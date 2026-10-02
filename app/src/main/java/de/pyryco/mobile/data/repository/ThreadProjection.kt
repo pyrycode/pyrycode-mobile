@@ -101,8 +101,9 @@ internal class ThreadProjection {
      * An id is **removed when consumed**, which is also what makes the legal duplicate-`message_id`
      * case behave: dropping a second item carrying an already-spent id finds nothing and removes
      * nothing, instead of taking an unrelated row with it. Connection-scoped and in-memory like every
-     * sibling projection (#351) — it holds one minted id per successful send, minus every consumed
-     * drop, and dies with the connection.
+     * sibling projection (#351) — it holds one minted id per issued send, minus every consumed
+     * drop, and dies with the connection. Recorded when the send is issued (#1355), so a refused send's id
+     * stays too; no queued item will ever carry it, so it never removes a row.
      */
     private val mintedMessageIds = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
 
@@ -462,8 +463,8 @@ internal class ThreadProjection {
 
     /**
      * Record [messageId] as an echo this device minted into [conversationId]'s thread (#781), called by
-     * [RemoteConversationRepository.sendMessage] after its ack — only an id in [mintedMessageIds] may later
-     * be correlated with a queued item and removed.
+     * [RemoteConversationRepository.sendMessage] as it draws the echo, before the ack (#1355) — only an id
+     * in [mintedMessageIds] may later be correlated with a queued item and removed.
      */
     fun recordMinted(
         conversationId: String,

@@ -4,12 +4,14 @@ import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
+import de.pyryco.mobile.data.model.ModalAction
 import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.model.batchFor
+import de.pyryco.mobile.data.model.reconnected
 import de.pyryco.mobile.data.model.reduce
 import de.pyryco.mobile.data.network.PumpState
 import de.pyryco.mobile.data.network.RelayTransport
@@ -25,6 +27,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
@@ -34,8 +37,8 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
-import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
@@ -224,16 +227,34 @@ class RelayRepositoryCoordinator(
      * next connection is published; the deterministic [answerModal]/[cancelModal] null-guard keeps a tap on
      * one from reaching a dead connection. Desktop #415/#510/#1140.
      *
+     * Rejection notices (#1340) are the exception: [HostModalState.reconnected] keeps them, so only the user's
+     * dismissal or the end of the pairing clears one.
+     *
      * **Hoisted from [ThreadViewModel] (#492)** so a `modal_shown` that arrives before any thread screen
-     * subscribes is held. **Started [SharingStarted.Eagerly]:** `scan` re-emits its initial accumulator on
-     * every fresh upstream collection, so under `WhileSubscribed` a resubscription would blank held prompts
-     * that the `replay = 0` source cannot rebuild. Adds **no log**: the modal fields may name a sensitive
-     * command/path.
+     * subscribes is held: one collector, launched eagerly in [scope], folds every frame whether or not anyone
+     * observes. Since #1340 it is a [MutableStateFlow] so [recordModalAction] can fold this phone's own actions
+     * synchronously beside it; both write through `update`, so neither loses the other's change. Adds **no
+     * log**: the modal fields may name a sensitive command/path.
      */
-    val hostModals: StateFlow<HostModalState> =
-        modalEvents
-            .scan(HostModalState()) { state, event -> if (event == null) HostModalState() else state.reduce(event) }
-            .stateIn(scope, SharingStarted.Eagerly, HostModalState())
+    private val hostModalState = MutableStateFlow(HostModalState())
+    val hostModals: StateFlow<HostModalState> = hostModalState.asStateFlow()
+
+    init {
+        scope.launch {
+            modalEvents.collect { event ->
+                hostModalState.update { state -> if (event == null) state.reconnected() else state.reduce(event) }
+            }
+        }
+    }
+
+    /**
+     * Folds one of this phone's own prompt actions into [hostModals] at once (#1340): an answer or cancel
+     * closing its prompt before the daemon replies, a refused answer, or the user dismissing that refusal.
+     * Non-suspending, so the thread's next synchronous read already sees it. No log: actions carry modal ids.
+     */
+    fun recordModalAction(action: ModalAction) {
+        hostModalState.update { it.reduce(action) }
+    }
 
     /**
      * Every clarification batch outstanding on this host (#822), across all its conversations. A per-

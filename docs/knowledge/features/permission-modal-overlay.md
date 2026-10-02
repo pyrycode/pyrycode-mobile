@@ -44,12 +44,15 @@ two signals **verbatim — no UI-side re-derivation**:
   (back-press / outside-tap dismissal stay disabled, see below). Since #815 this moved into the shared
   `MobileGateModal` footer as an outlined `ModalCancelButton`; since #1306 it renders as its own inline
   `ModalCancelButton` item — see § The inline request.
-- **Send-error snackbar.** A failed `modal_answer` / `modal_cancel` surfaces on the existing
-  `snackbarHostState` via a **fixed local string** `modal_send_failed` — see § Send-error confidentiality.
+- **Send-error snackbar — removed by [#1340](modal-answer-flow.md#local-close-on-tap-and-the-in-chat-rejection-notice-1340).**
+  A failed `modal_answer` / `modal_cancel` used to surface on `snackbarHostState` via a fixed local string
+  `modal_send_failed`. #1340 replaced it with the card closing locally at once and, for a daemon refusal
+  only, an in-chat `NoticePill` that stays until dismissed — see § The rejection notice below.
 - **Tapjacking net.** Now that the taps are live, `filterTouchesWhenObscured = true` on the dialog's own
   window — see § Security.
-- **Route-host wiring.** `MainActivity` collects `vm.armedOptionId`, forwards it + `vm.modalSendErrors`, and
-  binds `onModalOption` / `onModalCancel` to `vm::onModalOption` / `vm::onModalCancel`.
+- **Route-host wiring.** `MainActivity` collects `vm.armedOptionId`, binds `onModalOption` / `onModalCancel`
+  to `vm::onModalOption` / `vm::onModalCancel`, and (since #1340) forwards `vm.answerRejected` +
+  `vm::onAnswerRejectionDismissed` in place of the removed `vm.modalSendErrors`.
 
 ## What #1306 moved
 
@@ -61,7 +64,9 @@ items drawn directly inside `ThreadScreen`'s message list, following the #1305 q
 - **Container.** `permissionRequestItems` replaces `PermissionModalOverlay`, emitting (under the list's
   reverse layout, newest end first) Cancel, the card, then the title — see § The inline request below. The
   request also renders in an **empty thread** (the `EmptyThreadState` branch now also gates on
-  `openRequest == null`) and no longer blocks Back, chat switching or history scrolling.
+  `openRequest == null`, and since [#1340](modal-answer-flow.md#local-close-on-tap-and-the-in-chat-rejection-notice-1340)
+  on `!answerRejected` too, so a refused answer in a chat with no messages has a slot to draw in) and no
+  longer blocks Back, chat switching or history scrolling.
 - **Hardening moved from the dialog window to the activity surface.** `FLAG_SECURE` and
   `filterTouchesWhenObscured` were the dialog's own window properties; with no dialog, the thread mounts
   [`QuestionPromptProtection`](question-batch-modal.md#rendering) — the #1305 shared-owner guard — for as
@@ -106,39 +111,41 @@ for what still reaches the old `Scaffold`-sibling `when` block (`Dismissed` only
 ThreadViewModel.currentModal : StateFlow<ModalUiState>      ◀── #445 fold (host-level, modalId-keyed; #1337 holds every outstanding prompt, not one), scoped to this thread's own conversation since #816
 ThreadViewModel.armedOptionId : StateFlow<String?>          ◀── #451 arm projection (VM-scoped)
 ThreadViewModel.alwaysAllowAccepted : StateFlow<Boolean>    ◀── #818 offer-acceptance projection, now backed by PermissionDraftStore (#1306)
-ThreadViewModel.modalSendErrors : Flow<Unit>                ◀── #451 payload-free one-shot
-        │  MainActivity: collectAsStateWithLifecycle(currentModal, armedOptionId, alwaysAllowAccepted) like isThinking/isStalled;
-        │  modalSendErrors forwarded BY REFERENCE (single-consumer — collected in ThreadScreen, #452);
+ThreadViewModel.answerRejected : StateFlow<Boolean>         ◀── #1340, replacing modalSendErrors: Flow<Unit> (#451)
+        │  MainActivity: collectAsStateWithLifecycle(currentModal, armedOptionId, alwaysAllowAccepted, answerRejected) like isThinking/isStalled
         │  DisposableEffect(vm) { onDispose { vm.onConversationLeft() } } clears the arm on the way out (#1306)
         ▼
-ThreadScreen(state, …, modalState = Hidden, armedOptionId = null, modalSendErrors = emptyFlow(),
+ThreadScreen(state, …, modalState = Hidden, armedOptionId = null,
              alwaysAllowAccepted = false, onAlwaysAllowChanged = { _, _ -> },
              onModalOption = { modalId, optionId -> vm.onModalOption(optionId, modalId) },
-             onModalCancel = { modalId -> vm.onModalCancel(modalId) })   ◀── all live since #452/#818/#1306
-        │  LaunchedEffect(modalSendErrors){ collect → snackbar(modal_send_failed) }   (#452 error collect)
+             onModalCancel = { modalId -> vm.onModalCancel(modalId) },
+             answerRejected = false, onDismissAnswerRejection = vm::onAnswerRejectionDismissed)   ◀── all live since #452/#818/#1306/#1340
+        │  if (answerRejected) item("permission-rejection") { NoticePill(...) }   (#1340, replacing the #452 error-snackbar collect)
         │  val openRequest = modalState as? ModalUiState.Open   (#1306)
         │  LazyColumn(reverseLayout = true) { openRequest?.let { permissionRequestItems(it, ...) } ; … }
         │  when (modalState):   ── the request itself no longer reaches this block (#1306)
         ├─ Open      → Unit                                                  -- rendered inline above instead
-        ├─ Dismissed → LaunchedEffect(modalId) { snackbarHostState.showSnackbar(dismissReasonText(source)) }
+        ├─ Dismissed → LaunchedEffect(modalId) { snackbarHostState.showSnackbar(dismissReasonText(source)) }  -- skipped for the phone's own answer since #1340, see current-modal-state.md
         └─ Hidden    → Unit
 ```
 
-`modalState` / `armedOptionId` / `modalSendErrors` / `alwaysAllowAccepted` / `onAlwaysAllowChanged` are all
-**defaulted** parameters (`= Hidden` / `= null` / `= emptyFlow()` / `= false` / `= { _, _ -> }`), so every
-existing preview and androidTest call site stays inert — no call-site cascade. The
-route host collects `currentModal` + `armedOptionId` + `alwaysAllowAccepted` exactly like the `isThinking` /
-`isStalled` collect-and-forward and binds `onModalOption` / `onModalCancel` / `onAlwaysAllowChanged` to the
-VM. [#451](modal-answer-flow.md) added the VM's decision methods (the answer/cancel + arm logic); the render
-slice [**#452**](../codebase/452.md) forwarded those screen hooks to `vm::onModalOption` /
-`vm::onModalCancel` in the route host and threaded `armedOptionId` into the overlay to draw the armed
-affordance; [**#1306**](../../specs/architecture/1306-inline-permissions.md) widened both hooks to
-two-argument lambdas that pass the rendered `modalId` alongside the tap, so a tap composed before a
-replacement cannot reach it (see [Modal answer flow § Stale
-taps](modal-answer-flow.md#stale-taps-carry-the-wrong-modalid-1306)). `ThreadScreen` still collects
-`modalSendErrors` internally (not the route host) because the snackbar — its effect — is a screen concern,
-while `navigationEvents` stays in `MainActivity` because navigation is a host concern. `modalSendErrors` is a
-single-consumer `Channel.receiveAsFlow()`, so `MainActivity` only forwards the reference.
+`modalState` / `armedOptionId` / `alwaysAllowAccepted` / `onAlwaysAllowChanged` / `answerRejected` /
+`onDismissAnswerRejection` are all **defaulted** parameters (`= Hidden` / `= null` / `= false` /
+`= { _, _ -> }` / `= false` / `= {}`), so every existing preview and androidTest call site stays inert — no
+call-site cascade. The route host collects `currentModal` + `armedOptionId` + `alwaysAllowAccepted` +
+`answerRejected` exactly like the `isThinking` / `isStalled` collect-and-forward and binds `onModalOption` /
+`onModalCancel` / `onAlwaysAllowChanged` / `onDismissAnswerRejection` to the VM. [#451](modal-answer-flow.md)
+added the VM's decision methods (the answer/cancel + arm logic); the render slice [**#452**](../codebase/452.md)
+forwarded those screen hooks to `vm::onModalOption` / `vm::onModalCancel` in the route host and threaded
+`armedOptionId` into the overlay to draw the armed affordance; [**#1306**](../../specs/architecture/1306-inline-permissions.md)
+widened both hooks to two-argument lambdas that pass the rendered `modalId` alongside the tap, so a tap
+composed before a replacement cannot reach it (see [Modal answer flow § Stale
+taps](modal-answer-flow.md#stale-taps-carry-the-wrong-modalid-1306)). [**#1340**](modal-answer-flow.md#local-close-on-tap-and-the-in-chat-rejection-notice-1340)
+removed the `modalSendErrors` one-shot `Channel`/`Flow` that `ThreadScreen` used to collect internally (the
+snackbar — its effect — was a screen concern, while `navigationEvents` stays in `MainActivity` because
+navigation is a host concern) and replaced it with the plain `Boolean` `answerRejected` state above, rendered
+as a `NoticePill` list item rather than a transient snackbar — so there is no one-shot collect to own
+anymore, screen or host.
 
 Host-level by construction: the coordinator's fold holds **every outstanding prompt** on a host in one
 [`HostModalState`](current-modal-state.md#2-the-hostmodalstate-fold-1337--the-viewmodel-re-exposure), keyed on `modalId`
@@ -329,6 +336,13 @@ snackbar is a one-shot *per view*, not a one-shot *per device*, and it stops the
 `resolved`. The Scaffold gains a `snackbarHostState = remember { SnackbarHostState() }` + `snackbarHost`,
 mirroring the [`ArchivedDiscussionsScreen`](archived-discussions-screen.md) dismiss-reason precedent.
 
+**Since [#1340](modal-answer-flow.md#local-close-on-tap-and-the-in-chat-rejection-notice-1340), the most
+recent `Dismissed` this fallback would return is skipped entirely when it is the phone's own
+(`answeredHere = true`), so none of the above fires for the user's own tap** — no "Resolved on another
+device" for an answer the phone just sent, and (the trap the implementation had to avoid) no older *remote*
+dismissal resurfacing either, since the fallback does not search past the newest entry. The snackbar in this
+section now fires only for a `remote` or `timeout` dismissal of a prompt this phone did not answer itself.
+
 `dismissReasonText(source)` maps the verbatim wire token to a **local** string resource:
 
 | `Dismissed.source` | string | |
@@ -343,25 +357,43 @@ Activity window** (`FLAG_SECURE` covers only the *dialog's* window), so the reas
 string — **never** the raw `source` token. An unknown forward-compat value yields the generic fallback, not
 the echoed value. (Copy is design-owed placeholder, reconciled when the visual spec lands.)
 
-## Send-error confidentiality (`modalSendErrors`, #452)
+## The rejection notice (`answerRejected`, #1340, replacing the send-error snackbar)
 
-When a `modal_answer` / `modal_cancel` send fails ([#451](modal-answer-flow.md) catches server `error` /
-not-connected), the VM emits a one-shot `modalSendErrors: Flow<Unit>`. [#452](../codebase/452.md) collects
-it **inside `ThreadScreen`** (the snackbar is a screen concern) onto the **same** `snackbarHostState` as the
-dismiss reason, via the `ArchivedDiscussionsScreen` VM-event→snackbar idiom:
+Through #452, a failed `modal_answer` / `modal_cancel` send surfaced as a one-shot `modalSendErrors: Flow<Unit>`
+snackbar on `snackbarHostState`, and the card stayed open. [#1340](modal-answer-flow.md#local-close-on-tap-and-the-in-chat-rejection-notice-1340)
+removed that channel: the card now closes locally before a send can even fail (§ The dismissal above), and
+only a **daemon refusal** (`RelayErrorException`) leaves anything to show — a notice in the owning chat,
+not a transient snackbar, since a snackbar that can fire after the reader has scrolled away or left the
+screen would be easy to miss for state the ticket wants to persist. `ThreadScreen` takes `answerRejected:
+Boolean` and `onDismissAnswerRejection: () -> Unit`, both defaulted inert, and renders the Default
+`NoticePill` (Figma [347:6617](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=347-6617),
+unshadowed) in the slot the permission card occupied when `answerRejected` is true:
 
 ```kotlin
-val modalSendFailedMessage = stringResource(R.string.modal_send_failed)   // fixed local string, never the payload
-LaunchedEffect(modalSendErrors, snackbarHostState) {
-    modalSendErrors.collect { snackbarHostState.showSnackbar(modalSendFailedMessage) }
+if (answerRejected) {
+    item(key = "permission-rejection") {
+        NoticePill(
+            text = stringResource(R.string.permission_answer_rejected),
+            isError = false,
+            onDismiss = onDismissAnswerRejection,
+            shadowElevation = 0.dp,
+        )
+    }
 }
 ```
 
-Confidentiality is **structural, not by discipline**: the event carries `Unit` (#451) and the message is a
-fixed local string, so it is **impossible** for a `modalId` / `optionId` / command / path to reach the
-snackbar — which, like the dismiss reason, draws in the un-secured Activity window. `currentModal` stays
-`Open` after a failure (#451), so the user can re-answer; there is no retry or error-code interpretation here
-(the reactive read-only degrade off the error code is the **#440** extension point). This is the exact
+Confidentiality is **structural, not by discipline**, the same posture #452's snackbar had: the VM's
+`RelayErrorException` catch discards the daemon's `message`/`code` and records only the owning
+`conversationId` (`ModalAction.Rejected`, never a wire value — see [Modal answer flow](modal-answer-flow.md)),
+and `permission_answer_rejected` is a fixed local string, so it is **impossible** for a `modalId` /
+`optionId` / command / path or any daemon text to reach the pill — which, like the dismiss reason, draws in
+the un-secured Activity window. Unlike the old snackbar, the notice is **not** one-shot: it stays until the
+user's X (`onDismissAnswerRejection`) or a pairing reset, because [Current-modal
+state](current-modal-state.md#lifecycle-errors-edge-cases) keeps `rejectedConversations` across a reconnect
+— deliberately the one part of the fold a reconnect does not clear. A refused cancel and an unsent answer or
+cancel (`IllegalStateException`) show nothing at all: the card is already gone, and the daemon re-sends an
+unanswered prompt on the next connection. There is no retry or error-code interpretation here (the reactive
+read-only degrade off the error code is the **#440** extension point). This is the exact
 mirror of the dismiss-reason mapped-not-echoed posture above.
 
 ## Security — the render-time obligations deferred to this surface
@@ -504,11 +536,13 @@ design gap, not an exact component match.
   the sibling prompt kind this surface now shares a `QuestionPromptProtection` owner and a reveal effect
   with; `PermissionDraftStore` follows its `QuestionDraftStore`'s process-lifetime, app-scoped precedent.
 - [Modal answer flow](modal-answer-flow.md) ([#451](../codebase/451.md)) — the behavior half whose
-  `armedOptionId` / `modalSendErrors` signals this renders and whose `onModalOption` / `onModalCancel`
+  `armedOptionId` / `answerRejected` signals this renders and whose `onModalOption` / `onModalCancel`
   decision methods the route host wires; since [#818](modal-answer-flow.md#the-session-grant-draft-818-moved-to-process-lifetime-in-1306)
   also `alwaysAllowAccepted` and `onAlwaysAllowChanged`, which `AlwaysAllowOffer` reflects the same way; since
   [#1306](modal-answer-flow.md#stale-taps-carry-the-wrong-modalid-1306) the `modalId` guard every callback
-  carries, and [`onConversationLeft`](modal-answer-flow.md#leaving-the-conversation-clears-the-arm-not-the-grant-1306).
+  carries, and [`onConversationLeft`](modal-answer-flow.md#leaving-the-conversation-clears-the-arm-not-the-grant-1306);
+  since [#1340](modal-answer-flow.md#local-close-on-tap-and-the-in-chat-rejection-notice-1340) the local
+  close on tap and `onAnswerRejectionDismissed`, which the notice's X calls.
 - [#818 architecture doc](../../specs/architecture/818-permission-always-allow.md) and
   [PR #903](https://github.com/pyrycode/pyrycode-mobile/pull/903) — the always-allow offer: design source,
   the security review, the deliberate 10-file overage.

@@ -52,14 +52,37 @@ sealed interface ModalUiState {
      * The currently-open modal resolved. Mirrors [ModalEvent.Dismissed]; [source] is the verbatim
      * resolution reason (`remote` | `local` | `timeout`, or any forward-compat value unchanged).
      * [conversationId] is the resolved modal's own (#816): the wire dismiss carries none, so the host fold
-     * copies it from the [Open] modal it resolves.
+     * copies it from the [Open] modal it resolves. [answeredHere] (#1340) marks a prompt this phone answered or
+     * cancelled itself: it never comes back on this connection, and no thread announces its dismissal.
      */
     data class Dismissed(
         val modalId: String,
         val outcome: String,
         val source: String,
         val conversationId: String = "",
+        val answeredHere: Boolean = false,
     ) : ModalUiState
+}
+
+/**
+ * What this phone did to a prompt (#1340), folded into [HostModalState] beside the wire's [ModalEvent]s, as
+ * desktop's `reduceModal` folds its local `dismissed`, `rejected` and `rejectionDismissed`.
+ */
+sealed interface ModalAction {
+    /** An answer or cancel for [modalId] left the phone's hands: the prompt closes before the daemon replies. */
+    data class AnsweredHere(
+        val modalId: String,
+    ) : ModalAction
+
+    /** The daemon refused the answer [conversationId]'s chat sent. */
+    data class Rejected(
+        val conversationId: String,
+    ) : ModalAction
+
+    /** The user dismissed [conversationId]'s rejection notice. */
+    data class RejectionDismissed(
+        val conversationId: String,
+    ) : ModalAction
 }
 
 /**
@@ -74,7 +97,50 @@ sealed interface ModalUiState {
 data class HostModalState(
     val outstanding: List<ModalUiState.Open> = emptyList(),
     val resolved: List<ModalUiState.Dismissed> = emptyList(),
+    /** The chats showing "your answer was rejected" (#1340, desktop `rejectionOwners`); kept by [reconnected]. */
+    val rejectedConversations: Set<String> = emptySet(),
 )
+
+/**
+ * The fold a new connection starts from (#1337, #1340): no prompts and no resolutions, so only the daemon's
+ * re-sends bring a prompt back, but every rejection notice stays until the user dismisses it.
+ */
+internal fun HostModalState.reconnected(): HostModalState = HostModalState(rejectedConversations = rejectedConversations)
+
+/**
+ * Folds one of this phone's own [ModalAction]s (#1340). Pure, and like the wire fold it logs nothing.
+ *
+ * - [ModalAction.AnsweredHere] for a held id → removed and recorded as an [answeredHere][ModalUiState.Dismissed.answeredHere]
+ *   resolution, so a repeated `modal_shown` stays gone on this connection and the daemon's own later dismiss,
+ *   naming an id no longer held, is ignored. An id the host does not hold → unchanged.
+ * - [ModalAction.Rejected] → its non-blank chat joins [HostModalState.rejectedConversations].
+ * - [ModalAction.RejectionDismissed] → its chat leaves it.
+ */
+internal fun HostModalState.reduce(action: ModalAction): HostModalState =
+    when (action) {
+        is ModalAction.AnsweredHere -> {
+            val held = outstanding.firstOrNull { it.modalId == action.modalId }
+            if (held == null) {
+                this
+            } else {
+                copy(
+                    outstanding = outstanding - held,
+                    resolved =
+                        resolved +
+                            ModalUiState.Dismissed(
+                                modalId = held.modalId,
+                                outcome = "",
+                                source = "",
+                                conversationId = held.conversationId,
+                                answeredHere = true,
+                            ),
+                )
+            }
+        }
+        is ModalAction.Rejected ->
+            if (action.conversationId.isBlank()) this else copy(rejectedConversations = rejectedConversations + action.conversationId)
+        is ModalAction.RejectionDismissed -> copy(rejectedConversations = rejectedConversations - action.conversationId)
+    }
 
 /**
  * Folds one [ModalEvent] into the host's prompts. Pure and side-effect-free — **no logging** of any modal
@@ -134,11 +200,13 @@ internal fun HostModalState.reduce(event: ModalEvent): HostModalState =
 /**
  * The host's prompts as one thread with [conversationId] sees them (#1337): its first outstanding prompt;
  * with none, its most recent dismissal, so the thread's dismissal message still fires; otherwise
- * [ModalUiState.Hidden]. Matching goes through [ModalUiState.scopedTo], so a blank conversation matches nothing.
+ * [ModalUiState.Hidden]. A most recent dismissal this phone made itself reads as [ModalUiState.Hidden]
+ * (#1340), so the user's own tap announces nothing and an older dismissal does not resurface.
+ * Matching goes through [ModalUiState.scopedTo], so a blank conversation matches nothing.
  */
 fun HostModalState.scopedTo(conversationId: String): ModalUiState =
     outstanding.firstOrNull { it.scopedTo(conversationId) !== ModalUiState.Hidden }
-        ?: resolved.lastOrNull { it.scopedTo(conversationId) !== ModalUiState.Hidden }
+        ?: resolved.lastOrNull { it.scopedTo(conversationId) !== ModalUiState.Hidden }?.takeUnless { it.answeredHere }
         ?: ModalUiState.Hidden
 
 /**

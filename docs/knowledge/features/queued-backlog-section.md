@@ -10,8 +10,10 @@ instead of wondering whether the turns they fired during a long response were dr
 Through #467 this lived in a dedicated foot-of-list section, `QueuedBacklog`, drawn below the message
 list. **#782 deleted that section.** The daemon parks a message and pushes a `queue_state` snapshot for
 it, but the phone had already drawn its own optimistic echo of that same send the moment
-`RemoteConversationRepository.sendMessage` got its ack — interactive mode streams no user-message event
-back, so the echo is the phone's only record of its own send. The section drew the daemon's snapshot as a
+`RemoteConversationRepository.sendMessage` issued the request — before the daemon's ack, since
+[#1355](https://github.com/pyrycode/pyrycode-mobile/issues/1355) moved the draw ahead of the await —
+interactive mode streams no user-message event back, so the echo is the phone's only record of its own
+send. The section drew the daemon's snapshot as a
 *second*, near-identical row below the thread, one of the two claiming delivery it hadn't made. #782 joins
 the two at render time instead: `foldQueuedRows` (`ui/conversations/thread/ThreadRow.kt`) correlates the
 daemon's backlog against the thread's own rows on the key [#781](../codebase/781.md) carried through

@@ -21,12 +21,23 @@ message locally. (The "send_message echo" phrasing still in the `TYPE_MESSAGE` c
 this correction and is harmless — that path correctly handles the other-device / assistant cases.) See
 [[phase4-send-message-acks-not-message-echo]] and [[phase4-request-encoders-live-in-mutation-tickets]].
 
-**Decision (PO-owned, `security-sensitive`): confirmed-insert, not optimistic.** The message is
-projected into the read path **only on the correlated `ack`** — never before, never on failure. There
-is no rollback path because nothing is inserted speculatively. The trust property — the thread never
-shows a message the server did not receive — holds **by construction**. (`Message` has no
-delivery-status field, so an optimistic insert could only render as a normal-looking message that might
-silently vanish; perceived send latency is a future UI-layer concern, not a data-layer one.)
+**Decision (PO-owned, `security-sensitive`): optimistic echo, not confirmed-insert ([#1355](https://github.com/pyrycode/pyrycode-mobile/issues/1355), reversing the original ruling below).** Desktop's
+`submitMessage` draws its `userText` echo the moment it sends, whether or not the send goes out, so the
+app never looks like it ignored a tap; mobile now copies that rule end to end. The message is built,
+recorded into both projections and minted into the echo ledger **before** `sendAndAwaitReply`, not after
+it. A refused send (a server `error` or a not-connected throw) leaves the echo in place — there is no
+rollback, because desktop has no failure surface for a send to roll back against either. The trust
+property the original ruling protected — the thread never shows a message the server did not receive —
+no longer holds by construction; it is traded for responsiveness, matching desktop's own posture. `ack`
+still has to come back clean for the send to be considered delivered in the wire sense, but nothing in
+the UI distinguishes a delivered bubble from a not-yet-acknowledged one (`Message` still carries no
+delivery-status field, so a "sending" treatment remains a future UI-layer concern, not a data-layer one).
+
+**Original ruling (superseded above, kept for context).** Before #1355 the message was projected into
+the read path only on the correlated `ack`, never before and never on failure, so the thread could never
+show a message the server had not received. That held by construction as long as the UI was willing to
+leave a tapped Send silent until the daemon answered; #1355 judged that latency a worse user-facing fault
+than the (already-accepted-on-desktop) risk of a bubble outliving a refused send.
 
 The flow (≤ ~15 lines):
 
@@ -41,10 +52,11 @@ suspend fun sendMessage(conversationId: String, text: String): Message {
         payload = MobileJson.encodeToJsonElement(
             SendMessagePayloadDto(conversationId, messageId, text)),  // {conversation_id, message_id, text}
     )
-    requests.sendAndAwaitReply(request)                  // throws on error / not-Open; ignore the empty {} ack
     val message = Message(messageId, sessionId = "", Role.User, text, sentAt, isStreaming = false)
-    conversationList.recordLastMessage(conversationId, message)  // confirmed-insert into BOTH projections,
-    threadProjection.appendMessages(listOf(conversationId to message))  //   only after the ack
+    conversationList.recordLastMessage(conversationId, message)  // echo drawn into BOTH projections and the
+    threadProjection.appendMessages(listOf(conversationId to message))  //   minted ledger BEFORE the await (#1355)
+    threadProjection.recordMinted(conversationId, messageId)
+    requests.sendAndAwaitReply(request)                  // throws on error / not-Open; the echo is already drawn
     return message
 }
 ```
@@ -163,16 +175,16 @@ suspend fun sendMessage(conversationId: String, text: String, attachments: List<
 `MessageCommands`' two-argument `sendMessage` now calls the three-argument override with
 `emptyList()`. The override calls `MessageAttachmentIds.forSend` **before** minting `message_id` or
 building the envelope, so a too-many-ids refusal throws before any request id is taken or frame sent —
-otherwise it's the unchanged #346 flow (same `RelayRequests.sendAndAwaitReply`, same confirmed-insert only after the
-`ack`), with `attachmentIds = attachments.map { it.attachmentId }` set on the DTO. Only ids reach the
+otherwise it's the unchanged #346 flow (same `RelayRequests.sendAndAwaitReply`, same echo drawn before the
+`ack`, #1355), with `attachmentIds = attachments.map { it.attachmentId }` set on the DTO. Only ids reach the
 wire; the parameter's own type changed from `attachmentIds: List<String>` to `attachments:
 List<MessageAttachment>` for the caller (#983, see below) — no second overload, since JVM erasure forbids
 two `List<...>` overloads that only differ by element type. A daemon refusal (`attachment.not_found`,
 `protocol.malformed`) arrives as a correlated `error` and throws `RelayErrorException` through the same
-path as any other `sendMessage` failure — the confirmed insert is unreachable, so a refused send leaves
-the thread unchanged.
+path as any other `sendMessage` failure — the echo is already drawn by this point (#1355), so a refused
+send leaves the row in place rather than leaving the thread unchanged.
 
-**The confirmed row now carries the references (#983), reversing the note above.** `MessageCommands.sendMessage`
+**The echoed row carries the references (#983).** `MessageCommands.sendMessage`
 builds the row's `attachments` from the parameter, not from the wire reply (`send_message`'s reply stays
 an empty `ack`): `attachments.distinctBy { it.attachmentId }.map { ... }` in caller order, with each
 non-null `displayName` and `mimeType` passed through `attachmentDisplayName` — **the same

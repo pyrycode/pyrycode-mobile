@@ -9,11 +9,13 @@ import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.ModalAction
 import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
+import de.pyryco.mobile.data.model.reconnected
 import de.pyryco.mobile.data.model.reduce
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
@@ -43,6 +45,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.FlowCollector
@@ -55,6 +58,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -322,8 +326,6 @@ class ThreadViewModelTest {
             val modal = MutableStateFlow<ModalUiState>(openModal(modalId = "m1")) // default = reject_once
             val recorder = ModalSendRecorder()
             val vm = vmWithModalSendPath(modal, recorder)
-            val errors = mutableListOf<Unit>()
-            val errorCollector = launch { vm.modalSendErrors.collect { errors += it } }
             advanceUntilIdle()
 
             vm.onModalOption("reject_once")
@@ -333,8 +335,7 @@ class ThreadViewModelTest {
             assertEquals(listOf("m1" to "reject_once"), recorder.answers)
             assertTrue(recorder.cancels.isEmpty())
             assertNull(vm.armedOptionId.value)
-            assertTrue(errors.isEmpty())
-            errorCollector.cancel()
+            assertFalse(vm.answerRejected.value)
         }
 
     @Test
@@ -408,30 +409,98 @@ class ThreadViewModelTest {
             assertNull(vm.armedOptionId.value)
         }
 
+    // ---- #1340: the prompt closes on the tap; only a refused answer stays visible ------------------
+
     @Test
-    fun modalSend_onFailure_emitsErrorSignalWithoutMutatingModal() =
+    fun answerAndCancel_closeThePromptBeforeTheDaemonReplies_andAnnounceNothing() =
         runTest {
-            // Both documented throws (server `error` incl. the ungranted-device reject; not-connected).
-            val failures =
-                listOf<Throwable>(
-                    RelayErrorException(code = "device.not_granted", retryable = false, message = "no"),
-                    IllegalStateException("not connected"),
+            val gate = CompletableDeferred<Unit>() // the daemon has not replied yet
+            val taps =
+                listOf<(ThreadViewModel) -> Unit>(
+                    { it.onModalOption("reject_once", "m1") }, // the default, single tap
+                    {
+                        it.onModalOption("allow_once", "m1") // arm
+                        it.onModalOption("allow_once", "m1") // confirm
+                    },
+                    { it.onModalCancel("m1") },
                 )
-            for (failure in failures) {
-                val modal = MutableStateFlow<ModalUiState>(openModal(modalId = "m1"))
-                val recorder = ModalSendRecorder(failWith = failure)
-                val vm = vmWithModalSendPath(modal, recorder)
-                val errors = mutableListOf<Unit>()
-                val errorCollector = launch { vm.modalSendErrors.collect { errors += it } }
+            for (tap in taps) {
+                val host = MutableStateFlow(HostModalState(listOf(openModal(modalId = "m1"))))
+                val vm =
+                    hostChat(
+                        ACTIVE_CONV,
+                        host,
+                        ModalSendRecorder(),
+                        answerModal = { _, _, _ -> gate.await() },
+                        cancelModal = { gate.await() },
+                    )
                 advanceUntilIdle()
 
-                vm.onModalOption("reject_once") // default → single-tap answer that fails
+                tap(vm)
                 advanceUntilIdle()
 
-                // Exactly one non-crashing error signal; the modal is untouched so the user can re-answer (AC #4).
-                assertEquals(1, errors.size)
+                assertEquals("closed while the send is in flight", ModalUiState.Hidden, vm.currentModal.value)
+                assertTrue(host.value.outstanding.isEmpty())
+
+                // A repeated modal_shown for the answered id on this connection does not bring it back.
+                host.value = host.value.reduce(shownEvent("m1"))
+                advanceUntilIdle()
+                assertEquals(ModalUiState.Hidden, vm.currentModal.value)
+
+                // After a reconnect the daemon's re-send does.
+                host.value = host.value.reconnected().reduce(shownEvent("m1"))
+                advanceUntilIdle()
                 assertEquals("m1", (vm.currentModal.value as ModalUiState.Open).modalId)
-                errorCollector.cancel()
+            }
+        }
+
+    @Test
+    fun aRefusedAnswer_showsTheNoticeInItsOwnChatOnly_untilDismissed() =
+        runTest {
+            val host = MutableStateFlow(HostModalState(listOf(openModal(modalId = "a1"))))
+            val refused = ModalSendRecorder(failWith = RelayErrorException(code = "device.not_granted", retryable = false, message = "no"))
+            val chatA = hostChat(ACTIVE_CONV, host, refused)
+            val chatB = hostChat(OTHER_CONV, host, ModalSendRecorder())
+            advanceUntilIdle()
+
+            chatA.onModalOption("reject_once", "a1")
+            advanceUntilIdle()
+
+            assertTrue(chatA.answerRejected.value)
+            assertFalse("another chat shows nothing", chatB.answerRejected.value)
+            assertEquals(ModalUiState.Hidden, chatA.currentModal.value)
+
+            // It survives a reconnect, and a chat opened afterwards (Back and reopen) still reads it.
+            host.value = host.value.reconnected()
+            advanceUntilIdle()
+            assertTrue(chatA.answerRejected.value)
+            assertTrue(hostChat(ACTIVE_CONV, host, ModalSendRecorder()).answerRejected.value)
+
+            chatA.onAnswerRejectionDismissed()
+            advanceUntilIdle()
+            assertFalse(chatA.answerRejected.value)
+        }
+
+    @Test
+    fun aRefusedCancel_andAnUnsentAnswerOrCancel_showNothing() =
+        runTest {
+            val cases =
+                listOf<Pair<Throwable, (ThreadViewModel) -> Unit>>(
+                    RelayErrorException(code = "modal.stale", retryable = false, message = "no") to { it.onModalCancel("m1") },
+                    IllegalStateException("not connected") to { it.onModalCancel("m1") },
+                    IllegalStateException("not connected") to { it.onModalOption("reject_once", "m1") },
+                )
+            for ((failure, tap) in cases) {
+                val host = MutableStateFlow(HostModalState(listOf(openModal(modalId = "m1"))))
+                val vm = hostChat(ACTIVE_CONV, host, ModalSendRecorder(failWith = failure))
+                advanceUntilIdle()
+
+                tap(vm)
+                advanceUntilIdle()
+
+                assertFalse(vm.answerRejected.value)
+                assertEquals(emptySet<String>(), host.value.rejectedConversations)
+                assertEquals(ModalUiState.Hidden, vm.currentModal.value)
             }
         }
 
@@ -781,7 +850,6 @@ class ThreadViewModelTest {
             val modal = MutableStateFlow<ModalUiState>(offeringModal("m1", defaultOptionId = "allow_once"))
             val recorder = ModalSendRecorder(failWith = IllegalStateException("not connected"))
             val vm = vmWithModalSendPath(modal, recorder)
-            val errorCollector = launch { vm.modalSendErrors.collect { } }
             advanceUntilIdle()
 
             vm.onAlwaysAllowChanged("m1", true)
@@ -792,7 +860,6 @@ class ThreadViewModelTest {
             vm.onModalOption("allow_once")
             advanceUntilIdle()
             assertEquals(listOf(true, true), recorder.grants)
-            errorCollector.cancel()
         }
 
     // ---- #1306: the grant draft outlives the destination; the arm and stale taps do not ------------
@@ -998,10 +1065,11 @@ class ThreadViewModelTest {
             chatA.onModalOption("reject_once", "a1") // the default answers on one tap
             advanceUntilIdle()
             assertEquals(listOf("a1" to "reject_once"), recorder.answers)
-
-            host.value = host.value.reduce(ModalEvent.Dismissed("a1", "reject_once", "local"))
+            // #1340: A's prompt closes on the tap, and the daemon's later dismissal of it changes nothing.
+            assertEquals(ModalUiState.Hidden, chatA.currentModal.value)
+            host.value = host.value.reduce(ModalEvent.Dismissed("a1", "reject_once", "remote"))
             advanceUntilIdle()
-            assertEquals(ModalUiState.Dismissed("a1", "reject_once", "local", ACTIVE_CONV), chatA.currentModal.value)
+            assertEquals(ModalUiState.Hidden, chatA.currentModal.value)
             assertEquals("b1", (chatB.currentModal.value as ModalUiState.Open).modalId)
 
             chatB.onModalCancel("b1")
@@ -1029,37 +1097,34 @@ class ThreadViewModelTest {
         }
 
     @Test
-    fun modalSend_scopeCancellationMidSend_doesNotEmitErrorSignal() =
+    fun modalSend_scopeCancellationMidSend_recordsNoRejection() =
         runTest {
             // Regression guard (#451 rework): on the JVM `kotlinx.coroutines.CancellationException` is a
             // typealias for `j.u.c.CancellationException`, which extends `IllegalStateException` — so a bare
-            // `catch (IllegalStateException)` would swallow `viewModelScope` teardown mid-send and fire a
-            // spurious error. The `catch (CancellationException) { throw e }` rethrow prevents that.
+            // `catch (IllegalStateException)` would swallow `viewModelScope` teardown mid-send. The
+            // `catch (CancellationException) { throw e }` rethrow keeps it structured, and nothing is recorded.
             val gate = CompletableDeferred<Unit>() // never completes — the send stays suspended in-flight
-            val modal = MutableStateFlow<ModalUiState>(openModal(modalId = "m1")) // default = reject_once
+            val actions = mutableListOf<ModalAction>()
             val vm =
                 makeVm(
                     SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV)),
                     FakeConversationRepository(),
-                    currentModal = modal,
+                    currentModal = MutableStateFlow<ModalUiState>(openModal(modalId = "m1")), // default = reject_once
                     answerModal = { _, _, _ -> gate.await() },
+                    recordModalAction = { actions += it },
                 )
             // Host the VM in a store so store.clear() cancels its viewModelScope — the real teardown path.
             val store = ViewModelStore().apply { put("vm", vm) }
-            val errors = mutableListOf<Unit>()
-            val errorCollector = launch { vm.modalSendErrors.collect { errors += it } }
             advanceUntilIdle()
 
             vm.onModalOption("reject_once") // single-tap send; suspends on `gate`
             advanceUntilIdle()
-            assertTrue("the send must still be suspended in-flight", errors.isEmpty())
+            assertEquals(listOf<ModalAction>(ModalAction.AnsweredHere("m1")), actions)
 
             store.clear() // cancels viewModelScope → the awaiting send throws CancellationException
             advanceUntilIdle()
 
-            // The rethrow keeps cancellation structured: no spurious error signal fires (AC #4 invariant).
-            assertTrue("VM-scope cancellation mid-send must not emit an error signal", errors.isEmpty())
-            errorCollector.cancel()
+            assertEquals("teardown mid-send records nothing more", listOf<ModalAction>(ModalAction.AnsweredHere("m1")), actions)
         }
 
     // ---- #458: onInterrupt outbound send path -------------------------------------------------
@@ -3140,12 +3205,12 @@ class ThreadViewModelTest {
         }
 
     @Test
-    fun sendMessage_whenRefused_leavesTheDraftToResend() =
+    fun sendMessage_whenRefused_doesNotRestoreTheDraft() =
         runTest {
-            // AC #2, negative half — the defect this ticket fixes. The clear sits inside the guarded
-            // block after the repo call, so each of the three failure types launchGuardedRepoCall
-            // swallows jumps past it and the text stays put. Uncaught throws are captured because a
-            // throw escaping viewModelScope reaches the default handler, not runTest.
+            // #1355 AC #3: as on desktop, the composer clears on tap and a refused send does not put the
+            // text back — the echo stays in the thread instead (#789's restore-on-failure is dropped).
+            // Each of the three failure types launchGuardedRepoCall swallows stays quiet. Uncaught throws
+            // are captured because a throw escaping viewModelScope reaches the default handler, not runTest.
             val uncaught = mutableListOf<Throwable>()
             val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
             Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
@@ -3170,8 +3235,8 @@ class ThreadViewModelTest {
                     vm.sendMessage("worth keeping")
                     advanceUntilIdle()
 
-                    assertEquals("refused by $failure must keep the draft", "worth keeping", vm.draft.value)
-                    assertEquals("worth keeping", store.draftFor("pyrybox", DRAFT_CONV))
+                    assertEquals("refused by $failure must not restore the draft", "", vm.draft.value)
+                    assertEquals("", store.draftFor("pyrybox", DRAFT_CONV))
                 }
                 assertTrue("a refused send must stay quiet, not crash: $uncaught", uncaught.isEmpty())
             } finally {
@@ -3180,10 +3245,28 @@ class ThreadViewModelTest {
         }
 
     @Test
+    fun sendMessage_trimsTheText_andClearsTheDraftBeforeAnyReply() =
+        runTest {
+            // #1355 AC #1: the send never completes, yet the composer is already clear and the
+            // repository was handed the trimmed text.
+            val store = ComposerDraftStore()
+            val repository = NeverRepliesRepository()
+            val vm = makeVm(threadHandle("pyrybox", DRAFT_CONV), repository, draftStore = store)
+            advanceUntilIdle()
+            vm.onDraftChange("  hi \n")
+
+            vm.sendMessage("  hi \n")
+            advanceUntilIdle()
+
+            assertEquals(listOf("hi"), repository.sentTexts)
+            assertEquals("", vm.draft.value)
+            assertTrue(store.drafts.value.isEmpty())
+        }
+
+    @Test
     fun sendMessage_whenTheDraftChangedInFlight_leavesTheNewTextAlone() =
         runTest {
-            // The clear is guarded on the draft still equalling what was sent, so an accepted send
-            // cannot swallow text typed while it was in flight.
+            // The draft clears before the send launches, so text typed while it is in flight survives it.
             val store = ComposerDraftStore()
             var vm: ThreadViewModel? = null
             val repository =
@@ -4706,6 +4789,21 @@ class ThreadViewModelTest {
         conversationId: String,
     ): SavedStateHandle = SavedStateHandle(initialState = mapOf("serverId" to serverId, "conversationId" to conversationId))
 
+    /** Records each sent text and never returns: a daemon reply that never arrives (#1355). */
+    private class NeverRepliesRepository(
+        private val delegate: FakeConversationRepository = FakeConversationRepository(),
+    ) : ConversationRepository by delegate {
+        val sentTexts = mutableListOf<String>()
+
+        override suspend fun sendMessage(
+            conversationId: String,
+            text: String,
+        ): Message {
+            sentTexts += text
+            awaitCancellation()
+        }
+    }
+
     /**
      * Runs [whileSending] inside the suspend `sendMessage` call, before it returns (#789) — the user
      * typing while their send is in flight. Reads delegate to a seeded fake so `state` still assembles.
@@ -4778,6 +4876,7 @@ class ThreadViewModelTest {
         answerModal: suspend (String, String, Boolean) -> Unit = { _, _, _ -> },
         cancelModal: suspend (String) -> Unit = { _ -> },
         interrupt: suspend (String) -> Unit = { },
+        recordModalAction: (ModalAction) -> Unit = {},
         // #861: whether the host's live repository is published. Available from the start by default, as
         // the demo path's fake is.
         repositoryAvailable: Flow<Boolean> = flowOf(true),
@@ -4797,6 +4896,7 @@ class ThreadViewModelTest {
             cancelModal,
             interrupt,
             repositoryAvailable = repositoryAvailable,
+            recordModalAction = recordModalAction,
             rememberModel = rememberModel,
             permissionDraftStore = permissionDraftStore,
         )
@@ -4835,21 +4935,31 @@ class ThreadViewModelTest {
             permissionDraftStore = permissionDraftStore,
         )
 
-    /** A chat on host "host" for [conversationId], reading the host's whole prompt list (#1337). */
+    /**
+     * A chat on host "host" for [conversationId], reading the host's whole prompt list (#1337). A
+     * [MutableStateFlow] host also takes the chat's own prompt actions (#1340), as the coordinator's does.
+     */
     private fun TestScope.hostChat(
         conversationId: String,
         host: StateFlow<HostModalState>,
         recorder: ModalSendRecorder,
         permissionDraftStore: PermissionDraftStore? = null,
+        answerModal: suspend (String, String, Boolean) -> Unit = recorder.answer,
+        cancelModal: suspend (String) -> Unit = recorder.cancel,
     ): ThreadViewModel =
         makeVm(
             SavedStateHandle(initialState = mapOf("conversationId" to conversationId, "serverId" to "host")),
             FakeConversationRepository(),
-            answerModal = recorder.answer,
-            cancelModal = recorder.cancel,
+            answerModal = answerModal,
+            cancelModal = cancelModal,
+            recordModalAction = { action -> (host as? MutableStateFlow<HostModalState>)?.update { it.reduce(action) } },
             permissionDraftStore = permissionDraftStore,
             hostModals = host,
         )
+
+    /** The daemon's `modal_shown` for [modalId] in [ACTIVE_CONV]'s chat (#1340). */
+    private fun shownEvent(modalId: String): ModalEvent.Shown =
+        ModalEvent.Shown(modalId, "permission", "Run command?", "do the thing", fourOptions, "reject_once", ACTIVE_CONV)
 
     /**
      * A one-prompt host view of a single-modal flow (#1337), so the cases written against one modal keep

@@ -1,6 +1,6 @@
 # Permission-modal overlay — testing
 
-Split out of [Permission-modal overlay](permission-modal-overlay.md) (#446/#452/#1306/#1337) on 2026-10-01 to
+Split out of [Permission-modal overlay](permission-modal-overlay.md) (#446/#452/#1306/#1337/#1340) on 2026-10-01 to
 keep that overview under the docs-guard size cap. This page covers the render surface's own test coverage —
 the shared screen test, the device-only capture test, and the rung-3 live scenarios. The render surface
 itself, its security obligations and its visual spec status stay on the parent page.
@@ -8,8 +8,10 @@ itself, its security obligations and its visual spec status stay on the parent p
 Shared screen test `app/src/sharedTest/.../thread/ThreadScreenModalTest.kt`, available to both unit and
 device suites, mirrors `ThreadScreenOverflowTest`'s idiom — the #446 set
 (render array-order, exactly-one-default-highlight, dismissed × {remote, local, timeout}, forward-compat
-fallback, hidden), extended by #452 with the armed/two-tap/send-error cases, and **adapted by
-[#1306](../../specs/architecture/1306-inline-permissions.md) to the inline surface (31/31)**:
+fallback, hidden), extended by #452 with the armed/two-tap/send-error cases, **adapted by
+[#1306](../../specs/architecture/1306-inline-permissions.md) to the inline surface (31/31)**, and by
+[#1340](modal-answer-flow.md#local-close-on-tap-and-the-in-chat-rejection-notice-1340) from send-error cases
+to rejection-pill cases (33/33 — see below):
 
 - **armed affordance** — `armedOptionId = "allow_once"`: **exactly one** option carries the
   `modal_armed_option_desc` marker and it is `allow_once`; with `armedOptionId = null` **none** does; the
@@ -20,8 +22,11 @@ fallback, hidden), extended by #452 with the armed/two-tap/send-error cases, and
   `var armed by remember { mutableStateOf<String?>(null) }` whose `onModalOption` mimics #451's branch order),
   recomposing `armedOptionId = armed`: the **first** tap of a non-default arms it (no send recorded) **and**
   renders the armed affordance; the **second** tap of the same option confirms (send recorded).
-- **send-error confidentiality** — a `Channel<Unit>` fed into `modalSendErrors` emits once: `modal_send_failed`
-  is displayed and no payload substring (`rm -rf`) appears in the snackbar.
+- **the rejection notice (#1340, replacing the send-error snackbar)** — `answerRejected = true` shows the
+  `permission_answer_rejected` `NoticePill` with its X, and tapping the X calls `onDismissAnswerRejection`;
+  `answerRejected = false` shows nothing, including in an otherwise empty thread (the empty-thread branch
+  gives way to the pill the same way it already did for an open request). The removed send-error snackbar
+  case (a `Channel<Unit>` fed into `modalSendErrors`) is gone with the channel it tested.
 - **decision context** (#817) and **always-allow offer** (#818) — unchanged from the pre-#1306 assertions,
   now driven over the inline card: the reason/description/blocked-path labels, the `classifier` / `rule`
   sentence labels and the raw-category fallback; the offer's label and rules render between the context and
@@ -50,12 +55,6 @@ managed-device run (API 33) recorded 3 executed, 0 failed, 0 skipped; the affect
 (412 × 892) and compact (320 × 700, 1.5×) states live under `app/src/androidTest/assets/permission-1306/`,
 for the app-wide comparison in #1220.
 
-> **Known test-strength NIT (code review, optional, predates #1306):** the send-error confidentiality test
-> drives the error over a `Hidden` modal, so the `prompt` (`rm -rf …`) is never composed and the
-> `assertDoesNotExist("rm -rf")` passes **vacuously**. The contract is enforced structurally (the event is
-> `Unit` + a fixed local string), so not a real gap — but the assertion would be stronger driven over an
-> **`Open`** request where the payload is actually on screen.
-
 **Rung 3 (live end-to-end).** `InteractiveStreamE2ETest.interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation`
 was adapted to the inline card's selectors (`awaitReadPrompt` now scopes to the request card, not an
 ancestor holding Cancel — a plain "holds Cancel" ancestor would also match the phone's own message naming
@@ -64,6 +63,16 @@ prompt text), returns to A (grant still checked, arm cleared), and then needs tw
 phone's answer, A's session grant and B's peer resolution survive the inline move. The dispatcher's
 post-verifier live run recorded **43 executed, 43 passed, 0 failed, 0 skipped** for the full
 `InteractiveStreamE2ETest` suite on 2026-09-30, with this method present and passing among them. See [Real-claude e2e coverage](../../e2e-interactive-stream.md).
+
+**[#1340](modal-answer-flow.md#local-close-on-tap-and-the-in-chat-rejection-notice-1340) moved this method's
+step 4 earlier and tightened it.** It now waits for the request card to leave the screen right after the
+allow tap — **before** it awaits the daemon's own `modal_dismissed` for the same id — and only then asserts
+`hasText(modal_dismissed_remote).assertCountEquals(0)`, so the no-snackbar check runs while a Short snackbar
+could still be visible rather than after `awaitTurnEnd`/`assertBashRan`, when it would likely have already
+expired and the check could barely fail. The dispatcher's gate for this ticket's AC 4 ran a 5-method
+selection (this method, `interactiveTurn_permissionPrompts_heldPerConversation`, and three always-run
+methods) against `feature/1340` merged with `main`: **5 executed, 5 passed, 0 failed, 0 skipped**, with
+`interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation` present among the 5 that ran and passed.
 
 **[#1337](../../specs/architecture/1337-hold-every-outstanding-prompt.md) added a sibling method,
 `interactiveTurn_permissionPrompts_heldPerConversation`, on the curated `LIVE` method list in
@@ -82,12 +91,6 @@ skipped** for the curated selection that includes this method alongside
 `interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect` and
 `interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool` — see [the real-claude e2e
 ladder](../../e2e-interactive-stream.md) for the curated list and how a method joins it.
-
-> **Known test-strength NIT (code review, optional):** the send-error confidentiality test drives the error
-> over a `Hidden` modal, so the `prompt` (`rm -rf …`) is never composed and the `assertDoesNotExist("rm -rf")`
-> passes **vacuously**. The contract is enforced structurally (the event is `Unit` + a fixed local string), so
-> not a real gap — but the assertion would be stronger driven over an **`Open`** modal where the payload is
-> actually on screen. A candidate strengthening when **#440** next touches this test.
 
 > **Test-pitfall lesson (#1337).** `SecondClientPeer.recorded(conversationId)` filters recorded frames on
 > the payload's own `conversation_id` field. `modal_dismissed` carries no `conversation_id` (§

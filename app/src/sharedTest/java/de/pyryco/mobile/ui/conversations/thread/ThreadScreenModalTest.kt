@@ -51,10 +51,6 @@ import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emptyFlow
-import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -104,8 +100,9 @@ class ThreadScreenModalTest {
         armedOptionId: String? = null,
         onModalOption: (String) -> Unit = {},
         onModalCancel: () -> Unit = {},
-        modalSendErrors: Flow<Unit> = emptyFlow(),
         alwaysAllowAccepted: Boolean = false,
+        answerRejected: Boolean = false,
+        onDismissAnswerRejection: () -> Unit = {},
         onAlwaysAllowChanged: (String, Boolean) -> Unit = { _, _ -> },
         onBack: () -> Unit = {},
     ) {
@@ -119,11 +116,12 @@ class ThreadScreenModalTest {
                     onRetry = {},
                     modalState = modalState,
                     armedOptionId = armedOptionId,
-                    modalSendErrors = modalSendErrors,
                     onModalOption = { modalId, optionId -> onModalOption("$modalId/$optionId") },
                     onModalCancel = { modalId -> if (modalId == "m1") onModalCancel() },
                     alwaysAllowAccepted = alwaysAllowAccepted,
                     onAlwaysAllowChanged = onAlwaysAllowChanged,
+                    answerRejected = answerRejected,
+                    onDismissAnswerRejection = onDismissAnswerRejection,
                 )
             }
         }
@@ -697,17 +695,24 @@ class ThreadScreenModalTest {
         assertEquals(listOf("allow_once"), sent)
     }
 
+    // ---- #1340: a refused answer stays in its chat as a Default notice with an X ----------------------
+
     @Test
-    fun modal_send_error_surfaces_local_string_without_payload() {
-        val errors = Channel<Unit>(Channel.BUFFERED)
-        // Hidden: with no modal drawn, the snackbar is the only thing that could carry a payload substring.
-        setContent(modalState = ModalUiState.Hidden, modalSendErrors = errors.receiveAsFlow())
+    fun answer_rejected_shows_the_client_notice_in_the_cards_slot_and_its_x_dismisses_it() {
+        var dismissed = 0
+        setContent(modalState = ModalUiState.Hidden, answerRejected = true, onDismissAnswerRejection = { dismissed++ })
 
-        errors.trySend(Unit)
-        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag(PERMISSION_REJECTION_TEST_TAG).assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.permission_answer_rejected)).assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription(string(R.string.thread_notice_dismiss)).performClick()
+        assertEquals(1, dismissed)
+    }
 
-        composeTestRule.onNodeWithText(string(R.string.modal_send_failed)).assertIsDisplayed()
-        // confidentiality: a sensitive command / path must never reach the un-secured snackbar window.
-        composeTestRule.onNodeWithText("rm -rf", substring = true).assertDoesNotExist()
+    @Test
+    fun no_rejection_shows_no_notice() {
+        setContent(modalState = openModal())
+
+        composeTestRule.onNodeWithTag(PERMISSION_REJECTION_TEST_TAG).assertDoesNotExist()
+        composeTestRule.onNodeWithText(string(R.string.permission_answer_rejected)).assertDoesNotExist()
     }
 }

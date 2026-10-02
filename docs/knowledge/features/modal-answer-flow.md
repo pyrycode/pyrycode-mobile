@@ -5,10 +5,11 @@ the open modal becomes an outbound `modal_answer` / `modal_cancel` over the live
 **fail-safe-deny single-tap / second-confirm** UX belt and a non-crashing error signal. Landed in
 [#451](../codebase/451.md) (split from #444, the interaction half of #439), part of the Phase 3
 permission-modal feature (epic pyrycode#597, ADR 025). This slice adds **no UI** — it drives the
-`onModalOption` / `onModalCancel` screen hooks from the ViewModel and exposes the arm + error signals; the
+`onModalOption` / `onModalCancel` screen hooks from the ViewModel and exposes the arm signal; the
 **sibling render slice [#452](../codebase/452.md)** (`blockedBy` this) then **shipped** the render half that
-draws the armed affordance off `armedOptionId`, surfaces `modalSendErrors` on the snackbar, and wires these
-hooks into the route host so the taps go live.
+draws the armed affordance off `armedOptionId` and wires these hooks into the route host so the taps go
+live. [#1340](#local-close-on-tap-and-the-in-chat-rejection-notice-1340) later replaced #452's send-error
+snackbar with the local close-on-answer behaviour and an in-chat rejection notice — see that section.
 
 It is the fourth and final half of the modal family:
 
@@ -32,6 +33,9 @@ ThreadScreen onModalOption(modalId, optionId) / onModalCancel(modalId)   ◀─�
 ThreadViewModel.onModalOption / onModalCancel            ◀── reads modalId from scopedModal() (#816: hostModal filtered to this VM's own conversationId, read synchronously — not the collected currentModal)
         │  fail-safe-deny decision: default → answer ; non-default → arm → 2nd confirm → answer ; cancel
         ▼
+sendAnswer / sendCancel  ──▶  recordModalAction(AnsweredHere(modalId))   ◀── #1340, before the send launches:
+        │                          = coordinator::recordModalAction (AppModule) — the card leaves at once
+        ▼
 sendAnswer / sendCancel  ──▶  answerModal / cancelModal  (defaulted suspend lambdas)
         │                          = coordinator::answerModal / ::cancelModal  (AppModule)
         ▼
@@ -39,6 +43,8 @@ RelayRepositoryCoordinator.answerModal / cancelModal     ◀── #451 outbound
         │  reaches the connection-scoped concrete repo via activeConnection.value?.repo
         ▼
 RemoteConversationRepository.answerModal / cancelModal   ◀── #438 (mints answer_token, awaits ack/error, throws)
+        │  RelayErrorException (daemon refused) ──▶ recordModalAction(Rejected(conversationId))   ◀── #1340
+        │  IllegalStateException (unsent)        ──▶ nothing recorded; the next connection re-sends it
 ```
 
 Two seams, both the **outbound mirror** of the inbound modal path: the coordinator passthrough mirrors #445's
@@ -155,9 +161,12 @@ val armedOptionId: StateFlow<String?> =
 - **`Eagerly` matches `currentModal`** so `.value` is always the true projection and a resolve immediately
   nulls the affordance.
 - **The arm clears on the send *attempt*** (`sendAnswer` nulls it *before* launching), not on success — the
-  second-confirm gesture is consumed whether the send succeeds or fails. `currentModal` stays `Open` until
-  the daemon resolves it, so the user may answer again after a failure (no auto-retry — first-answer-wins is
-  server-side).
+  second-confirm gesture is consumed whether the send succeeds or fails. Through #1337, `currentModal`
+  stayed `Open` until the daemon resolved it, so the user could answer again after a failure (no auto-retry
+  — first-answer-wins is server-side). **Since [#1340](#local-close-on-tap-and-the-in-chat-rejection-notice-1340)
+  the prompt closes with the arm, before the send even launches** — there is no answering again after a
+  failure from this card; a refused answer surfaces as the chat's rejection notice, and an unsent one is
+  re-sent by the daemon on the next connection.
 
 ### Leaving the conversation clears the arm, not the grant (#1306)
 
@@ -283,50 +292,99 @@ private fun grantsAlwaysAllow(open: ModalUiState.Open, optionId: String): Boolea
   .alwaysAllow: Boolean?`, `null` on an ordinary answer, `true` set at all only when the answer is a grant);
   the daemon decides what "the rules it retained for this modal" means and grants them, never the phone.
 
-## The error signal — one-shot, payload-free
+## Local close on tap, and the in-chat rejection notice (#1340)
 
-A failed send (server `error`, including the ungranted-device reject pyrycode#702; or a not-connected
-session) is caught and surfaced as the established one-shot VM→UI event idiom — the `navigationEvents` shape,
-**not** a `ThreadUiState` field (consistent with `currentModal` / `isThinking` / `isStalled` being VM-exposed
-signals):
+Through #452 a failed send surfaced as a one-shot `modalSendErrors` snackbar and the card otherwise stayed
+open until the daemon's own `modal_dismissed` arrived — which, for the phone's own tap, the daemon names
+`source: remote`, so the dismissal snackbar read "Resolved on another device" for an answer the user had
+just given. [#1340](../../specs/architecture/1340-close-prompt-on-answer.md) closes the card **locally, at
+once**, and replaces the snackbar with a rejection notice that lives in the chat until dismissed — following
+desktop's `answerPrompt`/`cancelPrompt` (`modalResolution.ts`) and `reduceModal`'s `rejectionOwners`
+(`modalPrompts.ts`).
+
+The fold gains a second, local input (`ModalAction` — [Current-modal state §
+2](current-modal-state.md#2-the-hostmodalstate-fold-1337--the-viewmodel-re-exposure) has the type and the
+`reduce`/`reconnected` details):
 
 ```kotlin
-private val modalSendErrorChannel = Channel<Unit>(capacity = Channel.BUFFERED)
-val modalSendErrors: Flow<Unit> = modalSendErrorChannel.receiveAsFlow()   // #452 shows a transient snackbar
+sealed interface ModalAction {
+    data class AnsweredHere(val modalId: String) : ModalAction   // this phone answered or cancelled modalId
+    data class Rejected(val conversationId: String) : ModalAction        // the daemon refused that chat's answer
+    data class RejectionDismissed(val conversationId: String) : ModalAction  // the user dismissed the notice
+}
 ```
 
-The payload is **`Unit`** — a send failed; the VM does not distinguish failure types here, and nothing
-sensitive can leak through it (the `modalId`/`optionId`/modal text never reach the signal). If #440/#452's
-reactive read-only mode later needs to distinguish the #702 reject, the event payload can be extended to
-carry the non-sensitive `RelayErrorException.code` **then** (additive — the seam is here; evidence-based fix
-selection means no distinguishing behavior is built until the consuming behavior exists).
+`RelayRepositoryCoordinator.recordModalAction(action)` folds one into `hostModals` synchronously (the same
+`update {}` the wire collector uses), and `AppModule` hands it to `ThreadViewModel` as a new, by-name
+constructor parameter `recordModalAction: (ModalAction) -> Unit = {}` (defaulted inert for direct
+test/preview construction and the twenty-odd existing test files that build a VM positionally).
 
-### Catch order is load-bearing
+`sendAnswer` / `sendCancel` record `AnsweredHere(modalId)` **before** launching the send — the same point
+the arm already clears (§ above) — so the card is gone before the daemon can possibly reply:
 
 ```kotlin
 private fun sendAnswer(modalId: String, optionId: String, alwaysAllow: Boolean) {
     armedModalOption.value = null
+    recordModalAction(ModalAction.AnsweredHere(modalId))
     viewModelScope.launch {
         try {
             answerModal(modalId, optionId, alwaysAllow)
         } catch (e: CancellationException) {
-            throw e // MUST be first: j.u.c.CancellationException extends IllegalStateException on the JVM
+            throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
         } catch (e: RelayErrorException) {
-            modalSendErrorChannel.trySend(Unit)
+            RelayLog.d { "event=permission_answer outcome=rejected" }
+            recordModalAction(ModalAction.Rejected(conversationId))
         } catch (e: IllegalStateException) {
-            modalSendErrorChannel.trySend(Unit)
+            RelayLog.d { "event=permission_answer outcome=unsent" }
         }
     }
 }
 ```
 
-The `catch (CancellationException) { throw e }` **must precede** the typed catches. On the JVM/Android
-`kotlinx.coroutines.CancellationException` is a `typealias` for `java.util.concurrent.CancellationException`,
-which **`extends IllegalStateException`** — so without the leading rethrow, the `IllegalStateException` catch
-would swallow coroutine cancellation (VM teardown mid-send → `deferred.await()` throws `CancellationException`),
-break structured cancellation, and fire a spurious error signal. This was the [#451](../codebase/451.md)
-rework defect; see [[catch-illegalstate-swallows-cancellation]]. A broad `catch (Exception)` /
-`catch (Throwable)` is forbidden for the same reason. `sendCancel` is identical minus the `optionId`.
+`sendCancel` is the same shape minus `optionId`/`alwaysAllow`, and its `RelayErrorException` catch records
+nothing — a refused cancel shows nothing, same as an unsent answer or cancel. Nothing is lost either way:
+the daemon re-sends every still-outstanding prompt on the next connection (`protocol-mobile.md` § Reconcile
+on (re)connect), so an answer that never left the phone just gets asked again. The debug logs are
+content-free — a static outcome code only, never a `modalId`, `optionId`, conversation id or the exception
+message.
+
+`HostModalState.reduce(ModalAction.AnsweredHere)` removes the held prompt and appends a `resolved` entry
+with `answeredHere = true`; `HostModalState.scopedTo` skips an `answeredHere` entry rather than returning it,
+so the user's own tap raises **no** dismissal snackbar, and the existing `Shown`-ignores-a-resolved-id fold
+row keeps a repeated `modal_shown` for it from reopening the card on this connection. The daemon's own later
+`modal_dismissed` for the same id is already a no-op by the pre-existing "not held" rule — it has nothing
+left to resolve. See [Current-modal state](current-modal-state.md#2-the-hostmodalstate-fold-1337--the-viewmodel-re-exposure)
+for the fold table and the `takeUnless { it.answeredHere }` trap it documents (skipping the newest
+resolution does not fall back to an older one).
+
+**The rejection notice.** `ThreadViewModel.answerRejected: StateFlow<Boolean>` reads `conversationId in
+hostModal.value.rejectedConversations`, seeded synchronously so a VM recreated for the same chat (Back and
+reopen) sees an existing rejection immediately. `onAnswerRejectionDismissed()` records
+`RejectionDismissed(conversationId)`. Because `rejectedConversations` lives in the coordinator's
+process-scoped fold and — since #1340 — `HostModalState.reconnected()` keeps it instead of clearing it like
+`outstanding`/`resolved`, the notice **survives a reconnect and leaving the chat**; only the user's own X or
+the end of the pairing (coordinator `close()`) removes it. This is the one place the fold's per-connection
+reset does **not** apply, and it is deliberate: a rejection is not a property of the connection that
+produced it.
+
+`ThreadScreen` renders the notice as the Default `NoticePill` (Figma
+[347:6617](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=347-6617), unshadowed) in the slot the
+permission card occupied, keyed `"permission-rejection"`, counted in `promptRowCount`; the empty-thread
+branch gives way to it the same way it already did for an open request. No frame draws the rejection itself
+— the ticket's own instruction, since it reuses an existing component unchanged.
+
+### Catch order is still load-bearing
+
+The `catch (CancellationException) { throw e }` **must precede** the typed catches, unchanged by #1340. On
+the JVM/Android `kotlinx.coroutines.CancellationException` is a `typealias` for
+`java.util.concurrent.CancellationException`, which **`extends IllegalStateException`** — so without the
+leading rethrow, the `IllegalStateException` catch would swallow coroutine cancellation (VM teardown
+mid-send → `deferred.await()` throws `CancellationException`), break structured cancellation, and (pre-#1340)
+would have fired a spurious error signal; post-#1340 it would instead record nothing extra, but the
+cancellation would still fail to propagate, which is the actual bug this order prevents. This was the
+[#451](../codebase/451.md) rework defect; see [[catch-illegalstate-swallows-cancellation]]. A broad
+`catch (Exception)` / `catch (Throwable)` is forbidden for the same reason. A VM cleared mid-send (the
+cancellation path) records nothing beyond the local `AnsweredHere` already recorded before `launch`.
 
 ## The coordinator passthrough
 
@@ -368,14 +426,19 @@ viewModel {
         // #818: a lambda, not a bare method reference, since the VM's answerModal now takes the grant.
         answerModal = { modal, option, grant -> coordinator.answerModal(modal, option, grant) },
         cancelModal = coordinator::cancelModal,
+        // ..., // every other named ctor param unaffected
+        // #1340: last ctor param, by name — keeps every positional test-file caller unshifted.
+        recordModalAction = coordinator::recordModalAction,
     )
 }
 ```
 
-The two VM ctor params default to no-ops (`{ _, _ -> }` / `{ _ -> }`) for direct
-test/preview construction that omits them. `AppModule` supplies the coordinator's
-send methods in both real and demo builds; the
-[repository build option](dependency-injection.md#how-it-works) does not gate them.
+The two send-lambda ctor params default to no-ops (`{ _, _ -> }` / `{ _ -> }`) for direct test/preview
+construction that omits them; `recordModalAction` (#1340) defaults to `{}` the same way, and is the
+**last** constructor parameter rather than sitting beside `cancelModal`, specifically so the twenty-odd
+existing test files that build a `ThreadViewModel` positionally do not have their argument lists shifted.
+`AppModule` supplies the coordinator's send methods and `recordModalAction` in both real and demo builds;
+the [repository build option](dependency-injection.md#how-it-works) does not gate them.
 Taps on a VM with no open modal no-op via the `as? Open ?: return` guard.
 
 ## Edge cases / limitations
@@ -383,22 +446,31 @@ Taps on a VM with no open modal no-op via the `as? Open ?: return` guard.
 - **No modal open** — `onModalOption` / `onModalCancel` are no-ops (the `scopedModal() as? Open ?:
   return` guard — since #816 reading the host flow through `ModalUiState.scopedTo`, not the collected
   `currentModal`; see below), including tests that keep `currentModal` at `Hidden`.
-- **Send failure** — caught, emits one `modalSendErrors`; `currentModal` stays `Open` so the user can
-  re-answer. No auto-retry, no error-code interpretation, no read-only degrade (that is #440/#452).
-- **VM teardown mid-send** — cancellation propagates cleanly (the rethrow); no spurious error signal.
-- **Stale `Open` across a plain disconnect, still persists; across a new connection, cleared since #1337**
-  (deferred from #445/#446, revised by [#1337](../../specs/architecture/1337-hold-every-outstanding-prompt.md)) —
+- **Send failure** — since [#1340](#local-close-on-tap-and-the-in-chat-rejection-notice-1340) the card is
+  already gone by the time a send can fail, so there is no re-answering from it. A daemon refusal
+  (`RelayErrorException`) records a `Rejected` for the owning chat, shown as an in-chat notice until
+  dismissed; an unsent answer or cancel (`IllegalStateException`) records nothing, and the daemon re-sends
+  the still-outstanding prompt on the next connection. No auto-retry, no error-code interpretation, no
+  read-only degrade (that is #440/#452), no daemon text in the notice.
+- **VM teardown mid-send** — cancellation propagates cleanly (the rethrow); nothing is recorded beyond the
+  local close that already happened before `launch`.
+- **Stale `Open` across a plain disconnect, still persists; across a new connection, cleared since #1337,
+  except rejection notices (since #1340)**
+  (deferred from #445/#446, revised by [#1337](../../specs/architecture/1337-hold-every-outstanding-prompt.md)
+  and [#1340](../../specs/architecture/1340-close-prompt-on-answer.md)) —
   a connection *drop* alone (`activeConnection → null`) still pushes no "clear" event, so a prompt held at
   that moment persists exactly as before. Answering a held prompt that the daemon has in fact already
-  resolved is rejected server-side (stale `modalId`) and surfaces via the error signal regardless, so that
-  backstop was never conditional on this projection. What #1337 adds: when `activeConnection` switches to a
-  **new** connection, the coordinator's `hostModals` fold is reset to empty before that connection's first
-  `modal_shown` is collected (see [Current-modal state §
+  resolved is rejected server-side (stale `modalId`) and now shows the rejection notice regardless, so that
+  backstop was never conditional on this projection. What #1337 added: when `activeConnection` switches to a
+  **new** connection, the coordinator's `hostModals` fold resets its outstanding/resolved prompts before
+  that connection's first `modal_shown` is collected (see [Current-modal state §
   Lifecycle](current-modal-state.md#lifecycle-errors-edge-cases)), and only the daemon's connect-time
   re-send of every still-outstanding prompt (`protocol-mobile.md` § Reconcile on (re)connect) brings a prompt
-  back — one it does not re-send stays gone. A proactive stale-clear on a *plain* disconnect remains a UX
-  nicety, not a correctness requirement, for the same reason as before: the daemon validation is the
-  deterministic backstop.
+  back — one it does not re-send stays gone, including a prompt this phone itself just answered. What #1340
+  adds on top: the reset (`reconnected()`) keeps `rejectedConversations`, so a rejection notice is **not**
+  one of the things a reconnect clears — only the user's X, or the end of the pairing, clears it. A proactive
+  stale-clear on a *plain* disconnect remains a UX nicety, not a correctness requirement, for the same reason
+  as before: the daemon validation is the deterministic backstop.
 - **Scoped to this thread's conversation (#816), not app-level.** The coordinator's fold holds every
   outstanding prompt per host, keyed on `modalId` ([#1337](../../specs/architecture/1337-hold-every-outstanding-prompt.md)
   — before it, one modal per host), but `onModalOption` / `onModalCancel` read it through a private
@@ -416,14 +488,31 @@ Unit only (`./gradlew testDebugUnitTest --tests "…ThreadViewModelTest"` /
 modal by setting the injected `StateFlow<ModalUiState>`'s `.value` directly (via the `vmWithModal` /
 `openModal(...)` helpers — renamed in [#492](../codebase/492.md) from the pre-hoist `vmWithModalEvents` /
 `modalShown` that emitted a raw `ModalEvent.Shown`), captures the send path with recording lambdas
-(`vmWithModalSendPath`), and asserts `armedOptionId.value` + collects `modalSendErrors` (the
-`navigationEvents` pattern): default→answer, non-default→arm, second-tap→send+clear, re-tap→re-arm,
-cancel→cancel+clear, failure→error-signal, stale-arm scoping, inert-with-no-modal, and the
-`modalSend_scopeCancellationMidSend_doesNotEmitErrorSignal` regression (hosts the VM in a real
-`ViewModelStore`, suspends a send on a never-completing deferred, `store.clear()`s the scope, asserts no
-error fires). `RelayRepositoryCoordinatorTest` mirrors the `register_push_token` quartet for the
-passthrough (delegate-over-active-connection + no-connection-throws), driven with `runCurrent()`
-([[remote-repo-test-runcurrent-not-advanceuntilidle]]).
+(`vmWithModalSendPath`), and asserts `armedOptionId.value` + (since #1340) `currentModal`/`answerRejected`
+rather than the removed `modalSendErrors`: default→answer, non-default→arm, second-tap→send+clear,
+re-tap→re-arm, cancel→cancel+clear, stale-arm scoping, inert-with-no-modal, and a
+`scopeCancellationMidSend...` regression (hosts the VM in a real `ViewModelStore`, suspends a send on a
+never-completing deferred, `store.clear()`s the scope, asserts no rejection is recorded after the local
+close). `RelayRepositoryCoordinatorTest` mirrors the `register_push_token` quartet for the passthrough
+(delegate-over-active-connection + no-connection-throws), driven with `runCurrent()`
+([[remote-repo-test-runcurrent-not-advanceuntilidle]]), plus (#1340) a case showing `recordModalAction`
+updates `hostModals.value` synchronously and a rejection survives a reconnect that brings a re-sent prompt
+back.
+
+**#1340 added:** `ModalUiStateTest` cases for `HostModalState.reduce(ModalAction)` (an `AnsweredHere` for a
+held id closes it and is ignored by a later `Shown`/wire `Dismissed`; an unknown id is unchanged; `Rejected`/
+`RejectionDismissed` add/remove, a blank owner ignored) and for `reconnected()` (keeps rejections, drops
+outstanding/resolved, so a re-sent `Shown` returns); `ThreadViewModelTest` cases for the default tap, the
+armed second tap and Cancel each closing the prompt while the send is still in flight (gated on a
+`CompletableDeferred`), a refused answer setting `answerRejected` only for the owning chat and surviving a
+reconnect and VM recreation until `onAnswerRejectionDismissed`, a refused cancel and an unsent answer/cancel
+recording nothing, and cancellation mid-send recording no rejection; and `ThreadScreenModalTest` cases for
+the rejection pill (text + X calling `onDismissAnswerRejection`) appearing, including in an otherwise empty
+thread, and for nothing appearing when there is no rejection. The `destinationBindingsKeepCollidingIdsOnTheirHostAcrossSelectionAndReconnect`
+case in `RelayConnectionFactoryTest` (DI-level, not in this doc's own test classes) needed a second prompt
+raised between an answer and a cancel on the same host, since the first prompt's cancel now has nothing open
+to act on — a caller the #1340 plan's own testing strategy did not name, caught only by the full
+`./gradlew check`, not a `--tests`-filtered run.
 
 `ThreadViewModelTest` (#818) extends the same recording-lambda pattern to a `Triple(modalId, optionId,
 alwaysAllow)`: accept-then-allow (default tap and the armed second confirm) sends `true`; allow without
@@ -440,8 +529,8 @@ an allow after returning needs two fresh taps (the grant itself is untouched); a
 `onModalOption` / `onModalCancel` is ignored once the scoped modal has moved on; and a replaced request
 never inherits the previous one's grant. `PermissionDraftStoreTest` covers isolation by server and
 conversation, a bound collector retiring a draft on replacement / dismissal / a changed rule list / an owner
-rebind, and the matching request keeping its draft through all of that. `ThreadScreenModalTest` (31/31,
-adapted to the inline surface — see [Permission-modal overlay —
+rebind, and the matching request keeping its draft through all of that. `ThreadScreenModalTest` (31/31 at
+\#1306; 33/33 after #1340 added the rejection-pill cases above — see [Permission-modal overlay —
 testing](permission-modal-overlay-testing.md)) covers the render side: no dialog, an empty thread, live
 Back, the history anchor across arrival and the grant toggle, and the two-tap flow driven through the
 rendered `modalId`.
@@ -456,12 +545,13 @@ rendered `modalId`.
   `Open.defaultOptionId` this reads at tap time; the projection half.
 - [Permission-modal overlay](permission-modal-overlay.md) ([#446](../codebase/446.md) base + [#452](../codebase/452.md)
   live + [#1306](permission-modal-overlay.md) inline) — the render of the request + dismiss snackbar; the
-  render slice **#452** extended it with the armed affordance + Cancel button + send-error snackbar +
-  tapjacking net and wired these VM hooks (`vm::onModalOption` / `vm::onModalCancel`) + `armedOptionId` /
-  `modalSendErrors` into the route host; [**#818**](permission-modal-overlay.md#the-always-allow-offer-818)
+  render slice **#452** extended it with the armed affordance + Cancel button + (removed by #1340) send-error
+  snackbar + tapjacking net and wired these VM hooks (`vm::onModalOption` / `vm::onModalCancel`) +
+  `armedOptionId` into the route host; [**#818**](permission-modal-overlay.md#the-always-allow-offer-818)
   added `AlwaysAllowOffer`, which reflects this doc's `alwaysAllowAccepted` the same way the options reflect
   `armedOptionId`; **#1306** moved the whole render out of its dialog window into the conversation's message
-  stream and widened every decision callback to carry the rendered `modalId`.
+  stream and widened every decision callback to carry the rendered `modalId`; **#1340** replaced the
+  send-error snackbar with the rejection-notice `NoticePill` described above.
 - [Question batch modal § Batch ownership](question-batch-modal.md#batch-ownership-process-lifetime-drafts-source--and-request-bound-sends)
   — the process-lifetime, app-scoped draft-store precedent `PermissionDraftStore` follows for the
   session-grant checkbox.
@@ -470,8 +560,9 @@ rendered `modalId`.
 - [Relay repository coordinator § Outbound modal-send passthrough](relay-repository-coordinator-seams-and-passthroughs.md#outbound-modal-send-passthrough-451)
   — hosts the passthrough; the outbound mirror of its [§ Modal event seam](relay-repository-coordinator-seams-and-passthroughs.md#modal-event-seam-445-and-the-hoisted-currentmodal-fold-492).
 - [Modal events](modal-events.md) ([#437](../codebase/437.md)) — the upstream decode seam.
-- [Thread screen](thread-screen.md) — the `ThreadViewModel` host; `armedOptionId` / `modalSendErrors` join
-  `currentModal` / `isThinking` / `isStalled` / `navigationEvents` as VM-exposed signals.
+- [Thread screen](thread-screen.md) — the `ThreadViewModel` host; `armedOptionId` / `answerRejected` (#1340,
+  replacing `modalSendErrors`) join `currentModal` / `isThinking` / `isStalled` / `navigationEvents` as
+  VM-exposed signals.
 - Sibling slices: [**#452**](../codebase/452.md) the render of the armed/second-confirm affordance +
   snackbar + route-host forward (shipped) · **#440** read-only device mode (`blockedBy` #452).
 - Producer SSOT: pyrycode#716 (fail-safe-deny `default_option_id`, no per-option destructive marker), #702

@@ -72,6 +72,38 @@ class TurnEndPayloadsTest {
         assertEquals("cancelled", event.stopReason)
     }
 
+    // ---- #1346: cost_usd_total, Claude's running session estimate ----
+
+    @Test
+    fun absentCost_decodesToNull() {
+        assertEquals(null, decodeTurnEnd("").costUsdTotal)
+    }
+
+    @Test
+    fun numericCost_isCarried() {
+        assertEquals(0.42, decodeTurnEnd(""""cost_usd_total":0.42""").costUsdTotal)
+        assertEquals(3.0, decodeTurnEnd(""""cost_usd_total":3""").costUsdTotal)
+    }
+
+    // Decode is verbatim; the ViewModel decides which values may be shown.
+    @Test
+    fun zeroNegativeAndOverflowingCosts_areCarriedVerbatim() {
+        assertEquals(0.0, decodeTurnEnd(""""cost_usd_total":0""").costUsdTotal)
+        assertEquals(-1.5, decodeTurnEnd(""""cost_usd_total":-1.5""").costUsdTotal)
+        assertEquals(Double.POSITIVE_INFINITY, decodeTurnEnd(""""cost_usd_total":1e999""").costUsdTotal)
+    }
+
+    @Test
+    fun nonNumberCost_isAbsentAndTheFrameStillDecodes() {
+        for (value in listOf("\"0.42\"", "true", "null", "{\"usd\":1}", "[1]")) {
+            val event = decodeTurnEnd(""""outcome":"success","cost_usd_total":$value""")
+
+            assertEquals(value, null, event.costUsdTotal)
+            assertEquals(value, "success", event.outcome)
+            assertEquals(value, "end_turn", event.stopReason)
+        }
+    }
+
     private fun decodeTurnEnd(
         extra: String,
         stopReason: String = "end_turn",

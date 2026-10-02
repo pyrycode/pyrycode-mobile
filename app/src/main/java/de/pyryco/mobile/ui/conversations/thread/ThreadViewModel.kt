@@ -10,6 +10,7 @@ import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.MessageAttachment
+import de.pyryco.mobile.data.model.ModalAction
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Question
 import de.pyryco.mobile.data.model.QuestionAnswer
@@ -34,6 +35,7 @@ import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ResetStatus
+import de.pyryco.mobile.data.repository.SessionFacts
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.SlashCommandMenu
 import de.pyryco.mobile.data.repository.SystemPromptLimit
@@ -70,6 +72,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
@@ -167,6 +170,9 @@ class ThreadViewModel(
     private val rememberModel: suspend (String) -> Unit = {},
     // #1027: where a markdown attachment's kept file is read before the reader opens.
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    // #1340: folds this phone's own prompt actions into [hostModal] at once (the coordinator's
+    // recordModalAction). Defaulted inert, so the fake-backed graph and existing tests keep their prompts.
+    private val recordModalAction: (ModalAction) -> Unit = {},
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
@@ -473,6 +479,28 @@ class ThreadViewModel(
             ::Pair,
         ).distinctUntilChanged()
 
+    /**
+     * Claude's latest estimate of this session's cost (#1346): the newest positive finite `cost_usd_total`
+     * on this conversation's `turn_end`s. Each replaces the last (the value is already a running total, so
+     * it is never summed), and an absent, zero, negative or non-finite one leaves the earlier value standing.
+     * Collected eagerly so it lasts as long as this view model, as desktop keeps it while the timeline lives;
+     * `WhileSubscribed` would forget it whenever the screen stops collecting. Claude's claim: never logged.
+     */
+    private val sessionCostUsd: StateFlow<Double?> =
+        liveSessionEvents
+            .filterIsInstance<LiveSessionEvent.TurnEnd>()
+            .mapNotNull { event ->
+                event.costUsdTotal?.takeIf { event.conversationId == conversationId && it.isFinite() && it > 0 }
+            }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /**
+     * Channel info's Session readings (#1346): what Claude reports about its session, with the permission
+     * mode [runningModel] leaves unread, and [sessionCostUsd]. A second `observeSessionFacts` subscription is
+     * a projection read that sends nothing. None of it reaches [runConfigFlow].
+     */
+    private val channelInfoSession: Flow<Pair<SessionFacts?, Double?>> =
+        combine(repository.observeSessionFacts(conversationId), sessionCostUsd, ::Pair)
+
     /** This conversation's MCP server reading (#1344), seeded so a source that never emits cannot stall [state]. */
     private val mcpStatusReading: Flow<McpStatus> =
         repository
@@ -609,6 +637,8 @@ class ThreadViewModel(
             uiState.copy(absentActions = absentComposerActions(menu, slashCommandsAccepted), slashCommands = menu?.rows)
         }.combine(backgroundTaskReading) { uiState, (roster, count) ->
             uiState.copy(backgroundTasks = roster, backgroundTaskCount = count)
+        }.combine(channelInfoSession) { uiState, (facts, cost) ->
+            uiState.copy(reportedSessionFacts = facts, sessionCostUsd = cost)
         }.combine(mcpStatusReading) { uiState, mcp ->
             uiState.copy(mcpStatus = mcp)
         }.stateIn(
@@ -990,16 +1020,15 @@ class ThreadViewModel(
             modal is ModalUiState.Open && modal.offersAlwaysAllow && accepted == modal.alwaysAllowKey()
         }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
-    private val modalSendErrorChannel = Channel<Unit>(capacity = Channel.BUFFERED)
-
     /**
-     * One-shot "a modal send (answer or cancel) failed" signal (#451) — the established one-shot VM→UI
-     * event idiom this VM already uses for [navigationEvents]. Carries **no** modal payload (just [Unit]),
-     * so nothing sensitive can leak through it; the render slice (#452) shows a transient snackbar. Fires
-     * exactly once per caught failure ([RelayErrorException] from a server `error`, incl. the
-     * ungranted-device reject pyrycode#702; [IllegalStateException] from a not-connected session).
+     * Whether this chat shows "Your answer was rejected." (#1340): the daemon refused an answer this chat sent,
+     * and the user has not dismissed the notice. Read from the host fold, so it survives leaving the chat and
+     * a reconnect, and shows in no other chat.
      */
-    val modalSendErrors: Flow<Unit> = modalSendErrorChannel.receiveAsFlow()
+    val answerRejected: StateFlow<Boolean> =
+        hostModal
+            .map { conversationId in it.rejectedConversations }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, conversationId in hostModal.value.rejectedConversations)
 
     private val questions = questionDraftStore ?: QuestionDraftStore()
     private val mutableQuestionModal = MutableStateFlow<QuestionModalState?>(null)
@@ -1124,7 +1153,7 @@ class ThreadViewModel(
     private val newSessionErrorChannel = Channel<Unit>(capacity = Channel.BUFFERED)
 
     /**
-     * One-shot "starting a new session failed" signal (#540) — the [modalSendErrors] one-shot idiom, cloned
+     * One-shot "starting a new session failed" signal (#540) — the one-shot idiom of [navigationEvents], cloned
      * for the overflow "New session" action. Carries **no** payload (just [Unit]), so nothing sensitive can
      * leak through it; the render slice shows a transient snackbar with a **fixed local string**, never an
      * exception message. Fires exactly once per caught not-connected failure ([IllegalStateException] from
@@ -1522,61 +1551,64 @@ class ThreadViewModel(
     }
 
     /**
-     * Send [text], then clear this chat's draft — **only** once the daemon has accepted it (#789).
+     * Send [text] trimmed, as desktop's `submitMessage` does (#1355): whitespace-only text sends nothing
+     * and leaves the draft as it was. The draft clears **before** the send launches, and the repository
+     * draws the echo before the daemon replies, so the message shows the moment Send is tapped.
      *
-     * The clear sits *inside* the guarded lambda, which is the whole mechanism:
-     * [launchGuardedRepoCall]'s catches wrap the block, so a [de.pyryco.mobile.data.network
-     * .RelayErrorException] server error, a not-connected [IllegalStateException] or an unwired
-     * [UnsupportedOperationException] skips this line and leaves the text in the composer, ready to
-     * resend. Before this, the composer cleared on tap and the guard swallowed the failure, so a
-     * refused send silently ate the message. Same success-only-continuation shape as [sendArchive].
-     *
-     * The equality guard keeps an in-flight send from eating text typed while it was in flight. It
-     * compares against [ComposerDraftStore] directly and **not** against [draft]: the exposed flow is
-     * derived, so its value lags an edit made from inside an already-running coroutine until that
-     * dispatch yields, and the guard would then clear text it had never seen. The store's own value is
-     * the authority and is read synchronously. [draft] is for rendering; this is for deciding.
-     *
-     * It is a check-then-act after a suspension point and is safe because both sides and
-     * [onDraftChange] run on `viewModelScope`'s `Dispatchers.Main.immediate`, so no edit can interleave
-     * between them.
+     * A refused send — a [de.pyryco.mobile.data.network.RelayErrorException] server error, a not-connected
+     * [IllegalStateException] or an unwired [UnsupportedOperationException], each swallowed by
+     * [launchGuardedRepoCall] — does not put the text back: the echo stays in the thread, as on desktop,
+     * which has no failure surface for a send. This drops #789's restore-on-failure.
      */
     fun sendMessage(text: String) {
         if (!connectedFor("send")) return
         if (_attachmentsSending.value) return
+        val trimmed = text.trim()
         // #1328: text is required even with files pending, as on desktop; blank leaves them for the next send.
-        if (text.isBlank()) return
+        if (trimmed.isEmpty()) return
         val attachments = draftStore.attachmentsFor(serverId, conversationId)
         if (attachments.isNotEmpty()) {
-            return sendWithAttachments(text, attachments) {
-                if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
-            }
+            // #1355: the guarded clear runs once the uploads succeed, before the send.
+            return sendWithAttachments(
+                trimmed,
+                attachments,
+                onUploaded = {
+                    if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
+                },
+                onSent = {},
+            )
         }
+        onDraftChange("")
         launchGuardedRepoCall {
             // #686: a message sent while this opening's recall write is outstanding follows it.
             effortRecall.awaitWrite()
-            sendInLocalWindow { repository.sendMessage(state.value.conversationId, text) }
-            if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
+            sendInLocalWindow { repository.sendMessage(state.value.conversationId, trimmed) }
         }
     }
 
     /**
      * Send [text] naming [attachments], this chat's pending entries as they stood when send was tapped
-     * (#932). [text] is never blank: [sendMessage] refuses that before reading the attachments (#1328).
+     * (#932). [text] is the trimmed text and never blank: [sendMessage] refuses that before reading the
+     * attachments (#1328); [onComposerCommand] passes its command.
      *
      * Each entry without an acknowledged id is read and uploaded in order, and its id recorded in
      * [draftStore] as soon as the daemon acknowledges it, so a later failure never costs a retry that
      * upload. One file's bytes are live at a time. The first failed read or upload stops the send before
      * anything else is uploaded or sent; a thrown upload or send is swallowed by [launchGuardedRepoCall].
-     * Either way the text and every entry stay in the draft — the way a failed text send is reported.
+     * Either way the text and every entry stay in the draft.
      *
-     * On success [onSent] runs — [sendMessage]'s guarded draft clear, or [onComposerCommand]'s log, which
-     * leaves the draft alone (#1348) — and only the snapshot's entries are removed, so an attachment added
-     * while this send was in flight survives it.
+     * Once every upload has succeeded, and before the send (#1355), [onUploaded] runs — [sendMessage]'s
+     * guarded draft clear, which runs only while the store still holds the text as typed: the store, not the
+     * derived [draft], because the exposed flow lags an edit made from inside a running coroutine. Both sides
+     * and [onDraftChange] run on `viewModelScope`'s `Dispatchers.Main.immediate`, so text typed during the
+     * uploads is never swallowed. Only the snapshot's entries are then removed, so an attachment added during
+     * the uploads survives. After the send returns, [onSent] runs — [onComposerCommand]'s log, which leaves the
+     * draft alone (#1348). A send that then fails restores neither, as a failed text send restores nothing.
      */
     private fun sendWithAttachments(
         text: String,
         attachments: List<PendingAttachment>,
+        onUploaded: () -> Unit = {},
         onSent: () -> Unit,
     ) {
         _attachmentsSending.value = true
@@ -1594,11 +1626,12 @@ class ThreadViewModel(
                 // #984: before the send, because the confirmed row can be drawn while it is suspended. A
                 // send that then fails leaves harmless entries: its retry names the same ids.
                 draftStore.recordSentOriginals(serverId, conversationId, originals)
+                onUploaded()
+                draftStore.removeAttachments(serverId, conversationId, attachments.mapTo(HashSet()) { it.key })
                 // #686: a message sent while this opening's recall write is outstanding follows it.
                 effortRecall.awaitWrite()
                 sendInLocalWindow { repository.sendMessage(target, text, references) }
                 onSent()
-                draftStore.removeAttachments(serverId, conversationId, attachments.mapTo(HashSet()) { it.key })
             } finally {
                 // #933: however the send ended — sent, stopped by a failed read or upload, or a swallowed throw.
                 _attachmentsSending.value = false
@@ -1922,6 +1955,11 @@ class ThreadViewModel(
         armedModalOption.value = null
     }
 
+    /** The rejection notice's X (#1340): this chat stops showing it. */
+    fun onAnswerRejectionDismissed() {
+        recordModalAction(ModalAction.RejectionDismissed(conversationId))
+    }
+
     /**
      * Accept or withdraw the open prompt's "don't ask again this session" offer (#818). [modalId] is the
      * prompt the checkbox was drawn for, used only as a guard: a tap on a stale frame of a prompt that has
@@ -1959,12 +1997,13 @@ class ThreadViewModel(
     private fun scopedModal(): ModalUiState = hostModal.value.scopedTo(conversationId)
 
     /**
-     * Send a `modal_answer` for [optionId] of modal [modalId] via the injected outbound path. Clears the
-     * arm **before** launching — the second-confirm gesture is consumed on the attempt (success or
-     * failure); [currentModal] stays [ModalUiState.Open] until the daemon resolves it, so the user may
-     * answer again after a failure (no auto-retry — first-answer-wins is server-side). Catches **only** the
-     * two documented throws so [kotlinx.coroutines.CancellationException] still propagates; on failure it
-     * surfaces a one-shot [modalSendErrors] event and nothing else (no log, no [currentModal] mutation).
+     * Send a `modal_answer` for [optionId] of modal [modalId] via the injected outbound path. Clears the arm
+     * and closes the prompt **before** launching (#1340, desktop `answerPrompt`): the card leaves at once and
+     * the daemon's later `modal_dismissed` for it is ignored. Catches **only** the two documented throws so
+     * [kotlinx.coroutines.CancellationException] still propagates. A [RelayErrorException] is the daemon
+     * refusing the answer, so this chat shows the rejection notice; an [IllegalStateException] means the
+     * answer never reached the daemon, which re-sends the still-outstanding prompt on the next connection, so
+     * nothing is shown. No modal field or daemon text is logged or kept.
      */
     private fun sendAnswer(
         modalId: String,
@@ -1972,31 +2011,34 @@ class ThreadViewModel(
         alwaysAllow: Boolean,
     ) {
         armedModalOption.value = null
+        recordModalAction(ModalAction.AnsweredHere(modalId))
         viewModelScope.launch {
             try {
                 answerModal(modalId, optionId, alwaysAllow)
             } catch (e: CancellationException) {
                 throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
             } catch (e: RelayErrorException) {
-                modalSendErrorChannel.trySend(Unit)
+                RelayLog.d { "event=permission_answer outcome=rejected" }
+                recordModalAction(ModalAction.Rejected(conversationId))
             } catch (e: IllegalStateException) {
-                modalSendErrorChannel.trySend(Unit)
+                RelayLog.d { "event=permission_answer outcome=unsent" }
             }
         }
     }
 
-    /** The [sendAnswer] mirror for `modal_cancel` (no option id, no idempotency token). Same never-log,
-     *  catch-only-the-two-documented-throws, one-shot-error posture. */
+    /** The [sendAnswer] mirror for `modal_cancel` (no option id, no idempotency token): the prompt closes at
+     *  once, and a refused or unsent cancel shows nothing (#1340, desktop `cancelPrompt`). */
     private fun sendCancel(modalId: String) {
+        recordModalAction(ModalAction.AnsweredHere(modalId))
         viewModelScope.launch {
             try {
                 cancelModal(modalId)
             } catch (e: CancellationException) {
                 throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
             } catch (e: RelayErrorException) {
-                modalSendErrorChannel.trySend(Unit)
+                RelayLog.d { "event=permission_cancel outcome=refused" }
             } catch (e: IllegalStateException) {
-                modalSendErrorChannel.trySend(Unit)
+                RelayLog.d { "event=permission_cancel outcome=unsent" }
             }
         }
     }
@@ -2482,7 +2524,7 @@ class ThreadViewModel(
                 closeChannelInfo()
                 launchGuardedRepoCall {
                     repository.delete(state.value.conversationId)
-                    // #790: success-only, the position [sendMessage]'s own clear occupies — each of the
+                    // #790: success-only — each of the
                     // three failure types [launchGuardedRepoCall] swallows skips this line, leaving the
                     // draft for a conversation that still exists. Keyed by the route's own pair, the one
                     // [onDraftChange] wrote under, never re-derived from `state`. Before the `PopBack`

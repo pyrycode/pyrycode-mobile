@@ -303,7 +303,7 @@
     <string name="modal_context_description">Description</string>
     <string name="modal_context_blocked_path">Blocked path</string>
     <string name="modal_always_allow_label">Don\'t ask again this session for:</string>
-    <string name="modal_send_failed">Couldn\'t send your answer. Try again.</string>
+    <string name="permission_answer_rejected">Your answer was rejected.</string>
     <string name="question_modal_title">Claude has questions</string>
     <!-- #1116: the questions dialog of a Codex conversation. -->
     <string name="question_modal_title_codex">Codex has questions</string>
