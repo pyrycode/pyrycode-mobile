@@ -37,7 +37,8 @@ import kotlinx.datetime.Instant
  *   cannot be forged from inside the text. Keep it a separate styled span.
  * - **No second length cap** — the daemon bounds the text at 4 KiB and reports its own cut in
  *   [ThreadItem.Banner.truncated], shown as a client-owned italic mark.
- * - **No logging, no persisting** — nothing on this path logs the text, and the row is never cached.
+ * - **No logging** — nothing on this path logs the text. The thread cache stores the row as held (#1353), so
+ *   a restored row renders through this same boundary.
  */
 @Composable
 fun BannerNoticeRow(

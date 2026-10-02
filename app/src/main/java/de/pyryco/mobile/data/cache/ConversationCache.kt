@@ -53,7 +53,8 @@ interface ConversationCache {
      *
      * Graceful like [readConversations]: anything unreadable yields an empty list, and a read never
      * repairs what it could not parse. A row read back is always settled — never streaming, never a
-     * running tool — and no message id or session-boundary pair appears twice.
+     * running tool — and no two rows share a thread list key: a message id, a session boundary's
+     * identity, or a banner's, compaction divider's or model refusal's `(type, ts)` (#1353).
      *
      * The default stores nothing, so a double that does not exercise threads need not override it.
      */
@@ -127,28 +128,26 @@ data class ReadPosition(
     val unread: Boolean get() = readTurnId != completedTurnId
 }
 
-/** How many of a thread's newest settled rows the cache keeps, so a long thread cannot grow without limit. */
-const val MAX_CACHED_THREAD_ROWS = 200
+/**
+ * How many of a thread's newest settled rows the cache keeps, so a long thread cannot grow without limit.
+ * Desktop's saved-timeline parser caps a timeline at the same count and trims nothing below it (#1353).
+ */
+const val MAX_CACHED_THREAD_ROWS = 100_000
 
 /**
  * The rows of a drawn thread the cache may hold (#797): its newest [MAX_CACHED_THREAD_ROWS] settled rows.
  *
- * Drops every [ThreadItem.UnrecognizedMessage] (unbounded, model-adjacent JSON its KDoc forbids
- * persisting), every [ThreadItem.Banner] (claude-authored prose, restored by history replay instead, #873),
- * every [ThreadItem.CompactionBoundary] (restored by history replay, #874), every [ThreadItem.ModelRefusal]
- * (claude-authored model names and prose, restored by history replay, #875)
- * and every in-flight row — a streaming message or a running tool call — because those are
- * live state: restored, they would be a permanent caret or spinner. The one definition the cache
- * enforces on write and the caching repository compares against, so the two can never disagree.
+ * Every settled row kind is kept — messages, session boundaries, banners, compaction dividers and model
+ * refusals (#1353) — because history loads only when the user asks, so nothing else restores them. Drops
+ * every [ThreadItem.UnrecognizedMessage] (unbounded, model-adjacent JSON its KDoc forbids persisting, and
+ * this cache is plain files) and every in-flight row — a streaming message or a running tool call —
+ * because those are live state: restored, they would be a permanent caret or spinner. The one definition
+ * the cache enforces on write and the caching repository compares against, so the two can never disagree.
  */
 fun cacheableThreadRows(rows: List<ThreadItem>): List<ThreadItem> =
     settledThreadRows(rows)
-        .filterNot {
-            it is ThreadItem.UnrecognizedMessage ||
-                it is ThreadItem.Banner ||
-                it is ThreadItem.CompactionBoundary ||
-                it is ThreadItem.ModelRefusal
-        }.takeLast(MAX_CACHED_THREAD_ROWS)
+        .filterNot { it is ThreadItem.UnrecognizedMessage }
+        .takeLast(MAX_CACHED_THREAD_ROWS)
 
 /**
  * [rows] without its in-flight rows — a streaming message or a running tool call — which only a live
