@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -27,8 +28,15 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RadialGradientShader
+import androidx.compose.ui.graphics.Shader
+import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -53,6 +61,7 @@ import de.pyryco.mobile.ui.conversations.components.TreeConversationRow
 import de.pyryco.mobile.ui.conversations.components.TreeHostRow
 import de.pyryco.mobile.ui.conversations.components.TreeHostSectionRow
 import de.pyryco.mobile.ui.host.HostEditorModal
+import de.pyryco.mobile.ui.theme.LocalStaticDarkPalette
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
 import kotlinx.datetime.Clock
@@ -97,6 +106,19 @@ internal const val CHANNEL_LIST_TEST_TAG: String = "channel-list"
 internal const val PLAY_STORE_URL: String = "https://play.google.com/store/apps/details?id=de.pyryco.mobile"
 
 // Host containers share one scrollable list and keep the Figma spacing.
+// Figma 15:8's canvas glow: a radius-10 gradient under the frame's transform
+// matrix(43.8 -11.95 13.523 49.567 196 265), which stretches and tilts it into an ellipse (#1522).
+private val GlowTransform = floatArrayOf(43.8f, -11.95f, 13.523f, 49.567f)
+private const val GLOW_CENTRE_X_FRACTION = 196f / 412f
+private const val GLOW_CENTRE_Y_DP = 265f
+private const val GLOW_RADIUS = 10f
+private const val GLOW_STOP = 0.76012f
+
+// Android blends gradient stops premultiplied, which keeps the start hue all the way out; Figma blends hue and
+// alpha separately. Sampling Figma's ramp at this many steps holds the difference under one RGB unit.
+private const val GLOW_STEPS = 8
+private const val CANVAS_SCRIM_ALPHA = 0.30f
+
 private val TreeGutter = 20.dp
 private val TreeHostGap = 16.dp
 private val TreeConversationGap = 4.dp
@@ -344,14 +366,15 @@ fun ChannelListScreen(
     LaunchedEffect(createChat?.requestId, createChat?.failed) {
         if (createChat?.failed == true) snackbarHostState.showSnackbar(createChatFailure)
     }
+    val staticDark = LocalStaticDarkPalette.current
     Scaffold(
         // The arrival marker goes on the root, above the branch below, so both draws carry it (#736).
-        modifier = modifier.testTag(CHANNEL_LIST_TEST_TAG),
+        modifier = modifier.testTag(CHANNEL_LIST_TEST_TAG).then(if (staticDark) Modifier.canvasGlow(colors) else Modifier),
         containerColor =
-            if (colors.surface.luminance() < 0.5f) {
-                colors.scrim.copy(alpha = 0.30f).compositeOver(colors.surface)
-            } else {
-                colors.surface
+            when {
+                staticDark -> Color.Transparent
+                colors.surface.luminance() < 0.5f -> colors.scrim.copy(alpha = CANVAS_SCRIM_ALPHA).compositeOver(colors.surface)
+                else -> colors.surface
             },
         topBar = { ChannelListTopBar(onEvent) },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -381,6 +404,53 @@ fun ChannelListScreen(
     CreateChannelModalBinding(hostState = hostState, onEvent = onEvent)
     ChannelEditorModal(hostState = hostState, onEvent = onEvent)
 }
+
+/**
+ * Figma 15:8's static-dark canvas, which spans the bar and the tree: surface, the blue glow, then the
+ * sidebar's 30 % black overlay. The glow's local matrix carries the frame's gradient transform in dp, so
+ * the ellipse keeps its shape at every density; its centre follows the width as the thread frame's does.
+ */
+private fun Modifier.canvasGlow(scheme: ColorScheme): Modifier =
+    drawWithCache {
+        val glow =
+            object : ShaderBrush() {
+                override fun createShader(size: Size): Shader =
+                    RadialGradientShader(
+                        center = Offset.Zero,
+                        radius = GLOW_RADIUS,
+                        colors =
+                            List(GLOW_STEPS + 1) { step ->
+                                val fraction = step / GLOW_STEPS.toFloat()
+                                lerp(scheme.primaryContainer, scheme.onPrimary, fraction).copy(alpha = 1f - fraction)
+                            },
+                        colorStops = List(GLOW_STEPS + 1) { step -> GLOW_STOP * step / GLOW_STEPS },
+                    ).apply {
+                        val (a, b, c, d) = GlowTransform
+                        setLocalMatrix(
+                            android.graphics.Matrix().apply {
+                                setValues(
+                                    floatArrayOf(
+                                        a * density,
+                                        c * density,
+                                        size.width * GLOW_CENTRE_X_FRACTION,
+                                        b * density,
+                                        d * density,
+                                        GLOW_CENTRE_Y_DP * density,
+                                        0f,
+                                        0f,
+                                        1f,
+                                    ),
+                                )
+                            },
+                        )
+                    }
+            }
+        onDrawBehind {
+            drawRect(scheme.surface)
+            drawRect(glow)
+            drawRect(scheme.scrim.copy(alpha = CANVAS_SCRIM_ALPHA))
+        }
+    }
 
 /**
  * [EditChannelModal] bound to the open [ChannelEditorState] (#667), present exactly while there is one.
