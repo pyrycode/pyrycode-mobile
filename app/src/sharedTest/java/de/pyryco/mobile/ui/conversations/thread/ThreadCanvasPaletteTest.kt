@@ -118,6 +118,7 @@ class ThreadCanvasPaletteTest {
 
     private fun assertCanvas() {
         val bounds = rule.onNodeWithTag("canvas").fetchSemanticsNode().boundsInRoot
+        val stream = if (reader) null else rule.onNodeWithTag("thread-message-region").fetchSemanticsNode().boundsInRoot
         assertEquals(dark to wallpaper, renderedMode)
         assertEquals(expectedWidth.toFloat(), bounds.width, 1f)
         val title = if (reader) "Canvas.md" else "Canvas thread"
@@ -162,7 +163,16 @@ class ThreadCanvasPaletteTest {
                 pixel(160f, ruleY - 1.5f, canvas)
                 pixel(160f, ruleY + 1.5f, canvas)
             }
-            pixel(2f, bounds.height / density - 30f, surface) // Composer surround or trailing reader space.
+            if (dark && !wallpaper && stream != null) {
+                // #1548: the input area paints no band of its own, so the glow runs across its top edge unbroken.
+                val x = bounds.center.x.toInt()
+                val above = Color(bitmap.getPixel(x, (stream.bottom - 4 * density).toInt()))
+                val below = Color(bitmap.getPixel(x, (stream.bottom + 4 * density).toInt()))
+                assertTrue("the glow reaches the input area top edge", above.blue > canvas.blue + 2f / 255f)
+                assertEquals("no band edge where the input area starts", above.blue, below.blue, 2f / 255f)
+            } else {
+                pixel(2f, bounds.height / density - 30f, surface) // Composer surround or trailing reader space.
+            }
             if (!populated && (reader || !dark || wallpaper)) pixel(160f, 300f, canvas)
             System.getProperty("canvas.capture.dir")?.let { directory ->
                 File(directory, "canvas-$reader-$dark-$wallpaper-$populated.png").outputStream().use {

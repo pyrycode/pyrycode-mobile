@@ -14,7 +14,7 @@ Split out of [Thread screen](thread-screen.md) on 2026-09-05 to keep that docume
 
 ```kotlin
 bottomBar = {
-    Column(Modifier.fillMaxWidth().background(surface).imePadding().padding(top = 12.dp, bottom = 16.dp)) {
+    Column(Modifier.fillMaxWidth().imePadding().padding(top = 12.dp, bottom = 16.dp)) {
         ThreadStatusArea(apiRetry = apiRetry, resetting = resetting, isCompacting = isCompacting, isStalled = isStalled, turnOutcome = turnOutcome, onCompact = onCompact, isThinking = isThinking, isBusy = isBusy, localSendPending = localSendPending, thinkingProgress = thinkingProgress, runningTool = if (isBusy) openTool else null, waitingForAnswers = …, connectionState = connectionState, taskCount = state.backgroundTaskCount, onTasksClick = { backgroundTasksOpen = true }, agent = state.agent)
         ThreadInputBar(onSend = onSendMessage, isBusy = isBusy, onInterrupt = onInterrupt, …)
         ThreadComposerFooter(runConfig = state.runConfig, onOpen = { openControl = it }, onStatusClick = { sheetVisible = true }, onAnchorChanged = { control, bounds -> footerAnchors[control] = bounds }, …)
@@ -385,8 +385,19 @@ The VM's own `connectionStateSource.observe()` call is unchanged by #1318 — wh
 
 Under the static dark palette, `ThreadScreen` draws a radial `primaryContainer` glow over the
 theme surface with a 30% scrim, matching the live `16:8` root. Its `Scaffold` is transparent in
-this mode so the glow reaches the header and blank message region; the composer surround retains
-`threadColors.surface`. Static light and wallpaper variants keep the flat thread background.
+this mode so the glow reaches the header, blank message region, and — as of
+[#1548](https://github.com/pyrycode/pyrycode-mobile/issues/1548) — the input area: the `bottomBar`
+`Column` (status area, input field and footer) paints no background of its own, so the glow runs
+behind it instead of ending at a flat band, matching Figma `16:8` and `635:2036`. Static light and
+wallpaper variants keep the flat thread background, because there the frame paints
+`threadColors.background`, which is the same colour `surface` was.
+
+A keyboard-closed capture at 412 × 892 cannot tell the band from the gradient: at that height the
+glow has already faded to the flat canvas colour by the input area's top edge, in both the app and
+Figma. The discriminating check is `ThreadCanvasPaletteTest.assertCanvas` on Robolectric's
+320 × 731dp screen, which samples 4dp above and 4dp below the bottom of `thread-message-region` in
+static dark and requires both the glow's presence and a match between the two pixels; a capture
+alone does not prove this regression is fixed.
 
 `PyrycodeMobileTheme` provides the immutable `ThreadColors` palette from the resolved app mode and
 wallpaper setting, also used by the [markdown reader](markdown-reader-screen.md#what-it-does).
