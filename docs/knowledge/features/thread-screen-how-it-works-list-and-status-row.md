@@ -15,8 +15,17 @@ agent name](session-boundary-delimiter.md#edge-cases--limitations)), `Unrecogniz
 `UnrecognizedMessageRow(item = item)`),
 `ThreadRow.Queued` → `QueuedMessageRow(text = row.text, onDrop = { onDropQueued(row.queuedMessageId) })`.
 The screen does **not** re-dispatch by `Message.role`; [`MessageBubble`](message-bubble.md) owns that
-selection internally. No `verticalArrangement = Arrangement.Bottom` override — `reverseLayout = true`
-already pins the first item to the bottom edge.
+selection internally. The `LazyColumn` passes `verticalArrangement = Arrangement.Top` (#1509; before
+that it took the reversed-list default, `Arrangement.Bottom`, which pinned a stream shorter than the
+viewport against the composer instead of under the header, as Figma `640:2646` and the pending-request
+frame `639:2242` draw it). Under `reverseLayout = true`, `Arrangement.Top` places a short stream's
+newest-first content at the viewport's top edge — the visual top of the arrangement is the thread's
+*bottom* (newest) end, so this still reads newest-at-the-bottom once the reversed items are drawn; an
+overflowing stream fills the viewport regardless of arrangement, so scrolling is unaffected. A short
+list still reports `FollowNewestEnd`'s first-visible index and offset as 0, and the oldest row still
+sits at the viewport's far edge for `isNearOldestEnd`, so neither reader needed a change. Covered by
+`ThreadScreenShortStreamTest` (see [Thread screen — testing § Short-stream top anchoring
+(#1509)](thread-screen-testing.md#short-stream-top-anchoring-1509)).
 
 **Source-list reversal is required.** `observeMessages` returns items chronologically ascending (index 0 = oldest), but `LazyColumn(reverseLayout = true)` draws the **first** item at the bottom. For "newest at the bottom" the screen reverses before passing — `rows.asReversed()` (pre-#782: `state.items.asReversed()`) is the Kotlin stdlib O(1) view (no allocation, no copy), and it's a `List<ThreadRow>` so it slots into `itemsIndexed(...)` directly. Keys are computed from the underlying rows, so the view's reversed index is irrelevant for identity.
 
