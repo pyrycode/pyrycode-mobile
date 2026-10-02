@@ -68,7 +68,7 @@ regardless of which `tool_result` arrives afterwards. Correlation for `tool_resu
 ([#1350](https://github.com/pyrycode/pyrycode-mobile/issues/1350)).** `withToolUse`'s "if absent" guard
 checks whether *any* `Message` — tool, user or assistant — already carries this `toolUseId`, not only an
 existing `Role.Tool` row. This is the mirror image of the segment-key guard
-[Remote conversation repository § Assistant reply segments](remote-conversation-repository-reads-and-thread-store-history-paging.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350)
+[Remote conversation repository § Assistant reply segments](remote-conversation-repository-assistant-reply-segments.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350)
 needed once a turn's text can be keyed `"<turnId>#<seq>"`: a hostile or buggy daemon could otherwise send a
 `tool_use` whose id equals an assistant segment's key (or another message's id), and the thread's `"msg:<id>"`
 `LazyColumn` key would collide. Widening the check costs nothing on the honest path — an id a `tool_use`
@@ -240,7 +240,7 @@ extends the thread's **last** row only when that row is already an assistant seg
 tool row (or any other row) in between makes the next delta open a new segment at the end, so the second
 piece of text draws **below** the tool row this call opened. See
 [Streaming assistant turns § Finished rows are now per-segment](streaming-assistant-turns.md#finished-rows-are-now-per-segment-not-one-bubble-per-turn-1350)
-and [Remote conversation repository § Assistant reply segments](remote-conversation-repository-reads-and-thread-store-history-paging.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350).
+and [Remote conversation repository § Assistant reply segments](remote-conversation-repository-assistant-reply-segments.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350).
 
 ## Chronological interleave (AC #4) — why it's free
 

@@ -59,11 +59,9 @@ import de.pyryco.mobile.ui.workspace.workspaceDisplayName
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -560,15 +558,13 @@ class ThreadViewModel(
     /**
      * Restores the history position saved when this thread was last open (#1354), so the first pull asks
      * past the rows the cache already drew instead of re-fetching the newest page. Reading asks nothing.
-     * [onDemandOlderHistory] waits for it, so no ask can carry the opening empty cursor once a saved one
-     * exists. Completes `true` when no position was saved: this phone never loaded the thread's history,
-     * and the `init` block asks for the newest page once (#1569).
+     * [onDemandOlderHistory] and the `init` block's newest-page ask (#1572) wait for it, so no walk ask can
+     * carry the opening empty cursor once a saved one exists.
      */
-    private val historySeed: Deferred<Boolean> =
-        viewModelScope.async {
-            val saved = repository.readHistoryPosition(conversationId) ?: return@async true
+    private val historySeed: Job =
+        viewModelScope.launch {
+            val saved = repository.readHistoryPosition(conversationId) ?: return@launch
             historyDemand.update { it.restored(cursor = saved.cursor, atStart = saved.atStart) }
-            false
         }
 
     /**
@@ -1299,17 +1295,21 @@ class ThreadViewModel(
     }
 
     init {
-        // #1352: neither opening the thread nor a reconnect asks for history; only the reader does
-        // (onDemandOlderHistory). The walk keeps its cursor across a reconnect.
-        //
-        // #1569, the one exception: a thread with no saved history position asks for the newest page once,
-        // when its host is first available. A dormant channel created on another client otherwise opened
-        // empty. The claim admits only the untouched walk, so a pull that got there first asks instead.
+        // #1572: an open thread asks for the newest history page every time its host becomes available, at
+        // open and after every reconnect. A reply that reached it while it was off-screen was never cached and
+        // the reconnect dropped it; replay does not resend it, so only this ask brings it back. Older pages
+        // are still asked for only by the reader (#1352), and the walk keeps its cursor across a reconnect.
+        // This replaces #1569's opening ask, which a never-loaded thread only made.
         viewModelScope.launch {
-            if (!historySeed.await()) return@launch
-            hostAvailable.first { it }
-            val claimed = claimHistorySlot { if (it == ThreadHistoryDemand()) it.asking() else null } ?: return@launch
-            launchHistoryAsk(claimed)
+            historySeed.join()
+            var opened = false
+            repositoryAvailable
+                .distinctUntilChanged()
+                .filter { it }
+                .collect {
+                    askForNewestPage(reconnect = opened)
+                    opened = true
+                }
         }
 
         // #1311: a drop and the return both end the round trip the local-send window was waiting on.
@@ -1465,8 +1465,8 @@ class ThreadViewModel(
 
     /**
      * The reader pulled toward older messages at the thread's oldest end (#1352) — ask for the next page
-     * back. The only ask besides Retry and a never-loaded thread's one opening ask (#1569): a reconnect
-     * and a page arriving never ask.
+     * back. The only ask besides Retry and the newest-page ask on each host arrival ([askForNewestPage]):
+     * a page arriving never asks.
      *
      * Sends nothing while the host is not connected. [ThreadHistoryDemand.canAsk] drops an ask that
      * arrives while a request is outstanding or after the walk reached a terminal stop, and drops it
@@ -1500,6 +1500,57 @@ class ThreadViewModel(
         if (!hostAvailable.value) return
         val claimed = claimHistorySlot { if (it.canRetry) it.asking() else null } ?: return
         launchHistoryAsk(claimed)
+    }
+
+    /**
+     * The open thread's host became available (#1572) — ask for the newest page, which brings back a reply
+     * stored while the thread was off-screen. The page merges through the repository's dedup, so rows
+     * already drawn do not repeat.
+     *
+     * It takes the walk's one outstanding-request slot, so it is dropped while a pull or a retry is out. When
+     * the walk's own next ask would carry the empty cursor anyway, the page is the walk's and settles as a
+     * pull's would; otherwise the walk's cursor, saved position and stop reason are left as they were.
+     */
+    private fun askForNewestPage(reconnect: Boolean) {
+        if (reconnect) RelayLog.d { "event=history_newest_ask reason=reconnect" }
+        // Re-set on every run of the claim, so after the loop it describes the claim that won.
+        var walkPage = false
+        val claimed =
+            claimHistorySlot {
+                walkPage = it.newestPageAdvancesWalk
+                when {
+                    walkPage -> it.asking()
+                    !it.inFlight -> it.askingNewest()
+                    else -> null
+                }
+            }
+        when {
+            claimed == null -> RelayLog.d { "event=history_newest_ask_skipped reason=in_flight" }
+            walkPage -> launchHistoryAsk(claimed)
+            else -> launchNewestPageSideAsk()
+        }
+    }
+
+    /**
+     * A newest-page ask that is not the walk's page (#1572). Its answer is not read at all: the repository has
+     * merged the rows, and the page's cursor and `atStart` would move the walk. A failure is logged with a
+     * static event only and shows nothing, since the reader asked for no page; the next host arrival asks again.
+     */
+    private fun launchNewestPageSideAsk() {
+        viewModelScope.launch {
+            try {
+                repository.requestHistory(conversationId, cursor = "")
+            } catch (e: CancellationException) {
+                throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
+            } catch (e: RelayErrorException) {
+                RelayLog.d { "event=history_newest_ask_failed" }
+            } catch (e: IllegalStateException) {
+                RelayLog.d { "event=history_newest_ask_failed" }
+            } catch (e: IllegalArgumentException) {
+                RelayLog.d { "event=history_newest_ask_failed" }
+            }
+            historyDemand.update { it.newestSettled() }
+        }
     }
 
     /**
