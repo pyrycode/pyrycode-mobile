@@ -98,7 +98,7 @@ class ThreadHistoryDemandTest {
     }
 
     @Test
-    fun failed_keepsEveryLoadedRowsPositionAndStopsAsking() {
+    fun failed_keepsTheWalksPositionAndLetsAFreshGestureAskAgain() {
         val walked = ThreadHistoryDemand().asking().settled(pageCursor = "c1", atStart = false)
         val failed = walked.asking().failed(retryable = true)
         // The walk's position is kept — the cursor and the page count are exactly the walked ones.
@@ -107,18 +107,22 @@ class ThreadHistoryDemandTest {
         // The in-flight state always clears, so the loading affordance can never be left stuck.
         assertFalse(failed.inFlight)
         assertEquals(HistoryWalkStop.RetryableFailure, failed.stoppedBy)
-        // A stopped walk still refuses the SCROLL-driven ask. Recovery is a deliberate gesture.
-        assertFalse(failed.canAsk)
+        // #1352: a failure no longer locks the walk; a fresh user gesture may ask again.
+        assertTrue(failed.canAsk)
     }
 
     @Test
-    fun everyStopReason_refusesFurtherAsks() {
-        HistoryWalkStop.entries.forEach { stop ->
+    fun onlyTheTerminalStops_refuseFurtherAsks() {
+        listOf(HistoryWalkStop.AtStart, HistoryWalkStop.NotAdvancing, HistoryWalkStop.PageCap).forEach { stop ->
             assertFalse("$stop still allowed an ask", ThreadHistoryDemand(stoppedBy = stop).canAsk)
+        }
+        listOf(HistoryWalkStop.RetryableFailure, HistoryWalkStop.PermanentFailure).forEach { stop ->
+            assertTrue("$stop refused a fresh ask", ThreadHistoryDemand(stoppedBy = stop).canAsk)
+            assertFalse("$stop allowed an ask while one is in flight", ThreadHistoryDemand(stoppedBy = stop, inFlight = true).canAsk)
         }
     }
 
-    // --- #778: the retryable split, the retry claim and the two restarts ---------------------------
+    // --- #778: the retryable split and the retry claim ---------------------------------------------
 
     @Test
     fun failed_splitsOnRetryableAndOnlyTheRetryableOneOffersARetry() {
@@ -129,118 +133,97 @@ class ThreadHistoryDemandTest {
         assertEquals(HistoryWalkStop.PermanentFailure, permanent.stoppedBy)
         assertTrue(retryable.canRetry)
         assertFalse(permanent.canRetry)
-        // Both keep the walk's position, so a retry resumes from the page that failed.
+        // Both keep the walk's position, so the next ask resumes from the page that failed.
         assertEquals("c1", permanent.cursor)
         assertEquals(1, permanent.pagesLoaded)
     }
 
     @Test
-    fun canRetry_isFalseForEveryTerminalStopAndWhileInFlight() {
+    fun canRetry_isFalseForEveryOtherStopAndWhileInFlight() {
         HistoryWalkStop.entries
             .filter { it != HistoryWalkStop.RetryableFailure }
             .forEach { stop ->
                 assertFalse("$stop offered a retry", ThreadHistoryDemand(stoppedBy = stop).canRetry)
             }
-        // Open Question 2: the !inFlight term makes a stale-in-flight retry claim unreachable.
         val inFlight = ThreadHistoryDemand(stoppedBy = HistoryWalkStop.RetryableFailure, inFlight = true)
         assertFalse(inFlight.canRetry)
     }
 
     @Test
-    fun retrying_resumesFromTheSameCursorAtTheSameCostAsAnyOtherPage() {
-        val failed =
-            ThreadHistoryDemand()
-                .asking()
-                .settled(pageCursor = "c1", atStart = false)
-                .asking()
-                .failed(retryable = true)
-        val retrying = failed.retrying()
-        // AC #1: the same cursor, so the retry loads the page that failed, not the next one.
-        assertEquals("c1", retrying.cursor)
-        assertEquals(1, retrying.pagesLoaded)
-        assertTrue(retrying.inFlight)
-        assertNull(retrying.stoppedBy)
-        // It costs one page of budget when it settles, exactly like a scroll-driven ask.
-        assertEquals(2, retrying.settled(pageCursor = "c2", atStart = false).pagesLoaded)
+    fun askingAfterAFailure_resumesFromTheSameCursorAtTheSameCostAsAnyOtherPage() {
+        listOf(true, false).forEach { retryable ->
+            val failed =
+                ThreadHistoryDemand()
+                    .asking()
+                    .settled(pageCursor = "c1", atStart = false)
+                    .asking()
+                    .failed(retryable = retryable)
+            val asking = failed.asking()
+            // The same cursor, so the ask loads the page that failed, not the next one.
+            assertEquals("c1", asking.cursor)
+            assertEquals(1, asking.pagesLoaded)
+            assertTrue(asking.inFlight)
+            assertNull(asking.stoppedBy)
+            assertEquals(2, asking.settled(pageCursor = "c2", atStart = false).pagesLoaded)
+        }
     }
 
+    // --- #1352: the refused cursor and the offline notice ------------------------------------------
+
     @Test
-    fun restarted_goesBackToTheNewestPageCarryingTheBudget() {
+    fun cursorRefused_sendsTheNextAskToTheNewestPageWithoutClaimingTheSlot() {
         val walked =
             ThreadHistoryDemand()
                 .asking()
                 .settled(pageCursor = "c1", atStart = false)
                 .asking()
                 .settled(pageCursor = "c2", atStart = false)
-        val restarted = walked.restarted()
-        // AC #3/#4: newest page, and a cursor minted on the old walk is not carried into the new one.
-        assertEquals("", restarted.cursor)
-        // The budget is CARRIED, not reset — a restart that reset it would be a bound with an off switch.
-        assertEquals(2, restarted.pagesLoaded)
-        assertTrue(restarted.inFlight)
-        assertNull(restarted.stoppedBy)
-        // A settle from the superseded walk is distinguishable by generation, and so droppable.
-        assertEquals(walked.walk + 1, restarted.walk)
-    }
-
-    @Test
-    fun restarted_clearsAFailureSoTheBackgroundForegroundCycleSelfHeals() {
-        val failed = ThreadHistoryDemand(cursor = "c1").asking().failed(retryable = false)
-        val restarted = failed.restarted()
-        assertNull(restarted.stoppedBy)
-        assertEquals("", restarted.cursor)
-        assertEquals(ThreadHistoryTail.Loading, restarted.tail())
-    }
-
-    @Test
-    fun restarted_cannotBuyAnAskTheCapAlreadyRefused() {
-        var demand = ThreadHistoryDemand()
-        repeat(MAX_HISTORY_PAGES) { page ->
-            demand = demand.asking().settled(pageCursor = "c$page", atStart = false)
-        }
-        assertEquals(HistoryWalkStop.PageCap, demand.stoppedBy)
-
-        val restarted = demand.restarted()
-        // A flapping connection cannot launder a fresh budget: the restart claims no slot at all...
-        assertFalse(restarted.inFlight)
-        assertEquals(HistoryWalkStop.PageCap, restarted.stoppedBy)
-        assertEquals(MAX_HISTORY_PAGES, restarted.pagesLoaded)
-        // ...and still bumps the generation, so an ask in flight from the old walk is invalidated.
-        assertEquals(demand.walk + 1, restarted.walk)
-    }
-
-    @Test
-    fun repeatedRestarts_spendTheBudgetRatherThanResettingIt() {
-        // The ticket's security shape: a daemon refusing every cursor while the connection flaps.
-        var demand = ThreadHistoryDemand()
-        var pages = 0
-        repeat(MAX_HISTORY_PAGES * 3) {
-            demand = demand.restarted()
-            if (demand.inFlight) {
-                pages++
-                demand = demand.settled(pageCursor = "c$pages", atStart = false)
-            }
-        }
-        assertEquals(MAX_HISTORY_PAGES, pages)
-        assertEquals(HistoryWalkStop.PageCap, demand.stoppedBy)
+        val refused = walked.asking().cursorRefused()
+        assertEquals("", refused.cursor)
+        // The budget is carried, so a daemon refusing every cursor cannot launder a fresh one.
+        assertEquals(2, refused.pagesLoaded)
+        // No ask follows by itself: the slot is released and the next gesture asks.
+        assertFalse(refused.inFlight)
+        assertNull(refused.stoppedBy)
+        assertTrue(refused.canAsk)
+        assertEquals(ThreadHistoryTail.None, refused.tail(connected = true))
     }
 
     @Test
     fun tail_showsOneSlotPerWalkStateAndHidesTheTerminationReasons() {
-        assertEquals(ThreadHistoryTail.None, ThreadHistoryDemand().tail())
-        assertEquals(ThreadHistoryTail.Loading, ThreadHistoryDemand().asking().tail())
+        assertEquals(ThreadHistoryTail.None, ThreadHistoryDemand().tail(connected = true))
+        assertEquals(ThreadHistoryTail.Loading, ThreadHistoryDemand().asking().tail(connected = true))
         assertEquals(
             ThreadHistoryTail.Retry,
-            ThreadHistoryDemand(stoppedBy = HistoryWalkStop.RetryableFailure).tail(),
+            ThreadHistoryDemand(stoppedBy = HistoryWalkStop.RetryableFailure).tail(connected = true),
         )
         assertEquals(
             ThreadHistoryTail.DeadEnd,
-            ThreadHistoryDemand(stoppedBy = HistoryWalkStop.PermanentFailure).tail(),
+            ThreadHistoryDemand(stoppedBy = HistoryWalkStop.PermanentFailure).tail(connected = true),
         )
         // A normally-ended walk shows nothing: reaching the start of a log is not a failure.
         listOf(HistoryWalkStop.AtStart, HistoryWalkStop.NotAdvancing, HistoryWalkStop.PageCap)
             .forEach { stop ->
-                assertEquals("$stop surfaced a tail row", ThreadHistoryTail.None, ThreadHistoryDemand(stoppedBy = stop).tail())
+                assertEquals(
+                    "$stop surfaced a tail row",
+                    ThreadHistoryTail.None,
+                    ThreadHistoryDemand(stoppedBy = stop).tail(connected = true),
+                )
             }
+    }
+
+    @Test
+    fun tail_whileNotConnected_isTheOfflineNoticeUnlessTheWalkReachedTheStart() {
+        listOf(
+            ThreadHistoryDemand(),
+            ThreadHistoryDemand().asking(),
+            ThreadHistoryDemand(stoppedBy = HistoryWalkStop.RetryableFailure),
+            ThreadHistoryDemand(stoppedBy = HistoryWalkStop.PermanentFailure),
+            ThreadHistoryDemand(stoppedBy = HistoryWalkStop.NotAdvancing),
+            ThreadHistoryDemand(stoppedBy = HistoryWalkStop.PageCap),
+        ).forEach { demand ->
+            assertEquals("$demand", ThreadHistoryTail.Offline, demand.tail(connected = false))
+        }
+        assertEquals(ThreadHistoryTail.None, ThreadHistoryDemand(stoppedBy = HistoryWalkStop.AtStart).tail(connected = false))
     }
 }

@@ -257,11 +257,12 @@ class ThreadInlineQuestionTest {
         assertEquals(anchor, rule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot)
         rule.onNodeWithTag("question-batch-title").assertDoesNotExist()
         rule.onNode(hasScrollToIndexAction()).performScrollToIndex(32)
-        rule.runOnIdle { assertEquals(1, demands) }
+        // #1352: reaching the oldest row is not a pull, so it asks nothing.
+        rule.runOnIdle { assertEquals(0, demands) }
         rule.runOnIdle { pending = null }
         rule.waitForIdle()
         rule.runOnIdle { pending = question.copy(generation = 2) }
         rule.waitForIdle()
-        rule.runOnIdle { assertEquals("prompt replacement cannot manufacture another oldest-history demand", 1, demands) }
+        rule.runOnIdle { assertEquals("prompt replacement cannot manufacture an oldest-history demand", 0, demands) }
     }
 }

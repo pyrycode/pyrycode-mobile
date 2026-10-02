@@ -721,28 +721,43 @@ chat's list row, and the thread reopened after navigating back all still show is
 content, not a live read. While offline the peer sends a second prompt and its turn ends (`turn_end`
 occurrence 2 keeps the wait honest); the phone draws neither the prompt nor the reply, the negative
 control that shows it really was offline. On `setHostLink(serverId, up = true)`, with the thread still
-open, the peer's reply arrives by the daemon's ring replay — the prompt text does not, since no live
-frame carries another device's message text, only a history page does. When this scenario shipped
-(#850), the still-open thread's own reconnect re-ask fired as soon as the socket came up, before the
-coordinator's repository was back, and died with an `IllegalStateException` — a production bug that
-ticket found and filed rather than fixed, [#861](https://github.com/pyrycode/pyrycode-mobile/issues/861),
-and the scenario worked around it by leaving the thread and reopening the chat's row so a fresh
-`ThreadViewModel`'s opening history ask ran on the live repository for both the prompt and the reply.
-**#861 fixed the bug**: the reconnect re-ask now keys off the host's `coordinator.currentRepository`
-going non-null instead of the socket-level `ConnectionState`, so it no longer fires ahead of the
-repository it needs. Step 6 dropped the reopen; it waits in the still-open thread for both the peer's
-reply and `OFFLINE_PROMPT` to render, then asserts each of the four messages (`PING_PROMPT`, its reply,
-`OFFLINE_PROMPT`, its reply) renders **exactly once**, in `boundsInRoot.top` order. Two real claude
-turns: the phone's ping and the peer's offline turn. Folded into the pre-ship `LIVE=1` gate as the 13th
-curated method, taking `LIVE_MINIMUM` from 12 to 13 and the run's real-claude cost from six turns to
-eight. The live run that closed #850 (`python3 scripts/android-test-gate.py live`, 2026-09-23; branch
-`feature/850` at `c9b0fdc084` merged with `main` at `923b176bef`) executed all thirteen with no failures
-or skips; two earlier live attempts on that branch failed first because the cut raced the phone's own
-settled reply rather than the peer's, then because the reconnect assertion ran before the reopened
-thread's history page had arrived, before the fixes recorded above landed. The live run that closed
-\#861 (`python3 scripts/android-test-gate.py live`, 2026-09-23; branch `feature/861` at `24c9490d9a`
-merged with `origin/main` at `148b9f7225`) re-proved the same thirteen scenarios with step 6's reopen
-dropped — see the dedicated entry below.
+open, the peer's reply arrives by the daemon's ring replay. When this scenario shipped (#850), **no live
+frame carried another device's message text, only a history page did**, so the still-open thread's own
+reconnect re-ask — which fired as soon as the socket came up, before the coordinator's repository was
+back, and died with an `IllegalStateException` — was the only way `OFFLINE_PROMPT`'s text could reach the
+phone at all; that production bug was found and filed rather than fixed,
+[#861](https://github.com/pyrycode/pyrycode-mobile/issues/861), and the scenario worked around it by
+leaving the thread and reopening the chat's row so a fresh `ThreadViewModel`'s opening history ask ran on
+the live repository for both the prompt and the reply. **#861 fixed the bug**: the reconnect re-ask keyed
+off the host's `coordinator.currentRepository` going non-null instead of the socket-level
+`ConnectionState`, so it no longer fired ahead of the repository it needed, and step 6 dropped the reopen
+— it waited in the still-open thread for both the peer's reply and `OFFLINE_PROMPT` to render, relying on
+that reconnect re-ask's history page to supply the prompt text.
+
+**[#1352](https://github.com/pyrycode/pyrycode-mobile/issues/1352) removed the reconnect re-ask outright**
+(older history now loads only on the reader's own pull, never on a reconnect — see [Remote conversation
+repository § the retry and the two
+restarts](knowledge/features/remote-conversation-repository-reads-and-thread-store-history-paging.md#the-retry-and-the-two-restarts-778)),
+so this scenario no longer has a history page to lean on for `OFFLINE_PROMPT`'s text. It still needs none:
+since pyrycode#2699, landed before #1352, the daemon pushes each delivered user message **live and into
+the replay ring**, not only into history, so the missed-event `last_event_id` replay that #1352 explicitly
+left untouched now delivers `OFFLINE_PROMPT`'s text itself, with no `request_history` round trip involved.
+The scenario's own steps and assertions are unchanged — it still waits in the still-open thread for both
+the peer's reply and `OFFLINE_PROMPT` to render with no pull gesture — only its KDoc and step comments
+changed, to say the prompt arrives via the reconnect replay rather than naming the now-removed re-ask.
+Step 6 still asserts each of the four messages (`PING_PROMPT`, its reply, `OFFLINE_PROMPT`, its reply)
+renders **exactly once**, in `boundsInRoot.top` order. Two real claude turns: the phone's ping and the
+peer's offline turn. Folded into the pre-ship `LIVE=1` gate as the 13th curated method, taking
+`LIVE_MINIMUM` from 12 to 13 and the run's real-claude cost from six turns to eight. The live run that
+closed #850 (`python3 scripts/android-test-gate.py live`, 2026-09-23; branch `feature/850` at
+`c9b0fdc084` merged with `main` at `923b176bef`) executed all thirteen with no failures or skips; two
+earlier live attempts on that branch failed first because the cut raced the phone's own settled reply
+rather than the peer's, then because the reconnect assertion ran before the reopened thread's history
+page had arrived, before the fixes recorded above landed. The live run that closed #861 (`python3
+scripts/android-test-gate.py live`, 2026-09-23; branch `feature/861` at `24c9490d9a` merged with
+`origin/main` at `148b9f7225`) re-proved the same thirteen scenarios with step 6's reopen dropped — see
+the dedicated entry below. The live run that closed #1352 (dispatcher real-claude gate, 2026-10-02)
+re-proved this scenario, among fifty executed with none failed, with the reconnect re-ask gone.
 
 The **model and effort settings round trip** (#545) is four **always-on** methods (none `@Ignore`d)
 proving the settings read (#590), the applied-effort footer (#889) and the remembered-effort recall
@@ -1154,6 +1169,13 @@ change let a stored user `message` entry's `attachment_ids` survive into the red
 conversation repository — reads and the thread store — history
 paging](knowledge/features/remote-conversation-repository-reads-and-thread-store-history-paging.md#history-pages-fold-into-the-same-thread-645)).
 With that fix it dropped `@Ignore` and rides LIVE as the curated list's thirty-second method.
+[#1352](https://github.com/pyrycode/pyrycode-mobile/issues/1352) removed the opening history ask that used
+to fetch this row for free on reopening chat X after `rebuildGraph` — older pages now load only on the
+reader's own pull. The scenario now performs that pull itself through a shared `pullForOlderHistory`
+helper (a swipe down on the `thread-message-region` tag), called once after reopening chat X and before
+asserting the row, so "the row can only come from history replay" still means exactly that: the reload
+reaches the screen through a page this test explicitly asked for, not an ask the app used to make on its
+own.
 
 `interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart` keeps the phone attached to a fresh chat X
 while a prompt has claude write a short file with `printf` and hand it over with the daemon's `send_file`
@@ -1231,6 +1253,10 @@ phone at all, live or by reload, and the retrieval path being interrupted is the
 `request_attachment`/`AttachmentStore`/row-state path whoever sent the file. Once #1020 landed and let a
 replayed `message` entry's `attachment_ids` survive into the reduced row, the method was rewritten to use
 the peer's own file, as the ticket had originally asked. One real-claude turn: the peer's message.
+[#1352](https://github.com/pyrycode/pyrycode-mobile/issues/1352) removed the opening history ask this
+method relied on to surface the row after the restart; it now calls the same `pullForOlderHistory` helper
+as `interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload` once chat X is reopened, before
+scrolling the row onto screen to arm the cut.
 
 `interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost` (AC-3) reuses #847's seeded collision — one
 conversation id on two isolated test daemons — pairs host B by code as #847 does, and reads each copy's
@@ -2153,7 +2179,22 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-02 (#1369).** The dispatcher ran
+**Current live verification — 2026-10-02 (#1352).** The dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1352` at
+`4251829d37`, merged with `origin/main` at `8dc5a6b483` in a detached worktree (16 commits behind before
+the merge): **50 executed, 50 passed, 0 failed, 0 skipped**, exit 0, wall clock 716.6s. This is full-suite
+evidence, requested as `## Live tests: all` because removing the opening history ask could affect any
+scenario that expected rows to load on open, not only the three the ticket named. The fresh XML has
+passing testcases for all three: `interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect` (whose KDoc
+and step comments now say the peer's prompt arrives via the reconnect replay rather than the removed
+reconnect history re-ask — see § *offline-read-reconcile* above), and
+`interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload` and
+`interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile` (both of which now perform a
+`pullForOlderHistory` gesture after opening chat X, since their rows can only come from history once the
+thread cache is cleared and nothing asks for history by itself any more). `LIVE_MINIMUM` stayed at 50;
+this ticket added no new live method and renamed none in the curated list.
+
+**Previous live verification — 2026-10-02 (#1369).** The dispatcher ran
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1369` at
 `6e79da4f`, merged with `origin/main` at `b6c06182` in a detached worktree (11 commits behind before
 the merge): **50 executed, 50 passed, 0 failed, 0 skipped**, exit 0, wall clock 722.8s. This is

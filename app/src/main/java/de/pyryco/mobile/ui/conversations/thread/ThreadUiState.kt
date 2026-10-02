@@ -133,10 +133,10 @@ data class ThreadUiState(
     // one carrier for all three keeps the footer and the Status sheet agreeing by construction.
     val runConfig: ThreadRunConfig = ThreadRunConfig(),
     val mutationsSupported: Boolean = true,
-    // #777/#778: what the thread's single oldest-end slot shows — loading, a retry, a dead end or
-    // nothing. The walk's TERMINATION reasons deliberately do not reach the screen, only its failures:
-    // the screen asks, the VM decides whether the ask is honoured, and a second copy of that decision in
-    // Compose would be a second place to get it wrong.
+    // #777/#778/#1352: what the thread's single oldest-end slot shows — loading, a retry, a dead end, the
+    // offline notice or nothing. The walk's TERMINATION reasons deliberately do not reach the screen, only
+    // its failures: the screen asks, the VM decides whether the ask is honoured, and a second copy of that
+    // decision in Compose would be a second place to get it wrong.
     val historyTail: ThreadHistoryTail = ThreadHistoryTail.None,
     // #884: the Actions menu's commands this conversation's published slash-command menu proves absent,
     // greyed out in the menu.
