@@ -10,7 +10,12 @@
   `requireRealSystemBars=true`, density 1.0, fixed dark theme, real 24 px status and navigation bars. Each `.txt`
   records the measured values.
 - **Result:** `prompts-results.xml`, the whole class in one run after the second rework: 6 executed, 0 failures.
-  Every capture here comes from that run.
+  Every capture here comes from that run, except the four `question-*` captures.
+- **#1484 re-capture:** `feature/1484` (merge base `ca50716f`) changed the question actions. The whole class ran
+  again in one run on the same device and arguments: 6 executed, 0 failed, 0 skipped, now in `prompts-results.xml`.
+  The `question-unanswered`, `question-answered`, `question-keyboard` and `question-compact` captures and their
+  comparisons come from that run; `question-answered.png` came out byte-identical. The other captures are kept
+  from the #1433 run.
 
 **How these captures differ from onboarding's.** Both prompts set `FLAG_SECURE` on the activity window while
 they show, which blacks out the harness's `UiAutomation` screenshot. The class draws the decor view into a
@@ -51,13 +56,13 @@ scaling or the app matches the frames.
 | Padding | match: 20 px gutters, 16 px card padding |
 | Spacing | mismatch in the Other row: Figma puts the field 28 px below the "Other" label's top and the radio top-aligned with the label; the app's field sits about 6 px lower and its radio is centred in a 48 dp row, about 10 px below the label. Kotlin to Rust rows match at 56 px; actions 12 px below the card |
 | Typography | mismatch: footer "Cxt high: 84%". Question, option label and description, header and actions match |
-| Colour | mismatch: disabled Continue is near-black with dim text, where Figma fills it blue-grey; footer label in the warning colour |
+| Colour | mismatch: footer label in the warning colour. The disabled Continue matches since #1484: the primary fill and on-primary label at 38 % opacity, as `636:3535` |
 | Borders | match: primary-container card border, outlined Cancel |
 | Radii | match |
 | Icon paths | mismatch: footer tune icon. Header snowflake glyphs, radios and checkboxes match |
 | Component state | match: nothing selected, Continue disabled, "Waiting for answers" |
 
-- **Routed:** #1484 (disabled Continue), #1501 (Other row spacing and radio alignment), #1485 (footer)
+- **Routed:** #1501 (Other row spacing and radio alignment), #1485 (footer). Disabled Continue fixed by #1484
 
 ### Questions · Answers selected — `636:3540`
 
@@ -94,9 +99,9 @@ scaling or the app matches the frames.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: the focused Other field is in view, but Cancel and Continue are half under the composer footer; Figma shows both above "Waiting for answers". The focus scroll offset varies between runs: the first and this run leave them half under, the first rework run hid them fully. Every run covers them |
+| Geometry | match since #1484: at the focus scroll position the focused Other field and both Cancel and Continue are fully in view, the actions' bottom at the stream's bottom edge above "Waiting for answers", as Figma. The focus scroll places the actions first, so the position no longer depends on the IME animation; the test asserts the field and both actions inside the message region |
 | Padding | match |
-| Spacing | mismatch: the actions have no gap above the footer (see Geometry); the Other row as Unanswered |
+| Spacing | mismatch: the Other row as Unanswered. The actions sit 4 px above the stream's edge, from the batch's item gutter |
 | Typography | mismatch: footer "Cxt high: 84%" |
 | Colour | mismatch: footer warning colour |
 | Borders | match |
@@ -104,9 +109,9 @@ scaling or the app matches the frames.
 | Icon paths | mismatch: footer tune icon |
 | Component state | match: Other focused with "Web" (the caret blinks and is in its off phase in this capture); the draft is kept |
 
-- **Clipping and reach:** Cancel and Continue are covered by the footer at the focus scroll position. Both
-  scroll into view and display with the keyboard still open (`reachable` in the test). No control is unreachable.
-- **Routed:** #1484 (actions under the footer), #1501 (Other row), #1485 (footer)
+- **Clipping and reach:** nothing is covered at the focus scroll position (`assertAboveComposer` in the test,
+  without a scroll of its own). Both actions also scroll into view with the keyboard still open (`reachable`).
+- **Routed:** #1501 (Other row), #1485 (footer). Actions under the footer fixed by #1484
 
 ### Questions · Compact text at 150% — `636:4066`
 
@@ -118,7 +123,7 @@ scaling or the app matches the frames.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: Cancel and Continue stack, but centred, where Figma stacks them at the card's start edge. Figma's Cancel and Continue are 52 px tall (118 and 143.5 px wide); the app's are about 42 px |
+| Geometry | mismatch: Figma's Cancel and Continue are 52 px tall (118 and 143.5 px wide); the app's are about 42 px. Since #1484 the stacked pair sits at the card's start edge with Cancel centred over Continue, as `636:4325` |
 | Padding | match |
 | Spacing | mismatch: the Other row, as Unanswered |
 | Typography | mismatch: the top-bar title is about 26 px against Figma's 34 px (see "Top-bar title at 150 %"); the action labels are smaller than the frame's linear 150 %; the footer reads "Cxt h…". Every label wraps |
@@ -130,7 +135,7 @@ scaling or the app matches the frames.
 
 - **Clipping and reach:** the footer's context label truncates to "Cxt h…". The title, both questions, Cancel
   and Continue each scroll into view and display.
-- **Routed:** #1484 (stacked action alignment), #1501 (button heights and their smaller labels, the top-bar title, Other row), #1485 (footer, truncation)
+- **Routed:** #1501 (button heights and their smaller labels, the top-bar title, Other row), #1485 (footer, truncation)
 
 ### Permission · Safe default — `639:2242`
 

@@ -42,6 +42,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -312,8 +313,11 @@ internal fun QuestionBlock(
                             val scope = rememberCoroutineScope()
                             var focused by remember { mutableStateOf(false) }
                             val imeBottom = WindowInsets.ime.getBottom(LocalDensity.current)
-                            // The last run sees the settled inset, so every run ends at the same position.
+                            // The last run sees the settled inset, so every run ends at the same position. The effect can
+                            // start while the lazy item is composed inside the list's measure, where a scroll may not run,
+                            // so the scroll waits for the next frame.
                             val reveal: suspend () -> Unit = {
+                                withFrameNanos {}
                                 revealActions()
                                 requester.bringIntoView()
                             }

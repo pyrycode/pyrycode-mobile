@@ -91,10 +91,24 @@ None new; scroll refusal is above.
 ## Open Questions
 
 - Whether `scrollToItem` before the field's `bringIntoView()` is stable across the IME animation on the
-  device. Resolve from three keyboard-frame runs.
+  device. Resolved: see Revisions.
 
 ## Documentation handoff
 
 - `docs/knowledge/features/question-batch-modal.md` § Rendering — pending: the focus scroll now places the
   actions item at the stream's bottom edge before bringing the field into view; disabled Continue is the
   enabled colours at 38 % group alpha; the stacked pair is start-aligned with Cancel centred over Continue.
+
+## Revisions
+
+### 2026-10-02 — the reveal waits a frame before scrolling
+
+- **What changed.** The reveal runs `withFrameNanos {}` before `revealActions()`.
+- **What drove it.** The first device run of `questionKeyboardFrame` crashed with "performMeasureAndLayout called
+  during measure layout": when a focused question's lazy item is composed inside the list's measure pass, its
+  `LaunchedEffect` starts there, and `LazyListState.scrollToItem` forces a remeasure, which is illegal inside
+  measure. The field's own `bringIntoView()` never forced a remeasure, so the old code did not hit this.
+- **New contract.** The reveal scrolls on the next frame, outside layout, then brings the field into view. The
+  Open Question is resolved: the next full-class run passed except for the harness's known 332 px keyboard
+  (`the test IME's keyboard is open`, before the reveal is asserted), and the following full-class run passed
+  6 of 6 with the field and both actions inside the message region.
