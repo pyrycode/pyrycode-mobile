@@ -19,20 +19,45 @@ trigger, copying desktop's rule: older pages load only on a reader's own pull to
 both apps, and never because a screen opened, a connection returned, a page arrived, or a row scrolled
 into view.
 
-**[#1569](https://github.com/pyrycode/pyrycode-mobile/issues/1569) adds the one exception: a thread this
-phone has never loaded history for asks for the newest page once, when its host is first available.**
-"Never loaded" means `ConversationRepository.readHistoryPosition` (#1354) found nothing saved —
-`ThreadViewModel.historySeed` reports that back as a `Boolean`, and an `init` coroutine awaits it, then
-awaits `hostAvailable.first { it }`, then claims the slot only if the walk is still untouched
-(`ThreadHistoryDemand()`, `it == ThreadHistoryDemand()`) before calling the same `launchHistoryAsk` a pull
-uses. A thread with a saved position never reaches this ask and keeps #1352's pull-only rule exactly; a
-reader whose pull wins the slot first leaves the opening collector nothing to claim, so it never asks a
-second, older page. Opening before the host connects asks nothing until the host arrives, asks exactly
-once then, and a later drop and return asks nothing more — the collector takes only the first
-`hostAvailable` edge. This exists because a dormant channel created on another client — a live session's
-rows reach the thread through the live lane, so only a *dormant* conversation with nothing cached was
-affected — opened with `EmptyThreadState` and stayed empty until a send woke the session, since the daemon
-serves a dormant conversation's history from disk only when asked.
+**[#1572](https://github.com/pyrycode/pyrycode-mobile/issues/1572): an open thread asks for the newest
+history page every time its host becomes available — at open, and again after every reconnect while it
+stays open — not only the first time.** This replaces #1569's never-loaded-only opening ask below. A
+reply the daemon had stored while the thread was off-screen was never cached (`observeMessages` only
+writes to the cache while a thread is collected — see [Caching conversation repository §
+Why it exists](caching-conversation-repository.md#why-it-exists)), and a reconnect discarded the
+connection-scoped projection that held it; replay does not resend it, so nothing else brought it back.
+`ThreadViewModel.historySeed` is a `Job` an `init` coroutine awaits before collecting
+`repositoryAvailable.distinctUntilChanged().filter { it }`, calling `askForNewestPage(reconnect = opened)`
+on every arrival — the same shape as the #1410 context-usage collector. Waiting for the seed first means
+every claim sees the restored position (#1354) rather than racing it.
+
+`askForNewestPage` claims the walk's single outstanding-request slot (`claimHistorySlot`), so it is
+dropped, with a static log, while a pull or a retry is out, and a pull or retry that arrives while it is
+out is dropped in turn. Two outcomes follow, chosen by `ThreadHistoryDemand.newestPageAdvancesWalk`
+(`canAsk && cursor.isEmpty()`):
+
+- **The newest page is the walk's own next page** for a never-loaded thread (#1569's original case), a
+  walk whose cursor the daemon refused, or a walk whose previous newest-page ask failed. The ask then
+  goes through the ordinary `asking()`/`launchHistoryAsk` path: the page settles into the walk and its
+  position is saved, exactly as a pull from the newest would.
+- **Otherwise it is a side ask** (`ThreadHistoryDemand.askingNewest()`/`newestSettled()`) that claims and
+  releases the slot without touching the cursor, the page count or the stop reason. The reply's `cursor`
+  and `atStart` are never read, so a saved cursor keeps driving the next *older* pull and a saved
+  `AtStart` keeps reading as fully loaded. The rows still reach the thread, because `requestHistory` has
+  already merged them into `observeMessages` through `mergeHistoryRows` and `mergeCachedRows` regardless
+  of why the page was asked for. A failed side ask logs a static event and changes nothing else; the next
+  host arrival asks again.
+
+A thread opened offline asks nothing until the host arrives, then asks once; a later drop and return
+asks again each time, unlike #1569's one-shot collector. **A known, unfixed quirk (verifier SHOULD FIX,
+PR #1585, non-blocking):** `ThreadHistoryDemand.tail(connected)` checks `inFlight` before the stop
+reason, so a side ask's `inFlight = true` shows the oldest-end `Loading` row even on an already fully
+loaded (`AtStart`) thread, for as long as the side ask is out. This happens on every open and every
+reconnect of a long-lived, fully-loaded channel, not only on a never-loaded one — a transient visual
+regression against this ticket's own "no visual change" claim and against the third acceptance
+criterion's "a saved `atStart` still shows the thread as fully loaded." The fix path, if taken, is a
+second in-flight flag that gates `canAsk`/`canRetry` without feeding `tail`; it was accepted as a
+non-blocking NIT rather than fixed in #1572.
 
 **`OlderHistoryGesture` and `Modifier.olderHistoryPull`** (`ThreadHistoryRows.kt`) replace the #777
 scroll-position `snapshotFlow` entirely. `OlderHistoryGesture` is a `NestedScrollConnection` constructed
@@ -120,9 +145,10 @@ the `else` arm of `if (!state.hasMessages)` (§ *Empty-state branch* in the pare
 thread shows no loading, retry, dead-end or offline row even while a pull there is in flight or has
 failed; it only shows `EmptyThreadState`. Before #1352 this was a one-round-trip flash on the opening ask;
 \#1352 removed the opening ask entirely, and [#1569](https://github.com/pyrycode/pyrycode-mobile/issues/1569)
-brought one back for the never-loaded case above, so the gap now also covers that opening ask: a
-never-loaded thread renders `EmptyThreadState` with no loading feedback while its one opening request is
-in flight, exactly as a reader's own pull on an empty thread does. Still open.
+brought one back for the never-loaded case, which [#1572](https://github.com/pyrycode/pyrycode-mobile/issues/1572)
+widened to every host arrival, so the gap now also covers every one of those asks: a thread with no
+messages drawn renders `EmptyThreadState` with no loading feedback while a newest-page ask is in flight,
+exactly as a reader's own pull on an empty thread does. Still open.
 
 ### The oldest-end history retry and restart (#778)
 

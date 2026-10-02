@@ -212,7 +212,7 @@ row a second time.
   `ThreadProjection.applyAssistantDelta` passes the conversation's `queued` set, so a delta still extends the
   reply it belongs to instead of opening a second segment below the parked echo. The history reducer's own
   caller passes nothing; see [Remote conversation repository § Assistant reply
-  segments](remote-conversation-repository-reads-and-thread-store-history-paging.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350).
+  segments](remote-conversation-repository-assistant-reply-segments.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350).
   **`passOver` only ever names an id already in `queued`**, which the echo joins on the *first* `queue_state`
   that reports it — not at tap time. A delta that lands between the tap and that first snapshot still opens a
   second segment below the echo, exactly as it did before this ticket; the gap is the same shape as the one
@@ -354,7 +354,7 @@ simpler means; a paired device cannot forge a match at all) extends unchanged to
   [Remote conversation repository § reads and the thread store](remote-conversation-repository-reads-and-thread-store.md),
   [§ Control sends](remote-conversation-repository-control-sends.md), [Streaming assistant
   turns](streaming-assistant-turns.md) and [§ Assistant reply
-  segments](remote-conversation-repository-reads-and-thread-store-history-paging.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350)).
+  segments](remote-conversation-repository-assistant-reply-segments.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350)).
 - [Stall state](stall-state.md) (#395) — the structural twin: the decode→state→observe shape, gate, and
   test harness this reuses; the onset-only counterpoint to this full-snapshot model.
 - [API-retry status](api-retry-status.md) (#593) — follows this arm's payload-carrying `Map` projection
