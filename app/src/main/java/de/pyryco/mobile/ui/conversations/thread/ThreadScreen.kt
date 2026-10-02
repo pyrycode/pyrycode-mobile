@@ -8,12 +8,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
@@ -78,6 +77,7 @@ import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
+import de.pyryco.mobile.ui.components.EditChannelModal
 import de.pyryco.mobile.ui.conversations.components.ApiRetryIndicator
 import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
@@ -135,8 +135,10 @@ private val AttachmentStripTouchOverlap = 5.dp
 private val FooterTouchBottomOverflow = 12.dp
 private val FrameFooterTouchHeight = 32.dp
 
-// Figma's top overlay shares the message area's top edge.
-private val TopOverlayTopGap = 0.dp
+// #1562: the message area starts at the header's rule, so scrolled rows run up to it. This inset keeps a
+// short stream, the empty state and the top overlay where they sat when the area began 28dp lower.
+private val MessageAreaTopInset = 28.dp
+private val TopOverlayTopGap = MessageAreaTopInset
 private val FrameGlowRadius = 480.dp
 private const val FRAME_GLOW_STOP = 0.76012f
 private const val FRAME_SCRIM_ALPHA = 0.30f
@@ -541,7 +543,6 @@ fun ThreadScreen(
                         .padding(inner)
                         .fillMaxSize(),
             ) {
-                Spacer(Modifier.height(12.dp))
                 // #782: the thread's rows are the join of its items with the daemon's queued backlog, so a
                 // message the daemon parked draws once — in place, carrying the queue treatment — instead
                 // of once as an optimistic echo and again in a foot-of-list section. Pure and cached on
@@ -577,7 +578,7 @@ fun ThreadScreen(
                                     .fillMaxSize()
                                     .olderHistoryPull(emptyThreadPull)
                                     .scrollable(rememberScrollableState { 0f }, Orientation.Vertical)
-                                    .padding(horizontal = 24.dp),
+                                    .padding(start = 24.dp, top = MessageAreaTopInset, end = 24.dp),
                         )
                     } else {
                         val reversedRows = rows.asReversed()
@@ -637,6 +638,8 @@ fun ThreadScreen(
                             state = listState,
                             modifier = Modifier.fillMaxSize().olderHistoryPull(listPull),
                             reverseLayout = true,
+                            // #1562: padding at the oldest end, inside the clip, so scrolled rows still reach the rule.
+                            contentPadding = PaddingValues(top = MessageAreaTopInset),
                             // #1509: a reversed list defaults to bottom-anchored; Figma `640:2646` starts a
                             // short stream under the header. An overflowing stream is unaffected.
                             verticalArrangement = Arrangement.Top,
@@ -853,6 +856,29 @@ fun ThreadScreen(
             initialName = state.displayName,
             onSubmit = { onOverflowEvent(ThreadEvent.RenameSubmit(it)) },
             onDismiss = { onOverflowEvent(ThreadEvent.RenameDismiss) },
+        )
+    }
+    state.channelEditor?.let { editor ->
+        // #1561: the list's Edit channel binding, on this thread's host. Both failure strings are static: the
+        // shell announces them aloud, and the daemon's message never reaches this screen.
+        EditChannelModal(
+            conversationId = editor.conversationId,
+            initialName = editor.savedName,
+            prompt = editor.prompt,
+            initialMuted = editor.savedMuted,
+            onSubmit = { name, systemPrompt, muted ->
+                onOverflowEvent(ThreadEvent.ChannelEditSubmit(name, systemPrompt, muted))
+            },
+            onArchiveRequested = { onOverflowEvent(ThreadEvent.ChannelEditArchive) },
+            onDismissRequest = { onOverflowEvent(ThreadEvent.ChannelEditDismiss) },
+            hostAvailable = state.hostAvailable,
+            loading = editor.saving,
+            error =
+                when {
+                    editor.archiveFailed -> stringResource(R.string.archive_failed)
+                    editor.failed -> stringResource(R.string.edit_channel_save_failed)
+                    else -> null
+                },
         )
     }
     state.saveAsChannelDialog?.let { dialogState ->

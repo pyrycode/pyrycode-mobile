@@ -229,29 +229,15 @@ private fun ModelRow(
     ) {
         RadioMark(selected = selected, enabled = enabled)
         Spacer(modifier = Modifier.width(12.dp))
-        Column {
-            // #807: claude's own label, already made inert by the ViewModel. maxLines guards the layout
-            // against a label the daemon bounded but did not shape.
-            Text(
-                text = choice.label,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            // Replaces #254's private `Model.description()` mapping table, whose three Figma-derived
-            // strings described three device enum entries that no longer drive this sheet. The row's own
-            // `resolvedModel` is the honest equivalent: what this family currently resolves to.
-            if (choice.detail.isNotEmpty()) {
-                Text(
-                    text = choice.detail,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
+        // #807: claude's own label, already made inert by the ViewModel. #1497: 600:1694 draws the label alone on
+        // one line, without the resolved-identifier helper line.
+        Text(
+            text = choice.label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onBackground,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -292,8 +278,9 @@ private fun EffortRadioRows(
                     ) {
                         RadioMark(selected = effort.value == selectedEffort, enabled = enabled)
                         Spacer(modifier = Modifier.width(12.dp))
+                        // #1497: 600:1694 reads the published level capitalised; the write stays effort.value.
                         Text(
-                            text = effort.label,
+                            text = effort.label.replaceFirstChar { it.uppercaseChar() },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onBackground,
                         )

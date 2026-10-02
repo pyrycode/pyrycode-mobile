@@ -151,7 +151,7 @@ class ThreadComposerFooterTest {
         assertEquals(listOf("haiku"), modelSelections)
 
         opener.performClick()
-        composeTestRule.onNode(hasText("max") and isSelectable()).performClick()
+        composeTestRule.onNode(hasText("Max") and isSelectable()).performClick()
         assertEquals(listOf("max"), effortSelections)
 
         opener.performClick()

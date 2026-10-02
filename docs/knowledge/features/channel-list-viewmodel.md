@@ -261,59 +261,90 @@ archived, so a retry only touches the rows still active. Neither write patches a
 both rely on the host's own conversation stream re-emitting, the same discipline every other editor here
 uses.
 
-**A Channels row's own pencil, host-resolved an eighth time (#667).** `TreeChannelEditTapped(target) ->
-vm.openChannelEditor(target)`, `ChannelEditSubmitted(name, systemPrompt, muted) -> vm.submitChannelEdit(name,
-systemPrompt, muted)`, `ChannelArchiveRequested -> vm.archiveChannel()` and `ChannelEditDismissed ->
-vm.dismissChannelEditor()`. Unlike every editor above, this one's published state is not one
-`MutableStateFlow` but two, combined internally before either reaches `hostState`: a private
-`channelEditor: MutableStateFlow<ChannelEditorState?>` holding the target, the saved name, the saved mute
-flag (`savedMuted`, #1021 — the host's stored `Conversation.muted` at open time, then the value the
-daemon confirmed, the same pattern as `savedName`) and the
-`saving`/`failed`/`archiveFailed` flags (its own `prompt` field stays at its `Reading` default and is
-never read), and a private `channelPrompt: MutableStateFlow<Pair<HostConversationTarget,
+**A Channels row's own pencil, host-resolved an eighth time (#667), its machine shared with the thread's
+menu since #1561.** `TreeChannelEditTapped(target) -> vm.openChannelEditor(target)`,
+`ChannelEditSubmitted(name, systemPrompt, muted) -> vm.submitChannelEdit(name, systemPrompt, muted)`,
+`ChannelArchiveRequested -> vm.archiveChannel()` and `ChannelEditDismissed -> vm.dismissChannelEditor()`
+are each a one-line delegation to this VM's own [`ChannelEditorController`](#channeleditorcontroller-667--1561)
+instance — kept as this class's own methods, named exactly as before, so `ChannelListScreen`'s event
+dispatch and `HostChannelListViewModelTest`'s existing proofs are untouched by the #1561 extraction.
+`openChannelEditor` keeps its own unknown-channel check — it looks the channel up synchronously in
+`hostSource.snapshots.value`, matched by the target's own `serverId` then its own conversation id among
+that host's **`channels`** (the sibling lookup to `openChatEditor`'s `chats` walk above) — then calls
+`channelEditor.open(target, channel.name, channel.muted)`; an unknown id logs a content-free reject and
+touches neither `selected` nor the navigation channel, nor the controller, exactly as the chat and
+workspace editors' opens do. `hostState` combines `channelEditor.state` where it combined
+`publishedChannelEditor` before the move; the disconnect sweep's `init` block calls
+`channelEditor.closeUnless { it.serverId in live }` in place of the prior `clearUnless("channel_editor")` +
+manual `channelPromptRead?.cancel()` pair. See [`ChannelEditorController`](#channeleditorcontroller-667--1561)
+below for what moved and why, and for the one wrinkle the move left behind: the controller's home package
+is `ui.conversations.list`, which the thread's `ThreadViewModel` now imports from even though review
+convention keeps the thread package free of imports from `list` — the plan chose that placement
+deliberately (sharing the type with its sole prior owner rather than inventing a third location), and the
+\#1561 verifier flagged moving `ChannelEditorController` and its state types to a neutral package (e.g.
+`ui/conversations/components/`) as a non-blocking follow-up, not yet done.
+
+### `ChannelEditorController` (#667 / #1561)
+
+`ChannelEditorController` (`ui/conversations/list/ChannelEditorController.kt`) is a plain class — shaped
+like [`HostEditorController`](host-editor.md) (#751) — holding the Edit channel modal's machine that used
+to live directly on `ChannelListViewModel`: a private `editor: MutableStateFlow<ChannelEditorState?>`
+(target, saved name, saved mute flag `savedMuted` (#1021 — the host's stored `Conversation.muted` at open
+time, then the value the daemon confirmed, the same pattern as `savedName`), and the
+`saving`/`failed`/`archiveFailed` flags; its own `prompt` field stays at its `Reading` default and is never
+read directly) and a private `reading: MutableStateFlow<Pair<HostConversationTarget,
 ChannelPromptReading>?>` holding the latest stored-prompt reading tagged with the channel it belongs to.
-`publishedChannelEditor = combine(channelEditor, channelPrompt) { editor, reading -> editor?.copy(prompt =
+`state: Flow<ChannelEditorState?> = combine(editor, reading) { editor, reading -> editor?.copy(prompt =
 channelPromptFor(editor, reading)) }` publishes the editor's own reading only when the tag matches, else
 `ChannelPromptReading.Reading` — the same tag-and-filter discipline #904's `addWorkspaceRecent` combine
 established, applied here so a read landing mid-write can never break that write's own `compareAndSet`
-(the write's terminal transitions target `channelEditor`, which the read never touches).
+(the write's terminal transitions target `editor`, which the read never touches).
 
-`openChannelEditor` looks the channel up synchronously in `hostSource.snapshots.value`, matched by the
-target's own `serverId` then its own conversation id among that host's **`channels`** — the sibling
-lookup to `openChatEditor`'s `chats` walk above, now that `openChatEditor`'s own KDoc names this method
-rather than pointing at this ticket as future work. An unknown id logs a content-free reject and touches
-neither `selected` nor the navigation channel, exactly as the chat and workspace editors' opens do; only
-a chat qualifies for `openChatEditor`'s own lookup, a channel only for this one's. It then cancels any
-previous read job (a `Job?` field,
-`channelPromptRead`), resets `channelPrompt` to `target to Reading`, publishes the new `ChannelEditorState`
-with `savedName` clamped through the same `boundedName` helper `EditChatModal`'s seed uses (surrogate-safe
-`take(MAX_WORKSPACE_LABEL_CHARS)`) and `savedMuted` read straight from that same host-snapshot lookup's
-`channel.muted` (#1021), and launches the read job: it waits for `hostSource.repositoryFor
-(target.serverId)` to become non-null on the snapshots flow, calls `requestSystemPrompt` once, and
-publishes the tagged result — `Unavailable` for a thrown read or a reply over `SystemPromptLimit.MAX_BYTES`
-(never rendered or written back), `Read(prompt, status)` otherwise. `submitChannelEdit(name, systemPrompt,
-muted: Boolean? = null)` resolves
-`hostSource.repositoryFor(state.serverId)` **at the press**, the same discipline `submitChatName` and
-`submitWorkspaceName` use, and sends only what changed, in the order **rename → mute → prompt** (#1021): a
-rename iff the trimmed name differs from `savedName`, then a `setMuted` write iff `muted` is non-null and
-differs from `savedMuted` (`muted == null` means the caller reported no value and writes nothing — the
-default keeps every existing call site compiling), then the prompt leg, which follows desktop's
-`promptWriteFor` (#1342): `draft = systemPrompt?.takeIf { read != null }` — an unread or failed prompt can
-therefore never be overwritten, even when the operator typed a name change and pressed OK — and
-`writesPrompt = draft != null && draft != read?.prompt.orEmpty()` gates the write on any difference from
-the last reading, exactly as before; what changed is **what gets sent**: `promptToWrite =
-draft?.takeIf { it.isNotEmpty() }`, so an emptied box over a stored prompt sends `null` (clearing it)
-rather than storing `""`, while an unchanged box still sends nothing and any other text still goes
-verbatim. `ChannelListViewModel` logs `prompt=$writesPrompt` on `channel_edited`, a boolean rather than the
+Its constructor takes the owner's `viewModelScope` as `scope` (so clearing the owner cancels the prompt
+read and any write chain), `isHostLive: (serverId) -> Boolean` (gates every open and press), `repositoryFor:
+(serverId) -> ConversationRepository?` (resolved fresh at each press, since a reconnect replaces it),
+`awaitRepository: suspend (serverId) -> ConversationRepository` (what the prompt read waits on, so a modal
+opened while the host is down fills once it connects) and `onArchived: suspend () -> Unit = {}` (runs after
+a confirmed archive — a no-op for the list, `leaveForList()` for the thread). `ChannelListViewModel`
+constructs `ChannelEditorController(viewModelScope, ::isHostLive, hostSource::repositoryFor,
+awaitRepository = { serverId -> hostSource.snapshots.map { hostSource.repositoryFor(serverId) }
+.filterNotNull().first() })`; `ThreadViewModel` constructs one bound to its own repository and
+`hostAvailable` instead — see [`ThreadViewModel`'s instance](thread-overflow-menu-viewmodel-dispatcher.md#editchannel--channeleditorcontroller-1561).
+
+`open(target, name, muted)` cancels any previous read job, resets `reading` to `target to Reading`,
+publishes the new `ChannelEditorState` with `savedName` clamped through the same `boundedName` helper
+`EditChatModal`'s seed uses (surrogate-safe `take(MAX_WORKSPACE_LABEL_CHARS)`) and `savedMuted` set from
+the caller's own read of `channel.muted`, and launches the read job: it waits on `awaitRepository`, calls
+`requestSystemPrompt` once, and publishes the tagged result — `Unavailable` for a thrown read or a reply
+over `SystemPromptLimit.MAX_BYTES` (never rendered or written back), `Read(prompt, status)` otherwise.
+`submit(name, systemPrompt, muted: Boolean? = null)` resolves `repositoryFor(state.serverId)` **at the
+press**, the same discipline `ChannelListViewModel.submitChatName` and `submitWorkspaceName` use, and sends
+only what changed, in the order **rename → mute → prompt** (#1021): a rename iff the trimmed name differs
+from `savedName`, then a `setMuted` write iff `muted` is non-null and differs from `savedMuted` (`muted ==
+null` means the caller reported no value and writes nothing — the default keeps every existing call site
+compiling), then the prompt leg, which follows desktop's `promptWriteFor` (#1342): `draft =
+systemPrompt?.takeIf { read != null }` — an unread or failed prompt can therefore never be overwritten,
+even when the operator typed a name change and pressed OK — and `writesPrompt = draft != null && draft !=
+read?.prompt.orEmpty()` gates the write on any difference from the last reading; what gets sent is
+`promptToWrite = draft?.takeIf { it.isNotEmpty() }`, so an emptied box over a stored prompt sends `null`
+(clearing it) rather than storing `""`, while an unchanged box still sends nothing and any other text still
+goes verbatim. Every caller logs `prompt=$writesPrompt` on `channel_edited`, a boolean rather than the
 nullable value, since the thing worth recording is "did a prompt write happen", not what it sent. A
-confirmed rename updates
-`savedName`, and a confirmed mute write updates `savedMuted`, before the prompt leg runs — the prompt is
-the only write whose confirmation is never recorded, so it stays last and a retry after any failure sends
-only the writes the host has not yet confirmed. `archiveChannel` mirrors `archiveChat`'s shape exactly — no field condition, no
-confirmation, `archive(conversationId)` on the press-resolved repository — and `dismissChannelEditor`
-nulls `channelEditor` and cancels `channelPromptRead` unguarded. See
-[System prompt editor](system-prompt-editor.md) for why this reads and writes the prompt itself rather
-than constructing a `SystemPromptEditor`: that class binds one repository at construction, which a
+confirmed rename updates `savedName`, and a confirmed mute write updates `savedMuted`, before the prompt
+leg runs — the prompt is the only write whose confirmation is never recorded, so it stays last and a retry
+after any failure sends only the writes the host has not yet confirmed. `archive()` mirrors the list's
+`archiveChat`'s shape exactly — no field condition, no confirmation, `archive(conversationId)` on the
+press-resolved repository — and on success runs `onArchived()` after its terminal `compareAndSet`, which is
+how a thread leaves for the list on a confirmed archive from the modal, through the same `leaveForList`
+its menu's own Archive uses. `dismiss()` nulls `editor` and cancels the read job unguarded. `closeUnless
+(keep)` is the list's own `clearUnless("channel_editor")` plus the prompt-read cancel, folded into the
+controller so the thread gets the same disconnect behaviour for free if it ever adopts #1336's rule (it
+does not today — see [Edit channel on the thread](thread-overflow-menu-viewmodel-dispatcher.md#editchannel--channeleditorcontroller-1561)
+for why). Every line removed from `ChannelListViewModel` reappeared here unchanged but for the renamed
+fields and the injected lambdas — the #1561 verifier compared them line by line — so the guarded writes,
+the rename → mute → prompt order, cancellation handling and log events are exactly as they were before the
+move. See [System prompt editor](system-prompt-editor.md) for why this reads and writes the prompt itself
+rather than constructing a `SystemPromptEditor`: that class binds one repository at construction, which a
 background/foreground reconnect retires.
 
 **A disconnected host closes its own create and edit modals, reversing #1190 (#1336).** #1190 made
@@ -322,8 +353,10 @@ the ticket's own rationale was that an in-flight write should not be yanked out 
 The owner now wants desktop's rule instead: an `init` block launches `viewModelScope.launch {
 hostSource.snapshots.collect { … } }` that computes the live server-id set on every snapshot and, through a
 private `MutableStateFlow<T?>.clearUnless(name, keep)` helper (`getAndUpdate { it?.takeIf(keep) }`), sets
-`createChannel`, `chatEditor` and `createChat` to `null`, and `channelEditor` to `null` while also
-cancelling `channelPromptRead`, for whichever of them belongs to a host no longer in that set — a modal for
+`createChannel`, `chatEditor` and `createChat` to `null`, and (since #1561, through
+`channelEditor.closeUnless { it.serverId in live }` rather than a local `clearUnless` call) closes the
+Edit channel modal and cancels its own prompt read, for whichever of them belongs to a host no longer in
+that set — a modal for
 a still-live host is untouched, and the clearing is atomic against any writer calling the same state's
 `compareAndSet`. A write already in flight may still finish: its terminal `compareAndSet` targets the state
 published before the watcher ran, so once that state is `null` the write's own `compareAndSet` is a no-op

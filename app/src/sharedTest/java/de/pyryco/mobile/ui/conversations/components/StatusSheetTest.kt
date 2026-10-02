@@ -192,15 +192,15 @@ class StatusSheetTest {
     }
 
     @Test
-    fun renders_the_published_rows_with_their_labels_and_details() {
+    fun renders_the_published_rows_with_their_labels_only() {
         composeTestRule.setSheet()
 
         composeTestRule.onNode(hasText("Model")).assertIsDisplayed()
         composeTestRule.onNode(hasText("Opus 4.7")).assertIsDisplayed()
-        composeTestRule.onNode(hasText("claude-opus-4-7")).assertIsDisplayed()
         composeTestRule.onNode(hasText("Sonnet 4.6")).assertIsDisplayed()
-        composeTestRule.onNode(hasText("claude-sonnet-4-6")).assertIsDisplayed()
         composeTestRule.onNode(hasText("Haiku 4.5")).assertIsDisplayed()
+        // #1497: 600:1694 dropped the resolved-identifier helper line; each row is its label alone.
+        composeTestRule.onAllNodes(hasText("claude-", substring = true)).assertCountEquals(0)
     }
 
     @Test
@@ -227,7 +227,7 @@ class StatusSheetTest {
         composeTestRule.setSheet()
 
         val model = composeTestRule.onNode(isSelectable() and hasText("Opus 4.7")).fetchSemanticsNode()
-        val effort = composeTestRule.onNode(isSelectable() and hasText("high")).fetchSemanticsNode()
+        val effort = composeTestRule.onNode(isSelectable() and hasText("High")).fetchSemanticsNode()
         assertTrue(model.touchBoundsInRoot.height >= 48f)
         assertTrue(effort.touchBoundsInRoot.height >= 48f)
     }
@@ -293,12 +293,29 @@ class StatusSheetTest {
         composeTestRule.setSheet(selectedModel = "opus")
 
         composeTestRule.onNode(hasText("Effort")).assertIsDisplayed()
-        composeTestRule.onNode(hasText("low")).assertIsDisplayed()
-        composeTestRule.onNode(hasText("high")).assertIsDisplayed()
-        composeTestRule.onNode(hasText("max")).assertIsDisplayed()
+        composeTestRule.onNode(hasText("Low")).assertIsDisplayed()
+        composeTestRule.onNode(hasText("High")).assertIsDisplayed()
+        composeTestRule.onNode(hasText("Max")).assertIsDisplayed()
         // "medium" and "xhigh" are Effort entries this row never published.
+        composeTestRule.onAllNodes(hasText("Medium")).assertCountEquals(0)
+        composeTestRule.onAllNodes(hasText("Xhigh")).assertCountEquals(0)
+    }
+
+    // #1497: 600:1694 reads the published levels capitalised; the write value stays the wire string.
+    @Test
+    fun published_levels_read_capitalised_and_write_verbatim() {
+        val picks = mutableListOf<String>()
+        composeTestRule.setSheet(
+            effortChoices = listOf("low", "medium", "high", "max").map { ThreadEffortChoice(it, it) },
+            selectedEffort = "",
+            onEffortSelected = picks::add,
+        )
+
+        listOf("Low", "Medium", "High", "Max").forEach { label ->
+            composeTestRule.onNode(isSelectable() and hasText(label)).performClick()
+        }
         composeTestRule.onAllNodes(hasText("medium")).assertCountEquals(0)
-        composeTestRule.onAllNodes(hasText("xhigh")).assertCountEquals(0)
+        assertEquals(listOf("low", "medium", "high", "max"), picks)
     }
 
     @Test
@@ -306,7 +323,7 @@ class StatusSheetTest {
         val picks = mutableListOf<String>()
         composeTestRule.setSheet(onEffortSelected = picks::add)
 
-        composeTestRule.onNode(hasText("low")).performClick()
+        composeTestRule.onNode(hasText("Low")).performClick()
 
         assertEquals(listOf("low"), picks)
     }
@@ -315,8 +332,8 @@ class StatusSheetTest {
     fun selected_effort_chip_reports_selected_semantics() {
         composeTestRule.setSheet(selectedEffort = "max")
 
-        composeTestRule.onNode(isSelectable() and hasText("max")).assertIsSelected()
-        composeTestRule.onNode(isSelectable() and hasText("low")).assertIsNotSelected()
+        composeTestRule.onNode(isSelectable() and hasText("Max")).assertIsSelected()
+        composeTestRule.onNode(isSelectable() and hasText("Low")).assertIsNotSelected()
     }
 
     @Test
@@ -324,11 +341,11 @@ class StatusSheetTest {
         val picks = mutableListOf<String>()
         composeTestRule.setSheet(selectedEffort = "", onEffortSelected = picks::add)
 
-        composeTestRule.onNode(isSelectable() and hasText("low")).assertIsNotSelected()
-        composeTestRule.onNode(isSelectable() and hasText("high")).assertIsNotSelected()
+        composeTestRule.onNode(isSelectable() and hasText("Low")).assertIsNotSelected()
+        composeTestRule.onNode(isSelectable() and hasText("High")).assertIsNotSelected()
 
         // Still selectable: an unset saved effort is not a reason to withhold the row's own levels.
-        composeTestRule.onNode(hasText("low")).performClick()
+        composeTestRule.onNode(hasText("Low")).performClick()
         assertEquals(listOf("low"), picks)
     }
 
@@ -338,7 +355,7 @@ class StatusSheetTest {
         composeTestRule.setSheet(selectedEffort = "", effortNote = "Claude reports no effort parameter.")
 
         composeTestRule.onNode(hasText("Claude reports no effort parameter.")).assertIsDisplayed()
-        composeTestRule.onNode(isSelectable() and hasText("high")).assertIsNotSelected()
+        composeTestRule.onNode(isSelectable() and hasText("High")).assertIsNotSelected()
     }
 
     @Test
@@ -346,8 +363,8 @@ class StatusSheetTest {
         composeTestRule.setSheet(selectedModel = "haiku")
 
         composeTestRule.onNode(hasText("No effort levels published for this model.")).assertIsDisplayed()
-        composeTestRule.onAllNodes(hasText("low")).assertCountEquals(0)
-        composeTestRule.onAllNodes(hasText("high")).assertCountEquals(0)
+        composeTestRule.onAllNodes(hasText("Low")).assertCountEquals(0)
+        composeTestRule.onAllNodes(hasText("High")).assertCountEquals(0)
     }
 
     // ---- Running model (#891) --------------------------------------------------------------------
@@ -403,7 +420,7 @@ class StatusSheetTest {
         composeTestRule.onNode(hasText("Model · applying…")).assertIsDisplayed()
         composeTestRule.onNode(hasText("Effort · applying…")).assertIsDisplayed()
         composeTestRule.onNode(isSelectable() and hasText("Sonnet 4.6")).assertIsNotEnabled()
-        composeTestRule.onNode(isSelectable() and hasText("low")).assertIsNotEnabled()
+        composeTestRule.onNode(isSelectable() and hasText("Low")).assertIsNotEnabled()
     }
 
     @Test
@@ -413,7 +430,7 @@ class StatusSheetTest {
         composeTestRule.onNode(hasText("Model")).assertIsDisplayed()
         composeTestRule.onAllNodes(hasText("Model · applying…")).assertCountEquals(0)
         composeTestRule.onNode(isSelectable() and hasText("Sonnet 4.6")).assertIsNotEnabled()
-        composeTestRule.onNode(isSelectable() and hasText("low")).assertIsNotEnabled()
+        composeTestRule.onNode(isSelectable() and hasText("Low")).assertIsNotEnabled()
     }
 
     // ---- Unchanged sections ----------------------------------------------------------------------

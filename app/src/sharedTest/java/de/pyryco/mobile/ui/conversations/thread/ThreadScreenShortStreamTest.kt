@@ -89,10 +89,11 @@ class ThreadScreenShortStreamTest {
     private fun assertTopAnchored(node: SemanticsNodeInteraction) {
         val region = composeRule.onNodeWithTag("thread-message-region").bounds()
         val content = node.bounds()
+        val minTopGap = with(composeRule.density) { MESSAGE_AREA_TOP_INSET.toPx() }
         val maxTopGap = with(composeRule.density) { MAX_TOP_GAP.toPx() }
         val topGap = content.top - region.top
         val bottomGap = region.bottom - content.bottom
-        assertTrue("content starts $topGap px below the region top, over $maxTopGap", topGap in 0f..maxTopGap)
+        assertTrue("content starts $topGap px below the region top, outside $minTopGap..$maxTopGap", topGap in minTopGap..maxTopGap)
         assertTrue("the empty space ($bottomGap px) lies below the content, not above ($topGap px)", bottomGap > topGap)
     }
 
@@ -101,7 +102,12 @@ class ThreadScreenShortStreamTest {
     private companion object {
         const val MESSAGE = "Let's write the release notes."
 
-        // The row's own gutter and bubble padding; a bottom-anchored short stream sits hundreds of dp lower.
-        val MAX_TOP_GAP = 32.dp
+        // The list's top inset (#1562): the stream starts below it, where it sat before the region grew up to
+        // the header's rule.
+        val MESSAGE_AREA_TOP_INSET = 28.dp
+
+        // The inset plus the row's own gutter and bubble padding; a bottom-anchored short stream sits hundreds
+        // of dp lower.
+        val MAX_TOP_GAP = MESSAGE_AREA_TOP_INSET + 32.dp
     }
 }

@@ -108,7 +108,8 @@ class ThreadFrameTest {
         assertEquals(16f, back.top.value, 1f)
         assertEquals(404f, overflow.right.value, 1f)
         val messages = composeTestRule.onNodeWithTag("thread-message-region").getUnclippedBoundsInRoot()
-        assertEquals(97f, messages.top.value, 2f)
+        // #1562: Figma 621:3571 starts the message area at the rule's bottom edge.
+        assertEquals(69f, messages.top.value, 2f)
     }
 
     @OptIn(ExperimentalTestApi::class)

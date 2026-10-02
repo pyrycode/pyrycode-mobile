@@ -12,6 +12,7 @@ import de.pyryco.mobile.data.repository.SessionCapabilities
 import de.pyryco.mobile.data.repository.SessionFacts
 import de.pyryco.mobile.data.repository.SlashCommandMenuRow
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.conversations.list.ChannelEditorState
 import kotlinx.datetime.Instant
 
 sealed interface ThreadEvent {
@@ -38,6 +39,27 @@ sealed interface ThreadEvent {
     data object ChannelInfo : ThreadEvent
 
     data object ChannelInfoDismiss : ThreadEvent
+
+    /** A channel's menu Edit (#1561): opens Edit channel on this conversation. A discussion keeps [Rename]. */
+    data object EditChannel : ThreadEvent
+
+    /**
+     * OK on Edit channel (#1561), carrying what the modal reports. [toString] is overridden: the generated
+     * one would print the prompt, which may hold a pasted credential.
+     */
+    data class ChannelEditSubmit(
+        val name: String,
+        val systemPrompt: String?,
+        val muted: Boolean,
+    ) : ThreadEvent {
+        override fun toString(): String = "ChannelEditSubmit(name=<redacted>, systemPrompt=<redacted>, muted=$muted)"
+    }
+
+    /** Edit channel's Archive channel (#1561). */
+    data object ChannelEditArchive : ThreadEvent
+
+    /** Edit channel's X, Cancel or Back (#1561): closes it with nothing written. */
+    data object ChannelEditDismiss : ThreadEvent
 
     /**
      * The Channel info sheet's System prompt box changed (#1342). [toString] is overridden: the generated
@@ -159,6 +181,10 @@ data class ThreadUiState(
     // #1344: this conversation's MCP server reading on this connection. Its server strings are Claude-authored
     // and reach the screen only as bounded inert text in Channel info.
     val mcpStatus: McpStatus = McpStatus(),
+    // #1561: the open Edit channel modal, or null; and whether this thread's host has a live repository,
+    // which gates that modal's OK and Archive as the list gates them on its host's connection.
+    val channelEditor: ChannelEditorState? = null,
+    val hostAvailable: Boolean = true,
 )
 
 /**
@@ -184,7 +210,8 @@ enum class SaveAsChannelFailure { Promote, SystemPrompt }
  * argument [ConversationRepository.setSessionSettings] takes; it is an alias (`sonnet`), a bracketed
  * variant (`opus[1m]`) or `default`, so nothing parses it and nothing presents it as a version.
  * [label] is the display-only Claude family derived from [value] or the inert published name; Codex
- * uses the inert published name. [detail] is inert resolved text. [resolvedModel] stays raw for exact
+ * uses the inert published name. [detail] is inert resolved text that Run configuration no longer draws
+ * (#1497). [resolvedModel] stays raw for exact
  * inherited-default comparison and is never rendered directly.
  */
 data class ThreadModelChoice(
