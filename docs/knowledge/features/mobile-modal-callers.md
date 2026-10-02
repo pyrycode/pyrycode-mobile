@@ -275,8 +275,8 @@ sends `null` for a draft over a stored prompt that the operator emptied, desktop
 available host, a non-blank trimmed name and (when the prompt is showing) a draft within
 `SystemPromptLimit.MAX_BYTES`; Archive needs only the host and no write in flight, independent of either
 field, with no confirmation step — an archived channel comes back through Archive's own Restore, the
-same parity `EditChatModal`'s Archive established. [ChannelListScreen](channel-list-screen.md) is its
-only caller: the Channels row's own pen — the same pen shape #827 gave Chats rows, now
+same parity `EditChatModal`'s Archive established. [ChannelListScreen](channel-list-screen.md) was its
+only caller through #667: the Channels row's own pen — the same pen shape #827 gave Chats rows, now
 generalised behind `TreeConversationRow`'s `editDescription: @StringRes Int` parameter — opens it on
 that row's own host and conversation. Since #1523 the pen draws only on the selected conversation row
 (the one last opened and left with Back), so Edit channel, like Edit chat, is reached by opening the
@@ -289,7 +289,12 @@ repository resolved **at the press** — see [ChannelListScreen § Channels row 
 [ChannelListViewModel § Wiring](channel-list-viewmodel.md#wiring) for the two target-tagged state flows
 that keep a prompt read from ever landing on a write's own `compareAndSet`, and for why this caller
 resolves the repository at the press rather than binding one at construction the way
-[`SystemPromptEditor`](system-prompt-editor.md) does.
+[`SystemPromptEditor`](system-prompt-editor.md) does. **Since #1561 it has a second caller**: a channel's
+thread menu Edit, in place of Rename, hosts the same composable off `ThreadUiState.channelEditor` —
+[Thread screen — the sheets § EditChannelModal hosting](thread-screen-how-it-works-sheets.md#editchannelmodal-hosting-post-1561)
+has the binding, and [`ChannelEditorController`](channel-list-viewmodel.md#channeleditorcontroller-667--1561)
+is the shared machine both callers' bindings now drive, extracted from this view model so neither caller
+copies the other's write chain.
 
 **`PermissionModalOverlay`** (`ui/conversations/thread/ThreadPermissionModal.kt`, #815) is the first of
 [`MobileGateModal`](mobile-modal.md#the-hardened-gate-mobilegatemodal)'s two callers, and the only one using it rather than

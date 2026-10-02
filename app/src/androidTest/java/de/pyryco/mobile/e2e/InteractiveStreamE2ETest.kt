@@ -7145,18 +7145,34 @@ class InteractiveStreamE2ETest {
         }
     }
 
-    /** Rename the open thread's conversation to [newName] and wait for its top bar to re-label (#537's drive). */
+    /**
+     * Rename the open thread's conversation to [newName] and wait for its top bar to re-label (#537's drive).
+     * A chat renames through its menu's Rename dialog; a channel through its menu's Edit, which opens Edit
+     * channel (#1561).
+     */
     private fun renameOpenThread(newName: String) {
+        val edit = string(R.string.thread_overflow_edit)
         composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(RENAME_ITEM).fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodesWithText(RENAME_ITEM).fetchSemanticsNodes().isNotEmpty() ||
+                composeTestRule.onAllNodesWithText(edit).fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onAllNodesWithText(RENAME_ITEM).onFirst().performClick()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasSetTextAction() and isFocused()).fetchSemanticsNodes().isNotEmpty()
+        if (composeTestRule.onAllNodesWithText(edit).fetchSemanticsNodes().isNotEmpty()) {
+            composeTestRule.onAllNodesWithText(edit).onFirst().performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasTestTag(CHANNEL_NAME_FIELD_TAG)).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).performTextReplacement(newName)
+            composeTestRule.onNodeWithText(EDIT_CHANNEL_OK).performClick()
+            awaitChannelEditorClosed()
+        } else {
+            composeTestRule.onAllNodesWithText(RENAME_ITEM).onFirst().performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasSetTextAction() and isFocused()).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNode(hasSetTextAction() and isFocused()).performTextReplacement(newName)
+            composeTestRule.onNodeWithText(RENAME_SAVE).performClick()
         }
-        composeTestRule.onNode(hasSetTextAction() and isFocused()).performTextReplacement(newName)
-        composeTestRule.onNodeWithText(RENAME_SAVE).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(newName).fetchSemanticsNodes().isNotEmpty()
         }

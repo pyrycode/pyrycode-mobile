@@ -355,12 +355,14 @@ round-trips, promote being a pure registry op daemon-side); a **list-archive-ent
 Archived screen appears, proving the entry #737 put on the list's bar reaches Archived independently of
 the Settings route; **zero** claude turns, no daemon round-trip at all — the bar is drawn on every state
 of the list); and a **two-hosts-colliding-conversation-id** scenario (#847 —
-`interactiveTurn_twoHostsCollidingConversationId_stayPerHost`: seed one conversation under a shared id
-but a different name on two isolated test daemons, pair the second host through the app's own scanner →
-paste-code flow, and assert each host's row, thread and cache stay separated by `(serverId,
+`interactiveTurn_twoHostsCollidingConversationId_stayPerHost`: seed one **promoted** conversation under a
+shared id but a different name on two isolated test daemons, pair the second host through the app's own
+scanner → paste-code flow, and assert each host's row, thread and cache stay separated by `(serverId,
 conversationId)` — re-checked after a rename, after each host's relay link is cut and restored, and
 after the app's object graph is rebuilt over the same on-device state; **zero** claude turns — pairing,
-navigation, rename and link cycling are all daemon round-trips); and a
+navigation, rename and link cycling are all daemon round-trips. The rename step renames a channel, so
+since #1561 it drives the shared `renameOpenThread` helper's Edit-channel path — the menu's Edit opens
+Edit channel rather than the rename dialog; see [Follow-ups to ticket](#follow-ups-to-ticket)); and a
 **peer-started-turn** scenario (#848 — `interactiveTurn_peerStartedTurn_continuesOnPhone`: a
 `SecondClientPeer` sends the ping prompt into a chat the phone has renamed and has open, asserting
 claude's reply renders exactly once while the thread stays open, then that the peer's message and the
@@ -3022,6 +3024,21 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — updated:** [#1561](https://github.com/pyrycode/pyrycode-mobile/issues/1561) changed the
+  shared `renameOpenThread(newName)` helper: a promoted conversation now renames through the thread's menu's
+  Edit, which opens Edit channel (name field tagged `CHANNEL_NAME_FIELD_TAG`, then OK); an unpromoted one
+  still goes through Rename. `interactiveTurn_twoHostsCollidingConversationId_stayPerHost`'s AC-2 step
+  renames host A's seeded **channel**, so it now drives this ticket's Edit-channel flow against a real
+  daemon instead of the rename dialog. No new test method and no change to the curated selector or
+  `LIVE_MINIMUM`. The dispatcher's post-verifier full `python3 scripts/android-test-gate.py live` run
+  (branch `feature/1561` at `3419cd5883`, merged with `origin/main` at `72a3f328a5`, 0 commits behind
+  before the merge) executed 51, passed 51, failed 0, skipped 0; `interactiveTurn_twoHostsCollidingConversationId_stayPerHost`
+  and `interactiveTurn_muteChannel_roundTripsThroughTheHost` are both present and passing in the fresh XML.
+  Removing the list's row pens (tracked as a sibling ticket) will break
+  `interactiveTurn_muteChannel_roundTripsThroughTheHost` and the create/edit-channel scenario
+  (`interactiveTurn_createEditArchiveChannel_readsPromptBack`), both of which open Edit channel from a
+  Channels row's pen today; they can switch to the thread's menu Edit, which now reaches the same modal.
 
 - **Coverage — added:** [#1460](https://github.com/pyrycode/pyrycode-mobile/issues/1460) adds
   `InteractiveStreamE2ETest.interactiveTurn_compactWithAttachment_compactsAndClearsTheStrip` to the

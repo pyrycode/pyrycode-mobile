@@ -104,3 +104,49 @@ LaunchedEffect(vm) {
 ```
 
 A `Channel` (not a `StateFlow<Boolean>`) is the **one-shot guarantee (AC #5)**: it delivers each element once and never replays, so on rotation `LaunchedEffect(vm)` re-collects the same VM's flow but the consumed `PopBack` is gone — no second pop. The collection site is `MainActivity`, not the screen, because the consumer (`popBackStack()`) is a NavHost concern — this is the twin of the `ChannelListNavigation` collection and calls the same `popBackStack()` that `onBack` already calls; contrast [`ArchivedDiscussionsViewModel.effects`](archived-discussions-screen.md), collected in-screen because *its* effect drives a snackbar. See [the per-ticket notes](../codebase/227.md) for the full decision record.
+
+### EditChannelModal hosting (post-#1561)
+
+[#1561](https://github.com/pyrycode/pyrycode-mobile/issues/1561) hosts the existing
+[`EditChannelModal`](mobile-modal-callers.md#callers) (the binding the list's Channels row pencil has used
+since #667) as a seventh `Scaffold` sibling, gated on `state.channelEditor != null`, in place of a channel's
+Rename slot:
+
+```kotlin
+state.channelEditor?.let { editor ->
+    EditChannelModal(
+        conversationId = editor.conversationId,
+        initialName = editor.savedName,
+        prompt = editor.prompt,
+        initialMuted = editor.savedMuted,
+        onSubmit = { name, systemPrompt, muted ->
+            onOverflowEvent(ThreadEvent.ChannelEditSubmit(name, systemPrompt, muted))
+        },
+        onArchiveRequested = { onOverflowEvent(ThreadEvent.ChannelEditArchive) },
+        onDismissRequest = { onOverflowEvent(ThreadEvent.ChannelEditDismiss) },
+        hostAvailable = state.hostAvailable,
+        loading = editor.saving,
+        error = when {
+            editor.archiveFailed -> stringResource(R.string.archive_failed)
+            editor.failed -> stringResource(R.string.edit_channel_save_failed)
+            else -> null
+        },
+    )
+}
+```
+
+Wired exactly as the list's own `ChannelEditorModal` binding is, with this thread's own `hostAvailable`
+in place of the list's per-host `isHostConnected(serverId)` — both static-string error branches never show
+a daemon message, since the shell announces it aloud instead. `onArchiveRequested` dispatches
+`ChannelEditArchive` straight to `onOverflowEvent`, not through the sheet's own `Archive` reuse pattern
+above: Edit channel's Archive is a distinct `ThreadEvent`, not `ThreadEvent.Archive`, because its
+`ChannelEditorController.archive()` (see [ThreadOverflowMenu — ViewModel dispatcher](thread-overflow-menu-viewmodel-dispatcher.md#editchannel--channeleditorcontroller-1561))
+runs its own archive call and its own `onArchived` continuation rather than the menu's `sendArchive()`
+path — both ultimately call `leaveForList()`, so either Archive leaves the thread the same way, but
+neither reuses the other's event or handler. No `navigationChannel.send(PopBack)` here: `leaveForList()`
+is the shared #1399 latch described above, not a direct one-shot send.
+
+Unlike the sheet's Archive/Delete, there is **no disconnect-sweep parity with the list's #1336 rule** — see
+[the ViewModel dispatcher doc](thread-overflow-menu-viewmodel-dispatcher.md#editchannel--channeleditorcontroller-1561)
+for why a dropped host leaves this modal open, gated only by `hostAvailable` disabling its controls,
+rather than closing it outright.

@@ -18,13 +18,11 @@ import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.ui.host.HostEditorController
 import de.pyryco.mobile.ui.host.HostEditorState
-import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 import de.pyryco.mobile.ui.workspace.isWorkspaceLabelTooLong
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
 import de.pyryco.mobile.ui.workspace.workspaceLabelFor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -102,21 +100,6 @@ data class HostChannelListState(
 }
 
 private fun ConnectionStatus.isLive(): Boolean = relay == RelayLinkStatus.Connected && pyrycode == PyrycodeLinkStatus.Connected
-
-/** [editor]'s own reading, or [ChannelPromptReading.Reading] while the latest one is another channel's. */
-private fun channelPromptFor(
-    editor: ChannelEditorState,
-    reading: Pair<HostConversationTarget, ChannelPromptReading>?,
-): ChannelPromptReading =
-    reading?.takeIf { it.first == HostConversationTarget(editor.serverId, editor.conversationId) }?.second
-        ?: ChannelPromptReading.Reading
-
-/**
- * A daemon-authored name clamped before layout, as `EditChatModal` clamps its own. The clamp must not end on
- * half a surrogate pair, since an untouched field is compared against it.
- */
-private fun boundedName(name: String): String =
-    name.take(MAX_WORKSPACE_LABEL_CHARS).let { if (it.lastOrNull()?.isHighSurrogate() == true) it.dropLast(1) else it }
 
 /**
  * The Edit chat modal's target and flags (#827), shaped like [HostEditorState]: ids and display text only.
@@ -334,17 +317,19 @@ class ChannelListViewModel(
     private val pendingNewChatModels = mutableSetOf<HostConversationTarget>()
     private val tappedPendingNewChats = mutableSetOf<HostConversationTarget>()
 
-    // #667: the editor's own prompt stays at its default here; the reading lives apart, tagged with the
-    // channel it was read for, so a read landing mid-write never breaks that write's `compareAndSet` and no
-    // emission can pair one channel's modal with another channel's prompt.
-    private val channelEditor = MutableStateFlow<ChannelEditorState?>(null)
-    private val channelPrompt = MutableStateFlow<Pair<HostConversationTarget, ChannelPromptReading>?>(null)
-    private var channelPromptRead: Job? = null
-
-    private val publishedChannelEditor: Flow<ChannelEditorState?> =
-        combine(channelEditor, channelPrompt) { editor, reading ->
-            editor?.copy(prompt = channelPromptFor(editor, reading))
-        }
+    // #667: the Edit channel modal's machine, shared with the thread's menu since #1561.
+    private val channelEditor =
+        ChannelEditorController(
+            scope = viewModelScope,
+            isHostLive = ::isHostLive,
+            repositoryFor = hostSource::repositoryFor,
+            awaitRepository = { serverId ->
+                hostSource.snapshots
+                    .map { hostSource.repositoryFor(serverId) }
+                    .filterNotNull()
+                    .first()
+            },
+        )
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val hostState: StateFlow<HostChannelListState> =
@@ -364,7 +349,7 @@ class ChannelListViewModel(
             collapsedKeys,
             lastOpenedTarget,
             // Grouped first: five flows is the typed `combine`'s limit.
-            combine(combine(hostEditor.state, chatEditor, ::Pair), workspaceEditor, publishedChannelEditor, ::Triple),
+            combine(combine(hostEditor.state, chatEditor, ::Pair), workspaceEditor, channelEditor.state, ::Triple),
         ) { hosts, (adding, recent, creatingModals), collapsed, selected, (editorAndChat, workspace, channel) ->
             val (editor, chat) = editorAndChat
             val (creating, creatingChat) = creatingModals
@@ -394,7 +379,7 @@ class ChannelListViewModel(
                 createChannel.clearUnless("create_channel") { it.serverId in live }
                 createChat.clearUnless("create_chat") { it.serverId in live }
                 chatEditor.clearUnless("chat_editor") { it.serverId in live }
-                if (channelEditor.clearUnless("channel_editor") { it.serverId in live }) channelPromptRead?.cancel()
+                channelEditor.closeUnless { it.serverId in live }
             }
         }
     }
@@ -1098,199 +1083,24 @@ class ChannelListViewModel(
             RelayLog.d { "event=channel_editor_open_rejected code=unknown_channel" }
             return
         }
-        if (!isHostLive(target.serverId)) {
-            RelayLog.d { "event=channel_editor_open_rejected code=disconnected" }
-            return
-        }
-        channelPromptRead?.cancel()
-        channelPrompt.value = target to ChannelPromptReading.Reading
-        channelEditor.value =
-            ChannelEditorState(
-                serverId = target.serverId,
-                conversationId = target.conversationId,
-                savedName = boundedName(channel.name?.takeIf { it.isNotBlank() }.orEmpty()),
-                savedMuted = channel.muted,
-            )
-        RelayLog.d { "event=channel_editor_opened" }
-        channelPromptRead =
-            viewModelScope.launch {
-                val live =
-                    hostSource.snapshots
-                        .map { hostSource.repositoryFor(target.serverId) }
-                        .filterNotNull()
-                        .first()
-                channelPrompt.value = target to readChannelPrompt(live, target.conversationId)
-            }
+        channelEditor.open(target, channel.name, channel.muted)
     }
 
     /**
-     * OK: renames the open editor's channel when the trimmed [name] differs from its saved name, then writes
-     * [muted] when it differs from the saved flag (#1021), then writes [systemPrompt] verbatim when it differs
-     * from the stored prompt that was read, then closes (#667). [muted] `null` writes no mute.
-     *
-     * [systemPrompt] is `null` when the modal never showed a stored prompt, and it is ignored unless this
-     * editor's reading arrived: a prompt the operator never saw can never be overwritten. An absent stored
-     * prompt reads as an empty box, as `SystemPromptEditorState.Loaded.changed` does, and a box emptied over
-     * a stored prompt sends `null`, clearing it (#1342). A confirmed rename is
-     * recorded as the saved name and a confirmed mute as the saved flag; the prompt, whose confirmation is not
-     * recorded, goes last. So a retry sends only the writes the host has not confirmed.
-     *
-     * The repository is resolved from the editor's `serverId` at the press — a reconnect replaces it — and
-     * every terminal transition is a `compareAndSet`, as [submitChatName]. The chain is not cancelled by a
-     * dismissal: the operator already pressed OK.
+     * OK on the Edit channel modal: writes only what changed, rename then mute then prompt (#667, #1021).
+     * The machine is [ChannelEditorController.submit].
      */
     fun submitChannelEdit(
         name: String,
         systemPrompt: String?,
         muted: Boolean? = null,
-    ) {
-        val state = channelEditor.value ?: return
-        if (state.saving) return
-        val trimmed = name.trim()
-        val read = channelPromptFor(state, channelPrompt.value) as? ChannelPromptReading.Read
-        val draft = systemPrompt?.takeIf { read != null }
-        if (trimmed.isEmpty() || (draft != null && !SystemPromptLimit.fits(draft))) {
-            RelayLog.d { "event=channel_edit_rejected code=invalid" }
-            return
-        }
-        if (!isHostLive(state.serverId)) {
-            RelayLog.d { "event=channel_edit_rejected code=disconnected" }
-            closeChannelEditor(state)
-            return
-        }
-        val live = hostSource.repositoryFor(state.serverId)
-        if (live == null) {
-            RelayLog.d { "event=channel_edit_rejected code=unavailable" }
-            channelEditor.value = state.copy(failed = true, archiveFailed = false)
-            return
-        }
-        val renameTo = trimmed.takeIf { it != state.savedName.trim() }
-        val muteTo = muted?.takeIf { it != state.savedMuted }
-        // Desktop's promptWriteFor (#1342): an unchanged box sends nothing, an emptied one clears the prompt
-        // with null, and any other text is sent verbatim.
-        val writesPrompt = draft != null && draft != read?.prompt.orEmpty()
-        val promptToWrite = draft?.takeIf { it.isNotEmpty() }
-        val pending = state.copy(saving = true, failed = false, archiveFailed = false)
-        channelEditor.value = pending
-        viewModelScope.launch {
-            var current = pending
-            if (renameTo != null) {
-                try {
-                    live.rename(state.conversationId, renameTo)
-                } catch (error: Exception) {
-                    if (error is CancellationException) throw error
-                    // Never log the name, the prompt, the ids or the server's message.
-                    RelayLog.d { "event=channel_rename_failed" }
-                    channelEditor.compareAndSet(pending, pending.copy(saving = false, failed = true))
-                    return@launch
-                }
-                current = pending.copy(savedName = renameTo)
-                channelEditor.compareAndSet(pending, current)
-            }
-            if (muteTo != null) {
-                val before = current
-                try {
-                    live.setMuted(state.conversationId, muteTo)
-                } catch (error: Exception) {
-                    if (error is CancellationException) throw error
-                    RelayLog.d { "event=channel_mute_write_failed" }
-                    channelEditor.compareAndSet(before, before.copy(saving = false, failed = true))
-                    return@launch
-                }
-                current = before.copy(savedMuted = muteTo)
-                channelEditor.compareAndSet(before, current)
-            }
-            if (writesPrompt) {
-                try {
-                    live.setSystemPrompt(state.conversationId, promptToWrite)
-                } catch (error: Exception) {
-                    if (error is CancellationException) throw error
-                    RelayLog.d { "event=channel_prompt_write_failed" }
-                    channelEditor.compareAndSet(current, current.copy(saving = false, failed = true))
-                    return@launch
-                }
-            }
-            // The row picks the new name and flag up from the host's own conversation stream; nothing is patched here.
-            channelEditor.compareAndSet(current, null)
-            RelayLog.d {
-                "event=channel_edited renamed=${renameTo != null} muted=${muteTo != null} prompt=$writesPrompt"
-            }
-        }
-    }
+    ) = channelEditor.submit(name, systemPrompt, muted)
 
-    /**
-     * Archives the open editor's channel on the editor's own host, then closes the modal (#667).
-     *
-     * [archiveChat]'s shape: no confirmation, since Archive restores it, and nothing the fields hold — a
-     * blank name or an unread prompt — stands in the way. The channel leaves Channels through the host's own
-     * conversation stream.
-     */
-    fun archiveChannel() {
-        val state = channelEditor.value ?: return
-        if (state.saving) return
-        if (!isHostLive(state.serverId)) {
-            RelayLog.d { "event=channel_archive_rejected code=disconnected" }
-            closeChannelEditor(state)
-            return
-        }
-        val live = hostSource.repositoryFor(state.serverId)
-        if (live == null) {
-            RelayLog.d { "event=channel_archive_rejected code=unavailable" }
-            channelEditor.value = state.copy(failed = false, archiveFailed = true)
-            return
-        }
-        val pending = state.copy(saving = true, failed = false, archiveFailed = false)
-        channelEditor.value = pending
-        viewModelScope.launch {
-            RelayLog.d { "event=channel_archive_started" }
-            try {
-                live.archive(state.conversationId)
-            } catch (error: Exception) {
-                if (error is CancellationException) throw error
-                RelayLog.d { "event=channel_archive_failed" }
-                channelEditor.compareAndSet(pending, pending.copy(saving = false, archiveFailed = true))
-                return@launch
-            }
-            channelEditor.compareAndSet(pending, null)
-            RelayLog.d { "event=channel_archived" }
-        }
-    }
-
-    /** Closes [state]'s Edit channel modal, and stops its prompt read, unless another one replaced it. */
-    private fun closeChannelEditor(state: ChannelEditorState) {
-        if (channelEditor.compareAndSet(state, null)) channelPromptRead?.cancel()
-    }
+    /** Archives the open editor's channel on its own host, then closes the modal (#667). */
+    fun archiveChannel() = channelEditor.archive()
 
     /** Cancel, Close and Back: close the Edit channel modal, stop its prompt read and send nothing. */
-    fun dismissChannelEditor() {
-        channelEditor.value = null
-        channelPromptRead?.cancel()
-        RelayLog.d { "event=channel_editor_dismissed" }
-    }
-
-    /**
-     * One stored-prompt read. A reply over the byte limit is [ChannelPromptReading.Unavailable]: the decoder
-     * bounds nothing, and a prompt the field cannot hold must never be rendered or written back.
-     */
-    private suspend fun readChannelPrompt(
-        live: ConversationRepository,
-        conversationId: String,
-    ): ChannelPromptReading =
-        try {
-            val reading = live.requestSystemPrompt(conversationId)
-            val prompt = reading.systemPrompt
-            if (prompt != null && !SystemPromptLimit.fits(prompt)) {
-                RelayLog.d { "event=channel_prompt_read_failed code=oversize" }
-                ChannelPromptReading.Unavailable
-            } else {
-                RelayLog.d { "event=channel_prompt_read" }
-                ChannelPromptReading.Read(prompt, reading.sessionPromptStatus)
-            }
-        } catch (error: Exception) {
-            if (error is CancellationException) throw error
-            RelayLog.d { "event=channel_prompt_read_failed" }
-            ChannelPromptReading.Unavailable
-        }
+    fun dismissChannelEditor() = channelEditor.dismiss()
 
     private companion object {
         const val STOP_TIMEOUT_MILLIS = 5_000L

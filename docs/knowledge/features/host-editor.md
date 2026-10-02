@@ -204,3 +204,11 @@ No new test file — the machine is proven by its two callers' own suites:
   `docs/specs/architecture/745-unpair-host-from-edit-modal.md`,
   `docs/specs/architecture/751-settings-host-edit-and-unpair.md` (the extraction and Settings' second
   caller, including the security review's scope/concurrency findings)
+- [`ChannelEditorController`](channel-list-viewmodel.md#channeleditorcontroller-667--1561) (#1561) — the
+  second plain-class extraction built on this one's shape: `ChannelListViewModel`'s Edit channel machine
+  (#667) pulled out the same way, so `ThreadViewModel` could compose a second instance over its own
+  repository without inheriting the list's `HostConversationSource` lookup. One difference from `open`
+  above: this controller's `open` publishes the editor state synchronously, from name/mute the caller
+  already read off its own snapshot, and only the system-prompt read is async (still cancelled on every
+  call, the same race guard this controller's `openJob` gives `loadById`) — Edit channel has no
+  equivalent of a slow identity lookup standing between the tap and the modal's first paint.

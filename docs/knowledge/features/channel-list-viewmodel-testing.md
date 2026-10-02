@@ -142,7 +142,15 @@ archive completing after a dismissal leaves the editor closed, and a second arch
 mid-gate are both ignored — the same `saving`-guard-plus-`compareAndSet` proof #827's rename suite
 already established, reused rather than re-derived.
 
-**Channel editor coverage (#667, same `fixture()`).** Both fixture hosts get a channel sharing the same
+**Channel editor coverage (#667, same `fixture()`).** Every test below still exercises this view model's own
+`openChannelEditor` / `submitChannelEdit` / `archiveChannel` / `dismissChannelEditor` methods and
+`hostState.channelEditor`, unchanged in name, signature and behaviour; since
+[#1561](https://github.com/pyrycode/pyrycode-mobile/issues/1561) those methods are one-line delegations to
+a [`ChannelEditorController`](channel-list-viewmodel.md#channeleditorcontroller-667--1561) instance rather
+than the machine itself, so this suite passing unchanged is the regression proof that the #1561 extraction
+moved the machine without altering it — the #1561 verifier compared the controller's body against what was
+removed from this class line by line and found only the renamed fields and injected lambdas. Both fixture
+hosts get a channel sharing the same
 id, `"same"`, under different names and prompts — the chat editor's colliding-id fixture, repeated here for
 the same reason: a conversation id is host-local, and a rename or prompt write sent to the wrong host
 would still pass a suite that gave every fixture channel its own id. `Repo` gains a scripted
