@@ -44,10 +44,10 @@ import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
 import de.pyryco.mobile.ui.conversations.components.SwitchBackOffer
 import de.pyryco.mobile.ui.conversations.components.SystemPromptEditor
 import de.pyryco.mobile.ui.conversations.components.SystemPromptEditorState
-import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
+import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
 import de.pyryco.mobile.ui.conversations.components.attachmentTarget
 import de.pyryco.mobile.ui.conversations.components.loadsOnShow
-import de.pyryco.mobile.ui.conversations.components.turnOutcomeReport
+import de.pyryco.mobile.ui.conversations.components.turnRecoveryNotice
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
 import kotlinx.coroutines.CancellationException
@@ -68,6 +68,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
@@ -78,7 +79,6 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
-import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
@@ -532,6 +532,8 @@ class ThreadViewModel(
         ).scan(ThreadFold(emptyList(), null)) { fold, input -> fold.reduce(input, conversationId) }
             .map { it.render() }
             .distinctUntilChanged()
+            // #1357: a session transition reaches this thread only as a new boundary row.
+            .onEach(::noteNewestBoundary)
 
     /**
      * The thread's content surface: the [threadItems] rows folded with the conversation's queued-message
@@ -760,24 +762,25 @@ class ThreadViewModel(
                 initialValue = false,
             )
 
+    private val _turnOutcome = MutableStateFlow<TurnRecoveryNotice?>(null)
+
     /**
-     * How this conversation's last turn ended, when it did not end cleanly (#805) — drives the status
-     * area's turn-outcome arm. A sibling [StateFlow] beside [isThinking] / [isBusy] over the same live
-     * events, with the same lifetime. `null` covers no event yet, a clean last turn, and a next turn that
-     * has started.
+     * The recovery advice for this conversation's last stopped turn (#1357), desktop's `latestTurnEnd` read by
+     * `ComposerErrorSlotControl` — drives the status area's turn-outcome arm. A `turn_end` sets or replaces it
+     * through [turnRecoveryNotice]; the next sign of activity clears it: a non-idle `turn_state`, an
+     * assistant delta, a tool use or result ([nextTurnOutcome]), a new thinking reading, a new session
+     * boundary ([noteNewestBoundary]), the user's send, and a reconnect. An `idle` `turn_state` never clears it,
+     * since it may arrive on either side of the `turn_end` it accompanies.
      *
-     * A `turn_end` replaces the value outright (a clean one clears a stale report), and only `thinking` /
-     * `responding` clear it otherwise — never `idle`, which may arrive on either side of the `turn_end` it
-     * accompanies. [isThinking] and [isBusy] are untouched: they already turn off on any `turn_end`.
+     * Held, not folded per subscriber, so a `turn_end` that lands while the screen is not collecting still
+     * counts. Every writer runs on `viewModelScope`'s main dispatcher.
      */
-    val turnOutcome: StateFlow<TurnOutcomeReport?> =
-        liveSessionEvents
-            .runningFold(null as TurnOutcomeReport?) { current, event -> nextTurnOutcome(current, event) }
-            .stateIn(
-                scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(5_000),
-                initialValue = null,
-            )
+    val turnOutcome: StateFlow<TurnRecoveryNotice?> = _turnOutcome.asStateFlow()
+
+    /** The newest boundary row [threadItems] has drawn, once it has drawn a non-empty thread (#1357). */
+    private var newestBoundary: ThreadItem.SessionBoundary? = null
+
+    private var boundaryBaselineSeen = false
 
     /** The open Channel info sheet's System prompt state (#1342), or `null` while the sheet is closed. */
     val systemPrompt: StateFlow<SystemPromptEditorState?> =
@@ -1179,20 +1182,51 @@ class ThreadViewModel(
 
     /** Folds one live event into [turnOutcome]; events for other conversations leave it unchanged. */
     private fun nextTurnOutcome(
-        current: TurnOutcomeReport?,
+        current: TurnRecoveryNotice?,
         event: LiveSessionEvent,
-    ): TurnOutcomeReport? {
+    ): TurnRecoveryNotice? {
         if (event.conversationId != conversationId) return current
         return when (event) {
-            is LiveSessionEvent.TurnEnd -> turnOutcomeReport(event)
+            is LiveSessionEvent.TurnEnd -> turnRecoveryNotice(event)
             is LiveSessionEvent.TurnState ->
                 if (event.phase == LiveSessionEvent.TurnState.Phase.Idle) current else null
             is LiveSessionEvent.AssistantDelta,
             is LiveSessionEvent.ToolUse,
             is LiveSessionEvent.ToolResult,
-            is LiveSessionEvent.ReplayGap,
-            -> current
+            -> null
+            is LiveSessionEvent.ReplayGap -> current
         }
+    }
+
+    private fun setTurnOutcome(
+        notice: TurnRecoveryNotice?,
+        reason: String,
+    ) {
+        val current = _turnOutcome.value
+        if (notice == current) return
+        _turnOutcome.value = notice
+        RelayLog.d {
+            if (notice == null) {
+                "event=turn_recovery_notice state=cleared reason=$reason"
+            } else {
+                "event=turn_recovery_notice state=shown notice=${notice.name}"
+            }
+        }
+    }
+
+    private fun clearTurnOutcome(reason: String) = setTurnOutcome(null, reason)
+
+    /**
+     * Clear [turnOutcome] when [items] end on a boundary newer than the last one drawn (#1357). An empty list,
+     * the fold's seed or a thread not loaded yet, sets no baseline, so the first load never reads as a
+     * transition. An older history page prepends rows and leaves the newest boundary as it was.
+     */
+    private fun noteNewestBoundary(items: List<ThreadItem>) {
+        if (items.isEmpty()) return
+        val newest = items.lastOrNull { it is ThreadItem.SessionBoundary } as ThreadItem.SessionBoundary?
+        if (boundaryBaselineSeen && newest != null && newest != newestBoundary) clearTurnOutcome("session_boundary")
+        newestBoundary = newest
+        boundaryBaselineSeen = true
     }
 
     init {
@@ -1205,7 +1239,30 @@ class ThreadViewModel(
             repositoryAvailable
                 .distinctUntilChanged()
                 .drop(1)
-                .collect { closeLocalSendWindow("reconnect") }
+                .collect {
+                    closeLocalSendWindow("reconnect")
+                    clearTurnOutcome("reconnect")
+                }
+        }
+
+        // #1357: the live events set and clear the recovery notice, and a new thinking reading clears it. The
+        // repository drops a reading on `turn_end`, so any reading that follows belongs to a later step.
+        viewModelScope.launch {
+            liveSessionEvents.collect { event ->
+                val reason =
+                    when (event) {
+                        is LiveSessionEvent.TurnEnd -> "turn_end"
+                        is LiveSessionEvent.TurnState -> "turn_state"
+                        is LiveSessionEvent.AssistantDelta -> "assistant_delta"
+                        is LiveSessionEvent.ToolUse -> "tool_use"
+                        is LiveSessionEvent.ToolResult -> "tool_result"
+                        is LiveSessionEvent.ReplayGap -> "replay_gap"
+                    }
+                setTurnOutcome(nextTurnOutcome(_turnOutcome.value, event), reason)
+            }
+        }
+        viewModelScope.launch {
+            repository.observeThinkingProgress(conversationId).filterNotNull().collect { clearTurnOutcome("thinking") }
         }
 
         // #1311: the daemon's first `turn_state` for this conversation, of any phase, closes the local-send
@@ -1283,6 +1340,7 @@ class ThreadViewModel(
      * that returns was accepted, and tells the screen to follow the newest end again (#1314).
      */
     private suspend fun <T> sendInLocalWindow(send: suspend () -> T): T {
+        clearTurnOutcome("send")
         openLocalSendWindow()
         val sent =
             try {
@@ -1760,6 +1818,7 @@ class ThreadViewModel(
         }
         launchGuardedRepoCall {
             effortRecall.awaitWrite()
+            clearTurnOutcome("send")
             repository.sendMessage(conversationId, command)
             RelayLog.d { "event=composer_action action=${action.value} outcome=sent" }
         }

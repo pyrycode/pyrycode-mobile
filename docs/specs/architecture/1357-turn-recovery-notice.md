@@ -84,3 +84,7 @@ Pending for the documentation stage:
 
 - `docs/knowledge/features/turn-outcome-indicator.md`: the arm shows only the three recovery notices, the Compact pill and its availability, and the signals it clears on. Revise "Classification & sanitization" and "How this differs from the stopped-turn row (#1356)" to match.
 - `docs/e2e-interactive-stream.md`: `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain` no longer asserts an Interrupted label (method name kept for the references to it).
+
+## Revisions
+
+**2026-10-02 (implementation).** Open question resolved: the Compact pill keeps the Default variant; the device capture `412x892-outcome.png` shows it reading apart from the error notice. The pill takes `sizeIn(minHeight = 24.dp)`, as the task pill does, because a text-only pill measures 22dp and the band is 24dp. Every notice wraps to two lines even at 412dp, so the band grows while one shows, as the old two-line failure labels did; `ThreadStatusBandTest` now holds the glyph's leading edge for the notice reading instead of its whole bounds.

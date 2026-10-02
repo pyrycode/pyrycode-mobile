@@ -2748,9 +2748,10 @@ class InteractiveStreamE2ETest {
      * [SecondClientPeer], paired with `--allow-remote-permissions`, allows it once so the dialog is gone and
      * the Stop control is reachable the way an operator would reach it.
      *
-     * After the tap the turn ends as cancelled (the peer's `turn_end`), the status area shows the Interrupted
-     * outcome, and a ping sent in the same thread gets claude's real reply. The held turn's reply token is
-     * never drawn, because the stopped turn never finished.
+     * After the tap the turn ends as cancelled (the peer's `turn_end`), the Stop control goes, and a ping sent
+     * in the same thread gets claude's real reply. The held turn's reply token is never drawn, because the
+     * stopped turn never finished. Since #1357 a cancelled turn puts no notice in the status area, so the
+     * method's name outlives the Interrupted label it once asserted.
      *
      * **Two real-claude turns**: the stopped turn and the ping.
      */
@@ -2794,7 +2795,7 @@ class InteractiveStreamE2ETest {
             }
             composeTestRule.onNode(stopControl).performClick()
 
-            // 4. AC-1: the turn ends as cancelled, the Stop control goes, and the status area says Interrupted.
+            // 4. AC-1: the turn ends as cancelled and the Stop control goes.
             val turnEnd =
                 peerStep(peer, "await the stopped turn's turn_end") { peer.awaitFrame(conversationId, "turn_end", THREAD_TIMEOUT_MS) }
             assertEquals(
@@ -2802,10 +2803,8 @@ class InteractiveStreamE2ETest {
                 "cancelled",
                 (turnEnd.payload as? JsonObject)?.get("stop_reason")?.jsonPrimitive?.contentOrNull,
             )
-            val interrupted = hasContentDescription(string(R.string.thread_turn_outcome_interrupted), substring = true)
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(interrupted).fetchSemanticsNodes().isNotEmpty() &&
-                    composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isEmpty()
+                composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isEmpty()
             }
 
             // 5. AC-1: a following message in the same thread gets a real reply, and that turn is the
