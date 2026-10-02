@@ -243,7 +243,9 @@ extended from #446's 2-way by [#452](../codebase/452.md):
 | neither — a resting non-default | `OutlinedButton`, with primary text and a primary 1 dp border, matching [the shared action palette](mobile-modal.md#layout-and-theme) and footer Cancel | none (a first tap arms it via the VM) |
 
 The dark button reference gives the default and resting options 6 dp corners, body-large medium labels,
-and a 40 dp visible action inside a 48 dp touch region. Full-width option labels take the available row
+and a 40 dp visible action; since [#1501](../../specs/architecture/1501-prompt-measured-spacing.md) its
+48 dp touch target comes from pointer hit-test expansion, not added layout height, so 8 dp-apart choices
+meet rather than overlap. Full-width option labels take the available row
 width and wrap. Exact text-layout checks use Robolectric native graphics: its default graphics mode
 reported a clipped long label as one line. The armed tonal treatment stays below the filled default.
 That move also changed the surface the armed button sits on, from `surfaceContainerHigh` to
@@ -275,8 +277,9 @@ claude's own optional decision context for a permission ask — `reason`, `reaso
 `description`, each `null` when the frame carried none. `PermissionContext(context)` is a private
 composable, drawn between the prompt and the option `Column` **only when `!context.isEmpty`** — a
 context-free modal renders exactly as before #817, with no empty area or extra spacing left behind. It is a
-`Column` (12 dp spacing, the `533-2369` frame's content-row gap) of up to three `ModalContextRow(label,
-value)` rows in the desktop's order — reason, description, blocked path — each the frame's "Input large"
+`Column` (16 dp spacing, the card's own column rhythm — [#1501](../../specs/architecture/1501-prompt-measured-spacing.md)
+corrected this from the `533-2369` frame's 12 dp content-row gap to match `639:2242`) of up to three
+`ModalContextRow(label, value)` rows in the desktop's order — reason, description, blocked path — each the frame's "Input large"
 stacked shape (label above value, 8 dp gap) rather than its single-line read-only row, because a reason or
 description is prose an ellipsis would hide. A row merges its semantics so a screen reader reads label and
 value as one node.

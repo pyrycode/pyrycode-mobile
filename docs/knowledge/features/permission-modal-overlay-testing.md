@@ -36,6 +36,25 @@ to rejection-pill cases (33/33 — see below):
   unmoved by request arrival or a grant toggle, and neither raises a second history demand; a new request
   reveals at the newest end (mirroring the #1305 reveal effect); Cancel renders below the card; and 320×700
   at 150% text keeps every decision reachable, wrapped and unclipped.
+- **measured geometry against `639:2242`/`639:2882`, added by
+  [#1501](../../specs/architecture/1501-prompt-measured-spacing.md)** —
+  `permission_context_spacing_matches_the_frame` asserts the label-to-value top gap (28 dp), the gap between
+  context groups (16 dp) and the gap from the last context value to the first choice (16 dp), each at
+  `@Config(qualifiers = "w412dp-h892dp")` with `@GraphicsMode(NATIVE)` (not `ForcedSize`, which rescales
+  density and reads dp values about 1.2× too large — see the lesson below);
+  `permission_choices_are_40dp_surfaces_8dp_apart_with_48dp_touch_targets` asserts each choice surface lays
+  out at 40 dp, 8 dp apart, that `touchBoundsInRoot` is still at least 48 dp on each, and that a real pointer
+  tap 3 dp outside a surface, inside the 8 dp gap, still reaches the nearer choice; `armed_hint_sits_in_the_8dp_choice_gaps`
+  covers `639:2882`.
+
+> **Test-pitfall lesson (#1501).** A clickable Material `Surface` applies `minimumInteractiveComponentSize`
+> internally, so removing the explicit modifier from the caller is not enough to get the 40 dp layout size —
+> the column also needs `LocalMinimumInteractiveComponentSize provides Dp.Unspecified`. The pointer touch
+> target still expands to `ViewConfiguration.minimumTouchTargetSize` regardless, so the 48 dp tap-reach
+> assertion stays true even though the layout shrank. Separately, `AppTypography`'s styles carry no
+> `lineHeightStyle`, so Compose trims a single line of text to its glyphs — a 14/20 or 20/20 style renders
+> about 16 dp tall, 4 dp short of the line box a Figma measurement assumes, until the style is given
+> `LineHeightStyle(Center, Trim.None)`.
 
 The compact-width case scrolls to every decision at 1.5× text and checks long labels for wrapping, overflow
 and ellipsis. The fold logic remains unit-tested in #445, the decision logic in #451/#818/#1306 (see [Modal
@@ -102,6 +121,9 @@ ladder](../../e2e-interactive-stream.md) for the curated list and how a method j
 ## Related
 
 - [Permission-modal overlay](permission-modal-overlay.md) — the render surface this page tests.
+- [1501 architecture doc](../../specs/architecture/1501-prompt-measured-spacing.md) — the measured-spacing
+  fix: the `639:2242`/`639:2882` gaps, the `Trim.None` line-box cause, and the compact-frame platform-scaling
+  branch.
 - [Modal answer flow § Testing](modal-answer-flow.md#testing) — the decision-logic tests this surface
   renders the result of.
 - [Real-claude e2e coverage](../../e2e-interactive-stream.md) — the rung-3 ladder and curated LIVE list.

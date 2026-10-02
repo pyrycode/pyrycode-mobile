@@ -17,12 +17,13 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -33,7 +34,9 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ModalContext
@@ -129,31 +132,36 @@ private fun PermissionRequestCard(
                     onChanged = { onAlwaysAllowChanged(open.modalId, it) },
                 )
             }
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                // Iterate in array order (the canonical display/selection order). isDefault drives the
-                // fail-safe-deny highlight; isArmed reflects the VM's armed non-default option — no
-                // option-id semantics are interpreted, every tap forwards verbatim.
-                open.options.forEach { option ->
-                    val label = option.label.take(MAX_PERMISSION_TEXT)
-                    val isArmed = option.id == armedOptionId
-                    ModalOptionButton(
-                        label = label,
-                        isDefault = option.id == open.defaultOptionId,
-                        isArmed = isArmed,
-                        enabled = connected,
-                        onClick = { onOption(open.modalId, option.id) },
-                    )
-                    // Figma `639:2882`: the confirm hint sits directly under the armed choice, inside the
-                    // column's 8 dp gaps. The bounded server label renders through plain Text only.
-                    if (isArmed) {
-                        Text(
-                            text = stringResource(R.string.modal_armed_option_hint, label),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            // Figma `639:2242`: 40 dp choices 8 dp apart. Material's layout touch floor would pad each to 48 dp and
+            // double the gap, so it is off here; each choice keeps a 48 dp touch target through pointer hit-test
+            // expansion to `ViewConfiguration.minimumTouchTargetSize`, which takes no layout space (#1501).
+            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    // Iterate in array order (the canonical display/selection order). isDefault drives the
+                    // fail-safe-deny highlight; isArmed reflects the VM's armed non-default option — no
+                    // option-id semantics are interpreted, every tap forwards verbatim.
+                    open.options.forEach { option ->
+                        val label = option.label.take(MAX_PERMISSION_TEXT)
+                        val isArmed = option.id == armedOptionId
+                        ModalOptionButton(
+                            label = label,
+                            isDefault = option.id == open.defaultOptionId,
+                            isArmed = isArmed,
+                            enabled = connected,
+                            onClick = { onOption(open.modalId, option.id) },
                         )
+                        // Figma `639:2882`: the confirm hint sits directly under the armed choice, inside the
+                        // column's 8 dp gaps. The bounded server label renders through plain Text only.
+                        if (isArmed) {
+                            Text(
+                                text = stringResource(R.string.modal_armed_option_hint, label),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
                     }
                 }
             }
@@ -172,8 +180,8 @@ private fun PermissionRequestCard(
 private fun PermissionContext(context: ModalContext) {
     Column(
         modifier = Modifier.fillMaxWidth(),
-        // The container frame's (`533-2369`) content-row gap.
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        // Figma `639:2242`: the groups sit in the card's 16 dp column rhythm (#1501).
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         if (context.reason != null || context.reasonType != null) {
             val label =
@@ -243,6 +251,9 @@ private fun AlwaysAllowOffer(
     }
 }
 
+/** Figma draws each context line in its full 20 dp line box; the theme's styles would trim it to the glyphs. */
+private val ContextLineBox = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
+
 /**
  * The container frame's label style over its value (the frame's "Input large" stacking, 8 dp apart) rather
  * than its single-line read-only row, because a reason or description is prose an ellipsis would hide. The
@@ -257,8 +268,12 @@ private fun ModalContextRow(
         modifier = Modifier.fillMaxWidth().semantics(mergeDescendants = true) {},
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(text = label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-        if (value != null) Text(text = value, style = MaterialTheme.typography.bodyMedium)
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge.copy(lineHeightStyle = ContextLineBox),
+            fontWeight = FontWeight.SemiBold,
+        )
+        if (value != null) Text(text = value, style = MaterialTheme.typography.bodyMedium.copy(lineHeightStyle = ContextLineBox))
     }
 }
 
@@ -292,8 +307,8 @@ private fun ModalOptionButton(
 ) {
     val defaultDesc = stringResource(R.string.modal_default_option_desc)
     val armedDesc = stringResource(R.string.modal_armed_option_desc)
-    // Figma `489:1876` draws a 40 dp surface; Material supplies the surrounding 48 dp touch floor.
-    val base = Modifier.fillMaxWidth().minimumInteractiveComponentSize()
+    // Figma `489:1876` draws a 40 dp surface; the caller keeps its 48 dp touch target out of layout.
+    val base = Modifier.fillMaxWidth()
     val modifier =
         when {
             isArmed -> base.semantics { stateDescription = armedDesc }
