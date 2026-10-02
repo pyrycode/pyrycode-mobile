@@ -344,7 +344,7 @@ records.
   loaded row. [#1352](https://github.com/pyrycode/pyrycode-mobile/issues/1352) removed both triggers: older
   pages now load only on the reader's own gesture, never on open — see
   [§ the retry and the two restarts (#778)](#the-retry-and-the-two-restarts-778) below and
-  [Thread screen § the oldest-end history demand](thread-screen-how-it-works-list-and-status-row.md#the-oldest-end-history-demand-777)
+  [Thread screen § the oldest-end history demand](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777)
   for what replaced the scroll-driven ask.
 - **The walk reads `requestHistory`'s returned `HistoryPage` for `cursor` and `atStart` only.**
   `settled(pageCursor: String, atStart: Boolean)` takes the two scalars rather than the whole `HistoryPage`
@@ -435,7 +435,7 @@ depends on here.
   `false` sends nothing — logged as `event=history_ask_skipped reason=offline` for a gesture — and the
   oldest-end slot shows the new offline notice unless the walk has already reached the start of history;
   see
-  [Thread screen § the oldest-end history demand](thread-screen-how-it-works-list-and-status-row.md#the-oldest-end-history-demand-777).
+  [Thread screen § the oldest-end history demand](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777).
 - **A refused cursor (`history.invalid_cursor`) resets to the newest page without asking (#1352),
   replacing #778's refused-cursor restart.** `cursorRefused()` clears `cursor` back to `""`, releases the
   outstanding-request slot and clears any stop, carrying `pagesLoaded` forward so a daemon that refuses
@@ -453,9 +453,9 @@ depends on here.
 
 The screen-side half — the gesture that replaced #777's oldest-row scroll trigger, and the one oldest-end
 slot's five states including the new offline notice — is
-[Thread screen § the oldest-end history demand](thread-screen-how-it-works-list-and-status-row.md#the-oldest-end-history-demand-777)
+[Thread screen § the oldest-end history demand](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777)
 and
-[§ the oldest-end history retry and restart](thread-screen-how-it-works-list-and-status-row.md#the-oldest-end-history-retry-and-restart-778).
+[§ the oldest-end history retry and restart](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-retry-and-restart-778).
 
 ## Resuming from the saved position (#1354)
 
@@ -476,16 +476,32 @@ this section covers only `ThreadHistoryDemand`/`ThreadViewModel`, which is where
   the same terminal stop a live walk reaches by paging all the way back, so a restored "start of
   history" asks nothing and the oldest-end slot's offline notice stays hidden exactly as it already
   does for a walk that reached `AtStart` this visit (see [Thread screen § the oldest-end history
-  demand](thread-screen-how-it-works-list-and-status-row.md#the-oldest-end-history-demand-777)).
+  demand](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777)).
   `pagesLoaded` is carried forward unchanged, so restoring a position never buys a fresh
   `MAX_HISTORY_PAGES` budget — the cap stays per screen-open (see § The walk that finally calls
   `requestHistory` above).
-- **`ThreadViewModel.historySeed`**, a `Job` launched in `viewModelScope` right after `historyDemand`
-  is constructed, reads `repository.readHistoryPosition(conversationId)` once and, if it finds one,
-  folds it with `restored`. Reading asks nothing — `onDemandOlderHistory` is still the only path that
-  calls `requestHistory`. For every in-memory repository (every unit test, and the demo
-  `FakeConversationRepository`) the default `readHistoryPosition` returns without suspending, so the
-  seed completes during construction and a test never has to await it explicitly.
+- **`ThreadViewModel.historySeed`**, a `Deferred<Boolean>` launched in `viewModelScope` right after
+  `historyDemand` is constructed, reads `repository.readHistoryPosition(conversationId)` once and, if it
+  finds one, folds it with `restored` and completes `false`. Reading asks nothing — `onDemandOlderHistory`
+  is still the only path that calls `requestHistory` on a thread with a saved position. For every
+  in-memory repository (every unit test, and the demo `FakeConversationRepository`) the default
+  `readHistoryPosition` returns without suspending, so the seed completes during construction and a test
+  never has to await it explicitly.
+- **[#1569](https://github.com/pyrycode/pyrycode-mobile/issues/1569): no saved position completes
+  `historySeed` `true`, and that is the one case where opening a thread asks by itself.** A reported
+  channel (`questions`, conversation `7dc049bc`, 65 events on disk, session dormant) opened with no
+  earlier messages and stayed empty after leaving and reopening, filling in only after a send woke the
+  session — the daemon serves a dormant conversation's history from disk only on a `request_history` it
+  never received, and #1352 had made every open ask nothing. A `ThreadViewModel.init` coroutine awaits
+  `historySeed`, then the thread's `hostAvailable` becoming true for the first time, then claims the
+  history slot only if the walk is still exactly `ThreadHistoryDemand()` (a reader's pull that got there
+  first leaves nothing to claim) before asking with the same empty cursor and `launchHistoryAsk` a pull
+  uses — so the saved page lands through `writeHistoryPosition` exactly as any other ask's does, and a
+  failure lands in the same Retry/DeadEnd/Offline tail. A thread with a saved position (`historySeed`
+  `false`) never reaches this collector and keeps #1352's pull-only rule unchanged; see [Thread screen §
+  the oldest-end history
+  demand](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777) for the
+  screen-side detail.
 - **A pull during the seed waits for it, rather than racing it.** `onDemandOlderHistory` checks
   `historySeed.isCompleted` first; if the read is still in flight, it launches a coroutine that joins
   the seed and re-enters, instead of either dropping the pull or letting it carry the opening empty
