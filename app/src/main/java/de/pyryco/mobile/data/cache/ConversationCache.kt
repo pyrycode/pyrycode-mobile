@@ -115,9 +115,10 @@ interface ConversationCache {
 
 /**
  * How far the operator has read one conversation on one host (#877): a client-side mark, since the daemon
- * carries no read marker. [completedTurnId] is the latest turn this phone saw complete live, and
- * [readTurnId] the one the operator had seen when they last opened the conversation, or null when they
- * have not opened it since a turn completed. Both are daemon-authored ids used only for equality.
+ * carries no read marker. [completedTurnId] marks the latest change that made the conversation unread: a
+ * turn this phone saw complete live, or a client-minted token for a new thread row (#1361). [readTurnId]
+ * is the mark the operator had seen when they last opened the conversation, or null when they have not
+ * opened it since. Both are used only for equality.
  *
  * A conversation with no stored position is read.
  */

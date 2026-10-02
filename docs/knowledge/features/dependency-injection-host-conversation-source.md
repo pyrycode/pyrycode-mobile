@@ -152,6 +152,22 @@ since desktop has no such edge. No new visuals: a busy conversation resolves to 
   sets that same `ReadPosition` like any other completed turn (#1451 removed the separate
   `failed` fold this used to feed), so it resolves Unread when not viewed and Idle once
   opened. Every other event is a no-op.
+- `rowsAdded(conversationId, viewing, token)` (#1361) is the other way a conversation turns
+  Unread: a row — a text delta's bubble, a tool call, a banner, a session boundary, a
+  compaction divider, a refusal, an attachment offer, a `TurnEnd` — appended to the thread,
+  rather than only a turn ending. Desktop's `isConversationUnread` counts rows the same way;
+  this fold is mobile's trigger change onto mobile's own storage and bounds. A viewed
+  conversation is unchanged (opening is what reads it, below), and a conversation already
+  Unread keeps its stored position rather than overwriting it — a fresh token there would
+  drop the turn id `isCounted` needs to recognise a `TurnEnd` re-delivered to a cold process.
+  Otherwise the conversation's position becomes `ReadPosition(token, previous readTurnId)`,
+  moved to the newest end of the bounded map exactly as `onEvent`'s `TurnEnd` branch does.
+  `token` is a value **this phone mints** per call — a random UUID, not a daemon id — so it
+  can never collide with a stored read token or a turn id; `ReadPosition`'s two fields are
+  therefore no longer both daemon-authored (contrast the KDoc update in
+  `ConversationCache.kt`). A `TurnEnd` that follows rows already counted by `rowsAdded` still
+  runs its own counted/alert bookkeeping — the two folds are independent, so a turn with no
+  rows still marks Unread as before, and a turn after rows still alerts once.
 - `opened(conversationId)` sets `readTurnId = completedTurnId`.
 - `disconnected()` clears `running` only — positions survive a lost
   connection in memory, matching the lifecycle driver closing a supervisor and the
@@ -181,17 +197,37 @@ host on each change. `ChannelListViewModel.onHostRowTapped` calls
 `ConversationViewing` handle of its own, so opening it also advances the read position via
 `opened`, but does not hold the conversation read past that one call the way a thread's view does.
 
-`HostConversationSource.launchAttention(entry)` runs five collectors under the same
+`HostConversationSource.launchAttention(entry)` runs six collectors under the same
 `entry.job` `reconcile` already cancels on bundle replacement or removal: the live-event
 fold (reading `viewing` under the class monitor via `updateAttention`), a `repositories`
 null emission → `disconnected()`, a second, independent `connection.repositories.collectLatest`
 that folds each repository's `observeBusyConversations()` into `busy` via `withBusy(ids)`
-(#1452, a null repository observes nothing), the combined `modals`/`questionBatches` →
-`resolve`, and, only when a `cache` is bound, a one-shot restore followed by a collector over
-each distinct positions map, written through `ConversationCache.writeReadPositions`. All five
+(#1452, a null repository observes nothing), a third `connection.repositories.collectLatest`
+(#1361) that folds each repository's `observeThreadRowCounts(): Flow<Map<String, Int>>` (a
+defaulted empty `ConversationRepository` member; `RemoteConversationRepository` returns
+`ThreadProjection.observeRowCounts()`, the per-conversation thread list's size) against a
+local `seen` map that **starts empty on every repository**, not on whatever counts the
+collector happens to observe first — a connection's `ThreadProjection` itself starts empty, so
+rows a replay (`last_event_id`) delivered before this collector's first read are genuinely new
+against that zero baseline, not an in-place jump to be ignored. Each emission's conversations
+whose count exceeds `seen[id] ?: 0` fold through `rowsAdded(id, viewing.isViewing(serverId,
+id), UUID.randomUUID().toString())` in one `updateAttention` call, then `seen` becomes that
+emission; `collectLatest` cancels the previous repository's `seen` along with its collection on
+replacement, so the next repository restarts at zero rather than carrying over the old one's
+counts. The combined `modals`/`questionBatches` → `resolve`, and, only when a `cache` is
+bound, a one-shot restore followed by a collector over each distinct positions map, written
+through `ConversationCache.writeReadPositions`, round out the six. All of them
 route through one `@Synchronized updateAttention(entry, change)`, which reuses `update`'s
 staleness guard (factored out as `isCurrent(entry)`) so a retired bundle cannot publish or
 persist.
+
+Rows the phone already had re-enter a repository's `ThreadProjection` only through
+`observeMessages`'s `backfill_since` and `requestHistory` pages, and only `ThreadViewModel`
+asks for those, whose lifetime is the `ConversationViewing` view — so a conversation's own
+backfill, including the one a reconnect repeats against the new repository, lands while it is
+viewed and `rowsAdded` leaves it alone. An attachment offer's first-seen row already comes
+from `AttachmentOfferProjection.apply` (#983) appending into the same thread store, so it
+needs no separate counting path.
 
 **Known gap: a disconnect can race a stale busy write.** The null-repository collector clears
 `busy` with `disconnected()`, and the separate `observeBusyConversations()` collector writes

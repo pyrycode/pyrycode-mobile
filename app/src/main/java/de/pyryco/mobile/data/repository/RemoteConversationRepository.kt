@@ -1154,6 +1154,8 @@ class RemoteConversationRepository(
             emitAll(threadProjection.observe(conversationId))
         }
 
+    override fun observeThreadRowCounts(): Flow<Map<String, Int>> = threadProjection.observeRowCounts()
+
     override fun observeLastMessage(conversationId: String): Flow<Message?> = conversationListProjection.observeLastMessage(conversationId)
 
     override fun observeStall(conversationId: String): Flow<Boolean> = stallProjection.observe(conversationId)

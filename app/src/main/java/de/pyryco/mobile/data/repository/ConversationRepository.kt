@@ -28,6 +28,13 @@ interface ConversationRepository {
     fun observeMessages(conversationId: String): Flow<List<ThreadItem>>
 
     /**
+     * How many rows each conversation's thread holds on this repository (#1361), keyed by conversation id.
+     * A row appended raises its count; growth of an existing row does not. Defaulted empty for a repository
+     * that has no live thread store.
+     */
+    fun observeThreadRowCounts(): Flow<Map<String, Int>> = emptyFlow()
+
+    /**
      * Emits the most-recent [Message] (by [Message.timestamp]) for the
      * conversation, or `null` if the conversation has no messages or is
      * unknown. Cold flow, re-emits on every state change.
