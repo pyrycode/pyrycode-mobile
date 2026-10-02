@@ -2908,8 +2908,9 @@ internal const val PERMISSION_SETTLE_WINDOW_MS = 15_000L
 /** The pause between two settle reads once a reading has not yet reported the requested mode. */
 internal const val PERMISSION_SETTLE_INTERVAL_MS = 500L
 
-/** One published row, split into the verbatim write argument and the inert render of it. `resolvedModel`
- *  becomes [ThreadModelChoice.detail] only when it says something the label does not. */
+/** One published row, split into the verbatim write argument and inert display text. `resolvedModel`
+ *  becomes [ThreadModelChoice.detail], which no screen draws since #1497, only when it says something the
+ *  label does not. */
 private fun ModelMenuRow.toChoice(agent: ConversationAgent): ThreadModelChoice {
     val label = dropdownLabel(agent)
     return ThreadModelChoice(
