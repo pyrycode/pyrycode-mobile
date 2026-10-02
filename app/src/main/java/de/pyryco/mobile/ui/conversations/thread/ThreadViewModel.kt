@@ -91,9 +91,9 @@ import kotlin.math.floor
 
 /**
  * The one `history.*` wire code this screen branches on (#778) — the daemon refused the cursor, so the
- * walk restarts from the newest page instead of surfacing a dead end. Every other code, known or not,
- * falls through to a failure, so a hostile daemon cannot reach the restart branch by guessing. The code
- * vocabulary's SSOT is the protocol document, not this constant.
+ * walk's next ask starts from the newest page instead of surfacing a dead end (#1352). Every other code,
+ * known or not, falls through to a failure. The code vocabulary's SSOT is the protocol document, not
+ * this constant.
  */
 private const val HISTORY_INVALID_CURSOR = "history.invalid_cursor"
 
@@ -146,8 +146,8 @@ class ThreadViewModel(
     backgroundTaskCount: (conversationId: String) -> Flow<Int> = { flowOf(0) },
     // #861: whether this thread's host has a live repository published — for a relay host, the
     // coordinator's `currentRepository` being non-null, which happens only after the Noise handshake,
-    // later than the socket-level `Connected` [connectionStateSource] reports. Keys the #778 walk
-    // restart, the #1309 settings re-read and the #1410 context-usage ask. Defaulted to
+    // later than the socket-level `Connected` [connectionStateSource] reports. Gates the history ask
+    // (#1352), and keys the #1309 settings re-read and the #1410 context-usage ask. Defaulted to
     // always-available, as the demo path's fake repository is.
     private val repositoryAvailable: Flow<Boolean> = flowOf(true),
     // #843: whether this thread's own host rejected the saved pairing — the relay leg's distinct state,
@@ -494,18 +494,25 @@ class ThreadViewModel(
         }
 
     /**
-     * This conversation's backward history walk (#777) — cursor, in-flight, page count, stop reason and
-     * walk generation in one value. Written from four places, all CAS-shaped: [claimHistorySlot]'s
-     * [MutableStateFlow.compareAndSet] loop for the ask and the retry claims, [restartHistoryWalk]'s own
-     * loop, and [applyToWalk]'s generation-guarded [MutableStateFlow.update] for every settle and fail. A
-     * plain read-then-assign would open a real window, because the settle runs in a launched coroutine
-     * while the claim runs on the caller's.
+     * This conversation's backward history walk (#777) — cursor, in-flight, page count and stop reason in
+     * one value. Written CAS-shaped: [claimHistorySlot]'s [MutableStateFlow.compareAndSet] loop for the
+     * ask and the retry claims, and [MutableStateFlow.update] for every settle and fail. A plain
+     * read-then-assign would open a real window, because the settle runs in a launched coroutine while the
+     * claim runs on the caller's.
      *
-     * Not persisted — no [SavedStateHandle], no DataStore. The repository's projections are
-     * connection-scoped, so a cursor that outlived its connection would be a stale-cursor bug; #778
-     * restarts the walk on a new connection instead of resuming it.
+     * Not persisted. It survives a reconnect (#1352): the cursor names a position in the daemon's
+     * append-only log, so the next gesture after a reconnect continues from it.
      */
     private val historyDemand = MutableStateFlow(ThreadHistoryDemand())
+
+    /**
+     * Whether this thread's host has a live repository right now (#1352), desktop's
+     * `connectedConversationHostNow`: a history ask is sent only while it holds, and the oldest-end slot
+     * shows the offline notice while it does not. Keyed on the published repository, not the socket, for
+     * the #861 reason on [repositoryAvailable].
+     */
+    private val hostAvailable: StateFlow<Boolean> =
+        repositoryAvailable.distinctUntilChanged().stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     /**
      * The thread rows (#337): the #313 finished-message projection from [ConversationRepository.observeMessages]
@@ -536,8 +543,13 @@ class ThreadViewModel(
      * `distinctUntilChanged`, so this never stalls and adds no operator.
      */
     private val threadContent: Flow<ThreadContent> =
-        combine(threadItems, repository.observeQueue(conversationId), historyDemand) { items, queued, demand ->
-            ThreadContent(items, queued, demand.tail())
+        combine(
+            threadItems,
+            repository.observeQueue(conversationId),
+            historyDemand,
+            hostAvailable,
+        ) { items, queued, demand, connected ->
+            ThreadContent(items, queued, demand.tail(connected))
         }
 
     val state: StateFlow<ThreadUiState> =
@@ -1184,35 +1196,16 @@ class ThreadViewModel(
     }
 
     init {
-        // AC #1 of #777: opening a thread asks for the newest page. A phone that only ever rendered the
-        // live stream showed nothing that predated its connection.
-        requestOlderHistory()
-
-        // #778: a new connection restarts the walk from the newest page. The repository's projections are
-        // connection-scoped, so a cursor minted on one connection is not valid on the next — the walk
-        // restarts rather than resumes.
+        // #1352: neither opening the thread nor a reconnect asks for history; only the reader does
+        // (onDemandOlderHistory). The walk keeps its cursor across a reconnect.
         //
-        // #861: keyed on the repository becoming available, not on the socket. A relay host's supervisor
-        // reports Connected at socket-open, before the Noise handshake publishes the repository, so a
-        // restart keyed there asked a null repository and settled as a permanent dead end.
-        //
-        // `drop(1)` after `distinctUntilChanged` drops exactly the availability the thread opened on — the
-        // flow hands every collector its current value on subscription, so restarting on it would restart
-        // the walk this init has just started, spending a page of budget and a round trip on every open.
-        // Only a RETURN to available counts. A first value of unavailable correctly makes the repository's
-        // arrival a restart: the opening ask on the absent repository already failed.
+        // #1311: a drop and the return both end the round trip the local-send window was waiting on.
+        // `drop(1)` skips the availability the thread opened on, which the flow hands every collector.
         viewModelScope.launch {
             repositoryAvailable
                 .distinctUntilChanged()
                 .drop(1)
-                .collect { available ->
-                    // #1311: a drop and the return both end the round trip the window was waiting on.
-                    closeLocalSendWindow("reconnect")
-                    if (available) {
-                        RelayLog.d { "event=history_walk_restart reason=reconnect" }
-                        restartHistoryWalk(fromWalk = historyDemand.value.walk)
-                    }
-                }
+                .collect { closeLocalSendWindow("reconnect") }
         }
 
         // #1311: the daemon's first `turn_state` for this conversation, of any phase, closes the local-send
@@ -1232,7 +1225,7 @@ class ThreadViewModel(
         viewModelScope.launch { runSettingsRereadEdges(liveSessionEvents).collect(::rereadRunSettings) }
 
         // #1345: the MCP reading starts empty on every connection, so the thread asks once when its repository is
-        // first available and again on each return, keyed there for the #861 reason above. Gated as Channel
+        // first available and again on each return, keyed there for the #861 reason. Gated as Channel
         // info's ask is. Only the reconnect ask logs: construction stays log-free, and the opening is already
         // logged as `thread_destination_bound`.
         viewModelScope.launch {
@@ -1248,8 +1241,8 @@ class ThreadViewModel(
         }
 
         // #1410: ask for a fresh context reading when the thread opens on a live host and each time the host's
-        // repository returns, as desktop does on open. Unlike the walk restart above there is no `drop(1)`: the
-        // opening availability is the open's own ask, and nothing else sends it. An opening `false` waits for the
+        // repository returns, as desktop does on open. Unlike the local-send collector above there is no
+        // `drop(1)`: the opening availability is the open's own ask, and nothing else sends it. An opening `false` waits for the
         // repository's arrival. Each ask is one fire-and-forget frame; the reply lands on observeContextUsage.
         viewModelScope.launch {
             var opened = false
@@ -1334,29 +1327,32 @@ class ThreadViewModel(
     }
 
     /**
-     * The reader has reached the oldest loaded row (#777) — ask for the next page back. Safe to call as
-     * often as the list's scroll predicate fires: [ThreadHistoryDemand.canAsk] drops an ask that arrives
-     * while a request is outstanding or after the walk has stopped, and drops it rather than queuing it.
+     * The reader pulled toward older messages at the thread's oldest end (#1352) — ask for the next page
+     * back. The only ask besides Retry: opening, a reconnect and a page arriving never ask.
+     *
+     * Sends nothing while the host is not connected. [ThreadHistoryDemand.canAsk] drops an ask that
+     * arrives while a request is outstanding or after the walk reached a terminal stop, and drops it
+     * rather than queuing it.
      */
     fun onDemandOlderHistory() {
-        requestOlderHistory()
+        if (!hostAvailable.value) {
+            RelayLog.d { "event=history_ask_skipped reason=offline" }
+            return
+        }
+        val claimed = claimHistorySlot { if (it.canAsk) it.asking() else null } ?: return
+        launchHistoryAsk(claimed)
     }
 
     /**
      * The reader pressed the oldest-end retry affordance (#778) — ask again for the page that failed.
      *
      * Gated on [ThreadHistoryDemand.canRetry], so it is inert unless the walk actually stopped on a
-     * retryable failure. The retry resumes from the **same** cursor, keeping every loaded row and the
-     * walk's position across both the failure and the retry.
+     * retryable failure, and on the host being connected. The retry resumes from the **same** cursor,
+     * keeping every loaded row and the walk's position across both the failure and the retry.
      */
     fun onRetryOlderHistory() {
-        val claimed = claimHistorySlot { if (it.canRetry) it.retrying() else null } ?: return
-        launchHistoryAsk(claimed)
-    }
-
-    /** Issue one backward step of the walk, if the demand allows one (#777). */
-    private fun requestOlderHistory() {
-        val claimed = claimHistorySlot { if (it.canAsk) it.asking() else null } ?: return
+        if (!hostAvailable.value) return
+        val claimed = claimHistorySlot { if (it.canRetry) it.asking() else null } ?: return
         launchHistoryAsk(claimed)
     }
 
@@ -1368,17 +1364,14 @@ class ThreadViewModel(
      * entries into the thread this VM reads through `observeMessages`, so folding them here as well
      * would render every loaded row twice. Nothing needs a second fold.
      *
-     * Every write back is guarded on [claimed]'s [ThreadHistoryDemand.walk] (#778), so an ask superseded
-     * by a restart writes nothing at all. On reconnect that case is real, not theoretical: the ask issued
-     * on the connection that just died is still in flight, and its late settle would otherwise store that
-     * dead connection's cursor as the live walk's.
+     * Exactly one ask is outstanding at a time ([claimHistorySlot]), so every settle and fail belongs to
+     * the current ask. A page that settles across a reconnect still applies: its cursor stays valid.
      */
     private fun launchHistoryAsk(claimed: ThreadHistoryDemand) {
-        val walk = claimed.walk
         viewModelScope.launch {
             try {
                 val page = repository.requestHistory(conversationId, claimed.cursor)
-                applyToWalk(walk) { it.settled(pageCursor = page.cursor, atStart = page.atStart) }
+                historyDemand.update { it.settled(pageCursor = page.cursor, atStart = page.atStart) }
             } catch (e: CancellationException) {
                 throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
             } catch (e: RelayErrorException) {
@@ -1386,68 +1379,31 @@ class ThreadViewModel(
                 // server-supplied and is never read, logged or surfaced. An unknown or differently-cased
                 // code falls through to the failure branch, so the fallback here is the safe one.
                 if (e.code == HISTORY_INVALID_CURSOR && claimed.cursor.isNotEmpty()) {
-                    // AC #3: the daemon refused the cursor, so walk the log again from the newest page
-                    // rather than surfacing a dead end. Bounded because restartHistoryWalk carries the
-                    // page budget.
-                    RelayLog.d { "event=history_walk_restart reason=invalid_cursor" }
-                    restartHistoryWalk(fromWalk = walk)
+                    // #1352: the daemon refused the cursor. The next gesture asks from the newest page;
+                    // nothing asks now.
+                    RelayLog.d { "event=history_cursor_refused" }
+                    historyDemand.update { it.cursorRefused() }
                 } else {
-                    // A refusal of the NEWEST-page ask is permanent, not a restart: restarting would
-                    // re-send the same empty cursor for the same refusal, at round-trip speed with no
-                    // user input. There is nothing to restart to when the walk is already at the newest
-                    // page, and this is what keeps the restart cycle structurally impossible rather than
-                    // merely capped.
-                    failWalk(walk, retryable = e.retryable)
+                    // A refusal of the NEWEST-page ask has nothing to fall back to, so it is a failure.
+                    failWalk(retryable = e.retryable)
                 }
             } catch (e: IllegalStateException) {
-                // A not-connected session, #488's teardown sweep, or the not-wired interface default.
-                // Not retryable: a button with no connection behind it cannot work, and the reconnect
-                // restart above is what actually recovers this case.
-                failWalk(walk, retryable = false)
+                // A not-connected session, #488's teardown sweep, or the not-wired interface default. Not
+                // retryable: a button with no connection behind it cannot work. A gesture after the
+                // reconnect asks again (#1352).
+                failWalk(retryable = false)
             } catch (e: IllegalArgumentException) {
                 // An unknown conversation id, or a malformed page — kotlinx.serialization's
                 // SerializationException is an IllegalArgumentException, so the decode failure lands here.
-                failWalk(walk, retryable = false)
+                failWalk(retryable = false)
             }
         }
     }
 
-    /** Settle a failed ask, if it still belongs to the current walk. [retryable] is a flag, never text. */
-    private fun failWalk(
-        walk: Int,
-        retryable: Boolean,
-    ) {
+    /** Settle a failed ask. [retryable] is a flag, never text. */
+    private fun failWalk(retryable: Boolean) {
         RelayLog.d { "event=history_ask_failed retryable=$retryable" }
-        applyToWalk(walk) { it.failed(retryable = retryable) }
-    }
-
-    /** Apply [transform] only while the walk is still the one the ask was issued on (#778). */
-    private fun applyToWalk(
-        walk: Int,
-        transform: (ThreadHistoryDemand) -> ThreadHistoryDemand,
-    ) {
-        historyDemand.update { if (it.walk == walk) transform(it) else it }
-    }
-
-    /**
-     * Restart the walk from the newest page on the **same** page budget (#778), and ask for that page
-     * unless the budget is already spent.
-     *
-     * Returns without a write when the generation has already moved — two restarts can genuinely race
-     * (a refused cursor and a reconnect), and each taking a distinct generation means at most one settle
-     * applies: two round trips for one page of budget, which spends the bound faster rather than
-     * laundering it.
-     */
-    private fun restartHistoryWalk(fromWalk: Int) {
-        while (true) {
-            val current = historyDemand.value
-            if (current.walk != fromWalk) return
-            val restarted = current.restarted()
-            if (historyDemand.compareAndSet(current, restarted)) {
-                if (restarted.inFlight) launchHistoryAsk(restarted)
-                return
-            }
-        }
+        historyDemand.update { it.failed(retryable = retryable) }
     }
 
     /**

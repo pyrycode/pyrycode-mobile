@@ -170,3 +170,25 @@ Pending for the documentation stage:
 - `docs/knowledge/features/thread-screen-how-it-works-list-and-status-row.md`, "The oldest-end history
   demand (#777)" and the retry/restart section: the nested-scroll gesture and its 200dp band, the
   empty-thread `scrollable`, and the offline notice.
+
+## Revisions
+
+### 2026-10-02 — the gesture's start is the pointer down
+
+**What changed.** `OlderHistoryGesture` no longer decides "started near" on a gesture's first nested-scroll
+delta. A new `Modifier.olderHistoryPull(gesture)` observes each gesture's first pointer down
+(`awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)`, consuming nothing), which
+arms the gesture when the list is near its oldest end, and attaches the connection with `nestedScroll`.
+`onPreScroll` asks once for a `UserInput` delta toward older content while armed; the ask and
+`onPreFling` disarm it.
+
+**What drove it.** A Robolectric run showed that a semantics `ScrollBy` reaches the connection as
+`UserInput` deltas with no fling after it, so a fling-delimited gesture ran a semantics scroll and the next
+drag together as one gesture, and the 300dp case asked. A pointer down is a real gesture boundary, and
+scrolls with no pointer behind them now never ask.
+
+The 200dp band constant is `HistoryAskBand`, a `Dp` beside the gesture, rather than `HISTORY_ASK_BAND`.
+
+**Open Questions resolved.** (1) A `LazyColumn` that cannot scroll still dispatches its drags through
+nested scroll: the short-thread test asks once. (2) Under `reverseLayout`, `LazyListItemInfo.offset` runs
+from the viewport's bottom: at the oldest end the oldest row's `offset + size` equals `viewportEndOffset`.
