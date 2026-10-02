@@ -535,9 +535,10 @@ private fun List<ThreadItem>.withHistoryEntry(
  * The references a stored user turn names, a `send_message` (#983) or a user `message` (#1020), in wire order: every id that is not the published
  * lowercase-UUIDv4 shape is dropped and the rest kept, a repeat keeps its first position, and at most
  * [MessageAttachmentIds.MAX] survive, the bound the daemon enforced on the send. A replayed entry is not
- * re-validated by the daemon, so this is the only check between it and the thread.
+ * re-validated by the daemon, so this is the only check between it and the thread. The live `message`
+ * arm (#1351) runs the same check on a pushed user turn.
  */
-private fun storedAttachmentReferences(ids: List<String>?): List<MessageAttachment> =
+internal fun storedAttachmentReferences(ids: List<String>?): List<MessageAttachment> =
     ids
         .orEmpty()
         .filter(::isAttachmentIdShape)
