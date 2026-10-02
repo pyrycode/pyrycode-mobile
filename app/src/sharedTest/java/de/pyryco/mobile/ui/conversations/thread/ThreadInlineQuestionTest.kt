@@ -59,6 +59,17 @@ class ThreadInlineQuestionTest {
             ),
             generation = 1,
         )
+    private val twoQuestions =
+        QuestionModalState(
+            QuestionBatch(
+                "chat",
+                "request",
+                listOf("Language", "Targets").map { header ->
+                    Question("Which $header?", header, listOf(QuestionOption("Kotlin", "JVM"), QuestionOption("Rust", "Systems")), false)
+                },
+            ),
+            generation = 1,
+        )
 
     @Test
     fun empty_thread_has_inline_questions_active_back_and_composer_without_history_demand() {
@@ -272,18 +283,6 @@ class ThreadInlineQuestionTest {
         rule.runOnIdle { assertEquals("prompt replacement cannot manufacture an oldest-history demand", 0, demands) }
     }
 
-    private val twoQuestions =
-        QuestionModalState(
-            QuestionBatch(
-                "chat",
-                "request",
-                listOf("Language", "Targets").map { header ->
-                    Question("Which $header?", header, listOf(QuestionOption("Kotlin", "JVM"), QuestionOption("Rust", "Systems")), false)
-                },
-            ),
-            generation = 1,
-        )
-
     // #1484, Figma 636:3803: the focus scroll shows the focused field and both actions, not only the field's own row.
     @Test
     fun focusing_other_reveals_the_field_and_both_actions() {
@@ -317,6 +316,39 @@ class ThreadInlineQuestionTest {
         )) {
             assertTrue("$bounds lies inside the stream $stream", stream.contains(bounds))
         }
+    }
+
+    // #1484: only the last question's field reveals the actions, so an earlier field already in view never leaves it.
+    @Test
+    fun focusing_an_earlier_other_keeps_the_field_in_view_on_every_frame() {
+        rule.setContent {
+            CompositionLocalProvider(LocalOverscrollFactory provides null) {
+                PyrycodeMobileTheme {
+                    ThreadScreen(
+                        ThreadUiState("chat", "Client planning", isPromoted = false, hasMessages = true, items = historyItems()),
+                        {},
+                        {},
+                        ConnectionState.Connected,
+                        {},
+                        questionState = twoQuestions,
+                    )
+                }
+            }
+        }
+        // Index 2 is the first question: its bottom meets the stream's bottom edge, the second question and the
+        // actions below it, out of view.
+        rule.onNode(hasScrollToIndexAction()).performScrollToIndex(2)
+        val stream = rule.onNodeWithTag("thread-message-region").getUnclippedBoundsInRoot()
+        assertTrue("the field starts in view", stream.contains(rule.onNodeWithTag("question_other_0").getUnclippedBoundsInRoot()))
+
+        rule.mainClock.autoAdvance = false
+        rule.onNodeWithTag("question_other_0").performClick()
+        repeat(30) { frame ->
+            rule.mainClock.advanceTimeByFrame()
+            val field = rule.onNodeWithTag("question_other_0").getUnclippedBoundsInRoot()
+            assertTrue("frame $frame: $field lies inside the stream $stream", stream.contains(field))
+        }
+        rule.mainClock.autoAdvance = true
     }
 
     // #1484, Figma 636:4325: stacked at 150 %, the pair sits at the card's start with Cancel centred over Continue.

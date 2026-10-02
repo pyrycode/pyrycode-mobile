@@ -41,6 +41,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -226,6 +227,9 @@ private object QuestionProtectionOwners {
     }
 }
 
+/** The [QuestionBlock] reveal for a question whose Other field does not bring the actions along. */
+internal val NoReveal: suspend () -> Unit = {}
+
 /** Bounds each daemon-authored string rendered by a question row. */
 private const val MAX_QUESTION_TEXT = 8192
 
@@ -233,7 +237,8 @@ private const val MAX_QUESTION_TEXT = 8192
  * Figma `347:6697`: a tertiary header line above a bordered card holding the question and its rows.
  *
  * [revealActions] scrolls the batch's actions into view; a focused Other field runs it before bringing itself into
- * view, so the field and both actions show above the keyboard (#1484, Figma `636:3803`).
+ * view, so the field and both actions show above the keyboard (#1484, Figma `636:3803`). The thread passes it to the
+ * last question only; the others keep [NoReveal].
  */
 @Composable
 internal fun QuestionBlock(
@@ -242,8 +247,9 @@ internal fun QuestionBlock(
     selection: QuestionSelection,
     enabled: Boolean,
     onEvent: (QuestionModalEvent) -> Unit,
-    revealActions: suspend () -> Unit = {},
+    revealActions: suspend () -> Unit = NoReveal,
 ) {
+    val currentRevealActions by rememberUpdatedState(revealActions)
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             Image(
@@ -318,7 +324,7 @@ internal fun QuestionBlock(
                             // so the scroll waits for the next frame.
                             val reveal: suspend () -> Unit = {
                                 withFrameNanos {}
-                                revealActions()
+                                currentRevealActions()
                                 requester.bringIntoView()
                             }
                             LaunchedEffect(focused, imeBottom) {
