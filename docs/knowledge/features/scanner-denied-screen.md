@@ -32,16 +32,18 @@ fun ScannerDeniedScreen(
 
 The root `Surface` receives `modifier`. Its column draws the shared
 `scannerAtmosphere` blue radial center from dark theme roles before it applies
-`systemBarsPadding()`
-and 4 dp top padding, then a 64 dp header row with 4 dp start padding. The 48 dp
-Back button is vertically centered; the `titleLarge` title starts at x=52 dp.
-The header belongs to this state surface: the host supplies navigation callbacks,
+`systemBarsPadding()`, then the shared [`PairingHeader`](scanner-screen.md#pairingheader--one-header-for-scanner-denied-and-pair-screen)
+(#1463) with `title = "Pair with pyrycode"`, `onSurface`, `startPadding = 4.dp`
+and `divider = false` — this is the one frame of the three with no divider. The
+header places the title's 28 dp line box 24 dp below the status inset. The
+header belongs to this state surface: the host supplies navigation callbacks,
 not an additional top bar.
 
-The body has 32 dp side margins. A 64 dp gap below the header precedes the 120 dp
-illustration; 32 dp separates it from the `headlineSmall` heading, then 16 dp
-leads to the `bodyMedium` explanation capped at 300 dp width. A weighted spacer
-pins the full-width actions toward the bottom.
+The body has 32 dp side margins. A 70 dp gap below the header precedes the 120 dp
+illustration, keeping it at 132 dp from the inset as before the header moved;
+32 dp separates it from the `headlineSmall` heading, then 16 dp leads to the
+`bodyMedium` explanation capped at 300 dp width. A weighted spacer pins the
+full-width actions toward the bottom.
 
 The filled action is 48 dp high. The text action is visibly 40 dp high, centered
 in a 48 dp slot to preserve its accessible touch area. A 4 dp spacer before that
@@ -144,3 +146,6 @@ menu states do not apply to this surface.
 - [Restoration plan and revisions](../../specs/architecture/1151-scanner-denied-surface.md)
 - [Scanner screen](scanner-screen.md), [pair with code](paste-code-dialog.md),
   [navigation](navigation.md) and [Welcome](welcome-screen.md)
+- [One pairing header plan](../../specs/architecture/1463-shared-pairing-header.md) —
+  the shared [`PairingHeader`](scanner-screen.md#pairingheader--one-header-for-scanner-denied-and-pair-screen)
+  this screen now draws its header from (#1463)
