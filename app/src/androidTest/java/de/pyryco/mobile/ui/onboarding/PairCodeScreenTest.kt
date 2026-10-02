@@ -268,7 +268,7 @@ class PairCodeScreenTest {
         state = PairCodeState(targetName = "Pyrybox", code = "draft")
         show()
         rule.onNodeWithContentDescription("Host name").assertTextContains("Pyrybox").assertIsNotEnabled()
-        rule.onNodeWithContentDescription("Clear host name").assertIsNotEnabled()
+        rule.onNodeWithContentDescription("Clear host name").assertDoesNotExist()
         rule.runOnIdle { state = state.copy(error = WRONG_HOST_ERROR) }
         rule.onNodeWithText(WRONG_HOST_ERROR).assertIsDisplayed()
         rule.onNodeWithText("Pair").assertIsDisplayed()

@@ -93,7 +93,7 @@ class OnboardingDesignCaptureTest {
         send(pair, PairCodeEvent.Code("not-a-pairing-code"))
         send(pair, PairCodeEvent.Pair)
         awaitPairCode { it.error != null }
-        design.capture(FOLDER, "pair-invalid-code", "533:2147")
+        design.capture(FOLDER, "pair-invalid-code", "663:3191")
 
         send(pair, PairCodeEvent.Code(payload("home.lan:7117")))
         send(pair, PairCodeEvent.Pair)
@@ -103,20 +103,20 @@ class OnboardingDesignCaptureTest {
         inputs.holdSaves.value = true
         send(pair, PairCodeEvent.Confirm)
         awaitPairCode { it.phase == PairCodePhase.Saving }
-        design.capture(FOLDER, "pair-saving", "none")
+        design.capture(FOLDER, "pair-saving", "663:2887")
 
         inputs.holdSaves.value = false
         awaitPairCode { it.phase == PairCodePhase.Connecting }
-        design.capture(FOLDER, "pair-connecting", "654:4882")
+        design.capture(FOLDER, "pair-connecting", "663:2963")
 
         inputs.pairingStatus.value = ConnectionStatus(RelayLinkStatus.DaemonAbsent, PyrycodeLinkStatus.Down)
         awaitPairCode { it.failure?.retryable == true }
-        design.capture(FOLDER, "pair-failed-retry", "654:4932")
+        design.capture(FOLDER, "pair-failed-retry", "663:3039")
 
         send(pair, PairCodeEvent.Pair)
         inputs.pairingStatus.value = ConnectionStatus(RelayLinkStatus.PairingRejected, PyrycodeLinkStatus.Down)
         awaitPairCode { it.failure?.retryable == false }
-        design.capture(FOLDER, "pair-failed-rejected", "654:4982")
+        design.capture(FOLDER, "pair-failed-rejected", "663:3115")
     }
 
     @Test fun rePairFramesAt412By892() {
@@ -127,12 +127,12 @@ class OnboardingDesignCaptureTest {
         rule.onNodeWithText("Pyrycode Mobile").performScrollTo().performClick()
         rule.onNodeWithText("Pairing error - Re-pair").performClick()
         val pair = awaitPairCode { it.targetName == "Pyrybox" }
-        design.capture(FOLDER, "repair", "533:2147")
+        design.capture(FOLDER, "repair", "663:3266")
 
         send(pair, PairCodeEvent.Code(payload("home.lan:7117")))
         send(pair, PairCodeEvent.Pair)
         awaitPairCode { it.error != null }
-        design.capture(FOLDER, "repair-wrong-host", "533:2147")
+        design.capture(FOLDER, "repair-wrong-host", "663:3331")
     }
 
     private fun openScanner(): ScannerViewModel {
