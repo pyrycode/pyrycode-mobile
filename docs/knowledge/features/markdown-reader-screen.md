@@ -4,8 +4,7 @@ In-app reader for ready `.md`/`.markdown` attachments (#1027) and live workspace
 from assistant replies (#1050). Other attachments use
 [`openAttachment`](message-bubble-attachment-slot.md#open-and-save-since-985).
 The `markdown_reader/{serverId}/{conversationId}/{attachmentId}` route, copy/refresh
-[menu](#copy-and-refresh-menu-since-1067), [open](#open-in-another-app-since-1068) and
-[save](#save-to-device-since-1069) actions live in
+[menu](markdown-reader-menu.md) actions live in
 `de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreen.kt`.
 
 ## What it does
@@ -20,8 +19,20 @@ and 6dp sibling-list-item gaps. Reader headings and prose use untrimmed line-hei
 thread keeps its existing metrics. Unlabelled and indented code uses a plain, tappable,
 horizontally scrolling panel; labelled fences keep syntax highlighting and visible per-block copy.
 Reader quotes use regular `bodyLarge` text and a subdued 3dp rule. See
-[MarkdownText block dispatch](markdown-text.md#block-dispatch). Reader menu copies and link routing
+[MarkdownText block dispatch](markdown-text-internals.md#block-dispatch). Reader menu copies and link routing
 are unchanged.
+
+**List items follow `553:2574`'s in-paragraph marker (#1533).** A non-task reader item whose first
+block is a paragraph draws its marker and text as one `Text`, so a wrapped continuation line returns
+to the list's own left edge rather than hanging under the item text — the frame writes each item as
+`•  text` in one paragraph, not a marker beside a text column. Pinned by
+`MarkdownReaderDesignTest.wrappedListItemContinuesAtTheGutter`. A nested block under an item still
+indents at a fixed offset since the frame has no nested case to measure; see
+[MarkdownText § Block dispatch](markdown-text-internals.md#block-dispatch) for the full rule, including why
+ordered items and task items differ. Because the marker is now part of the item's text node,
+`MarkdownTypographyTest`'s reader list assertions match item text with `substring = true` and count
+`•  ` / `N.  `-prefixed nodes rather than standalone marker nodes; the thread cases still assert
+standalone markers.
 
 The [side-by-side](../../../app/src/androidTest/assets/markdown-reader-1291/side-by-side.png) and
 [labelled overlay/difference](../../../app/src/androidTest/assets/markdown-reader-1291/overlay-difference.png)
@@ -150,7 +161,7 @@ exactly like [`ThreadDestinationFactory.repository`](attachment-retrieval.md#les
 
 ## Linked note, live (since #1050)
 
-A markdown-path link in an assistant reply — [`markdownLinkPath`](markdown-text.md#markdown-path-links-since-1050),
+A markdown-path link in an assistant reply — [`markdownLinkPath`](markdown-text-internals.md#markdown-path-links-since-1050),
 e.g. `[Plan](notes/Plan.md)` — opens this same reader, but the note is **never a stored attachment**: it is
 read live from the conversation's workspace on every tap, and nothing is kept between opens. The operator
 decided (2026-09-24) that the reader always shows the file as it is on the host right now, so unlike the
@@ -217,212 +228,7 @@ shows.
 
 ## Copy and refresh menu (since #1067)
 
-The top bar's overflow button (`Icons.Filled.MoreVert`, `cd_more_actions`, the same 48dp touch target and bar
-metrics as `ThreadTopAppBar`'s own) opens a plain M3 `DropdownMenu` built the way `ThreadOverflowMenu` builds
-the thread's menu — the operator decided (2026-09-24) it reuses that dropdown rather than a second style.
-Figma: `Options overlay` (`533:1958`). Six items, each dismissing the menu before it acts: **Copy as
-markdown**, **Copy as plain text**, **Copy as HTML**, **Refresh**, **Open in another app** (since #1068,
-[below](#open-in-another-app-since-1068)), **Save to device** (since #1069,
-[below](#save-to-device-since-1069)). The menu shows only once the reader has content — the bar draws
-nothing until the first read finishes, and a failed first read never opens the reader at all (see [What it
-does](#what-it-does)).
-
-### Copy
-
-All three copy formats act on the `document` currently on screen — after a Refresh, on the refreshed one — and
-go out through `LocalClipboardManager.setClip(ClipEntry(clipData))`. None shows a snackbar of its own: every
-supported device (min SDK 33) already confirms a copy at the platform level, the same precedent
-[`MessageMetaRow`'s `CopyTextControl`](message-bubble.md#meta-row-and-copy-control-messagemetarowkt-since-644)
-set. The clip label is the static string `markdown_reader_clip_label`, never the note's name.
-
-- **Copy as markdown** — `ClipData.newPlainText(label, boundClipText(document.text))`: the raw file text,
-  bounded.
-- **Copy as plain text** — `ClipData.newPlainText(label, boundClipText(markdownPlainText(document.text)))`.
-- **Copy as HTML** — one `ClipData.newHtmlText(label, plainTextFallback, html)`: a single clip item carrying
-  both the generated HTML and the plain-text form as its fallback, each independently bounded.
-
-`markdownPlainText` and `markdownHtml` are new pure functions in
-`ui/conversations/components/MarkdownConversions.kt`, no Compose runtime, no Android types — parsed with the
-same `MarkdownFlavour` (GFM) [`MarkdownText`](markdown-text.md) uses, so the copies match what the screen
-actually renders rather than a second, potentially-drifting notion of "this note's markdown":
-
-- **Plain text** walks the AST directly for block structure (headings — all six ATX levels, even though the
-  renderer shows `####`+ as raw source, because the AC promises no heading markers at any level; lists, one
-  line per item with no bullet/number/task box, nested lists indented two spaces per level; block quotes, no
-  `>`; fenced/indented code kept verbatim via the renderer's own `fencedCodeText`/`indentedCodeText`; tables,
-  header then body rows tab-separated, within the renderer's `MAX_TABLE_ROWS`/`MAX_TABLE_COLUMNS` bounds) but
-  defers every inline span — paragraph text, heading content, table cells — to
-  [`inlineText`](markdown-text.md#inline-dispatch), the renderer's own inline walk exposed for this purpose.
-  That is what makes "the rendered text" true by construction: emphasis/code/strike delimiters and link targets
-  drop exactly as the screen hides them. **Lesson from implementation:** a block quote's continuation `>` and
-  the space after it sit inside the *paragraph* node, not the quote's own children — a plain-text extractor
-  that walks only the paragraph keeps them, rendering a two-line quote as `words  and more` with a double
-  space; `blockText`'s `PARAGRAPH` arm filters both out explicitly.
-- **HTML** runs the same parse through `org.intellij.markdown`'s `HtmlGenerator` with the flavour's own
-  provider map, then overrides the providers that would otherwise put note-authored text somewhere unsafe. This
-  is the one new place note text leaves the app (another app renders the pasted HTML), so every override
-  matters for the security boundary, not just fidelity:
-  - **Raw HTML is text.** The HTML-block and inline-HTML-tag providers are replaced with one that
-    HTML-escapes the node's source and writes it as a `<p>` (block) or inline text.
-  - **One href allowlist for every link-producing node** — inline links, reference links, `<autolink>` and a
-    GFM bare URL all resolve through [`isSafeLinkScheme`](markdown-text.md#link-safety--scheme-allowlist)
-    (`http`/`https`/`mailto`); anything else writes the link's text alone, with no `href`. Titles are dropped.
-    **Lesson:** `LinkGeneratingProvider.RenderInfo.destination` arrives already entity-decoded by the library,
-    so escaping its `&` again turned `?b=1&c=2` into `&amp;amp;`; the href is escaped for `"`/`'`/`<`/`>` only,
-    leaving `&` alone, and the scheme check runs on that decoded value so `java&#115;cript:` is judged as
-    `javascript:`. The autolink provider reads *raw* source instead, so it escapes `&` as well as the other
-    four characters.
-  - **Images become alt text only** — no `<img>` ever reaches the clip, so a remote `src` can never fetch
-    anything on the note author's behalf.
-  - **The code-fence provider is always replaced**, not conditionally — `<pre><code>` with the code escaped, no
-    `class` attribute — so a fence info string can never reach an attribute regardless of what the library
-    itself would have escaped. A revision during implementation dropped the earlier "replace it only if the
-    library doesn't already escape it" plan in favour of always replacing it, since that removes any dependence
-    on the library's own behaviour.
-  - No other attribute in the generated HTML carries note-authored text.
-- **`internal fun boundClipText(text)`** — `text.take(MAX_CLIPBOARD_CHARS)`. **`internal fun
-  boundClipHtml(html)`** — unchanged within the bound; otherwise cut after the last `>` inside it, so the cut
-  never lands inside a tag or an entity. `MAX_CLIPBOARD_CHARS` moved from `private` in `MessageMetaRow.kt` to
-  `internal` (visibility only) so both copy paths share the one number — a parcelled clip has a Binder ceiling
-  near 1 MB, and a note at the reader's own `MAX_MARKDOWN_READER_BYTES` (256 KiB) must not crash a copy.
-
-### Refresh
-
-`@Composable fun RefreshableMarkdownReader(initial: MarkdownDocument, reread: suspend () -> MarkdownDocument?,
-onBack, modifier)` owns the refresh and is the one real caller of `MarkdownReaderScreen`. `document` is
-`remember(initial) { mutableStateOf(initial) }`, so it survives a Refresh but not a new attachment/link
-identity. A tap holds a `Job` in `remember`; if it is still active, a second tap does nothing — the read
-already in flight is the only one that can complete. A non-null result from `reread()` replaces `document` in
-place, keeping the scroll position wherever `MarkdownText` happens to re-lay it out; `null` leaves `document`
-untouched and shows `AttachmentNotice.OPEN_FAILED`'s "Couldn't open file" string in the reader's own
-`SnackbarHostState` — the same string the thread's own failed-open snackbar uses, but scoped to the reader so
-the operator doesn't have to leave it to see the failure. Leaving the reader cancels the scope and any read
-still in flight.
-
-**Lesson from the verifier's rework round:** the failure snackbar first ran *inside* the same `Job` as the
-read, so `refreshJob?.isActive` stayed `true` for the ~4s the "Couldn't open file" snackbar was showing —
-retrying, the natural next action after that notice, silently did nothing. The fix launches the snackbar in
-its own `scope.launch { … }`, so the in-flight guard covers only the read; a retry while the notice is still
-showing reads again. Pinned by `MarkdownReaderScreenTest.aRetry_whileTheFailureNoticeShows_readsAgain`.
-
-### Open in another app (since #1068)
-
-The menu's last item, `markdown_reader_open_in_app`, hands the `document` currently on screen — after a
-Refresh, the refreshed one — to another app as `text/markdown`, through the system chooser, mirroring the
-read-only single-URI grant [`openAttachment`](message-bubble-attachment-slot.md#open-and-save-since-985) gives
-a stored attachment. A linked note (since #1050) has no file on disk at all, and a stored attachment's kept
-file can be stale after a Refresh, so the text on screen is always written out fresh first rather than handing
-on whatever file (if any) already exists.
-
-- **`SharedNoteFile.kt`** (new, `ui/conversations/thread/`, pure JVM, no Compose or Android types):
-  `sharedNoteDirectory(noBackupFilesDir)` is `<noBackupFilesDir>/attachments/shared-note` — a child of the same
-  root [`AttachmentStore`](attachment-retrieval.md#host-store--datacacheattachmentstorekt) and the attachment
-  `FileProvider` use, but named `shared-note`, which is not a 64-character hex digest. That is what keeps it
-  safe from `AttachmentStore.removeHost`'s recursive per-host delete (`<root>/<sha256hex(serverId)>`), which
-  can never collide with or reach a name outside that shape, and it never deletes anything but its own
-  contents in return. `sharedNoteFileName(name)` takes the last component after the last `/` and `\` (a
-  daemon-authored name — an attachment's `displayName` or a link's path text — can carry either separator),
-  runs it through `attachmentDisplayName` (the same control/format-character strip and 255-UTF-8-byte bound
-  attachment names already get, see [Attachment retrieval](attachment-retrieval.md)), and falls back to
-  `note.md` for an empty, `.` or `..` result. `writeSharedNote(directory, name, text)` runs under one
-  process-wide lock: creates the directory, deletes every entry already there (so at most one note's file
-  exists at a time — an open never accumulates), resolves the name inside it, and refuses (`null`) unless the
-  resolved file's canonical parent is still the directory's own canonical file — the same
-  climb-back-out defence `writeSharedNote`'s own test (`aNameThatWouldClimbOut_staysInside`) pins, on top of
-  `FileProvider`'s independent canonicalisation against `attachment_paths.xml`'s one root. Any exception is
-  `null`, unread — an exception message can carry the path.
-- **`openNoteInAnotherApp(context, document, chooserTitle, ioDispatcher)`** (`AttachmentActions.kt`): writes the
-  note on `ioDispatcher` (`OPEN_FAILED` on `null`), resolves its content URI through the same
-  `attachmentContentUri` an opened attachment uses (`OPEN_FAILED` on `null`), builds an `ACTION_VIEW` /
-  `text/markdown` intent carrying exactly `FLAG_GRANT_READ_URI_PERMISSION` — never write, persistable or
-  prefix — then checks `packageManager.queryIntentActivities` before starting anything: an empty result is
-  `NO_APP`, because handing an unresolvable `ACTION_VIEW` to `Intent.createChooser` would show an empty chooser
-  rather than throw. `startActivity(Intent.createChooser(view, chooserTitle))` follows; `createChooser` itself
-  migrates only that read grant into the chooser's own `ClipData` for the picked target.
-  `ActivityNotFoundException` is also `NO_APP`; any other exception is `OPEN_FAILED`; a started chooser is
-  `null`. `AndroidManifest.xml` gained a `<queries>` element (`VIEW` + `content` scheme + `text/markdown` type)
-  so the `queryIntentActivities` check sees installed viewers under Android 11+ package visibility — without
-  it the query would under-report regardless of what is actually installed.
-- **`MarkdownReaderScreen`** owns the action the same way it owns the copies: the tap captures the `document`
-  it is currently drawing, launches in `rememberCoroutineScope()`, and a non-null notice shows in the reader's
-  own `snackbarHostState` — `AttachmentNotice.NO_APP` ("No app can open this file") or the existing
-  `OPEN_FAILED` ("Couldn't open file"), the same strings the thread's own attachment-open failures use.
-  Notice strings are resolved with `stringResource` before the coroutine launches, not `Context.getString`
-  inside it (lint `LocalContextGetResourceValueCall`).
-- **Accepted stale-grant gap** (from the ticket's security review): the app the operator picked loses its read
-  grant on the previous file the moment the *next* open deletes it, and it cannot resolve the new file unless
-  the note's name is unchanged (a different URI). Recorded as accepted rather than fixed — one note stays on
-  disk at a time is the design, and a grant to text the operator already handed the app for the same note is
-  not a new exposure.
-
-**Lesson from implementation:** `MarkdownReaderScreenTest` needed the same `FileProvider.sCache` reset
-`AttachmentActionsTest` already used (see [Testing](#testing)) — without it, a shared-note file served in one
-test could leave the provider's authority-to-root cache pointed at a data directory Robolectric had already
-torn down for the next test in the same JVM, turning an expected `NO_APP` into `OPEN_FAILED`.
-
-Both destinations wrap `RefreshableMarkdownReader` rather than `MarkdownReaderScreen` directly:
-`MarkdownReaderDestination`'s `Loaded` arm passes `reread = { readMarkdownAttachment(repository,
-conversationId, attachmentId) }` (see [The reader destination](#the-reader-destination));
-`LinkedMarkdownReaderDestination` passes `reread = { reread(note.path) }`, where the outer `reread` parameter
-is `MainActivity`'s `{ path -> readLinkedMarkdown(destinations.repository(target.serverId), target.conversationId,
-path) }` (see [Linked note, live](#linked-note-live-since-1050)) — so a linked note's Refresh sends another
-`read_workspace_file`, proven live by the extended `interactiveTurn_markdownLink_opensLiveNoteInReader`
-scenario (see [Testing](#testing) and [Interactive stream e2e](../../e2e-interactive-stream.md)).
-
-### Save to device (since #1069)
-
-The menu's last item writes `document.text`, as it stood when the picker opened, into a document the operator
-picks through the same system create-document picker the thread's own attachment save uses, then reports the
-outcome with the existing `AttachmentNotice.SAVED` / `SAVE_FAILED` snackbar strings.
-
-- **`saveNoteText(text, openOutput, discard)`** (`AttachmentActions.kt`): `null` `text` — the pending text was
-  lost, see below — discards the document without ever calling `openOutput` and returns `false`; otherwise it
-  runs `copyAttachment` with `text.toByteArray(Charsets.UTF_8).inputStream()` as the source, so a failed write
-  discards the document exactly as an attachment save does. Blocking; the caller runs it on `Dispatchers.IO`.
-  This is the one new pure function — everything else reuses `CreateAttachmentDocument` and `copyAttachment`
-  unchanged.
-- **`rememberNoteSaver(onNotice): (MarkdownDocument) -> Unit`** (`AttachmentActions.kt`) is the reader's save,
-  bound to its composition: one `rememberLauncherForActivityResult(CreateAttachmentDocument())`, and a private
-  `PendingNote` holder — a plain `var` in a `remember`, never `rememberSaveable` — that carries the note's text
-  across the picker. The returned function stores `document.text` in the holder and launches
-  `Request(suggestedName = sharedNoteFileName(document.name), mimeType = "text/markdown")`, reusing
-  [`sharedNoteFileName`](#open-in-another-app-since-1068) for the same last-path-component-and-sanitise
-  treatment Open in another app already gives the note's name. The result callback takes the holder's text and
-  clears it immediately, before deciding anything else, so a later result can never see stale text from an
-  earlier save (the same discipline `RefreshableMarkdownReader` uses for its own in-flight guard). A `null`
-  destination (cancelled) writes nothing and notifies nothing. A picked destination writes via `saveNoteText` on
-  `Dispatchers.IO` inside `rememberCoroutineScope()`, then notifies `SAVED` or `SAVE_FAILED`.
-- **Text lost across process death.** The pending text lives only in the `remember`ed holder — never in saved
-  state — because the ticket's technical note ruled out writing stale or wrong text after a restart. If the
-  activity or process is recreated while the picker is open, `ActivityResultRegistry` still redelivers the
-  picked URI to the re-registered launcher, but the holder is now empty: `saveNoteText(null, …)` deletes the
-  created document and the reader shows `SAVE_FAILED` rather than writing anything else in its place.
-- **`MarkdownReaderScreen`** wires `onSaveToDevice = { saveNote(document) }`, so like the copies and Open in
-  another app it acts on the `document` currently drawn — the refreshed one after a Refresh — not on whatever
-  was on screen when the menu opened.
-- Logs (see [Logging](#logging) below) never carry the text, the name or the picked URI, matching every other
-  action in this menu.
-
-**Lesson from implementation (screen-test provider access).** `MarkdownReaderScreenTest` lives in
-`app/src/sharedTest`, which compiles into both the JVM (Robolectric) and device test sets (see
-[Development verification § Where a screen test goes](development-verification-gates.md#where-a-screen-test-goes)),
-so it cannot call a Robolectric-only API such as `Robolectric.setupContentProvider` to stand in for the
-document the picker returns — that would fail to compile for the device target. The test instead answers the
-picker with a `file://` URI inside the app's cache directory: Robolectric 4.17's
-`ContentResolver.openOutputStream(uri, "wt")` passes an unregistered URI straight to the real resolver, which
-resolves a `file://` URI the same way a device does, so a missing parent directory makes the write fail exactly
-as it would on a device. `DocumentsContract.deleteDocument` cannot reach a `file://` URI at all and throws,
-which `saveNoteText`'s own `runCatching` swallows — so the discard call is proven only in the `saveNoteText`
-unit tests (`AttachmentActionsTest`), and the failed-write screen test instead asserts the "Couldn't save file"
-notice and that no file exists at the destination.
-
-### Logging
-
-`RelayLog.d` only, static fields, never the text, name, path or clip contents:
-`event=markdown_reader_copy format=markdown|plain|html chars=<source length>`,
-`event=markdown_reader_refresh outcome=loaded|failed`,
-`event=markdown_reader_open_in_app outcome=opened|no_app|failed chars=<text length>` (since #1068), and (since
-\#1069) `event=markdown_reader_save outcome=saved|failed|cancelled chars=<length, or -1 when lost>`.
+The top bar's overflow menu — copy as markdown/plain text/HTML, Refresh, Open in another app (since #1068) and Save to device (since #1069), plus their logging — moved to [Markdown reader menu](markdown-reader-menu.md) under the docs guard's size cap (#1533).
 
 ## Testing
 
@@ -457,7 +263,7 @@ opposed and switches themes after composition; its 320dp fixtures prove colour, 
 `readLinkedMarkdown` cases (name from the last path component, text unchanged, every failure kind collapsing
 to `null`, exactly-at-bound succeeding); `MarkdownLinkRoutingTest` (`app/src/test/…/components/`) covers
 `markdownLinkPath` and `routeMarkdownLink` classification (see
-[MarkdownText § Markdown-path links](markdown-text.md#markdown-path-links-since-1050)); `ThreadViewModelMarkdownLinkTest`
+[MarkdownText § Markdown-path links](markdown-text-internals.md#markdown-path-links-since-1050)); `ThreadViewModelMarkdownLinkTest`
 covers one read per open, the shared in-flight guard, a reopen after release re-fetching and showing new
 content, one failure signal with nothing held, and that logs carry neither path nor text;
 `MarkdownLinkTapTest` (`app/src/sharedTest/…/components/`, Robolectric) covers a tap in both a finished and a
@@ -489,7 +295,7 @@ spends two real-claude turns — the rewrite prompt moved from the phone's compo
 turn to the suite's running total; see [Interactive stream e2e § Follow-ups to
 ticket](../../e2e-interactive-stream.md#follow-ups-to-ticket) for the live-run evidence.
 
-\#1068's [open in another app](#open-in-another-app-since-1068) adds: `SharedNoteFileTest` (`app/src/test/…/thread/`,
+\#1068's [open in another app](markdown-reader-menu.md#open-in-another-app-since-1068) adds: `SharedNoteFileTest` (`app/src/test/…/thread/`,
 pure JVM, `TemporaryFolder`, 8 tests) — `sharedNoteFileName` takes the last path component for both `/` and
 `\`, strips control characters, fits the 255-UTF-8-byte limit, and falls back to `note.md` for an empty, `.`,
 `..` or trailing-separator name; `sharedNoteDirectory`'s name is never a 64-hex-character host directory;
@@ -502,13 +308,13 @@ a markdown viewer registered, `openNoteInAnotherApp` starts an `ACTION_CHOOSER` 
 grant, and whose own chooser flags carry none of the write/persistable/prefix bits; with no viewer registered,
 `NO_APP` and nothing started; with the shared-note directory blocked by a file in its place, `OPEN_FAILED` and
 nothing started. `MarkdownReaderScreenTest` grew by 2 tests and one `@Before`: the reset of `FileProvider`'s
-cached authority roots the [lesson above](#open-in-another-app-since-1068) needed; the overflow's five items in
+cached authority roots the [lesson above](markdown-reader-menu.md#open-in-another-app-since-1068) needed; the overflow's five items in
 order (was four); choosing Open in another app with no registered viewer shows "No app can open this file"
 while the rendered content stays displayed underneath. No rung-3 scenario — the hand-off ends in another app's
 chooser, which the harness cannot drive, and the daemon is not involved; the read that produces the text is
 already proven live by the scenarios above.
 
-\#1069's [Save to device](#save-to-device-since-1069) adds: `AttachmentActionsTest` gained 3 pure-JVM tests for
+\#1069's [Save to device](markdown-reader-menu.md#save-to-device-since-1069) adds: `AttachmentActionsTest` gained 3 pure-JVM tests for
 `saveNoteText` — the exact UTF-8 bytes of a string with multi-byte characters, with nothing discarded; a failing
 output stream returns `false` and discards; `null` text returns `false`, discards and never opens the output.
 `MarkdownReaderScreenTest` grew by 4 tests: the overflow's six items in order (was five); choosing Save to
@@ -522,9 +328,11 @@ is not involved, the same call #1068 made.
 
 ## Related
 
+- [Markdown reader menu](markdown-reader-menu.md) — copy as markdown/plain text/HTML, Refresh, Open in another app
+  and Save to device, and their logging; split out under the docs guard's size cap (#1533).
 - [MessageBubble — attachment slot § Open and save](message-bubble-attachment-slot.md#open-and-save-since-985) —
   the `Ready`-row tap this screen is one branch of; `AttachmentActions.kt`'s `rememberAttachmentActions` and
-  `openAttachment`, the read-only single-URI-grant pattern [`openNoteInAnotherApp`](#open-in-another-app-since-1068)
+  `openAttachment`, the read-only single-URI-grant pattern [`openNoteInAnotherApp`](markdown-reader-menu.md#open-in-another-app-since-1068)
   mirrors for a note instead of a kept attachment file.
 - [Attachment retrieval](attachment-retrieval.md) — `ConversationRepository.retrieveAttachment`, the
   host-keyed `AttachmentStore` this reader's two reads (thread, then reader) both resolve through, and why the
@@ -534,11 +342,11 @@ is not involved, the same call #1068 made.
 - [Thread screen](thread-screen.md) — `ThreadNavigation`, the one-shot `navigationChannel` this ticket's
   `OpenMarkdown` case rides, and where `onOpenMarkdownAttachment` / `markdownOpenFailures` are wired into
   `ThreadScreen`.
-- [MarkdownText § Markdown-path links](markdown-text.md#markdown-path-links-since-1050) — `markdownLinkPath`,
+- [MarkdownText § Markdown-path links](markdown-text-internals.md#markdown-path-links-since-1050) — `markdownLinkPath`,
   `routeMarkdownLink`, and the `onOpenMarkdownPath` opt-in this screen's linked-note path is reached through;
   following a link inside an *open* note (attachment or linked) is still a later ticket, unaffected by #1050.
-- [MarkdownText § Inline dispatch](markdown-text.md#inline-dispatch) and
-  [§ Link safety](markdown-text.md#link-safety--scheme-allowlist) — `inlineText`, `MarkdownFlavour` and
+- [MarkdownText § Inline dispatch](markdown-text-internals.md#inline-dispatch) and
+  [§ Link safety](markdown-text-internals.md#link-safety--scheme-allowlist) — `inlineText`, `MarkdownFlavour` and
   `isSafeLinkScheme`, all `internal` since #1067 so the copy-and-refresh menu's conversions share the renderer's
   own parse and allowlist rather than a second copy.
 - [Thread overflow menu](thread-overflow-menu.md) — `ThreadOverflowMenu`, the `DropdownMenu` +
@@ -562,12 +370,14 @@ is not involved, the same call #1068 made.
   `chars=` log field, the bar padding, and the two rework-round fixes: the live Refresh proof and the
   retry-while-the-notice-shows fix).
 - Ticket: `docs/specs/architecture/1068-markdown-reader-open-in-app.md` — design for
-  [open in another app](#open-in-another-app-since-1068), the security review (the accepted stale-grant
+  [open in another app](markdown-reader-menu.md#open-in-another-app-since-1068), the security review (the accepted stale-grant
   gap, the `shared-note` directory's non-collision with `AttachmentStore`'s host directories), and the
   Revisions entry (the `FileProvider.sCache` reset `MarkdownReaderScreenTest` needed once `AttachmentActionsTest`
   ran first in the same JVM, and resolving notice strings with `stringResource` ahead of the coroutine).
+- Ticket: `docs/specs/architecture/1533-reader-list-wrap-to-gutter.md` — design for the reader's
+  in-paragraph list marker fixing a wrapped continuation line's left edge to match Figma `553:2574`.
 - Ticket: `docs/specs/architecture/1069-markdown-reader-save-to-device.md` — design for
-  [Save to device](#save-to-device-since-1069), the security review (no findings; the app never builds a path
+  [Save to device](markdown-reader-menu.md#save-to-device-since-1069), the security review (no findings; the app never builds a path
   and gets no persistable or tree grant, and lost pending text after recreation is addressed by design), and the
   Revisions entry (the screen test's `file://`-URI provider workaround once `sharedTest` compilation into the
   device set ruled out a Robolectric-only fake content provider).
