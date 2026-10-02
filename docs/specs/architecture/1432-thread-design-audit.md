@@ -96,3 +96,19 @@ Driven by the verifier's FAIL on PR #1491.
 - **Cleanup.** `@After` clears the draft and the fake's model menu and session-settings reading for the seeded
   channel, and deletes the staged and kept image files.
 - **Reruns.** Two methods were rerun after fixture fixes; the index names both results files.
+
+### 2026-10-02 — second rework
+
+Driven by the verifier's second FAIL on PR #1491.
+
+- **Gaps routing.** The states with no frame (status-band arms, the `StoppedTurn`, `CompactionBoundary` and
+  `UnrecognizedMessage` rows, the slash-command type-ahead and thread snackbars) are routed to the new #1529 instead
+  of a comment on #1500, whose own scope is done.
+- **Status bar.** The index gains a Status bar section naming the 412x892 captures that show #1510's dark icons,
+  taken before that fix merged.
+- **Compact rerun.** `compactAt320By700` is rerun on `pixel8Api35` at the branch's current `main` merge, so its
+  captures carry the auto-mode Run configuration fixture and #1510's fix; the index records that commit for the
+  compact captures separately.
+- **Waits and panel helpers.** Pairing-error, empty and never-reported panel states wait for their own text. The
+  panel opens and closes through the header X's "Close" description, which survives #1496 removing the text button.
+  The bubble photo is written only when `retrieveAttachment` first asks for it.

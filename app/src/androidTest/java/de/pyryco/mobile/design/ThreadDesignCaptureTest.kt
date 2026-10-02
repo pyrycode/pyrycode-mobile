@@ -16,6 +16,7 @@ import androidx.compose.ui.test.hasProgressBarRangeInfo
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -96,7 +97,7 @@ class ThreadDesignCaptureTest {
     private val turnPhase = MutableStateFlow(LiveSessionEvent.TurnState.Phase.Idle)
     private val usageLimit = MutableStateFlow<UsageLimitReading?>(null)
     private val images = mutableListOf<Uri>()
-    private val photo by lazy { photoFile() }
+    private var photo: File? = null
 
     /** Clears what outlives one test in this process: staged files, the draft, and the fake's per-channel readings. */
     @After fun clearStaged() {
@@ -106,7 +107,7 @@ class ThreadDesignCaptureTest {
         }
         val resolver = InstrumentationRegistry.getInstrumentation().targetContext.contentResolver
         images.forEach { resolver.delete(it, null, null) }
-        photo.delete()
+        photo?.delete()
         fake().setModelMenu(CONVERSATION, null)
         fake().setSessionSettingsReading(CONVERSATION, null)
     }
@@ -145,6 +146,7 @@ class ThreadDesignCaptureTest {
         thinking()
         await("2 tasks running")
         await("usage", substring = true)
+        await("Pairing error", substring = true)
         design.capture(FOLDER, "task-count-pill", "568:3139")
     }
 
@@ -187,11 +189,13 @@ class ThreadDesignCaptureTest {
         inputs.backgroundTasks.value = BackgroundTaskRoster(emptyList(), 0)
         inputs.backgroundTaskCount.value = 0
         openPanel()
+        await("No background tasks")
         design.capture(FOLDER, "tasks-empty", "568:981")
         closePanel()
 
         inputs.backgroundTasks.value = null
         openPanel()
+        await("No background-task report yet")
         design.capture(FOLDER, "tasks-never-reported", "568:997")
     }
 
@@ -249,6 +253,7 @@ class ThreadDesignCaptureTest {
         await("Offline · Retry")
         design.capture(FOLDER, "compact-offline", "627:4910")
         inputs.pairingRejected.value = true
+        await("Pairing error", substring = true)
         design.capture(FOLDER, "compact-offline-overlays", "627:4910")
         inputs.pairingRejected.value = false
         inputs.connectionState.value = ConnectionState.Connected
@@ -404,15 +409,17 @@ class ThreadDesignCaptureTest {
         rule.waitForIdle()
     }
 
+    /** Opens and closes through the header X, which stays when #1496 removes the panel's Close button. */
     private fun openPanel() {
         rule.waitForIdle()
         openActions()
         rule.onNodeWithText("Background tasks", substring = true).performTouchInput { click() }
-        await("Close")
+        rule.waitUntil(5_000) { rule.onAllNodesWithContentDescription("Close").fetchSemanticsNodes().isNotEmpty() }
+        rule.waitForIdle()
     }
 
     private fun closePanel() {
-        rule.onNodeWithText("Close").performTouchInput { click() }
+        rule.onNodeWithContentDescription("Close").performTouchInput { click() }
         rule.waitForIdle()
     }
 
@@ -457,7 +464,7 @@ class ThreadDesignCaptureTest {
                             override suspend fun retrieveAttachment(
                                 conversationId: String,
                                 attachmentId: String,
-                            ) = AttachmentRetrievalResult.Retrieved(photo, "stone.png", "image/png")
+                            ) = AttachmentRetrievalResult.Retrieved(photo ?: photoFile().also { photo = it }, "stone.png", "image/png")
 
                             override suspend fun readWorkspaceFile(
                                 conversationId: String,

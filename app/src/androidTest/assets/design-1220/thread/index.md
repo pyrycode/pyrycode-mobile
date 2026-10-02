@@ -2,7 +2,8 @@
 
 - **App commit:** `main` at `3cebb1ad` (the `main` merged into `feature/1432`), plus the test-only
   `ThreadDesignCaptureTest` on `feature/1432`. Between the first pass's `4c755aa6` and `3cebb1ad` only onboarding
-  production files changed.
+  production files changed. The compact captures (`compact-*.png`) were retaken at `main` `85466a15` (the merge in
+  `feature/1432` at `da65538a`), after #1510's status-bar fix; see "Compact, keyboard and menus".
 - **Figma:** Mobile page of `g2HIq2UyPhslEoHRokQmHG`, re-read and every frame re-exported with `get_screenshot` on
   2026-10-02 at 13:10 EEST. Since the first pass, `16:8`, `600:1694`, `620:1577`, `627:1740`, `627:4657`,
   `627:4910`, `627:5466`, `646:4707` and `568:3139` changed, and the section **Thread states · 2026-10-02**
@@ -15,10 +16,12 @@
 - **Result:** `thread-results.xml`, 6 executed, 0 failures. Two methods were rerun after fixture fixes, and their
   captures replace the full run's: `threadStatusFramesAt412By892` waits for the bubble photo's decode
   (`thread-rerun-results.xml`, 1 executed, 0 failures), and `runConfigurationAndReaderAt412By892` uses a model menu
-  that supports auto mode (`run-configuration-rerun-results.xml`, 1 executed, 0 failures).
+  that supports auto mode (`run-configuration-rerun-results.xml`, 1 executed, 0 failures). `compactAt320By700` was
+  rerun in the second rework (`compact-rerun-results.xml`, 1 executed, 0 failures) and its captures replace the
+  earlier ones.
 - **Strict waits:** every frame state waits for its marker text ("Connecting…", "Offline · Retry", "Thinking",
-  "2 tasks running", "Switch back to", "Sonnet", "Manual approval", "Builder Pipeline Plan", the panel's Close and
-  so on) and fails the run if it does not appear within 5 s. No capture is taken of a state that did not render.
+  "2 tasks running", "Pairing error", "Switch back to", "Sonnet", "Manual approval", "Builder Pipeline Plan",
+  "No background tasks", "No background-task report yet" and so on) and fails the run if it does not appear within 5 s. No capture is taken of a state that did not render.
 
 Verdicts compare each capture with its frame at 1:1 in the side-by-side and overlay images. Figma's frames have no
 system chrome, and the thread lays out inside the bars: every thread element sits 24 px below its frame position at
@@ -33,8 +36,10 @@ locale ("5/10/26 - 12:00 PM" for the frames' "13.01.2026 - 13:55"). Neither is c
 
 **Routed defects.** #1494 refusal model names · #1496 inset sheets and the task panel's Close · #1497 Run
 configuration · #1498 workspace delimiter in the seed · #1499 Offline and usage-limit pills · #1485 compact footer ·
-#1512 delimiter rule inset · #1513 photo above text · #1118 agent switch (pending). #1493, #1495 and #1500 asked
-for these captures against the updated frames; their verdicts are below and leave nothing open for them.
+#1512 delimiter rule inset · #1513 photo above text · #1529 states with no frame (Gaps) · #1118 agent switch
+(pending) · #1510 dark status-bar icons (fixed after these captures; see Status bar). #1493, #1495 and #1500 asked
+for these captures against the updated frames; their verdicts are below, and the states #1500 could not cover moved
+to #1529.
 
 ## Composer and footer
 
@@ -424,6 +429,17 @@ verdicts apply to each of those frames, which list only what differs.
 - **Owning ticket:** #1118, open on 2026-10-02.
 - Not captured. Both frames are pending #1118; `figma-578-3248.png` and `figma-578-3442.png` are kept for it.
 
+## Status bar
+
+The frames draw no status bar; the reference is light bar icons on the dark canvas (#1510). The 412x892 captures
+were taken on `main` at `3cebb1ad`, before #1510's fix merged at `8fa9df64`, on an emulator in light mode. In
+`thread.png`, `tool-row.png`, `notification-text.png`, `refusal-switch-back.png`, `session-notice.png`,
+`connecting.png`, `reconnecting.png`, `offline.png`, `task-count-pill.png`, `session-delimiter.png`,
+`overflow-menu.png`, `actions-menu.png`, `keyboard.png` and `markdown-reader.png` the clock and icons are dark
+(no pixel in the top 24 px brighter than 19 of 255). That is the #1510 defect, not counted in their Colour verdicts.
+The sheet captures (`run-configuration.png`, `tasks-*.png`) draw light icons over the sheet's scrim. #1510 is closed
+and merged; the compact captures, retaken after it, all draw light status-bar icons.
+
 ## Removed controls
 
 Checked on every capture: no removed footer selector (the footer is Actions, Cxt, paperclip and the Status
@@ -434,20 +450,22 @@ changed to ~/Workspace/pyrycode-mobile" session delimiter, which is plain text, 
 
 ## Compact, keyboard and menus
 
-Compact captures are 320x700 at font scale 1.5. Only `676:3981` has a frame at that size; the rest are checked for
-clipping, overlap and unreachable controls.
+Compact captures are 320x700 at font scale 1.5, taken at `main` `85466a15` with real 24 px status and navigation
+bars. Only `676:3981` has a frame at that size; the rest are checked for clipping, overlap and unreachable controls.
+Thread-side production changes between `3cebb1ad` and `85466a15` are #1509 (short-stream top anchoring, which does
+not apply to the seeded thread's full list) and #1510 (status-bar icons).
 
 | State | Capture | Result |
 |---|---|---|
 | Thread, compact | `compact-thread.png` | Header, band, count pill, input and footer fit. Bubbles keep their width rule, so body text wraps at two or three words a line but is not clipped. The context label truncates to "Cxt h…" (#1485) |
 | Keyboard open, compact | `compact-keyboard.png` | Compared with `676:3981` above. Input, footer and band stay above the keyboard; no control is hidden |
 | Offline pill, compact | `compact-offline.png` | "Offline · Retry" fits on one line at the right; no overlap with the header |
-| Offline with pairing error, compact | `compact-offline-overlays.png` | The pairing error replaces the Offline pill in `ThreadTopOverlay`; it overlays the top bubble as designed. No clipping |
-| Usage pill, refusal offer and strip, compact | `compact-notices.png` | The usage-limit pill wraps to three lines across the message area (#1499) but keeps its dismiss X reachable. The refusal row and "Switch back to" button wrap and stay inside the gutter; the four tiles and their remove badges fit above the input |
+| Offline with pairing error, compact | `compact-offline-overlays.png` | "Pairing error - Re-pair" (waited for) replaces the Offline pill in `ThreadTopOverlay`; it overlays the top bubble as designed. No clipping |
+| Usage pill, refusal offer and strip, compact | `compact-notices.png` | The usage-limit pill wraps to three lines across the message area (#1499) but keeps its dismiss X reachable. The refusal row and "Switch back to" button wrap and stay inside the gutter; the four tiles and their remove badges fit above the input. The second image tile shows its PNG glyph because its thumbnail had not loaded at capture; the tile's size and badge are unchanged |
 | Overflow menu, compact | `compact-overflow-menu.png` | All four rows visible and reachable; no workspace action |
 | Actions menu, compact | `compact-actions-menu.png` | All four rows visible above the footer; it covers the count pill while open, which is the menu's overlay, not a layout overlap |
-| Task panel, compact | `compact-tasks.png` | Title wraps to two lines beside the close X; cards scroll and Close stays reachable (#1496 removes it) |
-| Run configuration, compact | `compact-run-configuration.png` | Model and effort rows fit; the sheet scrolls and Done is pinned, displayed and reachable (asserted). Captured before the auto-mode fixture change, so it lists five permission rows |
+| Task panel, compact | `compact-tasks.png` | Title wraps to two lines beside the close X; cards scroll and the Close button stays reachable (#1496 removes it; the test closes through the header X) |
+| Run configuration, compact | `compact-run-configuration.png` | Model and effort rows fit; the sheet scrolls to Running model and the Permission section, and Done is pinned, displayed and reachable (asserted). The fixture supports auto mode, and "Auto approval" rendering is asserted |
 
 Approved geometry is unchanged: the audit changes no production code.
 
@@ -458,10 +476,11 @@ The six states the first pass listed here now have frames in `674:5852` and are 
 | State | Capture | Owning ticket | Routed |
 |---|---|---|---|
 | Codex agent switch | none | #1118 | pending #1118 |
-| Status-band arms `Resetting`, `ApiRetry`, `Compacting`, `TurnOutcome`, `Working`, `Stalled`, `RunningTool` | none | #1312 | #1500 (comment) |
-| `StoppedTurn`, `CompactionBoundary` and `UnrecognizedMessage` rows | none | #1207, #608 | #1500 (comment) |
-| Slash-command type-ahead and thread snackbars | none | #1149 | #1500 (comment) |
+| Status-band arms `Resetting`, `ApiRetry`, `Compacting`, `TurnOutcome`, `Working`, `Stalled`, `RunningTool` | none | #1312, #897, #803 | #1529 |
+| `StoppedTurn`, `CompactionBoundary` and `UnrecognizedMessage` rows | none | #1356, #874, #1358, #608 | #1529 |
+| Slash-command type-ahead and thread snackbars | none | #885, #1149 | #1529 |
 
 No Mobile-page frame or Components-page component shows these states on 2026-10-02, so they are not captured. The
+owning tickets are closed; #1529 asks for a frame or a recorded out-of-reference decision for each. The
 thread dialogs (Channel Info `668:5355` and `668:5460`, Rename `671:5664`, Save as channel `671:5718`, Delete
 confirmation `673:3665`) belong to #1431's list-side audit in `design-1220/list/`.
