@@ -29,11 +29,7 @@ instead of a second `Dialog` stacking over the first — `MobileModal` is itself
 a stacked confirmation would give the phone two back targets for one decision. The
 prompt names the host from this component's own already-clamped `boundedName`, the
 same fallback the host row uses, so a caller cannot bypass the clamp by formatting an
-unbounded name into the confirmation. Declining returns to the editor rather than
-closing it — `onDismissRequest` is unreachable while confirming, so no route out of a
-destructive step (Cancel, the close glyph, system Back) is ambiguous about whether it
-removed anything. See [ChannelListViewModel](channel-list-viewmodel.md#wiring) for the
-removal itself.
+unbounded name into the confirmation. Declining (Cancel, system Back) returns to the editor. The close glyph is the one route the shell does not hand to the confirmation: `MobileModal`'s `onCloseRequest` defaults to the same callback as Back and Cancel, so before #1560 the close glyph also declined, leaving an operator who meant to leave stuck back in the editor. `EditHostModal` now passes its own `onDismissRequest` as `onCloseRequest`, so the X always closes the whole modal without unpairing, while Cancel and Back still decline back to the editor. See [ChannelListViewModel](channel-list-viewmodel.md#wiring) for the removal itself.
 
 `HostEditorModal` remains the shared binding for Edit host on the channel list. Settings no longer opens it. Its controller, presence rule, loading mapping and failure copy remain described in [Host editor](host-editor.md).
 
@@ -85,6 +81,11 @@ caller that pre-fills an editable field inside this shell:
   bound `boundedRowText` uses on the host row this modal opens from, applied before
   layout and before any merged-semantics description is built — including the
   pre-filled seed value, not only the two fields the acceptance criteria named.
+- **`Espresso.pressBack()` does not wait for Compose to recompose.** Pressed
+  immediately after a click that switches the shell into its confirmation step, Back
+  can still land on the editor step's `onDismissRequest` rather than the confirmation's
+  decline callback, because the confirmation has not yet drawn. Assert the confirmation
+  is displayed before pressing Back (`EditHostModalTest`, `EditWorkspaceModalTest`, #1560).
 - **A confirmation step inside this shell is a content swap, not a second `Dialog`
   (#745).** `MobileModal` is itself a `Dialog`; stacking a second one over it gives the
   phone two back targets and two dismiss-outside behaviours for what is really one
@@ -180,9 +181,10 @@ validation. The field's `supportingText` shows the trimmed name's size against t
 a bare number-then-word as a pluralizable string; leading with the unit avoids that without a plurals
 resource for what is really a counter). Archive workspace swaps the content for a confirmation in place —
 `EditHostModal`'s unpair shape again — naming the workspace and warning that every active chat and channel
-there moves to Archive; the shell's own footer carries the decision (OK confirms, every dismissal route
-declines), and the typed name survives a decline because the buffer is keyed on identity, not on the
-confirmation flag. [ChannelListScreen](channel-list-screen-tree-and-controls.md#workspace-row-edit-and-archive-control-905)
+there moves to Archive; the shell's own footer carries the decision (OK confirms, Cancel and Back decline),
+while the close glyph passes its own `onDismissRequest` as `onCloseRequest` (#1560) and closes the whole
+modal instead of declining, and the typed name survives a decline because the buffer is keyed on identity,
+not on the confirmation flag. [ChannelListScreen](channel-list-screen-tree-and-controls.md#workspace-row-edit-and-archive-control-905)
 (#905) is its first and only caller: every workspace row's own pencil, in both sections, opens it on that
 row's own host and exact `cwd` — see that section and
 [ChannelListViewModel](channel-list-viewmodel.md#wiring) for the label rule and the write targeting.
