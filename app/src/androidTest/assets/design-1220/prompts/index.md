@@ -11,6 +11,11 @@
   records the measured values.
 - **Result:** `prompts-results.xml`, the whole class in one run after the second rework: 6 executed, 0 failures.
   Every capture here comes from that run.
+- **Re-capture for #1483:** the six permission and trust items below were re-captured on `feature/1483`, from a
+  whole-class run of `PromptsDesignCaptureTest` on 2026-10-02 (6 executed; `permissionFrames` and
+  `permissionCompactFrame` passed; `questionKeyboardFrame` failed on the known 332 px keyboard, see that item).
+  A run that starts with `permissionFrames` draws its first capture over a 63 px navigation bar, so the whole class
+  ran to keep every bar at 24 px. `prompts-results.xml` and the question and switching captures stay #1433's.
 
 **How these captures differ from onboarding's.** Both prompts set `FLAG_SECURE` on the activity window while
 they show, which blacks out the harness's `UiAutomation` screenshot. The class draws the decor view into a
@@ -134,7 +139,7 @@ scaling or the app matches the frames.
 
 ### Permission · Safe default — `639:2242`
 
-- **Owning ticket:** #1306 (inline permissions), #1300 (permission components)
+- **Owning ticket:** #1306 (inline permissions), #1300 (permission components), #1483 (frame fixes)
 - **Capture:** `permission-safe-default.png` (412x892, 1.0)
 - **Side-by-side:** `permission-safe-default-side-by-side.png`
 - **Overlay:** `permission-safe-default-overlay.png`
@@ -142,21 +147,21 @@ scaling or the app matches the frames.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: the request is anchored to the stream's end with empty space above it; Figma starts it under the header. The title "Permission required" sits above the card; Figma puts it inside as the first line. Cancel is centred; Figma start-aligns it |
+| Geometry | mismatch: the request is anchored to the stream's end with empty space above it; Figma starts it under the header. The title "Permission required" is the card's first line and Cancel is start-aligned 12 px under the card, as Figma |
 | Padding | match: 16 px card padding, 20 px gutters |
 | Spacing | mismatch: Figma puts Reject once 8 px below Allow once (y 0–40, then 48); the app shows 16 px, because the 48 dp touch floor around each 40 dp button moves layout. In the context block Figma measures 28 px from label to value, 36 px between the Reason and Folder groups and 36 px before the choices; the app measures 24, about 28 and about 28 px |
-| Typography | mismatch: the path label reads "Blocked path" where Figma reads "Folder"; footer "Cxt high: 84%". Styles match |
+| Typography | mismatch: footer "Cxt high: 84%". The title (16 px Medium, on-background), the "Folder" label and every other style match |
 | Colour | mismatch: footer warning colour. Filled primary safe default and outlined Allow once match |
 | Borders | match |
 | Radii | match |
 | Icon paths | mismatch: footer tune icon |
-| Component state | mismatch: the status row shows the glyph without "Waiting for permission". Server order and the Reject once default match |
+| Component state | match: the status row reads "Waiting for permission" beside the snowflake. Server order and the Reject once default match |
 
-- **Routed:** #1483 (placement, title, Cancel, label, status text), #1501 (choice gap, context spacing), #1485 (footer)
+- **Routed:** #1509 (placement), #1501 (choice gap, context spacing), #1485 (footer)
 
 ### Permission · Session grant offered — `639:2451`
 
-- **Owning ticket:** #1306, #818 (session grant)
+- **Owning ticket:** #1306, #818 (session grant), #1483
 - **Capture:** `permission-grant-offered.png` (412x892, 1.0)
 - **Side-by-side:** `permission-grant-offered-side-by-side.png`
 - **Overlay:** `permission-grant-offered-overlay.png`
@@ -164,21 +169,21 @@ scaling or the app matches the frames.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: as Safe default |
+| Geometry | mismatch: placement, as Safe default. Title inside the card and start-aligned Cancel match |
 | Padding | match |
 | Spacing | mismatch: choice gap and context block, as Safe default. The checkbox row and rule text match |
-| Typography | mismatch: "Blocked path" label, as Safe default; footer "Cxt high: 84%" |
+| Typography | mismatch: footer "Cxt high: 84%". Title and "Folder" label match |
 | Colour | mismatch: footer warning colour |
 | Borders | match |
 | Radii | match |
 | Icon paths | mismatch: footer tune icon. The unchecked checkbox matches |
-| Component state | mismatch: the status row shows the glyph without "Waiting for permission". Grant offered and unchecked matches |
+| Component state | match: "Waiting for permission"; grant offered and unchecked |
 
-- **Routed:** #1483, #1501, #1485
+- **Routed:** #1509, #1501, #1485
 
 ### Permission · Session grant selected — `639:2666`
 
-- **Owning ticket:** #1306, #818
+- **Owning ticket:** #1306, #818, #1483
 - **Capture:** `permission-grant-selected.png` (412x892, 1.0)
 - **Side-by-side:** `permission-grant-selected-side-by-side.png`
 - **Overlay:** `permission-grant-selected-overlay.png`
@@ -186,21 +191,21 @@ scaling or the app matches the frames.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: as Safe default |
+| Geometry | mismatch: placement, as Safe default. Title inside the card and start-aligned Cancel match |
 | Padding | match |
 | Spacing | mismatch: choice gap and context block, as Safe default |
-| Typography | mismatch: "Blocked path" label, as Safe default; footer "Cxt high: 84%" |
+| Typography | mismatch: footer "Cxt high: 84%". Title and "Folder" label match |
 | Colour | mismatch: footer warning colour. The checked checkbox matches |
 | Borders | match |
 | Radii | match |
 | Icon paths | mismatch: footer tune icon. The checkmark matches |
-| Component state | mismatch: the status row shows the glyph without "Waiting for permission". Ticked by a tap, with nothing armed or answered, matches |
+| Component state | match: "Waiting for permission"; ticked by a tap, with nothing armed or answered |
 
-- **Routed:** #1483, #1501, #1485
+- **Routed:** #1509, #1501, #1485
 
 ### Permission · Confirm Allow once (armed) — `639:2882`
 
-- **Owning ticket:** #1306, #451 (arm then confirm)
+- **Owning ticket:** #1306, #451 (arm then confirm), #1483
 - **Capture:** `permission-armed.png` (412x892, 1.0)
 - **Side-by-side:** `permission-armed-side-by-side.png`
 - **Overlay:** `permission-armed-overlay.png`
@@ -208,21 +213,21 @@ scaling or the app matches the frames.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: as Safe default |
+| Geometry | mismatch: placement, as Safe default. Title inside the card and start-aligned Cancel match |
 | Padding | match |
-| Spacing | mismatch: no hint line between Allow once and Reject once, which sit 16 px apart; context block as Safe default |
-| Typography | mismatch: "Tap Allow once again to confirm." is missing; "Blocked path" label; footer "Cxt high: 84%" |
+| Spacing | mismatch: "Tap Allow once again to confirm." sits between Allow once and Reject once as Figma, but about 12 px from each button where Figma has 8 px, the touch-floor gap of Safe default; context block as Safe default |
+| Typography | mismatch: footer "Cxt high: 84%". The hint (12 px Medium, on-primary-container), title and "Folder" label match |
 | Colour | mismatch: footer warning colour. The tonal armed fill matches |
 | Borders | match |
 | Radii | match |
 | Icon paths | mismatch: footer tune icon |
-| Component state | mismatch: the status row shows the glyph without "Waiting for permission". Armed by the first tap, grant still ticked and nothing sent all match |
+| Component state | match: "Waiting for permission"; armed by the first tap with its hint, grant still ticked and nothing sent |
 
-- **Routed:** #1483 (hint, label, status text), #1501 (gap, context spacing), #1485
+- **Routed:** #1509 (placement), #1501 (choice and hint gaps, context spacing), #1485
 
 ### Trust · Safe default — `639:3099`
 
-- **Owning ticket:** #1306
+- **Owning ticket:** #1306, #1483
 - **Capture:** `trust-safe-default.png` (412x892, 1.0)
 - **Side-by-side:** `trust-safe-default-side-by-side.png`
 - **Overlay:** `trust-safe-default-overlay.png`
@@ -230,21 +235,21 @@ scaling or the app matches the frames.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: as Safe default ("Trust this folder?" above the card, Cancel centred, request at the stream's end) |
+| Geometry | mismatch: placement, as Safe default. "Trust this folder?" inside the card and start-aligned Cancel match |
 | Padding | match |
 | Spacing | mismatch: choice gap and context block, as Safe default |
-| Typography | mismatch: "Blocked path" label, as Safe default; footer "Cxt high: 84%" |
+| Typography | mismatch: footer "Cxt high: 84%". Title and "Folder" label match |
 | Colour | mismatch: footer warning colour. "Don't trust" filled as the default matches |
 | Borders | match |
 | Radii | match |
 | Icon paths | mismatch: footer tune icon |
-| Component state | mismatch: the status row shows the glyph without "Waiting for permission". Server order and the default match |
+| Component state | match: "Waiting for permission"; server order and the default |
 
-- **Routed:** #1483, #1501, #1485
+- **Routed:** #1509, #1501, #1485
 
 ### Permission · Compact text at 150% — `639:3308`
 
-- **Owning ticket:** #1306
+- **Owning ticket:** #1306, #1483
 - **Capture:** `permission-compact.png` (320x700, 1.5)
 - **Side-by-side:** `permission-compact-side-by-side.png`
 - **Overlay:** `permission-compact-overlay.png`
@@ -252,19 +257,19 @@ scaling or the app matches the frames.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: "Permission required" sits above the card instead of inside it as the first line; Cancel is centred where Figma start-aligns it. Figma's Allow once, Reject once and Cancel are 52 px tall (Cancel 118 px wide); the app's are about 42 px |
+| Geometry | mismatch: Figma's Allow once, Reject once and Cancel are 52 px tall (Cancel 118 px wide); the app's are about 42 px. Title inside the card and start-aligned Cancel match |
 | Padding | match |
-| Spacing | mismatch: no confirm hint under the armed choice, which sits about 14 px above Reject once; context block as Safe default |
-| Typography | mismatch: the top-bar title is about 26 px against Figma's 34 px (see "Top-bar title at 150 %"); "Blocked path" label; the button labels are smaller than the frame's linear 150 %; footer "Cxt h…". Every label wraps |
+| Spacing | mismatch: the hint sits under the armed choice as Figma, with the touch-floor gaps of Safe default; context block as Safe default |
+| Typography | mismatch: the top-bar title is about 26 px against Figma's 34 px (see "Top-bar title at 150 %"); the button labels are smaller than the frame's linear 150 %; footer "Cxt h…". The hint and "Folder" label match. Every label wraps |
 | Colour | mismatch: footer warning colour |
 | Borders | match |
 | Radii | match |
 | Icon paths | mismatch: footer tune icon |
-| Component state | mismatch: the status row shows the glyph without "Waiting for permission". Grant ticked and Allow once armed match |
+| Component state | match: "Waiting for permission"; grant ticked and Allow once armed with its hint |
 
 - **Clipping and reach:** the footer's context label truncates to "Cxt h…". The title, prompt, grant, both
   choices and Cancel each scroll into view and display.
-- **Routed:** #1483 (title, Cancel, hint, label, status text), #1501 (button heights and their smaller labels, the top-bar title, context spacing), #1485 (footer, truncation)
+- **Routed:** #1501 (button heights and their smaller labels, the top-bar title, choice gaps, context spacing), #1485 (footer, truncation)
 
 ### Switch chats while prompts wait — `640:2437`
 
