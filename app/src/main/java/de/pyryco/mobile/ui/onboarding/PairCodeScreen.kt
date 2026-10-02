@@ -25,6 +25,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -80,6 +81,7 @@ internal fun PairCodeScreen(
         val drafting = editing && state.failure == null
         val canRetry = state.failure?.retryable != false
         val saving = state.phase == PairCodePhase.Saving
+        val busy = saving || state.phase == PairCodePhase.Connecting
         val colors = MaterialTheme.colorScheme
         val uriHandler = LocalUriHandler.current
         val codeError = state.error?.takeIf { it == INVALID_CODE_ERROR || it == WRONG_HOST_ERROR }
@@ -138,6 +140,14 @@ internal fun PairCodeScreen(
                             enabled = editing && canRetry,
                             modifier = Modifier.fillMaxWidth().height(56.dp),
                         ) {
+                            // The Button's State=Loading variant (663:2887, 663:2963), as the modal's loading button.
+                            if (busy) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.padding(end = 8.dp).size(20.dp),
+                                    color = colors.primary,
+                                    strokeWidth = 2.dp,
+                                )
+                            }
                             Text(
                                 when {
                                     saving -> "Saving…"
@@ -221,7 +231,7 @@ private fun PairCodeField(
                 interactionSource = interactionSource,
                 decorationBox = { innerTextField ->
                     Column(
-                        Modifier.fillMaxWidth().padding(start = 16.dp, top = 8.dp, bottom = 8.dp),
+                        Modifier.fillMaxWidth().padding(start = 16.dp, top = 8.dp, end = if (enabled) 0.dp else 16.dp, bottom = 8.dp),
                         verticalArrangement = Arrangement.Center,
                     ) {
                         Text(
@@ -233,8 +243,11 @@ private fun PairCodeField(
                     }
                 },
             )
-            IconButton(onClick = { onChange("") }, enabled = enabled) {
-                Icon(Icons.Outlined.Cancel, contentDescription = clearLabel)
+            // A field that cannot be edited has nothing to clear, so it shows no clear icon (#1464).
+            if (enabled) {
+                IconButton(onClick = { onChange("") }) {
+                    Icon(Icons.Outlined.Cancel, contentDescription = clearLabel)
+                }
             }
         }
         if (error != null) {
