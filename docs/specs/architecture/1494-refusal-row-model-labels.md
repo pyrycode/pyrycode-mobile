@@ -142,3 +142,15 @@ monospace span; they need the known-label rule (`ThreadRunConfig.knownModelLabel
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-02
+
+## Revisions
+
+**2026-10-02, verifier review of PR #1554.** The Testing strategy said existing tests run as they are because
+their fixtures have no menu, and that the scripted `refusal` scenario still covers the switch-back round trip.
+It missed the scripted and live harnesses, where the daemon publishes a real menu: fakeclaude's canned menu
+lists `value = "haiku"`, so `knownModelLabel("haiku")` is "Haiku" and the button reads "Switch back to Haiku".
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_refusalSwitchBackRestoresOriginalModel`
+now waits for that label (`REFUSAL_ORIGINAL_LABEL`) and still reads back `haiku` as the written model. No live
+test asserts refusal text. The contract is unchanged: any e2e assertion on a model name the harness's menu
+publishes expects the menu label. The review's nits also rename `ModelRefusalRow`'s parameter to
+`knownModelLabel`, so it no longer collides with `ThreadRunConfig.modelLabel`, and add a known-label preview.
