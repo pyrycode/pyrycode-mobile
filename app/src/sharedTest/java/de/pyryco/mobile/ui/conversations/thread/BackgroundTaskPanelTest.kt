@@ -14,6 +14,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.BackgroundTask
 import de.pyryco.mobile.data.model.BackgroundTaskProgress
@@ -157,13 +158,14 @@ class BackgroundTaskPanelTest {
         composeTestRule.onNodeWithText(UNREPORTED).assertIsDisplayed()
     }
 
-    // AC#3: the footer's Close and the close glyph each dismiss, and neither sends anything.
+    // AC#3: Back and the close glyph each dismiss, and neither sends anything. #1496: no footer Close.
     @Test
     fun closing_sendsNothing() {
         setThread(roster = roster(task()), count = 1)
 
         openPanelFromMenu(count = 1)
-        button("Close").performClick()
+        button("Close").assertDoesNotExist()
+        Espresso.pressBack()
         composeTestRule.onNodeWithText(UNREPORTED).assertDoesNotExist()
         composeTestRule.onNodeWithText("sleep 300").assertDoesNotExist()
 
