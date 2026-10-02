@@ -161,7 +161,7 @@ private fun RuleLabelRow(
     ) {
         BoundaryRule(modifier = Modifier.weight(1f))
         // Deliberately unweighted: Row measures a non-weighted child against the full available
-        // width before the weighted rules claim any, so a long `Workspace changed to …` label wraps
+        // width before the weighted rules claim any, so a long label wraps
         // (centred) and squeezes the rules toward zero instead of pushing anything past the viewport
         // edge. That is the degradation the narrow preview below is here to show.
         Text(
@@ -201,8 +201,8 @@ internal fun boundaryLabel(
 ): String {
     val time = formatShortTime(boundary.occurredAt, timeZone, locale)
     return when (boundary.reason) {
-        BoundaryReason.Clear -> "New session — $time"
-        BoundaryReason.WorkspaceChange -> "Workspace changed to ${boundary.workspaceCwd!!} — $time"
+        // The product has no workspaces any more (#1498); the wire still admits `workspace_change`.
+        BoundaryReason.Clear, BoundaryReason.WorkspaceChange -> "New session — $time"
         BoundaryReason.IdleEvict -> "Idle session ended — $time"
     }
 }
