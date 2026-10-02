@@ -378,7 +378,7 @@ class ChannelListScreenTest {
 
         fun HostChannelListEntry.withRelay(relay: RelayLinkStatus) =
             copy(host = host.copy(connectionStatus = ConnectionStatus(relay, PyrycodeLinkStatus.Connected)))
-        var state by mutableStateOf(HostChannelListState(listOf(first, second), selected = HostConversationTarget("first", "c1")))
+        var state by mutableStateOf(HostChannelListState(listOf(first, second)))
         composeTestRule.setContent {
             PyrycodeMobileTheme { ChannelListScreen(hostState = state, onEvent = { events += it }) }
         }

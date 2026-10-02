@@ -173,8 +173,8 @@ holds only the bare `Icon=Pair` (`486:995`) and `Icon=Update` (`581:1606`) glyph
 
 | State | Capture | Owning ticket | Routed |
 |---|---|---|---|
-| Edit channel modal (row pen) | `edit-channel.png`, `edit-channel-compact.png` (it opens with its name field focused and the keyboard up; at 412x892 every field and action sits above the keyboard, at 320x700 the prompt field is cut by the action bar and Mute and Archive channel sit below it; the walk scrolls to Archive channel with the keyboard up and asserts it is displayed, so both stay reachable) | #667 | #1504 |
-| Edit chat modal (row pen) | none | #827 | #1504 |
+| Edit channel modal (thread More actions, Edit) | `edit-channel.png`, `edit-channel-compact.png` (it opens with its name field focused and the keyboard up; at 412x892 every field and action sits above the keyboard, at 320x700 the prompt field is cut by the action bar and Mute and Archive channel sit below it; the walk scrolls to Archive channel with the keyboard up and asserts it is displayed, so both stay reachable) | #667 | #1504 |
+| Edit chat modal (unreachable since #1563; chats are renamed from the thread's More actions, Rename) | none | #827 | #1504 |
 | Create channel modal (Channels plus) | none | #958 | #1504 |
 | Unpair host confirmation (Edit host) | `edit-host-unpair.png`, `edit-host-unpair-compact.png`; its copy names a "saved workspace" | #745 | #1504, copy in #1489 |
 | Archive, Discussions tab | `archive-discussions.png`, `archive-discussions-compact.png` | #1265 | #1487 |
