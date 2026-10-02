@@ -280,7 +280,7 @@ private fun EffortRadioRows(
                         Spacer(modifier = Modifier.width(12.dp))
                         // #1497: 600:1694 reads the published level capitalised; the write stays effort.value.
                         Text(
-                            text = effort.label.replaceFirstChar { it.titlecase() },
+                            text = effort.label.replaceFirstChar { it.uppercaseChar() },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onBackground,
                         )

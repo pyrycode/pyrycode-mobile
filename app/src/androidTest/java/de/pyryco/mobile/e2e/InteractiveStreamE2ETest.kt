@@ -6302,54 +6302,51 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * Run configuration marks exactly [marked]'s radio, told apart by its label and `resolved_model` detail,
-     * or, with [marked] `null`, no model radio at all and shows [note] outside the radios (#1308). Every
-     * non-default Claude row of [menu] counts, including rows whose family label another row shares, since
-     * those are the rows a wrong mark would land on.
+     * Run configuration marks exactly [marked]'s radio, or, with [marked] `null`, no model radio at all and
+     * shows [note] outside the radios (#1308). Model rows draw only their label (#1497), so two rows sharing
+     * a family label read alike; the marked radio is told apart by its position among the model radios,
+     * which render in [menu] order. Every non-default Claude row of [menu] counts, including rows whose
+     * family label another row shares, since those are the rows a wrong mark would land on.
      */
     private fun awaitAnnouncedMark(
         menu: ModelMenu,
         marked: ModelMenuRow?,
         note: String,
     ) {
-        val labels =
-            menu.rows
-                .filter { it.agent == ConversationAgent.Claude && it.value != INHERITED_MODEL_VALUE }
-                .map { it.dropdownLabel(ConversationAgent.Claude) }
-                .toSet()
-        val markedModelRadio =
-            SemanticsMatcher("a marked model radio") { node ->
+        val rows = menu.rows.filter { it.agent == ConversationAgent.Claude && it.value != INHERITED_MODEL_VALUE }
+        val rowLabels = rows.map { it.dropdownLabel(ConversationAgent.Claude) }
+        val labels = rowLabels.toSet()
+        val modelRadio =
+            SemanticsMatcher("a model radio") { node ->
                 node.config.getOrNull(SemanticsProperties.Role) == SemanticsRole.RadioButton &&
-                    node.config.getOrNull(SemanticsProperties.Selected) == true &&
                     node.config
                         .getOrNull(SemanticsProperties.Text)
                         ?.firstOrNull()
                         ?.text in labels
             }
-        val expected =
-            marked?.let { row ->
-                val label = row.dropdownLabel(ConversationAgent.Claude)
-                val detail = row.resolvedModel.inert().takeIf { it.isNotBlank() && it != label }
-                listOfNotNull(label, detail)
-            }
+        val expectedMarks = listOfNotNull(marked?.let { row -> rows.indexOfFirst { it.value == row.value } })
 
-        fun markedTexts() =
-            composeTestRule.onAllNodes(markedModelRadio).fetchSemanticsNodes().map { node ->
+        // The model radios in sheet order, as (label, marked) pairs.
+        fun radios() =
+            composeTestRule.onAllNodes(modelRadio).fetchSemanticsNodes().map { node ->
                 node.config
                     .getOrNull(SemanticsProperties.Text)
                     .orEmpty()
-                    .map { it.text }
+                    .joinToString("") { it.text } to (node.config.getOrNull(SemanticsProperties.Selected) == true)
             }
+
+        fun markedIndices() = radios().withIndex().filter { it.value.second }.map { it.index }
         openRunConfiguration()
         try {
-            if (expected != null) {
-                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { markedTexts() == listOf(expected) }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { radios().map { it.first } == rowLabels }
+            if (marked != null) {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { markedIndices() == expectedMarks }
             } else {
                 val standaloneNote = hasText(note) and SemanticsMatcher.keyNotDefined(SemanticsProperties.Role)
                 composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                     composeTestRule.onAllNodes(standaloneNote).fetchSemanticsNodes().isNotEmpty()
                 }
-                assertEquals("a model radio is marked for an ambiguous or unmatched announcement", emptyList<List<String>>(), markedTexts())
+                assertEquals("a model radio is marked for an ambiguous or unmatched announcement", emptyList<Int>(), markedIndices())
             }
         } finally {
             composeTestRule.onNodeWithContentDescription("Close").performClick()
