@@ -8,12 +8,15 @@
   `requireRealSystemBars=true`: 412x892 px at density 1.0, font scale 1.0, fixed dark theme, real 24 px status
   and navigation bars. Each `.txt` beside a PNG records the measured values.
 - **Result:** `onboarding-results.xml`, 3 executed, 0 failures, 0 errors, 0 skipped.
+- **Recaptured for #1463:** every capture, side-by-side and overlay in this folder comes from a 2026-10-02 rerun on
+  `feature/1463` (same image, viewport and arguments, 3 executed, 0 failures). `figma-32-2.png` and
+  `figma-533-2147.png` were re-exported the same day after the frames' headers moved to Scanner's height.
 
 Verdicts compare each capture with its frame at 1:1 in the side-by-side and overlay images. Figma's frames
-have no system chrome. The app's screens do not share one rule for the bars: Welcome and Pair Screen lay
-out at the frame's full-screen coordinates and draw under the bars, while Scanner, Denied and the pairing
-modal move their content inside the bars. A 24 px move that keeps a whole screen inside its bars is not
-counted as a mismatch. A difference between screens that share a component is, and #1463 records it.
+have no system chrome. Welcome lays out at the frame's full-screen coordinates and draws under the bars;
+Scanner, Denied, Pair Screen and the pairing modal lay out inside the bars, reading each frame as the area
+below the status bar (#1463). A 24 px move that keeps a whole screen inside its bars is not counted as a
+mismatch. A difference between screens that share a component is.
 
 ### Welcome — `6:32`
 
@@ -41,8 +44,8 @@ counted as a mismatch. A difference between screens that share a component is, a
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: the header is 28 px below the frame, 4 px more than the status bar and 22 px lower than Pair Screen's identical header; the camera card ends 24 px higher, above the paste link |
-| Padding | mismatch: header top inset (see geometry) |
+| Geometry | match inside the bars: header, divider and camera card 24 px down at the top; card bottom and paste link 24 px up at the bottom. The title's line box starts 47 px from the window top (glyph top 53 px against the frame's 30), the same height as on Denied and Pair Screen |
+| Padding | match: title line box 24 px below the status bar, divider 44 px below the title top |
 | Spacing | match |
 | Typography | match: header, hint with the monospace `pyry pair`, paste link |
 | Colour | match: mask, stripes, reticle and hint surface; the emulator's camera scene shows through where Figma is static |
@@ -51,7 +54,7 @@ counted as a mismatch. A difference between screens that share a component is, a
 | Icon paths | match: back arrow, reticle corners |
 | Component state | match: ready to scan |
 
-- **Routed:** #1463 (pairing header height differs across Scanner, Denied and Pair Screen)
+- **Routed:** none
 
 ### Scanner — Denied — `32:2`
 
@@ -62,7 +65,7 @@ counted as a mismatch. A difference between screens that share a component is, a
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | match inside the bars: every element 24 px down at the top and 24 px up at the bottom; its header differs from Pair Screen's, routed under Scanner |
+| Geometry | match inside the bars: every element 24 px down at the top and 24 px up at the bottom; the header sits at the same height as Scanner's and Pair Screen's |
 | Padding | match |
 | Spacing | match |
 | Typography | match |
@@ -72,7 +75,7 @@ counted as a mismatch. A difference between screens that share a component is, a
 | Icon paths | match: crossed camera |
 | Component state | match: denied |
 
-- **Routed:** #1463 (header height, shared with Scanner)
+- **Routed:** none
 
 ### Scanner — Camera error — `654:5032`
 
@@ -181,8 +184,8 @@ counted as a mismatch. A difference between screens that share a component is, a
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: fields, Pair, Cancel and footer sit at the frame's coordinates, but the header is only 6 px below the frame, 18 px higher in the window than the same header on Denied |
-| Padding | mismatch: header top inset (see geometry) |
+| Geometry | match inside the bars: header and form top 24 px down, at the same height as Scanner's and Denied's header; Pair, Cancel and footer keep the frame's 28 px bottom gutter (24 px bar plus 4 px), so the centred fields sit 13 px lower than the frame |
+| Padding | match: title line box 24 px below the status bar, divider 44 px below the title top |
 | Spacing | match |
 | Typography | match, including the `pyrycode-mobile` footer |
 | Colour | mismatch: the radial glow is a narrow vertical ellipse with dark side bands; the frame's glow is broad and reaches both edges |
@@ -191,7 +194,7 @@ counted as a mismatch. A difference between screens that share a component is, a
 | Icon paths | match: back arrow and clear icons |
 | Component state | match: filled fields, Pair enabled |
 
-- **Routed:** #1462 (glow), #1463 (header height)
+- **Routed:** #1462 (glow)
 
 ### Pair Screen with the keyboard open — `533:2147`
 
@@ -212,7 +215,7 @@ counted as a mismatch. A difference between screens that share a component is, a
 | Icon paths | match |
 | Component state | match: Host name focused with a cursor |
 
-- **Routed:** #1462 (glow); the header height of #1463 applies here too
+- **Routed:** #1462 (glow)
 
 ## Gaps
 
