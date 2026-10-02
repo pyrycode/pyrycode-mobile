@@ -20,13 +20,21 @@ The supplied modifier threads onto the outermost `BoxWithConstraints`.
 Layout is a top-level `BoxWithConstraints(fillMaxSize)` with three layers:
 
 1. **Base** — `Modifier.background(colorScheme.surface)`.
-2. **Atmospheric glow** — `drawWithCache` builds a radial shader with Figma's
-   affine transform, preserving the tilted ellipse and its independent axes.
-   The radius-10 reference uses `matrix(43.8 -11.95 13.523 49.567 196 265)` at
-   412 × 892, scaled to the available drawing area's width and height. Stops
-   run from opaque `primaryContainer` at 0 to transparent `onPrimary` at 0.76012.
-   This returns to the surface near the upper corners; a circular gradient
-   with a height-based radius does not reproduce that fade. Drawing consumes
+2. **Atmospheric glow** — since #1462, `Modifier.onboardingGlow()` in the
+   internal `ui/onboarding/OnboardingGlow.kt`. The `drawWithCache` body and its
+   `RadialGradient` are unchanged from before the extraction, so Welcome's
+   pixels did not move; only the modifier moved to a shared file so
+   [`PairCodeScreen`](paste-code-dialog.md#form-and-rendering) could apply the
+   identical glow instead of its own narrower one. It builds a radial shader
+   with Figma's affine transform, preserving the tilted ellipse and its
+   independent axes. The radius-10 reference uses
+   `matrix(43.8 -11.95 13.523 49.567 196 265)` at 412 × 892, scaled to the
+   available drawing area's width and height. Stops run from opaque
+   `primaryContainer` at 0 to transparent `onPrimary` at 0.76012. This returns
+   to the surface near the upper corners; a circular gradient with a
+   height-based radius does not reproduce that fade. A vertically scaled
+   ellipse (what `PairCodeScreen` drew pre-#1462) does not reach a full-width
+   frame's corners either — only the affine transform does. Drawing consumes
    no layout space.
 3. **Content** — a `Column` with `fillMaxSize`, `systemBarsPadding`, 32 dp
    horizontal padding and `Arrangement.SpaceBetween` holds the hero and CTA stack.
@@ -155,3 +163,5 @@ pass geometry checks without capturing pixels. See
 - Ticket notes: `../codebase/7.md` (scaffold), `../codebase/14.md` (`onSetup` external-browser wiring), `../codebase/57.md` (Figma polish), `../codebase/149.md` (pill CTA + 168.dp hero top padding refinement), `../codebase/150.md` (logo arm geometry repair under the old `9:2` source), `../codebase/167.md` (full drawable rewrite to single filled path under the new `80:2` source + Icon bounding-box switch to 92×104dp), `../codebase/168.md` (M3 Elevation Level 3 drop-shadow on logo `Icon` via `Modifier.shadow`)
 - Figma node: `6:32` (412×892 baseline) — https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=6-32
 - Sibling: [Scanner screen](scanner-screen.md)
+- [Pair-with-code screen](paste-code-dialog.md#form-and-rendering), which shares this glow via `Modifier.onboardingGlow()` as of
+  [#1462](../../specs/architecture/1462-pair-code-full-screen-glow.md)
