@@ -421,6 +421,13 @@ class ChannelListScreenTest {
         composeTestRule.waitForIdle()
         assertDrawn(firstControls, 0)
         assertDrawn(secondControls, 1)
+        // The connected host's selected row keeps its pen while the other host is offline.
+        val secondPen = listOf(hasContentDescription(string(R.string.cd_tree_channel_edit, "second channel")))
+        state = state.copy(selected = HostConversationTarget("second", "c2"))
+        composeTestRule.waitForIdle()
+        assertDrawn(secondPen, 1)
+        state = state.copy(selected = HostConversationTarget("first", "c1"))
+        composeTestRule.waitForIdle()
         // The host row keeps Edit host and its reconnect control; folding and opening rows still work.
         list.performScrollToNode(hasTestTag(treeHostEditTestTag("first")))
         composeTestRule.onNodeWithTag(treeHostEditTestTag("first")).performClick()
@@ -1559,7 +1566,7 @@ class ChannelListScreenTest {
     }
 
     @Test
-    fun channelRowPen_namesItsChannel_andOpensItsOwnTargetWithoutSelecting() {
+    fun channelRowPen_namesItsChannel_andOpensItsOwnTargetWithoutOpeningTheRow() {
         setTree(
             entry(serverId = "pyrybox", displayName = "Pyrybox", channels = listOf(conversation("same", "alpha channel", "/w/one", true))),
             entry(serverId = "macbook", displayName = "Macbook", channels = listOf(conversation("same", "bravo channel", "/w/one", true))),
@@ -1573,9 +1580,8 @@ class ChannelListScreenTest {
             .assertHeightIsAtLeast(24.dp)
             .performClick()
 
-        // The pen's own node took the tap: it opens neither the thread nor the highlight.
+        // The pen's own node took the tap: no TreeRowTapped follows, so the thread does not open.
         assertEquals(listOf(ChannelListEvent.TreeChannelEditTapped(HostConversationTarget("macbook", "same"))), events)
-        composeTestRule.onAllNodes(hasTestTag(TREE_CHANNEL_ROW_TEST_TAG)).onFirst().assertIsNotSelected()
     }
 
     private fun openChannel(

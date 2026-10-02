@@ -113,6 +113,18 @@ class ListDesignCaptureTest {
         design.capture(FOLDER, "edit-host-unpair$suffix", "none")
         relaunch()
 
+        // Only the selected row draws its pen (#1523), so select the first channel the operator's way: open it, go Back.
+        rule
+            .onAllNodesWithTag(TREE_CHANNEL_ROW_TEST_TAG)
+            .onFirst()
+            .performScrollTo()
+            .performClick()
+        rule.waitUntil(5_000) { design.inputs.thread.value != null }
+        Espresso.pressBack()
+        awaitText("Channels")
+        rule.waitUntil(5_000) {
+            rule.onAllNodesWithContentDescription("Edit channel", substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
         rule
             .onAllNodesWithContentDescription("Edit channel", substring = true)
             .onFirst()
