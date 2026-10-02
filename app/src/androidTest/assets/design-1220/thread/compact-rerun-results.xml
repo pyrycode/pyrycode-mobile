@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="1" failures="0" errors="0" skipped="0" time="43.579" timestamp="2026-10-02T13:03:57" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.design.ThreadDesignCaptureTest" tests="1" failures="0" errors="0" skipped="0" time="39.892" timestamp="2026-10-02T13:03:57" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="compactAt320By700" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="39.892" />
+  </testsuite>
+</testsuites>
