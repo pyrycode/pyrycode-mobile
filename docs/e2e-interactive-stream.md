@@ -1994,6 +1994,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `replay-order` (#477) | events produced **entirely while offline** replay **in order, each exactly once** | `replay-order-open.jsonl` + `replay-order.jsonl` | **two** (release on disconnect) |
 | `refusal` (#1360) | a session-scoped `model_refusal_fallback` row offers "Switch back to haiku"; the tap writes `haiku` and the button disappears | `refusal.jsonl` | one |
 | `mcp-failed` (#1457) | the failed-MCP-server pill (#1345) renders and tapping it opens Channel info on its MCP servers section | `mcp-failed.jsonl` | one |
+| `context-overflow` (#1473) | the context notice and Compact pill (#1357) render after a `prompt_too_long` turn end, and tapping Compact reaches the daemon's child | `context-overflow.jsonl` | one |
 
 `refusal` selects
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_refusalSwitchBackRestoresOriginalModel`
@@ -2029,6 +2030,7 @@ DETERMINISTIC=1 SCENARIO=reconnect    PYRYCODE_SRC=~/Workspace/Projects/pyrycode
 DETERMINISTIC=1 SCENARIO=replay-order PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # post-reconnect replay ordering
 DETERMINISTIC=1 SCENARIO=refusal      PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # refusal switch-back
 DETERMINISTIC=1 SCENARIO=mcp-failed   PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # failed MCP server pill
+DETERMINISTIC=1 SCENARIO=context-overflow PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # context notice + Compact pill
 ```
 
 `mcp-failed` selects
@@ -2044,6 +2046,20 @@ itself, because the sheet's own later `mcp_status` ask gets fakeclaude's `connec
 load only `pyry_approve` and `pyry_files`, so [pyrycode
 #2272](https://github.com/pyrycode/pyrycode/issues/2272) pins the real-Claude shape of a failed server on
 the daemon side instead.
+
+`context-overflow` selects
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_contextOverflowCompactReachesDaemon`
+and belongs to `python3 scripts/android-test-gate.py scripted-all`. `context-overflow.jsonl`'s first
+turn replays an assistant line then a `result` with `is_error` true and `terminal_reason`
+`prompt_too_long`; the test waits for the status area's [context notice and Compact pill
+(#1357)](knowledge/features/turn-outcome-indicator.md), then taps Compact, which calls
+`ThreadViewModel.onComposerCommand` and sends `/compact` as an ordinary message (the daemon only
+intercepts `/clear`). Fakeclaude's canned `initializeCommands` publishes `compact`, which is what keeps
+the pill clickable; every later turn gets fakeclaude's built-in echo-plus-`success` reply, so the test
+waits for a **second** exact-text `/compact` node — the phone's own sent row is the first, fakeclaude's
+echo is the second — and only the echo proves the command reached the daemon's child. It then asserts
+the context notice is gone. No live rung-3 twin is possible: real Claude cannot be driven to
+`prompt_too_long` on demand.
 
 **`stream`** — `stream.jsonl` is three `text` lines with **distinct** `message.id`s, so the producer
 emits three `assistant_delta` envelopes (same `turn_id`, `seq` 0/1/2); the last line's
