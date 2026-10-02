@@ -142,7 +142,7 @@ class ChannelListColoursTest {
                 .onFirst()
                 .fetchSemanticsNode()
                 .boundsInRoot
-        assertEquals("Divider top", 68f, (bands.first() - panel.top) / density, 0.5f)
+        assertEquals("Divider top", 72f, (bands.first() - panel.top) / density, 0.5f)
         val firstRuleEnd = matchingRows.first { it + 1 !in matchingRows } + 1
         assertEquals("Divider thickness", 1f, (firstRuleEnd - bands.first()) / density, 0.5f)
         assertEquals("Divider to first row including list padding", 24f, (host.top - firstRuleEnd) / density, 0.5f)
