@@ -53,6 +53,8 @@ import de.pyryco.mobile.ui.conversations.components.attachmentTarget
 import de.pyryco.mobile.ui.conversations.components.loadsOnShow
 import de.pyryco.mobile.ui.conversations.components.turnRecoveryNotice
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
+import de.pyryco.mobile.ui.conversations.list.ChannelEditorController
+import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -312,6 +314,23 @@ class ThreadViewModel(
     private val promptEditor = MutableStateFlow<SystemPromptEditor?>(null)
 
     private val pendingDeleteConfirm = MutableStateFlow(false)
+
+    /**
+     * Edit channel from a channel's menu (#1561): the list's machine, bound to this thread's own repository.
+     * Its OK and Archive follow [hostAvailable], as the list's follow its host's connection, and a confirmed
+     * archive leaves the thread as the menu's Archive does.
+     */
+    private val channelEditor =
+        ChannelEditorController(
+            scope = viewModelScope,
+            isHostLive = { hostAvailable.value },
+            repositoryFor = { repository },
+            awaitRepository = {
+                hostAvailable.first { it }
+                repository
+            },
+            onArchived = { leaveForList() },
+        )
 
     private val navigationChannel = Channel<ThreadNavigation>(capacity = Channel.BUFFERED)
     val navigationEvents: Flow<ThreadNavigation> = navigationChannel.receiveAsFlow()
@@ -641,6 +660,8 @@ class ThreadViewModel(
             uiState.copy(reportedSessionFacts = facts, sessionCostUsd = cost)
         }.combine(mcpStatusReading) { uiState, mcp ->
             uiState.copy(mcpStatus = mcp)
+        }.combine(combine(channelEditor.state, hostAvailable, ::Pair)) { uiState, (editor, available) ->
+            uiState.copy(channelEditor = editor, hostAvailable = available)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -2509,6 +2530,21 @@ class ThreadViewModel(
         RelayLog.d { "event=mcp_wait_released" }
     }
 
+    /**
+     * Opens Edit channel on this conversation with its name and mute flag as the list holds them (#1561).
+     * Only a channel qualifies; a discussion's menu offers Rename instead.
+     */
+    private fun openChannelEditor() {
+        viewModelScope.launch {
+            val channel = conversations.first().firstOrNull { it.id == conversationId && it.isPromoted }
+            if (channel == null) {
+                RelayLog.d { "event=channel_editor_open_rejected code=unknown_channel" }
+                return@launch
+            }
+            channelEditor.open(HostConversationTarget(serverId, conversationId), channel.name, channel.muted)
+        }
+    }
+
     fun onOverflowEvent(event: ThreadEvent) {
         when (event) {
             ThreadEvent.Archive -> {
@@ -2542,6 +2578,10 @@ class ThreadViewModel(
                 }
             }
             ThreadEvent.RenameDismiss -> pendingRenameDialog.value = false
+            ThreadEvent.EditChannel -> openChannelEditor()
+            is ThreadEvent.ChannelEditSubmit -> channelEditor.submit(event.name, event.systemPrompt, event.muted)
+            ThreadEvent.ChannelEditArchive -> channelEditor.archive()
+            ThreadEvent.ChannelEditDismiss -> channelEditor.dismiss()
             ThreadEvent.SaveAsChannel -> {
                 pendingSaveAsChannelDialog.value =
                     SaveAsChannelDialogState(
@@ -2868,8 +2908,9 @@ internal const val PERMISSION_SETTLE_WINDOW_MS = 15_000L
 /** The pause between two settle reads once a reading has not yet reported the requested mode. */
 internal const val PERMISSION_SETTLE_INTERVAL_MS = 500L
 
-/** One published row, split into the verbatim write argument and the inert render of it. `resolvedModel`
- *  becomes [ThreadModelChoice.detail] only when it says something the label does not. */
+/** One published row, split into the verbatim write argument and inert display text. `resolvedModel`
+ *  becomes [ThreadModelChoice.detail], which no screen draws since #1497, only when it says something the
+ *  label does not. */
 private fun ModelMenuRow.toChoice(agent: ConversationAgent): ThreadModelChoice {
     val label = dropdownLabel(agent)
     return ThreadModelChoice(

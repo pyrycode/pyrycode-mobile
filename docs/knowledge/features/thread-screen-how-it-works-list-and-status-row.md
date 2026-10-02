@@ -232,8 +232,16 @@ window for a later unrelated drag to abuse. This is recorded under the plan's Re
 **`isNearOldestEnd` reads `LazyListLayoutInfo` under `reverseLayout = true`, where an item's offset runs
 from the viewport's bottom, not its top.** `internal fun LazyListLayoutInfo.isNearOldestEnd(oldestIndex:
 Int, bandPx: Float): Boolean` treats an empty thread (`oldestIndex < 0`) as always at the end; otherwise it
-finds the oldest row in `visibleItemsInfo` and checks `offset + size - viewportEndOffset <= bandPx` — the
-part of that row still hidden past the viewport's far edge. **A row not laid out at all — because it is
+finds the oldest row in `visibleItemsInfo` and checks `offset + size + afterContentPadding -
+viewportEndOffset <= bandPx` — the part of that row still hidden past the viewport's far edge.
+[#1562](https://github.com/pyrycode/pyrycode-mobile/issues/1562) added the `afterContentPadding` term: the
+`LazyColumn`'s top `contentPadding` (`MessageAreaTopInset`, 28dp — see [overlays and app
+bar](thread-screen-how-it-works-overlays-and-app-bar.md#thread-top-overlay-placement-post-1002)) is
+after-content padding at this reversed list's oldest end and is folded into `viewportEndOffset`, so without
+adding it back the ask band would arm 228dp from the oldest end instead of the documented 200dp —
+`ThreadOldestEndBandTest` drives a fake `LazyListLayoutInfo` to pin the corrected formula; a screen-level
+probe can't tell 200dp from 228dp apart because by ~214dp the oldest row has already left `visibleItemsInfo`
+and both counts treat it as out of band. **A row not laid out at all — because it is
 further away than a screenful, or because it is short and fully scrolled past — counts as further away
 than the band**, by construction of `firstOrNull { it.index == oldestIndex } ?: return false`; the function
 has no way to measure a row it cannot see. The plan names this limitation explicitly, and the verifier

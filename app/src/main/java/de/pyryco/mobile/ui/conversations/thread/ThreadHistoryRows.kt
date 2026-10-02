@@ -114,8 +114,9 @@ internal fun Modifier.olderHistoryPull(gesture: OlderHistoryGesture): Modifier =
  * the oldest thread row's list index, or negative when the thread has no rows, which counts as at the end.
  *
  * Under `reverseLayout` an item's offset runs from the viewport's bottom, so the part of the oldest row
- * still hidden above the viewport is `offset + size - viewportEndOffset`. A row not laid out yet counts as
- * further away than the band.
+ * still hidden above the viewport is `offset + size - viewportEndOffset`. The list's top content padding
+ * (#1562) is after-content padding there and lies past the oldest row, so it is added back to measure the
+ * distance from the scroll's oldest end. A row not laid out yet counts as further away than the band.
  */
 internal fun LazyListLayoutInfo.isNearOldestEnd(
     oldestIndex: Int,
@@ -123,7 +124,7 @@ internal fun LazyListLayoutInfo.isNearOldestEnd(
 ): Boolean {
     if (oldestIndex < 0) return true
     val oldest = visibleItemsInfo.firstOrNull { it.index == oldestIndex } ?: return false
-    return oldest.offset + oldest.size - viewportEndOffset <= bandPx
+    return oldest.offset + oldest.size + afterContentPadding - viewportEndOffset <= bandPx
 }
 
 /**

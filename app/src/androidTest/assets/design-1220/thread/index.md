@@ -37,7 +37,7 @@ shapes, not the frames' photo. Message text is partly the demo seed's, and times
 locale ("5/10/26 - 12:00 PM" for the frames' "13.01.2026 - 13:55"). Neither is compared.
 
 **Routed defects.** #1494 refusal model names (fixed; `620:1577` and `646:4707` retaken) · #1496 inset sheets and the task panel's Close · #1497 Run
-configuration · #1498 workspace delimiter in the seed · #1499 Offline and usage-limit pills · #1485 compact footer ·
+configuration (fixed; `600:1694` retaken) · #1498 workspace delimiter in the seed · #1499 Offline and usage-limit pills · #1485 compact footer ·
 #1512 delimiter rule inset · #1513 photo above text and photo bubble width · #1529 states with no frame (Gaps) ·
 #1532 PDF tile not dimmed while disconnected · #1533 reader list indent · #1534 task panel spacing · #1118 agent switch
 (pending) · #1510 dark status-bar icons (fixed after these captures; see Status bar). #1493, #1495 and #1500 asked
@@ -276,23 +276,26 @@ verdicts apply to each of those frames, which list only what differs.
 - **Capture:** `run-configuration.png` (412x892, 1.0)
 - **Side-by-side:** `run-configuration-side-by-side.png`
 - **Overlay:** `run-configuration-overlay.png`
-- **Verdict:** mismatch
+- **Verdict:** mismatch (inset sheet only, #1496)
 - Four-model menu with real resolved identifiers and auto mode, Sonnet at high effort, Manual approval. No "Default"
   option in any spelling (asserted with a case-insensitive substring match).
+- **Recaptured for #1497** with `runConfigurationAndReaderAt412By892` on `pixel8Api35`, `requireRealSystemBars=true`
+  (`1497-results.xml`, 1 executed, 0 failures), and compared again with `scripts/design-compare.py`. Only
+  the `run-configuration` PNGs (capture, side-by-side, overlay) were replaced; `markdown-reader.png` keeps its #1432 capture.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: each model row is two lines tall, so Effort and the sections below sit lower, and with the inset sheet "Bypass approvals" falls below the visible area (it scrolls into view). The sheet ends above the navigation bar with rounded bottom corners; the frame runs it to the screen's bottom |
+| Geometry | match apart from the inset: each model row is one line, so Effort sits at its frame position plus the 24 px bar shift and the sections below stay within 2 px of it, and "Bypass approvals" is in view. The sheet ends above the navigation bar with rounded bottom corners; the frame runs it to the screen's bottom |
 | Padding | match |
 | Spacing | match: Permission heading and row spacing |
-| Typography | mismatch: a resolved-identifier second line under every model ("claude-sonnet-5"); effort options read "low/medium/high/max" where the frame reads "Low/Medium/High/Max" |
+| Typography | match: model rows show the label only, and effort options read "Low/Medium/High/Max" |
 | Colour | match: radios, labels and Done |
 | Borders | match: header divider |
 | Radii | mismatch: rounded bottom sheet corners (see geometry); Done matches |
 | Icon paths | match: close X, radios |
 | Component state | match: Permission section with the frame's six rows in its order, Manual approval selected |
 
-- **Routed:** #1497 (model rows, effort case), #1496 (the `MobileModalShell` inset shared with the task panel)
+- **Routed:** #1496 (the `MobileModalShell` inset shared with the task panel). #1497's model rows and effort case are fixed
 
 ### Markdown Reader — `553:2574`
 
@@ -473,7 +476,7 @@ not apply to the seeded thread's full list) and #1510 (status-bar icons).
 | Overflow menu, compact | `compact-overflow-menu.png` | All four rows visible and reachable; no workspace action |
 | Actions menu, compact | `compact-actions-menu.png` | All four rows visible above the footer; it covers the count pill while open, which is the menu's overlay, not a layout overlap |
 | Task panel, compact | `compact-tasks.png` | Title wraps to two lines beside the close X; cards scroll and the Close button stays reachable (#1496 removes it; the test closes through the header X) |
-| Run configuration, compact | `compact-run-configuration.png` | Model and effort rows fit, and Done is pinned, displayed and reachable (asserted). The capture ends at "Running model"; the Permission section lies below it in the sheet's scrolling column. The test asserts only that the "Auto approval" row is composed, not that it or "Bypass approvals" scrolls into view, so reaching the Permission rows at this size is not shown |
+| Run configuration, compact | `compact-run-configuration.png` | Model and effort rows fit, and Done is pinned, displayed and reachable (asserted). The capture ends at "Running model"; the Permission section lies below it in the sheet's scrolling column. The test asserts only that the "Auto approval" row is composed, not that it or "Bypass approvals" scrolls into view, so reaching the Permission rows at this size is not shown. Captured before #1497, so it still shows two-line model rows and lowercase effort labels |
 
 Approved geometry is unchanged: the audit changes no production code.
 

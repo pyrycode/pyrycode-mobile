@@ -267,6 +267,7 @@
     <string name="tool_row_collapse">Hide tool details</string>
     <string name="thread_overflow_new_session">Reset session</string>
     <string name="thread_overflow_rename">Rename</string>
+    <string name="thread_overflow_edit">Edit</string>
     <string name="thread_overflow_change_workspace">Change workspace…</string>
     <string name="thread_overflow_archive">Archive</string>
     <string name="thread_overflow_channel_info">Channel info</string>
