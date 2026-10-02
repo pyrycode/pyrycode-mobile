@@ -77,6 +77,8 @@ import de.pyryco.mobile.ui.theme.modalContainer
  * Presentation only: the caller owns visibility, editable values and submission state.
  * Content is a non-lazy column; the shell provides scrolling and IME avoidance.
  * Request any initial field focus inside [content], in the dialog's subcomposition.
+ * The close glyph fires [onCloseRequest]; Cancel and Back fire [onDismissRequest]. A caller whose Cancel
+ * steps back rather than closing, such as a confirmation step (#1560), passes its own close here.
  */
 @Composable
 internal fun MobileModal(
@@ -84,6 +86,7 @@ internal fun MobileModal(
     onDismissRequest: () -> Unit,
     onSubmit: () -> Unit,
     modifier: Modifier = Modifier,
+    onCloseRequest: () -> Unit = onDismissRequest,
     submissionEnabled: Boolean = true,
     loading: Boolean = false,
     error: String? = null,
@@ -98,6 +101,7 @@ internal fun MobileModal(
         gate = false,
         modifier = modifier,
         error = error,
+        onCloseRequest = onCloseRequest,
         footer = { dismiss ->
             ModalCancelButton(label = cancelLabel, onClick = dismiss)
             if (submitLabel != null) {
@@ -202,7 +206,7 @@ internal fun MobileDismissModal(
 
 /**
  * [gate] is the only switch between the editing shell and the hardened decision gate. A null [footer]
- * draws no footer row. [extendToBottom] lets the sheet reach the screen's bottom edge and moves the bottom
+ * draws no footer row. [onCloseRequest] is the close glyph's own route. [extendToBottom] lets the sheet reach the screen's bottom edge and moves the bottom
  * safe-drawing inset inside it, so the content still ends above the navigation bar and keyboard.
  */
 @Composable
@@ -217,6 +221,7 @@ private fun MobileModalShell(
     contentAlignment: Alignment.Vertical = Alignment.CenterVertically,
     footerAlignment: Alignment.Horizontal = Alignment.CenterHorizontally,
     bottomPadding: androidx.compose.ui.unit.Dp = 20.dp,
+    onCloseRequest: () -> Unit = onDismissRequest,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     DisposableEffect(Unit) {
@@ -229,6 +234,10 @@ private fun MobileModalShell(
     val dismiss = {
         logModalEvent("dismiss_requested")
         onDismissRequest()
+    }
+    val close = {
+        logModalEvent("close_requested")
+        onCloseRequest()
     }
     Dialog(
         onDismissRequest = dismiss,
@@ -305,7 +314,7 @@ private fun MobileModalShell(
                                 // The visible row is 28 dp; the centred 48 dp hit area fits within its 20 dp
                                 // title gap and 12 dp separator gap without changing either Figma measure.
                                 Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
-                                    IconButton(onClick = dismiss, modifier = Modifier.requiredSize(48.dp)) {
+                                    IconButton(onClick = close, modifier = Modifier.requiredSize(48.dp)) {
                                         Icon(
                                             painter = painterResource(R.drawable.ic_modal_close),
                                             contentDescription = "Close",

@@ -91,12 +91,11 @@ private val ActionVisibleHeight = 40.dp
  *
  * While [confirmingUnpair] the frame's four content children are replaced **in place** by the
  * confirmation prompt (#745), and the shell's own footer carries the decision: its OK becomes
- * [onUnpairConfirmed] and every dismissal route it funnels — Cancel, the close glyph, system Back —
- * becomes [onUnpairDeclined]. The alternative, a second [MobileModal]-style `Dialog`, would stack two
- * windows over one decision and give the phone two back targets for it. Declining therefore returns to
- * the editor rather than closing it, which is also why [onDismissRequest] is not reachable from the
- * confirmation at all: no route out of a destructive step should be ambiguous about whether it removed
- * anything.
+ * [onUnpairConfirmed], and Cancel and system Back become [onUnpairDeclined], which returns to the editor.
+ * The close glyph stays [onDismissRequest] and closes the whole modal without unpairing (#1560), so the X
+ * never leaves the operator inside an editor they meant to leave. The alternative, a second
+ * [MobileModal]-style `Dialog`, would stack two windows over one decision and give the phone two back
+ * targets for it. Only OK removes anything.
  */
 @Composable
 internal fun EditHostModal(
@@ -133,6 +132,7 @@ internal fun EditHostModal(
         onDismissRequest = if (confirmingUnpair) onUnpairDeclined else onDismissRequest,
         onSubmit = if (confirmingUnpair) onUnpairConfirmed else submit,
         modifier = modifier,
+        onCloseRequest = onDismissRequest,
         submissionEnabled = submissionEnabled,
         loading = loading,
         error = error,

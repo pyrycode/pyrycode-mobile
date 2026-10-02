@@ -18,6 +18,10 @@ N/A — behaviour only. The close glyph, its placement and every pixel stay as d
 
 ## Testing strategy
 
-- `EditHostModalTest.unpairConfirmationReplacesTheContentInPlaceAndEveryDismissalRouteDeclines`: Cancel and Back decline (2), the X dismisses (1), nothing unpairs.
+- `EditHostModalTest.unpairConfirmationReplacesTheContentInPlace_cancelAndBackDecline_closeDismisses`: Cancel and Back decline (2), the X dismisses (1), nothing unpairs.
 - `EditWorkspaceModalTest.archiveAsksInPlace_okConfirms_cancelDeclinesBackToTheTypedName`: the trailing X in the confirmation records `dismiss`, not `decline`; a new check that Back declines in the confirmation.
 - `HostChannelListViewModelTest`: after dismissing from the unpair and archive confirmations, reopening the editor yields `confirmingUnpair`/`confirmingArchive` false.
+
+## Revisions
+
+- 2026-10-02: the host test was renamed from `unpairConfirmationReplacesTheContentInPlaceAndEveryDismissalRouteDeclines`, whose name no longer held. The workspace test asserts the confirmation is drawn before pressing Back, because Espresso's Back does not wait for Compose and otherwise lands on the editor step's `onDismissRequest`. The contract is unchanged.

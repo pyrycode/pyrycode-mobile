@@ -1336,6 +1336,16 @@ class HostChannelListViewModelTest {
             assertEquals("Pyrybox", requireNotNull(f.store.loadById("Host")).displayName)
             assertEquals("/w/host", f.prefs.defaultWorkspace("Host").first())
             assertEquals("/w/other", f.prefs.defaultWorkspace("host").first())
+
+            // Closing from the confirmation (#1560) removes nothing and leaves nothing armed for the next open.
+            f.vm.requestHostUnpair()
+            f.vm.dismissHostEditor()
+            runCurrent()
+            assertNull(f.vm.hostState.value.hostEditor)
+            f.vm.openHostEditor("Host")
+            runCurrent()
+            assertFalse(requireNotNull(f.vm.hostState.value.hostEditor).confirmingUnpair)
+            assertTrue(f.store.removals.isEmpty())
         }
 
     @Test
@@ -2377,6 +2387,11 @@ class HostChannelListViewModelTest {
                 f.b.repo.workspaceArchives
                     .isEmpty(),
             )
+
+            // Closing from the confirmation (#1560) leaves nothing armed: reopening shows the editor.
+            f.vm.openWorkspaceEditor("host", sharedCwd)
+            runCurrent()
+            assertFalse(requireNotNull(f.vm.hostState.value.workspaceEditor).confirmingArchive)
         }
 
     @Test

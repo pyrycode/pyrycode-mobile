@@ -70,8 +70,9 @@ private val ActionMinHeight = 48.dp
  * clears the label. The field reports the trimmed name's size in UTF-8 bytes, the daemon's unit.
  *
  * While [confirmingArchive] the content is replaced **in place** by one prompt naming the workspace, and
- * the shell's own footer decides it — OK is [onArchiveConfirmed], and Cancel, the close glyph and Back
- * are [onArchiveDeclined] — for the reasons `EditHostModal`'s unpair confirmation records. The buffer is
+ * the shell's own footer decides it — OK is [onArchiveConfirmed], and Cancel and Back are
+ * [onArchiveDeclined], while the close glyph stays [onDismissRequest] and closes the modal (#1560) — for
+ * the reasons `EditHostModal`'s unpair confirmation records. The buffer is
  * not keyed on that flag, so declining comes back to exactly what the operator typed. Keep [error]
  * generic: the shell announces it aloud.
  */
@@ -105,6 +106,7 @@ internal fun EditWorkspaceModal(
         onDismissRequest = if (confirmingArchive) onArchiveDeclined else onDismissRequest,
         onSubmit = if (confirmingArchive) onArchiveConfirmed else submit,
         modifier = modifier,
+        onCloseRequest = onDismissRequest,
         submissionEnabled = hostAvailable && (confirmingArchive || !tooLong),
         loading = loading,
         error = error,
