@@ -13,7 +13,7 @@
 
 **Figma:** https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=15-8
 
-Flat `Schemes/Surface` `rgb(16,20,24)`, then a radial glow from `Schemes/Primary Container` `#134A74` at 0 to transparent `Schemes/On Primary` `#003355` at stop 0.76, elliptical and rotated by the gradient transform `matrix(43.8 -11.95 13.523 49.567 196 265)` on a radius of 10, then the sidebar's 30 % black overlay. The glow spans the whole frame, top bar included. The export samples at (300,350) 8,33,52; (10,300) 8,26,39; (206,2) 11,31,45; (400,500) 9,18,25; (200,700) 11,14,17. Figma's (200,200) falls on the selected row in the export, not on bare canvas, so it is not a glow sample.
+Flat `Schemes/Surface` `rgb(16,20,24)`, then a radial glow from `Schemes/Primary Container` `#134A74` at 0 to transparent `Schemes/On Primary` `#003355` at stop 0.76, elliptical and rotated by the gradient transform `matrix(43.8 -11.95 13.523 49.567 196 265)` on a radius of 10, then the sidebar's 30 % black overlay. The glow spans the whole frame, top bar included. The export samples at (300,350) 8,33,52; (10,300) 8,26,39; (206,20) 8,24,35; (400,500) 9,18,25; (200,700) 11,14,17. Figma's (200,200) falls on the selected row in the export, not on bare canvas, so it is not a glow sample.
 
 ## Change
 
@@ -26,3 +26,7 @@ Under `LocalStaticDarkPalette`, `ChannelListScreen` draws surface, the elliptica
 ## Documentation handoff
 
 - `docs/knowledge/features/app-preferences.md`, the `15:8` comparison paragraph saying the flat canvas "is a routed Colour mismatch (#1486)": pending for the documentation stage — update to say the list now draws the glow (#1522).
+
+## Revisions
+
+**2026-10-02.** Two stops became nine. Android blends gradient stops premultiplied, so a two-stop ramp kept the start hue to the edge and rendered 3–5 RGB units bright against the export. The glow now samples Figma's straight-alpha ramp at eight steps, each stop `lerp(primaryContainer, onPrimary, f)` at alpha `1 - f`, the same correction the thread frame's midpoint stop makes; the render is within one unit of the export at every bare-canvas sample. Figma's top 4 dp is the body band outside the sidebar overlay (the stack #1521 handles), so the bar sample moved from (206,2) to (206,20). The toolbar rule is translucent, so over the glow the dark rule check matches 33,68,99 within 4 units, as Figma's own rule varies across its width.
