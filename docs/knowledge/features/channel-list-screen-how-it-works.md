@@ -57,14 +57,26 @@ assembled tree (four before #738 retired the flat state's loading and error text
 being touched. This is what makes the "bar on every draw" requirement fall out of the structure rather than
 needing to be re-proven per state.
 
-**Geometry ([#1202](../../specs/architecture/1202-sidebar-toolbar-figma.md)).** Each 24dp visual frame
-is centred in a 44dp target, giving `BarTouchSlack = 10.dp` and `BarTopGap = 18dp`. The adjacent left
+**Geometry ([#1202](../../specs/architecture/1202-sidebar-toolbar-figma.md), top gap corrected in
+[#1521](../../specs/architecture/1521-channel-list-bar-top-gap.md)).** Each 24dp visual frame
+is centred in a 44dp target, giving `BarTouchSlack = 10.dp`. `BarTopGap = 32.dp - BarTouchSlack` (22dp)
+and `BarRuleGap = 16.dp - BarTouchSlack` (6dp) so the glyph tops sit at Figma `15:8`'s 32dp — the frame
+stacks body top padding 4 + sidebar top padding 24 + button-row top padding 4. The adjacent left
 targets touch without overlap, so Settings and Archive centres are exactly 44dp apart. At a 412dp panel
 width the Settings glyph spans x=21–43, Archive x=64–88, and add-host x=368–392; the first and last
-24dp visual frames align with the 20dp content gutters. The toolbar rule spans x=20–392 at y=68–69,
-with `BarRuleGap = 6dp` below the targets. The Archive glyph's half-dp vertical centering rasterizes at
-y=30 in the device geometry check, while the 24dp-tall glyphs start at y=28. Keeping 44dp targets is
-necessary to reproduce the design's icon centres without overlapping click regions.
+24dp visual frames align with the 20dp content gutters. The toolbar rule sits at y=72–73, 4dp below
+its pre-#1521 position, because the rule and the tree follow the bar in the `Scaffold` rather than
+moving independently. The Archive glyph's half-dp vertical centering rasterizes 2dp below the other two
+in the device geometry check (y=34 against y=32), while all three 24dp-tall glyphs top out at y=32.
+Keeping 44dp targets is necessary to reproduce the design's icon centres without overlapping click
+regions. [#1521](../../specs/architecture/1521-channel-list-bar-top-gap.md) also proved, rather than
+changed, two things the single-host #1431 audit couldn't check: the 16dp gap between consecutive host
+containers (`TreeHostGap`, [conversation tree](channel-list-screen-tree-and-controls.md#conversation-tree-731))
+and the collapsed treatment (right chevron, no child rows; closed-folder glyph on a collapsed section) —
+both already matched `15:8` with no production change. Rendering the comparison state under Robolectric
+(`root.draw(Canvas)` on a `w412dp-h892dp-mdpi` config with `@GraphicsMode(NATIVE)`) reaches multi-host
+and folded-row states pixel-comparable to a Figma export in seconds, without an emulator — see
+`app/src/androidTest/assets/design-1521/`.
 
 **First-row spacing.** The global Channels/Chats headers are no longer emitted. `BarBottomGap = 24.dp`
 is the entire gap from the divider's bottom to the first host row: both list-top padding and first-host
