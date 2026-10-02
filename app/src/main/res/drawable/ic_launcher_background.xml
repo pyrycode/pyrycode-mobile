@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Launcher icon background (Figma 703:5002): the dark surface under a radial glow,
+  after the macOS icon 504:2189. Figma's glow is a radius-10 gradient under
+  matrix(7.9313 -1.6594 1.6791 9.2402 54 43.594). Decomposed, that matrix is
+  rotate(-5.932) * scale(8.092, 9.401) * rotate(-5.070). The last rotation turns a
+  circular gradient about its own centre, which changes nothing, so the group's
+  scale-then-rotate reproduces the ellipse exactly.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
@@ -7,4 +16,27 @@
     <path
         android:fillColor="@color/ic_launcher_background"
         android:pathData="M0,0h108v108h-108z" />
+    <group
+        android:rotation="-5.932"
+        android:scaleX="8.092"
+        android:scaleY="9.401"
+        android:translateX="54"
+        android:translateY="43.594">
+        <path android:pathData="M-10,-10h20v20h-20z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:centerX="0"
+                    android:centerY="0"
+                    android:gradientRadius="10"
+                    android:type="radial">
+                    <item
+                        android:color="#FF134A74"
+                        android:offset="0.11058" />
+                    <item
+                        android:color="#00335500"
+                        android:offset="0.62303" />
+                </gradient>
+            </aapt:attr>
+        </path>
+    </group>
 </vector>
