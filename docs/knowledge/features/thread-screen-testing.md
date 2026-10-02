@@ -118,7 +118,7 @@ Instrumented `PingReplyTest` and `SessionBoundaryVisibilityTest` render the real
 `InteractiveStreamE2ETest`. They cover queue replacement without substring-count
 growth and revealing a delimiter after a tall finalized wrap-up. Both live beside
 `QueuedBacklogTest`, outside the routine UI gate's excluded `e2e` package. See
-[Compose evidence](development-verification.md#compose-evidence) for matcher scope
+[Compose evidence](development-verification-compose-evidence.md#compose-evidence) for matcher scope
 and the distinction between semantic existence and display.
 
 `PingReplyAssertions.kt`'s `pingReplyMatcher()` anchors on content, not placement
@@ -147,7 +147,7 @@ Tests added in [#789](https://github.com/pyrycode/pyrycode-mobile/issues/789), g
 
 Sibling test file added in [#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043):
 `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/TaskCountPillTest.kt`
-(`@GraphicsMode(GraphicsMode.Mode.NATIVE)` — see [Compose evidence](development-verification.md#compose-evidence)
+(`@GraphicsMode(GraphicsMode.Mode.NATIVE)` — see [Compose evidence](development-verification-compose-evidence.md#compose-evidence)
 for why an exact-width/position assertion needs real fonts rather than Robolectric's legacy renderer, which
 measured the pill's label at almost no width and made it wrap). Five `@Test`s host the real `ThreadScreen`:
 the pill beside a live `ThinkingIndicator` reading, positioned to that reading's right; the pill alone,

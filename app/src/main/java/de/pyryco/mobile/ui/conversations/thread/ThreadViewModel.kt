@@ -25,6 +25,8 @@ import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
+import de.pyryco.mobile.data.repository.HistoryPage
+import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.LiveRefusalEvent
 import de.pyryco.mobile.data.repository.McpStatus
 import de.pyryco.mobile.data.repository.MemorySearchReport
@@ -500,10 +502,23 @@ class ThreadViewModel(
      * read-then-assign would open a real window, because the settle runs in a launched coroutine while the
      * claim runs on the caller's.
      *
-     * Not persisted. It survives a reconnect (#1352): the cursor names a position in the daemon's
-     * append-only log, so the next gesture after a reconnect continues from it.
+     * It survives a reconnect (#1352): the cursor names a position in the daemon's append-only log, so the
+     * next gesture after a reconnect continues from it. Its position is saved beside the cached rows when
+     * an ask settles and restored at open by [historySeed] (#1354); the page count and failures are not.
      */
     private val historyDemand = MutableStateFlow(ThreadHistoryDemand())
+
+    /**
+     * Restores the history position saved when this thread was last open (#1354), so the first pull asks
+     * past the rows the cache already drew instead of re-fetching the newest page. Reading asks nothing.
+     * [onDemandOlderHistory] waits for it, so no ask can carry the opening empty cursor once a saved one
+     * exists.
+     */
+    private val historySeed: Job =
+        viewModelScope.launch {
+            val saved = repository.readHistoryPosition(conversationId) ?: return@launch
+            historyDemand.update { it.restored(cursor = saved.cursor, atStart = saved.atStart) }
+        }
 
     /**
      * Whether this thread's host has a live repository right now (#1352), desktop's
@@ -1393,6 +1408,14 @@ class ThreadViewModel(
      * rather than queuing it.
      */
     fun onDemandOlderHistory() {
+        if (!historySeed.isCompleted) {
+            // #1354: a pull while the saved position is still being read asks once it has been.
+            viewModelScope.launch {
+                historySeed.join()
+                onDemandOlderHistory()
+            }
+            return
+        }
         if (!hostAvailable.value) {
             RelayLog.d { "event=history_ask_skipped reason=offline" }
             return
@@ -1424,38 +1447,50 @@ class ThreadViewModel(
      *
      * Exactly one ask is outstanding at a time ([claimHistorySlot]), so every settle and fail belongs to
      * the current ask. A page that settles across a reconnect still applies: its cursor stays valid.
+     *
+     * A received page's position is saved (#1354) before the settle releases the slot, so the one
+     * outstanding ask also orders the saves. A failed ask saves nothing, leaving the saved position as it
+     * was; a refused cursor clears it.
      */
     private fun launchHistoryAsk(claimed: ThreadHistoryDemand) {
         viewModelScope.launch {
-            try {
-                val page = repository.requestHistory(conversationId, claimed.cursor)
-                historyDemand.update { it.settled(pageCursor = page.cursor, atStart = page.atStart) }
-            } catch (e: CancellationException) {
-                throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
-            } catch (e: RelayErrorException) {
-                // A server error frame. Only the CODE is read, and only to choose a branch; e.message is
-                // server-supplied and is never read, logged or surfaced. An unknown or differently-cased
-                // code falls through to the failure branch, so the fallback here is the safe one.
-                if (e.code == HISTORY_INVALID_CURSOR && claimed.cursor.isNotEmpty()) {
-                    // #1352: the daemon refused the cursor. The next gesture asks from the newest page;
-                    // nothing asks now.
-                    RelayLog.d { "event=history_cursor_refused" }
-                    historyDemand.update { it.cursorRefused() }
-                } else {
-                    // A refusal of the NEWEST-page ask has nothing to fall back to, so it is a failure.
-                    failWalk(retryable = e.retryable)
-                }
-            } catch (e: IllegalStateException) {
-                // A not-connected session, #488's teardown sweep, or the not-wired interface default. Not
-                // retryable: a button with no connection behind it cannot work. A gesture after the
-                // reconnect asks again (#1352).
-                failWalk(retryable = false)
-            } catch (e: IllegalArgumentException) {
-                // An unknown conversation id, or a malformed page — kotlinx.serialization's
-                // SerializationException is an IllegalArgumentException, so the decode failure lands here.
-                failWalk(retryable = false)
-            }
+            val page = fetchHistoryPage(claimed) ?: return@launch
+            repository.writeHistoryPosition(conversationId, HistoryPosition(page.cursor, page.atStart))
+            historyDemand.update { it.settled(pageCursor = page.cursor, atStart = page.atStart) }
         }
+    }
+
+    /** Ask for the page at [claimed]'s cursor, or settle the failure and return `null`. */
+    private suspend fun fetchHistoryPage(claimed: ThreadHistoryDemand): HistoryPage? {
+        try {
+            return repository.requestHistory(conversationId, claimed.cursor)
+        } catch (e: CancellationException) {
+            throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
+        } catch (e: RelayErrorException) {
+            // A server error frame. Only the CODE is read, and only to choose a branch; e.message is
+            // server-supplied and is never read, logged or surfaced. An unknown or differently-cased
+            // code falls through to the failure branch, so the fallback here is the safe one.
+            if (e.code == HISTORY_INVALID_CURSOR && claimed.cursor.isNotEmpty()) {
+                // #1352: the daemon refused the cursor. The next gesture asks from the newest page;
+                // nothing asks now. #1354: the saved position goes too, so the next open does the same.
+                RelayLog.d { "event=history_cursor_refused" }
+                repository.writeHistoryPosition(conversationId, null)
+                historyDemand.update { it.cursorRefused() }
+            } else {
+                // A refusal of the NEWEST-page ask has nothing to fall back to, so it is a failure.
+                failWalk(retryable = e.retryable)
+            }
+        } catch (e: IllegalStateException) {
+            // A not-connected session, #488's teardown sweep, or the not-wired interface default. Not
+            // retryable: a button with no connection behind it cannot work. A gesture after the
+            // reconnect asks again (#1352).
+            failWalk(retryable = false)
+        } catch (e: IllegalArgumentException) {
+            // An unknown conversation id, or a malformed page — kotlinx.serialization's
+            // SerializationException is an IllegalArgumentException, so the decode failure lands here.
+            failWalk(retryable = false)
+        }
+        return null
     }
 
     /** Settle a failed ask. [retryable] is a flag, never text. */

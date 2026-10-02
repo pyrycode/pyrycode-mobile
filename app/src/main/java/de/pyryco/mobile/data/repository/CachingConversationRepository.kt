@@ -37,14 +37,19 @@ import java.util.concurrent.ConcurrentHashMap
  * cache with the open-time snapshot, and the next connection's rows merge over everything drawn so far.
  *
  * If more than one page arrived while offline, a reconnect's newest page does not overlap the base's
- * tail: the base draws above a gap in arrival order until the reader scrolls up and the history walk,
- * whose pages land in the live projection, fills it.
+ * tail: the base draws above a gap in arrival order. With no saved history position the reader's first
+ * pull asks for the newest page, and the walk, whose pages land in the live projection, can fill it. Once
+ * a position is saved (#1354) the walk continues from older than the cached rows and never returns to
+ * the newest page, so the gap stays until that position is cleared.
  *
  * What is written is the thread as drawn, restored-plus-live, not the live projection alone: right
  * after a reconnect the live side holds only the newest page and would shrink the cache. It is written
  * only when its [cacheableThreadRows] differ from the last set written, so an `assistant_delta` stream
  * writes nothing until the turn settles. Holds no scope and launches nothing; cancellation is the
  * collector's.
+ *
+ * The thread's saved history position (#1354) passes straight through to the cache under [serverId]: the
+ * row writer above keeps it, and the thread screen reads it at open and writes it when an ask settles.
  *
  * A confirmed [delete] also removes the conversation's cached content (#798) — the host is this
  * wrapper's own [serverId], captured from the destination that issued the call, never a global
@@ -78,8 +83,10 @@ class CachingConversationRepository(
                 emit(drawn)
                 val cacheable = cacheableThreadRows(drawn)
                 if (cacheable != lastWritten && conversationId !in deleted) {
-                    // A failed write leaves lastWritten behind, so the next change retries it.
-                    if (cache.writeThread(serverId, conversationId, cacheable).isSuccess) {
+                    // A failed write leaves lastWritten behind, so the next change retries it. The cache is
+                    // handed the drawn rows, not the already-trimmed cacheable ones, so it can see a trim at
+                    // MAX_CACHED_THREAD_ROWS and drop the saved history position (#1354).
+                    if (cache.writeThread(serverId, conversationId, drawn).isSuccess) {
                         lastWritten = cacheable
                     } else {
                         RelayLog.d { "event=thread_cache_write_failed" }
@@ -87,6 +94,24 @@ class CachingConversationRepository(
                 }
             }
         }
+
+    /** This thread's saved history position (#1354), under this wrapper's own [serverId]. */
+    override suspend fun readHistoryPosition(conversationId: String): HistoryPosition? = cache.readHistoryPosition(serverId, conversationId)
+
+    /**
+     * Saves [position] beside the thread's cached rows (#1354). Skipped for a conversation this destination
+     * deleted, so a page settling after the delete cannot put the document back. A failed write is logged
+     * and not surfaced: the next open re-fetches one page.
+     */
+    override suspend fun writeHistoryPosition(
+        conversationId: String,
+        position: HistoryPosition?,
+    ) {
+        if (conversationId in deleted) return
+        cache
+            .writeHistoryPosition(serverId, conversationId, position)
+            .onFailure { RelayLog.d { "event=history_position_write_failed" } }
+    }
 
     override suspend fun retrieveAttachment(
         conversationId: String,

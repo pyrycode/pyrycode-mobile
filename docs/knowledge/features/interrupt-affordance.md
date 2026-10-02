@@ -215,7 +215,7 @@ Test-first, mirroring the `isThinking` coverage.
   content description, not by composable identity or screen position.
   Instrumented-source changes require `./gradlew compileDebugAndroidTestKotlin`;
   aggregate JVM tests, lint and assemble do not compile them. See
-  [development verification](development-verification.md#gradle-and-source-checks).
+  [development verification](development-verification-gates.md#gradle-and-source-checks).
 - **Instrumented, added in [#643](../codebase/643.md) (`ThreadFrameTest.kt`)** — `inputButton_stopsWhileBusyWithEmptyField`
   and `inputButton_sendsWhenTextPresent` pin the send/stop precedence table directly on the stateless
   `ThreadInputBar`; `busyThread_hasExactlyOneStopControl` mounts the full `ThreadScreen` with

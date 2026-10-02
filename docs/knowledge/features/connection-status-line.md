@@ -166,7 +166,7 @@ The category→token resolver remains visually checked through previews.
 [`ConnectionStatusLineLayoutTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/ConnectionStatusLineLayoutTest.kt)
 adds geometry coverage using the real Settings `HostIdentityRow`, a forced and asserted 412dp
 width, 100%/200% text, and static light/dark themes. Native graphics supplies real font metrics
-(see [shared screen tests](development-verification.md#where-a-screen-test-goes)). Its two tests
+(see [shared screen tests](development-verification-gates.md#where-a-screen-test-goes)). Its two tests
 cover connected groups and the remaining status mappings, comparing each semantic group's
 width and height with independently measured unwrapped name/state text plus the dot and gaps.
 They also check containment, the 16dp Settings start inset, ordinary 24dp spacing and centred

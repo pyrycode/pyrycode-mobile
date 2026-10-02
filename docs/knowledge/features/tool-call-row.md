@@ -324,7 +324,7 @@ rendering doesn't ripple into the data-layer fake.
   fields (not treated as `Bash`), and `Bash` with neither field (falls back to `toolRowSubject`'s
   précis).
 - **`ToolCallRowTest`** lives in `app/src/sharedTest`, not `app/src/androidTest` — see
-  [development-verification § where a screen test goes](./development-verification.md#where-a-screen-test-goes).
+  [development-verification § where a screen test goes](./development-verification-gates.md#where-a-screen-test-goes).
   Covers each status's own content description (and that `Denied` does *not* also show
   `cd_tool_failed`), the elapsed text at a running reading vs. no reading vs. a stale reading on a
   resolved row, simple/described selection, chevron presence, supplied-only sections, inert
