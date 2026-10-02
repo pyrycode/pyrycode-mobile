@@ -1169,6 +1169,9 @@ class RelayConnectionFactoryTest {
                 a.onInterrupt()
                 a.onOverflowEvent(ThreadEvent.NewSession)
                 a.onModalOption("deny")
+                // #1340: the answer closes its prompt at once, so the cancel needs a second one to reach.
+                ta.emit(modal("A again", modalId = "second"))
+                runCurrent()
                 a.onModalCancel()
                 a.onDropQueued(42)
                 a.onOverflowEvent(ThreadEvent.RenameSubmit("A renamed"))
@@ -1714,11 +1717,13 @@ class RelayConnectionFactoryTest {
             payload: String,
         ) = Envelope(1, type, "2026-09-20T00:00:00Z", MobileJson.parseToJsonElement(payload))
 
-        fun modal(title: String) =
-            envelope(
-                "modal_shown",
-                """{"modal_id":"same","class":"permission","title":"$title","prompt":"Allow?","options":[{"id":"deny","label":"Deny"}],"default_option_id":"deny","conversation_id":"c"}""",
-            )
+        fun modal(
+            title: String,
+            modalId: String = "same",
+        ) = envelope(
+            "modal_shown",
+            """{"modal_id":"$modalId","class":"permission","title":"$title","prompt":"Allow?","options":[{"id":"deny","label":"Deny"}],"default_option_id":"deny","conversation_id":"c"}""",
+        )
 
         fun turn(id: Long) = envelope("turn_state", """{"conversation_id":"c","state":"thinking"}""").copy(eventId = id)
     }
