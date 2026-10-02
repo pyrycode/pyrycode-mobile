@@ -20,7 +20,7 @@ The tree's conversation rows are a status dot and a `bodySmall` name, with the s
 
 In `treeHost`, `TreeConversationRow` no longer receives `onEditTapped` or `editDescription`, so no Channels or Chats row draws a pen, selected or not, connected or not. The row's `onClick` (`TreeRowTapped`) is untouched, so a tap anywhere on the row, including where the pen was, opens it. `TreeHostRow` and `TreeWorkspaceRow` keep their pens. Channels are edited from the thread's Edit item (#1561) and chats renamed from the thread's Rename.
 
-`TreeChannelEditTapped`, `TreeChatEditTapped`, their `MainActivity` routes and the list's Edit channel and Edit chat modals stay: removing the list's now-unreached editors is a separate cleanup with its own call-site count, filed as a follow-up rather than folded into this one-file change. `TreeConversationRow` keeps its optional pen parameter for the same reason.
+`TreeChannelEditTapped`, `TreeChatEditTapped`, their `MainActivity` routes and the list's Edit channel and Edit chat modals stay: removing the list's now-unreached editors is a separate cleanup with its own call-site count, filed as #1582 rather than folded into this one-file change. `TreeConversationRow` keeps its optional pen parameter for the same reason.
 
 ## Testing strategy
 
