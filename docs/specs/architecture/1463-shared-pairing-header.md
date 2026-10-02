@@ -35,3 +35,13 @@ A new internal composable `PairingHeader(title, titleColor, onBack, backIcon: Pa
 ## Revisions
 
 - **2026-10-02 — title line box.** Compose's default `LineHeightStyle` trims a single line to the font's own height (24 dp under Robolectric's native fonts), so the centred title's box started 2 dp low and did not match Figma's 28 px line box. The header's title now uses `titleLarge` with `LineHeightStyle(Center, Trim.None)`: its box is the full 28 dp with glyphs centred, which is how Figma places the text, and the glyphs land where they did before. The row is `heightIn(min = 48.dp)` so a large font scale grows it instead of clipping. The geometry test sizes the window with `@Config(qualifiers = "w412dp-h892dp")` and `@GraphicsMode(NATIVE)` instead of `ForcedSize`, which rescales density on Robolectric's 320 dp screen.
+
+- **2026-10-02 — rework after review (PR #1505).** Two device classes also pinned the old header height and
+  were missing from Files read: `MainActivityInsetsDeviceTest.exercise` (Scanner Back at +18 dp, Pair Back at
+  the inset edge) and `ScannerDeniedRouteDeviceTest.capture` (Denied Back at +12 dp). Both now assert the
+  property the ticket defines, the `pairing_header_title` top at the status inset + 24 dp, so a change to the
+  button no longer needs retuning. The review also found Pair Screen's bottom still at full-frame
+  coordinates (4 dp above the navigation bar). Under the ticket's inside-the-bars rule the frame's 28 px
+  gutter under the CTAs is 28 dp above the navigation bar, so the form column's bottom pad grows from 4 to
+  28 dp. `PairingHeaderGeometryTest.pairScreenKeepsTheFramesBottomGutterAboveTheNavigationBar` asserts the
+  footer bottom at window bottom − navigation inset − 28 dp.

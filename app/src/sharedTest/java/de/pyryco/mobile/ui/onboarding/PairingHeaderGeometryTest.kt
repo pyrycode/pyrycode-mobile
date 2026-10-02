@@ -13,6 +13,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -71,6 +73,25 @@ class PairingHeaderGeometryTest {
             }
         assertEquals(titleTops[0], titleTops[1], 0.5f)
         assertEquals(titleTops[0], titleTops[2], 0.5f)
+    }
+
+    @Test
+    fun pairScreenKeepsTheFramesBottomGutterAboveTheNavigationBar() {
+        rule.runOnUiThread { rule.activity.enableEdgeToEdge() }
+        rule.setContent {
+            view = LocalView.current
+            PyrycodeMobileTheme(darkTheme = true) { screens[2]() }
+        }
+        val density = rule.activity.resources.displayMetrics.density
+        applyBars(density)
+        val footer =
+            rule
+                .onNodeWithText("Open source · github.com/pyrycode/pyrycode-mobile")
+                .fetchSemanticsNode()
+                .boundsInRoot
+        val root = rule.onRoot().fetchSemanticsNode().boundsInRoot
+        // 533:2147 ends its CTAs 28 px above the frame bottom; inside the bars that is 28 dp above the navigation bar.
+        assertEquals(root.bottom - 24 * density - 28 * density, footer.bottom, 1f)
     }
 
     // Robolectric reports no system bars, so fixed 24 dp ones are applied to the Compose view.

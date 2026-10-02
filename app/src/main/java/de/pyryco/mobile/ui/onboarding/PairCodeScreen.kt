@@ -104,7 +104,7 @@ internal fun PairCodeScreen(
                             rememberScrollState(),
                         ).heightIn(min = maxHeight)
                         .height(IntrinsicSize.Min)
-                        .padding(start = 32.dp, end = 32.dp, top = 32.dp, bottom = 4.dp),
+                        .padding(start = 32.dp, end = 32.dp, top = 32.dp, bottom = 28.dp),
                 ) {
                     Column(
                         Modifier.weight(1f).heightIn(min = 200.dp).fillMaxWidth(),
