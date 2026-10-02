@@ -1,6 +1,8 @@
 package de.pyryco.mobile.design
 
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -10,6 +12,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
 import androidx.lifecycle.SavedStateHandle
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -123,19 +126,19 @@ class ThreadDesignCaptureTest {
         inputs.backgroundTaskCount.value = 2
         openPanel()
         design.capture(FOLDER, "tasks-populated", "568:877")
-        Espresso.pressBack()
+        closePanel()
 
         inputs.backgroundTasks.value = capped()
         inputs.backgroundTaskCount.value = 11
         openPanel()
         design.capture(FOLDER, "tasks-capped", "568:932")
-        Espresso.pressBack()
+        closePanel()
 
         inputs.backgroundTasks.value = BackgroundTaskRoster(emptyList(), 0)
         inputs.backgroundTaskCount.value = 0
         openPanel()
         design.capture(FOLDER, "tasks-empty", "568:981")
-        Espresso.pressBack()
+        closePanel()
 
         inputs.backgroundTasks.value = null
         openPanel()
@@ -186,7 +189,7 @@ class ThreadDesignCaptureTest {
         Espresso.pressBack()
         rule.waitForIdle()
 
-        design.openMenu(rule.onNodeWithText("Actions"))
+        openActions()
         noWorkspaceAction()
         design.capture(FOLDER, "${prefix}actions-menu", "16:8")
         Espresso.pressBack()
@@ -199,8 +202,17 @@ class ThreadDesignCaptureTest {
         design.closeKeyboard()
     }
 
+    /** No clickable workspace row; the seeded demo reply itself mentions a workspace picker in plain text. */
     private fun noWorkspaceAction() {
-        rule.onAllNodes(hasText("workspace", substring = true, ignoreCase = true)).assertCountEquals(0)
+        rule.onAllNodes(hasText("workspace", substring = true, ignoreCase = true) and hasClickAction()).assertCountEquals(0)
+    }
+
+    /** The footer's Actions menu draws in the screen's own window, not a popup, so wait for its last row. */
+    private fun openActions() {
+        rule.onNodeWithText("Actions").performTouchInput { click() }
+        // The row reads "Background tasks (N)" while tasks run.
+        rule.waitUntil(5_000) { rule.onAllNodesWithText("Background tasks", substring = true).fetchSemanticsNodes().isNotEmpty() }
+        rule.waitForIdle()
     }
 
     private fun openThread() {
@@ -219,9 +231,14 @@ class ThreadDesignCaptureTest {
 
     private fun openPanel() {
         rule.waitForIdle()
-        design.openMenu(rule.onNodeWithText("Actions"))
-        rule.onNodeWithText("Background tasks").performClick()
-        soft { rule.onAllNodesWithText("Background tasks").fetchSemanticsNodes().isNotEmpty() }
+        openActions()
+        rule.onNodeWithText("Background tasks", substring = true).performTouchInput { click() }
+        soft { rule.onNodeWithText("Close").fetchSemanticsNode() }
+        rule.waitForIdle()
+    }
+
+    private fun closePanel() {
+        rule.onNodeWithText("Close").performTouchInput { click() }
         rule.waitForIdle()
     }
 
@@ -323,7 +340,8 @@ class ThreadDesignCaptureTest {
         windowTokens = 0,
     )
 
-    private fun menuRow(name: String) = ModelMenuRow(name.lowercase(), name.lowercase(), name, listOf("low", "medium", "high", "max"), false, null)
+    private fun menuRow(name: String) =
+        ModelMenuRow(name.lowercase(), name.lowercase(), name, listOf("low", "medium", "high", "max"), false, null)
 
     private fun task(
         id: String,
@@ -353,10 +371,21 @@ class ThreadDesignCaptureTest {
     private fun populated() =
         BackgroundTaskRoster(
             listOf(
-                task("t1", "local_bash", "go test ./internal/relay/... -run TestReconnect -count=20 -race", update = """{"output_tail":"--- PASS: TestReconnect/drop_mid_frame (0.84s)"}"""),
+                task(
+                    "t1",
+                    "local_bash",
+                    "go test ./internal/relay/... -run TestReconnect -count=20 -race",
+                    update = """{"output_tail":"--- PASS: TestReconnect/drop_mid_frame (0.84s)"}""",
+                ),
                 task("t2", "local_agent", "Review the relay reconnect diff for data races"),
                 task("t3", "local_bash", "npm run build", finish = "Build finished in 38s with no warnings.", status = "completed"),
-                task("t4", "local_bash", "docker compose up relay", finish = "Exited with code 1: port 8443 is already in use.", status = "failed"),
+                task(
+                    "t4",
+                    "local_bash",
+                    "docker compose up relay",
+                    finish = "Exited with code 1: port 8443 is already in use.",
+                    status = "failed",
+                ),
             ),
             0,
         )
@@ -364,8 +393,18 @@ class ThreadDesignCaptureTest {
     private fun capped() =
         BackgroundTaskRoster(
             listOf(
-                task("c1", "local_bash", "for f in \$(git ls-files \"internal/**/*.go\"); do go vet \"\$f\" && staticcheck -checks all \"\$f\" >> /tmp/lint.txt; done; sort -u /tmp/lint.txt | head -n 400 > /tmp/li", truncated = listOf("description")),
-                task("c2", "local_bash", "python3 scripts/replay_capture.py", update = """{"output_tail":"replayed 214 frames, 3 roste"}"""),
+                task(
+                    "c1",
+                    "local_bash",
+                    "for f in \$(git ls-files \"internal/**/*.go\"); do go vet \"\$f\" && staticcheck -checks all \"\$f\" >> /tmp/lint.txt; done; sort -u /tmp/lint.txt | head -n 400 > /tmp/li",
+                    truncated = listOf("description"),
+                ),
+                task(
+                    "c2",
+                    "local_bash",
+                    "python3 scripts/replay_capture.py",
+                    update = """{"output_tail":"replayed 214 frames, 3 roste"}""",
+                ),
                 task("c3", "local_agent", "Summarise the open tickets that mention the relay"),
             ) + (4..8).map { task("c$it", "local_bash", "sleep $it") },
             3,
