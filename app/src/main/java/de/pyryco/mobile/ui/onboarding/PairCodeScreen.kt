@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
@@ -25,7 +24,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.material3.Button
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -91,13 +89,13 @@ internal fun PairCodeScreen(
                 .systemBarsPadding()
                 .imePadding(),
         ) {
-            Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { onEvent(PairCodeEvent.Back) }, enabled = !saving, modifier = Modifier.size(48.dp)) {
-                    Icon(painterResource(R.drawable.ic_pair_back), contentDescription = "Back")
-                }
-                Text("Pairing", style = MaterialTheme.typography.titleLarge, color = colors.onPrimaryContainer)
-            }
-            HorizontalDivider(Modifier.padding(start = 20.dp, end = 20.dp), color = colors.inversePrimary.copy(alpha = 0.6f))
+            PairingHeader(
+                title = "Pairing",
+                titleColor = colors.onPrimaryContainer,
+                onBack = { onEvent(PairCodeEvent.Back) },
+                backIcon = painterResource(R.drawable.ic_pair_back),
+                backEnabled = !saving,
+            )
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                 Column(
                     Modifier
@@ -106,7 +104,7 @@ internal fun PairCodeScreen(
                             rememberScrollState(),
                         ).heightIn(min = maxHeight)
                         .height(IntrinsicSize.Min)
-                        .padding(start = 32.dp, end = 32.dp, top = 28.dp, bottom = 4.dp),
+                        .padding(start = 32.dp, end = 32.dp, top = 32.dp, bottom = 4.dp),
                 ) {
                     Column(
                         Modifier.weight(1f).heightIn(min = 200.dp).fillMaxWidth(),

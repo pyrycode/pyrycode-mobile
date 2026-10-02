@@ -108,7 +108,9 @@ class PairCodeScreenInsetsTest {
 
         assertTrue("status bar inset $statusTop", statusTop > 0)
         assertTrue("navigation bar inset $navigationBottom", navigationBottom > 0)
-        assertEquals(statusTop.toFloat(), pairBack, 1f)
+        // #1463: the shared pairing header centres its 48 dp Back on a row 14 dp below the bar.
+        val headerTop = statusTop + 14 * view.resources.displayMetrics.density
+        assertEquals(headerTop, pairBack, 1f)
         assertTrue("Back top $pairBack under status bar $statusTop", pairBack >= statusTop)
 
         val footer = "Open source · github.com/pyrycode/pyrycode-mobile"

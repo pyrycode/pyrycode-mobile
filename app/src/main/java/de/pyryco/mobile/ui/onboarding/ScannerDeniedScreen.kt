@@ -4,7 +4,6 @@ import android.content.res.Configuration
 import android.util.Log
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,7 +16,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -25,6 +23,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
@@ -52,31 +51,23 @@ fun ScannerDeniedScreen(
                         MaterialTheme.colorScheme.primaryContainer,
                         MaterialTheme.colorScheme.surfaceContainerLowest,
                         MaterialTheme.colorScheme.surface,
-                    ).systemBarsPadding()
-                    .padding(top = 4.dp),
+                    ).systemBarsPadding(),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().height(64.dp).padding(start = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(
-                    onClick = { deniedAction("back", onNavigateBack) },
-                    modifier = Modifier.size(48.dp),
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                }
-                Text(
-                    text = "Pair with pyrycode",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-            }
+            PairingHeader(
+                title = "Pair with pyrycode",
+                titleColor = MaterialTheme.colorScheme.onSurface,
+                onBack = { deniedAction("back", onNavigateBack) },
+                backIcon = rememberVectorPainter(Icons.AutoMirrored.Filled.ArrowBack),
+                startPadding = 4.dp,
+                divider = false,
+            )
             Column(
                 modifier = Modifier.fillMaxSize().padding(start = 32.dp, end = 32.dp, bottom = 80.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Spacer(modifier = Modifier.height(64.dp))
+                // The frame's illustration sits 132 dp below the bar; the header is 62 dp tall.
+                Spacer(modifier = Modifier.height(70.dp))
                 DeniedCameraIllustration(modifier = Modifier.size(120.dp))
                 Spacer(modifier = Modifier.height(32.dp))
                 Text(
