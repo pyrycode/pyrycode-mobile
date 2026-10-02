@@ -22,3 +22,11 @@ The thread's rule drops its 16 dp bottom padding and `ThreadScreen` drops the 12
 - `ThreadFrameTest.referenceFrame_placesHeaderAndMessageRegionAtFigmaAnchors`: the region top moves from 97 to 69 (the Figma `Frame 1` anchor).
 - `ThreadScreenShortStreamTest`: the short stream's top gap is now measured from the region top plus `MessageAreaTopInset`, so it still proves the stream starts at the old position.
 - New sharedTest `ThreadMessageAreaTopTest` at 412 × 892, recording each value's pre-change position: an overflowing thread at its newest end draws a row across the region top, the rule (AC 1); the empty-state text's centre, a top-overlay pill's top and the composer field's top stay at their pre-change y (AC 2).
+
+## Revisions
+
+### 2026-10-02 — verifier review on PR #1567
+
+- **Short-stream test (MUST FIX).** The first build widened `ThreadScreenShortStreamTest`'s upper bound and kept `0` as the lower one, so dropping the list's top `contentPadding` stayed green. The test now asserts the top gap lies in `MessageAreaTopInset..MessageAreaTopInset + 32dp`, as the Testing strategy promised. Removing the padding turns both of its cases red; this was checked by mutation.
+- **Row reach (SHOULD FIX).** `ThreadMessageAreaTopTest.scrolled_rows_are_drawn_up_to_the_header_rule` now measures only text nodes under the region, so the list's own full-region node cannot stand in for a row.
+- **Oldest-end band (NIT, production).** The Files read note on `isNearOldestEnd` was wrong to say it needs no change. Under `reverseLayout` the 28dp top padding is after-content padding and feeds `viewportEndOffset`, which widened the ask band from 200dp to 228dp. `isNearOldestEnd` now adds `afterContentPadding` back. The contract is now that the band is measured from the scroll's oldest end, whatever the padding. The new unit test `ThreadOldestEndBandTest` drives a fake `LazyListLayoutInfo` and fails on the old formula. A screen-level probe at 214dp could not separate the two bands, because the oldest row has already left the layout there.
