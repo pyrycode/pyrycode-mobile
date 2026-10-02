@@ -66,3 +66,9 @@ selected tab draws no fill. Channels is selected. Empty-tab frames are `673:3577
   (`interactiveTurn_archiveRestore_roundTripsListMembership` step 9 and `interactiveTurn_archiveTwoChats_listsSecondArchivedFirst`
   step 3) now tap the Discussions tab, the scenarios through a new private `openArchiveDiscussionsTab` helper. The
   production contract is unchanged.
+- **2026-10-03 (rework 1).** The verifier found a fourth caller of the Channels default:
+  `interactiveTurn_twoHostsArchive_staysPerHost` step 5 waits for an archived chat, which is a discussion. It now
+  selects the Discussions tab first. The helper became `openArchiveTab(labelId)`, which also replaces the inline
+  Channels tap in `interactiveTurn_createEditArchiveChannel_readsPromptBack` step 8. `ArchiveTabLabel` keeps
+  `TextOverflow.Ellipsis` beside its auto-size, so a label that still does not fit at the 10 sp floor ends in an
+  ellipsis instead of clipping. The one-line, fits-in-its-tab contract is unchanged.

@@ -1301,7 +1301,7 @@ class InteractiveStreamE2ETest {
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
             }
-            openArchiveDiscussionsTab()
+            openArchiveTab(R.string.archived_tab_discussions)
 
             // 10. Restore. Wait for the restore affordance keyed on the unique name — the "Restore <uniqueName>"
             //     IconButton (the row name is a Text node, so only the restore button matches a content-description
@@ -1404,7 +1404,7 @@ class InteractiveStreamE2ETest {
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
             }
-            openArchiveDiscussionsTab()
+            openArchiveTab(R.string.archived_tab_discussions)
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             val restoreA = hasContentDescription(context.getString(R.string.cd_restore_archive, nameA))
             val restoreB = hasContentDescription(context.getString(R.string.cd_restore_archive, nameB))
@@ -2336,6 +2336,7 @@ class InteractiveStreamE2ETest {
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
             }
+            openArchiveTab(R.string.archived_tab_discussions)
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasContentDescription(chatName, substring = true)).fetchSemanticsNodes().isNotEmpty()
             }
@@ -2546,11 +2547,7 @@ class InteractiveStreamE2ETest {
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
             }
-            val channelsTab = string(R.string.archived_tab_channels).substringBefore(" (")
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText(channelsTab, substring = true).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onAllNodesWithText(channelsTab, substring = true).onFirst().performClick()
+            openArchiveTab(R.string.archived_tab_channels)
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasContentDescription(newName, substring = true)).fetchSemanticsNodes().isNotEmpty()
             }
@@ -6506,13 +6503,16 @@ class InteractiveStreamE2ETest {
 
     private fun string(id: Int): String = InstrumentationRegistry.getInstrumentation().targetContext.getString(id)
 
-    /** Archive opens on Channels (#1487); archived chats are on its Discussions tab. */
-    private fun openArchiveDiscussionsTab() {
-        val discussionsTab = string(R.string.archived_tab_discussions).substringBefore(" (")
+    /**
+     * Selects an Archive tab by its label resource. Archive opens on Channels (#1487), so archived
+     * chats need [R.string.archived_tab_discussions].
+     */
+    private fun openArchiveTab(labelId: Int) {
+        val tab = string(labelId).substringBefore(" (")
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(discussionsTab, substring = true).fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodesWithText(tab, substring = true).fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onAllNodesWithText(discussionsTab, substring = true).onFirst().performClick()
+        composeTestRule.onAllNodesWithText(tab, substring = true).onFirst().performClick()
     }
 
     /** An effort note as a Claude conversation words it (#1115); the harness runs Claude conversations only. */
