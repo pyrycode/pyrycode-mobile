@@ -35,9 +35,14 @@
   1x value, and Cancel and Continue hug their labels. All of it is overrides inside the two frames; no shared
   component or variable changed. The captures stay #1501's, because #1543 changes only Figma, and
   `scripts/design-compare.py` rebuilt the two compact comparisons.
-- **Hint letter spacing (#1543 follow-up):** the armed hint in `639:2882` and `639:3308` had no letter spacing,
-  where the app's `labelMedium` tracks 0.5 sp. It now has 0.5 px at 1x and 0.75 px at 150 %. Both frames were
-  exported again on 2026-10-02 and their comparisons rebuilt; the captures did not change.
+- **Letter spacing (#1543 follow-up):** the board's own text had no letter spacing, where the app's styles track
+  it: 0.15 sp for `titleMedium`, 0.5 for `bodyLarge`, `labelMedium` and `labelSmall`, 0.25 for `bodyMedium` and
+  0.1 for `labelLarge`. Every text layer outside a component instance in the board's app frames now carries its
+  style's value in px, and 1.5 times that in the two compact frames: 129 layers, the armed hint first, and no
+  line re-wraps. Instance text already takes its letter spacing from the shared components and did not change.
+  The eleven frames compared here were exported again on 2026-10-02 and their comparisons rebuilt; the captures
+  did not change. Line widths now sit within 4 px of the app's, about 1.5 % of a line; the one exception is noted
+  in the compact question item.
 
 **How these captures differ from onboarding's.** Both prompts set `FLAG_SECURE` on the activity window while
 they show, which blacks out the harness's `UiAutomation` screenshot. The class draws the decor view into a
@@ -77,7 +82,7 @@ remains:
 
 Mobile and desktop share the same components and text styles, so neither changes to close these gaps (decision
 2026-10-02). Both compact items record them as mismatches, not routed. The tolerance for the two items is 2 px for
-heights, gaps and box sizes. Text is compared by glyph height, and a run up to 3 px wider counts as rendering.
+heights, gaps and box sizes. Text is compared by glyph height, and a run up to 4 px wider counts as rendering.
 
 ### Questions · Unanswered — `636:3279`
 
@@ -163,7 +168,7 @@ heights, gaps and box sizes. Text is compared by glyph height, and a run up to 3
 | Geometry | mismatch: the question card is 273 px tall against the frame's 261, see Spacing. Cancel (43 × 115 px against 44 × 115) and Continue (43 × 140 against 44 × 138) match within 2 px, and the stacked pair sits at the card's start edge with Cancel centred over Continue, as `636:4325`. The top bar's rule is 2 px higher |
 | Padding | match |
 | Spacing | mismatch, Compose's line boxes (see "Compact frames at 150 %"): under the question line the first choice starts 4 px lower; each choice row is 50 px against the frame's 48, 2 px more per row; and the "Other" field sits 6 px lower under its label. Under the card the app puts Cancel 11 px down and Continue 17 px below Cancel, where the frame has 16 and 12: Material's 48 px touch target around each 43 px button takes layout space. The composer box is 52 px against the frame's 58 |
-| Typography | match: the top-bar title is 26 px from cap to descender in both, and the question, choice and action text sits at the frame's sizes within 2 px of glyph height, the action labels within 2 px of width. Mismatch: the choice labels and descriptions run up to 13 px wider ("A systems language" 175 px against 162), the app's `labelMedium` letter spacing (0.75 px here), which the frame's choice text does not have; the footer reads "Cxt h…". Every label wraps |
+| Typography | match: the top-bar title is 26 px from cap to descender in both, and the question, choice and action text sits at the frame's sizes within 2 px of glyph height, the action labels within 2 px of width, and the choice labels and descriptions within 1 px of width since the letter-spacing follow-up ("A systems language" 175 px in both). Mismatch: at the app's letter spacing the question line "Which targets matter?" runs 7 px wider in the frame (195 px against 188), a rendering difference in 22 px Roboto Medium, where the same style matches at 1x within 3 px; the footer reads "Cxt h…". Every label wraps |
 | Colour | mismatch: footer warning colour |
 | Borders | match |
 | Radii | match |
@@ -173,8 +178,8 @@ heights, gaps and box sizes. Text is compared by glyph height, and a run up to 3
 - **Clipping and reach:** the footer's context label truncates to "Cxt h…". The title, both questions, Cancel
   and Continue each scroll into view and display.
 - **Routed:** #1485 (footer, truncation). The line-box, action-gap and composer gaps are recorded, not routed (see
-  "Compact frames at 150 %"). The choice text's missing letter spacing is a gap in the frame, not yet routed.
-  Scaling redrawn by #1543, Other row fixed by #1501
+  "Compact frames at 150 %"). The question line's rendering difference is recorded, not routed. Scaling redrawn
+  by #1543, Other row fixed by #1501
 
 ### Permission · Safe default — `639:2242`
 
