@@ -108,6 +108,12 @@ the question glyph tinted `primary`) in place of the usual `StatusReading` dispa
 verifier's Rework 3 absence check additionally waits to disappear (`awaitNoInlineQuestion`, see
 [Real-claude e2e coverage](../../e2e-interactive-stream.md)), since it is always composed and not subject to
 the lazy list's offscreen-vs-absent ambiguity the title and row tags have.
+[#1483](../../specs/architecture/1483-permission-request-frames.md) adds the sibling
+`waitingForPermission: Boolean` (`openRequest != null && connectionState == ConnectionState.Connected`),
+which reads `thread_status_waiting_for_permission` ("Waiting for permission") in the same box, behind the
+same snowflake glyph, when `waitingForAnswers` is false. The two never race: `shownQuestion` is withheld
+whenever a request is open (§ *Inline permission rows* below), so a question's own "Waiting for answers"
+reading cannot show while a permission is open.
 
 **`QuestionPromptProtection`** (the `FLAG_SECURE` / obscured-touch guard the old dialog window used to own)
 is mounted directly by `ThreadScreen` — right after the screen's `rememberSaveable` block, so it is active
@@ -126,12 +132,14 @@ later withholds the question from the rows it draws while a request is open, but
 into this same `LazyColumn` in #1306, following the #1305 question batch above almost row for row.
 `openRequest?.let { open -> permissionRequestItems(...) }` emits, immediately before the question items (so,
 under `reverseLayout = true`, drawn **below** the question rows and **above** every message row — the
-newest content on screen): Cancel, the card (prompt, decision context, the session-grant offer and the
-options), then the title — see [Permission-modal overlay](permission-modal-overlay.md) for what each
-renders and its `permission-cancel:$modalId` / `permission-card:$modalId` / `permission-title:$modalId` key
-scheme. The empty-thread branch and `promptRowCount` both gained a matching `openRequest` term (§ above and
-§ *The oldest-end history demand* below); `promptRowCount` adds a fixed `PERMISSION_ROW_COUNT = 3` rather
-than deriving a size from the request, since a permission/trust request always renders exactly three rows.
+newest content on screen): Cancel, then the card (title, prompt, decision context, the session-grant offer
+and the options) — see [Permission-modal overlay](permission-modal-overlay.md) for what each renders and its
+`permission-cancel:$modalId` / `permission-card:$modalId` key scheme. The title moved inside the card as its
+first line in [#1483](../../specs/architecture/1483-permission-request-frames.md), dropping the separate
+`permission-title:$modalId` item. The empty-thread branch and `promptRowCount` both gained a matching
+`openRequest` term (§ above and § *The oldest-end history demand* below); `promptRowCount` adds a fixed
+`PERMISSION_ROW_COUNT` rather than deriving a size from the request, since a permission/trust request always
+renders the same row count — **2** since #1483 (was 3, when the title was its own item).
 
 **The growth mask and the newest-end reveal generalize to either prompt kind rather than duplicating.** The
 mask that excludes prompt content and sizing from the growth signature (§ above) reads `questionState != null
