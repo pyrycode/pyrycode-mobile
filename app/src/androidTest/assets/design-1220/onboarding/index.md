@@ -4,7 +4,7 @@
 - **Figma:** Mobile page of `g2HIq2UyPhslEoHRokQmHG`, inspected and exported with `get_screenshot` on 2026-10-02.
   `32:20` (Scanner — Connecting) is now titled "Retired 2026-10-01" and is not audited; the
   **Pairing States · 2026-10-01** section (`654:4833`) replaces it.
-- **Capture:** `OnboardingDesignCaptureTest` (three methods) on the full `pixel8Api35` image (API 35) with
+- **Capture:** `OnboardingDesignCaptureTest` (three methods; the Pair Code States recaptured for #1464) on the full `pixel8Api35` image (API 35) with
   `requireRealSystemBars=true`: 412x892 px at density 1.0, font scale 1.0, fixed dark theme, real 24 px status
   and navigation bars. Each `.txt` beside a PNG records the measured values.
 - **Result:** `onboarding-results.xml`, 3 executed, 0 failures, 0 errors, 0 skipped.
@@ -217,21 +217,149 @@ mismatch. A difference between screens that share a component is.
 
 - **Routed:** #1462 (glow)
 
-## Gaps
+## Pair Code States · 2026-10-02
 
-States reachable from `MainActivity` with no current Mobile frame. They are captured here and compared
-with the nearest frame; #1464 asks for frames or a decision.
+The code path's wait and failures stay on the pair-code form (decision of 2026-10-02 on #1464); only
+`Confirming` uses the shared modal, compared above as `pair-confirm.png`. Recaptured for #1464 with
+`pairCodeFramesAt412By892` and `rePairFramesAt412By892` (2 executed, 0 failures, same device and settings as
+above); `onboarding-results.xml` still records the #1430 run of all three methods. Recaptured again on
+`feature/1463` after merging #1464 (3 executed, 0 failures), so these states show the shared pairing header. The Pair button's
+progress ring is captured mid-rotation, so its arc length differs from the frame's.
 
-| State | Capture | Nearest frame | Owning ticket | Routed |
-|---|---|---|---|---|
-| Pair code `Saving` (button "Saving…", Cancel disabled) | `pair-saving.png` | none | #1269 | #1464 |
-| Pair code `Connecting`, on the form instead of the modal | `pair-connecting.png`, `pair-connecting-side-by-side.png` | `654:4882` | #1385 | #1464 |
-| Pair code verification failed with Retry, on the form | `pair-failed-retry.png`, `-side-by-side.png` | `654:4932` | #1385 | #1464 |
-| Pair code verification failed, rejected, on the form | `pair-failed-rejected.png`, `-side-by-side.png` | `654:4982` | #1385 | #1464 |
-| `INVALID_CODE_ERROR` field error | `pair-invalid-code.png`, `-side-by-side.png` | `533:2147` | #1269 | #1464 |
-| Re-pair target label, reached from the thread's "Pairing error - Re-pair" | `repair.png`, `-side-by-side.png` | `533:2147` | #842 | #1464 |
-| `WRONG_HOST_ERROR` field error in re-pair mode | `repair-wrong-host.png`, `-side-by-side.png` | `533:2147` | #842 | #1464 |
+### Pair code — Saving — `663:2887`
 
-`pair-invalid-code.png` shows a text-selection handle under Host name. The keyboard step before it focused
-the field, and closing the keyboard with Back keeps the focus. The app behaves this way after any Back
-that closes the keyboard, so the handle is not a capture artefact.
+- **Owning ticket:** #1269, #1464
+- **Capture:** `pair-saving.png` · **Side-by-side:** `pair-saving-side-by-side.png` · **Overlay:** `pair-saving-overlay.png`
+- Reached by Confirm with `holdSaves = true`.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | match inside the bars, as on Pair Screen: header 24 px down with the title's line box 48 px from the window top; button, Cancel and footer 24 px up; the centred fields within 1 px of the frame |
+| Padding | match: title line box 24 px below the status bar, divider 44 px below the title top |
+| Spacing | match |
+| Typography | mismatch: the long code clips at the field edge where the frame ends it with an ellipsis |
+| Colour | mismatch: the narrow glow of #1462; disabled Pair container and label match |
+| Borders | match: field underlines and header divider |
+| Radii | match: pill Pair button |
+| Icon paths | match: 20 px progress ring before "Saving…", no clear icons |
+| Component state | match: both fields read-only, Pair loading, Cancel and Back disabled |
+
+- **Routed:** #1462 (glow), #1506 (ellipsis)
+
+### Pair code — Connecting — `663:2963`
+
+- **Owning ticket:** #1385, #1464
+- **Capture:** `pair-connecting.png` · **Side-by-side:** `pair-connecting-side-by-side.png` · **Overlay:** `pair-connecting-overlay.png`
+- Reached when the held save completes, with `pairingStatus` still `null`.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | match inside the bars, as on Pair Screen: header 24 px down with the title's line box 48 px from the window top; button, Cancel and footer 24 px up; the centred fields within 1 px of the frame |
+| Padding | match: title line box 24 px below the status bar, divider 44 px below the title top |
+| Spacing | match |
+| Typography | mismatch: the long code clips at the field edge where the frame ends it with an ellipsis |
+| Colour | mismatch: the narrow glow of #1462 |
+| Borders | match |
+| Radii | match |
+| Icon paths | match: progress ring before "Connecting…", no clear icons |
+| Component state | match: fields read-only, Pair loading, Cancel and Back enabled |
+
+- **Routed:** #1462 (glow), #1506 (ellipsis)
+
+### Pair code — Verification failed, retry — `663:3039`
+
+- **Owning ticket:** #1385
+- **Capture:** `pair-failed-retry.png` · **Side-by-side:** `pair-failed-retry-side-by-side.png` · **Overlay:** `pair-failed-retry-overlay.png`
+- Reached with `pairingStatus` set to `RelayLinkStatus.DaemonAbsent`. Other messages above the button follow this frame.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | match inside the bars, as on Pair Screen: header 24 px down with the title's line box 48 px from the window top; button, Cancel and footer 24 px up; the centred fields within 1 px of the frame |
+| Padding | match: title line box 24 px below the status bar, divider 44 px below the title top |
+| Spacing | match: message above Retry |
+| Typography | mismatch: the long code clips at the field edge where the frame ends it with an ellipsis; the message and its wrap match |
+| Colour | mismatch: the narrow glow of #1462; error role on the message |
+| Borders | match |
+| Radii | match |
+| Icon paths | match: no clear icons |
+| Component state | match: fields read-only, Retry and Cancel enabled |
+
+- **Routed:** #1462 (glow), #1506 (ellipsis)
+
+### Pair code — Verification failed, rejected — `663:3115`
+
+- **Owning ticket:** #1385
+- **Capture:** `pair-failed-rejected.png` · **Side-by-side:** `pair-failed-rejected-side-by-side.png` · **Overlay:** `pair-failed-rejected-overlay.png`
+- Reached from Retry with `pairingStatus` set to `RelayLinkStatus.PairingRejected`.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | match inside the bars, as on Pair Screen: header 24 px down with the title's line box 48 px from the window top; button, Cancel and footer 24 px up; the centred fields within 1 px of the frame |
+| Padding | match: title line box 24 px below the status bar, divider 44 px below the title top |
+| Spacing | match |
+| Typography | mismatch: the long code clips at the field edge where the frame ends it with an ellipsis; the rejected message matches |
+| Colour | mismatch: the narrow glow of #1462 |
+| Borders | match |
+| Radii | match |
+| Icon paths | match: no clear icons |
+| Component state | match: fields read-only, Pair disabled, Cancel enabled |
+
+- **Routed:** #1462 (glow), #1506 (ellipsis)
+
+### Pair code — Invalid code — `663:3191`
+
+- **Owning ticket:** #1269
+- **Capture:** `pair-invalid-code.png` · **Side-by-side:** `pair-invalid-code-side-by-side.png` · **Overlay:** `pair-invalid-code-overlay.png`
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | mismatch: header 24 px down and button, Cancel and footer 24 px up match inside the bars, as on Pair Screen; the fields sit 6 px higher, because the shorter error line under the code takes less height |
+| Padding | mismatch: error text indent (see typography); the header's insets match Pair Screen |
+| Spacing | mismatch: no gap between underline and error text |
+| Typography | mismatch: the field error text starts at the field edge, right under the underline; the frame indents it 16 px with a 4 px gap |
+| Colour | mismatch: the narrow glow of #1462; error underline, label and text in the error role |
+| Borders | match: 2 px error underline on Pairing code |
+| Radii | match |
+| Icon paths | match: both fields keep their clear icons |
+| Component state | match: both fields editable; the app's focus stays in Host name after the keyboard closed, where the frame's cursor is in Pairing code |
+
+- **Routed:** #1462 (glow), #1506 (error text)
+
+### Re-pair — `663:3266`
+
+- **Owning ticket:** #842
+- **Capture:** `repair.png` · **Side-by-side:** `repair-side-by-side.png` · **Overlay:** `repair-overlay.png`
+- Reached from the thread's "Pairing error - Re-pair".
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | match inside the bars, as on Pair Screen: header 24 px down with the title's line box 48 px from the window top; button, Cancel and footer 24 px up; the centred fields within 1 px of the frame |
+| Padding | match: title line box 24 px below the status bar, divider 44 px below the title top |
+| Spacing | match |
+| Typography | match |
+| Colour | mismatch: the narrow glow of #1462 |
+| Borders | match |
+| Radii | match |
+| Icon paths | match: no clear icon on Host name, clear icon on Pairing code |
+| Component state | match: Host name fixed to the stored name, Pairing code empty and editable |
+
+- **Routed:** #1462 (glow)
+
+### Re-pair — Wrong host — `663:3331`
+
+- **Owning ticket:** #842
+- **Capture:** `repair-wrong-host.png` · **Side-by-side:** `repair-wrong-host-side-by-side.png` · **Overlay:** `repair-wrong-host-overlay.png`
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | mismatch: header 24 px down and button, Cancel and footer 24 px up match inside the bars, as on Pair Screen; the fields sit 6 px higher, because of the shorter error line |
+| Padding | mismatch: error text indent (see typography); the header's insets match Pair Screen |
+| Spacing | mismatch: no gap between underline and error text |
+| Typography | mismatch: the field error text starts at the field edge, right under the underline; the frame indents it 16 px with a 4 px gap; mismatch: the long code clips at the field edge where the frame ends it with an ellipsis |
+| Colour | mismatch: the narrow glow of #1462; error role on the code field |
+| Borders | match: error underline |
+| Radii | match |
+| Icon paths | match: no clear icon on Host name, clear icon on Pairing code |
+| Component state | match: Host name read-only, Pairing code editable with the error |
+
+- **Routed:** #1462 (glow), #1506 (error text, ellipsis)
