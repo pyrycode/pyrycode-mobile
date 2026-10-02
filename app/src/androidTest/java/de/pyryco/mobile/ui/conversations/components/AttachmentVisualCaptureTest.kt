@@ -14,13 +14,12 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
-import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
@@ -55,6 +54,7 @@ import org.junit.Test
 import org.junit.rules.TestRule
 import org.junit.runner.RunWith
 import java.io.File
+import kotlin.math.roundToInt
 
 /** Real device pixels for the current dark-theme attachment design. */
 @RunWith(AndroidJUnit4::class)
@@ -116,14 +116,35 @@ class AttachmentVisualCaptureTest {
 
         val bubbleColors = listOf(Color.rgb(0x00, 0x1D, 0x34), Color.rgb(0x00, 0x33, 0x55))
         bubbleColors.forEachIndexed { index, background ->
-            val row = rule.onAllNodesWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG)[index].captureToImage().asAndroidBitmap()
+            val row = drawNode(rule.onAllNodesWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG)[index])
             assertReadablePixels("sent page $index", row, background, 0, 45, 0, 25)
             assertReadablePixels("sent name $index", row, background, 55, row.width, 0, row.height)
         }
-        val pending = rule.onNodeWithContentDescription("report.pdf").captureToImage().asAndroidBitmap()
+        val pending = drawNode(rule.onNodeWithContentDescription("report.pdf"))
         val threadBackground = Color.rgb(0x0B, 0x0E, 0x11)
         assertReadablePixels("pending page", pending, threadBackground, 0, pending.width, 0, 25)
         assertReadablePixels("pending type label", pending, threadBackground, 8, pending.width - 8, 35, 55)
+    }
+
+    /**
+     * The node's pixels, drawn from the window's view tree. `captureToImage` waits on `forceRedraw` with a fixed 2 s
+     * timeout, which a cold emulator's first frames overrun (#1555); drawing the decor view needs no new frame.
+     */
+    private fun drawNode(node: SemanticsNodeInteraction): Bitmap {
+        rule.waitForIdle()
+        val bounds = node.fetchSemanticsNode().boundsInWindow
+        return rule.runOnIdle {
+            val root = rule.activity.window.decorView
+            val window = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888).also { root.draw(Canvas(it)) }
+            Bitmap
+                .createBitmap(
+                    window,
+                    bounds.left.roundToInt(),
+                    bounds.top.roundToInt(),
+                    bounds.width.roundToInt(),
+                    bounds.height.roundToInt(),
+                )
+        }
     }
 
     private fun assertReadablePixels(
