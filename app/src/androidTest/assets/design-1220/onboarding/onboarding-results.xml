@@ -1,13 +1,13 @@
 <?xml version='1.0' encoding='UTF-8' ?>
-<testsuites tests="3" failures="0" errors="0" skipped="0" time="34.72" timestamp="2026-10-02T07:59:36" hostname="localhost">
-  <testsuite name="de.pyryco.mobile.design.OnboardingDesignCaptureTest" tests="3" failures="0" errors="0" skipped="0" time="30.602" timestamp="2026-10-02T07:59:36" hostname="localhost">
+<testsuites tests="3" failures="0" errors="0" skipped="0" time="63.193" timestamp="2026-10-02T08:56:46" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.design.OnboardingDesignCaptureTest" tests="3" failures="0" errors="0" skipped="0" time="58.883" timestamp="2026-10-02T08:56:46" hostname="localhost">
     <properties>
       <property name="device" value="pixel8Api35" />
       <property name="flavor" value="" />
       <property name="project" value=":app" />
     </properties>
-    <testcase name="scannerFramesAt412By892" classname="de.pyryco.mobile.design.OnboardingDesignCaptureTest" time="17.014" />
-    <testcase name="pairCodeFramesAt412By892" classname="de.pyryco.mobile.design.OnboardingDesignCaptureTest" time="8.718" />
-    <testcase name="rePairFramesAt412By892" classname="de.pyryco.mobile.design.OnboardingDesignCaptureTest" time="4.87" />
+    <testcase name="scannerFramesAt412By892" classname="de.pyryco.mobile.design.OnboardingDesignCaptureTest" time="23.446" />
+    <testcase name="pairCodeFramesAt412By892" classname="de.pyryco.mobile.design.OnboardingDesignCaptureTest" time="25.191" />
+    <testcase name="rePairFramesAt412By892" classname="de.pyryco.mobile.design.OnboardingDesignCaptureTest" time="10.246" />
   </testsuite>
 </testsuites>

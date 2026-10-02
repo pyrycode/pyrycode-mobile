@@ -9,7 +9,7 @@
   and navigation bars. Each `.txt` beside a PNG records the measured values.
 - **Result:** `onboarding-results.xml`, 3 executed, 0 failures, 0 errors, 0 skipped.
 - **Recaptured for #1463:** every capture, side-by-side and overlay in this folder comes from a 2026-10-02 rerun on
-  `feature/1463` (same image, viewport and arguments, 3 executed, 0 failures). `figma-32-2.png` and
+  `feature/1463` after its review rework (same image, viewport and arguments, 3 executed, 0 failures). `figma-32-2.png` and
   `figma-533-2147.png` were re-exported the same day after the frames' headers moved to Scanner's height.
 
 Verdicts compare each capture with its frame at 1:1 in the side-by-side and overlay images. Figma's frames
@@ -44,7 +44,7 @@ mismatch. A difference between screens that share a component is.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | match inside the bars: header, divider and camera card 24 px down at the top; card bottom and paste link 24 px up at the bottom. The title's line box starts 47 px from the window top (glyph top 53 px against the frame's 30), the same height as on Denied and Pair Screen |
+| Geometry | match inside the bars: header, divider and camera card 24 px down at the top; card bottom and paste link 24 px up at the bottom. The title's line box starts 48 px from the window top (glyph top 53 px against the frame's 30), the same height as on Denied and Pair Screen |
 | Padding | match: title line box 24 px below the status bar, divider 44 px below the title top |
 | Spacing | match |
 | Typography | match: header, hint with the monospace `pyry pair`, paste link |
@@ -65,7 +65,7 @@ mismatch. A difference between screens that share a component is.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | match inside the bars: every element 24 px down at the top and 24 px up at the bottom; the header sits at the same height as Scanner's and Pair Screen's |
+| Geometry | match inside the bars: every element 24 px down at the top and 24 px up at the bottom; the header sits at the same height as Scanner's and Pair Screen's. The title's line box starts 48 px from the window top (`ScannerDeniedRouteDeviceTest` reads 48 px on the full image; glyph top 52 px against the frame's 29) |
 | Padding | match |
 | Spacing | match |
 | Typography | match |
@@ -184,7 +184,7 @@ mismatch. A difference between screens that share a component is.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | match inside the bars: header and form top 24 px down, at the same height as Scanner's and Denied's header; Pair, Cancel and footer keep the frame's 28 px bottom gutter (24 px bar plus 4 px), so the centred fields sit 13 px lower than the frame |
+| Geometry | match inside the bars: header and form top 24 px down, at the same height as Scanner's and Denied's header; Pair, Cancel and footer 24 px up, keeping the frame's 28 px gutter above the navigation bar; the centred fields within 3 px of the frame. The title's line box starts 48 px from the window top (glyph top 53 px against the frame's 30) |
 | Padding | match: title line box 24 px below the status bar, divider 44 px below the title top |
 | Spacing | match |
 | Typography | match, including the `pyrycode-mobile` footer |
@@ -205,7 +205,7 @@ mismatch. A difference between screens that share a component is.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | match: the form compresses above the keyboard; the header stays put and Pair, Cancel and footer stay above the keyboard |
+| Geometry | match: the form compresses above the keyboard; the header stays put and Pair, Cancel and footer stay above the keyboard (rechecked after #1463 moved the form's bottom inside the bars) |
 | Padding | match |
 | Spacing | match: field, button and footer gaps keep the frame's order, tightened to fit |
 | Typography | match |
