@@ -80,9 +80,20 @@ When hosted alone, that modifier reserves and consumes the bars itself.
 `imePadding()` then adds only keyboard height beyond the bottom inset already
 consumed by the activity or the screen. See
 [navigation § Insets](navigation.md#configuration) for once-only ownership.
-The toolbar Back `IconButton` is explicitly sized `Modifier.size(48.dp)`.
-The pair route starts this target at the consumed status inset; the scanner
-retains its separate 18 dp header offset. The
+
+The header is the shared [`PairingHeader`](scanner-screen.md#pairingheader--one-header-for-scanner-denied-and-pair-screen)
+(#1463): `title = "Pairing"`, `onPrimaryContainer`, divider on, `backEnabled = !saving`,
+with its own `ic_pair_back` painter. Before #1463 this screen drew a 48 dp header
+row at the inset edge with its own Back `IconButton`, which put the title 6 px
+low against Figma; the shared header puts the title's line box 24 dp below the
+status inset, matching Scanner and Denied. The form's top padding grew from 28
+to 32 dp (69 + 32 = 101 dp from the inset, Figma's hero-container position) so
+the form moves down with the header rather than leaving a gap. The footer's
+bottom padding is 28 dp, the frame's own gutter above the navigation bar — not
+a value this header move picked, but the padding that keeps the whole form
+"inside the bars" the way Denied's layout already was (see the
+[header's doc](scanner-screen.md#pairingheader--one-header-for-scanner-denied-and-pair-screen)
+for that rule). The
 `Confirming` phase returns `ScannerScreen` before this `Column` is composed,
 so it does not gain a second system-bar inset.
 
@@ -369,7 +380,10 @@ remains [#676](https://github.com/pyrycode/pyrycode-mobile/issues/676)'s scope.
 - [Pair-with-code design and revisions](../../specs/architecture/639-pair-with-code.md);
   [system-bar insets and the 48 dp Back target](../../specs/architecture/1141-pair-code-system-bar-insets.md)
   (#1141); [full-screen Figma glow](../../specs/architecture/1462-pair-code-full-screen-glow.md) (#1462);
-  [busy ring and read-only clear icons](../../specs/architecture/1464-pair-code-form-states.md) (#1464)
+  [busy ring and read-only clear icons](../../specs/architecture/1464-pair-code-form-states.md) (#1464);
+  [one pairing header for Scanner, Denied and Pair Screen](../../specs/architecture/1463-shared-pairing-header.md)
+  (#1463) — the shared [`PairingHeader`](scanner-screen.md#pairingheader--one-header-for-scanner-denied-and-pair-screen)
+  this screen now draws its header from
 - [Navigation](navigation.md) § [Insets](navigation.md#configuration), [scanner](scanner-screen.md) and
   [paired-server collection](paired-server-store.md)
 - [Legacy dialog history](../codebase/501.md): store-free callback contract retained

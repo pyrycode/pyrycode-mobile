@@ -45,18 +45,62 @@ A single `MutableStateFlow<ScannerUiState>(PermissionRequesting)` exposed via `a
 
 **Since #1386, the VM is no longer purely synchronous.** It takes `PairedServerStore`, `RelayConnectionController` and an `observe: (PairedServer) -> Flow<ConnectionStatus?>` constructor dependency (the DI module wires `observe` to `RelayConnectionRegistry::pairingStatus`) and gains `viewModelScope`. `ConfirmPairing` from `AwaitingConfirm` moves state to `Verifying(fingerprint, server)` **synchronously** — closing the earlier "camera double-confirm is not guarded" gap as a side effect, since a second tap while already `Verifying` falls through to the no-op branch — then launches a `Job` that saves via `confirmPairingAndConnect` and awaits the shared [`verifySavedPairing`](paste-code-dialog.md#target-readiness-and-retry) step (the same one [#1385](../../specs/architecture/1385-pairing-verification-rule.md) extracted for `PairCodeViewModel`) on the saved record: `Connected` → `Paired`; a `Failure` → `VerificationFailed(fingerprint, server, message, retryable)`, with the step's `message`/`retryable` copied out because a public sealed state cannot hold the `internal PairingVerification.Failure` directly. `RetryVerification` re-launches the same wait on the same `server` (no re-save); `CancelVerification` cancels the `Job` and moves to `Cancelled`. The one held `Job` is cancelled by `CancelVerification` and by `onCleared`, and a wait's result is applied only while state is still `Verifying` for that exact `(fingerprint, server)` — a late resume after Cancel or a newer wait can never navigate. While `Verifying` or `VerificationFailed`, every event other than `RetryVerification`/`CancelVerification` is ignored (`Paired`/`Cancelled` ignore everything): a rotation re-sends `PermissionGranted` through the route's permission-check `LaunchedEffect(Unit)`, and under the pre-#1386 unconditional transition that would have replaced the modal with `ReadyToScan` while the wait kept running underneath. Putting the wait on `viewModelScope` rather than a route-held `rememberCoroutineScope` job is what lets it survive rotation at all. Debug-only `RelayLog` events (`scanner_pair_save_started`, `scanner_pair_connection_wait`, `scanner_pair_connected`, `scanner_pair_failed code=…`, `scanner_pair_retry`, `scanner_pair_cancel`) carry only static names and the failure's `code` — never the server, token, fingerprint or status payload. See [Pairing confirm gate § Confirm, Retry and Cancel are events](pairing-confirm-gate.md#confirm-retry-and-cancel-are-events-the-vm-owns-the-wait-1386) for the full design.
 
+### `PairingHeader` — one header for Scanner, Denied and Pair Screen
+
+Internal composable in `ui/onboarding/PairingHeader.kt` (#1463), shared by this
+screen's `ScannerViewport`, [Scanner Denied](scanner-denied-screen.md) and
+[Pair Screen](paste-code-dialog.md). Before #1463 each screen drew its own header
+row with its own top padding and height, and the three landed at three different
+heights on a real device (28, 24 and 6 px off Figma at 412×892 with real 24 dp
+system bars) even though all three frames put the title's 28 px line box 24 px
+below the status bar. **The geometry contract, not the pixels, is what's shared**:
+`PairingHeader(title, titleColor, onBack, backIcon, modifier, startPadding, backEnabled, divider)`
+draws a `heightIn(min = 48.dp)` row padded 14 dp from its top — so the centered
+28 dp title line box starts 24 dp below wherever the row is placed — and, when
+`divider = true`, a `HorizontalDivider` 6 dp under the row (44 dp below the title
+top). Each caller applies `systemBarsPadding()` first and places `PairingHeader`
+at the inset edge; the body below it keeps each frame's own layout, so a header
+move shifts the body with it (Scanner's card, Pair Screen's form) rather than
+leaving a gap or an overlap.
+
+Two things are easy to miss when touching this composable:
+
+- **The title's bounds, not its glyphs, carry the contract.** Compose's default
+  `LineHeightStyle` trims a single-line `Text` to the font's own height, so the
+  title's measured top would land 2 dp low. The header pins
+  `MaterialTheme.typography.titleLarge.copy(lineHeightStyle = LineHeightStyle(Center, Trim.None))`,
+  which keeps the box the full 28 dp with glyphs centered inside it — the glyphs
+  land exactly where they did before, but the box (and the `pairing_header_title`
+  test tag's bounds) now matches Figma's line box. Asserting glyph position
+  instead of the tagged node's bounds would miss a future regression here.
+- **Each frame keeps its own title, color, icon and divider setting, not just its
+  copy.** Scanner and Pair Screen draw "Pairing" in `onPrimaryContainer` with a
+  divider; Denied draws "Pair with pyrycode" in `onSurface` with none
+  (`divider = false`, `startPadding = 4.dp` to match its narrower back-icon inset).
+  A caller that drops one of these per-screen parameters silently reverts to
+  Scanner's look.
+
+**Verification lesson:** header geometry is asserted in both the sharedTest
+`PairingHeaderGeometryTest` (renders all three screens at `w412dp-h892dp` with
+24 dp bars applied, asserting the title top and divider offset) and in two
+androidTest device classes that independently pinned the pre-#1463 Back-button
+height — `MainActivityInsetsDeviceTest` (Scanner and Pair Screen) and
+`ScannerDeniedRouteDeviceTest` (Denied). Both now assert the `pairing_header_title`
+top at the status inset + 24 dp rather than a Back-button offset, so a future
+header change does not need retuning in two places as this ticket did. A header
+move must update all three: the sharedTest, and both device classes.
+
 ### `ScannerViewport` — the locked viewport body
 
 The outer `Surface(color = colorScheme.surface)` fills the screen; an inner `Column`
-applies `systemBarsPadding()`. Its header is a `Row` with the shared Material
-ArrowBack glyph (`contentDescription = "Back"`) in an explicitly sized 48 dp
-`IconButton`, followed by **Pairing** in `titleLarge` / `onPrimaryContainer`.
-Header padding is 8 dp start, 20 dp end and 18 dp top. The `HorizontalDivider`
-uses `inversePrimary` at 60% opacity, 20 dp side insets and 6 dp top spacing;
-24 dp separates it from the camera window. The weighted window has 16 dp side
-insets. Below it, a 16 dp padded container holds the centered paste `TextButton`
-(`labelLarge` / `primary`, minimum 48 dp height). Native touch targets and system
-insets consume space absent from the frameless design canvas.
+applies `systemBarsPadding()`. Its header is the shared [`PairingHeader`](#pairingheader--one-header-for-scanner-denied-and-pair-screen)
+(`title = "Pairing"`, `onPrimaryContainer`, divider on), which places the title's
+28 dp line box 24 dp below the status inset and the divider 44 dp below the title
+top. The weighted window has 16 dp side insets and starts 24 dp below the header
+(93 dp from the inset, including the header). Below it, a 16 dp padded container
+holds the centered paste `TextButton` (`labelLarge` / `primary`, minimum 48 dp
+height). Native touch targets and system insets consume space absent from the
+frameless design canvas.
 
 The viewport has no tap-to-pair gesture. Back and Paste have separate callbacks;
 a QR decode starts camera pairing. Colors and typography come from theme roles;
@@ -234,6 +278,7 @@ the docs guard enforces.
 ## Related
 
 - [Updated pairing scanner plan and revisions](../../specs/architecture/640-updated-pairing-scanner.md)
+- [One pairing header for Scanner, Denied and Pair Screen](../../specs/architecture/1463-shared-pairing-header.md) (#1463)
 - Issues: https://github.com/pyrycode/pyrycode-mobile/issues/12 (stub), https://github.com/pyrycode/pyrycode-mobile/issues/60 (Figma polish), https://github.com/pyrycode/pyrycode-mobile/issues/326 (stateful + permission flow), https://github.com/pyrycode/pyrycode-mobile/issues/333 (decode core), https://github.com/pyrycode/pyrycode-mobile/issues/334 (live CameraX preview), https://github.com/pyrycode/pyrycode-mobile/issues/320 (parse → real `PairedServer` + persist), https://github.com/pyrycode/pyrycode-mobile/issues/343 (fingerprint confirm gate)
 - Specs: `docs/specs/architecture/12-stub-scanner-screen.md`, `docs/specs/architecture/60-scanner-screen-figma-polish.md`, `docs/specs/architecture/326-stateful-scanner-permission-flow.md`, `docs/specs/architecture/333-mlkit-qr-decode-pipeline.md`, `docs/specs/architecture/334-camerax-live-preview-scanner.md`, `docs/specs/architecture/320-qr-payload-parse-persist.md`, `docs/specs/architecture/343-pairing-fingerprint-confirm-gate.md`
 - Ticket notes: `../codebase/12.md`, `../codebase/60.md`, `../codebase/326.md`, `../codebase/333.md`, `../codebase/334.md`, `../codebase/320.md`, `../codebase/343.md`, [`../codebase/489.md`](../codebase/489.md) (connect-on-pairing via `confirmPairingAndConnect`)
