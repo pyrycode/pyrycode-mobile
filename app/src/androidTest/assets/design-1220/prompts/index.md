@@ -10,7 +10,8 @@
   `requireRealSystemBars=true`, density 1.0, fixed dark theme, real 24 px status and navigation bars. Each `.txt`
   records the measured values.
 - **Result:** `prompts-results.xml`, the whole class in one run after the second rework: 6 executed, 0 failures.
-  Every capture here comes from that run.
+  Every capture here comes from that run, except the six permission and trust items, re-captured for #1483
+  below.
 - **Re-capture for #1483:** the six permission and trust items below were re-captured on `feature/1483`, from a
   whole-class run of `PromptsDesignCaptureTest` on 2026-10-02 (6 executed; `permissionFrames` and
   `permissionCompactFrame` passed; `questionKeyboardFrame` failed on the known 332 px keyboard, see that item).
