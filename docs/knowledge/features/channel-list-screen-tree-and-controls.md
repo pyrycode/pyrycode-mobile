@@ -44,12 +44,16 @@ host, never `ThreadDestinationFactory.selectedServerId()`. Edit, attention and p
 host-qualified target. `selected = target == hostState.selected`, so a colliding id on another host does
 not acquire the highlight.
 
-In the static dark palette, a selected `TreeConversationRow` uses
-`colorScheme.onPrimary` (`#003355`), the `Schemes/On Primary` binding on Figma sidebar
-[`132:3902`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=132-3902)
-(inspected 2026-09-28). Explicit light and wallpaper-colour variants in
-isolated tests keep the translucent `primaryContainer` selection. `ChannelListColoursTest` samples the selected-row
-pixel; a contrast-only assertion could pass while the role was still wrong.
+Since #1523, in the static dark palette a selected `TreeConversationRow` uses
+`colorScheme.primaryContainer` (`#134a74`), matching Figma `15:8`'s `Hover` instance
+(node `398:7258`), and a pressed row uses `colorScheme.onPrimary` (`#003355`), the darker
+`pyrycode discord integration` row on the same frame — the reverse of the two fills'
+earlier roles. Explicit light and wallpaper-colour variants in isolated tests keep the
+translucent `primaryContainer.copy(alpha = SELECTED_FILL_ALPHA)` selection and `primaryContainer`
+pressed fill, both unchanged by #1523. `ChannelListColoursTest` samples the selected-row pixel; a
+contrast-only assertion could pass while the role was still wrong. A still capture cannot show the
+pressed fill, since it is transient; `ConversationTreeRowsTest`'s held-pointer pixel test is the
+evidence for it instead.
 
 **Tier test tags.** Each conversation row carries `Modifier.testTag(section.rowTestTag)` —
 `internal const val TREE_CHANNEL_ROW_TEST_TAG = "tree-channel-row"` /
@@ -271,7 +275,10 @@ for the `HostConversationSource.retryHost` seam this control drives, and
 
 `TreeConversationRow` gained an optional fourth parameter, `onEditTapped: (() -> Unit)? = null`. A
 non-null value draws a `TreeRowControl(Icons.Filled.Edit, …)` at the row's trailing edge — the design's
-hover pencil, drawn permanently for the same reason the host row's is (#744). The name `Text` takes
+hover pencil (`15:8`'s `Hover` instance, node `398:7258`). Since #1523, `treeHost` in
+[ChannelListScreen](channel-list-screen.md) passes a non-null callback only when the host is
+connected **and** the row's own target equals `hostState.selected`, so the pencil draws on at most
+one conversation row — the one last opened and left with Back — never on every row. The name `Text` takes
 `Modifier.weight(1f, fill = onEditTapped != null)` only while the control is present, which pushes the
 pencil to the trailing edge and ellipsizes a long name before it reaches it; a row with no callback is
 laid out exactly as before. `TreeRowControl` already stays its own semantics node with its own click
@@ -305,10 +312,12 @@ since the host's own Archive screen restores the chat.
 R.string.cd_tree_chat_edit`, generalising the pencil's content description that #827 hard-wired to the
 chat string: `treeHost`'s exhaustive `when (section)` now passes `cd_tree_chat_edit` for `Chats` (as
 before) and `cd_tree_channel_edit` for `Channels`, alongside `{ onEvent(TreeChannelEditTapped(target)) }`
-in place of the `null` every Channels row passed until this ticket — the pencil itself, its permanent
-(non-hover) drawing and its own merging-semantics node inside `FoldableTreeRow`'s `clickable` are
-unchanged from #827's chat-row shape, since both tiers share one row composable. `target` is the row's
-own `HostConversationTarget`, the same targeting discipline every row control in this file uses.
+in place of the `null` every Channels row passed until this ticket — the pencil itself and its own
+merging-semantics node inside `FoldableTreeRow`'s `clickable` are unchanged from #827's chat-row shape,
+since both tiers share one row composable. `target` is the row's own `HostConversationTarget`, the same
+targeting discipline every row control in this file uses. Since #1523 both sections' pencils draw only
+on the selected row (see [Chat row edit control](#chat-row-edit-control-827) above); Edit channel is
+reached the same way Edit chat is, by opening the row and pressing Back before tapping its pencil.
 
 Opening [`EditChannelModal`](mobile-modal-callers.md#callers) from that target, reading the channel's stored
 prompt once the row's host has a live repository, and resolving which host renames, writes the prompt or

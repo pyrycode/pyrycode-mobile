@@ -45,7 +45,7 @@ class ChannelListColoursTest {
         assertGlow(bitmap, "populated")
         // The rule is translucent, so over the glow it shifts a few units across the width, as Figma's does.
         assertToolbarRule(bitmap, Color.rgb(33, 68, 99), tolerance = 4)
-        assertSelectedRowFill(bitmap, Color.rgb(0, 51, 85))
+        assertSelectedRowFill(bitmap, Color.rgb(19, 74, 116))
     }
 
     @Test
@@ -215,7 +215,7 @@ class ChannelListColoursTest {
                 .boundsInRoot
         val x = bounds.left.roundToInt() + 2
         val y = bounds.top.roundToInt() + 2
-        assertEquals("Selected row uses Schemes/On Primary", expected, bitmap.getPixel(x, y))
+        assertEquals("Selected row uses Schemes/Primary Container", expected, bitmap.getPixel(x, y))
     }
 
     private fun closeColour(
