@@ -3,6 +3,7 @@ package de.pyryco.mobile.design
 import android.view.View
 import android.view.WindowInsets
 import androidx.compose.ui.platform.ViewRootForTest
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -17,6 +18,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.espresso.Espresso
@@ -30,6 +33,7 @@ import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -98,6 +102,7 @@ class ListDesignCaptureTest {
         relaunch()
         rule.onNodeWithContentDescription("Edit host", substring = true).performClick()
         awaitText("Host name:")
+        assertIdentityLabelsWrapOnlyBetweenWords()
         design.capture(FOLDER, "edit-host$suffix", "533:2369")
         val modal = awaitModalFocus(rule.onNode(hasSetTextAction()))
         rule.onNode(hasSetTextAction()).performClick()
@@ -110,7 +115,7 @@ class ListDesignCaptureTest {
         awaitModalKeyboard(modal, visible = false)
         rule.onNodeWithText("Unpair host").performScrollTo().performClick()
         awaitText("Unpair host?")
-        design.capture(FOLDER, "edit-host-unpair$suffix", "none")
+        design.capture(FOLDER, "edit-host-unpair$suffix", "671:5620")
         relaunch()
 
         // Only the selected row draws its pen (#1523), so select the first channel the operator's way: open it, go Back.
@@ -146,7 +151,7 @@ class ListDesignCaptureTest {
         design.capture(FOLDER, "thread-menu$suffix", "none")
         rule.onNodeWithText("Channel info").performClick()
         awaitText("About")
-        design.capture(FOLDER, "channel-info$suffix", "20:48")
+        design.capture(FOLDER, "channel-info$suffix", "668:5355")
     }
 
     /** Each surface starts from a fresh channel list, so one surface's dismissal path cannot steer the next. */
@@ -200,6 +205,23 @@ class ListDesignCaptureTest {
         val center = node.fetchSemanticsNode().boundsInWindow.center
         shell("input tap ${center.x.toInt()} ${center.y.toInt()}")
         rule.waitForIdle()
+    }
+
+    /**
+     * At 320x700 and 150 % the labels wrap in their compact column; a word too wide for it breaks inside, as
+     * "address" over a lone ":" (#1489). Device fonts only: Robolectric's metrics do not reproduce the break.
+     */
+    private fun assertIdentityLabelsWrapOnlyBetweenWords() {
+        listOf("Server identity:", "Relay address:").forEach { label ->
+            val layouts = mutableListOf<TextLayoutResult>()
+            rule.onNodeWithText(label, useUnmergedTree = true).performSemanticsAction(SemanticsActions.GetTextLayoutResult) {
+                it(layouts)
+            }
+            val layout = layouts.single()
+            (0 until layout.lineCount - 1).forEach { line ->
+                assertTrue("$label breaks inside a word after line $line", label[layout.getLineEnd(line) - 1].isWhitespace())
+            }
+        }
     }
 
     /**

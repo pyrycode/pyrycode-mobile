@@ -52,4 +52,42 @@ checks both labels' text layout for visual overflow, their bounds against the
 values, and the reachability of the name field and actions under Robolectric
 native graphics and on the managed API 33 device. A node can be displayed
 while its glyphs overflow its measured bounds, so visibility and bounds checks
-alone would miss the original clipping.
+alone would miss the original clipping. At compact width Edit host's identity
+row weights label and value 2:3, not 1:2 or 1:3 — see below.
+
+## Density-1.0 hinting and the trimmed line box (#1489)
+
+None of the six roles above set `lineHeightStyle`, so a single-line `Text` lays
+out at the font's own height (≈16.4 dp for 14 sp), not the role's 20 sp
+`lineHeight` — Compose trims the untouched space. Anything spaced from such a
+label in a `Column`, such as Edit host's "Host name:" to its field, sits about
+3.6 dp closer than the Figma frame, which measures the label's full line box.
+`EditHostModal`'s labels, values and the unpair confirmation message now carry
+a local `LineHeightStyle(Center, Trim.None)` (named `FrameLineBox`, matching
+`QuestionBatchModal.FrameLineBox` and `PairingHeader.TitleLineBox` — a third
+copy, not yet worth extracting into this shared ramp) to take the frame's
+untrimmed line box instead.
+
+Separately, at density 1.0 Android hints text layout by rounding each glyph's
+advance to a whole device pixel. A label-large emphasized (600-weight) run of
+16 glyphs can come out 4 px wider than Figma's unhinted metrics as a result —
+measured directly on the device, a `TextMeasurer` call against the same string
+gives Figma's width, while a hinted `Paint` at 14 px gives the wider one. The
+Medium-weight (500) text in the same screen matched Figma exactly, so the gap
+is hinting, not a device Roboto metrics difference, and not weight-specific in
+a way that points at the font file. Giving the label (and, for the same
+reason, the body text drawn with it) `textMotion = TextMotion.Animated` turns
+off that hinting and restores Figma's unhinted advances at every density.
+`TextMotion.Animated` is stable in the pinned Compose BOM; no opt-in is
+needed. Robolectric's font metrics do not reproduce either the trim or the
+hinting gap, so both are proven on the device capture, not a shared test.
+
+The unhinted label is also wider than Robolectric predicts, which moves where
+a compact-width label wraps: a shared test asserting "the label breaks only
+between words" can pass under Robolectric while the real device breaks a word
+like "address:" mid-word, because Robolectric's narrower, hinted estimate still
+fits the word on one line. That check belongs in the device-only design
+capture walk (`ListDesignCaptureTest.assertIdentityLabelsWrapOnlyBetweenWords`),
+not a shared test — and is also why Edit host's compact identity row weights
+label and value 2:3 rather than the narrower 1:2 split an earlier ticket used:
+the unhinted label needs the extra room.
