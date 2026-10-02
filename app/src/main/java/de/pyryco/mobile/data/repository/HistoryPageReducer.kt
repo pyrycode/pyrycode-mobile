@@ -40,6 +40,7 @@ import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.model.ToolDenial
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.BannerPayloadDto
+import de.pyryco.mobile.data.network.CompactingPayloadDto
 import de.pyryco.mobile.data.network.CompactionBoundaryPayloadDto
 import de.pyryco.mobile.data.network.MessageAttachmentIds
 import de.pyryco.mobile.data.network.MessagePayloadDto
@@ -54,6 +55,7 @@ import de.pyryco.mobile.data.network.ToolResultPayloadDto
 import de.pyryco.mobile.data.network.ToolUsePayloadDto
 import de.pyryco.mobile.data.network.TurnEndPayloadDto
 import de.pyryco.mobile.data.network.UnrecognizedMessagePayloadDto
+import de.pyryco.mobile.data.network.failed
 import de.pyryco.mobile.data.network.isAttachmentIdShape
 import de.pyryco.mobile.data.network.toBoundary
 import de.pyryco.mobile.data.network.toDenial
@@ -62,6 +64,7 @@ import de.pyryco.mobile.data.network.toMessage
 import de.pyryco.mobile.data.network.toRow
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_ASSISTANT_DELTA
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_BANNER
+import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_COMPACTING
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_COMPACTION_BOUNDARY
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_MESSAGE
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_MODEL_REFUSAL_FALLBACK
@@ -309,10 +312,20 @@ private fun List<ThreadItem>.highestSeqOf(turnId: String): Int =
  * (#1350) — and a row keyed by the bare turn id with no segment record — to [Message.isStreaming]
  * `= false` in place, so the thread renders the completed reply as static markdown rather than the
  * streaming caret view. **No-op when no streaming row of the turn exists** — a tool-only or empty turn
- * carries no assistant text — and a duplicate changes nothing. `turn_end` carries no final text, so
- * nothing is appended here.
+ * carries no assistant text — and a duplicate changes nothing. `turn_end` carries no final text.
+ *
+ * A turn that did not end cleanly then leaves a [ThreadItem.StoppedTurn] stamped [occurredAt] at the end,
+ * after the turn's last row (#1356), unless the thread already holds one for that turn ([holdsStoppedTurn]).
+ * Both lanes come through here, so a live row and a history row of one turn are built by one rule.
  */
-internal fun List<ThreadItem>.withFinalizedTurn(event: LiveSessionEvent.TurnEnd): List<ThreadItem> = withSettledTurns(setOf(event.turnId))
+internal fun List<ThreadItem>.withFinalizedTurn(
+    event: LiveSessionEvent.TurnEnd,
+    occurredAt: Instant,
+): List<ThreadItem> {
+    val settled = withSettledTurns(setOf(event.turnId))
+    val stopped = event.stoppedTurn(occurredAt) ?: return settled
+    return if (settled.holdsStoppedTurn(stopped.turnId)) settled else settled + stopped
+}
 
 /**
  * [withFinalizedTurn] for every turn in [turnIds] in one pass (#1419): the projection settles each row of a
@@ -347,6 +360,67 @@ internal fun List<ThreadItem>.withOnlyLastRowStreaming(): List<ThreadItem> {
     }
 }
 
+/**
+ * Where one conversation's compaction fold stands (#1358), desktop's `compacting` / `pendingCompaction`:
+ * whether a compaction is open, and the `occurredAt` of the divider its falling edge drew that a later
+ * `compaction_boundary` fills in. The live lane keeps one per conversation; a history reduction keeps one
+ * for the page.
+ */
+internal data class CompactionFold(
+    val compacting: Boolean = false,
+    val pending: Instant? = null,
+)
+
+/**
+ * Fold one `compacting` edge (#1358), desktop's `compacting` arm. An edge that repeats the fold's state
+ * changes nothing, so a falling edge with no rising edge before it draws nothing. A rising edge opens the
+ * compaction and forgets any pending divider. A falling edge appends a divider stamped with its own `ts`,
+ * unless the thread already holds one there ([holdsCompactionBoundary]), and leaves it pending unless
+ * [failed]. The divider carries no counts: those arrive on the boundary frame.
+ */
+internal fun List<ThreadItem>.withCompactingEdge(
+    fold: CompactionFold,
+    active: Boolean,
+    failed: Boolean,
+    occurredAt: Instant,
+): Pair<List<ThreadItem>, CompactionFold> {
+    if (active == fold.compacting) return this to fold
+    if (active) return this to CompactionFold(compacting = true)
+    val row = ThreadItem.CompactionBoundary(preTokens = null, postTokens = null, manual = false, occurredAt = occurredAt, failed = failed)
+    val rows = if (holdsCompactionBoundary(row)) this else this + row
+    return rows to CompactionFold(compacting = false, pending = if (failed) null else occurredAt)
+}
+
+/**
+ * Fold one `compaction_boundary` (#874, #1358), desktop's `compactionBoundary` arm. It replaces the pending
+ * divider **in place**, so the row keeps the edge divider's position and takes the boundary's `ts`, counts
+ * and trigger. With no pending divider it appends, unless the thread already holds its `ts`. When the
+ * thread already holds the boundary's `ts` while a divider is pending, a history page brought this
+ * compaction's filled-in row first, so the pending one is removed rather than given a second row with that
+ * key. The fold leaves with nothing pending.
+ */
+internal fun List<ThreadItem>.withCompactionBoundary(
+    fold: CompactionFold,
+    row: ThreadItem.CompactionBoundary,
+): Pair<List<ThreadItem>, CompactionFold> {
+    val next = fold.copy(pending = null)
+    val pending = fold.pending?.let { at -> indexOfFirst { it is ThreadItem.CompactionBoundary && it.occurredAt == at } } ?: -1
+    val heldElsewhere =
+        withIndex().any { (index, item) ->
+            index != pending &&
+                item is ThreadItem.CompactionBoundary &&
+                item.occurredAt == row.occurredAt
+        }
+    val rows =
+        when {
+            heldElsewhere && pending >= 0 -> filterIndexed { index, _ -> index != pending }
+            heldElsewhere -> this
+            pending >= 0 -> toMutableList().apply { this[pending] = row }
+            else -> this + row
+        }
+    return rows to next
+}
+
 // ---- The reduction -----------------------------------------------------------------------------
 
 /**
@@ -363,7 +437,9 @@ internal fun List<ThreadItem>.withOnlyLastRowStreaming(): List<ThreadItem> {
  * / `compacting` / modal frame must never be replayed into any of it. That is not enforced by a check:
  * this function returns [ThreadItem]s and holds no reference to any of those holders, so those types
  * simply have no arm and land in the `else`. A stored state frame **cannot** reopen an old permission
- * prompt or restart a finished status indicator.
+ * prompt or restart a finished status indicator. The one exception is `compacting`, and only toward the
+ * thread (#1358): its edges fold the same compaction divider the live lane draws ([withCompactionEntry]),
+ * through a page-local [CompactionFold], never the status indicator's state.
  *
  * **Routing is the caller's, never an entry's.** The result carries no conversation identity at all, so
  * a page structurally cannot write into a conversation the client did not ask about — an entry payload's
@@ -384,7 +460,43 @@ internal fun List<ThreadItem>.withOnlyLastRowStreaming(): List<ThreadItem> {
 internal fun reduceHistoryPage(
     entries: List<HistoryEntry>,
     interactive: Boolean,
-): List<ThreadItem> = entries.asReversed().fold(emptyList()) { rows, entry -> rows.withHistoryEntry(entry, interactive) }
+): List<ThreadItem> {
+    var compaction = CompactionFold()
+    return entries.asReversed().fold(emptyList()) { rows, entry ->
+        if (interactive && (entry.type == TYPE_COMPACTING || entry.type == TYPE_COMPACTION_BOUNDARY)) {
+            rows.withCompactionEntry(entry, compaction).let { (next, fold) ->
+                compaction = fold
+                next
+            }
+        } else {
+            rows.withHistoryEntry(entry, interactive)
+        }
+    }
+}
+
+/**
+ * Fold one stored `compacting` or `compaction_boundary` [entry] through the live lane's folds (#874, #1358),
+ * stamped with the entry's own `ts`, which the daemon also handed the live envelope, so a divider on both
+ * lanes joins on one identity. A malformed entry costs only itself and leaves [fold] as it was. Logs nothing.
+ */
+private fun List<ThreadItem>.withCompactionEntry(
+    entry: HistoryEntry,
+    fold: CompactionFold,
+): Pair<List<ThreadItem>, CompactionFold> =
+    try {
+        if (entry.type == TYPE_COMPACTING) {
+            MobileJson.decodeFromJsonElement<CompactingPayloadDto>(entry.payload).let { dto ->
+                withCompactingEdge(fold, dto.active, dto.failed(), entry.timestamp)
+            }
+        } else {
+            withCompactionBoundary(
+                fold,
+                MobileJson.decodeFromJsonElement<CompactionBoundaryPayloadDto>(entry.payload).toRow(entry.timestamp),
+            )
+        }
+    } catch (e: IllegalArgumentException) {
+        this to fold
+    }
 
 /**
  * Fold one [entry] into [this] accumulator, or return it unchanged when the entry produces no row.
@@ -441,7 +553,7 @@ private fun List<ThreadItem>.withHistoryEntry(
                         is LiveSessionEvent.ToolUse -> withToolUse(event, entry.timestamp)
                         is LiveSessionEvent.ToolResult -> withToolResult(event)
                         is LiveSessionEvent.AssistantDelta -> withAssistantDelta(event, entry.timestamp)
-                        is LiveSessionEvent.TurnEnd -> withFinalizedTurn(event)
+                        is LiveSessionEvent.TurnEnd -> withFinalizedTurn(event, entry.timestamp)
                         else -> this
                     }
                 }
@@ -492,17 +604,8 @@ private fun List<ThreadItem>.withHistoryEntry(
                         .toRow(occurredAt = entry.timestamp)
                         .let { row -> if (holdsBanner(row)) this else this + row }
                 }
-            // Stamped with the entry's own ts, as the banner arm above, so a divider on both lanes joins on
-            // one identity (#874). Counts and trigger are narrowed by toRow exactly as on the live lane.
-            TYPE_COMPACTION_BOUNDARY ->
-                if (!interactive) {
-                    this
-                } else {
-                    MobileJson
-                        .decodeFromJsonElement<CompactionBoundaryPayloadDto>(entry.payload)
-                        .toRow(occurredAt = entry.timestamp)
-                        .let { row -> if (holdsCompactionBoundary(row)) this else this + row }
-                }
+            // `compaction_boundary` and `compacting` fold in reduceHistoryPage (#1358), which carries their
+            // fold across the page; without `interactive` both land in the `else` below.
             // Stamped with the entry's own ts, as the banner arm above, and decoded by the stored type, which
             // is the only thing that tells the two frames apart, so a refusal on both lanes joins once (#875).
             TYPE_MODEL_REFUSAL_FALLBACK ->
@@ -613,6 +716,7 @@ private fun historyRowId(entryId: Long): String = "history-$entryId"
  *  - a [ThreadItem.Banner] joins on its `ts` — see [holdsBanner].
  *  - a [ThreadItem.CompactionBoundary] joins on its `ts` — see [holdsCompactionBoundary].
  *  - a [ThreadItem.ModelRefusal] joins on its frame type and `ts` — see [holdsModelRefusal].
+ *  - a [ThreadItem.StoppedTurn] joins on its `turn_id` — see [holdsStoppedTurn].
  *
  * A duplicate is **skipped, not merged in place.** The only overlap a walk can produce is the narrow
  * ask-versus-answer race the protocol names, and in that window the live lane owns the newer state and
@@ -856,6 +960,7 @@ private fun List<ThreadItem>.alreadyHolds(row: ThreadItem): Boolean =
         is ThreadItem.Banner -> holdsBanner(row)
         is ThreadItem.CompactionBoundary -> holdsCompactionBoundary(row)
         is ThreadItem.ModelRefusal -> holdsModelRefusal(row)
+        is ThreadItem.StoppedTurn -> holdsStoppedTurn(row.turnId)
     }
 
 /**
@@ -870,6 +975,7 @@ private fun ThreadItem.joinIdentity(): Any =
         is ThreadItem.Banner -> listOf("banner", occurredAt)
         is ThreadItem.CompactionBoundary -> listOf("compaction", occurredAt)
         is ThreadItem.ModelRefusal -> listOf("refusal", fallbackModel != null, occurredAt)
+        is ThreadItem.StoppedTurn -> listOf("stopped", turnId)
     }
 
 /**
@@ -916,7 +1022,8 @@ internal fun List<ThreadItem>.holdsBanner(banner: ThreadItem.Banner): Boolean =
  * Whether this thread already holds a compaction boundary stamped [boundary]'s `ts` (#874) — the protocol's
  * `(type, ts)` join key, with the type implied by [ThreadItem.CompactionBoundary].
  *
- * **One identity, three readers:** this history merge, the live lane's `appendCompactionBoundary`, and the
+ * **One identity, three readers:** this history merge, the live and history compaction folds
+ * (`withCompactingEdge`, `withCompactionBoundary`), and the
  * list key `ThreadRow.listKey` gives the divider, so two dividers this predicate lets into one thread never
  * share a key. Two *different* boundaries on one instant lose the second — the fail-safe direction, a missing
  * divider rather than a crashed thread; the daemon stamps one `ts` per compaction.
@@ -939,3 +1046,13 @@ internal fun List<ThreadItem>.holdsModelRefusal(refusal: ThreadItem.ModelRefusal
             (it.fallbackModel != null) == (refusal.fallbackModel != null) &&
             it.occurredAt == refusal.occurredAt
     }
+
+/**
+ * Whether this thread already holds the stopped-turn row of [turnId] (#1356): one turn ends once, so its id
+ * is the row's identity whichever lane or instant brought it.
+ *
+ * **One identity, three readers:** this history merge, [withFinalizedTurn] on both lanes, and the list key
+ * `ThreadRow.listKey` gives the row, so two stopped rows this predicate lets into one thread never share a
+ * key. A replayed `turn_end` whose fields differ loses to the row already held — the fail-safe direction.
+ */
+internal fun List<ThreadItem>.holdsStoppedTurn(turnId: String): Boolean = any { it is ThreadItem.StoppedTurn && it.turnId == turnId }

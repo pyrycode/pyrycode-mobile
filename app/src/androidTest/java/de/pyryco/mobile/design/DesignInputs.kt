@@ -191,7 +191,7 @@ class DesignInputs {
         module {
             viewModel {
                 val handle = get<SavedStateHandle>()
-                get<ThreadDestinationFactory>().thread(handle, get(), get(), get(), get()).also { thread ->
+                get<ThreadDestinationFactory>().thread(handle, get(), get(), get(), get(), get()).also { thread ->
                     val viewing =
                         get<ConversationViewing>().view(
                             handle.get<String>("serverId").orEmpty(),

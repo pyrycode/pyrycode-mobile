@@ -10,10 +10,10 @@ package de.pyryco.mobile.ui.conversations.thread
  * stop.
  *
  * At the fake's page size that is 2000 rows of scroll-back, past any plausible reader. The count is per
- * walk (so per [ThreadViewModel], so per screen-open): leaving and re-entering a thread starts a fresh
- * walk from the newest page. That reset costs a deliberate human gesture, and a per-screen walk is the
- * right scope for a per-screen cap — a process-scoped counter would leak walk state across conversations
- * for no attacker-relevant gain.
+ * walk (so per [ThreadViewModel], so per screen-open): re-entering a thread continues from its saved
+ * position (#1354) with a fresh count, because only the position is saved. Every page costs a deliberate
+ * human gesture since #1352, and a per-screen walk is the right scope for a per-screen cap — a
+ * process-scoped counter would leak walk state across conversations for no attacker-relevant gain.
  */
 internal const val MAX_HISTORY_PAGES = 100
 
@@ -21,8 +21,9 @@ internal const val MAX_HISTORY_PAGES = 100
  * Why a history walk stopped, or `null` while it is still walking (#777, split by #778).
  *
  * An enum rather than a `Boolean` so the retryable split could reopen exactly one member, which is what
- * #778 did: [RetryableFailure] is the recoverable one, and [AtStart] / [NotAdvancing] / [PageCap] /
- * [PermanentFailure] are terminal. A `stopped: Boolean` would have designed that split shut.
+ * #778 did: [RetryableFailure] is the one Retry recovers. [AtStart] / [NotAdvancing] / [PageCap] are
+ * terminal; since #1352 both failures let a fresh gesture ask again. A `stopped: Boolean` would have
+ * designed that split shut.
  *
  * Only the two failure members reach the screen (see [ThreadHistoryDemand.tail]). Reaching the start of a
  * log is not a failure and shows nothing.
@@ -45,14 +46,14 @@ internal enum class HistoryWalkStop {
 
     /**
      * The ask failed permanently — the non-retryable `history.*` codes, an unknown conversation id, a
-     * closed session, a malformed page. Visible to the reader, and the walk never resumes from it; a
-     * closed session recovers through the reconnect restart rather than through a button (#778).
+     * closed session, a malformed page. Visible to the reader with nothing to press; a fresh gesture
+     * asks again from the same cursor (#1352).
      */
     PermanentFailure,
 }
 
 /**
- * What the thread's single oldest-end slot shows (#778) — one slot, four states, never three rows.
+ * What the thread's single oldest-end slot shows (#778) — one slot, five states, never two rows.
  *
  * The walk's *termination* reasons deliberately do not reach the screen, only its failures: the screen
  * asks, the ViewModel decides whether the ask is honoured, and a second copy of that decision in Compose
@@ -70,6 +71,9 @@ enum class ThreadHistoryTail {
 
     /** The page failed permanently — visible, with nothing to press. */
     DeadEnd,
+
+    /** The host is not connected and the walk has not reached the start of history (#1352). */
+    Offline,
 }
 
 /**
@@ -82,42 +86,45 @@ enum class ThreadHistoryTail {
  *
  * @param cursor The position to ask with next — the daemon's own opaque value, echoed **verbatim** and
  *   never parsed, rebuilt, logged, or used as a path, URL, filename or cache key. Empty means "start at
- *   the newest", which is the normal opening value of a walk and not a missing one.
+ *   the newest", which is the normal opening value of a walk and not a missing one. It survives a
+ *   reconnect, because it names a position in the daemon's append-only log rather than in a connection
+ *   (#1352).
  * @param pagesLoaded How many pages have settled, counting toward [MAX_HISTORY_PAGES].
  * @param inFlight A request is outstanding. Exactly one may be, per conversation — see [canAsk].
  * @param stoppedBy Why the walk ended, or `null` while it is still walking.
- * @param walk Which walk this state belongs to, bumped by every [restarted] (#778). A settle or fail
- *   carrying a superseded generation is **dropped** rather than applied. Not cosmetic: on reconnect an
- *   ask issued on the connection that just died is genuinely still in flight, and without this its late
- *   settle would write that dead connection's cursor into the restarted walk — exactly what "a cursor
- *   minted on the previous connection is never sent on the new one" forbids.
  */
 internal data class ThreadHistoryDemand(
     val cursor: String = "",
     val pagesLoaded: Int = 0,
     val inFlight: Boolean = false,
     val stoppedBy: HistoryWalkStop? = null,
-    val walk: Int = 0,
 ) {
     /**
      * Whether an ask may be issued now. The one place the "one outstanding request per conversation, and
      * an ask arriving during a request is **dropped** rather than queued" rule lives — there is no queue
      * anywhere in this walk, by design.
      *
-     * A stopped walk refuses this even when it is retryable: the scroll must not resume a failed walk,
-     * because then the failure would be invisible and the reader would have no way to stop retrying.
-     * Recovery goes through [canRetry] or [restarted], both of which need a deliberate trigger.
+     * Every ask is a user gesture (#1352), so a failed walk may be asked again: the failure stays visible
+     * until then, and the reader stops retrying by not asking. Only the terminal stops refuse.
      */
-    val canAsk: Boolean get() = !inFlight && stoppedBy == null
+    val canAsk: Boolean
+        get() =
+            !inFlight &&
+                (
+                    stoppedBy == null ||
+                        stoppedBy == HistoryWalkStop.RetryableFailure ||
+                        stoppedBy == HistoryWalkStop.PermanentFailure
+                )
 
     /** Whether the reader may retry the page that failed (#778) — the whole of the retry affordance's gate. */
     val canRetry: Boolean get() = !inFlight && stoppedBy == HistoryWalkStop.RetryableFailure
 
     /**
-     * Claim the outstanding-request slot. The cursor is unchanged, so the caller reads the returned
-     * value's [cursor] as the one to ask with.
+     * Claim the outstanding-request slot, clearing a failure stop. The cursor and [pagesLoaded] are
+     * unchanged, so the caller reads the returned value's [cursor] as the one to ask with, and an ask
+     * after a failure — a gesture or the Retry press (#778) — loads the page that failed.
      */
-    fun asking(): ThreadHistoryDemand = copy(inFlight = true)
+    fun asking(): ThreadHistoryDemand = copy(inFlight = true, stoppedBy = null)
 
     /**
      * Fold the answer to the outstanding ask, stopping the walk when any of the three rules fires.
@@ -151,7 +158,7 @@ internal data class ThreadHistoryDemand(
     /**
      * Fold a failed ask: clear the in-flight state so the loading affordance can never be left stuck,
      * keep [cursor] and [pagesLoaded] exactly as they were so every loaded row and the walk's position
-     * survive, and stop asking.
+     * survive, and record the failure for the oldest-end slot.
      *
      * @param retryable The contract's own split, taken verbatim from
      *   [de.pyryco.mobile.data.network.RelayErrorException.retryable] — `history.unavailable` is its only
@@ -165,44 +172,33 @@ internal data class ThreadHistoryDemand(
         )
 
     /**
-     * Claim the slot for an explicit retry of the page that failed (#778). [cursor] and [pagesLoaded] are
-     * unchanged, so the retry loads the page that failed rather than the next one, and costs one page of
-     * budget when it settles — exactly like a scroll-driven ask.
+     * Resume from the position saved when the thread was last open (#1354): ask next with [cursor], and stop
+     * as [HistoryWalkStop.AtStart] when the saved walk had reached the start of history, so a pull asks
+     * nothing and the offline notice stays hidden. Takes the saved position's two scalars, for the same
+     * reason [settled] does. [pagesLoaded] is carried, so restoring never resets the [MAX_HISTORY_PAGES]
+     * budget.
      */
-    fun retrying(): ThreadHistoryDemand = copy(inFlight = true, stoppedBy = null)
+    fun restored(
+        cursor: String,
+        atStart: Boolean,
+    ): ThreadHistoryDemand = copy(cursor = cursor, stoppedBy = if (atStart) HistoryWalkStop.AtStart else stoppedBy)
 
     /**
-     * Restart the walk from the newest page (#778) — the one transition behind both the refused-cursor
-     * recovery and the reconnect recovery.
-     *
-     * Three properties, each load-bearing:
-     *
-     * 1. [cursor] goes back to empty, so the ask that follows *any* restart carries the newest-page
-     *    cursor. Together with the caller's rule that `history.invalid_cursor` on an empty cursor is a
-     *    permanent failure, that makes an automatic restart → refusal → restart cycle **structurally
-     *    impossible** rather than merely capped: every non-empty-cursor ask in the walk originates from a
-     *    reader scroll or a reader press.
-     * 2. [pagesLoaded] is **carried**, never reset. A restart that reset the budget would be a bound with
-     *    an off switch, and a flapping connection would launder a fresh one on every flap.
-     * 3. [walk] bumps on both arms — including the spent-budget arm that issues no ask — so a restart
-     *    always invalidates an ask still in flight from the previous connection.
-     *
-     * With the budget already spent the restart claims no slot and stays stopped at
-     * [HistoryWalkStop.PageCap]: it can never buy an ask the cap already refused.
+     * Fold a refused cursor (#1352): the daemon answered `history.invalid_cursor`, so the next ask starts
+     * again from the newest page. Nothing asks by itself — the slot is released, and the next qualifying
+     * gesture carries the empty cursor. [pagesLoaded] is carried, so a daemon refusing every cursor
+     * cannot buy a fresh budget.
      */
-    fun restarted(): ThreadHistoryDemand {
-        val spent = pagesLoaded >= MAX_HISTORY_PAGES
-        return copy(
-            cursor = "",
-            inFlight = !spent,
-            stoppedBy = if (spent) HistoryWalkStop.PageCap else null,
-            walk = walk + 1,
-        )
-    }
+    fun cursorRefused(): ThreadHistoryDemand = copy(cursor = "", inFlight = false, stoppedBy = null)
 
-    /** What the thread's oldest-end slot shows for this state (#778). */
-    fun tail(): ThreadHistoryTail =
+    /**
+     * What the thread's oldest-end slot shows for this state (#778). While the host is not [connected]
+     * the slot says older messages need a connection (#1352), unless this walk has reached the start of
+     * history, as desktop's `olderSaved` notice does.
+     */
+    fun tail(connected: Boolean): ThreadHistoryTail =
         when {
+            !connected -> if (stoppedBy == HistoryWalkStop.AtStart) ThreadHistoryTail.None else ThreadHistoryTail.Offline
             inFlight -> ThreadHistoryTail.Loading
             stoppedBy == HistoryWalkStop.RetryableFailure -> ThreadHistoryTail.Retry
             stoppedBy == HistoryWalkStop.PermanentFailure -> ThreadHistoryTail.DeadEnd

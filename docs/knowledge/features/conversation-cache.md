@@ -31,6 +31,9 @@ interface ConversationCache {
     suspend fun readThread(serverId: String, conversationId: String): List<ThreadItem> = emptyList()
     suspend fun writeThread(serverId: String, conversationId: String, rows: List<ThreadItem>): Result<Unit> =
         Result.success(Unit)
+    suspend fun readHistoryPosition(serverId: String, conversationId: String): HistoryPosition? = null
+    suspend fun writeHistoryPosition(serverId: String, conversationId: String, position: HistoryPosition?): Result<Unit> =
+        Result.success(Unit)
     suspend fun readReadPositions(serverId: String): Map<String, ReadPosition> = emptyMap()
     suspend fun writeReadPositions(serverId: String, positions: Map<String, ReadPosition>): Result<Unit> =
         Result.success(Unit)
@@ -61,6 +64,24 @@ replace**, like `writeConversations` is a whole-host replace, and it always stor
 `cacheableThreadRows(rows)` — never the caller's raw list — so no caller can persist an
 unrecognized, streaming or in-flight-tool row by constructing a `ThreadItem` list itself.
 
+**The saved history position (#1354).** `readHistoryPosition`/`writeHistoryPosition` share
+`writeThread`'s graceful-read, reporting-mutation, default-bodied shape, but they are not a
+fourth family with its own file: `HistoryPosition(cursor, atStart)` — the daemon's opaque
+cursor and whether that page reached the start of history — lives **inside the thread
+document**, beside the rows #797 already stores there. Only a received `requestHistory` page
+sets it, even an empty one; the row count never implies it, and a thread fed only by the live
+projection stores none. The row writer (`CachingConversationRepository.observeMessages`, see
+[Caching conversation repository](caching-conversation-repository.md)) and the position writer
+(`ThreadViewModel`, written only when a `requestHistory` ask **settles** — a failed ask never
+calls it, so the cache never sees a position change for one, and a cursor the daemon refuses with
+`history.invalid_cursor` writes `null` through this same path to clear it) therefore touch the
+same document from two different callers, and each must read and keep the other's half rather
+than overwrite it — see
+§ The thread document below for how `writeThread` and `writeHistoryPosition` each do that, and
+§ Concurrency for why they cannot interleave. Storing the position inside the thread document
+rather than beside it means `removeConversation` and `removeHost` remove it for free, the same
+reasoning #797's thread family gives for filing under the host directory.
+
 **The read-position family (#877).** `readReadPositions`/`writeReadPositions` follow the same
 graceful-read, reporting-mutation, default-bodied shape as the other two families, over
 `Map<String, ReadPosition>` keyed by conversation id. `writeReadPositions` is a **whole-host
@@ -82,7 +103,7 @@ cache (enforced on write) and [`CachingConversationRepository`](caching-conversa
 
 - **`settledThreadRows(rows)`** drops only the in-flight rows — a `Message` with `isStreaming` or
   whose `toolCall?.status == ToolCallStatus.Running` — leaving `UnrecognizedMessage`,
-  [`Banner`](banner-notice-row.md), [`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874)
+  [`Banner`](banner-notice-row.md), [`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874-1358)
   and [`ModelRefusal`](model-refusal-row.md) rows and the row count untouched. This is what a thread may
   keep **drawing** once its connection is gone, not what the cache may **hold**: it is also the caching
   repository's merge-base rebase on a disconnect (see that doc), where the bound would otherwise shrink a
@@ -93,7 +114,7 @@ cache (enforced on write) and [`CachingConversationRepository`](caching-conversa
   arrival order, so "newest" is the tail. This is what may reach disk.
 
   **Every other settled row kind is kept, including [`Banner`](banner-notice-row.md),
-  [`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874) and
+  [`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874-1358) and
   [`ModelRefusal`](model-refusal-row.md) (#1353).** Those three used to be dropped here and restored
   by history replay (#873, #874, #875) on every open. Once history loads only on the user's request
   (an owner decision outside this ticket), replay stopped running on a routine reopen, so a cached
@@ -175,11 +196,12 @@ reads `Conversation.agent` for the model picker or the agent switch should eithe
 here or gate on the live list before trusting a cold-started value.
 
 The thread document is the same shape, file-private to `FileConversationCache.kt`:
-`CachedThread(version: Int, rows: List<CachedThreadRow>)`, `CachedThreadRow(message:
-CachedMessage? = null, boundary: CachedBoundary? = null, banner: CachedBanner? = null, compaction:
-CachedCompaction? = null, refusal: CachedRefusal? = null)` — exactly one of the five is set, mapping
+`CachedThread(version: Int, rows: List<CachedThreadRow>, history: CachedHistoryPosition? = null)`,
+`CachedThreadRow(message: CachedMessage? = null, boundary: CachedBoundary? = null, banner:
+CachedBanner? = null, compaction: CachedCompaction? = null, refusal: CachedRefusal? = null)` —
+exactly one of the five is set, mapping
 `ThreadItem.MessageItem` / `ThreadItem.SessionBoundary` / [`Banner`](banner-notice-row.md) /
-[`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874) /
+[`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874-1358) /
 [`ModelRefusal`](model-refusal-row.md) (never `UnrecognizedMessage`, which `cacheableThreadRows`
 drops before a `CachedThreadRow` is ever built; `ThreadItem.toRecord()` throws if it ever reaches
 it). The three newer fields (#1353) default to `null`, so a document written before this ticket —
@@ -206,6 +228,42 @@ field has used. Like `MessageAttachment`, its generated `toString` is overridden
 `attachmentId` — the name and MIME hint are untrusted display text (see [data model §
 `Message`](data-model.md#message)) and this file-private class is exactly the kind of type a stray
 log call could otherwise reach.
+
+`CachedHistoryPosition(cursor: String, atStart: Boolean)` (#1354) mirrors `HistoryPosition` and
+defaults to `null` on `CachedThread`, so a document written before this ticket reads as rows with
+no position. Its `toString` is overridden to print only `atStart` — the cursor is the daemon's
+opaque value and `ConversationRepository`'s `HistoryPosition` KDoc forbids logging it, so the
+cache-local mirror repeats the same discipline rather than relying on the domain type's override
+surviving the copy.
+
+### The thread document's two writers (#1354)
+
+`writeThread` (the row writer, called from `CachingConversationRepository.observeMessages` on
+every settled change) and `writeHistoryPosition` (the position writer, called from
+`ThreadViewModel` when a history ask settles) both rewrite the same file, and each keeps the
+half it does not own:
+
+- **`writeThread` keeps the stored position**, read through a header-only decode
+  (`CachedThreadHeader(version, history)`, ignoring the rows) rather than the full validated
+  decode `readThread` uses — a row writer runs on every settled change, so decoding the whole
+  document there would double the cost of each write at up to 100000 rows. **Unless the rows it
+  is about to write were trimmed at `MAX_CACHED_THREAD_ROWS`**, in which case it writes no
+  position: the oldest row the trim just dropped no longer matches the saved cursor, and keeping
+  it would silently create a permanent gap in a long-lived thread's history walk. This only
+  triggers when the caller passes the **untrimmed** drawn rows — `writeThread`'s own KDoc now
+  says so, because `cacheableThreadRows` is what actually trims, and a caller that trims first
+  (as `CachingConversationRepository.observeMessages` originally did, see
+  [Caching conversation repository](caching-conversation-repository.md)) hides every trim from
+  this check.
+- **`writeHistoryPosition` keeps the stored rows**, read through the same validated
+  `decodeThread` path `readThread` uses, so a document whose rows are already unreadable reads
+  back as no rows rather than resurrecting them. Clearing a position (`null`) for a document that
+  was never written is a no-op — a clear never conjures a file, matching the no-op rule
+  `removeConversation`/`removeHost` already apply to an unknown id.
+
+Both run inside one `mutate` call, holding the instance's single `Mutex` across the whole
+read-modify-write, so a row write and a position write landing at the same time can never
+interleave and drop each other's half — see § Concurrency below.
 
 ### Read positions (#877)
 
@@ -318,6 +376,8 @@ never repair anything; it is the removal, asked for explicitly, that rewrites.
 conversation's thread document is deleted alongside its metadata rewrite (absent → no-op;
 present-but-undeletable → `IOException` → `io`), and `removeHost`'s recursive delete of the host
 directory already covers `threads/`, since the thread family is filed under it (see § Layout).
+The saved history position (#1354) is removed with it for free, since it lives inside the thread
+document rather than in a file of its own — there is no separate removal step to forget.
 `ConversationCache.removeConversation`'s KDoc records this as the rule any family added later must
 follow, so a permanently deleted conversation never leaves content behind under a family that
 forgot to extend the two removal operations.
@@ -457,6 +517,25 @@ host's untouched; `removeConversation` dropping exactly one conversation's entry
 graceful-empty-read shape (never written, corrupt, duplicate conversation id) reading back empty
 rather than throwing or repairing.
 
+[`FileConversationCacheThreadTest.kt`](../../../app/src/test/java/de/pyryco/mobile/data/cache/FileConversationCacheThreadTest.kt)
+also carries #1354's position cases: a round trip through a fresh instance; a row write keeping an
+existing position and a position write keeping existing rows; a thread fed only live rows storing
+none; a literal pre-#1354 document (rows, no `history` key) still reading as rows with no
+position; `null` clearing a stored position; a write trimmed at `MAX_CACHED_THREAD_ROWS` dropping
+the position; `removeConversation` and `removeHost` removing it along with the rows; and no cursor
+reaching `RelayLog` on either the read or the write-side re-read failure path.
+
+[`CachingConversationRepositoryTest.kt`](../../../app/src/test/java/de/pyryco/mobile/data/repository/CachingConversationRepositoryTest.kt)
+proves the same rules through the wrapper, against a real `FileConversationCache`: a position
+written through `writeHistoryPosition` survives a concurrent row write from `observeMessages` and
+reads back under the wrapper's own `serverId`; a deleted conversation's position write is skipped,
+the same guard the row writer already has; and — added after the first verifier pass flagged that
+the production path never exercised the trim rule — a drawn thread trimmed at
+`MAX_CACHED_THREAD_ROWS` drops the saved position when written through
+`CachingConversationRepository.observeMessages` itself, not only through a direct call to the
+cache. See [Caching conversation repository](caching-conversation-repository.md) for why
+`observeMessages` now hands `writeThread` the untrimmed drawn rows rather than pre-trimming them.
+
 No Compose UI test and no emulator scenario for either family — #796's restored conversation rows
 and #797's restored thread rows both draw through the same composables a live row does, so the
 screen needs no cache-specific coverage. See [dependency injection §
@@ -472,6 +551,12 @@ cache's or the wrapper's own unit suite.
 
 ## Related
 
+- [Ticket #1354](https://github.com/pyrycode/pyrycode-mobile/issues/1354) and its plan,
+  `docs/specs/architecture/1354-saved-history-position.md` — the saved history position inside
+  the thread document, and the two-writer read-modify-write rule § The thread document's two
+  writers above describes; see
+  [Remote conversation repository § Resuming from the saved position](remote-conversation-repository-reads-and-thread-store-history-paging.md#resuming-from-the-saved-position-1354)
+  for the `ThreadViewModel`/`ThreadHistoryDemand` side that reads and writes it
 - [Ticket #1353](https://github.com/pyrycode/pyrycode-mobile/issues/1353) and its plan,
   `docs/specs/architecture/1353-cache-notices-compaction-refusals.md` —
   banners, compaction dividers and model refusals joined the thread's cacheable rows, and the row

@@ -21,37 +21,52 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
-import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TestRule
 import org.junit.runner.RunWith
+import org.junit.runners.model.Statement
 import java.io.File
 
 /** Real pixels for Figma 553:2574 and the reader states that node does not depict. */
 @RunWith(AndroidJUnit4::class)
 class MarkdownReaderCaptureTest {
-    @get:Rule val rule = createComposeRule()
-
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
-    private var oldSize = "reset"
-    private var oldDensity = "reset"
     private var view: View? = null
 
-    @Before fun setViewport() {
-        oldSize = overrideOf(shell("wm size"))
-        oldDensity = overrideOf(shell("wm density"))
-        shell("wm density 160")
-        shell("wm size 412x892")
-        instrumentation.waitForIdleSync()
-    }
+    /** The display size a test captures at; without it the viewport rule applies 412x892. */
+    @Retention(AnnotationRetention.RUNTIME)
+    @Target(AnnotationTarget.FUNCTION)
+    private annotation class Viewport(
+        val size: String,
+    )
 
-    @After fun restoreViewport() {
-        shell("wm size $oldSize")
-        shell("wm density $oldDensity")
-        instrumentation.waitForIdleSync()
-    }
+    // Resizing under a running activity can recreate or refocus it, so the final size is
+    // applied here before the compose rule launches its activity, and restored after it ends.
+    @get:Rule(order = 0)
+    val viewport =
+        TestRule { base, description ->
+            object : Statement() {
+                override fun evaluate() {
+                    val size = overrideOf(shell("wm size"))
+                    val density = overrideOf(shell("wm density"))
+                    shell("wm density 160")
+                    shell("wm size ${description.getAnnotation(Viewport::class.java)?.size ?: "412x892"}")
+                    try {
+                        instrumentation.waitForIdleSync()
+                        base.evaluate()
+                    } finally {
+                        shell("wm size $size")
+                        shell("wm density $density")
+                        instrumentation.waitForIdleSync()
+                    }
+                }
+            }
+        }
+
+    @get:Rule(order = 1)
+    val rule = createComposeRule()
 
     @Test fun referenceAndMenuAt412By892() {
         show("Builder Pipeline - Plan.md", REFERENCE_MARKDOWN, 1f)
@@ -65,9 +80,9 @@ class MarkdownReaderCaptureTest {
         capture("menu-412x892.png", 412, 892, 1f, systemWindow = true)
     }
 
-    @Test fun compactLargeTextKeepsControlsAndBodyReachable() {
-        shell("wm size 320x700")
-        instrumentation.waitForIdleSync()
+    @Viewport("320x700")
+    @Test
+    fun compactLargeTextKeepsControlsAndBodyReachable() {
         show(
             "builder-pipeline-plan-with-a-long-description-that-must-stay-readable.md",
             REFERENCE_MARKDOWN + "\n\n" + (1..30).joinToString("\n\n") { "Paragraph $it" },

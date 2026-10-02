@@ -1,8 +1,12 @@
-# Compose evidence
+# Development verification — Compose evidence
 
-Split out of [Development verification](development-verification.md#compose-evidence)
-to keep that file under the search size cap. Compose device-capture conventions, ATD
-hazards, IME/resize ordering and the shared capture harness live here.
+Split out of [Development verification](development-verification.md) on 2026-10-02 to keep that
+document under the 50000-byte size cap the docs guard enforces. Every section below moved here
+verbatim and kept its heading, so its anchors are unchanged. Part of
+[Development verification](development-verification.md); see that document for the other topics
+and its links.
+
+## Compose evidence
 
 Compose tests should assert the contract independently of the implementation.
 Give a row, state and callback a value that the production code cannot derive from
@@ -90,10 +94,14 @@ need different final sizes, read the size from a private runtime annotation on
 the test method (`@Viewport("320x692")`) instead of branching on the method
 name, so the size stays attached to the test it belongs to.
 `ToolRowDesignCaptureTest` (#1425) copied the same shape for its own
-412x892/320x700 pair. #1430 extracted the copy into a shared
+412x892/320x700 pair, and `MarkdownReaderCaptureTest` (#1467) copied it again
+for the same pair. #1430 extracted the copy into a shared
 `app/src/androidTest/java/de/pyryco/mobile/design/ViewportRule.kt` with a
-public `@Viewport(size, fontScale)` annotation; both classes now use it
-unchanged otherwise. The same package holds the
+public `@Viewport(size, fontScale)` annotation;
+`ThreadActivityIndicatorCaptureTest` and `ToolRowDesignCaptureTest` now use it
+unchanged otherwise. `MarkdownReaderCaptureTest` and other androidTest capture
+classes still carry their own copy of the rule; moving them onto the shared
+rule is separate work. The same package holds the
 [`design-1220/` capture harness](../../../app/src/androidTest/assets/design-1220/README.md):
 `DesignCapture` (launch, real-bar capture, keyboard and menu helpers) and
 `DesignInputs`, a Koin override loaded over the app graph that redefines
@@ -112,6 +120,15 @@ passes the app's store, as production does, silently drops a test-supplied
 question batch; and no thread code reads
 `ConversationRepository.observeAttachmentOffers`, so overriding it changes
 nothing on screen.
+
+`MarkdownReaderCaptureTest#compactLargeTextKeepsControlsAndBodyReachable`
+(unrelated to the #1352 history-paging change, caught in its PR's UI gate and
+triaged there) hit the same `wm size` race, confirmed by two focused re-runs
+both passing 2/2 — the race is intermittent, not a property of the test
+itself, so a single red run proves nothing about whose change caused it.
+Filed as #1467 and fixed there: the class moved its resize into the same
+`order = 0` `TestRule` shape, reading `compactLargeTextKeepsControlsAndBodyReachable`'s
+320x700 size from `@Viewport("320x700")`, with the compose rule at `order = 1`.
 
 Reply assertions must not depend on total substring-count growth: removing queued
 prompt text can offset a newly displayed assistant reply. For fresh discussions
@@ -226,3 +243,12 @@ on demand — a focused device run only proves captures still succeed, not that
 the skip path fires. `ChannelInfoCaptureTest` and `AttachmentVisualCaptureTest`
 still call `captureToImage` unprotected; that sweep is tracked under #1046, not
 fixed here.
+
+## Probe the evidence itself
+
+An injection or sanitizer test must forge the exact line shape its reader matches.
+For the unrecognized-row sentinel, the hostile value must include the report's row
+prefix, not only a newline. Assert the total report line count as an independent
+fence. Temporarily widen the sanitizer, run the test and read the resulting failure
+before restoring the guard. This proves the assertion can fail instead of merely
+proving that the current implementation passes.

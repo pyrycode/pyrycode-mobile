@@ -3,7 +3,7 @@
 The thread's explanation for a changed model or a missing answer: claude refused a turn on one model and
 either retried it on another or did not ([#875](../codebase/875.md), split from #654). Before this ticket
 mobile dropped both `model_refusal_fallback` and `model_refusal_no_fallback` on both lanes, so a refusal
-went unexplained. Landed in the [`Banner`](banner-notice-row.md) / [`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874)
+went unexplained. Landed in the [`Banner`](banner-notice-row.md) / [`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874-1358)
 shape — the fourth `ThreadItem` variant carrying a wire-minted `(type, ts)` identity: one ticket for the
 type, both decode arms, and the row, because the decoder and the renderer are each other's only consumer.
 
@@ -329,6 +329,8 @@ repeats it for one frame type.
   § Scenarios, the `refusal` row, and its Follow-ups-to-ticket entry for #1360.
 - Structural precedent: [`Banner notice row`](banner-notice-row.md) — same wire-minted `(type, ts)` identity
   and dedup posture, read before adding a fifth `ThreadItem` variant of this kind.
+- Sibling row: [`StoppedTurnRow`](stopped-turn-row.md) (#1356) — same bare-text landing shape, but keyed on
+  `turnId` rather than a wire-minted `(type, ts)`.
 - Consumers: [`Conversation repository`](conversation-repository.md) (`ThreadItem`, co-located types,
   `model_announced` as the model-state authority, and — since #1360 — `LiveRefusalEvent` /
   `observeLiveRefusalEvents`), [`Remote conversation repository`](remote-conversation-repository.md)

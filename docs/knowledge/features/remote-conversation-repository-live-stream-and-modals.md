@@ -105,29 +105,44 @@ repository stays plain orchestration: decode runs behind the authenticated Noise
 the new arm or the drop branch logs the payload** (`title`/`prompt`/option-`label` are operator content —
 pyrycode#701 "never log modal body text"). See [Modal events § Trust boundary](modal-events.md#trust-boundary--no-payload-logging).
 
-## The compaction-boundary decode+fold seam (#874)
+## The compaction-boundary decode+fold seam (#874, #1358)
 
 A new `TYPE_COMPACTION_BOUNDARY = "compaction_boundary"` arm joins the `onInbound` `when (envelope.type)`
 demux, gated on `CAPABILITY_INTERACTIVE in negotiatedCapabilities()` (the reused #385 supplier) — a finished
 compaction, folded into the thread as a `ThreadItem.CompactionBoundary` divider rather than emitted on
-[`liveSessionEvents`](#livesessionevents--the-v2-structured-stream-decode-seam-385).
+[`liveSessionEvents`](#livesessionevents--the-v2-structured-stream-decode-seam-385). Since #1358 the
+`TYPE_COMPACTING` arm also reaches the thread: after `CompactingProjection.apply(envelope)` runs
+unchanged for the status indicator, `ThreadProjection.applyCompacting(envelope)` runs too, so a falling
+edge draws the divider before any boundary frame arrives.
 
 - **`decodeCompactionBoundary(envelope)`** decodes the `CompactionBoundaryPayloadDto` and
   `Instant.parse(envelope.ts)` inside one `try`/`catch (IllegalArgumentException)` — the `decodeBanner`
-  drop idiom — and routes by the payload's own `conversation_id`. `appendCompactionBoundary` end-appends
-  the mapped row inside one atomic `threadByConversation.update`, unless the thread already holds one
-  stamped that `ts` (`holdsCompactionBoundary`) — the `appendBanner` dedup shape, because the daemon hands
-  the same `ts` to both this arm and a later history page holding the same frame.
-- **Renders no `LiveSessionEvent` and clears no stall.** The frame is conversation-scoped with no
-  `turn_id` and can arrive with no preceding `compacting` edge; `compacting` alone still drives the
-  status-area indicator (unchanged by this arm — see [Compacting
-  indicator](compacting-indicator.md#edge-cases--limitations)). Exactly one write, and nothing on this
-  arm logs the envelope, its `conversation_id`, or either count.
+  drop idiom — and routes by the payload's own `conversation_id`. `applyCompactionBoundary` folds the
+  mapped row through the shared `withCompactionBoundary` fold (#1358) inside one atomic
+  `threadByConversation.update`: it replaces a still-pending divider from an earlier `compacting` falling
+  edge **in place**, taking this frame's `ts`, counts and trigger; with no pending divider it appends,
+  unless the thread already holds one stamped this `ts` (`holdsCompactionBoundary`) — the `appendBanner`
+  dedup shape, because the daemon hands the same `ts` to both this arm and a later history page holding
+  the same frame; and when the thread already holds this `ts` while a divider is still pending (a history
+  page raced the live lane and brought the filled-in row first), the pending divider is removed instead of
+  being given a second row under that same key. `decodeCompactingEdge(envelope)` decodes
+  `CompactingPayloadDto` the same way, reducing `compact_result`/`compact_error` to one `failed` boolean
+  (`failed()`) before anything downstream sees it; `applyCompacting` folds its edge through
+  `withCompactingEdge`, which on a falling edge appends a divider stamped with the edge's own `ts` (unless
+  already held) and leaves it pending for a later boundary unless `failed`. See [Session boundary
+  delimiter § CompactionBoundaryDivider](session-boundary-delimiter.md#compactionboundarydivider-874-1358)
+  for the fold's full shape, shared with the history reduction.
+- **Renders no `LiveSessionEvent` and clears no stall.** Both frames are conversation-scoped with no
+  `turn_id`, and a `compaction_boundary` can still arrive with no preceding `compacting` edge; `compacting`
+  alone still drives the status-area indicator (unchanged by #1358 — see [Compacting
+  indicator](compacting-indicator.md#edge-cases--limitations)). Each fold is one write inside its own
+  atomic update, and nothing on either arm logs the envelope, its `conversation_id`, either count, or
+  `compact_error`.
 - **Counts and trigger are narrowed at the DTO mapper (`toRow`), not here** — a non-negative safe integer
   or `null` per count, an exact-`"manual"` boolean for the open `trigger` string — so no claude-authored
   token reaches the row or a log.
 - The row, its label rules, and its cache exclusion are documented at [Session boundary delimiter §
-  CompactionBoundaryDivider](session-boundary-delimiter.md#compactionboundarydivider-874) and
+  CompactionBoundaryDivider](session-boundary-delimiter.md#compactionboundarydivider-874-1358) and
   [Conversation cache](conversation-cache.md); this section records only the decode seam.
 
 `security-sensitive`, the same posture as the sibling arms above: decode runs behind the authenticated

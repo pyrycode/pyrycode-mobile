@@ -113,6 +113,19 @@ private fun ThreadScreenHistoryDeadEndPreview() {
     HistoryTailPreview(ThreadHistoryTail.DeadEnd)
 }
 
+/** #1352: the same slot while the host is not connected and the walk has not reached the start. */
+@Preview(name = "Thread — history offline, light", showBackground = true, widthDp = 412)
+@Preview(
+    name = "Thread — history offline, dark",
+    showBackground = true,
+    widthDp = 412,
+    uiMode = Configuration.UI_MODE_NIGHT_YES,
+)
+@Composable
+private fun ThreadScreenHistoryOfflinePreview() {
+    HistoryTailPreview(ThreadHistoryTail.Offline)
+}
+
 /** #1306: the permission request inline at the newest end of its thread, grant ticked and a non-default armed. */
 @Preview(name = "Permission prompt — light", showBackground = true, widthDp = 412, heightDp = 892)
 @Preview(

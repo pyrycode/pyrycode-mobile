@@ -186,14 +186,12 @@
     <string name="thread_usage_limit_label_no_status">%1$s reported a usage-limit update</string>
     <string name="thread_usage_limit_spent">" · %1$d%% spent"</string>
     <string name="thread_usage_limit_resets">" · resets %1$s"</string>
-    <!-- #805: a turn that failed or was interrupted. Everything the agent said about the stop follows
-         "<agent> reports" (#1113), so an account state such as billing_error never reads as the app's own finding. -->
-    <string name="thread_turn_outcome_interrupted">Turn interrupted</string>
-    <string name="thread_turn_outcome_failed">Turn failed</string>
-    <string name="thread_turn_outcome_stopped">Turn stopped early</string>
-    <string name="thread_turn_outcome_agent_reports">" · %1$s reports %2$s"</string>
-    <string name="thread_turn_outcome_agent_reports_error">" · %1$s reports an error"</string>
-    <string name="thread_turn_outcome_api_error">API error %1$s</string>
+    <!-- #1357: recovery advice after a stopped turn, desktop's copy. %1$s is the conversation's agent name, so an
+         account state reads as the agent's report, never the app's own finding. -->
+    <string name="thread_recovery_context">Context too long. Compact or reset the session.</string>
+    <string name="thread_recovery_billing">%1$s reported a billing error. Check %1$s billing on this server.</string>
+    <string name="thread_recovery_auth">%1$s reported an authentication failure. Check %1$s sign-in on this server.</string>
+    <string name="thread_recovery_compact">Compact</string>
     <string name="thread_history_loading_label">Loading earlier messages</string>
     <string name="cd_thread_history_loading">Loading earlier messages in this conversation</string>
     <string name="thread_history_retry_label">Couldn\'t load earlier messages</string>
@@ -211,6 +209,7 @@
     <string name="thread_notice_dismiss">Dismiss notice</string>
     <string name="thread_history_dead_end_label">Earlier messages are unavailable</string>
     <string name="cd_thread_history_dead_end">Earlier messages in this conversation are unavailable</string>
+    <string name="thread_history_offline_label">Older messages require a connection.</string>
     <string name="thread_interrupt_label">Stop</string>
     <string name="cd_thread_interrupt">Stop the running turn</string>
     <string name="cd_thread_copy_message">Copy this message</string>
@@ -233,6 +232,17 @@
     <string name="agent_name_codex">Codex</string>
     <string name="thread_banner_attribution">"%1$s: "</string>
     <string name="thread_banner_truncated">" (truncated)"</string>
+    <!-- #1356: a stopped turn's row, desktop's stoppedTurnText copy. %1$s of the reason string is a
+         sanitized agent-authored token; the category clause names the agent (%2$s) before its report (%3$s). -->
+    <string name="thread_stopped_turn_limit">Stopped: turn limit reached</string>
+    <string name="thread_stopped_budget">Stopped: budget exhausted</string>
+    <string name="thread_stopped_context_too_long">Stopped: context too long, compact or reset</string>
+    <string name="thread_stopped_api_error">Stopped: API error</string>
+    <string name="thread_stopped_hook">Stopped by a hook</string>
+    <string name="thread_stopped_model_error">Stopped: model error</string>
+    <string name="thread_stopped_error">Stopped: error</string>
+    <string name="thread_stopped_reason">Stopped: %1$s</string>
+    <string name="thread_stopped_reported">%1$s (%2$s reported: %3$s)</string>
     <string name="cd_thread_banner_warning">Warning from %1$s</string>
     <string name="thread_refusal_refused_on">"Refused on "</string>
     <string name="thread_refusal_continued_on">", continued on "</string>

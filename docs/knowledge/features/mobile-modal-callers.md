@@ -342,7 +342,7 @@ cards, and the never-reported frame alone uses a 20dp close glyph. Keep the
 shared header and 28dp close control, and render every held task in the capped
 roster. The API 33 ATD captured black pixels despite passing geometry checks;
 use the full emulator for visual comparisons, as described in
-[Compose evidence](development-verification.md#compose-evidence).
+[Compose evidence](development-verification-compose-evidence.md#compose-evidence).
 
 Each task is a card: the raw `taskType` in monospace beside a
 [`TaskStatusTag`](../../../app/src/main/java/de/pyryco/mobile/ui/conversations/thread/TaskStatusTag.kt) pill

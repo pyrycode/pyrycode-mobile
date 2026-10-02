@@ -5345,6 +5345,31 @@ class RemoteConversationRepositoryTest {
             assertEquals("the state must not remain active after a falling edge", false, compacting.last())
         }
 
+    // #1358: the same arm folds the thread's divider, behind the same `interactive` gate.
+    @Test
+    fun compacting_fallingEdge_drawsTheThreadDividerOnlyWhenInteractive() =
+        runTest {
+            for (interactive in listOf(true, false)) {
+                val pump = FakeSessionPump()
+                val repo =
+                    RemoteConversationRepository(
+                        pump,
+                        backgroundScope,
+                        negotiatedCapabilities = { if (interactive) setOf("interactive") else emptySet() },
+                    )
+                val thread = collectMessages(repo, "c1")
+                runCurrent()
+
+                pump.push(compactingEnvelope("c1", active = true, id = 1L))
+                pump.push(compactingEnvelope("c1", active = false, id = 2L))
+                runCurrent()
+
+                val expected =
+                    if (interactive) listOf(ThreadItem.CompactionBoundary(null, null, false, Instant.parse(TS))) else emptyList()
+                assertEquals(expected, thread.last())
+            }
+        }
+
     // A re-fired rising edge for an already-compacting conversation is an idempotent Set add — no
     // re-emit. Unlike `api_retry` there is no counter to climb, so nothing distinguishes the repeat.
     @Test
@@ -10040,6 +10065,7 @@ class RemoteConversationRepositoryTest {
                 is ThreadItem.Banner -> "banner:${it.level}"
                 is ThreadItem.CompactionBoundary -> "compaction:${it.preTokens}->${it.postTokens}:${it.manual}"
                 is ThreadItem.ModelRefusal -> if (it.fallbackModel != null) "refusal:fallback" else "refusal:no-fallback"
+                is ThreadItem.StoppedTurn -> "stopped:${it.reason}"
             }
         }
 
