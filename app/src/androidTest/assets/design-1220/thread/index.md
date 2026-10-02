@@ -276,23 +276,26 @@ verdicts apply to each of those frames, which list only what differs.
 - **Capture:** `run-configuration.png` (412x892, 1.0)
 - **Side-by-side:** `run-configuration-side-by-side.png`
 - **Overlay:** `run-configuration-overlay.png`
-- **Verdict:** mismatch
+- **Verdict:** mismatch (inset sheet only, #1496)
 - Four-model menu with real resolved identifiers and auto mode, Sonnet at high effort, Manual approval. No "Default"
   option in any spelling (asserted with a case-insensitive substring match).
+- **Recaptured for #1497** with `runConfigurationAndReaderAt412By892` on `pixel8Api35`, `requireRealSystemBars=true`
+  (`1497-results.xml`, 1 executed, 0 failures), and compared again with `scripts/design-compare.py`. Only
+  `run-configuration*.png` and `.txt` were replaced; `markdown-reader.png` keeps its #1432 capture.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: each model row is two lines tall, so Effort and the sections below sit lower, and with the inset sheet "Bypass approvals" falls below the visible area (it scrolls into view). The sheet ends above the navigation bar with rounded bottom corners; the frame runs it to the screen's bottom |
+| Geometry | match apart from the inset: each model row is one line, so Effort sits at its frame position plus the 24 px bar shift and the sections below stay within 2 px of it, and "Bypass approvals" is in view. The sheet ends above the navigation bar with rounded bottom corners; the frame runs it to the screen's bottom |
 | Padding | match |
 | Spacing | match: Permission heading and row spacing |
-| Typography | mismatch: a resolved-identifier second line under every model ("claude-sonnet-5"); effort options read "low/medium/high/max" where the frame reads "Low/Medium/High/Max" |
+| Typography | match: model rows show the label only, and effort options read "Low/Medium/High/Max" |
 | Colour | match: radios, labels and Done |
 | Borders | match: header divider |
 | Radii | mismatch: rounded bottom sheet corners (see geometry); Done matches |
 | Icon paths | match: close X, radios |
 | Component state | match: Permission section with the frame's six rows in its order, Manual approval selected |
 
-- **Routed:** #1497 (model rows, effort case), #1496 (the `MobileModalShell` inset shared with the task panel)
+- **Routed:** #1496 (the `MobileModalShell` inset shared with the task panel). #1497's model rows and effort case are fixed
 
 ### Markdown Reader — `553:2574`
 
