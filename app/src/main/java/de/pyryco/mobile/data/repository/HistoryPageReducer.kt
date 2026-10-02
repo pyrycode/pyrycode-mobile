@@ -664,11 +664,14 @@ internal fun List<ThreadItem>.mergeCachedRows(cached: List<ThreadItem>): List<Th
     if (cached.isEmpty()) return this
     val kept = withAttachmentHintsFrom(cached)
     val heads = segmentHeads()
+    // Built once so the merge stays linear in the cached base, which holds a thread's whole history (#1353).
+    val heldAt = HashMap<Any, Int>(size)
+    forEachIndexed { index, row -> heldAt.putIfAbsent(row.joinIdentity(), index) }
     // Slot i is in front of this thread's row i; slot size is after its last row.
     val slots = mutableMapOf<Int, MutableList<ThreadItem>>()
     var slot = 0
     for (row in cached) {
-        val held = indexOfFirst { listOf(it).alreadyHolds(row) }
+        val held = heldAt[row.joinIdentity()] ?: -1
         if (held >= 0) {
             slot = held + 1
             continue
@@ -852,6 +855,20 @@ private fun List<ThreadItem>.alreadyHolds(row: ThreadItem): Boolean =
         is ThreadItem.Banner -> holdsBanner(row)
         is ThreadItem.CompactionBoundary -> holdsCompactionBoundary(row)
         is ThreadItem.ModelRefusal -> holdsModelRefusal(row)
+    }
+
+/**
+ * The identity [alreadyHolds] joins this row on, as a hashable key (#1353): two rows hold each other exactly
+ * when their identities are equal. The kind leads each key, so rows of different kinds never collide.
+ */
+private fun ThreadItem.joinIdentity(): Any =
+    when (this) {
+        is ThreadItem.MessageItem -> listOf("message", message.id)
+        is ThreadItem.SessionBoundary -> listOf("boundary", previousSessionId, newSessionId, occurredAt)
+        is ThreadItem.UnrecognizedMessage -> listOf("unrecognized", id)
+        is ThreadItem.Banner -> listOf("banner", occurredAt)
+        is ThreadItem.CompactionBoundary -> listOf("compaction", occurredAt)
+        is ThreadItem.ModelRefusal -> listOf("refusal", fallbackModel != null, occurredAt)
     }
 
 /**

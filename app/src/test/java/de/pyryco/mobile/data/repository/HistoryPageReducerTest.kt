@@ -192,6 +192,37 @@ class HistoryPageReducerTest {
         assertEquals(listOf(named, MessageAttachment(ID_B)), merged.messageRow("sent-1")?.attachments)
     }
 
+    // ---- #1353: the cache merge joins each row kind on its key alone ------------------------------
+
+    @Test
+    fun mergeCached_eachKindJoinsItsLiveTwinOnItsKeyAlone() {
+        val at = { second: Int -> Instant.parse("2026-09-05T10:00:0${second}Z") }
+        val live =
+            listOf(
+                messageItem("m1", content = "live"),
+                ThreadItem.SessionBoundary("s1", "s2", BoundaryReason.Clear, at(1)),
+                ThreadItem.UnrecognizedMessage("u1", UnrecognizedSite.Undecodable, "", "live", false, at(2)),
+                ThreadItem.Banner(BannerLevel.Warning, "live", false, at(3)),
+                ThreadItem.CompactionBoundary(24000, 3000, true, at(4)),
+                ThreadItem.ModelRefusal("opus", "sonnet", "live", false, at(5)),
+            )
+        // Each twin differs from its live row only outside the key; the last refusal is the other frame type.
+        val otherType = ThreadItem.ModelRefusal("opus", null, "cached", false, at(5))
+        val cached =
+            listOf(
+                messageItem("older"),
+                messageItem("m1", content = "cached"),
+                ThreadItem.SessionBoundary("s1", "s2", BoundaryReason.IdleEvict, at(1), workspaceCwd = "/w"),
+                ThreadItem.UnrecognizedMessage("u1", UnrecognizedSite.Undecodable, "", "cached", true, at(2)),
+                ThreadItem.Banner(BannerLevel.Info, "cached", true, at(3)),
+                ThreadItem.CompactionBoundary(null, null, false, at(4)),
+                ThreadItem.ModelRefusal("haiku", "sonnet-5", "cached", true, at(5)),
+                otherType,
+            )
+
+        assertEquals(listOf(messageItem("older")) + live + otherType, live.mergeCachedRows(cached))
+    }
+
     @Test
     fun merge_aNamelessHistoryTwinNeverReplacesAKnownName() {
         val named = MessageAttachment(ID_A, "photo.jpg", "image/jpeg")
