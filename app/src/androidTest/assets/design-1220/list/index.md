@@ -33,6 +33,10 @@ No audit declares app-wide parity; #1434 owns that verdict.
   contains "workspace".
 - Host-to-host spacing is unverified: the demo pairs one host, and #1187 sets 16 dp between host containers
   where the frame stacks four. Routed with #1486.
+- Three row states the frame draws are unverified: the selected row (lighter rounded fill with the pen), the
+  second row's darker fill, and collapsed folders and hosts. The capture reaches none of them, although source
+  reaches both: a row is selected after tapping it and pressing Back, and a folder or host collapses on tap.
+  Routed with #1486.
 
 | Aspect | Verdict |
 |---|---|
@@ -42,9 +46,9 @@ No audit declares app-wide parity; #1434 owns that verdict.
 | Typography | match: host, folder and row styles |
 | Colour | mismatch: rows have no green, pink or blue status dots (`ConversationStatusDot` fills WaitingForAnswer, Running and Unread; the demo rows reach none of them, so the state exists in code and was not reached); the frame's blue radial glow behind the tree (RGB 19,74,116 at 200,200, 8,33,52 at 300,350, flat 11,14,17 by y≈700) is missing, the app canvas is a flat 11,14,17 while Archive in the same build draws its glow. `docs/knowledge/features/app-preferences.md` put the glow outside the root palette contract; that earlier allowance does not excuse the deviation |
 | Borders | match: toolbar rule, 4 px high with the bar as in Geometry |
-| Radii | match (no row selected) |
+| Radii | unverified: no row is selected in the capture, so the frame's rounded selected-row fill and the second row's darker fill were not compared (routed with #1486) |
 | Icon paths | mismatch: every row and the host row draw an edit pen; the frame shows one only on the selected row |
-| Component state | match: folders expanded. The frame's Apps folder is not a requirement: #1187 records "Apps is deferred by the user; sample app rows are not requirements", and `ConversationTreeSection` holds only Host, Channels and Chats |
+| Component state | match for expanded folders and hosts only; the frame's selected row, darker-filled row and collapsed folders and hosts are unverified (routed with #1486). The frame's Apps folder is not a requirement: #1187 records "Apps is deferred by the user; sample app rows are not requirements", and `ConversationTreeSection` holds only Host, Channels and Chats |
 
 - `15:8` draws the expanded "Pyry" host with a right chevron and the expanded "MB Game dev" host with a down
   chevron. The frame is inconsistent with itself; the app draws a down chevron on every expanded host, which
@@ -85,16 +89,19 @@ No audit declares app-wide parity; #1434 owns that verdict.
 - Reached from the thread's overflow menu, Channel info.
 - The first About row reads "Folder" where the frame reads "Workspace". That is deliberate: workspaces are
   retired, and the row is not a mismatch.
+- The 412x892 capture stops at the Actions header. The Rename, Archive and Delete buttons and the "Channel ID"
+  footer sit below the fold and were not compared, so every verdict below covers the sheet down to the Actions
+  header only. The rest is unverified and routed with #1488.
 
 | Aspect | Verdict |
 |---|---|
 | Geometry | mismatch: the sheet fills the window; the frame is a 596 px sheet |
 | Padding | match: 16 px content gutters, section label inset |
 | Spacing | mismatch: About rows repeat every 35 px against the frame's 40 (label tops 155, 190, 226, 260, 295 against 129, 169, 210, 249, 289 in the 596 px export); the About label to the first row is 28 px against 32. The second run recorded a match |
-| Typography | match: title, section labels, monospace path |
-| Colour | match: sheet surface, secondary values |
+| Typography | match down to the Actions header: title, section labels, monospace path; the Actions buttons and the Channel ID footer are unverified |
+| Colour | match down to the Actions header: sheet surface, secondary values; the Actions buttons and the Channel ID footer are unverified |
 | Borders | match (none) |
-| Radii | match: top corners, drag handle |
+| Radii | match down to the Actions header: top corners, drag handle; the Actions buttons are unverified |
 | Icon paths | match: close icon |
 | Component state | mismatch: Session, System prompt and MCP servers sections sit before Actions, which falls below the fold; Memory plugins reads "Status unknown" where the frame shows "None" with a "+ Install" action (`ChannelInfoSheet` has the None and Install state; the demo session reports no plugin state, so it was not reached); the frame's Change workspace action is retired and must not be restored |
 
