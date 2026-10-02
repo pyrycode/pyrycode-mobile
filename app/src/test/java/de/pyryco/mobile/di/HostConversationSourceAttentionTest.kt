@@ -391,9 +391,10 @@ class HostConversationSourceAttentionTest {
 
                         pump.push(off(id))
                         runCurrent()
-                        // #1361: a session transition appends a boundary row, which marks the background chat
-                        // unread; reading it leaves only the busy edge under test.
-                        if (off(id).first == "session_transition") source.markOpened(host, id)
+                        // #1361: a session transition appends a boundary row, and (#1358) a compacting falling
+                        // edge appends a compaction divider; either marks the background chat unread, so reading
+                        // it leaves only the busy edge under test.
+                        if (off(id).first == "session_transition" || fact == "compacting") source.markOpened(host, id)
                         assertEquals(
                             fact,
                             mapOf("a" to emptyMap<String, ConversationAttention>(), "b" to emptyMap()),
