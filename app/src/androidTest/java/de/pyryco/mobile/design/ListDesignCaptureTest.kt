@@ -7,6 +7,7 @@ import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -120,6 +121,8 @@ class ListDesignCaptureTest {
             .performClick()
         rule.waitUntil(5_000) { rule.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
         design.capture(FOLDER, "edit-channel$suffix", "none")
+        // At 320x700 the keyboard pushes Mute and Archive channel below the window; they must stay reachable.
+        rule.onNodeWithText("Archive channel").performScrollTo().assertIsDisplayed()
         relaunch()
 
         rule
@@ -195,9 +198,13 @@ class ListDesignCaptureTest {
             .executeShellCommand(command)
             .let { ParcelFileDescriptor.AutoCloseInputStream(it).use { stream -> stream.readBytes() } }
 
-    /** The retired workspace product leaves no grouping or label behind on the list or in Settings. */
+    /**
+     * The retired workspace product leaves no grouping, label or control behind on the list or in Settings. A
+     * returning workspace row would show only its folder name, so its controls' descriptions are checked too.
+     */
     private fun assertNoWorkspaceText() {
         rule.onAllNodes(hasText("workspace", substring = true, ignoreCase = true)).assertCountEquals(0)
+        rule.onAllNodes(hasContentDescription("workspace", substring = true, ignoreCase = true)).assertCountEquals(0)
     }
 
     /**

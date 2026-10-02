@@ -9,7 +9,9 @@
   (`-compact`), fixed dark theme, real 24 px bars. Each surface starts from a fresh `MainActivity` launch on the
   paired demo host. Archive's capture archives three demo channels and restores them afterwards; Edit host's
   installs a store that answers `loadById` for the demo host, through Koin in the capture class. Archive's tabs
-  are tapped through the device's input (`input tap`), so the capture shows the state a finger leaves.
+  are tapped through the device's input (`input tap`), so the capture shows the state a finger leaves. This is
+  the third run; the second run's captures differ from these only inside the status bar and in Archive's tapped
+  tab fill (see Archive).
 - **Measuring:** positions are raw image y of the first and last bright text rows (luminance over 150); the
   shell's 24 px move inside the system bars is removed before comparing, per the README.
 - **Result:** `list-results.xml`, 2 executed, 0 failures, 0 errors, 0 skipped.
@@ -21,19 +23,22 @@ No audit declares app-wide parity; #1434 owns that verdict.
 - **Owning ticket:** #737 (bar), #738 (tree)
 - **Capture:** `channel-list.png` (412x892, 1.0), `channel-list-compact.png` (320x700, 1.5) · **Side-by-side:** `channel-list-side-by-side.png` · **Overlay:** `channel-list-overlay.png`
 - Host separation: one host row (Demo) with its own Channels and Chats folders. No workspace grouping and no
-  workspace label appear; the walk asserts no text containing "workspace" on the list and in Settings.
+  workspace label appear; the walk asserts that no text and no content description on the list or in Settings
+  contains "workspace".
+- Host-to-host spacing is unverified: the demo pairs one host, and #1187 sets 16 dp between host containers
+  where the frame stacks four. Routed with #1486.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: host and folder rows sit about 20 px below the frame (host text at y≈131 against 111) |
-| Padding | match: 20 px tree gutter, toolbar rule inset |
+| Geometry | mismatch: with the 24 px bar removed, the whole screen sits 4 px above the frame, top bar included (gear and archive glyphs y 28–51 against 32–55, host text 101–112 against 105–118), so the offset is the top bar's top gap, not the rows. The second run's "20 px below" did not remove the bar |
+| Padding | match: 20 px tree gutter, toolbar rule inset; the rule moves up 4 px with the bar |
 | Spacing | match: 28 px row pitch |
 | Typography | match: host, folder and row styles |
-| Colour | mismatch: status-bar icons are dark on the dark canvas; rows have no green, pink or blue status dots |
-| Borders | match: toolbar rule |
+| Colour | mismatch: status-bar icons are dark on the dark canvas; rows have no green, pink or blue status dots; the frame's blue radial glow behind the tree (RGB 19,74,116 at 200,200, 8,33,52 at 300,350, flat 11,14,17 by y≈700) is missing, the app canvas is a flat 11,14,17 while Archive in the same build draws its glow. `docs/knowledge/features/app-preferences.md` put the glow outside the root palette contract; that earlier allowance does not excuse the deviation |
+| Borders | match: toolbar rule, 4 px high with the bar as in Geometry |
 | Radii | match (no row selected) |
 | Icon paths | mismatch: every row and the host row draw an edit pen; the frame shows one only on the selected row |
-| Component state | match: folders expanded; the frame's user folder (Apps) has no app counterpart in the demo data |
+| Component state | match: folders expanded. The frame's Apps folder is not a requirement: #1187 records "Apps is deferred by the user; sample app rows are not requirements", and `ConversationTreeSection` holds only Host, Channels and Chats |
 
 - **Compact:** no clipping or overlap; every row, pen and plus stays reachable.
 - **Menu-open:** the list has no row or folder menu at this commit (`ChannelListScreen` and `ConversationTreeRows` hold no `DropdownMenu`; rows open editors through pens). The only menu on a list-side path is the thread overflow menu (`thread-menu.png`, `thread-menu-compact.png`), which opens fully inside the window with every entry reachable.
@@ -48,11 +53,11 @@ No audit declares app-wide parity; #1434 owns that verdict.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: the host label "Demo" (#715) adds 26 px above the tabs, so tabs and rows sit 26 px below the frame after the bar offset. `docs/knowledge/features/archived-discussions-screen.md` records the label as a deliberate addition to `18:2`; the frame does not carry it |
+| Geometry | mismatch: the host label "Demo" (#715) adds 23–24 px above the tabs, so after the bar the tab labels sit 23 px below the frame (105 against 82), the indicator and row titles 24 px (134 against 110, 157 against 133); the second run's 26 px was a misreading. `docs/knowledge/features/archived-discussions-screen.md` records the label as a deliberate addition to `18:2`; the frame does not carry it |
 | Padding | match: 16 px gutters, restore icons at x 365–384 |
 | Spacing | mismatch: rows repeat every 64 px against 66 (row titles at y 181, 245, 309 against the frame's 133, 199, 265); tab label to indicator 16 px against 15, title to subtitle 23 against 24 |
 | Typography | match: title, tab labels (14 px glyph rows in both), row title and subtitle |
-| Colour | mismatch: status-bar icons are dark on the dark canvas; the tapped tab keeps a lighter fill (RGB 29,51,67 against 11,39,59) |
+| Colour | mismatch: status-bar icons are dark on the dark canvas; the tapped tab keeps a lighter fill (RGB 29,56,75 at 100,140 against the frame's 11,39,59). Its strength differs between runs (the second run's 412x892 capture read 12,41,61 there), so it may be a press indication still fading at capture time; #1487 asks for that to be settled before a fix |
 | Borders | match: tab indicator under the selected tab and the divider |
 | Radii | match (none) |
 | Icon paths | match: back arrow, restore icon (18 px) |
@@ -68,18 +73,20 @@ No audit declares app-wide parity; #1434 owns that verdict.
 - **Owning ticket:** #1266
 - **Capture:** `channel-info.png`, `channel-info-compact.png` · **Side-by-side:** `channel-info-side-by-side.png` · **Overlay:** `channel-info-overlay.png`
 - Reached from the thread's overflow menu, Channel info.
+- The first About row reads "Folder" where the frame reads "Workspace". That is deliberate: workspaces are
+  retired, and the row is not a mismatch.
 
 | Aspect | Verdict |
 |---|---|
 | Geometry | mismatch: the sheet fills the window; the frame is a 596 px sheet |
 | Padding | match: 16 px content gutters, section label inset |
-| Spacing | match: row pitch in About |
+| Spacing | mismatch: About rows repeat every 35 px against the frame's 40 (label tops 155, 190, 226, 260, 295 against 129, 169, 210, 249, 289 in the 596 px export); the About label to the first row is 28 px against 32. The second run recorded a match |
 | Typography | match: title, section labels, monospace path |
 | Colour | match: sheet surface, secondary values |
 | Borders | match (none) |
 | Radii | match: top corners, drag handle |
 | Icon paths | match: close icon |
-| Component state | mismatch: Session, System prompt and MCP servers sections sit before Actions, which falls below the fold; the frame's Change workspace action is retired and must not be restored |
+| Component state | mismatch: Session, System prompt and MCP servers sections sit before Actions, which falls below the fold; Memory plugins reads "Status unknown" where the frame shows "None" with a "+ Install" action; the frame's Change workspace action is retired and must not be restored |
 
 - **Compact:** no clipping; long labels wrap and values stay right-aligned; Actions needs scrolling.
 - **Routed:** #1488
@@ -147,12 +154,13 @@ States reachable from `MainActivity` with no current Mobile frame:
 
 | State | Capture | Owning ticket | Routed |
 |---|---|---|---|
-| Edit channel modal (row pen) | `edit-channel.png`, `edit-channel-compact.png` (it opens with its name field focused and the keyboard up; at 412x892 every field and action sits above the keyboard, at 320x700 the prompt field is cut by the action bar and Mute and Archive channel sit below it, not checked for reachability) | #667 | #1504 |
+| Edit channel modal (row pen) | `edit-channel.png`, `edit-channel-compact.png` (it opens with its name field focused and the keyboard up; at 412x892 every field and action sits above the keyboard, at 320x700 the prompt field is cut by the action bar and Mute and Archive channel sit below it; the walk scrolls to Archive channel with the keyboard up and asserts it is displayed, so both stay reachable) | #667 | #1504 |
 | Edit chat modal (row pen) | none | #827 | #1504 |
 | Create channel modal (Channels plus) | none | #958 | #1504 |
 | Unpair host confirmation (Edit host) | `edit-host-unpair.png`, `edit-host-unpair-compact.png`; its copy names a "saved workspace" | #745 | #1504, copy in #1489 |
 | Archive, Discussions tab | `archive-discussions.png`, `archive-discussions-compact.png` | #1265 | #1487 |
 | Rename dialog and Save as channel (thread overflow) | none | #957 | #1504 |
+| Delete confirmation (Channel Info, Delete) | none; `ThreadScreen`'s `DeleteConfirmationDialog`, drawn while `state.deleteConfirmVisible` is true, which `ThreadEvent.Delete` from the sheet's Delete action sets | #227 | #1504 |
 
 Create folder and the pickers' new-folder dialog are reachable only from `AddWorkspaceModal` and `WorkspacePicker`
 (below), so they are not reachable. Paste code is the Pair Screen, audited in `onboarding/`.
