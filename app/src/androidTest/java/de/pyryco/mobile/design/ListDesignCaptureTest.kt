@@ -1,6 +1,5 @@
 package de.pyryco.mobile.design
 
-import android.os.ParcelFileDescriptor
 import android.view.View
 import android.view.WindowInsets
 import androidx.compose.ui.platform.ViewRootForTest
@@ -190,13 +189,6 @@ class ListDesignCaptureTest {
         shell("input tap ${center.x.toInt()} ${center.y.toInt()}")
         rule.waitForIdle()
     }
-
-    private fun shell(command: String) =
-        InstrumentationRegistry
-            .getInstrumentation()
-            .uiAutomation
-            .executeShellCommand(command)
-            .let { ParcelFileDescriptor.AutoCloseInputStream(it).use { stream -> stream.readBytes() } }
 
     /**
      * The retired workspace product leaves no grouping, label or control behind on the list or in Settings. A

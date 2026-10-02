@@ -13,7 +13,13 @@
   the third run; the second run's captures differ from these only inside the status bar and in Archive's tapped
   tab fill (see Archive).
 - **Measuring:** positions are raw image y of the first and last bright text rows (luminance over 150); the
-  shell's 24 px move inside the system bars is removed before comparing, per the README.
+  shell's 24 px move inside the system bars is removed before comparing, per the README. A table or row that
+  quotes raw y says so.
+- **Status bar:** not judged per surface. Within this run its icons are light on `channel-list*.png`,
+  `archive.png`, `settings*.png`, `channel-info*.png` and every modal capture, and dark on `archive-compact.png`,
+  `archive-discussions*.png` and `thread-menu*.png` (no pixel above luminance 150 in the top 24 px). The
+  appearance changes with the capture, not with the surface, so it is no Colour verdict here. The thread's dark
+  icons are handed to the thread audit, #1432, with the Archive recurrence as a lead.
 - **Result:** `list-results.xml`, 2 executed, 0 failures, 0 errors, 0 skipped.
 
 No audit declares app-wide parity; #1434 owns that verdict.
@@ -34,11 +40,15 @@ No audit declares app-wide parity; #1434 owns that verdict.
 | Padding | match: 20 px tree gutter, toolbar rule inset; the rule moves up 4 px with the bar |
 | Spacing | match: 28 px row pitch |
 | Typography | match: host, folder and row styles |
-| Colour | mismatch: status-bar icons are dark on the dark canvas; rows have no green, pink or blue status dots; the frame's blue radial glow behind the tree (RGB 19,74,116 at 200,200, 8,33,52 at 300,350, flat 11,14,17 by y≈700) is missing, the app canvas is a flat 11,14,17 while Archive in the same build draws its glow. `docs/knowledge/features/app-preferences.md` put the glow outside the root palette contract; that earlier allowance does not excuse the deviation |
+| Colour | mismatch: rows have no green, pink or blue status dots (`ConversationStatusDot` fills WaitingForAnswer, Running and Unread; the demo rows reach none of them, so the state exists in code and was not reached); the frame's blue radial glow behind the tree (RGB 19,74,116 at 200,200, 8,33,52 at 300,350, flat 11,14,17 by y≈700) is missing, the app canvas is a flat 11,14,17 while Archive in the same build draws its glow. `docs/knowledge/features/app-preferences.md` put the glow outside the root palette contract; that earlier allowance does not excuse the deviation |
 | Borders | match: toolbar rule, 4 px high with the bar as in Geometry |
 | Radii | match (no row selected) |
 | Icon paths | mismatch: every row and the host row draw an edit pen; the frame shows one only on the selected row |
 | Component state | match: folders expanded. The frame's Apps folder is not a requirement: #1187 records "Apps is deferred by the user; sample app rows are not requirements", and `ConversationTreeSection` holds only Host, Channels and Chats |
+
+- `15:8` draws the expanded "Pyry" host with a right chevron and the expanded "MB Game dev" host with a down
+  chevron. The frame is inconsistent with itself; the app draws a down chevron on every expanded host, which
+  stands. Do not change the app toward the right chevron.
 
 - **Compact:** no clipping or overlap; every row, pen and plus stays reachable.
 - **Menu-open:** the list has no row or folder menu at this commit (`ChannelListScreen` and `ConversationTreeRows` hold no `DropdownMenu`; rows open editors through pens). The only menu on a list-side path is the thread overflow menu (`thread-menu.png`, `thread-menu-compact.png`), which opens fully inside the window with every entry reachable.
@@ -55,9 +65,9 @@ No audit declares app-wide parity; #1434 owns that verdict.
 |---|---|
 | Geometry | mismatch: the host label "Demo" (#715) adds 23–24 px above the tabs, so after the bar the tab labels sit 23 px below the frame (105 against 82), the indicator and row titles 24 px (134 against 110, 157 against 133); the second run's 26 px was a misreading. `docs/knowledge/features/archived-discussions-screen.md` records the label as a deliberate addition to `18:2`; the frame does not carry it |
 | Padding | match: 16 px gutters, restore icons at x 365–384 |
-| Spacing | mismatch: rows repeat every 64 px against 66 (row titles at y 181, 245, 309 against the frame's 133, 199, 265); tab label to indicator 16 px against 15, title to subtitle 23 against 24 |
+| Spacing | mismatch: rows repeat every 64 px against 66 (row titles at raw image y 181, 245, 309 against the frame's 133, 199, 265; the pitch holds in either system, and after the bar the app's first title sits at 157 as in Geometry); tab label to indicator 16 px against 15, title to subtitle 23 against 24 |
 | Typography | match: title, tab labels (14 px glyph rows in both), row title and subtitle |
-| Colour | mismatch: status-bar icons are dark on the dark canvas; the tapped tab keeps a lighter fill (RGB 29,56,75 at 100,140 against the frame's 11,39,59). Its strength differs between runs (the second run's 412x892 capture read 12,41,61 there), so it may be a press indication still fading at capture time; #1487 asks for that to be settled before a fix |
+| Colour | mismatch: the tapped tab keeps a lighter fill (RGB 29,56,75 at 100,140 against the frame's 11,39,59). Its strength differs between runs (the second run's 412x892 capture read 12,41,61 there), so it may be a press indication still fading at capture time; #1487 asks for that to be settled before a fix |
 | Borders | match: tab indicator under the selected tab and the divider |
 | Radii | match (none) |
 | Icon paths | match: back arrow, restore icon (18 px) |
@@ -86,7 +96,7 @@ No audit declares app-wide parity; #1434 owns that verdict.
 | Borders | match (none) |
 | Radii | match: top corners, drag handle |
 | Icon paths | match: close icon |
-| Component state | mismatch: Session, System prompt and MCP servers sections sit before Actions, which falls below the fold; Memory plugins reads "Status unknown" where the frame shows "None" with a "+ Install" action; the frame's Change workspace action is retired and must not be restored |
+| Component state | mismatch: Session, System prompt and MCP servers sections sit before Actions, which falls below the fold; Memory plugins reads "Status unknown" where the frame shows "None" with a "+ Install" action (`ChannelInfoSheet` has the None and Install state; the demo session reports no plugin state, so it was not reached); the frame's Change workspace action is retired and must not be restored |
 
 - **Compact:** no clipping; long labels wrap and values stay right-aligned; Actions needs scrolling.
 - **Routed:** #1488
@@ -150,7 +160,9 @@ No audit declares app-wide parity; #1434 owns that verdict.
 
 ## Gaps
 
-States reachable from `MainActivity` with no current Mobile frame:
+States reachable from `MainActivity` with no current Mobile frame. On 2026-10-02 the Mobile page holds no channel-list
+variant beyond `15:8`, which draws every host connected, and no empty Archive tab; the Components page (`347:5692`)
+holds only the bare `Icon=Pair` (`486:995`) and `Icon=Update` (`581:1606`) glyphs, with no host-row state.
 
 | State | Capture | Owning ticket | Routed |
 |---|---|---|---|
@@ -160,6 +172,10 @@ States reachable from `MainActivity` with no current Mobile frame:
 | Unpair host confirmation (Edit host) | `edit-host-unpair.png`, `edit-host-unpair-compact.png`; its copy names a "saved workspace" | #745 | #1504, copy in #1489 |
 | Archive, Discussions tab | `archive-discussions.png`, `archive-discussions-compact.png` | #1265 | #1487 |
 | Rename dialog and Save as channel (thread overflow) | none | #957 | #1504 |
+| Disconnected host row | none; `TreeHostRow` draws the glyph and name in `error` and adds a plug control ("Reconnect <host>"), `treeHost` hides the Channels and Chats plus buttons, and `MainActivity` handles `TreeHostReconnectTapped`. The source notes "the reference has no disconnected-host variant" | #840, #1336 | #1504 |
+| Re-pair-required host row | none; the same treatment for `RelayLinkStatus.PairingRejected`, whose control emits `TreeHostRePairTapped`, which `MainActivity` routes to re-pair | #842 | #1504 |
+| Update-required host row | none; a download control and the update caption under the row for `RelayLinkStatus.UpdateRequired`, emitting `TreeHostUpdateTapped` | #1009 | #1504 |
+| Archive, empty tabs | none; `ArchivedDiscussionsScreen` shows `archived_empty_channels` ("No archived channels") or `archived_empty_discussions` ("No archived discussions"). The Channels tab is empty in the demo before the walk archives channels | #1265 | #1504 |
 | Delete confirmation (Channel Info, Delete) | none; `ThreadScreen`'s `DeleteConfirmationDialog`, drawn while `state.deleteConfirmVisible` is true, which `ThreadEvent.Delete` from the sheet's Delete action sets | #227 | #1504 |
 
 Create folder and the pickers' new-folder dialog are reachable only from `AddWorkspaceModal` and `WorkspacePicker`
