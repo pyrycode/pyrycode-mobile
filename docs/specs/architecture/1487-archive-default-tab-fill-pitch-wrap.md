@@ -58,3 +58,11 @@ selected tab draws no fill. Channels is selected. Empty-tab frames are `673:3577
   27,45,59 at +200 ms, 15,34,48 at +400 ms, back to the base 11,31,45 from +800 ms on. Touch mode was on before and after
   and no semantics node was focused. So it is the default press indication fading, captured mid-fade because `tap`
   returned before the event was dispatched. No production change is needed for it.
+
+## Revisions
+
+- **2026-10-03.** The Channels default reached three callers the plan did not list, all of which assumed Discussions.
+  `ArchiveNavigationTest`'s `openArchiveFromTheList` and two live scenarios in `InteractiveStreamE2ETest`
+  (`interactiveTurn_archiveRestore_roundTripsListMembership` step 9 and `interactiveTurn_archiveTwoChats_listsSecondArchivedFirst`
+  step 3) now tap the Discussions tab, the scenarios through a new private `openArchiveDiscussionsTab` helper. The
+  production contract is unchanged.

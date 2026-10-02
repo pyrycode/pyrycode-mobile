@@ -3,6 +3,8 @@ package de.pyryco.mobile.design
 import android.view.View
 import android.view.WindowInsets
 import androidx.compose.ui.platform.ViewRootForTest
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -75,8 +77,7 @@ class ListDesignCaptureTest {
             relaunch()
             rule.onNodeWithContentDescription("Open archive").performClick()
             awaitText("Archived")
-            // The view model opens on Discussions whatever the counts; the frame shows Channels selected.
-            tap(rule.onNodeWithText("Channels (", substring = true))
+            // Archive opens on Channels, as 18:2 does (#1487), so the frame's state needs no tap.
             awaitText("Archived", substring = true, count = it + 1)
             design.capture(FOLDER, "archive$suffix", "18:2")
             tap(rule.onNodeWithText("Discussions (", substring = true))
@@ -195,10 +196,21 @@ class ListDesignCaptureTest {
         rule.waitForIdle()
     }
 
-    /** Taps [node] through the device's input, as a finger would, so the capture shows the state a real tap leaves. */
+    /**
+     * Taps [node] through the device's input, as a finger would, so the capture shows the state a real tap leaves.
+     * `input tap` returns before the app sees the event, so wait for the tab to report selected, then for Compose
+     * idle, which outlasts the press ripple's frames (#1487 measured it fading out by about 800 ms).
+     */
     private fun tap(node: SemanticsNodeInteraction) {
-        val center = node.fetchSemanticsNode().boundsInWindow.center
+        val target = node.fetchSemanticsNode()
+        val center = target.boundsInWindow.center
         shell("input tap ${center.x.toInt()} ${center.y.toInt()}")
+        rule.waitUntil(5_000) {
+            rule
+                .onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.Selected, true))
+                .fetchSemanticsNodes()
+                .any { it.id == target.id }
+        }
         rule.waitForIdle()
     }
 

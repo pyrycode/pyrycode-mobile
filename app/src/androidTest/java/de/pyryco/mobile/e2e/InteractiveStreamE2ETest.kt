@@ -1207,8 +1207,8 @@ class InteractiveStreamE2ETest {
      * thread overflow and fires `ThreadEvent.Archive → sendArchive → repository.archive → success-only
      * PopBack`; there is **none** of #554's "Delete"-collision / sheet-behind-dialog disambiguation — the
      * archive tap is a single [onNodeWithText] in the open overflow. (2) **Restore needs a second screen:**
-     * channel list → Archived screen (default **Discussions** tab, so the renamed discussion is on it with no
-     * tab tap), restore, then Back to confirm re-appearance.
+     * channel list → Archived screen, a tap on its **Discussions** tab (Archive opens on Channels since #1487),
+     * restore, then Back to confirm re-appearance.
      *
      * **The one gotcha — the restore-coroutine cancellation race.** `RestoreRequested` handling is
      * `viewModelScope.launch { repository.unarchive(id); … }` scoped to the **Archived screen's**
@@ -1296,11 +1296,12 @@ class InteractiveStreamE2ETest {
             awaitChannelList()
             composeTestRule.onAllNodesWithText(uniqueName, substring = true).assertCountEquals(0)
 
-            // 9. The list toolbar opens Archive for the selected host. The default Discussions tab shows the chat.
+            // 9. The list toolbar opens Archive for the selected host. Its Discussions tab shows the chat.
             composeTestRule.onNode(hasContentDescription(CD_OPEN_ARCHIVE)).performClick()
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
             }
+            openArchiveDiscussionsTab()
 
             // 10. Restore. Wait for the restore affordance keyed on the unique name — the "Restore <uniqueName>"
             //     IconButton (the row name is a Text node, so only the restore button matches a content-description
@@ -1398,11 +1399,12 @@ class InteractiveStreamE2ETest {
             archiveOpenThread()
             archivedIds(serverId) { idA in it }
 
-            // 3. Open Archive on its default Discussions tab: A, archived last, is the first row.
+            // 3. Open Archive on its Discussions tab: A, archived last, is the first row.
             composeTestRule.onNode(hasContentDescription(CD_OPEN_ARCHIVE)).performClick()
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
             }
+            openArchiveDiscussionsTab()
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             val restoreA = hasContentDescription(context.getString(R.string.cd_restore_archive, nameA))
             val restoreB = hasContentDescription(context.getString(R.string.cd_restore_archive, nameB))
@@ -6503,6 +6505,15 @@ class InteractiveStreamE2ETest {
         }
 
     private fun string(id: Int): String = InstrumentationRegistry.getInstrumentation().targetContext.getString(id)
+
+    /** Archive opens on Channels (#1487); archived chats are on its Discussions tab. */
+    private fun openArchiveDiscussionsTab() {
+        val discussionsTab = string(R.string.archived_tab_discussions).substringBefore(" (")
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(discussionsTab, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(discussionsTab, substring = true).onFirst().performClick()
+    }
 
     /** An effort note as a Claude conversation words it (#1115); the harness runs Claude conversations only. */
     private fun claudeNote(id: Int): String =

@@ -130,15 +130,16 @@ class ArchivedDiscussionsViewModelTest {
                 ArchivedDiscussionsUiState.Loaded(
                     channels = listOf(channelB),
                     discussions = listOf(discussionA, discussionC),
-                    selectedTab = ArchiveTab.Discussions,
+                    selectedTab = ArchiveTab.Channels,
                 ),
                 vm.state.value,
             )
             collector.cancel()
         }
 
+    // #1487: Figma 18:2 opens on Channels, even when only discussions are archived.
     @Test
-    fun loaded_defaultSelectedTab_isDiscussions() =
+    fun loaded_defaultSelectedTab_isChannels() =
         runTest {
             val source = MutableSharedFlow<List<Conversation>>(replay = 0)
             val vm = ArchivedDiscussionsViewModel(stubRepo(source))
@@ -149,14 +150,14 @@ class ArchivedDiscussionsViewModelTest {
             val state = vm.state.value
             assertTrue("expected Loaded, was $state", state is ArchivedDiscussionsUiState.Loaded)
             assertEquals(
-                ArchiveTab.Discussions,
+                ArchiveTab.Channels,
                 (state as ArchivedDiscussionsUiState.Loaded).selectedTab,
             )
             collector.cancel()
         }
 
     @Test
-    fun tabSelected_channels_updatesStateOnly() =
+    fun tabSelected_discussions_updatesStateOnly() =
         runTest {
             val source = MutableSharedFlow<List<Conversation>>(replay = 0)
             val vm = ArchivedDiscussionsViewModel(stubRepo(source))
@@ -167,14 +168,14 @@ class ArchivedDiscussionsViewModelTest {
             source.emit(listOf(discussion, channel))
             advanceUntilIdle()
 
-            vm.onEvent(ArchivedDiscussionsEvent.TabSelected(ArchiveTab.Channels))
+            vm.onEvent(ArchivedDiscussionsEvent.TabSelected(ArchiveTab.Discussions))
             advanceUntilIdle()
 
             assertEquals(
                 ArchivedDiscussionsUiState.Loaded(
                     channels = listOf(channel),
                     discussions = listOf(discussion),
-                    selectedTab = ArchiveTab.Channels,
+                    selectedTab = ArchiveTab.Discussions,
                 ),
                 vm.state.value,
             )
@@ -182,7 +183,7 @@ class ArchivedDiscussionsViewModelTest {
         }
 
     @Test
-    fun tabSelected_discussions_returnsToDefault() =
+    fun tabSelected_channels_returnsToDefault() =
         runTest {
             val source = MutableSharedFlow<List<Conversation>>(replay = 0)
             val vm = ArchivedDiscussionsViewModel(stubRepo(source))
@@ -191,15 +192,15 @@ class ArchivedDiscussionsViewModelTest {
             source.emit(listOf(sampleArchivedDiscussion("disc-1"), sampleArchivedChannel("chan-1")))
             advanceUntilIdle()
 
-            vm.onEvent(ArchivedDiscussionsEvent.TabSelected(ArchiveTab.Channels))
-            advanceUntilIdle()
             vm.onEvent(ArchivedDiscussionsEvent.TabSelected(ArchiveTab.Discussions))
+            advanceUntilIdle()
+            vm.onEvent(ArchivedDiscussionsEvent.TabSelected(ArchiveTab.Channels))
             advanceUntilIdle()
 
             val state = vm.state.value
             assertTrue("expected Loaded, was $state", state is ArchivedDiscussionsUiState.Loaded)
             assertEquals(
-                ArchiveTab.Discussions,
+                ArchiveTab.Channels,
                 (state as ArchivedDiscussionsUiState.Loaded).selectedTab,
             )
             collector.cancel()
@@ -254,7 +255,7 @@ class ArchivedDiscussionsViewModelTest {
                 ArchivedDiscussionsUiState.Loaded(
                     channels = emptyList(),
                     discussions = emptyList(),
-                    selectedTab = ArchiveTab.Discussions,
+                    selectedTab = ArchiveTab.Channels,
                 ),
                 vm.state.value,
             )
