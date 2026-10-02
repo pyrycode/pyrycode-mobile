@@ -1,5 +1,7 @@
 package de.pyryco.mobile.e2e
 
+import androidx.compose.ui.semantics.SemanticsNode
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasClickAction
@@ -11,6 +13,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -29,7 +32,10 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -50,6 +56,8 @@ import org.koin.core.context.GlobalContext
  *  - `tool` (#455) — a tool step renders running mid-turn, then done after the result (two-fixture
  *    drop, same causal fence as the spinner; see the method KDoc).
  *  - `tool-failed` (#455) — a failing tool step renders failed (single terminal drop).
+ *  - `tool-then-text` (#1417) — reply text written after a tool step renders in its own node below the
+ *    tool row, and the text before it above (single terminal drop; see the method KDoc).
  *  - `tool-progress` (#950) — the status area's running-tool label shows claude's elapsed reading after a
  *    `tool_progress` heartbeat, then clears when the call's `tool_result` lands (see the method KDoc).
  *  - `reconnect` (#476) — an in-flight reply survives a mid-turn relay-link drop: the turn is held
@@ -399,6 +407,45 @@ class DeterministicInteractiveStreamE2ETest {
     }
 
     /**
+     * `tool-then-text` scenario (#1417) — a turn that goes text, tool, text must draw the first text above
+     * the tool row and the second below it, in separate nodes (#1350's per-segment reply). One fixture
+     * (`tool-then-text.jsonl`) carries claude's per-block records: the first text and the `Bash` `tool_use`
+     * share one `message.id`, the correlated `tool_result` follows, then the second text under a new id and
+     * the turn end. The `tool_use` has no input fields, so the collapsed row leads with the tool name `Bash`
+     * rather than a command (#1315). The test waits for the turn to settle (both markers on screen, the row
+     * no longer running, the thinking spinner gone), then compares on-screen bounds.
+     */
+    @Test
+    fun interactiveTurn_seededChannel_replyTextAfterToolRendersBelowIt() {
+        arriveInSeededThread()
+
+        typeAndSend(SEND_PROMPT)
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(BEFORE_TOOL_MARKER, substring = true).fetchSemanticsNodes().isNotEmpty() &&
+                composeTestRule.onAllNodesWithText(AFTER_TOOL_MARKER, substring = true).fetchSemanticsNodes().isNotEmpty() &&
+                composeTestRule.onAllNodesWithText(TOOL_NAME).fetchSemanticsNodes().isNotEmpty() &&
+                composeTestRule.onAllNodes(hasContentDescription(toolRunningDescription)).fetchSemanticsNodes().isEmpty() &&
+                composeTestRule.onAllNodes(hasContentDescription(thinkingDescription)).fetchSemanticsNodes().isEmpty()
+        }
+
+        val before = composeTestRule.onNodeWithText(BEFORE_TOOL_MARKER, substring = true).fetchSemanticsNode()
+        val after = composeTestRule.onNodeWithText(AFTER_TOOL_MARKER, substring = true).fetchSemanticsNode()
+        val toolRow = composeTestRule.onNodeWithText(TOOL_NAME).fetchSemanticsNode()
+
+        assertNotEquals("both markers rendered in one node", before.id, after.id)
+        assertFalse(nodeText(before).contains(AFTER_TOOL_MARKER))
+        assertFalse(nodeText(after).contains(BEFORE_TOOL_MARKER))
+        assertTrue(
+            "text before the tool (${before.boundsInRoot}) is not above the tool row (${toolRow.boundsInRoot})",
+            before.boundsInRoot.bottom <= toolRow.boundsInRoot.top,
+        )
+        assertTrue(
+            "text after the tool (${after.boundsInRoot}) is not below the tool row (${toolRow.boundsInRoot})",
+            after.boundsInRoot.top >= toolRow.boundsInRoot.bottom,
+        )
+    }
+
+    /**
      * `reconnect` scenario (#476, Layer 2b) — an in-flight reply must survive a mid-turn relay-link
      * drop. The turn is held open across the outage the same way the `spinner` scenario holds it: drop A
      * (`reconnect-open.jsonl`, a `thinking`-only line) fires on the **1st** `send_message.enqueued` and
@@ -554,6 +601,9 @@ class DeterministicInteractiveStreamE2ETest {
         }
     }
 
+    /** The node's text, joined across its merged `Text` children. */
+    private fun nodeText(node: SemanticsNode): String = node.config.getOrElse(SemanticsProperties.Text) { emptyList() }.joinToString(" ")
+
     /**
      * Sever the phone's relay link and restore it atomically (#476 continuity): the drop is taken and
      * immediately healed with no gap. Re-expressed as [severLink] then [restoreLink] — the two halves
@@ -647,6 +697,12 @@ class DeterministicInteractiveStreamE2ETest {
         // The `tool` fixture's Bash command, which carries no description. The collapsed row leads with it
         // instead of the tool name (#1315); an older daemon without input fields shows it as the précis.
         const val TOOL_COMMAND = "echo hello"
+
+        // The `tool-then-text` fixture's markers: the first sits in the text before the tool_use, the second in
+        // the text after its result. Neither occurs in "e2e-seed", the "hello" prompt, "Bash", the tool row or
+        // the other marker, so a match can only be the reply segment that carries it (#431).
+        const val BEFORE_TOOL_MARKER = "foxtrot"
+        const val AFTER_TOOL_MARKER = "zulu"
 
         // The `tool-progress` heartbeat's `elapsed_time_seconds: 30`, as the label formats it (#950).
         const val HEARTBEAT_ELAPSED = "30s"

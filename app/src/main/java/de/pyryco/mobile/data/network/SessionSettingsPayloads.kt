@@ -155,8 +155,8 @@ internal data class MemorySearchProviderDto(
 /**
  * The `session_settings` reply's `capabilities` object (#1111, pyrycode #2646), declaring only the keys this
  * client reads; [MobileJson] ignores the rest. Both arrays are required because the daemon always sends
- * them, so an object missing one fails the frame. [slashCommands] defaults to `true` so an object from a
- * daemon without pyrycode #2670 still decodes and disables nothing.
+ * them, so an object missing one fails the frame. [slashCommands] and [mcpServers] default to `true` so an
+ * object from a daemon without pyrycode #2670 still decodes and disables nothing.
  *
  * Wire SSOT: `../pyrycode/docs/protocol-mobile.md` § `capabilities` (multi_agent, #2646).
  */
@@ -165,6 +165,7 @@ data class SessionCapabilitiesDto(
     @SerialName("effort_levels") val effortLevels: List<String>,
     @SerialName("permission_modes") val permissionModes: List<String>,
     @SerialName("slash_commands") val slashCommands: Boolean = true,
+    @SerialName("mcp_servers") val mcpServers: Boolean = true,
 )
 
 /**
@@ -198,7 +199,7 @@ fun JsonElement.toSessionSettings(): SessionSettings {
         yolo = dto.yolo,
         usedTokens = dto.usedTokens,
         windowTokens = dto.windowTokens,
-        capabilities = dto.capabilities?.let { SessionCapabilities(it.effortLevels, it.permissionModes, it.slashCommands) },
+        capabilities = dto.capabilities?.let { SessionCapabilities(it.effortLevels, it.permissionModes, it.slashCommands, it.mcpServers) },
         memorySearch = dto.memorySearch.readMemorySearch(),
     )
 }

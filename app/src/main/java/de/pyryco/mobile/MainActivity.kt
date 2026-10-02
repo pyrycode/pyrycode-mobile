@@ -450,6 +450,7 @@ internal fun PyryNavHost(
                 val armedOptionId by vm.armedOptionId.collectAsStateWithLifecycle()
                 val alwaysAllowAccepted by vm.alwaysAllowAccepted.collectAsStateWithLifecycle()
                 val draft by vm.draft.collectAsStateWithLifecycle()
+                val systemPrompt by vm.systemPrompt.collectAsStateWithLifecycle()
                 val pendingAttachments by vm.pendingAttachments.collectAsStateWithLifecycle()
                 val attachmentsSending by vm.attachmentsSending.collectAsStateWithLifecycle()
                 val attachmentUploadProgress by vm.attachmentUploadProgress.collectAsStateWithLifecycle()
@@ -521,6 +522,7 @@ internal fun PyryNavHost(
                     onRetryOlderHistory = vm::onRetryOlderHistory,
                     draft = draft,
                     onDraftChange = vm::onDraftChange,
+                    systemPrompt = systemPrompt,
                     // #933: the composer's attachment picker and strip, over the same per-chat draft store.
                     attachments = pendingAttachments,
                     attachmentsSending = attachmentsSending,
@@ -529,10 +531,15 @@ internal fun PyryNavHost(
                     onRemoveAttachment = vm::removeAttachment,
                     attachmentRefusals = vm.attachmentRefusals,
                     attachmentSendFailures = vm.attachmentSendFailures,
+                    // #1314: an accepted send follows the thread's newest end again.
+                    sentMessages = vm.sentMessages,
                     // #984: the thread's message attachments, loaded as their rows come on screen.
                     attachmentStates = attachmentStates,
                     onAttachmentShown = vm::onAttachmentShown,
                     onRetryAttachment = vm::onRetryAttachment,
+                    // #1329: a file other than an image loads only when it is tapped, then opens or saves.
+                    onRequestAttachment = vm::onAttachmentRequested,
+                    attachmentLoads = vm.attachmentLoads,
                     // #843: the tree row's re-pair route (#842), keyed by this destination's own host. The
                     // thread stays on the back stack beneath it, so Cancel returns to the cached history.
                     showRePair = rePairAvailable,

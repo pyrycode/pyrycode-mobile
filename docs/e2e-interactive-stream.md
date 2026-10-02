@@ -187,10 +187,12 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    host's list toolbar after proving its active and archived membership changes;
    `interactiveTurn_twoHostsArchive_staysPerHost` archives and restores A's chat through A's toolbar
    while B's active and archived sets remain unchanged. Both wait for restore completion before Back.
-   **Channel create, edit and archive** is live again in `InteractiveStreamE2ETest` (#1251):
-   `interactiveTurn_createEditArchiveChannel_readsPromptBack` creates from an empty Channels section,
-   reads the original and edited prompt, waits for a distinct reply after Reset session, then restores
-   through the selected host's list-toolbar Archive entry and finds the edited name on the list.
+   **Channel create, edit and archive** is live again in `InteractiveStreamE2ETest` (#1251, extended
+   #1342): `interactiveTurn_createEditArchiveChannel_readsPromptBack` creates from an empty Channels
+   section, reads the original and edited prompt, waits for a distinct reply after Reset session,
+   then empties the prompt from Edit channel and polls the host until its reading comes back `null`,
+   opens Channel info and checks for an empty box at "0 / 8192 bytes", before restoring through the
+   selected host's list-toolbar Archive entry and finding the edited name on the list.
    **Archive order** (#1332 — `interactiveTurn_archiveTwoChats_listsSecondArchivedFirst`): archives two
    freshly created chats on a live daemon, the newer-by-last-use one first and the older one second, then
    opens Archive and asserts the second-archived chat is on top — proving the daemon's `archived_at` stamp,
@@ -369,10 +371,13 @@ shows a non-empty value that is not the unavailable note, with no model name har
 **footer-context-usage** scenario (#946 — `interactiveTurn_pingPrompt_footerShowsContextUsage`: after the
 ping turn, wait until the composer footer's `CONTEXT_USAGE_TEST_TAG` node's text matches `Cxt: \d+%`, with
 no percentage hard-coded — proving the daemon's post-turn `context_usage` push reaches
-`ThreadRunConfig.contextPercent` and renders in the footer; **one** claude turn — the scenario's own ping;
-no reconnect or subscription-time ask is exercised, since [#946](https://github.com/pyrycode/pyrycode-mobile/issues/946)'s
-Rework 1 removed the phone's `request_context_usage` send outright — see [Thread composer footer § Context
-usage segment](knowledge/features/thread-composer-footer.md#context-usage-segment-946)); and a
+`ThreadRunConfig.contextPercent` and renders in the footer; **one** claude turn — the scenario's own ping.
+This method does not itself prove an ask was sent, since #1411 the footer can show a percentage from
+`SessionSettings` alone with no reading at all — see [Thread composer footer — context usage
+segment](knowledge/features/thread-composer-footer-context-usage.md) for that gap and
+[#1410](https://github.com/pyrycode/pyrycode-mobile/issues/1410)'s
+`interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn`, which waits on the reading
+itself to close it; and a
 **status-band-never-empty** scenario ([#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311) —
 `interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy`: a prompt that makes real claude run a
 read-only `echo` and then answer in one sentence, sampled continuously from the tap on Send until the turn
@@ -961,11 +966,13 @@ lifecycle. They reuse #545's settings helpers and #850's `setHostLink` / `cycleH
 `SecondClientPeer` approval path, rather than repeating those scenarios.
 
 `interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive` runs a ping, cuts and restores the link,
-and confirms the footer's `Cxt:` segment reads `n/a` on the new connection — the reading belongs to the
-connection and nothing asks for it again since #946's Rework 1 — while model, effort and permission settle
-on what a fresh reading taken on the new connection reports. A second ping brings the context percentage
-back, proving the post-turn push is the fresh reading, and a model picked from the footer after that turn
-is confirmed by a further fresh reading. The #545 `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn`
+and confirms that the footer keeps its context percentage across the reconnect, matching #1317. The
+inherited model's selected row follows the held model announcement. Effort and permission settle on a
+live settings reply. Since #1397, `freshSettings` skips the held reply that #1320 emits first. The second
+ping must finish and deliver a context reading with a token count greater than the held reading. A saved
+percentage alone cannot prove freshness, because both turns can round to the same percentage. A model
+picked from the footer after that turn is confirmed by another live settings reply.
+The #545 `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn`
 method's effort-label mapping moved into a shared `appliedEffortFooter` helper both methods call, with no
 behaviour change. Two real claude turns: the ping before the cut and the ping after it.
 
@@ -1158,6 +1165,16 @@ cache holds it as an assistant-side message; after
 `rebuildGraph` (cache kept, unlike the other methods' cleared cache) the row is still there exactly once,
 and both `ACTION_VIEW` (open) and `ACTION_CREATE_DOCUMENT` (save) yield the fixture's digest. A fresh
 device, or a cleared cache, would not show the file — by design, and not asserted here.
+
+**Since #1329, the offered file is fetched by its first tap, not drawn and fetched on sight.** The offer
+`send_file` produces carries a name but no MIME type, and the name is a plain `.txt`, outside desktop's
+image-extension list — so the row draws deferred (the ready `File field`, no status line, nothing
+requested) until `assertOpensAndSaves` taps it. That tap is now what triggers the retrieval, so its wait
+for `ACTION_VIEW` grew from `THREAD_TIMEOUT_MS` to `REPLY_TIMEOUT_MS` to cover it; `readyAttachmentRow`
+matches a deferred row exactly as it matches a `Ready` one, since both draw identically. The sibling
+attachments-from-phone and peer-attachment scenarios are unaffected: one is the phone's own send, which
+resolves through `sentOriginal`/`canRead` with no relay request regardless of this rule, and the other is
+a history-replayed row, which has no name or type to defer on and so still loads on show.
 
 **The LIVE list only filters; it does not set the order.** JUnit's default `MethodSorters.DEFAULT` runs a
 class's methods by name hash, not by the list's own sequence, so a method's place in
@@ -1655,11 +1672,15 @@ These are daemon round trips and spend no real Claude turns. The independent
 `InteractiveStreamE2ETest#interactiveTurn_listArchiveEntry_opensArchived` (#740) still proves the toolbar
 entry reaches Archive without creating a conversation.
 
-`InteractiveStreamE2ETest#interactiveTurn_createEditArchiveChannel_readsPromptBack` (#1088/#1251)
-starts with an empty Channels section, creates a channel in its host's default working folder,
-and reads back its name and system prompt before and after editing. After Reset session, a
-distinct real `pong` reply precedes the prompt-status check, so the check belongs to the new
-session. It archives from Edit channel, restores through the selected host's list-toolbar
+`InteractiveStreamE2ETest#interactiveTurn_createEditArchiveChannel_readsPromptBack` (#1088/#1251,
+extended #1342) starts with an empty Channels section, creates a channel in its host's default
+working folder, and reads back its name and system prompt before and after editing. After Reset
+session, a distinct real `pong` reply precedes the prompt-status check, so the check belongs to the
+new session. It then empties the prompt from Edit channel, polls the host's own reading until it
+comes back `null` — proving `submitChannelEdit` sent `null` rather than `""` — and opens Channel
+info to check the System prompt section shows an empty box at "0 / 8192 bytes", the live proof that
+desktop's clear rule (#1342) reaches the daemon and that the section reads what Edit channel wrote.
+It archives from Edit channel, restores through the selected host's list-toolbar
 Archive entry and its Channels tab, then finds the edited name back on the list. The test
 restores the pre-existing channel fixtures and deletes its temporary conversations in `finally`.
 Two Settings-dependent methods and two older workspace-switching methods remain ignored and
@@ -1929,6 +1950,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `spinner` | the thinking spinner shows mid-turn, then clears at turn end | `spinner-open.jsonl` + `spinner-end.jsonl` | **two** |
 | `tool` (#455) | a tool step shows **running** in flight, then **done** after the result | `tool-open.jsonl` + `tool-done.jsonl` | **two** |
 | `tool-failed` (#455) | a failing tool step renders **failed** | `tool-failed.jsonl` | one |
+| `tool-then-text` (#1417) | reply text after a tool step renders below it | `tool-then-text.jsonl` | one |
 | `tool-progress` (#950) | the status area's running-tool label adds claude's elapsed reading after a `tool_progress` heartbeat, then clears once the call's `tool_result` lands while the turn stays busy | `tool-progress-open.jsonl` + `tool-progress-result.jsonl` | **two** |
 | `reconnect` (#476) | an in-flight reply **survives a mid-turn link drop** and renders exactly once | `reconnect-open.jsonl` + `reconnect-done.jsonl` | **two** |
 | `offline-retry` (#1286) | actual Offline pill retries the same host and a new reply renders | `ping.jsonl` | one |
@@ -1948,6 +1970,7 @@ DETERMINISTIC=1 SCENARIO=stream      PYRYCODE_SRC=~/Workspace/Projects/pyrycode 
 DETERMINISTIC=1 SCENARIO=spinner     PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # spinner
 DETERMINISTIC=1 SCENARIO=tool        PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # tool running→done
 DETERMINISTIC=1 SCENARIO=tool-failed PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # tool failed
+DETERMINISTIC=1 SCENARIO=tool-then-text PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # reply text below its tool step
 DETERMINISTIC=1 SCENARIO=tool-progress PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # running-tool label elapsed → gone
 DETERMINISTIC=1 SCENARIO=reconnect    PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # reconnect continuity
 DETERMINISTIC=1 SCENARIO=replay-order PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # post-reconnect replay ordering
@@ -2020,6 +2043,17 @@ fold renders the row `Running` (briefly) → `Failed`; the test asserts only the
 content-description (tolerant, stable). The `tool_use` line must precede the `tool_result` line so they
 correlate. Assertions never depend on the producer-derived `input_summary`/`result_summary` text — only
 the status CDs and the verbatim tool name.
+
+**`tool-then-text` (#1417)** — reply text written after a tool step must render **below** that step, proving
+the per-segment reply order from #1350 through the real daemon, relay and app. `tool-then-text.jsonl` is a
+single raw fragment: an `assistant` line (id `ttt-1`) holding text with the marker `foxtrot`, an `assistant`
+line sharing id `ttt-1` with a `Bash` `tool_use` whose input is `{}` (empty input keeps the collapsed row's
+lead on the tool name rather than a `command`, #1315), the correlated non-error `tool_result`, then an
+`assistant` line with a new id `ttt-2` and `stop_reason: end_turn` holding text with the marker `zulu`. The
+two markers don't occur in the seeded channel name, the prompt, `Bash` or each other (the #431 false-green
+lesson). The test waits for both markers and the `Bash` row to render and the running-tool/thinking CDs to
+clear, then asserts by `boundsInRoot` that the `foxtrot` node sits above the tool row and the `zulu` node
+sits below it, and that the two markers land in different nodes.
 
 **`reconnect` (#476, Layer 2b)** — an in-flight reply must survive a mid-turn relay-link drop. It reuses
 the spinner's **two-fragment causal release** with a sever/restore inserted in the gap:
@@ -2103,7 +2137,52 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-01 (#1332).** The dispatcher ran
+**Current live verification — 2026-10-01 (#1410).** The dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1410` at
+`92ba45dd43`, merged with `origin/main` at `ab368c3bf2` in a detached worktree (9 commits behind before
+the merge): **48 executed, 47 passed, 1 failed, 0 skipped**, exit 1, wall clock 1146.3s. This is
+full-suite evidence; no separate focused live run is claimed. `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`
+failed once and passed when re-run on the same merged tree, so the dispatcher treated it as a suite
+flake rather than this branch's failure — see the
+[re-run evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1410#issuecomment-5942399058). The
+fresh XML has passing testcases for the new method,
+`interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn`, and for
+`interactiveTurn_pingPrompt_footerShowsContextUsage`, both required by #1410's AC-3, plus the three
+reconnect-with-open-thread methods the new ask also reaches:
+`interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive`,
+`interactiveTurn_reconnect_slashCommandsAndCompactStillWork` and
+`interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect`. See the
+[dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1410#issuecomment-5942043165).
+
+**Previous live verification — 2026-10-01 (#1342).** The dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live --tests ...` against
+`feature/1342` at `bf964f0c39`, merged with `origin/main` at `599aa84bfd` in a detached worktree
+(27 commits behind before the merge): **8 executed, 8 passed, 0 failed, 0 skipped**, exit 0, wall
+clock 392.1s. The selection named the five methods in PR #1407's `## Live tests`
+(`interactiveTurn_createEditArchiveChannel_readsPromptBack`,
+`interactiveTurn_deleteConversation_removesFromListAndClosesThread`,
+`interactiveTurn_twoHostsArchive_staysPerHost`, `interactiveTurn_newSession_rendersSessionBoundaryDelimiter`,
+`interactiveTurn_markdownLink_opensLiveNoteInReader`) plus three always-run methods — not a full-suite
+run. The fresh XML has a passing testcase for the extended
+`interactiveTurn_createEditArchiveChannel_readsPromptBack`, closing AC-5 of #1342: it now empties the
+prompt in Edit channel, waits for the host reading to come back `null`, then opens Channel info and
+checks for an empty box at "0 / 8192 bytes". See the [dispatcher
+evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1342#issuecomment-5939773632).
+
+**Previous live verification — 2026-10-01 (#1337).** The dispatcher ran a focused
+`python3 scripts/android-test-gate.py live --tests ...` selection against `feature/1337` at
+`62ed2d1072`, merged with `origin/main` at `a8bb98ca56` (0 commits behind before the merge): **7
+executed, 7 passed, 0 failed, 0 skipped**, exit 0, wall clock 404.8s. The selection named the four
+methods in PR #1406's `## Live tests` (`interactiveTurn_permissionPrompts_heldPerConversation`,
+`interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation`,
+`interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect`,
+`interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool`) plus three always-run methods — not a
+full-suite run. The fresh XML has a passing testcase for
+`interactiveTurn_permissionPrompts_heldPerConversation`, closing AC-4 of
+[#1337](specs/architecture/1337-hold-every-outstanding-prompt.md). See the [dispatcher
+evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1337#issuecomment-5938993775).
+
+**Previous live verification — 2026-10-01 (#1332).** The dispatcher ran
 `ANDROID_GATE_WAIT_SECONDS=1200 python3 scripts/android-test-gate.py live` against `feature/1332` at
 `cc94a05bbc`, merged with `origin/main` at `18ea26526a` (0 commits behind before the merge):
 **41 executed, 41 passed, 0 failed, 0 skipped**, exit 0, wall clock 518.8s. This is full-suite evidence;
@@ -2796,6 +2875,55 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — added:** [#1410](https://github.com/pyrycode/pyrycode-mobile/issues/1410) adds
+  `InteractiveStreamE2ETest.interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn`
+  to the curated LIVE `TEST_TARGET` selector in `scripts/e2e-emulator.sh`; `LIVE_MINIMUM` is counted
+  from that list (#1440), so it rises by one with no edit to `android-test-gate.py`. The method proves
+  the thread's new opening ask (`ThreadViewModel.askForContextUsage`, which calls
+  `ConversationRepository.requestContextUsage`) rather than the footer alone: the peer runs the chat's
+  only turn while the phone is offline, so the daemon holds a reading the phone never received and
+  replay cannot name (the phone's cursor had no ring events for that chat before the cut). Before the
+  reopen the method asserts the host's held reading is still `null`; after `openChatRow` it waits on
+  `hostRepository(serverId).observeContextUsage(conversationId).filterNotNull().first()` itself, not
+  only the footer text, because since [#1411](https://github.com/pyrycode/pyrycode-mobile/issues/1411)
+  the footer renders a percentage from `session_settings` alone even with no reading — a footer-only
+  check could pass without the ask. `interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive` now
+  also carries a reconnect ask from the same trigger: it checks the held reading and footer while the
+  link is still down, where no ask can race, takes the pre-cut reading as its growth baseline, and
+  waits for the reconnect ask's answer to settle before accepting a larger post-turn reading, so the two
+  answers (a `detail:"full"` count and a `detail:"summary"` estimate) cannot be read as the same thing.
+  `interactiveTurn_reconnect_slashCommandsAndCompactStillWork` and
+  `interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect` also reconnect with a thread open and now
+  carry the ask, without asserting on it. No rung-4 twin: the scripted `fakeclaude` path has no
+  on-demand context querier to answer `request_context_usage` with a fixture. The dispatcher's
+  post-verifier `python3 scripts/android-test-gate.py live` run (branch `feature/1410` at `92ba45dd43`,
+  merged with `origin/main` at `ab368c3bf2`) executed 48, passed 47, failed 1 (a confirmed flake, not
+  this branch's) and skipped 0, including the new method and all four named methods above passing — see
+  [Verification status](#verification-status).
+
+- **Coverage — added:** [#1337](https://github.com/pyrycode/pyrycode-mobile/issues/1337) adds
+  `InteractiveStreamE2ETest.interactiveTurn_permissionPrompts_heldPerConversation` to the curated LIVE
+  `TEST_TARGET` selector in `scripts/e2e-emulator.sh`, raising `LIVE_MINIMUM` to 41 in
+  `scripts/android-test-gate.py` and pinned by `test_live_floor_matches_the_curated_list`. Chats A and
+  B each raise a real prompt at once; both show in their own chat; answering A from the phone resolves
+  only A's id while B's card stays mounted — proving the `HostModalState` hold-all fold (see
+  [Current-modal state](knowledge/features/current-modal-state.md)) against a real daemon, not just the
+  single-prompt-replacement case its sibling
+  `interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation` covers. The method proves the
+  phone's answer through the peer's `modal_dismissed` for A's id (source `remote`, outcome
+  `allow_once`) and the dialog leaving A, and does **not** await A's `turn_end`: the daemon streams
+  turn frames only for the conversation a message was last routed to (its `activeConversation`
+  follow-active cursor), and B's send in the method moves that cursor to B, so A's `tool_use` /
+  `turn_end` after the allow never reach any client — B's `turn_end` is still awaited, since B holds
+  the cursor. No rung-4 twin: the ticket's acceptance criteria require only the rung-3 proof. PR
+  #1406's `## Live tests` also names `interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect`
+  and `interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool` as the live guards whose input this
+  ticket changes (the former's input now goes `Open` → `Hidden` → `Open` across a reconnect, deduped only by
+  `AttentionNotifier`'s ledger). The dispatcher's post-verifier focused `python3
+  scripts/android-test-gate.py live --tests ...` run (branch `feature/1337` at `62ed2d1072`, merged with
+  `origin/main` at `a8bb98ca56`) executed 7, passed 7, failed 0 and skipped 0, including all four named
+  methods passing — see [Verification status](#verification-status).
 
 - **Coverage — updated:** [#1309](https://github.com/pyrycode/pyrycode-mobile/issues/1309) rewrote
   `InteractiveStreamE2ETest.interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn` to drop

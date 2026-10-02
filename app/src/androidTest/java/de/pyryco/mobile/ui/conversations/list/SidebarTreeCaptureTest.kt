@@ -267,7 +267,7 @@ class SidebarTreeCaptureTest {
                 ),
             recentChats = chats,
             chatCount = chats.size,
-            attention = mapOf("c4" to ConversationAttention.Unread, "c5" to ConversationAttention.Failed),
+            attention = mapOf("c4" to ConversationAttention.Unread, "c5" to ConversationAttention.WaitingForAnswer),
         )
         return HostChannelListState(
             hosts =
