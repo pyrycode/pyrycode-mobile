@@ -192,6 +192,39 @@ class HistoryPageReducerTest {
         assertEquals(listOf(named, MessageAttachment(ID_B)), merged.messageRow("sent-1")?.attachments)
     }
 
+    // ---- #1353: the cache merge joins each row kind on its key alone ------------------------------
+
+    @Test
+    fun mergeCached_eachKindJoinsItsLiveTwinOnItsKeyAlone() {
+        val at = { second: Int -> Instant.parse("2026-09-05T10:00:0${second}Z") }
+        val live =
+            listOf(
+                messageItem("m1", content = "live"),
+                ThreadItem.SessionBoundary("s1", "s2", BoundaryReason.Clear, at(1)),
+                ThreadItem.UnrecognizedMessage("u1", UnrecognizedSite.Undecodable, "", "live", false, at(2)),
+                ThreadItem.Banner(BannerLevel.Warning, "live", false, at(3)),
+                ThreadItem.CompactionBoundary(24000, 3000, true, at(4)),
+                ThreadItem.ModelRefusal("opus", "sonnet", "live", false, at(5)),
+                ThreadItem.StoppedTurn("turn-1", "max_turns", "", at(6)),
+            )
+        // Each twin differs from its live row only outside the key; the last refusal is the other frame type.
+        val otherType = ThreadItem.ModelRefusal("opus", null, "cached", false, at(5))
+        val cached =
+            listOf(
+                messageItem("older"),
+                messageItem("m1", content = "cached"),
+                ThreadItem.SessionBoundary("s1", "s2", BoundaryReason.IdleEvict, at(1), workspaceCwd = "/w"),
+                ThreadItem.UnrecognizedMessage("u1", UnrecognizedSite.Undecodable, "", "cached", true, at(2)),
+                ThreadItem.Banner(BannerLevel.Info, "cached", true, at(3)),
+                ThreadItem.CompactionBoundary(null, null, false, at(4)),
+                ThreadItem.ModelRefusal("haiku", "sonnet-5", "cached", true, at(5)),
+                ThreadItem.StoppedTurn("turn-1", "api_error", "overloaded", at(7)),
+                otherType,
+            )
+
+        assertEquals(listOf(messageItem("older")) + live + otherType, live.mergeCachedRows(cached))
+    }
+
     @Test
     fun merge_aNamelessHistoryTwinNeverReplacesAKnownName() {
         val named = MessageAttachment(ID_A, "photo.jpg", "image/jpeg")
@@ -325,6 +358,84 @@ class HistoryPageReducerTest {
         assertEquals(listOf("turn-1"), rows.messageIds())
         assertEquals("hello world", rows.messageRow("turn-1")?.content)
         assertFalse(rows.messageRow("turn-1")?.isStreaming ?: true)
+    }
+
+    // ---- #1356: a stopped turn leaves its reason in the thread --------------------------------------
+
+    @Test
+    fun reduce_aFailedTurnEnd_addsOneStoppedRowAfterTheTurnsLastRow_stampedWithTheEntryTs() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(4, "message", messagePayload("m2", "user", "next"), ts = "2026-09-05T10:04:00Z"),
+                    entry(3, "turn_end", turnEndPayload("turn-1", failure = FAILED), ts = "2026-09-05T10:03:00Z"),
+                    entry(2, "tool_use", toolUsePayload("t1", name = "Bash", input = "ls")),
+                    entry(1, "assistant_delta", assistantDeltaPayload("turn-1", seq = 0, text = "hello")),
+                ),
+                interactive = true,
+            )
+
+        assertEquals(
+            ThreadItem.StoppedTurn("turn-1", "prompt_too_long", "invalid_request", Instant.parse("2026-09-05T10:03:00Z")),
+            rows[2],
+        )
+        assertEquals(listOf("turn-1", "t1", "m2"), rows.messageIds())
+        assertEquals(4, rows.size)
+    }
+
+    @Test
+    fun reduce_aCancelledOrCleanTurnEnd_addsNoRow() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(2, "turn_end", turnEndPayload("turn-2", stopReason = "cancelled", failure = FAILED)),
+                    entry(1, "turn_end", turnEndPayload("turn-1", failure = """"outcome":"success"""")),
+                ),
+                interactive = true,
+            )
+
+        assertTrue(rows.isEmpty())
+    }
+
+    @Test
+    fun reduce_aRepeatedTurnEnd_addsOneStoppedRow() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(2, "turn_end", turnEndPayload("turn-1", failure = FAILED), ts = "2026-09-05T10:02:00Z"),
+                    entry(1, "turn_end", turnEndPayload("turn-1", failure = FAILED), ts = "2026-09-05T10:01:00Z"),
+                ),
+                interactive = true,
+            )
+
+        assertEquals(listOf("turn-1"), rows.filterIsInstance<ThreadItem.StoppedTurn>().map { it.turnId })
+    }
+
+    @Test
+    fun merge_aHistoryStoppedRow_joinsTheLiveOneByTurnId() {
+        val event =
+            LiveSessionEvent.TurnEnd(CONVERSATION, "turn-1", "end_turn", isError = true, terminalReason = "prompt_too_long")
+        val live = listOf(messageItem("m0")).withFinalizedTurn(event, Instant.parse("2026-09-05T11:00:00Z"))
+        val page = reduceHistoryPage(listOf(entry(1, "turn_end", turnEndPayload("turn-1", failure = FAILED))), interactive = true)
+
+        val merged = live.mergeHistoryRows(page)
+
+        assertSame(live, merged)
+        assertEquals(1, merged.count { it is ThreadItem.StoppedTurn })
+    }
+
+    @Test
+    fun withFinalizedTurn_appendsTheStoppedRowOnce_andAnotherTurnsRowStill() {
+        val at = Instant.parse("2026-09-05T11:00:00Z")
+        val failed = LiveSessionEvent.TurnEnd(CONVERSATION, "turn-1", "end_turn", outcome = "error_max_turns")
+
+        val once = emptyList<ThreadItem>().withFinalizedTurn(failed, at)
+        val twice = once.withFinalizedTurn(failed, Instant.parse("2026-09-05T11:00:01Z"))
+        val other = twice.withFinalizedTurn(failed.copy(turnId = "turn-2"), at)
+
+        assertEquals(listOf(ThreadItem.StoppedTurn("turn-1", "max_turns", "", at)), once)
+        assertSame(once, twice)
+        assertEquals(listOf("turn-1", "turn-2"), other.map { (it as ThreadItem.StoppedTurn).turnId })
     }
 
     @Test
@@ -836,6 +947,71 @@ class HistoryPageReducerTest {
         assertEquals(page + live, live.mergeHistoryRows(page))
     }
 
+    // ---- #1358: stored compacting edges draw the dividers the live lane draws ------------------------
+
+    // AC 2: a page with the live lane's frames folds to the live lane's dividers, ts for ts.
+    @Test
+    fun reduce_storedCompactingEdges_foldLikeTheLiveLane() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(7, "compaction_boundary", compactionPayload(), ts = "2026-09-05T10:03:21Z"),
+                    entry(6, "compacting", compactingPayload(false), ts = "2026-09-05T10:03:20Z"),
+                    entry(5, "compacting", compactingPayload(true), ts = "2026-09-05T10:03:00Z"),
+                    entry(4, "compacting", compactingPayload(false, ""","compact_error":"boom""""), ts = "2026-09-05T10:02:20Z"),
+                    entry(3, "compacting", compactingPayload(true), ts = "2026-09-05T10:02:00Z"),
+                    entry(2, "compacting", compactingPayload(false, ""","compact_result":"unknown_token""""), ts = "2026-09-05T10:01:20Z"),
+                    entry(1, "compacting", compactingPayload(true), ts = "2026-09-05T10:01:00Z"),
+                ),
+                interactive = true,
+            )
+
+        assertEquals(
+            listOf(
+                ThreadItem.CompactionBoundary(null, null, false, Instant.parse("2026-09-05T10:01:20Z")),
+                ThreadItem.CompactionBoundary(null, null, false, Instant.parse("2026-09-05T10:02:20Z"), failed = true),
+                ThreadItem.CompactionBoundary(24000L, 3000L, true, Instant.parse("2026-09-05T10:03:21Z")),
+            ),
+            rows,
+        )
+    }
+
+    // AC 2: the page's rows join the live lane's on every divider, so merging adds none.
+    @Test
+    fun merge_aPageOfCompactionsAlreadyLive_addsNone() {
+        val entries =
+            listOf(
+                entry(5, "compaction_boundary", compactionPayload(), ts = "2026-09-05T10:03:21Z"),
+                entry(4, "compacting", compactingPayload(false), ts = "2026-09-05T10:03:20Z"),
+                entry(3, "compacting", compactingPayload(true), ts = "2026-09-05T10:03:00Z"),
+                entry(2, "compacting", compactingPayload(false, ""","compact_result":"failed""""), ts = "2026-09-05T10:02:20Z"),
+                entry(1, "compacting", compactingPayload(true), ts = "2026-09-05T10:02:00Z"),
+            )
+        val live =
+            listOf(
+                ThreadItem.CompactionBoundary(null, null, false, Instant.parse("2026-09-05T10:02:20Z"), failed = true),
+                ThreadItem.CompactionBoundary(24000L, 3000L, true, Instant.parse("2026-09-05T10:03:21Z")),
+            )
+
+        assertEquals(live, live.mergeHistoryRows(reduceHistoryPage(entries, interactive = true)))
+    }
+
+    @Test
+    fun reduce_storedCompactingWithoutInteractive_orMalformed_yieldsNothing() {
+        val entries =
+            listOf(
+                entry(3, "compacting", compactingPayload(false), ts = "2026-09-05T10:01:20Z"),
+                entry(2, "compacting", """{"conversation_id":"c1","active":"neither"}""", ts = "2026-09-05T10:01:10Z"),
+                entry(1, "compacting", compactingPayload(true), ts = "2026-09-05T10:01:00Z"),
+            )
+
+        assertEquals(emptyList<ThreadItem>(), reduceHistoryPage(entries, interactive = false))
+        assertEquals(
+            listOf(ThreadItem.CompactionBoundary(null, null, false, Instant.parse("2026-09-05T10:01:20Z"))),
+            reduceHistoryPage(entries, interactive = true),
+        )
+    }
+
     // ---- #811: a refused call replays as denied, never as failed -----------------------------------
 
     @Test
@@ -1334,8 +1510,12 @@ class HistoryPageReducerTest {
         text: String,
     ): String = """{"conversation_id":"$CONVERSATION","turn_id":"$turnId","seq":$seq,"text":"$text"}"""
 
-    private fun turnEndPayload(turnId: String): String =
-        """{"conversation_id":"$CONVERSATION","turn_id":"$turnId","stop_reason":"end_turn"}"""
+    /** [failure] is a raw `"key":value` fragment of the outcome fields (#1356); empty leaves a clean turn. */
+    private fun turnEndPayload(
+        turnId: String,
+        stopReason: String = "end_turn",
+        failure: String = "",
+    ): String = """{"conversation_id":"$CONVERSATION","turn_id":"$turnId","stop_reason":"$stopReason"${extraFields(failure)}}"""
 
     private fun sessionTransitionPayload(
         previous: String,
@@ -1357,6 +1537,11 @@ class HistoryPageReducerTest {
         text: String = "Blocked by hook",
         truncated: Boolean = false,
     ): String = """{"conversation_id":"$CONVERSATION","level":"$level","text":"$text","truncated":$truncated,"stops_turn":true}"""
+
+    private fun compactingPayload(
+        active: Boolean,
+        outcome: String = "",
+    ): String = """{"conversation_id":"$CONVERSATION","active":$active$outcome}"""
 
     private fun compactionPayload(
         trigger: String = "manual",
@@ -1393,6 +1578,7 @@ class HistoryPageReducerTest {
         const val ID_B = "7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
         const val TS = "2026-09-05T10:00:00Z"
         const val OCCURRED_AT = "2026-09-05T09:59:00Z"
+        const val FAILED = """"outcome":"success","is_error":true,"terminal_reason":"prompt_too_long","error_category":"invalid_request""""
         val TS_INSTANT: Instant = Instant.parse(TS)
     }
 }

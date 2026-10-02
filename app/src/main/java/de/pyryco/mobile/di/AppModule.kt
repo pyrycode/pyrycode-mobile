@@ -52,6 +52,7 @@ import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
 import de.pyryco.mobile.ui.conversations.thread.ContentResolverAttachmentReader
+import de.pyryco.mobile.ui.conversations.thread.McpFailureAcknowledgements
 import de.pyryco.mobile.ui.conversations.thread.PermissionDraftStore
 import de.pyryco.mobile.ui.conversations.thread.QuestionDraftStore
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
@@ -109,7 +110,7 @@ val appModule =
         // and so any future removal path inherits the eviction. `save` and `setDisplayName` deliberately
         // do not evict: re-pairing the same id and renaming a host both keep their drafts and content.
         single {
-            ObservablePairedServerStore(KeystorePairedServerStore(get()), forgetRemovedHost(get(), lazy { get() }, lazy { get() }))
+            ObservablePairedServerStore(KeystorePairedServerStore(get()), forgetRemovedHost(get(), get(), lazy { get() }, lazy { get() }))
         } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
         single { NoiseClientInfo(deviceName = Build.MODEL, clientVersion = mobileClientVersion()) }
         single {
@@ -199,6 +200,9 @@ val appModule =
         // #1002: the usage readings hidden from the thread's Top overlay, one set for the app process so a
         // reading hidden in one thread stays hidden in every thread. Heap only; a restart shows it again.
         single { UsageLimitDismissals() }
+        // #1345: the failed MCP servers acknowledged from the thread's notice, per host and conversation, for the
+        // app process. Heap only; the unpair hook clears a removed host's entries.
+        single { McpFailureAcknowledgements() }
         // #932: reads a pending attachment's bytes through its content URI when the thread sends it.
         single<AttachmentReader> { ContentResolverAttachmentReader(androidContext().contentResolver, androidContext().packageName) }
         viewModel {
@@ -219,7 +223,7 @@ val appModule =
         viewModel { get<ThreadDestinationFactory>().archive(get()) }
         viewModel {
             val handle = get<SavedStateHandle>()
-            get<ThreadDestinationFactory>().thread(handle, get(), get(), get(), get()).also { thread ->
+            get<ThreadDestinationFactory>().thread(handle, get(), get(), get(), get(), get()).also { thread ->
                 // #877: the thread is what knows its conversation is being viewed. The view opens the
                 // conversation on its own host and holds it read until this view model is cleared.
                 val viewing =
@@ -370,6 +374,7 @@ internal class ThreadDestinationFactory(
         preferences: AppPreferences,
         questionDrafts: QuestionDraftStore? = null,
         permissionDrafts: PermissionDraftStore? = null,
+        mcpFailureAcknowledgements: McpFailureAcknowledgements? = null,
     ): ThreadViewModel {
         val serverId = handle.get<String>("serverId").orEmpty()
         val bundle = if (useRelay) registry.connectionFor(serverId) else null
@@ -410,6 +415,7 @@ internal class ThreadDestinationFactory(
             interrupt = { id -> checkNotNull(bundle).coordinator.interrupt(id) },
             questionDraftStore = questionDrafts,
             permissionDraftStore = permissionDrafts,
+            mcpFailureAcknowledgements = mcpFailureAcknowledgements,
             questionBatch = { id -> bundle?.coordinator?.observeQuestionBatch(id) ?: flowOf(null) },
             answerQuestionBatch = { batch, answers -> checkNotNull(bundle).coordinator.answerQuestionBatch(batch, answers) },
             refuseQuestionBatch = { batch -> checkNotNull(bundle).coordinator.refuseQuestionBatch(batch) },

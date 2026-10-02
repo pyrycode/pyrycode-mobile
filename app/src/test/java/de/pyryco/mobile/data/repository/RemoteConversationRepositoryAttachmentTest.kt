@@ -20,7 +20,9 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -483,7 +485,90 @@ class RemoteConversationRepositoryAttachmentTest {
             assertEquals(1, thread.last().size)
         }
 
+    // #1369: the daemon pushes the delivered send back to its sender (pyrycode#2699), naming only bare ids.
+    // The phone's row keeps its names and hints, and a replay of the same push changes nothing.
+    @Test
+    fun sendWithAttachments_thenPushOfTheSameMessageId_keepsTheNamedRow_alsoOnReplay() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = repo(pump)
+            val thread = collectThread(repo)
+            runCurrent()
+
+            val send = startSend(repo, emptyList(), listOf(NAMED_A, NAMED_B))
+            runCurrent()
+            val sent = pump.sends().single()
+            pump.push(ack(sent.id))
+            runCurrent()
+            val mine = requireNotNull(send()).getOrThrow()
+            val emitted = thread.size
+
+            val messageId =
+                sent.payload.jsonObject
+                    .getValue("message_id")
+                    .jsonPrimitive.content
+            pump.push(pushedUserMessage(messageId, listOf(ID_A, ID_B)))
+            runCurrent()
+            pump.push(pushedUserMessage(messageId, listOf(ID_A, ID_B)))
+            runCurrent()
+
+            assertEquals(listOf(ThreadItem.MessageItem(mine)), thread.last())
+            assertEquals(listOf(NAMED_A, NAMED_B), (thread.last().single() as ThreadItem.MessageItem).message.attachments)
+            assertEquals("a held id re-emits nothing", emitted, thread.size)
+        }
+
+    // #1369: the push can beat the ack. Its bare-id row is then replaced by the send's confirmed insert.
+    @Test
+    fun pushBeforeAck_theConfirmedInsertLeavesTheNamedRow() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = repo(pump)
+            val thread = collectThread(repo)
+            runCurrent()
+
+            val send = startSend(repo, emptyList(), listOf(NAMED_A, NAMED_B))
+            runCurrent()
+            val sent = pump.sends().single()
+            val messageId =
+                sent.payload.jsonObject
+                    .getValue("message_id")
+                    .jsonPrimitive.content
+            pump.push(pushedUserMessage(messageId, listOf(ID_A, ID_B)))
+            runCurrent()
+            assertEquals(
+                listOf(MessageAttachment(ID_A), MessageAttachment(ID_B)),
+                (thread.last().single() as ThreadItem.MessageItem).message.attachments,
+            )
+
+            pump.push(ack(sent.id))
+            runCurrent()
+            pump.push(pushedUserMessage(messageId, listOf(ID_A, ID_B)))
+            runCurrent()
+
+            val mine = requireNotNull(send()).getOrThrow()
+            assertEquals(listOf(ThreadItem.MessageItem(mine)), thread.last())
+            assertEquals(listOf(NAMED_A, NAMED_B), mine.attachments)
+        }
+
     private fun TestScope.repo(pump: FakeSessionPump) = RemoteConversationRepository(pump, backgroundScope)
+
+    /** The daemon's live role-`user` `message` for a delivered send, as every interactive conn receives it. */
+    private fun pushedUserMessage(
+        messageId: String,
+        attachmentIds: List<String>,
+    ) = Envelope(
+        id = 96L,
+        type = "message",
+        ts = TS,
+        payload =
+            buildJsonObject {
+                put("conversation_id", "conv-1")
+                put("message_id", messageId)
+                put("role", "user")
+                put("text", "hi")
+                put("attachment_ids", JsonArray(attachmentIds.map { JsonPrimitive(it) }))
+            },
+    )
 
     private fun TestScope.startSend(
         repo: RemoteConversationRepository,
@@ -587,6 +672,8 @@ class RemoteConversationRepositoryAttachmentTest {
         const val TS = "2026-09-23T00:00:00Z"
         const val ID_A = "0f4c8a52-3d1e-4b7a-9c6d-2e5f8a1b3c4d"
         const val ID_B = "7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+        val NAMED_A = MessageAttachment(ID_A, "notes.txt", "text/plain")
+        val NAMED_B = MessageAttachment(ID_B, "photo.jpg", "image/jpeg")
         val UUID_V4 = Regex("[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
     }
 }

@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 /** Host identity surrounds unchanged, host-local conversation records. Contains no pairing secrets. */
 data class HostConversationSnapshot(
@@ -205,7 +206,7 @@ class HostConversationSource internal constructor(
 
     /**
      * The host's attention collectors (#877), all under the entry's job so a replaced bundle stops them.
-     * Events fold with the viewing state read under the same monitor; a repository going away is the host
+     * Events and new thread rows fold with the viewing state read under the same monitor; a repository going away is the host
      * losing its connection, which ends every running turn and busy conversation on it.
      */
     private fun launchAttention(entry: Held) {
@@ -225,6 +226,25 @@ class HostConversationSource internal constructor(
         scope.launch(entry.job) {
             connection.repositories.collect { repository ->
                 if (repository == null) updateAttention(entry) { attention = attention.disconnected() }
+            }
+        }
+        scope.launch(entry.job) {
+            connection.repositories.collectLatest { repository ->
+                // Each connection's repository starts its thread store empty, so its baseline is zero rows:
+                // rows a replay delivered before this first read are new (#1361).
+                var seen = emptyMap<String, Int>()
+                repository?.observeThreadRowCounts()?.collect { counts ->
+                    val grown = counts.filter { (id, count) -> count > (seen[id] ?: 0) }.keys
+                    seen = counts
+                    if (grown.isNotEmpty()) {
+                        updateAttention(entry) {
+                            attention =
+                                grown.fold(attention) { state, id ->
+                                    state.rowsAdded(id, viewing.isViewing(connection.serverId, id), UUID.randomUUID().toString())
+                                }
+                        }
+                    }
+                }
             }
         }
         scope.launch(entry.job) {

@@ -8,6 +8,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Session
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonElement
@@ -25,6 +26,13 @@ interface ConversationRepository {
     fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>>
 
     fun observeMessages(conversationId: String): Flow<List<ThreadItem>>
+
+    /**
+     * How many rows each conversation's thread holds on this repository (#1361), keyed by conversation id.
+     * A row appended raises its count; growth of an existing row does not. Defaulted empty for a repository
+     * that has no live thread store.
+     */
+    fun observeThreadRowCounts(): Flow<Map<String, Int>> = emptyFlow()
 
     /**
      * Emits the most-recent [Message] (by [Message.timestamp]) for the
@@ -142,6 +150,15 @@ interface ConversationRepository {
      * inherit "nothing announced" and need no override.
      */
     fun observeAnnouncedModel(conversationId: String): Flow<AnnouncedModel?> = flowOf(null)
+
+    /**
+     * Emits [conversationId]'s live refusal frames and session transitions (#1360), in wire order, as they
+     * arrive. Hot, nothing replayed: history pages, the cache and a reopened thread never emit here, which is
+     * what lets a consumer tell a refusal that just happened from a restored row.
+     *
+     * Default `emptyFlow()`, the same cascade-avoidance as [observeAnnouncedModel].
+     */
+    fun observeLiveRefusalEvents(conversationId: String): Flow<LiveRefusalEvent> = emptyFlow()
 
     /**
      * Emits the facts claude last reported about its own run for [conversationId] (#890): its build and the
@@ -605,6 +622,26 @@ interface ConversationRepository {
     ): HistoryPage = error("requestHistory is not implemented for this ConversationRepository")
 
     /**
+     * The history position saved for [conversationId] (#1354), or `null` when none is: never received,
+     * cleared, or unreadable. Read once when a thread opens, to resume its walk where the saved rows end.
+     *
+     * Default `null` — a repository with no cache always starts from the newest page.
+     */
+    suspend fun readHistoryPosition(conversationId: String): HistoryPosition? = null
+
+    /**
+     * Save [position] for [conversationId] beside its cached rows (#1354), or clear it with `null`. Called
+     * when an ask settles; a failed ask never calls it. Never throws for a storage failure: losing a
+     * position costs only a re-fetched page.
+     *
+     * Default does nothing.
+     */
+    suspend fun writeHistoryPosition(
+        conversationId: String,
+        position: HistoryPosition?,
+    ) {}
+
+    /**
      * Read the system prompt stored for [conversationId] (#823), one `request_system_prompt` per call.
      * Keyed by **conversation**, never by session: a conversation with nothing running reads normally,
      * and the read changes nothing on the daemon. The stored value keeps its three states apart (see
@@ -892,8 +929,8 @@ sealed interface ThreadItem {
      *
      * **[text] is claude-authored and unsanitized** — bounded daemon-side at 4 KiB, never cleaned. It is
      * held verbatim; the render boundary owes the control-character and escape stripping (see
-     * `BannerNoticeRow`). Consumers must render it inert and attributed to claude, must not persist it, and
-     * must not log it.
+     * `BannerNoticeRow`). Consumers must render it inert and attributed to claude and must not log it. The
+     * thread cache stores it as held (#1353), and a restored row renders through the same boundary.
      *
      * Identity: [occurredAt], the envelope's (or stored entry's) `ts` — the protocol's `(type, ts)` join
      * key with the type implied by this variant. Invariant: unique among a thread's banners. The thread's
@@ -914,30 +951,36 @@ sealed interface ThreadItem {
 
     /**
      * A finished compaction (#874): claude shrank the conversation's context, so it no longer remembers
-     * detail from above this point. Carried by the `compaction_boundary` frame, which is conversation-scoped
-     * with no `turn_id` and may arrive with no `compacting` edge before it, so the row drives no turn and no
-     * status indicator. **Not a session boundary** — it changes no above-the-line de-emphasis.
+     * detail from above this point, or tried to and failed. Drawn by a `compacting` falling edge (#1358) and
+     * filled in by the `compaction_boundary` frame that follows it, or appended by a `compaction_boundary`
+     * with no edge before it. Both frames are conversation-scoped with no `turn_id`, so the row drives no
+     * turn and no status indicator. **Not a session boundary** — it changes no above-the-line de-emphasis.
      *
      * Every field is narrowed from claude's assertion at decode, so no claude-authored string is held here.
      *
      * Identity: [occurredAt], the envelope's (or stored entry's) `ts` — the protocol's `(type, ts)` join key
      * with the type implied by this variant. Invariant: unique among a thread's compaction boundaries. The
      * thread's `LazyColumn` keys the row on it, so a duplicate crashes the list; uniqueness is a producer
-     * obligation — both thread writers skip one the thread already holds (`holdsCompactionBoundary`) —
-     * documented here and asserted in tests, not enforced at construction (as [SessionBoundary]).
+     * obligation — both thread writers skip one the thread already holds (`holdsCompactionBoundary`), and
+     * a boundary that fills a pending divider replaces it in place, or removes it when the boundary's `ts`
+     * is already held — documented here and asserted in tests, not enforced at construction (as [SessionBoundary]).
      *
-     * Never cached: history replay restores it.
+     * The thread cache stores it (#1353), since history loads only when the user asks.
      *
      * @param preTokens claude's context size before the compaction, or null when it stated none, stated
      *   `null`, or stated a value that is not a non-negative safe integer. Never a stand-in `0`.
      * @param postTokens The size after, on the same rule.
      * @param manual Whether claude's open `trigger` was exactly `manual`; every other token reads as unknown.
+     * @param failed Whether the `compacting` falling edge this divider was drawn from reported a failure
+     *   (#1358). A divider drawn from that edge carries no counts until a `compaction_boundary` replaces it,
+     *   taking the boundary's `ts`; a failed one is never replaced.
      */
     data class CompactionBoundary(
         val preTokens: Long?,
         val postTokens: Long?,
         val manual: Boolean,
         val occurredAt: Instant,
+        val failed: Boolean = false,
     ) : ThreadItem
 
     /**
@@ -950,7 +993,8 @@ sealed interface ThreadItem {
      *
      * **Every string here is claude-authored and unsanitized** — bounded daemon-side, never cleaned. Held
      * verbatim; the render boundary owes the stripping (see `ModelRefusalRow`). Consumers must render them
-     * inert and attributed to claude, must not persist them, and must not log them.
+     * inert and attributed to claude and must not log them. The thread cache stores them as held (#1353), and
+     * a restored row renders through the same boundary.
      *
      * Identity: the frame type — `fallbackModel != null` — plus [occurredAt], the envelope's (or stored
      * entry's) `ts`: the protocol's `(type, ts)` join key. Invariant: unique among a thread's refusal rows.
@@ -969,6 +1013,32 @@ sealed interface ThreadItem {
         val fallbackModel: String?,
         val banner: String,
         val bannerTruncated: Boolean,
+        val occurredAt: Instant,
+    ) : ThreadItem
+
+    /**
+     * A turn that failed or stopped early (#1356), kept so its reason survives the next turn — desktop's
+     * `turnBoundary` row. Built from a `turn_end` only when `stoppedTurn` says the turn did not end cleanly;
+     * a cancelled or successful turn has no row.
+     *
+     * Both strings already crossed `stoppedReportText`, so they hold no control, format or separator
+     * character and at most 256 UTF-8 bytes. They are still agent-authored: consumers render them as plain
+     * text after client-owned copy (see `StoppedTurnRow`) and must not log them. The thread cache stores the
+     * row (#1356), and a restored row renders through the same sanitizer.
+     *
+     * Identity: [turnId]. Invariant: unique among a thread's stopped rows. The thread's `LazyColumn` keys the
+     * row on it, so a duplicate crashes the list; uniqueness is a producer obligation — both thread writers
+     * skip one the thread already holds (`holdsStoppedTurn`) — documented here and asserted in tests, not
+     * enforced at construction (as [SessionBoundary]).
+     *
+     * @param reason The reason token the row's copy is chosen by; empty reads as a bare error.
+     * @param category The API error category the agent reported; empty when none.
+     * @param occurredAt When the turn ended: the stored entry's `ts`, or the arrival instant on the live lane.
+     */
+    data class StoppedTurn(
+        val turnId: String,
+        val reason: String,
+        val category: String,
         val occurredAt: Instant,
     ) : ThreadItem
 }
@@ -1040,6 +1110,21 @@ data class HistoryPage(
     val cursor: String,
     val atStart: Boolean,
 )
+
+/**
+ * How far back one thread's history has been received (#1354), saved beside its cached rows: the last
+ * received [HistoryPage]'s [cursor] and [atStart], desktop's received `coverage`. Only a received page sets
+ * it, even an empty one; the row count never implies it, and a thread only ever fed live has none.
+ *
+ * [cursor] is the daemon's opaque value, echoed verbatim and never logged, parsed, or used as a path or
+ * key — so [toString] leaves it out.
+ */
+data class HistoryPosition(
+    val cursor: String,
+    val atStart: Boolean,
+) {
+    override fun toString(): String = "HistoryPosition(atStart=$atStart)"
+}
 
 /**
  * One stored frame in a conversation's history log (#623) — a wire type, its payload, a timestamp and
@@ -1459,6 +1544,25 @@ data class AnnouncedModel(
     val model: String,
     val truncated: Boolean,
 )
+
+/**
+ * One live event of [ConversationRepository.observeLiveRefusalEvents] (#1360): what arms or clears a thread's
+ * switch-back offer. Wire SSOT: pyrycode `docs/protocol-mobile.md` § `model_refusal_fallback`.
+ */
+sealed interface LiveRefusalEvent {
+    /**
+     * A refusal frame as it arrived: the row it folded and, for a fallback frame, its `scope`, verbatim
+     * (`null` for `model_refusal_no_fallback`, which has none). `scope` is claude's open string; compare it,
+     * never render or log it.
+     */
+    data class Refused(
+        val refusal: ThreadItem.ModelRefusal,
+        val scope: String?,
+    ) : LiveRefusalEvent
+
+    /** The conversation's session was replaced (`session_transition`), which ends a Reset too. */
+    data object SessionReplaced : LiveRefusalEvent
+}
 
 /**
  * What claude reported about its own run for a conversation's latest turn (#890, pyrycode#2253/#2254) — the

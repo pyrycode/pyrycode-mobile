@@ -4,6 +4,7 @@ import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalContext
 import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.ModalOption
@@ -463,7 +464,7 @@ class RemoteConversationRepositoryTest {
         }
 
     // AC #2: a message_id present in both the chunk and a later live `message` appears once,
-    // position fixed at first occurrence; the live payload wins (last-write-in-place).
+    // position fixed at first occurrence; the held row is kept as it is (#1351).
     @Test
     fun observeMessages_dedupesByMessageId_fixingFirstPosition() =
         runTest {
@@ -476,18 +477,64 @@ class RemoteConversationRepositoryTest {
                 messageChunkEnvelope(
                     listOf(
                         chunkRow("c1", "m1", "user", "first"),
-                        chunkRow("c1", "m2", "assistant", "from-backfill"),
+                        chunkRow("c1", "m2", "user", "from-backfill"),
                     ),
                 ),
             )
             runCurrent()
-            pump.push(messageEnvelope("c1", "m2", "assistant", "from-live", "2026-05-31T12:00:00Z"))
+            pump.push(messageEnvelope("c1", "m2", "user", "from-live", "2026-05-31T12:00:00Z"))
             runCurrent()
 
             val thread = emissions.last()
             assertEquals(listOf("m1", "m2"), messageIds(thread))
-            // Same id, updated in place at its original index; the live payload replaces the row.
-            assertEquals("from-live", (thread[1] as ThreadItem.MessageItem).message.content)
+            assertEquals("from-backfill", (thread[1] as ThreadItem.MessageItem).message.content)
+        }
+
+    // #1351: another device's user message draws live at the end, naming its files by stored reference.
+    @Test
+    fun observeMessages_liveUserMessage_appendsRowWithAttachmentReferences() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(messageEnvelope("c1", "m1", "user", "first", "2026-05-31T10:00:00Z"))
+            runCurrent()
+            pump.push(
+                messageEnvelope(
+                    "c1",
+                    "peer-1",
+                    "user",
+                    "from desktop",
+                    "2026-05-31T11:00:00Z",
+                    attachmentIds = listOf(LIVE_ATTACHMENT_ID, "not-an-id", LIVE_ATTACHMENT_ID),
+                ),
+            )
+            runCurrent()
+
+            val thread = emissions.last()
+            assertEquals(listOf("m1", "peer-1"), messageIds(thread))
+            val peer = (thread.last() as ThreadItem.MessageItem).message
+            assertEquals(Role.User, peer.role)
+            assertEquals(listOf(MessageAttachment(LIVE_ATTACHMENT_ID)), peer.attachments)
+        }
+
+    // #1351: an assistant `message` (v1 / dispatch-leg only) draws no thread row.
+    @Test
+    fun observeMessages_liveAssistantMessage_addsNoRow() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(messageEnvelope("c1", "m1", "user", "first", "2026-05-31T10:00:00Z"))
+            runCurrent()
+            pump.push(messageEnvelope("c1", "m2", "assistant", "second", "2026-05-31T11:00:00Z"))
+            runCurrent()
+
+            assertEquals(listOf("m1"), messageIds(emissions.last()))
         }
 
     // AC #3: a `message` (and chunk) for a different conversation does not re-emit this flow.
@@ -5379,6 +5426,31 @@ class RemoteConversationRepositoryTest {
             assertEquals("the state must not remain active after a falling edge", false, compacting.last())
         }
 
+    // #1358: the same arm folds the thread's divider, behind the same `interactive` gate.
+    @Test
+    fun compacting_fallingEdge_drawsTheThreadDividerOnlyWhenInteractive() =
+        runTest {
+            for (interactive in listOf(true, false)) {
+                val pump = FakeSessionPump()
+                val repo =
+                    RemoteConversationRepository(
+                        pump,
+                        backgroundScope,
+                        negotiatedCapabilities = { if (interactive) setOf("interactive") else emptySet() },
+                    )
+                val thread = collectMessages(repo, "c1")
+                runCurrent()
+
+                pump.push(compactingEnvelope("c1", active = true, id = 1L))
+                pump.push(compactingEnvelope("c1", active = false, id = 2L))
+                runCurrent()
+
+                val expected =
+                    if (interactive) listOf(ThreadItem.CompactionBoundary(null, null, false, Instant.parse(TS))) else emptyList()
+                assertEquals(expected, thread.last())
+            }
+        }
+
     // A re-fired rising edge for an already-compacting conversation is an idempotent Set add — no
     // re-emit. Unlike `api_retry` there is no counter to climb, so nothing distinguishes the repeat.
     @Test
@@ -7065,7 +7137,7 @@ class RemoteConversationRepositoryTest {
             runCurrent()
             pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "files"))
             runCurrent()
-            pump.push(messageEnvelope("c1", "m2", "assistant", "done", "2026-05-31T10:01:00Z"))
+            pump.push(messageEnvelope("c1", "m2", "user", "done", "2026-05-31T10:01:00Z"))
             runCurrent()
 
             assertEquals(listOf("m1", "tu1", "m2"), messageIds(emissions.last()))
@@ -7401,7 +7473,7 @@ class RemoteConversationRepositoryTest {
             runCurrent()
             pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear"))
             runCurrent()
-            pump.push(messageEnvelope("c1", "m2", "assistant", "second", "2026-05-31T10:01:00Z"))
+            pump.push(messageEnvelope("c1", "m2", "user", "second", "2026-05-31T10:01:00Z"))
             runCurrent()
 
             assertEquals(listOf("m1", "boundary:Clear", "m2"), threadShape(emissions.last()))
@@ -7622,7 +7694,7 @@ class RemoteConversationRepositoryTest {
 
             pump.push(messageChunkEnvelope(listOf(chunkRow("c1", "h1", "user", "history"))))
             runCurrent()
-            pump.push(messageEnvelope("c1", "m1", "assistant", "hi", "2026-05-31T10:00:00Z"))
+            pump.push(messageEnvelope("c1", "m1", "user", "hi", "2026-05-31T10:00:00Z"))
             runCurrent()
             pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear"))
             runCurrent()
@@ -7770,7 +7842,7 @@ class RemoteConversationRepositoryTest {
             runCurrent()
             pump.push(unrecognizedMessageEnvelope("c1", "line_type", "wobble", "{}"))
             runCurrent()
-            pump.push(messageEnvelope("c1", "m2", "assistant", "second", "2026-05-31T10:01:00Z"))
+            pump.push(messageEnvelope("c1", "m2", "user", "second", "2026-05-31T10:01:00Z"))
             runCurrent()
 
             assertEquals(listOf("m1", "unrecognized:LineType", "m2"), threadShape(emissions.last()))
@@ -8040,7 +8112,7 @@ class RemoteConversationRepositoryTest {
 
             pump.push(messageEnvelope("c1", "m1", "user", "first", "2026-05-31T10:00:00Z"))
             pump.push(bannerEnvelope("c1", "warning", id = 2L))
-            pump.push(messageEnvelope("c1", "m2", "assistant", "second", "2026-05-31T10:01:00Z"))
+            pump.push(messageEnvelope("c1", "m2", "user", "second", "2026-05-31T10:01:00Z"))
             runCurrent()
 
             assertEquals(listOf("m1", "banner:Warning", "m2"), threadShape(c1.last()))
@@ -8209,7 +8281,7 @@ class RemoteConversationRepositoryTest {
 
             pump.push(messageEnvelope("c1", "m1", "user", "first", "2026-05-31T10:00:00Z"))
             pump.push(refusalEnvelope("c1", fallbackModel = "b", id = 2L))
-            pump.push(messageEnvelope("c1", "m2", "assistant", "second", "2026-05-31T10:01:00Z"))
+            pump.push(messageEnvelope("c1", "m2", "user", "second", "2026-05-31T10:01:00Z"))
             runCurrent()
 
             assertEquals(listOf("m1", "refusal:fallback", "m2"), threadShape(c1.last()))
@@ -8251,7 +8323,7 @@ class RemoteConversationRepositoryTest {
             val thread = collectMessages(repo, "c1")
             runCurrent()
 
-            pump.push(messageEnvelope("c1", "m1", "assistant", "partial answer", "2026-05-31T10:00:00Z"))
+            pump.push(messageEnvelope("c1", "m1", "user", "partial answer", "2026-05-31T10:00:00Z"))
             pump.push(stallEnvelope("c1"))
             runCurrent()
             val before = thread.last()
@@ -8390,7 +8462,7 @@ class RemoteConversationRepositoryTest {
 
             pump.push(messageEnvelope("c1", "m1", "user", "first", "2026-05-31T10:00:00Z"))
             pump.push(compactionEnvelope("c1", id = 2L))
-            pump.push(messageEnvelope("c1", "m2", "assistant", "second", "2026-05-31T10:01:00Z"))
+            pump.push(messageEnvelope("c1", "m2", "user", "second", "2026-05-31T10:01:00Z"))
             runCurrent()
 
             assertEquals(listOf("m1", "compaction:24000->3000:true", "m2"), threadShape(c1.last()))
@@ -8785,8 +8857,8 @@ class RemoteConversationRepositoryTest {
             runCurrent()
 
             // Replayed-from-ring tail (event_id > advertised cursor), then the live stream that follows.
-            pump.push(messageEnvelope("c1", "m101", "assistant", "replayed-1", TS, eventId = 101))
-            pump.push(messageEnvelope("c1", "m102", "assistant", "replayed-2", TS, eventId = 102))
+            pump.push(messageEnvelope("c1", "m101", "user", "replayed-1", TS, eventId = 101))
+            pump.push(messageEnvelope("c1", "m102", "user", "replayed-2", TS, eventId = 102))
             runCurrent()
             pump.push(messageEnvelope("c1", "m103", "user", "live", "2026-05-31T12:00:00Z", eventId = 103))
             runCurrent()
@@ -8795,10 +8867,10 @@ class RemoteConversationRepositoryTest {
             assertEquals(103L, cursor.latest)
         }
 
-    // Defensive overlap: a replayed row whose message_id the live stream also carries folds in place
-    // (one row, last write wins) via the existing appendMessages dedup — never a duplicate row (AC#3).
+    // Defensive overlap: a replayed row whose message_id the live stream also carries stays one row,
+    // kept as first drawn (#1351) — never a duplicate row (AC#3).
     @Test
-    fun replayedMessageOverlappingLive_foldsInPlaceNoDuplicateRow() =
+    fun replayedMessageOverlappingLive_keepsHeldRowNoDuplicateRow() =
         runTest {
             val pump = FakeSessionPump()
             val cursor = ReplayCursor()
@@ -8813,14 +8885,14 @@ class RemoteConversationRepositoryTest {
             val emissions = collectMessages(repo, "c1")
             runCurrent()
 
-            pump.push(messageEnvelope("c1", "m1", "assistant", "from-replay", TS, eventId = 101))
+            pump.push(messageEnvelope("c1", "m1", "user", "from-replay", TS, eventId = 101))
             runCurrent()
-            pump.push(messageEnvelope("c1", "m1", "assistant", "from-live", "2026-05-31T12:00:00Z", eventId = 102))
+            pump.push(messageEnvelope("c1", "m1", "user", "from-live", "2026-05-31T12:00:00Z", eventId = 102))
             runCurrent()
 
             val thread = emissions.last()
             assertEquals(listOf("m1"), messageIds(thread))
-            assertEquals("from-live", (thread[0] as ThreadItem.MessageItem).message.content)
+            assertEquals("from-replay", (thread[0] as ThreadItem.MessageItem).message.content)
             assertEquals(102L, cursor.latest)
         }
 
@@ -10074,6 +10146,7 @@ class RemoteConversationRepositoryTest {
                 is ThreadItem.Banner -> "banner:${it.level}"
                 is ThreadItem.CompactionBoundary -> "compaction:${it.preTokens}->${it.postTokens}:${it.manual}"
                 is ThreadItem.ModelRefusal -> if (it.fallbackModel != null) "refusal:fallback" else "refusal:no-fallback"
+                is ThreadItem.StoppedTurn -> "stopped:${it.reason}"
             }
         }
 
@@ -10130,17 +10203,20 @@ class RemoteConversationRepositoryTest {
         ts: String,
         id: Long = 1L,
         eventId: Long? = null,
-    ): Envelope =
-        Envelope(
+        attachmentIds: List<String>? = null,
+    ): Envelope {
+        val attachments = attachmentIds?.joinToString(",", ""","attachment_ids":[""", "]") { "\"$it\"" }.orEmpty()
+        return Envelope(
             id = id,
             type = "message",
             ts = ts,
             payload =
                 MobileJson.parseToJsonElement(
-                    """{"conversation_id":"$conversationId","message_id":"$messageId","role":"$role","text":"$text"}""",
+                    """{"conversation_id":"$conversationId","message_id":"$messageId","role":"$role","text":"$text"$attachments}""",
                 ),
             eventId = eventId,
         )
+    }
 
     private fun TestScope.collectStall(
         repo: RemoteConversationRepository,
@@ -10886,6 +10962,7 @@ class RemoteConversationRepositoryTest {
 
     private companion object {
         const val TS = "2026-05-31T00:00:00Z"
+        const val LIVE_ATTACHMENT_ID = "3f2b8c1e-5d4a-4b6f-9a2e-7c1d0e9f8a6b"
 
         /** A #810 `tool_use` payload with input fields and a parent; `CONV` is the conversation placeholder. */
         const val TOOL_USE_810 =

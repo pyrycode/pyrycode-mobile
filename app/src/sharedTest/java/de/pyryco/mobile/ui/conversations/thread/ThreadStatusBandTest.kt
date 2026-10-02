@@ -37,7 +37,7 @@ import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.components.STATUS_GLYPH_TEST_TAG
-import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
+import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -69,7 +69,7 @@ class ThreadStatusBandTest {
         val isCompacting: Boolean = false,
         val resetting: ResetStatus? = null,
         val isStalled: Boolean = false,
-        val turnOutcome: TurnOutcomeReport? = null,
+        val turnOutcome: TurnRecoveryNotice? = null,
         val runningTool: Boolean = false,
         val taskCount: Int = 0,
         val waiting: Boolean = false,
@@ -162,7 +162,7 @@ class ThreadStatusBandTest {
             Reading("compaction", isBusy = true, isCompacting = true),
             Reading("reset", isBusy = true, resetting = ResetStatus(ResetStatus.Phase.WrappingUp, ResetStatus.Handoff.Pending)),
             Reading("stall", isBusy = true, isStalled = true),
-            Reading("turn outcome", turnOutcome = TurnOutcomeReport(TurnOutcomeReport.Kind.Interrupted, emptyList(), null)),
+            Reading("turn outcome", turnOutcome = TurnRecoveryNotice.ContextTooLong),
             Reading("task pill, idle", taskCount = 2),
             Reading("task pill, busy", isBusy = true, isThinking = true, taskCount = 2),
         )
@@ -177,6 +177,14 @@ class ThreadStatusBandTest {
             composeTestRule.waitForIdle()
             glyphs.assertCountEquals(1)
             val bounds = glyphs[0].getUnclippedBoundsInRoot()
+            if (state.turnOutcome != null) {
+                // #1357: every recovery notice wraps to two lines even at 412dp, raising the band, and the glyph
+                // stays centred on it; its leading edge must not move.
+                val reference = expected ?: bounds
+                assertEquals("glyph left in ${state.name}", reference.left, bounds.left)
+                assertEquals("glyph right in ${state.name}", reference.right, bounds.right)
+                return@forEach
+            }
             assertEquals("glyph bounds in ${state.name}", expected ?: bounds, bounds)
             expected = bounds
         }

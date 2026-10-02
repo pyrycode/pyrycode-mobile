@@ -272,6 +272,100 @@ class HostConversationSourceAttentionTest {
             )
         }
 
+    @Test
+    fun aNewRowMarksABackgroundConversationUnreadBeforeItsTurnEndsAndGrowthOfARowDoesNot() =
+        withSource { a, _, source ->
+            val alerts = collectAlerts(source)
+            a.rows.counts.value = mapOf("c" to 1)
+            runCurrent()
+            assertEquals(mapOf("a" to mapOf("c" to ConversationAttention.Unread), "b" to emptyMap()), source.attention.value)
+
+            source.markOpened("a", "c")
+            // More text in the same bubble or a tool result changes no count; another conversation's row is its own.
+            a.rows.counts.value = mapOf("c" to 1, "d" to 1)
+            runCurrent()
+            assertEquals(mapOf("d" to ConversationAttention.Unread), source.attention.value["a"])
+
+            a.rows.counts.value = mapOf("c" to 2, "d" to 1)
+            runCurrent()
+            assertEquals(mapOf("c" to ConversationAttention.Unread, "d" to ConversationAttention.Unread), source.attention.value["a"])
+            // The turn-completed alert stays on `TurnEnd`.
+            assertEquals(emptyList<AttentionAlert>(), alerts)
+        }
+
+    @Test
+    fun aViewedConversationNeverTurnsUnreadFromItsOwnRowsAndOpeningItReadsIt() =
+        withSource { a, _, source ->
+            val view = viewing.view("a", "c")
+            // The thread's own backfill on opening.
+            a.rows.counts.value = mapOf("c" to 5)
+            runCurrent()
+            assertEquals(emptyMap<String, ConversationAttention>(), source.attention.value["a"])
+
+            view.close()
+            a.rows.counts.value = mapOf("c" to 6)
+            runCurrent()
+            assertEquals(mapOf("c" to ConversationAttention.Unread), source.attention.value["a"])
+
+            viewing.view("a", "c")
+            a.rows.counts.value = mapOf("c" to 7)
+            runCurrent()
+            assertEquals(emptyMap<String, ConversationAttention>(), source.attention.value["a"])
+        }
+
+    @Test
+    fun rowUnreadSurvivesARestartBesideAPositionStoredBeforeIt() =
+        runTest {
+            val cache = MemoryCache()
+            cache.positions["a"] = mapOf("legacy" to ReadPosition("t1", null), "seen" to ReadPosition("t2", "t2"))
+            val first = Host("a")
+            val before =
+                HostConversationSource(MutableStateFlow(listOf(first.entry)), { null }, StandardTestDispatcher(testScheduler), cache)
+            runCurrent()
+            first.rows.counts.value = mapOf("c" to 1)
+            runCurrent()
+            before.dispose()
+
+            val after =
+                HostConversationSource(MutableStateFlow(listOf(Host("a").entry)), { null }, StandardTestDispatcher(testScheduler), cache)
+            try {
+                runCurrent()
+                assertEquals(
+                    mapOf("legacy" to ConversationAttention.Unread, "c" to ConversationAttention.Unread),
+                    after.attention.value["a"],
+                )
+                after.markOpened("a", "c")
+                runCurrent()
+                val stored = cache.positions.getValue("a").getValue("c")
+                assertEquals(stored.completedTurnId, stored.readTurnId)
+            } finally {
+                after.dispose()
+            }
+        }
+
+    @Test
+    fun aReplacedRepositoryCountsFromZeroSoReplayedRowsMarkUnreadAndBackfillDoesNot() =
+        withSource { a, _, source ->
+            a.rows.counts.value = mapOf("replayed" to 3, "quiet" to 2, "open" to 4)
+            runCurrent()
+            source.markOpened("a", "replayed")
+            source.markOpened("a", "quiet")
+            viewing.view("a", "open")
+            runCurrent()
+            assertEquals(emptyMap<String, ConversationAttention>(), source.attention.value["a"])
+
+            a.repositories.value = null
+            runCurrent()
+            // The replay lands in the new repository's empty projection before the source first reads it,
+            // and the open thread backfills its history again.
+            val next = RowCountingRepository()
+            next.counts.value = mapOf("replayed" to 1, "open" to 4)
+            a.repositories.value = next
+            runCurrent()
+
+            assertEquals(mapOf("replayed" to ConversationAttention.Unread), source.attention.value["a"])
+        }
+
     // #1452: each busy fact blinks only its own conversation on its own host, until that fact's clear edge.
     @Test
     fun eachBusyFactRunsOnlyItsConversationUntilItsOwnClearEdge() =
@@ -297,6 +391,10 @@ class HostConversationSourceAttentionTest {
 
                         pump.push(off(id))
                         runCurrent()
+                        // #1361: a session transition appends a boundary row, and (#1358) a compacting falling
+                        // edge appends a compaction divider; either marks the background chat unread, so reading
+                        // it leaves only the busy edge under test.
+                        if (off(id).first == "session_transition" || fact == "compacting") source.markOpened(host, id)
                         assertEquals(
                             fact,
                             mapOf("a" to emptyMap<String, ConversationAttention>(), "b" to emptyMap()),
@@ -424,7 +522,8 @@ class HostConversationSourceAttentionTest {
     private class Host(
         id: String,
     ) {
-        val repositories = MutableStateFlow<ConversationRepository?>(FakeConversationRepository())
+        val rows = RowCountingRepository()
+        val repositories = MutableStateFlow<ConversationRepository?>(rows)
         val status = MutableStateFlow(ConnectionStatus(RelayLinkStatus.Idle, PyrycodeLinkStatus.Down))
         val events = MutableSharedFlow<LiveSessionEvent>(extraBufferCapacity = 16)
         val modals = MutableStateFlow(HostModalState())
@@ -440,6 +539,13 @@ class HostConversationSourceAttentionTest {
                     },
                 )
         }
+    }
+
+    /** A connection's repository whose thread row counts the test sets directly (#1361). */
+    private class RowCountingRepository : ConversationRepository by FakeConversationRepository() {
+        val counts = MutableStateFlow<Map<String, Int>>(emptyMap())
+
+        override fun observeThreadRowCounts() = counts
     }
 
     private class MemoryCache : ConversationCache {

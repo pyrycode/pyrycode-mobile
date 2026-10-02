@@ -20,8 +20,8 @@ private val AtNewestEndTolerance = 4.dp
 
 /**
  * One layout frame of the thread list as the follow rule reads it (#1314): the first visible row's key,
- * index and scroll offset, a [content] signature whose change means the newest rows grew, and whether a
- * scroll, such as a finger on the list, is in progress.
+ * index and scroll offset, a [content] signature whose change means the newest rows grew, whether a
+ * scroll, such as a finger on the list, is in progress, and how many prompt rows lead the list (#1449).
  */
 internal data class ListFrame(
     val anchorKey: Any?,
@@ -29,6 +29,7 @@ internal data class ListFrame(
     val anchorOffset: Int,
     val content: Any?,
     val scrolling: Boolean = false,
+    val promptRows: Int = 0,
 )
 
 internal data class FollowStep(
@@ -46,6 +47,10 @@ internal data class FollowStep(
  * following, and a reply streaming below the viewport changes no visible row. So any frame that is not a
  * scroll retries the pin while following and off index 0: the newest row's content changing, or the finger
  * lifting.
+ *
+ * A reader whose anchor is a prompt row is reading the newest content, so when the prompt leaves, the reader is
+ * at the newest end and follows (#1449). The keyed position cannot find the vanished row and keeps its index,
+ * which then names an older row, so without this the departure would read as a scroll away from the end.
  */
 internal fun followStep(
     previous: ListFrame?,
@@ -55,6 +60,7 @@ internal fun followStep(
 ): FollowStep {
     val atEnd = current.anchorIndex == 0 && current.anchorOffset <= tolerancePx
     if (previous == null) return FollowStep(following = atEnd, pin = false)
+    if (previous.anchorIndex < previous.promptRows && current.promptRows == 0) return FollowStep(following = true, pin = true)
     if (previous.anchorKey != current.anchorKey || previous.anchorOffset != current.anchorOffset) {
         return FollowStep(following = atEnd, pin = false)
     }
@@ -67,7 +73,8 @@ internal fun followStep(
  * [newestRow] is the newest row's content, so a streamed delta is growth even while that row is below the
  * viewport. While a prompt is mounted row content and sizes are left out of the growth signature, so editing
  * a question or permission card never pulls the list (#1304); a new prompt or row still pins a reader who is
- * following.
+ * following. [promptRows] counts the prompt rows ahead of the message rows, so a reader on a prompt follows
+ * again when it leaves (#1449).
  */
 @Composable
 internal fun FollowNewestEnd(
@@ -76,6 +83,7 @@ internal fun FollowNewestEnd(
     newestRow: Any?,
     promptIdentity: Any?,
     promptPresent: Boolean,
+    promptRows: Int,
     sentMessages: Flow<Unit>,
 ) {
     val tolerancePx = with(LocalDensity.current) { AtNewestEndTolerance.roundToPx() }
@@ -83,6 +91,7 @@ internal fun FollowNewestEnd(
     val newest by rememberUpdatedState(newestRow)
     val prompt by rememberUpdatedState(promptIdentity)
     val maskSizes by rememberUpdatedState(promptPresent)
+    val promptRowCount by rememberUpdatedState(promptRows)
     // Read only inside the collectors below, never inside the snapshotFlow, so it cannot drive a frame.
     val follow = remember(listState) { Following() }
     LaunchedEffect(listState, tolerancePx) {
@@ -96,6 +105,7 @@ internal fun FollowNewestEnd(
                 anchorOffset = listState.firstVisibleItemScrollOffset,
                 content = listOf(newestKey, prompt, newest.takeUnless { maskSizes }, anchor?.size.takeUnless { maskSizes }),
                 scrolling = listState.isScrollInProgress,
+                promptRows = promptRowCount,
             )
         }.distinctUntilChanged()
             .collect { frame ->

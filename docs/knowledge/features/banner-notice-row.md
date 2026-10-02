@@ -166,15 +166,18 @@ All four of the exhaustive `when`s over `ThreadItem` gained a `Banner` arm:
   that also needs every `ThreadItem` arm to keep compiling, the same fourth site #608's Lessons learned
   named.
 
-## Cache — never persisted
+## Cache — persisted (#1353)
 
-`cacheableThreadRows` ([Conversation cache](conversation-cache.md)) filters out `ThreadItem.Banner`
-alongside `ThreadItem.UnrecognizedMessage` — claude-authored prose never reaches app-private disk.
-`FileConversationCache.toRecord` throws `IllegalStateException("banner rows are never cached")` if it
-ever receives one, the same defensive-throw shape as the unrecognized-row arm. `settledThreadRows` (the
-narrower "may still draw, connection gone" filter) keeps banner rows, so a thread that has lost its
-connection still shows them; only `cacheableThreadRows` (the "may reach disk" filter) drops them. History
-replay is what restores a banner after a cold start or a fresh cache — not the cache.
+`cacheableThreadRows` ([Conversation cache](conversation-cache.md)) keeps `ThreadItem.Banner`:
+`FileConversationCache.toRecord` maps it to `CachedBanner(level, text, truncated, occurredAt)`, stored
+verbatim as message content already is, so a restored thread draws its banners in place and the render
+path owns the same stripping either way. Only `ThreadItem.UnrecognizedMessage` still throws from
+`toRecord` — its KDoc forbids persisting raw model-adjacent JSON, and this cache is plain files.
+Before #1353 this row was dropped here and restored by history replay on every open (#873); once
+history loads only on the user's request, a reopened or offline thread stopped getting that replay, so
+the row had to be cached instead. `occurredAt` is the row's dedupe key both ways — `ThreadRow.listKey()`
+for the `LazyColumn`, `HistoryPageReducer.holdsBanner` for the merge, and `decodeThread` for rejecting a
+document that repeats it.
 
 ## Testing
 
@@ -224,6 +227,8 @@ replay is what restores a banner after a cold start or a fresh cache — not the
 - Structural precedent: [`UnrecognizedMessageRow`](unrecognized-message-row.md) — same three-site landing
   shape (type + live decode + history decode + row in one ticket), but the opposite dedup posture; read
   both before adding a fourth `ThreadItem` variant that carries a wire-minted identity.
+- Sibling row: [`StoppedTurnRow`](stopped-turn-row.md) (#1356) — same bare muted-text treatment, but keyed
+  on `turnId` rather than a wire-minted `(type, ts)`, since a turn ends once.
 - Consumers: [`Conversation repository`](conversation-repository.md) (`ThreadItem`, co-located types),
   [`Remote conversation repository`](remote-conversation-repository.md) (live decode), [`Thread
   screen`](thread-screen.md) (`LazyColumn` key, render arm, `timestamp()`), [`Conversation

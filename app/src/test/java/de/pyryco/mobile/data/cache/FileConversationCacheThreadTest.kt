@@ -11,6 +11,7 @@ import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.BoundaryReason
+import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UnrecognizedSite
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -19,6 +20,8 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -220,59 +223,176 @@ class FileConversationCacheThreadTest {
             assertTrue("unrecognized raw leaked into the document", !bytes.contains("mystery"))
         }
 
+    // ---- #1353: banners, compaction dividers and refusals are kept ----------------------------
+
+    private fun banner(
+        at: String,
+        level: BannerLevel = BannerLevel.Warning,
+        truncated: Boolean = false,
+    ) = ThreadItem.Banner(level, "hook said no at $at", truncated, Instant.parse(at))
+
+    private fun compaction(
+        at: String,
+        pre: Long? = 24000,
+        post: Long? = 3000,
+        manual: Boolean = true,
+        failed: Boolean = false,
+    ) = ThreadItem.CompactionBoundary(pre, post, manual, Instant.parse(at), failed)
+
+    private fun refusal(
+        at: String,
+        fallback: String? = "claude-sonnet-5",
+        truncated: Boolean = false,
+    ) = ThreadItem.ModelRefusal("claude-opus-5-5", fallback, "refused at $at", truncated, Instant.parse(at))
+
     @Test
-    fun `banner rows are never stored`() =
+    fun `banner compaction and refusal rows round-trip field-for-field in place`() =
         runTest {
-            val settled = message("m1")
-            val banner =
-                ThreadItem.Banner(
-                    BannerLevel.Warning,
-                    "hook said no",
-                    truncated = false,
-                    occurredAt = Instant.parse("2026-09-05T10:00:00Z"),
+            val rows =
+                listOf(
+                    message("m1", role = Role.User),
+                    banner("2026-09-22T10:00:00.123456789Z"),
+                    banner("2026-09-22T10:00:01Z", BannerLevel.Notice, truncated = true),
+                    compaction("2026-09-22T10:00:02Z"),
+                    compaction("2026-09-22T10:00:03Z", pre = null, post = null, manual = false),
+                    compaction("2026-09-22T10:00:03.5Z", pre = null, post = null, manual = false, failed = true),
+                    boundary(),
+                    refusal("2026-09-22T10:00:04Z"),
+                    refusal("2026-09-22T10:00:05Z", fallback = null, truncated = true),
+                    message("m2"),
                 )
-            cache().writeThread("server-a", "conv-1", listOf(settled, banner)).getOrThrow()
+            assertTrue(cache().writeThread("server-a", "conv-1", rows).isSuccess)
 
-            assertEquals(listOf(settled), cache().readThread("server-a", "conv-1"))
-            assertTrue("banner text leaked into the document", !threadFiles().single().readText().contains("hook said no"))
+            assertEquals(rows, cache().readThread("server-a", "conv-1"))
         }
 
     @Test
-    fun `compaction rows are never stored`() =
+    fun `a refusal with and without a fallback on one instant both read back`() =
         runTest {
-            val settled = message("m1")
-            val compaction = ThreadItem.CompactionBoundary(24000, 3000, manual = true, occurredAt = Instant.parse("2026-09-05T10:00:00Z"))
-            cache().writeThread("server-a", "conv-1", listOf(settled, compaction)).getOrThrow()
-
-            assertEquals(listOf(settled), cache().readThread("server-a", "conv-1"))
-        }
-
-    @Test
-    fun `model refusal rows are never stored`() =
-        runTest {
-            val settled = message("m1")
-            val refusal =
-                ThreadItem.ModelRefusal(
-                    originalModel = "claude-opus-5-5",
-                    fallbackModel = "claude-sonnet-5",
-                    banner = "refused and retried",
-                    bannerTruncated = false,
-                    occurredAt = Instant.parse("2026-09-05T10:00:00Z"),
-                )
-            cache().writeThread("server-a", "conv-1", listOf(settled, refusal)).getOrThrow()
-
-            assertEquals(listOf(settled), cache().readThread("server-a", "conv-1"))
-            assertTrue("refusal banner leaked into the document", !threadFiles().single().readText().contains("refused and retried"))
-        }
-
-    @Test
-    fun `only the newest rows are kept`() =
-        runTest {
-            val rows = (1..MAX_CACHED_THREAD_ROWS + 5).map { message("m$it") }
+            // Two frame types, so two list keys: the type half of the identity keeps both.
+            val rows = listOf(refusal("2026-09-22T10:00:00Z"), refusal("2026-09-22T10:00:00Z", fallback = null))
             cache().writeThread("server-a", "conv-1", rows).getOrThrow()
 
-            assertEquals(rows.takeLast(MAX_CACHED_THREAD_ROWS), cache().readThread("server-a", "conv-1"))
+            assertEquals(rows, cache().readThread("server-a", "conv-1"))
         }
+
+    @Test
+    fun `a thread document holding only messages and boundaries still reads`() =
+        runTest {
+            cache().writeThread("server-a", "conv-1", listOf(message("m1"))).getOrThrow()
+            // The pre-#1353 row shape, verbatim: no banner, compaction or refusal key on any row.
+            threadFiles().single().writeText(
+                """{"version":1,"rows":[{"message":{"id":"m0","sessionId":"session-1","role":"User","content":"hi",""" +
+                    """"timestamp":"2026-09-22T10:11:12.123456789Z"}},{"boundary":{"previousSessionId":"session-1",""" +
+                    """"newSessionId":"session-2","reason":"Clear","occurredAt":"2026-09-22T11:00:00Z"}}]}""",
+            )
+
+            val expected = message("m0", role = Role.User).let { it.copy(message = it.message.copy(content = "hi")) }
+            assertEquals(listOf(expected, boundary()), cache().readThread("server-a", "conv-1"))
+        }
+
+    // #1358: a divider saved before failures were kept has no failed key and reads as not failed.
+    @Test
+    fun `a compaction row saved without the failed key reads as not failed`() =
+        runTest {
+            cache().writeThread("server-a", "conv-1", listOf(message("m1"))).getOrThrow()
+            threadFiles().single().writeText(
+                """{"version":1,"rows":[{"compaction":{"manual":false,"occurredAt":"2026-09-22T10:00:02Z"}}]}""",
+            )
+
+            assertEquals(
+                listOf(compaction("2026-09-22T10:00:02Z", pre = null, post = null, manual = false)),
+                cache().readThread("server-a", "conv-1"),
+            )
+        }
+
+    @Test
+    fun `a document repeating a banner compaction or refusal key or mixing two kinds reads empty`() =
+        runTest {
+            cache()
+                .writeThread(
+                    "server-a",
+                    "conv-1",
+                    listOf(
+                        banner("2026-09-22T10:00:00Z"),
+                        banner("2026-09-22T10:00:01Z"),
+                        compaction("2026-09-22T10:00:02Z"),
+                        compaction("2026-09-22T10:00:03Z"),
+                        refusal("2026-09-22T10:00:04Z"),
+                        refusal("2026-09-22T10:00:05Z"),
+                    ),
+                ).getOrThrow()
+            val document = threadFiles().single()
+            val healthy = document.readText()
+
+            // Each repeats one list key the thread's LazyColumn would throw on.
+            val tampered =
+                listOf(
+                    healthy.replace("\"2026-09-22T10:00:01Z\"", "\"2026-09-22T10:00:00Z\""),
+                    healthy.replace("\"2026-09-22T10:00:03Z\"", "\"2026-09-22T10:00:02Z\""),
+                    healthy.replace("\"2026-09-22T10:00:05Z\"", "\"2026-09-22T10:00:04Z\""),
+                    // One row carrying a banner and a compaction record.
+                    healthy.replaceFirst(
+                        "{\"banner\":",
+                        "{\"compaction\":{\"manual\":true,\"occurredAt\":\"2026-09-22T09:00:00Z\"},\"banner\":",
+                    ),
+                )
+            tampered.forEach { text ->
+                assertTrue("tamper did not apply", text != healthy)
+                document.writeText(text)
+                assertEquals(text, emptyList<ThreadItem>(), cache().readThread("server-a", "conv-1"))
+            }
+        }
+
+    // ---- #1356: a stopped turn's row is kept ----------------------------------------------------
+
+    private fun stopped(
+        turnId: String,
+        reason: String = "prompt_too_long",
+        category: String = "",
+    ) = ThreadItem.StoppedTurn(turnId, reason, category, Instant.parse("2026-10-02T10:00:00.5Z"))
+
+    @Test
+    fun `stopped turn rows round-trip field-for-field in place through a fresh instance`() =
+        runTest {
+            val rows =
+                listOf(
+                    message("m1", role = Role.User),
+                    stopped("turn-1", category = "overloaded"),
+                    message("m2"),
+                    stopped("turn-2", reason = ""),
+                )
+            assertTrue(cache().writeThread("server-a", "conv-1", rows).isSuccess)
+
+            // A fresh instance over the same root is what a process restart reads.
+            assertEquals(rows, cache().readThread("server-a", "conv-1"))
+        }
+
+    @Test
+    fun `a document repeating a stopped turn id reads empty`() =
+        runTest {
+            cache().writeThread("server-a", "conv-1", listOf(stopped("turn-1"), stopped("turn-2"))).getOrThrow()
+            val document = threadFiles().single()
+            val tampered = document.readText().replace("\"turn-2\"", "\"turn-1\"")
+            document.writeText(tampered)
+
+            assertEquals(emptyList<ThreadItem>(), cache().readThread("server-a", "conv-1"))
+        }
+
+    @Test
+    fun `the row limit is one hundred thousand`() {
+        assertEquals(100_000, MAX_CACHED_THREAD_ROWS)
+    }
+
+    @Test
+    fun `past the row limit the newest settled rows are kept`() {
+        // Called directly: the limit is the filter's, and a 100k-row document write proves nothing more.
+        val rows = (1..MAX_CACHED_THREAD_ROWS + 5).map { message("m$it") } + banner("2026-09-22T10:00:00Z")
+
+        val kept = cacheableThreadRows(rows + unrecognized("u1") + message("live", isStreaming = true))
+
+        assertEquals(rows.takeLast(MAX_CACHED_THREAD_ROWS), kept)
+    }
 
     @Test
     fun `threads are isolated per conversation and per host`() =
@@ -304,7 +424,7 @@ class FileConversationCacheThreadTest {
                     "{\"version\":1,\"rows\":[",
                     "not json",
                     "{\"version\":99,\"rows\":[]}",
-                    // A row that is neither a message nor a boundary.
+                    // A row of no kind at all.
                     "{\"version\":1,\"rows\":[{}]}",
                 )
             cache().writeThread("server-a", "conv-1", listOf(message("m1"))).getOrThrow()
@@ -453,6 +573,134 @@ class FileConversationCacheThreadTest {
 
             assertTrue("expected a ConversationCacheException, got $error", error is ConversationCacheException)
             assertEquals(null, error?.cause)
+        }
+
+    // --- #1354: the saved history position, beside the rows in the thread document ---------------------
+
+    @Test
+    fun `a history position round-trips beside the rows through a fresh instance`() =
+        runTest {
+            val position = HistoryPosition(cursor = "opaque-cursor", atStart = false)
+            cache().writeThread("server-a", "conv-1", listOf(message("m1"))).getOrThrow()
+            cache().writeHistoryPosition("server-a", "conv-1", position).getOrThrow()
+
+            assertEquals(position, cache().readHistoryPosition("server-a", "conv-1"))
+            assertEquals(listOf(message("m1")), cache().readThread("server-a", "conv-1"))
+            assertEquals(1, threadFiles().size)
+        }
+
+    @Test
+    fun `a row write keeps the stored position and a position write keeps the stored rows`() =
+        runTest {
+            val first = HistoryPosition(cursor = "c1", atStart = false)
+            cache().writeHistoryPosition("server-a", "conv-1", first).getOrThrow()
+            cache().writeThread("server-a", "conv-1", listOf(message("m1"), message("m2"))).getOrThrow()
+            assertEquals(first, cache().readHistoryPosition("server-a", "conv-1"))
+
+            val atStart = HistoryPosition(cursor = "", atStart = true)
+            cache().writeHistoryPosition("server-a", "conv-1", atStart).getOrThrow()
+            assertEquals(listOf(message("m1"), message("m2")), cache().readThread("server-a", "conv-1"))
+            assertEquals(atStart, cache().readHistoryPosition("server-a", "conv-1"))
+        }
+
+    @Test
+    fun `a received empty page stores a position even with no rows`() =
+        runTest {
+            val position = HistoryPosition(cursor = "", atStart = true)
+            cache().writeHistoryPosition("server-a", "conv-1", position).getOrThrow()
+
+            assertEquals(position, cache().readHistoryPosition("server-a", "conv-1"))
+            assertEquals(emptyList<ThreadItem>(), cache().readThread("server-a", "conv-1"))
+        }
+
+    @Test
+    fun `a thread only ever fed rows stores no position`() =
+        runTest {
+            cache().writeThread("server-a", "conv-1", listOf(message("m1"))).getOrThrow()
+            cache().writeThread("server-a", "conv-1", listOf(message("m1"), message("m2"))).getOrThrow()
+
+            assertNull(cache().readHistoryPosition("server-a", "conv-1"))
+            assertFalse(threadFiles().single().readText().contains("history"))
+        }
+
+    @Test
+    fun `a thread document written before positions were kept reads as rows with no position`() =
+        runTest {
+            cache().writeThread("server-a", "conv-1", listOf(message("m1"))).getOrThrow()
+            threadFiles().single().writeText(
+                """{"version":1,"rows":[{"message":{"id":"m0","sessionId":"session-1","role":"User","content":"hi",""" +
+                    """"timestamp":"2026-09-22T10:11:12.123456789Z"}}]}""",
+            )
+
+            val expected = message("m0", role = Role.User).let { it.copy(message = it.message.copy(content = "hi")) }
+            assertEquals(listOf(expected), cache().readThread("server-a", "conv-1"))
+            assertNull(cache().readHistoryPosition("server-a", "conv-1"))
+        }
+
+    @Test
+    fun `clearing the position keeps the rows and a clear with no document writes nothing`() =
+        runTest {
+            cache().writeHistoryPosition("server-a", "conv-2", null).getOrThrow()
+            assertEquals(emptyList<File>(), threadFiles())
+
+            cache().writeThread("server-a", "conv-1", listOf(message("m1"))).getOrThrow()
+            cache().writeHistoryPosition("server-a", "conv-1", HistoryPosition("c1", false)).getOrThrow()
+            cache().writeHistoryPosition("server-a", "conv-1", null).getOrThrow()
+
+            assertNull(cache().readHistoryPosition("server-a", "conv-1"))
+            assertEquals(listOf(message("m1")), cache().readThread("server-a", "conv-1"))
+        }
+
+    @Test
+    fun `a position in an unreadable thread document reads as none`() =
+        runTest {
+            cache().writeThread("server-a", "conv-1", listOf(message("m1"))).getOrThrow()
+            cache().writeHistoryPosition("server-a", "conv-1", HistoryPosition("c1", false)).getOrThrow()
+            val document = threadFiles().single()
+            document.writeText(document.readText().replace("\"version\":1", "\"version\":99"))
+
+            assertNull(cache().readHistoryPosition("server-a", "conv-1"))
+        }
+
+    @Test
+    fun `a row write trimmed at the row limit drops the position`() =
+        runTest {
+            cache().writeHistoryPosition("server-a", "conv-1", HistoryPosition("c1", false)).getOrThrow()
+            val atLimit = (1..MAX_CACHED_THREAD_ROWS).map { message("m$it") }
+            cache().writeThread("server-a", "conv-1", atLimit).getOrThrow()
+            // Exactly at the limit nothing was trimmed, so the oldest saved row still matches the position.
+            assertEquals(HistoryPosition("c1", false), cache().readHistoryPosition("server-a", "conv-1"))
+
+            cache().writeThread("server-a", "conv-1", atLimit + message("newest")).getOrThrow()
+
+            assertNull(cache().readHistoryPosition("server-a", "conv-1"))
+        }
+
+    @Test
+    fun `removing a conversation or a host removes its position`() =
+        runTest {
+            cache().writeHistoryPosition("server-a", "conv-1", HistoryPosition("c1", false)).getOrThrow()
+            cache().writeHistoryPosition("server-a", "conv-2", HistoryPosition("c2", false)).getOrThrow()
+            cache().writeHistoryPosition("server-b", "conv-1", HistoryPosition("b1", false)).getOrThrow()
+
+            cache().removeConversation("server-a", "conv-1").getOrThrow()
+            assertNull(cache().readHistoryPosition("server-a", "conv-1"))
+            assertEquals(HistoryPosition("c2", false), cache().readHistoryPosition("server-a", "conv-2"))
+
+            cache().removeHost("server-a").getOrThrow()
+            assertNull(cache().readHistoryPosition("server-a", "conv-2"))
+            assertEquals(HistoryPosition("b1", false), cache().readHistoryPosition("server-b", "conv-1"))
+        }
+
+    @Test
+    fun `position writes log no cursor`() =
+        runTest {
+            cache().writeHistoryPosition("server-a", "conv-1", HistoryPosition("SECRET-CURSOR", false)).getOrThrow()
+            cache().writeThread("server-a", "conv-1", listOf(message("m1"))).getOrThrow()
+            cache().readHistoryPosition("server-a", "conv-1")
+
+            assertTrue("$logs", logs.any { it == "conversation_cache operation=write_history status=ok" })
+            logs.forEach { assertFalse("log leaked the cursor: $it", it.contains("SECRET-CURSOR")) }
         }
 
     private fun conversation(id: String) =

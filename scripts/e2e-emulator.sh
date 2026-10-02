@@ -51,6 +51,7 @@
 #   DETERMINISTIC=1 SCENARIO=tool-progress PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh # rung 4, running-tool label elapsed → gone
 #   DETERMINISTIC=1 SCENARIO=reconnect   PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, reconnect continuity
 #   DETERMINISTIC=1 SCENARIO=replay-order PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh  # rung 4, post-reconnect replay ordering
+#   DETERMINISTIC=1 SCENARIO=refusal     PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, refusal switch-back
 #   DETERMINISTIC=1 INTERACTIVE_RUNNER=stream-json PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh  # rung 4, pinned runner
 # Tunables (env):
 #   PORT=<a free port>  DEVICE=pixel2Api33Atd  PAIR_NAME=e2e-emulator  PYRY_NAME=e2e-emulator
@@ -134,6 +135,7 @@ FAKE_CLAUDE_BIN="${FAKE_CLAUDE_BIN:-}"        # prebuilt fakeclaude path (overri
 FIXTURES_DIR="${REPO_ROOT}/scripts/e2e-fixtures"
 SCENARIO="${SCENARIO:-ping}"                  # which deterministic scenario: ping | stream | spinner (#454) |
                                               # tool | tool-failed (#455) | tool-progress (#950) | reconnect (#476) |
+                                              # refusal (#1360) |
                                               # replay-order (#477) | tool-then-text (#1417). Resolved to a @Test method + fixture(s)
                                               # in the preflight below; bare DETERMINISTIC=1 (SCENARIO unset
                                               # → ping) keeps #431.
@@ -627,8 +629,14 @@ if [ -n "${DETERMINISTIC}" ]; then
       FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/replay-order.jsonl}"   # drop B: ordered sequence, produced while offline
       DROP_B_FENCE=disconnect                                                  # drop B fences on the phone-leg disconnect, not enqueue #2
       ;;
+    refusal)
+      # #1360: one session-scoped model_refusal_fallback (haiku -> sonnet, both in fakeclaude's canned menu) and
+      # a reply, single drop. The test taps Switch back and reads the written model back.
+      TEST_METHOD="interactiveTurn_seededChannel_refusalSwitchBackRestoresOriginalModel"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/refusal.jsonl}"
+      ;;
     *)
-      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order | tool-then-text)"
+      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order | tool-then-text | refusal)"
       ;;
   esac
   log "deterministic scenario: ${SCENARIO} → ${TEST_METHOD}"
@@ -789,7 +797,10 @@ DAEMON_COMMAND=(env)
 if [ -n "${DETERMINISTIC}" ]; then
   # The fake speaks the current runner protocol and replays the first fragment
   # on its first user envelope. A second fragment waits for our release signal.
-  REPLAY_ENV=(PYRY_FAKE_CLAUDE_STREAM_JSON=1
+  # #1345: the thread asks for MCP status on open and on each reconnect. The daemon serves that ask on the
+  # connection's FIFO app-frame worker, so a child that never answers holds every later send_message;
+  # the fake answers mcp_status only under this knob.
+  REPLAY_ENV=(PYRY_FAKE_CLAUDE_STREAM_JSON=1 PYRY_FAKE_CLAUDE_MCP_STATUS=1
     "PYRY_FAKE_CLAUDE_STREAM_REPLAY_FIRST=${FIXTURE_FILE}")
   if [ -n "${FIXTURE_FILE_2}" ]; then
     REPLAY_ENV+=("PYRY_FAKE_CLAUDE_STREAM_REPLAY_SECOND=${FIXTURE_FILE_2}"
@@ -1189,7 +1200,8 @@ elif [ -n "${LIVE}" ]; then
   # list holds 37 methods and 39 turns. Each cut is fired by the app's own RelayLog line, not by timing.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_interruptedUpload_retriesIntoOneMessageWithItsBytes"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_interruptedRetrieval_retryLoadsThePeersFile"
-  # #1305 excludes the cross-host file method while #1369 repairs the phone after daemon #2699.
+  # #1369 restores the cross-host file method that #1305 excluded after daemon #2699.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost"
   # #1085: the second host's rename and unpair from its Edit host modal joins at no turn cost (pairing,
   # rename and a phone-local unpair), so the list holds 38 methods and 39 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched"

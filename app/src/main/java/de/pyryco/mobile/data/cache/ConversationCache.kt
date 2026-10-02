@@ -2,6 +2,7 @@ package de.pyryco.mobile.data.cache
 
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.ThreadItem
 
 /**
@@ -53,7 +54,8 @@ interface ConversationCache {
      *
      * Graceful like [readConversations]: anything unreadable yields an empty list, and a read never
      * repairs what it could not parse. A row read back is always settled — never streaming, never a
-     * running tool — and no message id or session-boundary pair appears twice.
+     * running tool — and no two rows share a thread list key: a message id, a session boundary's
+     * identity, or a banner's, compaction divider's or model refusal's `(type, ts)` (#1353).
      *
      * The default stores nothing, so a double that does not exercise threads need not override it.
      */
@@ -66,11 +68,37 @@ interface ConversationCache {
      * Replace [conversationId]'s stored thread with [cacheableThreadRows] of [rows] — never the raw
      * list, so no caller can persist an unrecognized, streaming or running row. Reports failure like
      * [writeConversations]; a failed write leaves the previous document intact.
+     *
+     * Keeps the stored [HistoryPosition] (#1354), unless [rows] were trimmed at [MAX_CACHED_THREAD_ROWS]:
+     * the oldest kept row then no longer matches it, so the position is dropped. A caller must pass the
+     * untrimmed rows for that to be seen.
      */
     suspend fun writeThread(
         serverId: String,
         conversationId: String,
         rows: List<ThreadItem>,
+    ): Result<Unit> = Result.success(Unit)
+
+    /**
+     * The history position stored beside [conversationId]'s thread (#1354), or `null`. Graceful like
+     * [readThread]: a document never written, written before positions were kept, or unreadable has none.
+     *
+     * The default stores nothing.
+     */
+    suspend fun readHistoryPosition(
+        serverId: String,
+        conversationId: String,
+    ): HistoryPosition? = null
+
+    /**
+     * Store [position] beside [conversationId]'s thread, keeping its stored rows, or clear it with `null`
+     * (#1354). Lives in the thread document, so [removeConversation] and [removeHost] remove it with the
+     * rows. Reports failure like [writeConversations]; a failed write leaves the previous document intact.
+     */
+    suspend fun writeHistoryPosition(
+        serverId: String,
+        conversationId: String,
+        position: HistoryPosition?,
     ): Result<Unit> = Result.success(Unit)
 
     /**
@@ -101,8 +129,8 @@ interface ConversationCache {
      * Remove every cached artefact keyed by [conversationId] under [serverId], leaving that host's
      * other conversations readable.
      *
-     * That is its metadata entry, its thread rows (#797) and its read position (#877). A family added later must extend this
-     * operation too, or a permanently deleted conversation would leave its content behind.
+     * That is its metadata entry, its thread rows (#797) with their history position (#1354), and its read
+     * position (#877). A family added later must extend this operation too, or a permanently deleted conversation would leave its content behind.
      *
      * An unknown conversation is a successful no-op.
      */
@@ -114,9 +142,10 @@ interface ConversationCache {
 
 /**
  * How far the operator has read one conversation on one host (#877): a client-side mark, since the daemon
- * carries no read marker. [completedTurnId] is the latest turn this phone saw complete live, and
- * [readTurnId] the one the operator had seen when they last opened the conversation, or null when they
- * have not opened it since a turn completed. Both are daemon-authored ids used only for equality.
+ * carries no read marker. [completedTurnId] marks the latest change that made the conversation unread: a
+ * turn this phone saw complete live, or a client-minted token for a new thread row (#1361). [readTurnId]
+ * is the mark the operator had seen when they last opened the conversation, or null when they have not
+ * opened it since. Both are used only for equality.
  *
  * A conversation with no stored position is read.
  */
@@ -127,28 +156,26 @@ data class ReadPosition(
     val unread: Boolean get() = readTurnId != completedTurnId
 }
 
-/** How many of a thread's newest settled rows the cache keeps, so a long thread cannot grow without limit. */
-const val MAX_CACHED_THREAD_ROWS = 200
+/**
+ * How many of a thread's newest settled rows the cache keeps, so a long thread cannot grow without limit.
+ * Desktop's saved-timeline parser caps a timeline at the same count and trims nothing below it (#1353).
+ */
+const val MAX_CACHED_THREAD_ROWS = 100_000
 
 /**
  * The rows of a drawn thread the cache may hold (#797): its newest [MAX_CACHED_THREAD_ROWS] settled rows.
  *
- * Drops every [ThreadItem.UnrecognizedMessage] (unbounded, model-adjacent JSON its KDoc forbids
- * persisting), every [ThreadItem.Banner] (claude-authored prose, restored by history replay instead, #873),
- * every [ThreadItem.CompactionBoundary] (restored by history replay, #874), every [ThreadItem.ModelRefusal]
- * (claude-authored model names and prose, restored by history replay, #875)
- * and every in-flight row — a streaming message or a running tool call — because those are
- * live state: restored, they would be a permanent caret or spinner. The one definition the cache
- * enforces on write and the caching repository compares against, so the two can never disagree.
+ * Every settled row kind is kept — messages, session boundaries, banners, compaction dividers and model
+ * refusals (#1353) — because history loads only when the user asks, so nothing else restores them. Drops
+ * every [ThreadItem.UnrecognizedMessage] (unbounded, model-adjacent JSON its KDoc forbids persisting, and
+ * this cache is plain files) and every in-flight row — a streaming message or a running tool call —
+ * because those are live state: restored, they would be a permanent caret or spinner. The one definition
+ * the cache enforces on write and the caching repository compares against, so the two can never disagree.
  */
 fun cacheableThreadRows(rows: List<ThreadItem>): List<ThreadItem> =
     settledThreadRows(rows)
-        .filterNot {
-            it is ThreadItem.UnrecognizedMessage ||
-                it is ThreadItem.Banner ||
-                it is ThreadItem.CompactionBoundary ||
-                it is ThreadItem.ModelRefusal
-        }.takeLast(MAX_CACHED_THREAD_ROWS)
+        .filterNot { it is ThreadItem.UnrecognizedMessage }
+        .takeLast(MAX_CACHED_THREAD_ROWS)
 
 /**
  * [rows] without its in-flight rows — a streaming message or a running tool call — which only a live

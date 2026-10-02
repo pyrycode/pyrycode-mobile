@@ -132,6 +132,33 @@ second `ChannelInfo` event while the sheet is already open asks nothing. `Thread
 is one more arm on the `state` combine chain, `observeMcpStatus(conversationId).onStart { emit(McpStatus()) }`
 collected under the same `WhileSubscribed(5_000)` lifecycle as every other reading.
 
+**Asking again on open and on every reconnect ([#1345](https://github.com/pyrycode/pyrycode-mobile/issues/1345)).**
+The Channel info ask above only fires while the sheet is open. #1345's [Top overlay MCP-failure
+pill](thread-top-overlay.md#the-failed-mcp-server-pill-1345) needs a current reading even when the sheet has
+never been opened, and desktop keeps its last report across a reconnect while mobile's per-connection reading
+starts empty — so `ThreadViewModel` runs a second, independent ask: a `viewModelScope` collector over
+`repositoryAvailable.distinctUntilChanged()` calls `repository.requestMcpStatus(conversationId)` on every
+`true`, gated on the same `mcpServersSupported` reading the Channel info branch uses. The first `true` is the
+thread opening; every later one is a reconnect. Only the reconnect case logs
+(`event=mcp_status_requested reason=reconnect`) — logging from the view model's construction path crashed six
+existing JVM suites that construct it without a `RelayLog` sink, and the opening is already logged by the
+destination factory's `thread_destination_bound`. **This ask shares the daemon's per-connection FIFO
+app-frame worker with `send_message`:** if the child doesn't answer, the next send on that connection waits
+behind it with no timeout of its own. See [Development verification § Emulator and real
+evidence](development-verification-emulator-evidence.md#emulator-and-real-evidence) for the scripted `reconnect` hang this
+caused and the harness fix, and pyrycode/pyrycode#2702 for the upstream daemon issue.
+
+**Raising a notice from a failure — `McpFailureAcknowledgements`.** The [Top overlay's MCP-failure
+pill](thread-top-overlay.md#the-failed-mcp-server-pill-1345) reads this same `mcpStatusReading`: the first
+server in report order whose status is exactly `"failed"` and that this host and conversation have not
+acknowledged, shown only while the host is `Connected`. Tapping it acknowledges every currently-failed
+server and opens this sheet through `ThreadEvent.ChannelInfo`, so opening Channel info after a tap always
+re-asks for status too. `McpFailureAcknowledgements` is an app-scoped, in-memory holder keyed by host then
+conversation — see [Thread top overlay §
+Acknowledgement](thread-top-overlay.md#acknowledgement--mcpfailureacknowledgements) for its shape, and
+`ObservablePairedServerStore.forgetRemovedHost` for why unpairing a host clears its entries alongside
+`ComposerDraftStore`'s.
+
 **Built-in servers.** `pyry_approve` and `pyry_files` (client-owned `BUILT_IN_SERVER_NAMES`, compared only
 for display) stay hidden behind a "Show built-in" row until it is ticked. The tick is `rememberSaveable`
 local state, not part of `McpStatus` — since the host composes the section only while the sheet is open,
@@ -255,6 +282,26 @@ runs one ping turn (the daemon answers only for a running Claude process), opens
 built-in and waits for `pyry_approve`; it is on the `LIVE=1` curated list in `scripts/e2e-emulator.sh`. No
 rung-4 twin — the scripted `fakeclaude` has no MCP child to query.
 
+**#1345 (failure notice):** `McpFailureAcknowledgementsTest` (unit) covers the holder alone — selection is
+the first failed server in report order, exact `"failed"` (not `"Failed"` or `"pending"`), built-in names
+count, an acknowledged name is skipped, a `null` report selects nothing; the holder's per-host and
+per-conversation isolation, `clearHost` leaving other hosts untouched, and an empty `acknowledge` emitting
+nothing new. `ThreadViewModelMcpFailureTest` (unit, the `ThreadViewModelMcpServersTest` rig with a
+controllable connection and `repositoryAvailable`) covers `mcpFailure` / `onMcpFailureTapped` / the ask: the
+notice shows the first unacknowledged failure; a tap acknowledges every failed server in one pass and opens
+Channel info with one status request; a repeat report stays quiet, a newly failed server raises its own
+notice, a recovered server stops showing; acknowledgements survive a second view model on the shared holder
+(a reopen) and a reconnect; another conversation's notice still shows; the pill is hidden while not
+`Connected`; exactly one ask on open and one per return of `repositoryAvailable`, none while
+`mcpServersSupported` is false; and no log line ever carries a server name.
+`ThreadViewModelMcpServersTest`'s `rig` clears the open-time ask and its log before its own exact-call
+assertions, since #1345 added one more call on construction. `ThreadTopOverlayTest` (shared screen test)
+covers the pill itself — see [Thread top overlay §
+Testing](thread-top-overlay.md#testing). `HostChannelListViewModelTest` confirms the production
+`forgetRemovedHost` drops a removed host's acknowledgements and keeps another host's. Not rung-3: a failed
+MCP server needs a deliberately broken MCP config on the live e2e host, tracked as a follow-up
+([#1457](https://github.com/pyrycode/pyrycode-mobile/issues/1457)).
+
 `ChannelInfoCaptureTest` renders the real sheet on the managed Android 13 emulator. Its [result XML](../../../app/src/androidTest/assets/channel-info-1266/device-results.xml) records three executed tests with no failures or skips. The [412 × 892 comparison](../../../app/src/androidTest/assets/channel-info-1266/channel-info-comparison.png) and 320 × 692 provider and enlarged-text captures provide visual checks for sheet geometry and clipping. The capture also exposed the default handle spacing and equal-width Folder truncation, both corrected in the implementation; content assertions alone did not reveal them.
 
 ## Edge cases / limitations
@@ -268,9 +315,10 @@ rung-4 twin — the scripted `fakeclaude` has no MCP child to query.
 ## Related
 
 - Ticket notes: [`../codebase/217.md`](../codebase/217.md) (stateless composable), [`../codebase/226.md`](../codebase/226.md) (thread-overflow host), [`../codebase/227.md`](../codebase/227.md) (Archive/Delete wiring), [`../codebase/508.md`](../codebase/508.md) (`mutationsSupported` relay-mode gate hiding the Actions section)
-- Spec: `docs/specs/architecture/217-channelinfosheet-stateless-composable.md`, `docs/specs/architecture/508-hide-unavailable-conversation-actions.md`, `docs/specs/architecture/1342-channel-info-system-prompt.md` (System prompt section), `docs/specs/architecture/1344-channel-info-mcp-servers.md` (MCP servers section)
+- Spec: `docs/specs/architecture/217-channelinfosheet-stateless-composable.md`, `docs/specs/architecture/508-hide-unavailable-conversation-actions.md`, `docs/specs/architecture/1342-channel-info-system-prompt.md` (System prompt section), `docs/specs/architecture/1344-channel-info-mcp-servers.md` (MCP servers section), `docs/specs/architecture/1345-mcp-failure-notice.md` (the Top overlay failure pill and the open/reconnect ask)
 - [System prompt editor](system-prompt-editor.md) (#824, mounted here by #1342) — `SystemPromptEditorState`, `canSave`/`canClear`, refusal classification, the construction-per-open/drop-on-close lifecycle
 - [Remote `ConversationRepository` § MCP status](remote-conversation-repository-mcp-status.md) (#1343, surfaced here by #1344) — `McpStatus`/`McpStatusReport`/`McpServerStatus`, why the reading starts empty per connection, `requestMcpStatus`/`reconnectMcpServer`/`toggleMcpServer`/`endMcpReconnectWait`/`endMcpToggleWait`
+- [Thread top overlay § The failed-MCP-server pill](thread-top-overlay.md#the-failed-mcp-server-pill-1345) (#1345) — the notice this section's status report feeds, `McpFailureAcknowledgements`, and the open/reconnect ask's daemon FIFO-worker coupling
 - [ChannelListViewModel § Wiring](channel-list-viewmodel.md#wiring) — Edit channel's own system-prompt editing, including the #1342 clear rule this sheet's Clear button shares
 - Parent: split from [#144](https://github.com/pyrycode/pyrycode-mobile/issues/144) (Channel Info bottom sheet — host + sheet bundle).
 - Sibling sheet: [`WorkspacePickerSheet`](./workspace-picker-sheet.md) (#212) — same `ModalBottomSheet` shell + `*Content` body split, same `internal` visibility posture, same preview wrap. Worth reading first if you're picking up this file.
