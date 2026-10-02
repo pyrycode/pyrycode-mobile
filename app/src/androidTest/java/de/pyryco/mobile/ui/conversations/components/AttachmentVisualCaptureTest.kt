@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
-import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import android.view.View
 import androidx.activity.ComponentActivity
@@ -15,11 +14,12 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
@@ -38,6 +38,8 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.design.Viewport
+import de.pyryco.mobile.design.ViewportRule
 import de.pyryco.mobile.ui.conversations.thread.ATTACHMENT_STRIP_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStrip
 import de.pyryco.mobile.ui.conversations.thread.PendingAttachment
@@ -49,13 +51,23 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TestRule
 import org.junit.runner.RunWith
 import java.io.File
+import kotlin.math.roundToInt
 
 /** Real device pixels for the current dark-theme attachment design. */
 @RunWith(AndroidJUnit4::class)
 class AttachmentVisualCaptureTest {
-    @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
+    /** Sets a `@Viewport` method's size before the activity launches (#1402); other methods keep the device display. */
+    @get:Rule(order = 0)
+    val viewport =
+        TestRule { base, description ->
+            if (description.getAnnotation(Viewport::class.java) == null) base else ViewportRule().apply(base, description)
+        }
+
+    @get:Rule(order = 1)
+    val rule = createAndroidComposeRule<ComponentActivity>()
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private var screenView: View? = null
     private var draft by mutableStateOf("My message")
@@ -104,14 +116,35 @@ class AttachmentVisualCaptureTest {
 
         val bubbleColors = listOf(Color.rgb(0x00, 0x1D, 0x34), Color.rgb(0x00, 0x33, 0x55))
         bubbleColors.forEachIndexed { index, background ->
-            val row = rule.onAllNodesWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG)[index].captureToImage().asAndroidBitmap()
+            val row = drawNode(rule.onAllNodesWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG)[index])
             assertReadablePixels("sent page $index", row, background, 0, 45, 0, 25)
             assertReadablePixels("sent name $index", row, background, 55, row.width, 0, row.height)
         }
-        val pending = rule.onNodeWithContentDescription("report.pdf").captureToImage().asAndroidBitmap()
+        val pending = drawNode(rule.onNodeWithContentDescription("report.pdf"))
         val threadBackground = Color.rgb(0x0B, 0x0E, 0x11)
         assertReadablePixels("pending page", pending, threadBackground, 0, pending.width, 0, 25)
         assertReadablePixels("pending type label", pending, threadBackground, 8, pending.width - 8, 35, 55)
+    }
+
+    /**
+     * The node's pixels, drawn from the window's view tree. `captureToImage` waits on `forceRedraw` with a fixed 2 s
+     * timeout, which a cold emulator's first frames overrun (#1555); drawing the decor view needs no new frame.
+     */
+    private fun drawNode(node: SemanticsNodeInteraction): Bitmap {
+        rule.waitForIdle()
+        val bounds = node.fetchSemanticsNode().boundsInWindow
+        return rule.runOnIdle {
+            val root = rule.activity.window.decorView
+            val window = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888).also { root.draw(Canvas(it)) }
+            Bitmap
+                .createBitmap(
+                    window,
+                    bounds.left.roundToInt(),
+                    bounds.top.roundToInt(),
+                    bounds.width.roundToInt(),
+                    bounds.height.roundToInt(),
+                )
+        }
     }
 
     private fun assertReadablePixels(
@@ -146,10 +179,34 @@ class AttachmentVisualCaptureTest {
         return (lighter + 0.05) / (darker + 0.05)
     }
 
+    @Viewport("412x892")
     @Test
     fun pendingAndSentAttachments_matchReferenceGeometryAt412By892() {
-        val oldSize = overrideOf(shell("wm size"))
-        val oldDensity = overrideOf(shell("wm density"))
+        withThreadFixture { state, states, pending, decoder ->
+            showThread(state, states, pending, decoder)
+            awaitPendingThumbnails()
+            val strip = rule.onNodeWithTag(ATTACHMENT_STRIP_TEST_TAG).getUnclippedBoundsInRoot()
+            assertTrue(strip.width >= 45.dp * 4 + 12.dp * 3)
+            capture("emulator-412x892.png", 412, 892)
+        }
+    }
+
+    @Viewport("320x640")
+    @Test
+    fun compactLargeText_fileRowFitsAt320By640() {
+        withThreadFixture { state, states, pending, decoder ->
+            showThread(state, states, pending, decoder, fontScale = 1.5f)
+            awaitPendingThumbnails()
+            val file = rule.onNodeWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG).getUnclippedBoundsInRoot()
+            assertTrue("file row overflows compact viewport: $file", file.right <= 320.dp)
+            capture("emulator-320x640-large-text.png", 320, 640)
+        }
+    }
+
+    /** Inserts the rock image into MediaStore for the pending strip, runs [block] on the thread fixture, then deletes it. */
+    private fun withThreadFixture(
+        block: (ThreadUiState, Map<String, AttachmentViewState>, List<PendingAttachment>, AttachmentThumbnailDecoder) -> Unit,
+    ) {
         val resolver = instrumentation.targetContext.contentResolver
         val imageUri =
             resolver.insert(
@@ -210,36 +267,27 @@ class AttachmentVisualCaptureTest {
                     PendingAttachment(3, imageUri.toString(), "report.pdf", "application/pdf", 1),
                     PendingAttachment(4, imageUri.toString(), "rock-3.png", "image/png", 1),
                 )
-
-            shell("wm density 160")
-            shell("wm size 412x892")
-            instrumentation.waitForIdleSync()
-            showThread(state, states, pending, decoder)
-            rule.waitForIdle()
-            rule.waitUntil(10_000) {
-                listOf("rock.png", "rock-2.png", "rock-3.png").all { name ->
-                    val tile =
-                        rule
-                            .onNode(hasContentDescription(name) and hasAnyAncestor(hasTestTag(ATTACHMENT_STRIP_TEST_TAG)))
-                            .captureToImage()
-                            .asAndroidBitmap()
-                    Color.red(tile.getPixel(10, 10)) > 80
-                }
-            }
-            val strip = rule.onNodeWithTag(ATTACHMENT_STRIP_TEST_TAG).getUnclippedBoundsInRoot()
-            assertTrue(strip.width >= 45.dp * 4 + 12.dp * 3)
-            capture("emulator-412x892.png", 412, 892)
-
-            shell("wm size 320x640")
-            instrumentation.waitForIdleSync()
-            showThread(state, states, pending, decoder, fontScale = 1.5f)
-            val file = rule.onNodeWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG).getUnclippedBoundsInRoot()
-            assertTrue("file row overflows compact viewport: $file", file.right <= 320.dp)
-            capture("emulator-320x640-large-text.png", 320, 640)
+            block(state, states, pending, decoder)
         } finally {
             resolver.delete(imageUri, null, null)
-            shell("wm size $oldSize")
-            shell("wm density $oldDensity")
+        }
+    }
+
+    /**
+     * Waits until the pending strip's three image tiles show the decoded rock: the placeholder file tile merges its
+     * "PNG" label into the tile's semantics, the thumbnail has none. Polling semantics rather than `captureToImage`
+     * keeps the wait off `forceRedraw`, whose fixed 2 s draw timeout a cold emulator's first frames can overrun.
+     */
+    private fun awaitPendingThumbnails() {
+        rule.waitUntil(10_000) {
+            listOf("rock.png", "rock-2.png", "rock-3.png").all { name ->
+                rule
+                    .onNode(hasContentDescription(name) and hasAnyAncestor(hasTestTag(ATTACHMENT_STRIP_TEST_TAG)))
+                    .fetchSemanticsNode()
+                    .config
+                    .getOrNull(SemanticsProperties.Text)
+                    .isNullOrEmpty()
+            }
         }
     }
 
@@ -313,13 +361,4 @@ class AttachmentVisualCaptureTest {
         File(directory, "$name.txt").writeText("size=${width}x$height design=16:8,132:4605,390:7181,390:7159 inspected=2026-09-30\n")
         bitmap.recycle()
     }
-
-    private fun shell(command: String): String =
-        ParcelFileDescriptor
-            .AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command))
-            .bufferedReader()
-            .use { it.readText() }
-
-    private fun overrideOf(output: String) =
-        output.lineSequence().firstOrNull { it.startsWith("Override") }?.substringAfter(": ") ?: "reset"
 }
