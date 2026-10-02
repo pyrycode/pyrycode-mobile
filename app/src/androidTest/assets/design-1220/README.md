@@ -57,7 +57,9 @@ Each audited item in a subfolder's `index.md` is one section:
 
 A state reachable from `MainActivity` with no current Figma frame is listed under **Gaps** with its
 owning ticket and the routed issue. Platform system bars replace Figma's chrome-free outer frame and are
-not a mismatch; everything inside the app's window is compared.
+not a mismatch; everything inside the app's window is compared. A host row's connection states —
+disconnected, re-pair-required, update-required — count as reachable list-side states under this rule,
+even though the audited frame draws every host connected (#1431).
 
 ## Harness
 

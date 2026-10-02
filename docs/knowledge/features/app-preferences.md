@@ -319,8 +319,13 @@ launches the real activity at 412 × 892 with saved Light, System and Dark value
 wallpaper colours on and off, and both Android night modes. It checks the static
 dark canvas pixel, retained appearance values and an unrelated preference.
 The [emulator/Figma comparison](../../../app/src/androidTest/assets/palette-1238/palette-comparison.png)
-uses node `15:8` (inspected 2026-09-28); its lower canvas matches, while glow,
-system bars and fixture content are outside the root palette contract.
+uses node `15:8` (inspected 2026-09-28); its lower canvas matches, while
+system bars and fixture content are outside the root palette contract. The
+`15:8` export's canvas glow was read the same way at first, but the
+[list-side audit](../../../app/src/androidTest/assets/design-1220/list/index.md)
+(#1431) found the app's canvas flat where Figma draws a blue radial glow behind
+the tree, and an earlier allowance does not excuse a visual deviation: it is a
+routed Colour mismatch (#1486), not a contract exclusion.
 
 The remembered-model tests cover absence after changing the Settings default,
 an out-of-enum value that leaves that default intact, and verbatim persistence
