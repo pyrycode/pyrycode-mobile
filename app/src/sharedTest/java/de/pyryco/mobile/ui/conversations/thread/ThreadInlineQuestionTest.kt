@@ -7,6 +7,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.FontScale
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
@@ -15,6 +17,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -24,6 +27,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.unit.DpRect
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
@@ -37,6 +42,7 @@ import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -50,6 +56,17 @@ class ThreadInlineQuestionTest {
                 "chat",
                 "request",
                 listOf(Question("Choose a language", "Language", listOf(QuestionOption("Kotlin", "JVM")), false)),
+            ),
+            generation = 1,
+        )
+    private val twoQuestions =
+        QuestionModalState(
+            QuestionBatch(
+                "chat",
+                "request",
+                listOf("Language", "Targets").map { header ->
+                    Question("Which $header?", header, listOf(QuestionOption("Kotlin", "JVM"), QuestionOption("Rust", "Systems")), false)
+                },
             ),
             generation = 1,
         )
@@ -265,4 +282,100 @@ class ThreadInlineQuestionTest {
         rule.waitForIdle()
         rule.runOnIdle { assertEquals("prompt replacement cannot manufacture an oldest-history demand", 0, demands) }
     }
+
+    // #1484, Figma 636:3803: the focus scroll shows the focused field and both actions, not only the field's own row.
+    @Test
+    fun focusing_other_reveals_the_field_and_both_actions() {
+        rule.setContent {
+            CompositionLocalProvider(LocalOverscrollFactory provides null) {
+                PyrycodeMobileTheme {
+                    ThreadScreen(
+                        ThreadUiState("chat", "Client planning", isPromoted = false, hasMessages = true, items = historyItems()),
+                        {},
+                        {},
+                        ConnectionState.Connected,
+                        {},
+                        questionState = twoQuestions,
+                    )
+                }
+            }
+        }
+        // Index 1 is the second question: under reverseLayout its bottom meets the stream's bottom edge, with the
+        // actions (index 0) just below it, out of view.
+        rule.onNode(hasScrollToIndexAction()).performScrollToIndex(1)
+        val stream = rule.onNodeWithTag("thread-message-region").getUnclippedBoundsInRoot()
+        assertTrue("the field starts in view", stream.contains(rule.onNodeWithTag("question_other_1").getUnclippedBoundsInRoot()))
+        rule.onNodeWithText("Continue").assertDoesNotExist()
+
+        rule.onNodeWithTag("question_other_1").performClick()
+        rule.waitForIdle()
+        for (bounds in listOf(
+            rule.onNodeWithTag("question_other_1").getUnclippedBoundsInRoot(),
+            rule.onNodeWithText("Cancel").getUnclippedBoundsInRoot(),
+            rule.onNodeWithText("Continue").getUnclippedBoundsInRoot(),
+        )) {
+            assertTrue("$bounds lies inside the stream $stream", stream.contains(bounds))
+        }
+    }
+
+    // #1484: only the last question's field reveals the actions, so an earlier field already in view never leaves it.
+    @Test
+    fun focusing_an_earlier_other_keeps_the_field_in_view_on_every_frame() {
+        rule.setContent {
+            CompositionLocalProvider(LocalOverscrollFactory provides null) {
+                PyrycodeMobileTheme {
+                    ThreadScreen(
+                        ThreadUiState("chat", "Client planning", isPromoted = false, hasMessages = true, items = historyItems()),
+                        {},
+                        {},
+                        ConnectionState.Connected,
+                        {},
+                        questionState = twoQuestions,
+                    )
+                }
+            }
+        }
+        // Index 2 is the first question: its bottom meets the stream's bottom edge, the second question and the
+        // actions below it, out of view.
+        rule.onNode(hasScrollToIndexAction()).performScrollToIndex(2)
+        val stream = rule.onNodeWithTag("thread-message-region").getUnclippedBoundsInRoot()
+        assertTrue("the field starts in view", stream.contains(rule.onNodeWithTag("question_other_0").getUnclippedBoundsInRoot()))
+
+        rule.mainClock.autoAdvance = false
+        rule.onNodeWithTag("question_other_0").performClick()
+        repeat(30) { frame ->
+            rule.mainClock.advanceTimeByFrame()
+            val field = rule.onNodeWithTag("question_other_0").getUnclippedBoundsInRoot()
+            assertTrue("frame $frame: $field lies inside the stream $stream", stream.contains(field))
+        }
+        rule.mainClock.autoAdvance = true
+    }
+
+    // #1484, Figma 636:4325: stacked at 150 %, the pair sits at the card's start with Cancel centred over Continue.
+    @Test
+    fun stacked_actions_sit_at_the_start_with_cancel_centred_over_continue() {
+        rule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.5f)) {
+                PyrycodeMobileTheme {
+                    ThreadScreen(
+                        ThreadUiState("chat", "Client planning", isPromoted = false),
+                        {},
+                        {},
+                        ConnectionState.Connected,
+                        {},
+                        questionState = question,
+                    )
+                }
+            }
+        }
+        val actions = rule.onNodeWithTag("question-batch-actions").getUnclippedBoundsInRoot()
+        val cancel = rule.onNodeWithText("Cancel").getUnclippedBoundsInRoot()
+        val continueButton = rule.onNodeWithText("Continue").getUnclippedBoundsInRoot()
+        assertTrue("stacked", cancel.bottom <= continueButton.top)
+        assertEquals(actions.left.value, continueButton.left.value, 0.5f)
+        assertEquals((continueButton.left + continueButton.right).value / 2, (cancel.left + cancel.right).value / 2, 0.5f)
+    }
+
+    private fun DpRect.contains(other: DpRect): Boolean =
+        other.left >= left - 0.5.dp && other.right <= right + 0.5.dp && other.top >= top - 0.5.dp && other.bottom <= bottom + 0.5.dp
 }
