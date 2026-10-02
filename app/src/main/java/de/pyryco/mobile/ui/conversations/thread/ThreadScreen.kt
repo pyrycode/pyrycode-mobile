@@ -97,6 +97,7 @@ import de.pyryco.mobile.ui.conversations.components.ResettingIndicator
 import de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog
 import de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter
 import de.pyryco.mobile.ui.conversations.components.StatusSheet
+import de.pyryco.mobile.ui.conversations.components.SwitchBackOffer
 import de.pyryco.mobile.ui.conversations.components.SystemPromptEditorState
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
 import de.pyryco.mobile.ui.conversations.components.ThreadStatusGlyph
@@ -186,6 +187,9 @@ fun ThreadScreen(
     onOverflowEvent: (ThreadEvent) -> Unit = {},
     // #807: a published ModelMenuRow.value / effort level, forwarded verbatim — never a device enum.
     onModelSelected: (String) -> Unit = {},
+    // #1360: the switch-back offer, drawn on the refusal row that armed it, and its tap.
+    switchBackOffer: SwitchBackOffer? = null,
+    onSwitchBack: () -> Unit = {},
     onEffortSelected: (String) -> Unit = {},
     // #650: a PermissionModeOption wire value from the footer's permission menu.
     onPermissionModeSelected: (String) -> Unit = {},
@@ -238,6 +242,10 @@ fun ThreadScreen(
     // tap, which hides the reading the pill is showing. Defaulted so screens that never dismiss show every one.
     dismissedUsageLimits: Set<UsageLimitDismissals.Key> = emptySet(),
     onDismissUsageLimit: (UsageLimitReading) -> Unit = {},
+    // #1345: the failed MCP server the Top overlay names (ThreadViewModel.mcpFailure) and its tap, which
+    // acknowledges the report's failures and opens Channel info.
+    mcpFailure: String? = null,
+    onOpenMcpFailure: () -> Unit = {},
     // #933: this chat's pending attachments (ThreadViewModel.pendingAttachments) and whether a send carrying
     // them is under way (attachmentsSending); the picker's result, a tile's remove, and the one-shot refusal
     // notice. Bound by MainActivity; defaulted so screens that never attach render no strip.
@@ -678,7 +686,13 @@ fun ThreadScreen(
                                                         BannerNoticeRow(item = item, agent = state.agent)
                                                     }
                                                 is ThreadItem.CompactionBoundary -> CompactionBoundaryDivider(item = item)
-                                                is ThreadItem.ModelRefusal -> ModelRefusalRow(item = item, agent = state.agent)
+                                                is ThreadItem.ModelRefusal ->
+                                                    ModelRefusalRow(
+                                                        item = item,
+                                                        agent = state.agent,
+                                                        switchBack = switchBackOffer?.takeIf { it.armedBy(item) },
+                                                        onSwitchBack = onSwitchBack,
+                                                    )
                                             }
                                         // One render path for both kinds of queued row — the one the echo
                                         // correlated to and the one this device minted no echo for — so the
@@ -718,6 +732,8 @@ fun ThreadScreen(
                                 .align(Alignment.TopEnd)
                                 .padding(start = ComposerGutter, top = TopOverlayTopGap, end = ComposerGutter),
                         agent = state.agent,
+                        mcpFailure = mcpFailure,
+                        onOpenMcpFailure = onOpenMcpFailure,
                     )
                 }
             }
