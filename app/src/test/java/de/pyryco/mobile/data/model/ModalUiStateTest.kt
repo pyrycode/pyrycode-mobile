@@ -192,6 +192,73 @@ class ModalUiStateTest {
         assertEquals(ModalUiState.Hidden, open("m1").scopedTo(""))
     }
 
+    // ---- #1340: this phone's own answers and the daemon's refusals -------------------------------
+
+    @Test
+    fun answeredHere_removesTheHeldPrompt_andTheThreadSeesNoDismissal() {
+        val next = held(open("m1"), open("m2", conversationId = "c2")).reduce(ModalAction.AnsweredHere("m1"))
+
+        assertEquals(listOf("m2"), next.outstanding.map { it.modalId })
+        assertEquals(
+            listOf(ModalUiState.Dismissed("m1", outcome = "", source = "", conversationId = "c1", answeredHere = true)),
+            next.resolved,
+        )
+        assertEquals(ModalUiState.Hidden, next.scopedTo("c1"))
+    }
+
+    @Test
+    fun answeredHere_hidesAnOlderDismissalOfTheSameChat() {
+        // Otherwise the chat would go Open(m2) → Dismissed(m1) and replay m1's "resolved elsewhere" message.
+        val next =
+            held(open("m1"))
+                .reduce(ModalEvent.Dismissed("m1", "allow_once", "remote"))
+                .reduce(shown("m2", "c1"))
+                .reduce(ModalAction.AnsweredHere("m2"))
+
+        assertEquals(ModalUiState.Hidden, next.scopedTo("c1"))
+    }
+
+    @Test
+    fun answeredHere_aRepeatedShownAndTheDaemonsLaterDismissAreIgnored() {
+        val answered = held(open("m1")).reduce(ModalAction.AnsweredHere("m1"))
+
+        assertSame(answered, answered.reduce(shown("m1", "c1")))
+        assertSame(answered, answered.reduce(ModalEvent.Dismissed("m1", "allow_once", "remote")))
+    }
+
+    @Test
+    fun answeredHere_forAnIdTheHostDoesNotHold_changesNothing() {
+        val host = held(open("m1"))
+        assertSame(host, host.reduce(ModalAction.AnsweredHere("other")))
+    }
+
+    @Test
+    fun rejected_marksTheOwningChat_andItsDismissalClearsIt() {
+        val rejected = empty.reduce(ModalAction.Rejected("c1"))
+        assertEquals(setOf("c1"), rejected.rejectedConversations)
+
+        assertEquals(emptySet<String>(), rejected.reduce(ModalAction.RejectionDismissed("c1")).rejectedConversations)
+        assertEquals(setOf("c1"), rejected.reduce(ModalAction.RejectionDismissed("c2")).rejectedConversations)
+    }
+
+    @Test
+    fun rejected_withABlankOwner_marksNothing() {
+        assertSame(empty, empty.reduce(ModalAction.Rejected("")))
+    }
+
+    @Test
+    fun reconnected_keepsRejections_dropsPromptsAndAnswers_soAReSentPromptReturns() {
+        val before =
+            held(open("m1"), open("m2"))
+                .reduce(ModalAction.AnsweredHere("m1"))
+                .reduce(ModalAction.Rejected("c1"))
+
+        val after = before.reconnected()
+
+        assertEquals(HostModalState(rejectedConversations = setOf("c1")), after)
+        assertEquals(listOf("m1"), after.reduce(shown("m1", "c1")).outstanding.map { it.modalId })
+    }
+
     private fun held(vararg prompts: ModalUiState.Open) = HostModalState(outstanding = prompts.toList())
 
     private fun shown(

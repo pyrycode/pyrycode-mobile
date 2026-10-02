@@ -164,6 +164,9 @@ private const val HISTORY_TAIL_KEY = "history-tail"
 // #1306: the inline permission request's lazy items — Cancel, card and title.
 private const val PERMISSION_ROW_COUNT = 3
 
+/** The refused-answer notice's slot in the thread (#1340). */
+internal const val PERMISSION_REJECTION_TEST_TAG = "thread-permission-rejection"
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ThreadScreen(
@@ -204,7 +207,6 @@ fun ThreadScreen(
     onWorkspacePickerDismissed: () -> Unit = {},
     modalState: ModalUiState = ModalUiState.Hidden,
     armedOptionId: String? = null, // #452: the open modal's armed non-default option, or null (VM-scoped, #451)
-    modalSendErrors: Flow<Unit> = emptyFlow(), // #452: payload-free one-shot modal send-failure signal (#451)
     newSessionErrors: Flow<Unit> = emptyFlow(), // #540: payload-free one-shot new-session send-failure signal
     archiveErrors: Flow<Unit> = emptyFlow(), // #556: payload-free one-shot archive send-failure signal
     changeWorkspaceErrors: Flow<Unit> = emptyFlow(), // #561: payload-free one-shot change-workspace failure signal
@@ -217,6 +219,10 @@ fun ThreadScreen(
     // prompt), and its toggle, wired by MainActivity → vm::onAlwaysAllowChanged with the rendered modalId.
     alwaysAllowAccepted: Boolean = false,
     onAlwaysAllowChanged: (modalId: String, accepted: Boolean) -> Unit = { _, _ -> },
+    // #1340: the daemon refused an answer this chat sent (ThreadViewModel.answerRejected), and the notice's X,
+    // wired by MainActivity → vm::onAnswerRejectionDismissed.
+    answerRejected: Boolean = false,
+    onDismissAnswerRejection: () -> Unit = {},
     // #467: wired by MainActivity → vm::onDropQueued (passes QueuedMessage.id). Since #782 it is bound
     // per row by the fold rather than handed to a foot-of-list section.
     onDropQueued: (Long) -> Unit = {},
@@ -289,15 +295,8 @@ fun ThreadScreen(
     // #1306: one call site for both prompt kinds, so a question → permission hand-over keeps one owner.
     if (questionState != null || openRequest != null) QuestionPromptProtection()
     val snackbarHostState = remember { SnackbarHostState() }
-    // #452: surface a failed modal send as a transient snackbar. The event is payload-free (Unit, #451) and
-    // the message is a fixed local string, so nothing modal-derived (command / path) can reach the
-    // un-secured Activity window the snackbar draws in. Same VM-event→snackbar idiom as ArchivedDiscussionsScreen.
-    val modalSendFailedMessage = stringResource(R.string.modal_send_failed)
-    LaunchedEffect(modalSendErrors, snackbarHostState) {
-        modalSendErrors.collect { snackbarHostState.showSnackbar(modalSendFailedMessage) }
-    }
-    // #540: surface a failed "New session" send as a transient snackbar. Same payload-free (Unit) one-shot
-    // idiom as the modal path — the fixed local string keeps anything exception-derived out of the
+    // #540: surface a failed "New session" send as a transient snackbar. Payload-free (Unit) one-shot
+    // idiom — the fixed local string keeps anything exception-derived out of the
     // un-secured Activity window the snackbar draws in.
     val newSessionFailedMessage = stringResource(R.string.new_session_failed)
     LaunchedEffect(newSessionErrors, snackbarHostState) {
@@ -562,7 +561,12 @@ fun ThreadScreen(
                     val demandOlderHistory by rememberUpdatedState(onDemandOlderHistory)
                     val historyLoading by rememberUpdatedState(state.historyTail == ThreadHistoryTail.Loading)
                     val pullForOlderHistory = { if (!historyLoading) demandOlderHistory() }
-                    if (!state.hasMessages && state.queuedMessages.isEmpty() && shownQuestion == null && openRequest == null) {
+                    if (!state.hasMessages &&
+                        state.queuedMessages.isEmpty() &&
+                        shownQuestion == null &&
+                        openRequest == null &&
+                        !answerRejected
+                    ) {
                         // An empty thread is at its oldest end. The scrollable consumes nothing; it only lets
                         // a drag reach the pull.
                         val emptyThreadPull = remember { OlderHistoryGesture(nearOldestEnd = { true }, onDemand = pullForOlderHistory) }
@@ -586,7 +590,8 @@ fun ThreadScreen(
                         val listState = rememberLazyListState()
                         val promptRowCount =
                             (shownQuestion?.let { it.batch.questions.size + 2 } ?: 0) +
-                                (if (openRequest != null) PERMISSION_ROW_COUNT else 0)
+                                (if (openRequest != null) PERMISSION_ROW_COUNT else 0) +
+                                (if (answerRejected) 1 else 0)
                         // #1352: prompt rows take the lowest indices of the reversed list and are never
                         // history, so the oldest thread row sits after them.
                         val oldestRowIndex by rememberUpdatedState(if (rows.isEmpty()) -1 else rows.size + promptRowCount - 1)
@@ -628,6 +633,25 @@ fun ThreadScreen(
                                     onAlwaysAllowChanged = onAlwaysAllowChanged,
                                     gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerGutter, vertical = 4.dp),
                                 )
+                            }
+                            // #1340: a refused answer stays in the slot its card held, above any newer card, until
+                            // its X. No frame draws it: Figma 347:6617's Default pill, laid in the page unshadowed.
+                            if (answerRejected) {
+                                item(key = "permission-rejection") {
+                                    Box(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = ComposerGutter, vertical = 4.dp)
+                                            .testTag(PERMISSION_REJECTION_TEST_TAG),
+                                    ) {
+                                        NoticePill(
+                                            text = stringResource(R.string.permission_answer_rejected),
+                                            isError = false,
+                                            onDismiss = onDismissAnswerRejection,
+                                            shadowElevation = 0.dp,
+                                        )
+                                    }
+                                }
                             }
                             shownQuestion?.let { pending ->
                                 val dispatch: (QuestionModalEvent) -> Unit = { onQuestionEvent(it, pending.generation) }

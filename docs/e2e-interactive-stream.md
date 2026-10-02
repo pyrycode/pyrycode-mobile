@@ -1993,6 +1993,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `offline-retry` (#1286) | actual Offline pill retries the same host and a new reply renders | `ping.jsonl` | one |
 | `replay-order` (#477) | events produced **entirely while offline** replay **in order, each exactly once** | `replay-order-open.jsonl` + `replay-order.jsonl` | **two** (release on disconnect) |
 | `refusal` (#1360) | a session-scoped `model_refusal_fallback` row offers "Switch back to haiku"; the tap writes `haiku` and the button disappears | `refusal.jsonl` | one |
+| `mcp-failed` (#1457) | the failed-MCP-server pill (#1345) renders and tapping it opens Channel info on its MCP servers section | `mcp-failed.jsonl` | one |
 
 `refusal` selects
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_refusalSwitchBackRestoresOriginalModel`
@@ -2027,7 +2028,22 @@ DETERMINISTIC=1 SCENARIO=tool-progress PYRYCODE_SRC=~/Workspace/Projects/pyrycod
 DETERMINISTIC=1 SCENARIO=reconnect    PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # reconnect continuity
 DETERMINISTIC=1 SCENARIO=replay-order PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # post-reconnect replay ordering
 DETERMINISTIC=1 SCENARIO=refusal      PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # refusal switch-back
+DETERMINISTIC=1 SCENARIO=mcp-failed   PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # failed MCP server pill
 ```
+
+`mcp-failed` selects
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_failedMcpServerPillOpensChannelInfo`
+and belongs to `python3 scripts/android-test-gate.py scripted-all`. Fakeclaude's first `mcp_status`
+answer, already enabled on every deterministic run by `PYRY_FAKE_CLAUDE_MCP_STATUS=1`, names
+`pyry_mcp_test` as `failed`; the test waits for the [failed-MCP-server pill
+(#1345)](knowledge/features/thread-top-overlay.md#the-failed-mcp-server-pill-1345) by its
+`thread_mcp_server_failed` prefix, taps it, and asserts [Channel info's MCP servers
+section](knowledge/features/channel-info-sheet.md#mcp-servers-section) is shown — not the failed name
+itself, because the sheet's own later `mcp_status` ask gets fakeclaude's `connected` answer for
+`pyry_mcp_fresh`. No live rung-3 twin is possible: daemon children spawned under `--strict-mcp-config`
+load only `pyry_approve` and `pyry_files`, so [pyrycode
+#2272](https://github.com/pyrycode/pyrycode/issues/2272) pins the real-Claude shape of a failed server on
+the daemon side instead.
 
 **`stream`** — `stream.jsonl` is three `text` lines with **distinct** `message.id`s, so the producer
 emits three `assistant_delta` envelopes (same `turn_id`, `seq` 0/1/2); the last line's
@@ -2190,7 +2206,19 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-02 (#1456).** The dispatcher ran
+**Current live verification — 2026-10-02 (#1460).** The dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1460` at
+`5d3187e015`, merged with `origin/main` at `a4d536d9ad` in a detached worktree (0 commits behind before
+the merge): **51 executed, 50 passed, 1 failed, 0 skipped**, exit 1, wall clock 1409.7s. This is
+full-suite evidence; no separate focused live run is claimed. The one failure,
+`interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`, failed once and passed when
+re-run on the same merged tree, so the dispatcher treated it as a suite flake rather than this branch's.
+The fresh XML has a passing testcase for the new method,
+`interactiveTurn_compactWithAttachment_compactsAndClearsTheStrip` (see [Follow-ups to
+ticket](#follow-ups-to-ticket) above), with no failure or error. `LIVE_MINIMUM` rose from 50 to 51, since
+it is counted from the curated LIVE list and the ticket added one entry.
+
+**Previous live verification — 2026-10-02 (#1456).** The dispatcher ran
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1456` at
 `af31cd6ecd`, merged with `origin/main` at `cad0672435` in a detached worktree (8 commits behind before
 the merge): **50 executed, 50 passed, 0 failed, 0 skipped**, exit 0, wall clock 676.1s. This is
@@ -2934,8 +2962,10 @@ Earlier results and failure history:
   retain the triage and its evidence limits.
 - **Dispatcher-run:** before verifier, `python3 scripts/android-test-gate.py ui` runs the non-E2E
   device tests, skipped when the branch touches only docs, scripts and the e2e-only sources
-  (see [development verification](knowledge/features/development-verification.md)), followed by one `scripted` invocation for each of `ping`, `stream`, `spinner`,
-  `tool`, `tool-failed`, `reconnect` and `replay-order`. Tagged tickets run `live` after verifier.
+  (see [development verification](knowledge/features/development-verification.md)), followed by
+  `python3 scripts/android-test-gate.py scripted-all`, covering `ping`, `stream`, `spinner`, `tool`,
+  `tool-failed`, `tool-progress`, `reconnect`, `offline-retry`, `replay-order`, `tool-then-text`,
+  `refusal` and `mcp-failed`. Tagged tickets run `live` after verifier.
   Reports must be fresh and count executed tests. The live floor is eight. Leave the baseline
   command unset because the shared retry filter currently accepts Go test names.
 - **Negative control:** `InteractiveStreamE2ETest.negativeControl_wordClaudeNeverSays_isNeverDisplayed`
@@ -2969,6 +2999,29 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — added:** [#1460](https://github.com/pyrycode/pyrycode-mobile/issues/1460) adds
+  `InteractiveStreamE2ETest.interactiveTurn_compactWithAttachment_compactsAndClearsTheStrip` to the
+  curated LIVE `TEST_TARGET` selector in `scripts/e2e-emulator.sh`; `LIVE_MINIMUM` is counted from that
+  list, so it rose from 50 to 51 with no edit to `android-test-gate.py`. #1348 (PR #1414) made the
+  Actions-menu command carry the pending files, the same way desktop's `sendText` does, so the daemon's
+  `composeAttachmentPrompt` appends the attachment block after `/compact`'s text — Claude Code reads text
+  after `/compact` as custom summary instructions, so it was open whether real claude would still compact
+  with that block riding along. The new method sends a ping in a fresh chat (so claude spawns and
+  publishes `/compact`), attaches one small text fixture through Attach files, taps Compact session, and
+  waits for the same `cd_thread_compacting` indicator and compaction-divider signals
+  `interactiveTurn_reconnect_slashCommandsAndCompactStillWork` waits for (see the reconnect-commands
+  scenario above), then for the fixture's tile to leave the attachment strip. The waits are copied rather
+  than factored into a shared helper, so the existing method is unchanged. The fixture is deleted in a
+  `finally`. Two real claude turns (the ping and the compaction); no production code changed. The
+  dispatcher's post-verifier full `python3 scripts/android-test-gate.py live` run (branch `feature/1460`
+  at `5d3187e015`, merged with `origin/main` at `a4d536d9ad`, 0 commits behind before the merge) executed
+  51, passed 50, failed 1 and skipped 0; the new method has a passing testcase in the fresh XML with no
+  failure. The one failure,
+  `interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`, passed on a same-tree re-run,
+  so the dispatcher treated it as a suite flake rather than this branch's — see [Verification
+  status](#verification-status). Real claude does compact reliably with the attachment block after
+  `/compact`, so the ticket's `@Ignore` fallback was not needed.
 
 - **Coverage — added:** [#1360](https://github.com/pyrycode/pyrycode-mobile/issues/1360) adds the
   `refusal` scripted scenario (see [Scenarios](#scenarios-454) above) and
