@@ -233,6 +233,17 @@
     <string name="agent_name_codex">Codex</string>
     <string name="thread_banner_attribution">"%1$s: "</string>
     <string name="thread_banner_truncated">" (truncated)"</string>
+    <!-- #1356: a stopped turn's row, desktop's stoppedTurnText copy. %1$s of the reason string is a
+         sanitized agent-authored token; the category clause names the agent (%2$s) before its report (%3$s). -->
+    <string name="thread_stopped_turn_limit">Stopped: turn limit reached</string>
+    <string name="thread_stopped_budget">Stopped: budget exhausted</string>
+    <string name="thread_stopped_context_too_long">Stopped: context too long, compact or reset</string>
+    <string name="thread_stopped_api_error">Stopped: API error</string>
+    <string name="thread_stopped_hook">Stopped by a hook</string>
+    <string name="thread_stopped_model_error">Stopped: model error</string>
+    <string name="thread_stopped_error">Stopped: error</string>
+    <string name="thread_stopped_reason">Stopped: %1$s</string>
+    <string name="thread_stopped_reported">%1$s (%2$s reported: %3$s)</string>
     <string name="cd_thread_banner_warning">Warning from %1$s</string>
     <string name="thread_refusal_refused_on">"Refused on "</string>
     <string name="thread_refusal_continued_on">", continued on "</string>

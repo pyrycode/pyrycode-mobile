@@ -78,6 +78,7 @@ Not operator-facing as a new flow (a row drawn from an existing frame, no action
 ## Open Questions
 
 - Does any existing test assert a whole thread after an erroring `turn_end`? Resolved during implementation by running the affected suites; expectations change only where a row is now correct.
+  - Resolution (2026-10-02): none did. The only existing test change is `RemoteConversationRepositoryTest`'s exhaustive `threadShape` `when`, which gains the new kind. The design is unchanged.
 
 ## Documentation handoff
 
