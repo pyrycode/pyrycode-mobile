@@ -42,7 +42,7 @@ data class ReadPosition(val completedTurnId: String, val readTurnId: String?) {
     val unread: Boolean get() = readTurnId != completedTurnId
 }
 
-const val MAX_CACHED_THREAD_ROWS = 200
+const val MAX_CACHED_THREAD_ROWS = 100_000
 
 fun cacheableThreadRows(rows: List<ThreadItem>): List<ThreadItem>
 fun settledThreadRows(rows: List<ThreadItem>): List<ThreadItem>
@@ -87,14 +87,23 @@ cache (enforced on write) and [`CachingConversationRepository`](caching-conversa
   keep **drawing** once its connection is gone, not what the cache may **hold**: it is also the caching
   repository's merge-base rebase on a disconnect (see that doc), where the bound would otherwise shrink a
   long thread on screen the moment it goes offline.
-- **`cacheableThreadRows(rows)`** is `settledThreadRows(rows)` with `UnrecognizedMessage` rows
-  (unbounded, model-adjacent JSON; its KDoc forbids persisting it), [`Banner`](banner-notice-row.md)
-  rows (claude-authored prose; restored by history replay instead, #873),
-  [`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874) rows (never
-  cached; restored by history replay instead, #874) and [`ModelRefusal`](model-refusal-row.md) rows
-  (claude-authored model names and prose; restored by history replay instead, #875) additionally
-  dropped, and the result bounded to the newest `MAX_CACHED_THREAD_ROWS` (200) via `takeLast` — the
-  thread is in arrival order, so "newest" is the tail. This is what may reach disk.
+- **`cacheableThreadRows(rows)`** is `settledThreadRows(rows)` with only `UnrecognizedMessage` rows
+  (unbounded, model-adjacent JSON; its KDoc forbids persisting it) additionally dropped, and the
+  result bounded to the newest `MAX_CACHED_THREAD_ROWS` (100000) via `takeLast` — the thread is in
+  arrival order, so "newest" is the tail. This is what may reach disk.
+
+  **Every other settled row kind is kept, including [`Banner`](banner-notice-row.md),
+  [`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874) and
+  [`ModelRefusal`](model-refusal-row.md) (#1353).** Those three used to be dropped here and restored
+  by history replay (#873, #874, #875) on every open. Once history loads only on the user's request
+  (an owner decision outside this ticket), replay stopped running on a routine reopen, so a cached
+  thread that still excluded them lost those rows the moment the live page didn't re-deliver them.
+  Desktop's saved timeline already kept every settled row kind except the live-only attachment
+  offer, so this closes the gap rather than inventing a new rule — see
+  [`DurableThreadItem`/`isDurable`](https://github.com/pyrycode/pyrycode/blob/main/src/shared/chatHistory.ts)
+  in the sibling desktop checkout. `UnrecognizedMessage` stays out on purpose: its KDoc forbids
+  persisting raw model-adjacent JSON, and this cache is plain files, not desktop's encrypted secure
+  store.
 
 **Identity is exact, case-sensitive string equality** on `serverId` and on `Conversation.id` —
 the same rule [`PairedServerCollectionStore`](paired-server-store.md#the-contract) states for
@@ -167,19 +176,27 @@ here or gate on the live list before trusting a cold-started value.
 
 The thread document is the same shape, file-private to `FileConversationCache.kt`:
 `CachedThread(version: Int, rows: List<CachedThreadRow>)`, `CachedThreadRow(message:
-CachedMessage? = null, boundary: CachedBoundary? = null)` — exactly one of the two is set, mapping
-`ThreadItem.MessageItem` / `ThreadItem.SessionBoundary` (never `UnrecognizedMessage`,
-[`Banner`](banner-notice-row.md),
-[`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874) or
-[`ModelRefusal`](model-refusal-row.md), which
-`cacheableThreadRows` drops before a `CachedThreadRow` is ever built; `ThreadItem.toRecord()` throws
-if any of the four ever reaches it).
+CachedMessage? = null, boundary: CachedBoundary? = null, banner: CachedBanner? = null, compaction:
+CachedCompaction? = null, refusal: CachedRefusal? = null)` — exactly one of the five is set, mapping
+`ThreadItem.MessageItem` / `ThreadItem.SessionBoundary` / [`Banner`](banner-notice-row.md) /
+[`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874) /
+[`ModelRefusal`](model-refusal-row.md) (never `UnrecognizedMessage`, which `cacheableThreadRows`
+drops before a `CachedThreadRow` is ever built; `ThreadItem.toRecord()` throws if it ever reaches
+it). The three newer fields (#1353) default to `null`, so a document written before this ticket —
+holding only `message`/`boundary` rows — still decodes, and the stored `version` stays 1.
 `CachedMessage(id, sessionId, role, content, timestamp, tool: CachedToolCall? = null, attachments:
 List<CachedAttachment> = emptyList())` carries no `isStreaming` field — a restored row is always
 settled, so the field would have nothing to encode. `CachedToolCall(toolName, input, output,
 status)` and `CachedBoundary(previousSessionId, newSessionId, reason, occurredAt, workspaceCwd:
-String? = null)` round out the two row kinds. Enums serialize by name; `Instant` fields
-(`timestamp`, `occurredAt`) follow `lastUsedAt`'s ISO-text convention, not epoch millis.
+String? = null)` round out the two original row kinds. `CachedBanner(level, text, truncated,
+occurredAt)`, `CachedCompaction(preTokens: Long? = null, postTokens: Long? = null, manual,
+occurredAt)` and `CachedRefusal(originalModel, fallbackModel: String? = null, banner,
+bannerTruncated, occurredAt)` carry every field their domain row holds, stored verbatim as message
+content already is — the render path owns stripping either way, not the cache. Enums serialize by
+name; `Instant` fields (`timestamp`, `occurredAt`) follow `lastUsedAt`'s ISO-text convention, not
+epoch millis. `occurredAt` is also each of the three new kinds' dedupe key — the same field
+`ThreadRow.listKey()`, `HistoryPageReducer`'s `holdsBanner`/`holdsCompactionBoundary`/
+`holdsModelRefusal` and `decodeThread` below all join on.
 
 `CachedAttachment(attachmentId, displayName: String? = null, mimeType: String? = null)` (#983) maps
 `Message.attachments` 1:1; `explicitNulls = false` omits a `null` hint on encode rather than writing
@@ -255,13 +272,15 @@ both this) → `invalid_data`. Anything else, cancellation included, propagates 
 **`readThread` (#797) rejects the same tampered-or-buggy shapes a duplicate `Conversation.id`
 rejects, for the same reason: a document that would hand the thread's `LazyColumn` two rows under
 one key reads empty instead of drawing them.** Beyond the version check every family shares, a
-thread document is rejected (→ `invalid_data` → empty) when: a row carries both or neither of
-`message`/`boundary`; any two messages share an id; any two boundaries share their full
-`(previousSessionId, newSessionId, occurredAt)` identity (#775 — the pair alone is *not* rejected,
-since an idle-evicted session keeps its id and a session evicted twice legitimately sends the same
-pair twice with different instants); or any tool carries `ToolCallStatus.Running` — a restored row
-is defined to always be settled, so a running status on disk is itself a corrupt document, not a
-row to filter.
+thread document is rejected (→ `invalid_data` → empty) when: a row carries other than exactly one
+of `message`/`boundary`/`banner`/`compaction`/`refusal`; any two messages share an id; any two
+boundaries share their full `(previousSessionId, newSessionId, occurredAt)` identity (#775 — the
+pair alone is *not* rejected, since an idle-evicted session keeps its id and a session evicted
+twice legitimately sends the same pair twice with different instants); any two banners, or any two
+compaction rows, share an `occurredAt`; any two refusals of the same frame type (`fallbackModel !=
+null` or not) share an `occurredAt` (#1353); or any tool carries `ToolCallStatus.Running` — a
+restored row is defined to always be settled, so a running status on disk is itself a corrupt
+document, not a row to filter.
 
 Removing an unknown host or an unknown conversation is a **successful no-op**, matching
 `PairedServerCollectionStore.remove` — #798 does not need to check existence first.
@@ -379,9 +398,14 @@ cleared by the next successful write of that document or by `removeHost`.
   against offline disk imaging of a locked device, which is a device-wide FBE property, not
   this file's — out of scope unless the threat model changes.
 - **No byte cap on a thread document, only a row-count cap.** `cacheableThreadRows` bounds a
-  thread to its newest 200 rows, not to a byte size, so a hostile or unusual daemon that sends
+  thread to its newest 100000 rows, not to a byte size, so a hostile or unusual daemon that sends
   very large message contents is bounded only by what the live projection already holds in memory
-  for that thread. Accepted in #797's security review as a residual, deferred until observed.
+  for that thread. Accepted in #797's security review as a residual, deferred until observed. The
+  row count moved from 200 to 100000 in #1353, matching desktop's own saved-timeline cap, once
+  banners, compaction dividers and model refusals started counting toward it (see § The contract
+  above) — raising it is what made [`mergeCachedRows`](caching-conversation-repository.md#how-the-restore-merges-with-live-rows)'s
+  per-emission cost worth a look; see that section for the fix and why a bound this large changed
+  what "cheap enough to run on every streaming delta" means.
 
 ## Testing
 
@@ -407,17 +431,24 @@ real rather than a convention.
 
 [`FileConversationCacheThreadTest.kt`](../../../app/src/test/java/de/pyryco/mobile/data/cache/FileConversationCacheThreadTest.kt)
 (#797) is a sibling file rather than an extension of the test above, with the same second-instance
-and log-capture discipline. 14 cases cover: a field-for-field round trip (message, a tool call in
+and log-capture discipline. 23 cases cover: a field-for-field round trip (message, a tool call in
 both a settled and a failed status, a boundary with and without `workspaceCwd`); that unrecognized,
-streaming and running-tool rows are dropped on write; the newest-200 bound; per-conversation and
-per-host isolation; whole-thread replace on a second write; that two boundaries sharing a session
-pair but differing in `occurredAt` read back rather than being rejected (#775, a double idle-evict
-of the same session); every graceful-empty-read shape including a duplicate message id, a duplicate
-boundary identity (the full triple, not the pair) and a running-status document (left on disk,
-unrepaired); `removeConversation` removing one thread and leaving siblings; removal still
-working against host metadata that was never written; `removeHost` removing every thread under it
-and no other host's; no conversation id in a path or a log line, success or failure; and a coded,
-causeless exception on a forced write failure.
+streaming and running-tool rows are dropped on write; per-conversation and per-host isolation;
+whole-thread replace on a second write; that two boundaries sharing a session pair but differing in
+`occurredAt` read back rather than being rejected (#775, a double idle-evict of the same session);
+every graceful-empty-read shape including a duplicate message id, a duplicate boundary identity
+(the full triple, not the pair) and a running-status document (left on disk, unrepaired);
+`removeConversation` removing one thread and leaving siblings; removal still working against host
+metadata that was never written; `removeHost` removing every thread under it and no other host's;
+no conversation id in a path or a log line, success or failure; and a coded, causeless exception on
+a forced write failure. #1353 added: a field-for-field round trip of a banner (both levels,
+`truncated` true), a compaction row (null and non-null token counts, `manual` true/false) and a
+refusal, in their original positions among a message and a boundary; a refusal with and a refusal
+without a fallback model on one shared `occurredAt` both reading back, since their key also carries
+`fallbackModel != null`; a literal pre-#1353 document holding only a message and a boundary still
+reading; a document repeating a banner, compaction or refusal key, or a row setting two kinds, each
+reading empty; the 100000 limit on `MAX_CACHED_THREAD_ROWS`; and that `cacheableThreadRows`, called
+directly rather than through a 100k-row file write, keeps the newest rows past the limit.
 
 [`FileConversationCacheReadPositionTest.kt`](../../../app/src/test/java/de/pyryco/mobile/data/cache/FileConversationCacheReadPositionTest.kt)
 (#877) is a third sibling file, same second-instance and log-capture discipline. It covers a
@@ -441,6 +472,11 @@ cache's or the wrapper's own unit suite.
 
 ## Related
 
+- [Ticket #1353](https://github.com/pyrycode/pyrycode-mobile/issues/1353) and its plan,
+  `docs/specs/architecture/1353-cache-notices-compaction-refusals.md` —
+  banners, compaction dividers and model refusals joined the thread's cacheable rows, and the row
+  limit moved to 100000; its Revisions entry also covers the `mergeCachedRows` key-index fix (see
+  [Caching conversation repository § How the restore merges with live rows](caching-conversation-repository.md#how-the-restore-merges-with-live-rows))
 - [Ticket #795](https://github.com/pyrycode/pyrycode-mobile/issues/795) and its plan,
   `docs/specs/architecture/795-app-private-conversation-cache.md` (design, security review,
   and the `removeConversation` revision above)
