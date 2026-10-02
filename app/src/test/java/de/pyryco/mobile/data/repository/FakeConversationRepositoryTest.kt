@@ -162,14 +162,14 @@ class FakeConversationRepositoryTest {
         }
 
     @Test
-    fun seededPyrycodeMobileChannel_boundary_isWorkspaceChange_withSeededPath() =
+    fun seededPyrycodeMobileChannel_boundary_isClear_withNullWorkspaceCwd() =
         runBlocking {
             val repo = FakeConversationRepository()
             val items = repo.observeMessages("seed-channel-pyrycode-mobile").first()
             val boundary =
                 items.filterIsInstance<ThreadItem.SessionBoundary>().single()
-            assertEquals(BoundaryReason.WorkspaceChange, boundary.reason)
-            assertEquals("~/Workspace/pyrycode-mobile", boundary.workspaceCwd)
+            assertEquals(BoundaryReason.Clear, boundary.reason)
+            assertNull(boundary.workspaceCwd)
         }
 
     @Test
@@ -184,7 +184,7 @@ class FakeConversationRepositoryTest {
         }
 
     @Test
-    fun seededChannels_collectivelyExerciseAllBoundaryReasons() =
+    fun seededChannels_exerciseClearAndIdleEvict_withoutWorkspaceChange() =
         runBlocking {
             val repo = FakeConversationRepository()
             val channelIds =
@@ -203,7 +203,6 @@ class FakeConversationRepositoryTest {
                 setOf(
                     BoundaryReason.Clear,
                     BoundaryReason.IdleEvict,
-                    BoundaryReason.WorkspaceChange,
                 ),
                 reasons,
             )

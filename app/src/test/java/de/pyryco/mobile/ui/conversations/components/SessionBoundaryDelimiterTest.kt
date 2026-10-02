@@ -30,7 +30,7 @@ class SessionBoundaryDelimiterTest {
     }
 
     @Test
-    fun `boundaryLabel formats WorkspaceChange with cwd and short time`() {
+    fun `boundaryLabel formats WorkspaceChange as a new session without the cwd`() {
         val boundary =
             ThreadItem.SessionBoundary(
                 previousSessionId = "s0",
@@ -42,7 +42,7 @@ class SessionBoundaryDelimiterTest {
 
         val label = boundaryLabel(boundary, berlin, Locale.GERMANY)
 
-        assertEquals("Workspace changed to ~/Workspace/Projects/KitchenClaw — 16:32", label)
+        assertEquals("New session — 16:32", label)
     }
 
     @Test
@@ -61,8 +61,8 @@ class SessionBoundaryDelimiterTest {
         assertEquals("Idle session ended — 16:32", label)
     }
 
-    @Test(expected = NullPointerException::class)
-    fun `boundaryLabel fails fast when WorkspaceChange has null cwd`() {
+    @Test
+    fun `boundaryLabel formats WorkspaceChange with null cwd as a new session`() {
         val boundary =
             ThreadItem.SessionBoundary(
                 previousSessionId = "s0",
@@ -72,7 +72,7 @@ class SessionBoundaryDelimiterTest {
                 workspaceCwd = null,
             )
 
-        boundaryLabel(boundary, berlin, Locale.GERMANY)
+        assertEquals("New session — 16:32", boundaryLabel(boundary, berlin, Locale.GERMANY))
     }
 
     @Test
