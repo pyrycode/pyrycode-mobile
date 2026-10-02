@@ -3,7 +3,6 @@ package de.pyryco.mobile.design
 import android.Manifest
 import android.graphics.Bitmap
 import android.os.Build
-import android.os.ParcelFileDescriptor
 import android.provider.Settings
 import android.view.View
 import android.view.ViewGroup
@@ -83,6 +82,8 @@ class DesignCapture(
                 try {
                     shell("ime enable $imeId")
                     shell("ime set $imeId")
+                    // Not revoked afterwards: revoking a runtime permission kills the app process, and with it
+                    // this instrumentation. ScannerDeniedRouteDeviceTest sorts ahead of the design package.
                     for (permission in listOf(Manifest.permission.CAMERA, Manifest.permission.POST_NOTIFICATIONS)) {
                         instrumentation.uiAutomation.grantRuntimePermission(context.packageName, permission)
                     }
@@ -227,10 +228,4 @@ class DesignCapture(
         instrumentation.uiAutomation.waitForIdle(500, 5_000)
         rule.waitForIdle()
     }
-
-    private fun shell(command: String): String =
-        ParcelFileDescriptor
-            .AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command))
-            .bufferedReader()
-            .use { it.readText() }
 }

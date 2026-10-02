@@ -1,44 +1,13 @@
 <?xml version='1.0' encoding='UTF-8' ?>
-<testsuites tests="7" failures="1" errors="0" skipped="0" time="79.904" timestamp="2026-10-01T12:45:19" hostname="localhost">
-  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadActivityIndicatorCaptureTest" tests="2" failures="0" errors="0" skipped="0" time="16.641" timestamp="2026-10-01T12:45:19" hostname="localhost">
+<testsuites tests="3" failures="0" errors="0" skipped="0" timestamp="2026-10-02T00:24:05">
+  <testsuite name="de.pyryco.mobile.design.OnboardingDesignCaptureTest" tests="3" failures="0" errors="0" skipped="0" time="38.513" timestamp="2026-10-02T00:24:05" hostname="localhost">
     <properties>
       <property name="device" value="pixel8Api35" />
       <property name="flavor" value="" />
       <property name="project" value=":app" />
     </properties>
-    <testcase name="compactLargeTextKeepsOutcomeInTheStatusArea" classname="de.pyryco.mobile.ui.conversations.thread.ThreadActivityIndicatorCaptureTest" time="8.393" />
-    <testcase name="fiveReadingsAndMenuAt412By892" classname="de.pyryco.mobile.ui.conversations.thread.ThreadActivityIndicatorCaptureTest" time="8.248" />
-  </testsuite>
-  <testsuite name="de.pyryco.mobile.ui.conversations.components.ToolRowDesignCaptureTest" tests="2" failures="0" errors="0" skipped="0" time="12.865" timestamp="2026-10-01T12:45:19" hostname="localhost">
-    <properties>
-      <property name="device" value="pixel8Api35" />
-      <property name="flavor" value="" />
-      <property name="project" value=":app" />
-    </properties>
-    <testcase name="referenceVariantsAt412By892" classname="de.pyryco.mobile.ui.conversations.components.ToolRowDesignCaptureTest" time="5.893" />
-    <testcase name="compactLargeTextKeepsDescriptionAndStatusReachable" classname="de.pyryco.mobile.ui.conversations.components.ToolRowDesignCaptureTest" time="6.972" />
-  </testsuite>
-  <testsuite name="de.pyryco.mobile.design.OnboardingDesignCaptureTest" tests="1" failures="0" errors="0" skipped="0" time="17.253" timestamp="2026-10-01T12:45:19" hostname="localhost">
-    <properties>
-      <property name="device" value="pixel8Api35" />
-      <property name="flavor" value="" />
-      <property name="project" value=":app" />
-    </properties>
-    <testcase name="onboardingFramesAt412By892" classname="de.pyryco.mobile.design.OnboardingDesignCaptureTest" time="17.253" />
-  </testsuite>
-  <testsuite name="de.pyryco.mobile.design.DesignHarnessSmokeTest" tests="2" failures="1" errors="0" skipped="0" time="23.764" timestamp="2026-10-01T12:45:19" hostname="localhost">
-    <properties>
-      <property name="device" value="pixel8Api35" />
-      <property name="flavor" value="" />
-      <property name="project" value=":app" />
-    </properties>
-    <testcase name="compactLargeTextLaunchCapturesRealFrame" classname="de.pyryco.mobile.design.DesignHarnessSmokeTest" time="9.334" />
-    <testcase name="everyThreadInputReachesTheThreadViewModel" classname="de.pyryco.mobile.design.DesignHarnessSmokeTest" time="14.43">
-      <failure>androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 5000 ms
-at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidComposeUiTestImpl.waitUntil(ComposeUiTest.android.kt:809)
-at androidx.compose.ui.test.junit4.AndroidComposeTestRule.waitUntil(AndroidComposeTestRule.android.kt:378)
-at de.pyryco.mobile.design.DesignHarnessSmokeTest.everyThreadInputReachesTheThreadViewModel(DesignHarnessSmokeTest.kt:43)
-</failure>
-    </testcase>
+    <testcase name="scannerFramesAt412By892" classname="de.pyryco.mobile.design.OnboardingDesignCaptureTest" time="17.416" />
+    <testcase name="pairCodeFramesAt412By892" classname="de.pyryco.mobile.design.OnboardingDesignCaptureTest" time="14.838" />
+    <testcase name="rePairFramesAt412By892" classname="de.pyryco.mobile.design.OnboardingDesignCaptureTest" time="6.259" />
   </testsuite>
 </testsuites>

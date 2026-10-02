@@ -2,12 +2,13 @@ package de.pyryco.mobile.design
 
 import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.data.crypto.PairedServer
-import de.pyryco.mobile.data.crypto.PairedServerStore
+import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
+import de.pyryco.mobile.data.crypto.PairedServerEntry
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConnectionStatus
+import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
-import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.network.RelayConnectionController
 import de.pyryco.mobile.data.repository.AttachmentOffer
@@ -21,27 +22,32 @@ import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.di.ThreadDestinationFactory
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
+import de.pyryco.mobile.ui.onboarding.PairCodeViewModel
 import de.pyryco.mobile.ui.onboarding.ScannerViewModel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import org.koin.core.context.loadKoinModules
 import org.koin.core.module.Module
 import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.module
 
 /**
- * The capture harness's Koin override: every thread and scanner input the fake graph cannot emit, as hot
- * flows a test sets before or after launch. [install] redefines `ThreadViewModel` and `ScannerViewModel`
- * over the app graph; [uninstall] restores the app's own definitions. Later audits set values here and
- * never edit this class.
+ * The capture harness's Koin override: every thread and pairing input the fake graph cannot emit, as hot
+ * flows a test sets before or after launch. [install] redefines `ThreadViewModel`, `ScannerViewModel` and
+ * `PairCodeViewModel` over the app graph; [uninstall] restores the app's own definitions. Later audits set
+ * values here and never edit this class.
  *
- * Every thread input applies to whichever thread opens. Inputs keyed by conversation in production
- * (question batch, roster, count, repository flows) ignore the id here.
+ * Every thread input applies to whichever thread opens. The question batch, roster, count and repository
+ * flows ignore the conversation id here. [hostModal] does not: the view model scopes it with
+ * `HostModalState.scopedTo`, so a prompt shows only when its `conversationId` is the open thread's.
  */
 class DesignInputs {
     val connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Connected)
     val liveSessionEvents = MutableSharedFlow<LiveSessionEvent>(replay = 16)
-    val hostModal = MutableStateFlow<ModalUiState>(ModalUiState.Hidden)
+
+    /** The host's prompts; each `ModalUiState.Open` shows only in the thread its `conversationId` names. */
+    val hostModal = MutableStateFlow(HostModalState())
     val questionBatch = MutableStateFlow<QuestionBatch?>(null)
     val backgroundTasks = MutableStateFlow<BackgroundTaskRoster?>(null)
     val backgroundTaskCount = MutableStateFlow(0)
@@ -50,15 +56,26 @@ class DesignInputs {
     val sessionFacts = MutableStateFlow<SessionFacts?>(null)
     val contextUsage = MutableStateFlow<ContextUsage?>(null)
 
-    /** What the scanner's post-confirm wait observes; `null` keeps it waiting (the connecting state). */
+    /**
+     * What the scanner's and the pair-code screen's post-confirm wait observes. `null` holds the connecting
+     * state until `PAIRING_VERIFICATION_DEADLINE_MS` (30 s), which then fails as unavailable with Retry.
+     * `RelayLinkStatus.DaemonAbsent` fails the same way at once; `PairingRejected` fails without Retry.
+     */
     val pairingStatus = MutableStateFlow<ConnectionStatus?>(null)
 
-    /** Records the scanner's Confirm saves instead of writing the Keystore store. */
-    val savedPairings = mutableListOf<PairedServer>()
+    /**
+     * The in-memory paired-host store both pairing view models save to instead of the Keystore store, oldest
+     * first. Seed an entry to give the pair-code screen's re-pair target a stored name.
+     */
+    val pairedHosts = mutableListOf<PairedServerEntry>()
+
+    /** While `true`, a pairing save suspends, holding the pair-code screen in its saving state. */
+    val holdSaves = MutableStateFlow(false)
 
     /** The view models the override built last, for states only an event reaches. */
     val thread = MutableStateFlow<ThreadViewModel?>(null)
     val scanner = MutableStateFlow<ScannerViewModel?>(null)
+    internal val pairCode = MutableStateFlow<PairCodeViewModel?>(null)
 
     /**
      * Every input flow the open thread collects, for checks that the override reaches it. [attachmentOffers]
@@ -114,28 +131,62 @@ class DesignInputs {
                     backgroundTaskCount = { backgroundTaskCount },
                     pairingRejected = pairingRejected,
                     attachmentReader = get<AttachmentReader>(),
-                ).also { thread.value = it }
+                ).also {
+                    thread.value = it
+                    // As production does: the open thread marks its conversation viewed until it is cleared.
+                    val handle = get<SavedStateHandle>()
+                    it.addCloseable(
+                        get<ConversationViewing>().view(
+                            handle.get<String>("serverId").orEmpty(),
+                            handle.get<String>("conversationId").orEmpty(),
+                        ),
+                    )
+                }
             }
             viewModel {
-                val store =
-                    object : PairedServerStore {
-                        override suspend fun load(): PairedServer? = savedPairings.lastOrNull()
-
-                        override suspend fun save(record: PairedServer) {
-                            savedPairings += record
-                        }
-                    }
-                val controller =
-                    object : RelayConnectionController {
-                        override fun connect() = Unit
-
-                        override fun close() = Unit
-                    }
                 ScannerViewModel(store, controller) { pairingStatus }.also { scanner.value = it }
+            }
+            viewModel {
+                val target = get<SavedStateHandle>().get<String>("serverId")?.takeIf { it.isNotEmpty() }
+                PairCodeViewModel(store, controller, { pairingStatus }, target).also { pairCode.value = it }
             }
         }
 
-    // A copy of appModule's two definitions. Reloading appModule itself would re-run its eager singletons.
+    private val controller =
+        object : RelayConnectionController {
+            override fun connect() = Unit
+
+            override fun close() = Unit
+        }
+
+    private val store =
+        object : PairedServerCollectionStore {
+            override suspend fun load(): PairedServer? = pairedHosts.lastOrNull()?.record
+
+            override suspend fun save(record: PairedServer) {
+                holdSaves.first { !it }
+                val name = loadById(record.serverId)?.displayName
+                pairedHosts.removeAll { it.record.serverId == record.serverId }
+                pairedHosts += PairedServerEntry(record, name)
+            }
+
+            override suspend fun list() = pairedHosts.toList()
+
+            override suspend fun loadById(serverId: String) = pairedHosts.lastOrNull { it.record.serverId == serverId }
+
+            override suspend fun setDisplayName(
+                serverId: String,
+                displayName: String?,
+            ) {
+                pairedHosts.replaceAll { if (it.record.serverId == serverId) it.copy(displayName = displayName) else it }
+            }
+
+            override suspend fun remove(serverId: String) {
+                pairedHosts.removeAll { it.record.serverId == serverId }
+            }
+        }
+
+    // A copy of appModule's three definitions. Reloading appModule itself would re-run its eager singletons.
     private fun appDefinitions(): Module =
         module {
             viewModel {
@@ -152,6 +203,11 @@ class DesignInputs {
             viewModel {
                 val registry = get<RelayConnectionRegistry>()
                 ScannerViewModel(get(), registry, registry::pairingStatus)
+            }
+            viewModel {
+                val registry = get<RelayConnectionRegistry>()
+                val target = get<SavedStateHandle>().get<String>("serverId")?.takeIf { it.isNotEmpty() }
+                PairCodeViewModel(get(), registry, registry::pairingStatus, target)
             }
         }
 }

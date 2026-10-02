@@ -5,8 +5,8 @@ Figma file `g2HIq2UyPhslEoHRokQmHG`. #1430 built the harness and audited onboard
 (#1431, #1432, #1433) writes only its own subfolder and its own `index.md`. No audit declares app-wide
 parity; #1434 owns that verdict.
 
-- **App commit:** `main` at `2e1e2e46` (the commit #1430 branched from). Each subfolder's `index.md` records its own.
-- **Figma inspection:** 2026-10-01 for `onboarding/`. Each subfolder records its own date; the page is the source of truth.
+- **App commit:** `main` at `97ee8d75` (the last `main` merged into #1430 before its captures). Each subfolder's `index.md` records its own.
+- **Figma inspection:** 2026-10-02 for `onboarding/`. Each subfolder records its own date; the page is the source of truth.
 - **Theme:** the app's fixed dark theme only. Light mode, system theme and dynamic colour are out of scope.
 
 ## Folder layout
@@ -15,6 +15,8 @@ parity; #1434 owns that verdict.
 design-1220/
 ├── README.md                 # this file: layout, index format, harness and commands
 ├── smoke/                    # harness self-checks (compact large text, thread override, menu)
+│   ├── smoke-results.xml     # JUnit XML: DesignHarnessSmokeTest and the two classes on ViewportRule
+│   └── first-run-results.xml # the first smoke run's XML, 1 failure, behind the plan's 2026-10-01 revision
 └── <surface-group>/          # one per audit, e.g. onboarding/
     ├── index.md              # one entry per audited frame or state
     ├── <state>.png           # the app capture, from the device run
@@ -65,21 +67,29 @@ All under `app/src/androidTest/java/de/pyryco/mobile/design/`. No file under `ap
   density 160, the size (default `412x892`) and the system font scale before any activity launches,
   and restores all three afterwards.
 - `DesignCapture(rule)` — use with `createEmptyComposeRule()` at `order = 2`. Selects the test IME, grants
-  camera and notification permission, pins dark theme with wallpaper colours off, controls the startup
+  camera and notification permission (not revoked: a revoke kills the instrumentation process), pins dark theme with wallpaper colours off, controls the startup
   paired snapshot (`design.paired = true` opens the channel list), installs the Koin override, and
   restores everything. `launch()`, `capture(folder, name, figmaNode)`, `openKeyboard(node)`,
   `closeKeyboard()`, `openMenu(anchor)`, `insets()`.
-- `DesignInputs` (`design.inputs`) — the Koin override, loaded over the app graph. Set these before or
-  after launch; the open thread collects them:
-  `connectionState`, `liveSessionEvents`, `hostModal` (permission and trust prompts), `questionBatch`,
-  `backgroundTasks`, `backgroundTaskCount`, `pairingRejected`, `attachmentOffers`, `sessionFacts`,
-  `contextUsage`. The fake repository still supplies messages, session settings, the model menu and the
-  slash menu. `pairingStatus` is what the scanner's post-confirm wait observes (`null` keeps it
-  connecting), and Confirm records to `savedPairings` instead of the Keystore. `thread` and `scanner`
-  hold the view models the override built, for event-only states such as the scanner's denied state.
-  Inputs ignore the conversation id: they apply to whichever thread opens. The override passes no app
-  draft stores, so the view model reads `questionBatch` itself. At `2e1e2e46` no thread code reads
-  `observeAttachmentOffers`, so `attachmentOffers` is wired but nothing subscribes to it yet.
+- `DesignInputs` (`design.inputs`) — the Koin override, loaded over the app graph. It redefines
+  `ThreadViewModel`, `ScannerViewModel` and `PairCodeViewModel`. Set these before or after launch; the open
+  thread collects them:
+  `connectionState`, `liveSessionEvents`, `hostModal` (a `HostModalState` of permission and trust
+  prompts), `questionBatch`, `backgroundTasks`, `backgroundTaskCount`, `pairingRejected`,
+  `attachmentOffers`, `sessionFacts`, `contextUsage`. The fake repository still supplies messages, session
+  settings, the model menu and the slash menu. The question batch, roster, count and repository flows
+  apply to whichever thread opens. `hostModal` does not: the view model scopes it with
+  `HostModalState.scopedTo`, so a prompt shows only when its `conversationId` is the open thread's. The thread marks
+  its conversation viewed as production does. The override passes no app draft stores, so the view model
+  reads `questionBatch` itself. At `97ee8d75` no thread code reads `observeAttachmentOffers`, so
+  `attachmentOffers` is wired but nothing subscribes to it yet.
+- Pairing inputs, shared by the scanner and the pair-code screen: `pairingStatus` is what the post-confirm
+  wait observes. `null` holds the connecting state until the 30 s `PAIRING_VERIFICATION_DEADLINE_MS`, then
+  fails as unavailable with Retry. `RelayLinkStatus.DaemonAbsent` fails the same way at once, and
+  `PairingRejected` fails without Retry. Both save to the in-memory `pairedHosts` instead of the Keystore;
+  seed an entry to give a re-pair target its stored name. `holdSaves = true` suspends saves, holding the
+  pair-code screen in Saving. `thread`, `scanner` and `pairCode` hold the view models the override
+  built, for event-only states such as the scanner's denied or camera-error state.
 - `DesignHarnessSmokeTest` proves the compact 320x700 at 150 % capture and that every thread input
   reaches the thread's view model.
 

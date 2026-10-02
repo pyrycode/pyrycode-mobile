@@ -33,10 +33,10 @@ class ViewportRule : TestRule {
                 val size = overrideOf(shell("wm size"))
                 val density = overrideOf(shell("wm density"))
                 val fontScale = shell("settings get system font_scale").trim()
-                shell("wm density 160")
-                shell("wm size ${viewport?.size ?: "412x892"}")
-                shell("settings put system font_scale ${viewport?.fontScale ?: 1f}")
                 try {
+                    shell("wm density 160")
+                    shell("wm size ${viewport?.size ?: "412x892"}")
+                    shell("settings put system font_scale ${viewport?.fontScale ?: 1f}")
                     instrumentation.waitForIdleSync()
                     base.evaluate()
                 } finally {
@@ -52,12 +52,13 @@ class ViewportRule : TestRule {
             }
         }
 
-    private fun shell(command: String): String =
-        ParcelFileDescriptor
-            .AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command))
-            .bufferedReader()
-            .use { it.readText() }
-
     private fun overrideOf(output: String): String =
         output.lineSequence().firstOrNull { it.startsWith("Override") }?.substringAfter(": ") ?: "reset"
 }
+
+/** Runs [command] through the instrumentation's shell and returns its output; shared by the design rules. */
+internal fun shell(command: String): String =
+    ParcelFileDescriptor
+        .AutoCloseInputStream(InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command))
+        .bufferedReader()
+        .use { it.readText() }
