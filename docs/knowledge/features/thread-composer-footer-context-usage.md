@@ -58,22 +58,33 @@ or `ColorScheme.warning`, from `ui/theme/WarningColors.kt`), and `High` reads `"
 (`bodySmall`) does not change at any step. The unavailable state (`"Cxt: n/a"`, `onSurfaceVariant`) is a
 separate branch, untouched by the step.
 
-**The high text does not always fit, and that's accepted.** `"Cxt high: N%"` is long enough that at a
-320dp-wide footer with 1.5× font scale it ellipsizes — the content description still carries the full
-figure (`"Context usage high, 84%"`), so the information survives even when the glyphs don't.
-`ThreadComposerFooterTest` cannot catch this: it is a semantics-level test, and semantics always hold the
-untruncated description regardless of what the rendered line shows. The layout claim lives in
-`ThreadComposerFooterWidthTest` (a NATIVE-graphics test class), which actually measures line counts:
-`compactWidth_highReadingFitsOnOneLine` (320dp, default font) asserts the high text stays on one
-unellipsized line, and `compactWidthAndEnlargedText_highReadingKeepsTheFigureInItsDescription` (320dp,
-1.5× font) pins the accepted trade-off that it ellipsizes there while the description keeps "Context usage
-high, 84%". A reading at or above 70% also changed two older fixed-percentage tests: the #1032 compact-width
-layout test `compactWidthAndEnlargedText_keepThreeActionsSeparate` moved its reading from 84% to 37% because
-it is about the *ordinary* reading's layout, not the high one, and `contextSegment_showsTheReportedPercentage_andTheSheetAgrees`
-now expects `"Cxt high: 84%"` since 84 is itself a high reading. The real-Claude regexes in
-`InteractiveStreamE2ETest` (`CONTEXT_REPORTED` and its users) accept `Cxt high:` too, so a live reading of
-70 or more does not fail them; there is no new rung-3 scenario for the colour step itself, since it is not a
-new operator flow and a live session cannot be pushed to a specific percentage on demand.
+**The high text no longer ellipsizes at 320dp and 1.5× — it wraps under Actions instead ([#1549](https://github.com/pyrycode/pyrycode-mobile/issues/1549)).**
+Before #1549, `"Cxt high: N%"` was long enough that at a 320dp-wide footer with 1.5× font scale it
+ellipsized, relying on the content description (`"Context usage high, 84%"`) to carry the full figure. The
+design decision on [#1485](https://github.com/pyrycode/pyrycode-mobile/issues/1485) (2026-10-02) replaced
+that trade-off: when Actions, the label and the trailing paperclip/tune icons do not fit one row at their
+natural widths, `FooterTextRow` moves the label whole to its own line under Actions instead of shrinking or
+ellipsizing it — see [Thread composer footer § Trailing icons stay outside the weighted text
+region](thread-composer-footer.md#trailing-icons-stay-outside-the-weighted-text-region-1032) for the wrap
+shape, the `FooterFirstRowBottom` alignment line and `FooterLineGap`. The label keeps `maxLines = 1` and
+`TextOverflow.Ellipsis` for widths narrower than its own wrapped line can hold; #1549's acceptance scope is
+150% text, where "Cxt high: 84%" fits in full, so this remains unmeasured rather than a known gap.
+`ThreadComposerFooterTest` cannot catch wrapping either: it is a semantics-level test, and semantics always
+hold the untruncated description regardless of what the rendered line shows. The layout claim lives in
+`ThreadComposerFooterWidthTest` (a NATIVE-graphics test class): `compactWidth_highReadingFitsOnOneLine`
+(320dp, default font) asserts the high text stays on one unellipsized line on the Actions row, and
+`compactWidthAndEnlargedText_highReadingWrapsUnderActions` (320dp, 1.5× font, replacing the old
+`…highReadingKeepsTheFigureInItsDescription`) asserts the label is not ellipsized, sits `FooterLineGap`
+under Actions' visible text (measured above `contentBottomPadding`) and starts at Actions' left edge, with
+the paperclip and tune bottoms still level with Actions. `pixel8_highReadingStaysOnActionsRow` (411dp, 1.0×)
+covers the still-one-row shape at a realistic phone width. A reading at or above 70% also changed two older
+fixed-percentage tests: the #1032 compact-width layout test `compactWidthAndEnlargedText_keepThreeActionsSeparate`
+moved its reading from 84% to 37% because it is about the *ordinary* reading's layout, not the high one, and
+`contextSegment_showsTheReportedPercentage_andTheSheetAgrees` now expects `"Cxt high: 84%"` since 84 is
+itself a high reading. The real-Claude regexes in `InteractiveStreamE2ETest` (`CONTEXT_REPORTED` and its
+users) accept `Cxt high:` too, so a live reading of 70 or more does not fail them; there is no new rung-3
+scenario for the colour step or the wrap itself, since neither is a new operator flow and a live session
+cannot be pushed to a specific percentage on demand.
 
 **The open thread asks again, since [#1410](https://github.com/pyrycode/pyrycode-mobile/issues/1410).**
 \#945 originally had `ContextUsageProjection` ask (`request_context_usage`) on the 0→1 subscriber edge, but
