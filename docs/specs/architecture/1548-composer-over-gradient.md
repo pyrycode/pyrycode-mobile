@@ -22,3 +22,7 @@ Remove the `.background(threadColors.surface)` modifier from the `bottomBar` col
 `ThreadCanvasPaletteTest.assertCanvas` currently asserts the composer-surround pixel equals the flat `surface`, which is the band. In static dark on the thread it becomes: the composer-surround pixel is bluer than the flat canvas (the glow shows through, as the existing `glow` check does at y=200). The other modes keep the equality to `surface`, which still equals the frame's paint. Write that change first and watch it fail against the current code.
 
 Evidence: run `ThreadDesignCaptureTest#threadStatusFramesAt412By892` on `pixel8Api35` with `requireRealSystemBars=true`, then `scripts/design-compare.py` against the `16:8` export, and confirm the side-by-side shows no band.
+
+## Revisions
+
+- 2026-10-02: the test samples the input area's top edge, not its foot. Robolectric's 320x731dp screen puts the composer's foot past the glow's end, where the band and the gradient are the same colour, so the planned check could not fail. `assertCanvas` now reads the pixels 4dp above and below the bottom of `thread-message-region` at the screen's centre in static dark, requires the glow there, and requires the two to match; with the old background the lower pixel is the flat band and the check fails.

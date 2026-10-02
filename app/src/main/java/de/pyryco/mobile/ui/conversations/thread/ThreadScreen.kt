@@ -1,7 +1,6 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.rememberScrollableState
 import androidx.compose.foundation.gestures.scrollable
@@ -437,15 +436,15 @@ fun ThreadScreen(
             },
             // Figma 16:8's `Input area` (533:1957): a gap-8 column of the status area, the input field and
             // the model/effort footer, opening 12dp below the message area and closing 16dp above the
-            // frame's foot. It owns the composer's surface and the IME lift, so the whole input area rises
-            // above the keyboard as one unit while the header and the list stay put — and, sitting in the
-            // bottomBar slot over an opaque surface, it leaves the message list the only scrolling region.
+            // frame's foot. It owns the IME lift, so the whole input area rises above the keyboard as one
+            // unit while the header and the list stay put, and sitting in the bottomBar slot it leaves the
+            // message list the only scrolling region. #1548: it paints no background, so the frame's glow
+            // runs behind it as in 16:8; the list still ends above it at the Scaffold's inner padding.
             bottomBar = {
                 Column(
                     modifier =
                         Modifier
                             .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.threadColors.surface)
                             .imePadding()
                             .padding(top = ComposerTopGap, bottom = ComposerBottomGap),
                     verticalArrangement = Arrangement.spacedBy(ComposerSectionGap),
