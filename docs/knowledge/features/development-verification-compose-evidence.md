@@ -145,6 +145,27 @@ expected, not proof of staleness — check provenance in the paired `.txt`
 metadata (for example a field like `syntheticBars` that only a rewritten run
 carries), not the PNG history.
 
+`ListDesignCaptureTest` (#1431) audited the list-side surfaces (Channel List,
+Archive, Channel Info, Settings, Edit host) through this harness and found
+three more. A modal is shown in its own `Dialog`, so the activity window never
+takes focus while it is up and `DesignCapture.openKeyboard`'s wait for that
+focus times out; drive the keyboard from the dialog's own view instead, read
+from `ViewRootForTest.view` on a node inside the modal. Clicking a tab or
+control that is already selected leaves the capture identical to the one
+before the click — `ArchivedDiscussionsViewModel` always opens on
+`ArchiveTab.Discussions`, so a later click on "Discussions" was a silent no-op
+that compared the wrong tab against Figma; before a capture, assert content
+that only the target state shows, not just that the click happened. And in a
+frame with no status bar, measure whether the top bar moved with the content
+before calling an offset a row offset — the list's rows read as "20 px low"
+against the frame until the 24 px status bar was subtracted, which left the
+real error as the whole screen sitting 4 px high, top bar included, not the
+rows underneath it. Status-bar icon appearance is not safe to carry into a
+Colour verdict either: it differed between runs and even between two captures
+of the same surface in one run (`archive.png` against `archive-compact.png`),
+so re-read it from the committed capture immediately before writing that
+verdict rather than trusting an earlier run's reading.
+
 `MarkdownReaderCaptureTest#compactLargeTextKeepsControlsAndBodyReachable`
 (unrelated to the #1352 history-paging change, caught in its PR's UI gate and
 triaged there) hit the same `wm size` race, confirmed by two focused re-runs
