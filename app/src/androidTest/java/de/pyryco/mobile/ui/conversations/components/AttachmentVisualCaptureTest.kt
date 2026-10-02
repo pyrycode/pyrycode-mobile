@@ -18,6 +18,8 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
@@ -250,17 +252,20 @@ class AttachmentVisualCaptureTest {
         }
     }
 
-    /** Waits until the pending strip's three image tiles show the decoded rock rather than their placeholder. */
+    /**
+     * Waits until the pending strip's three image tiles show the decoded rock: the placeholder file tile merges its
+     * "PNG" label into the tile's semantics, the thumbnail has none. Polling semantics rather than `captureToImage`
+     * keeps the wait off `forceRedraw`, whose fixed 2 s draw timeout a cold emulator's first frames can overrun.
+     */
     private fun awaitPendingThumbnails() {
-        rule.waitForIdle()
         rule.waitUntil(10_000) {
             listOf("rock.png", "rock-2.png", "rock-3.png").all { name ->
-                val tile =
-                    rule
-                        .onNode(hasContentDescription(name) and hasAnyAncestor(hasTestTag(ATTACHMENT_STRIP_TEST_TAG)))
-                        .captureToImage()
-                        .asAndroidBitmap()
-                Color.red(tile.getPixel(10, 10)) > 80
+                rule
+                    .onNode(hasContentDescription(name) and hasAnyAncestor(hasTestTag(ATTACHMENT_STRIP_TEST_TAG)))
+                    .fetchSemanticsNode()
+                    .config
+                    .getOrNull(SemanticsProperties.Text)
+                    .isNullOrEmpty()
             }
         }
     }
