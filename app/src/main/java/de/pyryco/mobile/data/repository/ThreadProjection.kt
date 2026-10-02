@@ -174,17 +174,9 @@ internal class ThreadProjection {
      * failure boolean leaves the decode; the claude-authored outcome strings never do.
      */
     fun applyCompacting(envelope: Envelope) {
-        val dto: CompactingPayloadDto
-        val occurredAt: Instant
-        try {
-            dto = MobileJson.decodeFromJsonElement<CompactingPayloadDto>(envelope.payload)
-            occurredAt = Instant.parse(envelope.ts)
-        } catch (e: IllegalArgumentException) {
-            return
+        decodeCompactingEdge(envelope)?.let { (conversationId, edge) ->
+            foldCompaction(conversationId) { rows, fold -> rows.withCompactingEdge(fold, edge.active, edge.failed, edge.occurredAt) }
         }
-        val active = dto.active
-        val failed = dto.failed()
-        foldCompaction(dto.conversationId) { rows, fold -> rows.withCompactingEdge(fold, active, failed, occurredAt) }
     }
 
     /**
@@ -710,6 +702,26 @@ internal class ThreadProjection {
         try {
             val dto = MobileJson.decodeFromJsonElement<CompactionBoundaryPayloadDto>(envelope.payload)
             dto.conversationId to dto.toRow(occurredAt = Instant.parse(envelope.ts))
+        } catch (e: IllegalArgumentException) {
+            null
+        }
+
+    /** One `compacting` edge as the thread fold reads it (#1358): the outcome strings reduced to [failed]. */
+    private class CompactingEdge(
+        val active: Boolean,
+        val failed: Boolean,
+        val occurredAt: Instant,
+    )
+
+    /**
+     * Decode one `compacting` envelope (#1358) to its routing conversation id and its [CompactingEdge], or
+     * **null** when it cannot be folded. A malformed `ts` drops the frame as a malformed payload does. Mirrors
+     * [decodeCompactionBoundary], and like it logs nothing.
+     */
+    private fun decodeCompactingEdge(envelope: Envelope): Pair<String, CompactingEdge>? =
+        try {
+            val dto = MobileJson.decodeFromJsonElement<CompactingPayloadDto>(envelope.payload)
+            dto.conversationId to CompactingEdge(dto.active, dto.failed(), Instant.parse(envelope.ts))
         } catch (e: IllegalArgumentException) {
             null
         }

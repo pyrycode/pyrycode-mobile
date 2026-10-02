@@ -406,10 +406,10 @@ internal fun List<ThreadItem>.withCompactionBoundary(
     val next = fold.copy(pending = null)
     val pending = fold.pending?.let { at -> indexOfFirst { it is ThreadItem.CompactionBoundary && it.occurredAt == at } } ?: -1
     val heldElsewhere =
-        withIndex().any { (index, it) ->
+        withIndex().any { (index, item) ->
             index != pending &&
-                it is ThreadItem.CompactionBoundary &&
-                it.occurredAt == row.occurredAt
+                item is ThreadItem.CompactionBoundary &&
+                item.occurredAt == row.occurredAt
         }
     val rows =
         when {
@@ -1022,7 +1022,8 @@ internal fun List<ThreadItem>.holdsBanner(banner: ThreadItem.Banner): Boolean =
  * Whether this thread already holds a compaction boundary stamped [boundary]'s `ts` (#874) — the protocol's
  * `(type, ts)` join key, with the type implied by [ThreadItem.CompactionBoundary].
  *
- * **One identity, three readers:** this history merge, the live lane's `appendCompactionBoundary`, and the
+ * **One identity, three readers:** this history merge, the live and history compaction folds
+ * (`withCompactingEdge`, `withCompactionBoundary`), and the
  * list key `ThreadRow.listKey` gives the divider, so two dividers this predicate lets into one thread never
  * share a key. Two *different* boundaries on one instant lose the second — the fail-safe direction, a missing
  * divider rather than a crashed thread; the daemon stamps one `ts` per compaction.

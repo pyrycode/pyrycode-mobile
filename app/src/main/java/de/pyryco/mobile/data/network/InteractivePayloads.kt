@@ -304,9 +304,9 @@ internal fun ApiRetryPayloadDto.toStatus(): ApiRetryStatus =
  * phone never sends one. Always decode through [MobileJson].
  *
  * Wire SSOT: pyrycode `internal/protocol/interactive.go` (`CompactingPayload`) +
- * `docs/protocol-mobile.md` § `compacting`. Shape: `{conversation_id, active}` — exactly two fields,
- * both **strict-required, non-null** (the Go struct sets no `omitempty`, so `active: false` always
- * serializes). A missing field, or one whose JSON shape cannot be read as its declared type (a number
+ * `docs/protocol-mobile.md` § `compacting`. Shape: `{conversation_id, active}` plus the two optional
+ * outcome fields below. The two edge fields are **strict-required, non-null** (the Go struct sets no
+ * `omitempty`, so `active: false` always serializes). A missing edge field, or one whose JSON shape cannot be read as its declared type (a number
  * where a `String` is declared, an object or array where a `Boolean` is), fails the structural decode
  * with a [kotlinx.serialization.SerializationException] and the one envelope is dropped (AC #5). The
  * measured latitude documented on [ApiRetryPayloadDto] applies here too: kotlinx's *tree* decoder
@@ -315,8 +315,8 @@ internal fun ApiRetryPayloadDto.toStatus(): ApiRetryStatus =
  *
  * [active] is the edge — `true` on onset, `false` once compaction finished. Unlike [StallPayloadDto]
  * this carries a **real falling edge**, so the state must never stick after it (the sibling `stall`
- * infers recovery from forward progress instead). **Banner-only:** the upstream detector streams no
- * compaction progress, so there is deliberately no counter, percent, or ETA field.
+ * infers recovery from forward progress instead). The upstream detector streams no compaction progress,
+ * so there is deliberately no counter, percent, or ETA field.
  *
  * No `toX()` mapper, following [StallPayloadDto]'s precedent and deliberately unlike
  * [ApiRetryPayloadDto.toStatus]: that one exists to collapse four wire fields into a counter-carrying
