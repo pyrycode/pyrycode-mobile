@@ -57,16 +57,19 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.McpStatus
 import de.pyryco.mobile.data.repository.MemorySearchAvailability
 import de.pyryco.mobile.data.repository.MemorySearchProvider
 import de.pyryco.mobile.data.repository.MemorySearchReport
+import de.pyryco.mobile.data.repository.SessionFacts
 import de.pyryco.mobile.data.repository.SessionPromptStatus
 import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.ui.components.PROMPT_MIN_LINES
 import de.pyryco.mobile.ui.components.PromptWellHeight
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.theme.modalControl
+import java.util.Locale
 
 internal data class ChannelInfoUiModel(
     val conversationName: String,
@@ -77,6 +80,11 @@ internal data class ChannelInfoUiModel(
     val messageCount: Int,
     val memorySearch: MemorySearchReport,
     val channelId: String,
+    // #1346: the Session section's readings. The facts and the cost are Claude's claims, shown as inert
+    // text and never driving a control.
+    val agent: ConversationAgent = ConversationAgent.Claude,
+    val sessionFacts: SessionFacts? = null,
+    val sessionCostUsd: Double? = null,
     // #1344: the MCP server reading, or `null` when the session reports it cannot answer — which hides the section.
     val mcpServers: McpStatus? = null,
 )
@@ -171,6 +179,8 @@ internal fun ChannelInfoSheetContent(
         AboutRow(label = "Last activity", value = model.lastActivityLabel)
         AboutRow(label = "Total sessions", value = model.sessionCount.toString())
         AboutRow(label = "Total messages", value = model.messageCount.toString())
+
+        SessionSection(model)
 
         SectionHeader(text = "Memory")
         MemoryRow(report = model.memorySearch, onInstall = onInstallMemoryPlugin)
@@ -287,6 +297,125 @@ private fun AboutRow(
         )
     }
 }
+
+/**
+ * The Session section (#1346), desktop's: the agent's version and the permission mode Claude reports, then
+ * Claude's cost estimate when there is one. Both facts are claims only; nothing here reads them as a setting.
+ */
+@Composable
+private fun SessionSection(model: ChannelInfoUiModel) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        val facts = model.sessionFacts
+        val flagged = facts?.truncatedFields.orEmpty()
+        SectionHeader(text = "Session")
+        SessionRow(
+            label = if (model.agent == ConversationAgent.Codex) "Codex version" else "Claude version",
+            value = reportedSessionValue(facts?.claudeCodeVersion, CLAUDE_CODE_VERSION_FIELD in flagged),
+            valueTag = CHANNEL_INFO_AGENT_VERSION_TAG,
+        )
+        SessionRow(
+            label = "Reported permission mode",
+            value = reportedSessionValue(facts?.permissionMode, PERMISSION_MODE_FIELD in flagged),
+        )
+        model.sessionCostUsd?.let { cost ->
+            SessionRow(
+                label = "Cost (Claude's estimate)",
+                value = ReportedSessionValue(formatSessionCost(cost), truncated = false),
+                valueTag = CHANNEL_INFO_SESSION_COST_TAG,
+            )
+        }
+    }
+}
+
+/** The [AboutRow] layout, with "Not reported" for an absent value and a "Truncated" line under a cut one. */
+@Composable
+private fun SessionRow(
+    label: String,
+    value: ReportedSessionValue,
+    valueTag: String? = null,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Column(
+            modifier = Modifier.weight(1f).padding(start = 8.dp),
+            horizontalAlignment = Alignment.End,
+        ) {
+            Text(
+                text = value.text ?: "Not reported",
+                modifier = if (valueTag != null) Modifier.testTag(valueTag) else Modifier,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.End,
+            )
+            if (value.truncated) {
+                Text(
+                    text = "Truncated",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+/** One Session value as shown (#1346): [text] `null` reads "Not reported"; [truncated] tags it. */
+internal data class ReportedSessionValue(
+    val text: String?,
+    val truncated: Boolean,
+)
+
+/**
+ * A Claude-reported session value made inert (#1346): control and Unicode format code points (bidi
+ * overrides among them) become spaces and the ends are trimmed, then the text is cut at
+ * [MAX_SESSION_VALUE_CODE_POINTS] code points, never inside a surrogate pair. Nothing printable left reads
+ * as not reported. A cut made here or one the daemon reported ([flaggedTruncated]) marks it truncated. The
+ * result reaches `Text` only.
+ */
+internal fun reportedSessionValue(
+    raw: String?,
+    flaggedTruncated: Boolean,
+): ReportedSessionValue {
+    val printable =
+        buildString {
+            raw.orEmpty().codePoints().forEach { cp ->
+                if (Character.isISOControl(cp) || Character.getType(cp) == Character.FORMAT.toInt()) {
+                    append(' ')
+                } else {
+                    appendCodePoint(cp)
+                }
+            }
+        }.trim()
+    if (printable.isEmpty()) return ReportedSessionValue(null, flaggedTruncated)
+    val cut = printable.codePointCount(0, printable.length) > MAX_SESSION_VALUE_CODE_POINTS
+    val shown = if (cut) printable.substring(0, printable.offsetByCodePoints(0, MAX_SESSION_VALUE_CODE_POINTS)) else printable
+    return ReportedSessionValue(shown, cut || flaggedTruncated)
+}
+
+/** `$0.42 est.`, rounded to cents (desktop's `formatSessionCost`). */
+internal fun formatSessionCost(usd: Double): String = "$" + String.format(Locale.ROOT, "%.2f", usd) + " est."
+
+/** The device suites' handles for the Session section's version and cost values (#1346). */
+internal const val CHANNEL_INFO_AGENT_VERSION_TAG: String = "channel-info-agent-version"
+internal const val CHANNEL_INFO_SESSION_COST_TAG: String = "channel-info-session-cost"
+
+private const val MAX_SESSION_VALUE_CODE_POINTS = 256
+
+/** The `session_facts.truncated_fields` entries (pyrycode `docs/protocol-mobile.md`). */
+private const val CLAUDE_CODE_VERSION_FIELD = "claude_code_version"
+private const val PERMISSION_MODE_FIELD = "permission_mode"
 
 @Composable
 private fun MemoryRow(
@@ -588,6 +717,8 @@ private val SAMPLE_MODEL =
         messageCount = 347,
         memorySearch = MemorySearchReport(MemorySearchAvailability.Absent, emptyList()),
         channelId = "ch_a8f3c2d1e9b7",
+        sessionFacts = SessionFacts("2.1.143", "acceptEdits", null),
+        sessionCostUsd = 0.42,
     )
 
 private val SAMPLE_PROMPT =

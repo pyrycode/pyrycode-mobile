@@ -150,8 +150,8 @@ internal data class ToolProgressPayloadDto(
 /**
  * `turn_end`. The four trailing fields (#805) are claude's own stop shape and are **optional and open-set**
  * on the wire: an absent one — an older daemon — decodes to its empty value, the lenient-default posture
- * [ToolUsePayloadDto.parentToolUseId] set, and an unrecognised token is just a string. The eight numeric
- * fields on the same frame are not decoded.
+ * [ToolUsePayloadDto.parentToolUseId] set, and an unrecognised token is just a string. Of the eight numeric
+ * fields on the same frame only `cost_usd_total` is decoded (#1346).
  */
 @Serializable
 internal data class TurnEndPayloadDto(
@@ -162,6 +162,8 @@ internal data class TurnEndPayloadDto(
     @SerialName("is_error") val isError: Boolean = false,
     @SerialName("terminal_reason") val terminalReason: String = "",
     @SerialName("error_category") val errorCategory: String = "",
+    // #1346: an element, not a `Double?`, so a non-number is absent instead of failing the whole frame.
+    @SerialName("cost_usd_total") val costUsdTotal: JsonElement? = null,
 )
 
 /**
@@ -650,9 +652,24 @@ private fun JsonElement?.toInputFields(): Map<String, String> {
     }
 }
 
-/** Total field copy: every string passes through verbatim (consumers map and sanitize the wire values). */
+/**
+ * Total field copy: every string passes through verbatim (consumers map and sanitize the wire values). The
+ * cost (#1346) is kept only when the wire carried a JSON number.
+ */
 internal fun TurnEndPayloadDto.toEvent(): LiveSessionEvent =
-    LiveSessionEvent.TurnEnd(conversationId, turnId, stopReason, outcome, isError, terminalReason, errorCategory)
+    LiveSessionEvent.TurnEnd(
+        conversationId,
+        turnId,
+        stopReason,
+        outcome,
+        isError,
+        terminalReason,
+        errorCategory,
+        costUsdTotal.jsonNumberOrNull(),
+    )
+
+/** A JSON number's value; `null` for a string, a boolean, `null`, an object or an array. */
+private fun JsonElement?.jsonNumberOrNull(): Double? = (this as? JsonPrimitive)?.takeUnless { it.isString }?.content?.toDoubleOrNull()
 
 /**
  * The two v2 **modal** lifecycle payloads (#437, pyrycode#701/#703): `modal_shown` (a surfaced

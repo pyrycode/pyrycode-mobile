@@ -1,5 +1,6 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.BoundaryReason
@@ -8,6 +9,7 @@ import de.pyryco.mobile.data.repository.McpStatusReport
 import de.pyryco.mobile.data.repository.MemorySearchAvailability
 import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.SessionCapabilities
+import de.pyryco.mobile.data.repository.SessionFacts
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.components.formatRelativeTime
 import kotlinx.datetime.Instant
@@ -84,6 +86,25 @@ class ThreadScreenMapperTest {
             MemorySearchReport.Unknown,
             state.copy(conversationId = "ch_2", runConfig = ThreadRunConfig()).toChannelInfoUiModel(now).memorySearch,
         )
+    }
+
+    @Test
+    fun toChannelInfoUiModel_passesTheSessionReadingsThrough() {
+        val facts = SessionFacts("0.9.1", "auto", listOf("claude_code_version"))
+        val state =
+            ThreadUiState(
+                conversationId = "ch_1",
+                displayName = "x",
+                agent = ConversationAgent.Codex,
+                reportedSessionFacts = facts,
+                sessionCostUsd = 0.42,
+            )
+
+        val model = state.toChannelInfoUiModel(now)
+
+        assertEquals(ConversationAgent.Codex, model.agent)
+        assertEquals(facts, model.sessionFacts)
+        assertEquals(0.42, model.sessionCostUsd)
     }
 
     @Test

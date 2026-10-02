@@ -112,7 +112,9 @@ import de.pyryco.mobile.push.PushTokenSource
 import de.pyryco.mobile.ui.components.CHANNEL_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
+import de.pyryco.mobile.ui.conversations.components.CHANNEL_INFO_AGENT_VERSION_TAG
 import de.pyryco.mobile.ui.conversations.components.CHANNEL_INFO_PROMPT_FIELD_TAG
+import de.pyryco.mobile.ui.conversations.components.CHANNEL_INFO_SESSION_COST_TAG
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_ATTACHMENT_FILE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.RUNNING_MODEL_TEST_TAG
@@ -122,6 +124,7 @@ import de.pyryco.mobile.ui.conversations.components.treeHostEditTestTag
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHAT_ROW_TEST_TAG
+import de.pyryco.mobile.ui.conversations.thread.ATTACHMENT_STRIP_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.CONTEXT_USAGE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.ComposerAction
 import de.pyryco.mobile.ui.conversations.thread.EFFORT_PLACEHOLDER_LABEL
@@ -328,6 +331,10 @@ class InteractiveStreamE2ETest {
      * #891: after one real turn, the Status sheet's running-model row shows what claude announced on its
      * `system/init` line (`model_announced`). Asserts only that the row carries a non-empty value and not
      * the unavailable note — the model name depends on the operator's claude and is never hard-coded.
+     *
+     * #1346: first, Channel info's Session section shows a reported version (not "Not reported") and a cost
+     * row, which exists only once the turn's `turn_end` carried a positive `cost_usd_total`. Neither value
+     * is hard-coded; the sheet is closed with its own Close button before the Status sheet opens.
      */
     @Test
     fun interactiveTurn_pingPrompt_statusSheetShowsRunningModel() {
@@ -340,6 +347,33 @@ class InteractiveStreamE2ETest {
         composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
         composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
         composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+
+        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).onFirst().performClick()
+        val versionShown = {
+            composeTestRule
+                .onAllNodes(hasTestTag(CHANNEL_INFO_AGENT_VERSION_TAG))
+                .fetchSemanticsNodes()
+                .map { node -> node.config[SemanticsProperties.Text].joinToString("") { it.text } }
+        }
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            versionShown().any { it.isNotBlank() && it != SESSION_VALUE_NOT_REPORTED } &&
+                composeTestRule.onAllNodes(hasTestTag(CHANNEL_INFO_SESSION_COST_TAG)).fetchSemanticsNodes().isNotEmpty()
+        }
+        val cost =
+            composeTestRule
+                .onNode(hasTestTag(CHANNEL_INFO_SESSION_COST_TAG))
+                .fetchSemanticsNode()
+                .config[SemanticsProperties.Text]
+                .joinToString("") { it.text }
+        assertTrue("cost row reads \"$cost\"", Regex("\\$\\d+\\.\\d{2} est\\.").matches(cost))
+        composeTestRule.onNode(hasContentDescription(CD_CLOSE_SHEET) and hasClickAction()).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasTestTag(CHANNEL_INFO_AGENT_VERSION_TAG)).fetchSemanticsNodes().isEmpty()
+        }
 
         composeTestRule.onNode(hasContentDescription(statusExpandDescription)).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
@@ -1102,8 +1136,8 @@ class InteractiveStreamE2ETest {
         // 7. Open Channel info → tap the sheet's Delete. "Channel info" is ungated; the sheet's Delete
         //    ActionCell is unique while only the sheet is open. Tapping it opens the confirm dialog OVER the
         //    still-composed sheet (ThreadEvent.Delete leaves pendingChannelInfo true) → two "Delete" nodes.
-        //    The System prompt and MCP servers sections push Actions below the fold, so scroll to Delete
-        //    before tapping; an off-screen tap lands outside the sheet and opens nothing (#1344).
+        //    The Session (#1346), System prompt and MCP servers sections push Actions below the fold, so scroll
+        //    to Delete before tapping; an off-screen tap lands outside the sheet and opens nothing (#1344).
         composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).fetchSemanticsNodes().isNotEmpty()
@@ -3520,16 +3554,18 @@ class InteractiveStreamE2ETest {
                 composeTestRule.onAllNodes(allow and armed).fetchSemanticsNodes().isNotEmpty()
             }
             tapInPrompt(allow)
+            // #1340: the card closes on the tap itself, not on the daemon's reply.
+            awaitNoPromptDialog("A's card stayed after the allow tap")
 
             // 4. AC-1: the daemon took the phone's answer for this prompt, A's turn ends, and claude's reply
-            //    carries the command's output. The dialog leaves the thread.
+            //    carries the command's output. The phone's own answer is not announced as resolved elsewhere.
             val dismissed = runBlocking { peer.awaitModalDismissed(shown.modalId, THREAD_TIMEOUT_MS) }
             assertEquals("who resolved A's prompt", REMOTE_SOURCE, peer.field(dismissed, "source"))
             assertEquals("A's prompt outcome", ALLOW_ONCE, peer.field(dismissed, "outcome"))
             awaitTurnEnd(peer, chatA, 1, "A's allowed turn")
             assertBashRan(peer, chatA, 0, "A's allowed turn")
             assertTrue("A's reply does not carry the command's output", ANSWER_PERMISSION_TOKEN in assistantText(peer, chatA))
-            awaitNoPromptDialog("A's dialog stayed after the phone allowed it")
+            composeTestRule.onAllNodes(hasText(string(R.string.modal_dismissed_remote))).assertCountEquals(0)
 
             // 5. AC-2: the same command in A runs again with no second prompt. Claude could repeat the number
             //    from context, so the proof is a successful Bash call in this turn, not the reply alone.
@@ -3997,6 +4033,71 @@ class InteractiveStreamE2ETest {
         val anyDivider =
             (hasText(COMPACTION_DIVIDER, substring = true) or hasText(COMPACTION_FAILED)) and hasAnyAncestor(hasScrollToNodeAction())
         composeTestRule.onAllNodes(anyDivider).assertCountEquals(1)
+    }
+
+    /**
+     * Compact session from the Actions menu still compacts with a file pending, and takes the file with it
+     * (#1460; #1348). The command carries the pending files, so real claude receives `/compact` followed by the
+     * daemon's attachment block, which it reads as summary instructions. A ping first spawns claude, which
+     * publishes `/compact` and so enables the row. Then:
+     *  * the compacting indicator shows, a compaction divider follows and the indicator goes, as in
+     *    [interactiveTurn_reconnect_slashCommandsAndCompactStillWork];
+     *  * the composer's attachment strip no longer holds the file.
+     *
+     * **Two real-claude turns**: the ping and the compaction.
+     */
+    @Test
+    fun interactiveTurn_compactWithAttachment_compactsAndClearsTheStrip() {
+        val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
+        val stub = ActivityIntentStub()
+        val inserted = mutableListOf<Uri>()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.addMonitor(stub)
+        try {
+            // 1. A fresh chat with one real turn, so claude publishes /compact.
+            awaitChannelList()
+            awaitConnected()
+            val (_, name) = answerChat(serverId, COMPACT_ATTACH_NAME_PREFIX)
+            openChatRow(name)
+            sendFromPhone(PING_PROMPT)
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+
+            // 2. One small file waits in the strip.
+            val fileName = ATTACH_FILE_PREFIX + "compact-${System.currentTimeMillis()}.txt"
+            attachDocument(stub, fileName, "e2e1460 compact fixture\n".toByteArray(), inserted)
+
+            // 3. Compact session shows the compacting indicator, then a compaction divider.
+            openActions()
+            val compact = actionRow { it == ComposerAction.CompactSession.label }
+            composeTestRule.waitUntil(
+                THREAD_TIMEOUT_MS,
+            ) { composeTestRule.onAllNodes(compact and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+            composeTestRule.onAllNodes(compact).onFirst().performClick()
+            val compacting = hasContentDescription(string(R.string.cd_thread_compacting))
+            try {
+                composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodes(compacting).fetchSemanticsNodes().isNotEmpty() }
+            } catch (e: ComposeTimeoutException) {
+                throw AssertionError("the compacting indicator never showed after Compact session with a file attached", e)
+            }
+            val divider = hasText(COMPACTION_DIVIDER, substring = true) and hasAnyAncestor(hasScrollToNodeAction())
+            try {
+                composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodes(divider).fetchSemanticsNodes().isNotEmpty() }
+            } catch (e: ComposeTimeoutException) {
+                throw AssertionError("no compaction divider followed the compacting indicator with a file attached", e)
+            }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(compacting).fetchSemanticsNodes().isEmpty() }
+
+            // 4. The command took the file: the strip no longer holds it.
+            val tile = hasContentDescription(fileName) and hasAnyAncestor(hasTestTag(ATTACHMENT_STRIP_TEST_TAG))
+            try {
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(tile).fetchSemanticsNodes().isEmpty() }
+            } catch (e: ComposeTimeoutException) {
+                throw AssertionError("the attachment strip still holds the file after Compact session", e)
+            }
+        } finally {
+            instrumentation.removeMonitor(stub)
+            deleteFixtures(inserted)
+        }
     }
 
     /**
@@ -7201,6 +7302,10 @@ class InteractiveStreamE2ETest {
         const val RENAME_SAVE = "Save"
         const val CHANNEL_INFO_ITEM = "Channel info"
 
+        // #1346: Channel info's own strings — the absent-value text and the sheet's close button.
+        const val SESSION_VALUE_NOT_REPORTED = "Not reported"
+        const val CD_CLOSE_SHEET = "Close"
+
         // #1344: Channel info's MCP section — the Show built-in switch's label and the daemon's own approval server.
         const val MCP_SHOW_BUILT_IN = "Show built-in"
         const val MCP_BUILT_IN_APPROVE = "pyry_approve"
@@ -7527,6 +7632,7 @@ class InteractiveStreamE2ETest {
         // #967: the reconnect and background-task scenarios' run-unique chat prefixes; none contains "ping".
         const val RECONNECT_FOOTER_NAME_PREFIX = "e2e967-footer-"
         const val RECONNECT_COMMANDS_NAME_PREFIX = "e2e967-commands-"
+        const val COMPACT_ATTACH_NAME_PREFIX = "e2e1460-compact-"
         const val BACKGROUND_NAME_PREFIX = "e2e967-background-"
 
         // #955: the push scenarios' chat names, and their waits. The daemon sends a device no second wake

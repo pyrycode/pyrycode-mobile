@@ -1248,6 +1248,8 @@ elif [ -n "${LIVE}" ]; then
   # #1344: after one ping turn, Channel info's MCP section lists the daemon's pyry_approve once Show built-in
   # is ticked. One turn.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn"
+  # #1460: Compact session with a file pending still compacts and clears the strip. Two turns (ping, compaction).
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_compactWithAttachment_compactsAndClearsTheStrip"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi
