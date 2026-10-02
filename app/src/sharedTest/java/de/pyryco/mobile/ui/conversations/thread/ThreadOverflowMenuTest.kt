@@ -57,7 +57,9 @@ class ThreadOverflowMenuTest {
         // #883: the literal-screen view is retired — absent here (promoted) and in the discussion test.
         composeTestRule.onNodeWithText(RETIRED_LITERAL_SCREEN_ITEM).assertDoesNotExist()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_new_session)).assertIsDisplayed()
-        composeTestRule.onNodeWithText(string(R.string.thread_overflow_rename)).assertIsDisplayed()
+        // #1561, Figma `675:5883`: a channel offers Edit in Rename's place.
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_edit)).assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_rename)).assertDoesNotExist()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_change_workspace)).assertDoesNotExist()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_archive)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_channel_info)).assertIsDisplayed()
@@ -82,6 +84,7 @@ class ThreadOverflowMenuTest {
         composeTestRule.onNodeWithText(string(R.string.save_as_channel_action)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_new_session)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_rename)).assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_edit)).assertDoesNotExist()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_change_workspace)).assertDoesNotExist()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_archive)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_channel_info)).assertIsDisplayed()
@@ -106,6 +109,7 @@ class ThreadOverflowMenuTest {
         // Relay mode can't perform these mutations, so they must be non-invocable (AC#1).
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_new_session)).assertDoesNotExist()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_rename)).assertDoesNotExist()
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_edit)).assertDoesNotExist()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_change_workspace)).assertDoesNotExist()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_archive)).assertDoesNotExist()
 
@@ -140,7 +144,7 @@ class ThreadOverflowMenuTest {
             PyrycodeMobileTheme {
                 ThreadOverflowMenu(
                     expanded = true,
-                    isPromoted = true,
+                    isPromoted = false,
                     onDismiss = { log.add("dismiss") },
                     onEvent = { log.add("event:$it") },
                 )
@@ -150,6 +154,25 @@ class ThreadOverflowMenuTest {
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_rename)).performClick()
 
         assertEquals(listOf("dismiss", "event:Rename"), log)
+    }
+
+    @Test
+    fun tapping_edit_in_a_channel_dismisses_then_dispatches_edit_channel() {
+        val log = mutableListOf<String>()
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ThreadOverflowMenu(
+                    expanded = true,
+                    isPromoted = true,
+                    onDismiss = { log.add("dismiss") },
+                    onEvent = { log.add("event:$it") },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_edit)).performClick()
+
+        assertEquals(listOf("dismiss", "event:EditChannel"), log)
     }
 
     @Test
