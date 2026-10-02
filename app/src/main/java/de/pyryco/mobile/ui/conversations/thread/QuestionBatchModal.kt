@@ -63,6 +63,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConversationAgent
@@ -266,7 +267,7 @@ internal fun QuestionBlock(
             )
         }
         Surface(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().testTag("question_card_$index"),
             shape = MaterialTheme.shapes.modalControl,
             color = MaterialTheme.colorScheme.background,
             contentColor = MaterialTheme.colorScheme.onBackground,
@@ -278,7 +279,7 @@ internal fun QuestionBlock(
             ) {
                 Text(
                     text = question.question.take(MAX_QUESTION_TEXT),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.copy(lineHeightStyle = FrameLineBox),
                     fontWeight = FontWeight.Medium,
                 )
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -305,13 +306,13 @@ internal fun QuestionBlock(
                         multiSelect = question.multiSelect,
                         enabled = enabled,
                         controlTag = "question_control_${index}_other",
-                        other = true,
                         onClick = { onEvent(QuestionModalEvent.OtherToggled(index)) },
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            // Figma `636:3279`: the label's full 20 dp line box, top-aligned with the control (#1501).
                             Text(
                                 stringResource(R.string.question_other),
-                                style = MaterialTheme.typography.labelLarge,
+                                style = MaterialTheme.typography.labelLarge.copy(lineHeightStyle = FrameLineBox),
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                             )
@@ -331,15 +332,15 @@ internal fun QuestionBlock(
                                 if (focused) reveal()
                             }
                             val placeholder = stringResource(R.string.question_other_placeholder)
-                            // Keep the existing 48dp focus region around the reference's 32dp visible well.
-                            // This makes the cards slightly taller than the static Figma while retaining reachable touch targets.
+                            // Figma `636:3279`: the 32 dp well is the field's whole layout, 28 dp below the label's top. Its 48 dp
+                            // touch target comes from pointer hit-test expansion to `ViewConfiguration.minimumTouchTargetSize`,
+                            // which takes no layout space (#1501).
                             BasicTextField(
                                 value = selection.otherText,
                                 onValueChange = { onEvent(QuestionModalEvent.OtherTextChanged(index, it)) },
                                 modifier =
                                     Modifier
                                         .fillMaxWidth()
-                                        .heightIn(min = 48.dp)
                                         .bringIntoViewRequester(requester)
                                         .onFocusChanged { focus ->
                                             focused = focus.isFocused
@@ -353,28 +354,20 @@ internal fun QuestionBlock(
                                         modifier =
                                             Modifier
                                                 .fillMaxWidth()
-                                                .heightIn(min = 48.dp),
-                                        contentAlignment = Alignment.CenterStart,
+                                                .heightIn(min = 32.dp)
+                                                .background(
+                                                    MaterialTheme.colorScheme.modalFieldContainer,
+                                                    MaterialTheme.shapes.modalControl,
+                                                ).padding(horizontal = 12.dp, vertical = 8.dp),
                                     ) {
-                                        Box(
-                                            modifier =
-                                                Modifier
-                                                    .fillMaxWidth()
-                                                    .heightIn(min = 32.dp)
-                                                    .background(
-                                                        MaterialTheme.colorScheme.modalFieldContainer,
-                                                        MaterialTheme.shapes.modalControl,
-                                                    ).padding(horizontal = 12.dp, vertical = 8.dp),
-                                        ) {
-                                            if (selection.otherText.isEmpty()) {
-                                                Text(
-                                                    placeholder,
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    color = MaterialTheme.colorScheme.inversePrimary,
-                                                )
-                                            }
-                                            field()
+                                        if (selection.otherText.isEmpty()) {
+                                            Text(
+                                                placeholder,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.inversePrimary,
+                                            )
                                         }
+                                        field()
                                     }
                                 },
                             )
@@ -386,6 +379,9 @@ internal fun QuestionBlock(
     }
 }
 
+/** Figma draws the question and "Other" lines in their full 20 dp boxes; the theme's styles would trim them to the glyphs. */
+private val FrameLineBox = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
+
 /** One option or Other row: radio semantics on a single-choice question, checkbox on a multiple-choice. */
 @Composable
 private fun ChoiceRow(
@@ -394,7 +390,6 @@ private fun ChoiceRow(
     enabled: Boolean,
     controlTag: String,
     onClick: () -> Unit,
-    other: Boolean = false,
     label: @Composable () -> Unit,
 ) {
     val interaction =
@@ -418,7 +413,6 @@ private fun ChoiceRow(
         Box(
             modifier =
                 Modifier
-                    .padding(top = if (other) 8.dp else 0.dp)
                     .size(20.dp)
                     .border(2.dp, tertiary, shape)
                     .testTag(controlTag),

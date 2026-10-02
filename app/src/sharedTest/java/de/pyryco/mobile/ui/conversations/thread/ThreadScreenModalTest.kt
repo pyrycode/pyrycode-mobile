@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.DeviceConfigurationOverride
@@ -21,6 +22,7 @@ import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasScrollToNodeAction
@@ -41,8 +43,10 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.then
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.DpRect
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.height
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
@@ -62,6 +66,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 @RunWith(AndroidJUnit4::class)
@@ -380,6 +385,97 @@ class ThreadScreenModalTest {
             R.string.modal_context_description,
             R.string.modal_context_blocked_path,
         ).forEach { composeTestRule.onNodeWithText(string(it)).assertDoesNotExist() }
+    }
+
+    // ---- #1501: Figma 639:2242 measured layout ---------------------------------------------------------
+
+    private val frameRequest =
+        ModalUiState.Open(
+            modalId = "m1",
+            modalClass = "permission",
+            title = "Permission required",
+            prompt = "Allow Claude to read this project?",
+            options = listOf(ModalOption("allow_once", "Allow once"), ModalOption("reject_once", "Reject once")),
+            defaultOptionId = "reject_once",
+            context = ModalContext(reason = "This folder is outside the allowed paths.", blockedPath = "/projects/client"),
+        )
+
+    private fun setFrameContent(
+        armedOptionId: String? = null,
+        onModalOption: (String) -> Unit = {},
+    ) {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                ThreadScreen(
+                    state = baseState(),
+                    onBack = {},
+                    onSendMessage = {},
+                    connectionState = ConnectionState.Connected,
+                    onRetry = {},
+                    modalState = frameRequest,
+                    armedOptionId = armedOptionId,
+                    onModalOption = { modalId, optionId -> onModalOption("$modalId/$optionId") },
+                )
+            }
+        }
+    }
+
+    private fun textBounds(text: String): DpRect = composeTestRule.onNodeWithText(text, useUnmergedTree = true).getUnclippedBoundsInRoot()
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w412dp-h892dp")
+    fun permission_context_spacing_matches_the_frame() {
+        setFrameContent()
+        val reasonLabel = textBounds(string(R.string.modal_context_reason))
+        val reason = textBounds("This folder is outside the allowed paths.")
+        val folderLabel = textBounds(string(R.string.modal_context_blocked_path))
+        val folder = textBounds("/projects/client")
+        val allow = composeTestRule.onNodeWithText("Allow once").getUnclippedBoundsInRoot()
+
+        assertEquals("Reason label to value, top to top", 28f, (reason.top - reasonLabel.top).value, 0.5f)
+        assertEquals("Folder label to value, top to top", 28f, (folder.top - folderLabel.top).value, 0.5f)
+        assertEquals("Reason group to Folder group", 16f, (folderLabel.top - reason.bottom).value, 0.5f)
+        assertEquals("last context value to the first choice", 16f, (allow.top - folder.bottom).value, 0.5f)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w412dp-h892dp")
+    fun permission_choices_are_40dp_surfaces_8dp_apart_with_48dp_touch_targets() {
+        val tapped = mutableListOf<String>()
+        setFrameContent(onModalOption = { tapped += it })
+        val allow = composeTestRule.onNodeWithText("Allow once")
+        val reject = composeTestRule.onNodeWithText("Reject once")
+        val allowBounds = allow.getUnclippedBoundsInRoot()
+        val rejectBounds = reject.getUnclippedBoundsInRoot()
+
+        assertEquals(40f, allowBounds.height.value, 0.5f)
+        assertEquals(40f, rejectBounds.height.value, 0.5f)
+        assertEquals("visible gap between the choices", 8f, (rejectBounds.top - allowBounds.bottom).value, 0.5f)
+        with(composeTestRule.density) {
+            assertTrue(allow.fetchSemanticsNode().touchBoundsInRoot.height >= 48.dp.toPx() - 0.5f)
+            assertTrue(reject.fetchSemanticsNode().touchBoundsInRoot.height >= 48.dp.toPx() - 0.5f)
+        }
+
+        // Real pointer taps in the gap, 3 dp outside each visible surface, reach the nearer choice.
+        allow.performTouchInput { click(Offset(centerX, height + 3.dp.toPx())) }
+        reject.performTouchInput { click(Offset(centerX, -3.dp.toPx())) }
+        composeTestRule.runOnIdle { assertEquals(listOf("m1/allow_once", "m1/reject_once"), tapped) }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w412dp-h892dp")
+    fun armed_hint_sits_in_the_8dp_choice_gaps() {
+        setFrameContent(armedOptionId = "allow_once")
+        val allow = composeTestRule.onNodeWithText("Allow once").getUnclippedBoundsInRoot()
+        val hint =
+            textBounds(InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.modal_armed_option_hint, "Allow once"))
+        val reject = composeTestRule.onNodeWithText("Reject once").getUnclippedBoundsInRoot()
+
+        assertEquals(8f, (hint.top - allow.bottom).value, 0.5f)
+        assertEquals(8f, (reject.top - hint.bottom).value, 0.5f)
     }
 
     // ---- #818: the don't-ask-again offer ------------------------------------------------------------
