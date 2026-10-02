@@ -2,21 +2,24 @@
 
 - **App commit:** `main` at `ddebd393` (the merge base of `feature/1433` at the rework capture), plus the
   test-only `PromptsDesignCaptureTest`. The first pass captured at `4c755aa6`; no file under `app/src/main`
-  changed between the two.
+  changed between the two. The question captures are `feature/1484`'s and the permission and trust captures
+  `feature/1483`'s, as the re-capture bullets below say.
 - **Figma:** the Questions and permissions board `635:2036` of `g2HIq2UyPhslEoHRokQmHG`, inspected and exported
   with `get_screenshot` on 2026-10-02. Gaps, sizes and positions are measured against `get_metadata`
   coordinates, not by eye. Behaviour reference: the specification `640:2838`.
 - **Capture:** `PromptsDesignCaptureTest` on the full `pixel8Api35` image (API 35) with
   `requireRealSystemBars=true`, density 1.0, fixed dark theme, real 24 px status and navigation bars. Each `.txt`
   records the measured values.
-- **Result:** `prompts-results.xml`, the whole class in one run after the second rework: 6 executed, 0 failures.
-  Every capture here comes from that run, except the four `question-*` captures, re-captured for #1484, and the
-  six permission and trust items, re-captured for #1483 below.
+- **Result:** `prompts-results.xml` is #1484's latest whole-class run, below: 6 executed, 0 failed, 0 skipped.
+  The switching captures come from the #1433 whole-class run after its second rework (6 executed, 0 failures),
+  the four `question-*` captures from #1484 and the six permission and trust items from #1483.
 - **#1484 re-capture:** `feature/1484` (merge base `ca50716f`) changed the question actions. The whole class ran
-  again in one run on the same device and arguments: 6 executed, 0 failed, 0 skipped, now in `prompts-results.xml`.
-  The `question-unanswered`, `question-answered`, `question-keyboard` and `question-compact` captures and their
-  comparisons come from that run; `question-answered.png` came out byte-identical. The switching captures are kept
-  from the #1433 run, and the permission and trust captures from the #1483 run.
+  again in one run on the same device and arguments: 6 executed, 0 failed, 0 skipped. The `question-unanswered`,
+  `question-answered`, `question-keyboard` and `question-compact` captures and their comparisons come from that
+  run; `question-answered.png` came out byte-identical. After the rework that limits the actions reveal to the last
+  question, the whole class ran once more on `feature/1484` with `main` at `9fef692a` merged in: 6 executed, 0
+  failed, 0 skipped, now in `prompts-results.xml`, and all four question captures came out byte-identical. The
+  switching captures are kept from the #1433 run, and the permission and trust captures from the #1483 run.
 - **Re-capture for #1483:** the six permission and trust items below were re-captured on `feature/1483`, from a
   whole-class run of `PromptsDesignCaptureTest` on 2026-10-02 (6 executed; `permissionFrames` and
   `permissionCompactFrame` passed; `questionKeyboardFrame` failed on the known 332 px keyboard, see that item).
@@ -106,7 +109,7 @@ scaling or the app matches the frames.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | match since #1484: at the focus scroll position the focused Other field and both Cancel and Continue are fully in view, the actions' bottom at the stream's bottom edge above "Waiting for answers", as Figma. The focus scroll places the actions first, so the position no longer depends on the IME animation; the test asserts the field and both actions inside the message region |
+| Geometry | match since #1484: at the focus scroll position the focused Other field and both Cancel and Continue are fully in view, the actions' bottom at the stream's bottom edge above "Waiting for answers", as Figma. The last question's focus scroll places the actions first, so the position no longer depends on the IME animation; an earlier question's field brings only itself into view; the test asserts the field and both actions inside the message region |
 | Padding | match |
 | Spacing | mismatch: the Other row as Unanswered. The actions sit 4 px above the stream's edge, from the batch's item gutter |
 | Typography | mismatch: footer "Cxt high: 84%" |

@@ -95,8 +95,9 @@ None new; scroll refusal is above.
 
 ## Documentation handoff
 
-- `docs/knowledge/features/question-batch-modal.md` § Rendering — pending: the focus scroll now places the
-  actions item at the stream's bottom edge before bringing the field into view; disabled Continue is the
+- `docs/knowledge/features/question-batch-modal.md` § Rendering — pending: the last question's focus scroll
+  places the actions item at the stream's bottom edge, unless it is already fully shown, before bringing the
+  field into view; an earlier question's field brings only itself into view; disabled Continue is the
   enabled colours at 38 % group alpha; the stacked pair is start-aligned with Cancel centred over Continue.
 
 ## Revisions
@@ -112,3 +113,19 @@ None new; scroll refusal is above.
   Open Question is resolved: the next full-class run passed except for the harness's known 332 px keyboard
   (`the test IME's keyboard is open`, before the reveal is asserted), and the following full-class run passed
   6 of 6 with the field and both actions inside the message region.
+
+### 2026-10-02 — only the last question's field reveals the actions, and only when they are not shown
+
+- **What changed.** `ThreadScreen` passes `revealActions` to the last question's `QuestionBlock` only; the others
+  get `NoReveal`. `revealActions` skips the `scrollToItem` when the actions item is already fully inside the
+  viewport, read from `listState.layoutInfo`. `QuestionBlock` reads the callback through `rememberUpdatedState`.
+- **What drove it.** The verifier's MUST FIX on PR #1514: the unconditional snap to the actions moved an earlier
+  question's field out of the stream (frame 0 under the top bar, 14 frames to come back), restarted on every IME
+  inset frame. Its NIT: the effect captured a stale `revealActions` when the refused-answer notice toggled the
+  actions index.
+- **New contract.** Only the last question's Other field sits directly above the actions, so only its reveal can
+  bring them along without moving the field out of view; this is the case `636:3803` draws. An earlier field
+  behaves as before #1484: it brings only itself into view, and a field already in view does not move. Already
+  shown actions are not snapped, which also keeps a refused-answer notice in view. The new
+  `focusing_an_earlier_other_keeps_the_field_in_view_on_every_frame` steps the paused main clock and asserts the
+  first question's field stays inside `thread-message-region` on every frame; it was red before the change.
