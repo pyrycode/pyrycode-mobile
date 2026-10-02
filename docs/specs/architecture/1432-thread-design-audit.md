@@ -73,3 +73,26 @@ Device-only (real activity, real pixels, IME, `wm` resizing), on the full image:
 - **Thread inputs.** The first captures showed no "Thinking…" label: the status band reads `observeTurnPhase`, which the live event alone does not set. The class's override now also serves `observeTurnPhase` and `observeUsageLimit` (for `568:3139`'s usage pill). The composer strip is staged through the view model's `addPickedAttachments`, with MediaStore PNGs so image thumbnails load; `@After` removes the staged files. The draft is set to the frames' "My message" on open, because the draft store outlives one test in the process. Task and model fixtures copy the frames' data, and model rows carry real resolved identifiers.
 - **Compact comparisons.** Compact captures have no 320x700 frame, so they get no side-by-side or overlay; the index checks them for clipping, overlap and reachability.
 - **Open questions resolved.** The markdown reader is reachable through `onOpenMarkdownLink` over the override's `readWorkspaceFile`, and composer tiles through `addPickedAttachments`; neither is a gap. The thinking label holds once the turn phase is held.
+
+### 2026-10-02 — rework after review
+
+Driven by the verifier's FAIL on PR #1491.
+
+- **Figma moved.** The Mobile page gained **Thread states · 2026-10-02** (`674:5852`), and nine of the ticket's
+  frames were redrawn from the shipped app (footer, Permission section, disabled footer when disconnected, file row
+  colour). Every frame is re-exported and re-judged. The six new frames are captured: tool row `674:5853`, session
+  delimiter `675:3682`, overflow menu `675:5883`, Actions menu `675:5938`, keyboard open `675:6160` and compact
+  keyboard `676:3981`. The last gets a side-by-side and overlay; the other compact captures still have no frame.
+- **Strict waits.** The `soft` helper is gone. Every frame state waits for its marker text and fails the run if it
+  does not render, as `## Error handling` says. The "Default" check is a case-insensitive substring match and runs
+  after "Sonnet" and "Manual approval" have rendered.
+- **Thread inputs.** The override also serves `retrieveAttachment` with a generated photo, so `16:8`'s image bubble
+  is captured; the capture waits for the view model's ready state and then for the decode's progress indicator to
+  clear. The extra items add the clear and idle-evict delimiters. The notice and refusal frames stage the strip.
+  Model rows support auto mode, as the frame's Sonnet does.
+- **Compact coverage.** `compactAt320By700` adds the Offline pill alone, the usage pill with the refusal offer and
+  strip, the task panel and Run configuration with Done asserted displayed. The compact keyboard runs last, because
+  the focused composer's cursor handle is its own popup root and confuses `openMenu`'s root count.
+- **Cleanup.** `@After` clears the draft and the fake's model menu and session-settings reading for the seeded
+  channel, and deletes the staged and kept image files.
+- **Reruns.** Two methods were rerun after fixture fixes; the index names both results files.

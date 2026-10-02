@@ -7,10 +7,12 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.net.Uri
 import android.provider.MediaStore
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasProgressBarRangeInfo
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -302,6 +304,7 @@ class ThreadDesignCaptureTest {
         rule.onNodeWithContentDescription("Expand status details").performClick()
         await("Sonnet")
         await("Manual approval")
+        await("Auto approval")
         rule.onAllNodesWithText("Default", substring = true, ignoreCase = true).assertCountEquals(0)
     }
 
@@ -393,9 +396,11 @@ class ThreadDesignCaptureTest {
         await("Thinking", substring = true)
     }
 
-    /** The bubble's photo is ready once the view model holds it; the next idle draws it. */
+    /** The bubble's photo is fetched by the view model, then decoded off the main clock, so wait for both. */
     private fun awaitImageLoaded() {
         rule.waitUntil(10_000) { checkNotNull(inputs.thread.value).attachmentStates.value["design-photo"] is AttachmentViewState.Ready }
+        val spinner = hasProgressBarRangeInfo(ProgressBarRangeInfo.Indeterminate)
+        rule.waitUntil(10_000) { rule.onAllNodes(spinner).fetchSemanticsNodes().isEmpty() }
         rule.waitForIdle()
     }
 
@@ -561,7 +566,7 @@ class ThreadDesignCaptureTest {
     private fun menuRow(
         name: String,
         resolved: String,
-    ) = ModelMenuRow(resolved, name.lowercase(), name, listOf("low", "medium", "high", "max"), false, null)
+    ) = ModelMenuRow(resolved, name.lowercase(), name, listOf("low", "medium", "high", "max"), true, null)
 
     private fun task(
         id: String,
