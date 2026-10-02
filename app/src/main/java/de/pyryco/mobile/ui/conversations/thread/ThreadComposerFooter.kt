@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Icon
@@ -22,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.HorizontalAlignmentLine
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -236,6 +238,9 @@ private val FooterHorizontalPadding = 16.dp
 private val FooterButtonGap = 16.dp
 private val FooterButtonMinHeight = 32.dp
 private val FooterChevronGap = 4.dp
+
+// Figma 679:4116's 4dp gap between Actions and the context label when the label wraps (#1549).
+private val FooterLineGap = 4.dp
 private val FooterChevronWidth = 8.dp
 private val FooterChevronHeight = 4.dp
 private val FooterLabelMaxWidth = 140.dp
@@ -273,12 +278,12 @@ fun ThreadComposerFooter(
     // #1032: the text controls share one weighted slot, measured after the paperclip and the Status opener,
     // so a footer full of long labels shrinks the labels and never squeezes out the two icons.
     Row(
-        modifier = modifier.fillMaxWidth().padding(horizontal = FooterHorizontalPadding),
+        modifier = modifier.fillMaxWidth().wrapContentHeight(Alignment.Bottom).padding(horizontal = FooterHorizontalPadding),
         horizontalArrangement = Arrangement.spacedBy(FooterButtonGap),
-        verticalAlignment = Alignment.Bottom,
     ) {
-        // The buttons in order, then the `Cxt:` segment, which [FooterTextRow] gives the leftover width.
-        FooterTextRow(modifier = Modifier.weight(1f)) {
+        // The buttons in order, then the `Cxt:` segment, which [FooterTextRow] gives the leftover width or, when
+        // that is too little, a line under the buttons (#1549). The two icons stay level with the buttons.
+        FooterTextRow(modifier = Modifier.weight(1f).alignBy(FooterFirstRowBottom)) {
             FooterButton(
                 label = stringResource(R.string.thread_footer_actions),
                 clickLabel = stringResource(R.string.thread_footer_open_actions),
@@ -296,6 +301,7 @@ fun ThreadComposerFooter(
         Box(
             modifier =
                 Modifier
+                    .alignBy { it.measuredHeight }
                     .size(width = StatusOpenerSize, height = touchHeight)
                     .clickable(role = Role.Button, onClick = onAttach),
             contentAlignment = Alignment.BottomCenter,
@@ -310,6 +316,7 @@ fun ThreadComposerFooter(
         Box(
             modifier =
                 Modifier
+                    .alignBy { it.measuredHeight }
                     .size(width = StatusOpenerSize, height = touchHeight)
                     .clickable(role = Role.Button, onClick = onStatusClick),
             contentAlignment = Alignment.BottomCenter,
@@ -327,7 +334,8 @@ fun ThreadComposerFooter(
 /**
  * The footer's text controls in a row at [FooterButtonGap] (#1032). Every child but the last is a button,
  * held to its natural width until the buttons overflow, then to [footerShrinkCap]'s shared cap. The last
- * child, the `Cxt:` segment, gets whatever width the buttons leave, possibly none.
+ * child, the `Cxt:` segment, follows the buttons when it fits whole beside them. Otherwise it moves to its own
+ * line [FooterLineGap] under them (#1549, Figma 639:3308). [FooterFirstRowBottom] marks the button row's bottom.
  */
 @Composable
 private fun FooterTextRow(
@@ -337,25 +345,38 @@ private fun FooterTextRow(
     Layout(content = content, modifier = modifier) { measurables, constraints ->
         val gap = FooterButtonGap.roundToPx()
         val buttons = measurables.dropLast(1)
-        val available = (constraints.maxWidth - gap * (measurables.size - 1)).coerceAtLeast(0)
+        val label = measurables.last()
         val natural = buttons.map { it.maxIntrinsicWidth(constraints.maxHeight) }
+        val oneRow = natural.sum() + gap * buttons.size + label.maxIntrinsicWidth(constraints.maxHeight) <= constraints.maxWidth
+        val available = (constraints.maxWidth - gap * (if (oneRow) buttons.size else buttons.size - 1)).coerceAtLeast(0)
         val cap = footerShrinkCap(natural, available)
         val placed =
             buttons.zip(natural) { button, width ->
                 button.measure(Constraints(maxWidth = minOf(width, cap), maxHeight = constraints.maxHeight))
             }
-        val leftover = (available - placed.sumOf { it.width }).coerceAtLeast(0)
-        val all = placed + measurables.last().measure(Constraints(maxWidth = leftover, maxHeight = constraints.maxHeight))
-        val height = all.maxOf { it.height }
-        layout(constraints.maxWidth, height) {
+        val rowHeight = placed.maxOf { it.height }
+        val labelWidth = if (oneRow) (available - placed.sumOf { it.width }).coerceAtLeast(0) else constraints.maxWidth
+        val placedLabel = label.measure(Constraints(maxWidth = labelWidth, maxHeight = constraints.maxHeight))
+        val labelTop = if (oneRow) 0 else rowHeight + FooterLineGap.roundToPx()
+        val firstRowBottom = if (oneRow) maxOf(rowHeight, placedLabel.height) else rowHeight
+        val height = if (oneRow) firstRowBottom else labelTop + placedLabel.height
+        layout(constraints.maxWidth, height, mapOf(FooterFirstRowBottom to firstRowBottom)) {
             var x = 0
-            all.forEach {
-                it.placeRelative(x, height - it.height)
+            placed.forEach {
+                it.placeRelative(x, firstRowBottom - it.height)
                 x += it.width + gap
+            }
+            if (oneRow) {
+                placedLabel.placeRelative(x, firstRowBottom - placedLabel.height)
+            } else {
+                placedLabel.placeRelative(0, labelTop)
             }
         }
     }
 }
+
+/** The bottom of [FooterTextRow]'s button row (#1549), which the paperclip and tune align their bottoms to. */
+private val FooterFirstRowBottom = HorizontalAlignmentLine(::minOf)
 
 /**
  * The widest a footer button may be so that [widths] fit in [available] (#1032), or [Int.MAX_VALUE] when

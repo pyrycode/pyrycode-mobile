@@ -179,25 +179,50 @@ class ThreadComposerFooterWidthTest {
         assertTrue("high reading clips on the right at 320dp", layout.getLineRight(0) <= layout.size.width)
     }
 
-    // Accepted trade-off (#1412): at 320dp and 1.5× font the longer "Cxt high:" text no longer fits and
-    // ellipsizes, while the content description keeps the full figure. A layout change that makes it fit
-    // can drop the ellipsis assertion.
+    // #1549, Figma 639:3308: at 320dp and 1.5× font the "Cxt high:" text does not fit beside Actions, so it
+    // moves whole to a line of its own under Actions, and the paperclip and tune stay level with Actions.
     @Test
-    fun compactWidthAndEnlargedText_highReadingKeepsTheFigureInItsDescription() {
+    fun compactWidthAndEnlargedText_highReadingWrapsUnderActions() {
         renderCompactFooter(contextPercent = 84, fontScale = 1.5f)
-        assertTrue("high reading now fits at enlarged text", contextLayout().isLineEllipsized(0))
+        val layout = contextLayout()
+        assertEquals("Cxt high: 84%", layout.layoutInput.text.text)
+        assertFalse("high reading ellipsizes at enlarged text", layout.isLineEllipsized(0))
+        assertTrue("high reading clips on the right", layout.getLineRight(0) <= layout.size.width)
         composeTestRule
             .onNodeWithTag(CONTEXT_USAGE_TEST_TAG, useUnmergedTree = true)
             .assertContentDescriptionEquals("Context usage high, 84%")
+
+        val actions = composeTestRule.onNode(hasText("Actions") and hasClickAction()).getUnclippedBoundsInRoot()
+        val context = composeTestRule.onNodeWithTag(CONTEXT_USAGE_TEST_TAG, useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val attach = composeTestRule.onNodeWithContentDescription(string(R.string.cd_attach_files)).getUnclippedBoundsInRoot()
+        val status = composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_status_expand)).getUnclippedBoundsInRoot()
+        assertEquals("label starts under Actions", actions.left, context.left)
+        assertEquals("label sits 4dp under Actions", actions.bottom + 4.dp, context.top)
+        assertEquals("paperclip leaves Actions' row", actions.bottom, attach.bottom)
+        assertEquals("tune leaves Actions' row", actions.bottom, status.bottom)
+    }
+
+    // #1549, Figma 16:8: on a Pixel 8 at default font the label stays on Actions' row.
+    @Test
+    fun pixel8_highReadingStaysOnActionsRow() {
+        renderCompactFooter(contextPercent = 84, fontScale = 1f, size = pixel8)
+        val actions = composeTestRule.onNodeWithText("Actions", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val context = composeTestRule.onNodeWithTag(CONTEXT_USAGE_TEST_TAG, useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val attach = composeTestRule.onNodeWithContentDescription(string(R.string.cd_attach_files)).getUnclippedBoundsInRoot()
+        assertEquals("label leaves Actions' row", actions.bottom, context.bottom)
+        assertTrue("label is not beside Actions", context.left > actions.right)
+        assertTrue("label overlaps the paperclip", context.right < attach.left)
+        assertFalse(contextLayout().isLineEllipsized(0))
     }
 
     private fun renderCompactFooter(
         contextPercent: Int,
         fontScale: Float,
+        size: DpSize = DpSize(320.dp, 640.dp),
     ) {
         composeTestRule.setContent {
             PyrycodeMobileTheme(darkTheme = true) {
-                DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 640.dp))) {
+                DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(size)) {
                     CompositionLocalProvider(LocalDensity provides Density(1f, fontScale)) {
                         ThreadComposerFooter(
                             runConfig = fullConfig.copy(contextPercent = contextPercent),

@@ -46,3 +46,10 @@ In `ThreadComposerFooterWidthTest` (Robolectric, native graphics):
 Device evidence: rerun `ThreadDesignCaptureTest#compactAt320By700` and `#threadStatusFramesAt412By892` on the
 emulator and compare `compact-keyboard.png` and `thread.png` with `scripts/design-compare.py` against `676:3981`,
 `639:3308` / `636:4066` and `16:8`.
+
+## Revisions
+
+- 2026-10-02: `alignBy` places the aligned group at the top of a row taller than its content, which a forced test
+  size (and any fixed-height parent) gives the footer; the old `Alignment.Bottom` kept the controls at the bottom.
+  The outer row now also takes `wrapContentHeight(Alignment.Bottom)`, so the footer keeps its bottom placement in
+  a taller slot. Found by `contextText_sitsAtBottomOfFooterTapRow`.
