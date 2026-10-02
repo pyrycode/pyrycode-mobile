@@ -256,14 +256,20 @@ internal fun List<ThreadItem>.withToolProgress(progress: ToolProgressPayloadDto)
  * on the live lane. It holds for a page too, and for a different reason worth stating: a page is
  * reduced strictly oldest-first, so the log's own append order *is* the concatenation order. The delta
  * text is carried **verbatim** — never trimmed, parsed, or logged.
+ *
+ * [passOver] (#1558) names user rows the delta looks past when it picks the last row: the live lane's own
+ * queued echoes, which read below the running turn, so a reply the echo was typed into stays one segment.
+ * A page passes nothing.
  */
 internal fun List<ThreadItem>.withAssistantDelta(
     event: LiveSessionEvent.AssistantDelta,
     timestamp: Instant,
+    passOver: Set<String> = emptySet(),
 ): List<ThreadItem> {
     if (event.seq <= highestSeqOf(event.turnId)) return this
     val delta = SegmentDelta(event.seq, event.text.length)
-    val last = (lastOrNull() as? ThreadItem.MessageItem)?.message
+    val anchor = indexOfLast { row -> !(row is ThreadItem.MessageItem && row.message.role == Role.User && row.message.id in passOver) }
+    val last = (getOrNull(anchor) as? ThreadItem.MessageItem)?.message
     val segment = last?.segment
     if (last != null && last.role == Role.Assistant && segment?.turnId == event.turnId) {
         val extended =
@@ -272,7 +278,7 @@ internal fun List<ThreadItem>.withAssistantDelta(
                 isStreaming = true,
                 segment = segment.copy(deltas = segment.deltas + delta),
             )
-        return toMutableList().apply { this[lastIndex] = ThreadItem.MessageItem(extended) }
+        return toMutableList().apply { this[anchor] = ThreadItem.MessageItem(extended) }
     }
     val key = segmentKey(event.turnId, event.seq)
     if (any { it is ThreadItem.MessageItem && it.message.id == key }) return this

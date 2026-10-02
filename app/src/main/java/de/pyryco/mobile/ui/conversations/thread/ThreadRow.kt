@@ -9,8 +9,9 @@ import de.pyryco.mobile.data.repository.ThreadItem
  * [foldQueuedRows] from the thread's items and the daemon's queued backlog.
  *
  * The two arms are one message's two states, not two kinds of content: a send the daemon parked draws
- * as [Queued] at the position it was sent, and the same row becomes [Delivered] when the next snapshot
- * no longer holds it.
+ * as [Queued] where the thread's items hold its echo — below the turn it waits behind, which the
+ * repository's read sees to (#1558) — and the same row becomes [Delivered] when the next snapshot no
+ * longer holds it.
  */
 sealed interface ThreadRow {
     /** A row the daemon has run, or a row that is not a message at all (a boundary, an unrecognized frame). */

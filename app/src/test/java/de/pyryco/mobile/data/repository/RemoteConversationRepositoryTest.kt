@@ -4120,12 +4120,36 @@ class RemoteConversationRepositoryTest {
             val drop = startDropQueuedMessage(repo, "c-1", 42L)
             runCurrent()
             assertTrue(drop().isSuccess)
-            assertEquals(listOf(first, queued, third), messageIds(thread.last()))
+            // #1558: the queued echo reads below the rows after it until it leaves the backlog.
+            assertEquals(listOf(first, third, queued), messageIds(thread.last()))
 
             pump.push(queueStateEnvelope("c-1", emptyList()))
             runCurrent()
 
             assertEquals(listOf(first, third), messageIds(thread.last()))
+        }
+
+    // #1558 AC 1, 2: the queue_state arm reads this device's queued echo below a row that arrived after it,
+    // and the drain settles it there before the pushed copy lands, which leaves it in place.
+    @Test
+    fun queueState_ownQueuedEcho_readsBelowLaterRowsAndSettlesThereOnDrain() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val thread = collectMessages(repo, "c-1")
+            runCurrent()
+
+            val queued = sendAndAck(repo, pump, "c-1", "two")
+            pump.push(messageEnvelope("c-1", "peer-1", "user", "from desktop", TS))
+            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = queued))))
+            runCurrent()
+            assertEquals(listOf("peer-1", queued), messageIds(thread.last()))
+
+            pump.push(queueStateEnvelope("c-1", emptyList()))
+            pump.push(messageEnvelope("c-1", queued, "user", "two", TS))
+            runCurrent()
+
+            assertEquals(listOf("peer-1", queued), messageIds(thread.last()))
         }
 
     // #859 AC #1: a snapshot that still carries the dropped id (the backlog changed for another reason,
