@@ -354,12 +354,23 @@ Each task is a card: the raw `taskType` in monospace beside a
 "Latest update" label over a `surface` code block holding the latest patch — italic "No change reported"
 when the patch is empty, no label or block at all when `latestUpdate` is `null`.
 The local dark styling uses 13/19sp group labels, 14dp horizontal and 12dp vertical
-card padding, 12dp row gaps, 13sp description and progress text, and a 12/17sp
-latest-update label. The tag uses a 10dp corner, a 6dp dot and an 11/16sp medium
-label, with its existing 160dp width cap. Matching only nominal font sizes left
-the populated cards 7–16dp shorter in emulator captures than in Figma because
-Compose's text boxes differ; the local row and progress gaps establish the
-visible card rhythm without changing the shared typography or modal shell.
+card padding, 8dp row gaps, 2dp progress gaps, 13sp description and progress text, and
+a 12/17sp latest-update label. The tag uses a 10dp corner, a 6dp dot and an 11/16sp
+medium label, with its existing 160dp width cap.
+
+Every panel and tag text style carries `TextStyle.untrimmedLineBox()` (#1534,
+`BackgroundTaskPanel.kt` and `TaskStatusTag.kt`): `copy(lineHeightStyle =
+LineHeightStyle(Alignment.Center, Trim.None))`. Compose's default `LineHeightStyle`
+trims the half-leading above the first line and below the last, so a single-line
+`lineHeight = 19.sp` text measures only 15dp — a loss the #1041 redraw tried to hide
+behind stretched gaps (12dp row, 6dp progress), but those only matched one content
+shape, and the shortfall (4dp on the banner, 3dp per heading, 1dp on some cards) still
+accumulated down the panel. `Trim.None` makes every text box exactly `lineHeight ×
+lines`, matching the Figma frames' CSS line boxes for any number of lines, which is
+what let the row/progress gaps and the cut marker's vertical padding go back to the
+frames' own 8dp/2dp/2dp values — see `BackgroundTaskPanelSpacingTest`. A Figma border
+sits inside its CSS box, but a Compose `drawBehind` stroke takes no layout space, so
+`CutMarker`'s padding adds the border's width back in.
 
 The tag resolves from `finish`: unfinished reads Running; `finish == null` (the reconnect case — a task marked finished with no
 terminal frame ever arriving) reads Finished in the Stopped style; the wire's three known terminal words
