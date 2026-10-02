@@ -224,11 +224,19 @@ Cancel centred over Continue. The side-by-side `Row` used above that width thres
 
 Whole single-choice rows sit in one `selectableGroup()` with `Role.RadioButton`; multiple-choice
 rows use `Role.Checkbox` independently. The visible tertiary selectors are 20 dp, with a dot for a
-selected radio and the exported check vector for a selected checkbox. Rows retain a 48 dp touch
-floor even though the wider Figma component example has a tighter vertical rhythm. Other is part
-of its choice row: its `BasicTextField` has the index-only `question_other_<index>` tag and an
-independent 48 dp focus region around the inset 6 dp `modalFieldContainer` well. The focus region
-matters because a row's selection target does not enlarge a separately focusable field.
+selected radio and the exported check vector for a selected checkbox. Other is part of its choice
+row: its `BasicTextField` has the index-only `question_other_<index>` tag. Since
+[#1501](../../specs/architecture/1501-prompt-measured-spacing.md), its 48 dp touch target no longer
+comes from a `heightIn(min = 48.dp)` wrapper around the inset `modalFieldContainer` well — that
+moved layout and left the card 6 dp taller than Figma `636:3279` — but from Compose's pointer
+hit-test expansion to `ViewConfiguration.minimumTouchTargetSize`, which takes no layout space; the
+field's own layout is the 32 dp well. The Other label and the question line both carry a local
+`Trim.None` line-height style (`FrameLineBox` in `QuestionBatchModal.kt`) so each keeps its full
+20 dp line box — `AppTypography`'s styles carry no `lineHeightStyle`, so Compose otherwise trims a
+single line to its glyphs (about 16 dp for a 14/20 or 20/20 style), 4 dp short of the box Figma
+measures from. The radio/checkbox sits top-aligned with the "Other" label (`ChoiceRow` lost its
+`other` top-offset parameter); a row's selection target still does not enlarge the separately
+focusable field.
 
 **Only the last question's Other field can bring the actions into view (#1484, Figma `636:3803`).** On focus,
 and again on every IME height change, `QuestionBlock`'s `reveal` waits one frame (`withFrameNanos {}` — the
@@ -257,9 +265,10 @@ this content, now enforced directly by these three composables instead of inheri
 questionnaire is a 699 dp component example with Previous, not a full-screen mobile question reference:
 **no full-screen 412 × 892 question reference exists**. The normal, compact and keyboard captures attached
 to #1305 (`app/src/androidTest/assets/question-1305/`) compare the inline layout's component geometry
-against the linked Figma states rather than claim a frame match; Other's 48 dp focus region around the
-32 dp visible well makes the cards slightly taller than Figma, an intentional touch-floor tradeoff kept
-from #1299.
+against the linked Figma states rather than claim a frame match. Since
+[#1501](../../specs/architecture/1501-prompt-measured-spacing.md) dropped the Other field's layout-height
+touch floor (see above), each question card measures 240 dp against Figma `636:3279`'s 242 — within the
+ticket's 2 dp tolerance, not the "slightly taller than Figma" gap #1299's touch-floor tradeoff used to leave.
 
 **Accessibility semantics, restored after a rework.** `QuestionBatchTitle` carries `Modifier.semantics {
 heading() }`; the `question-send-failed` failure text carries `liveRegion = LiveRegionMode.Polite` and
@@ -386,6 +395,9 @@ question rows).
 - [Shared mobile modal](mobile-modal.md) — the `MobileGateModal` shell this surface was drawn in before
   #1305, and the submit/sending/error extension #1305's `Continue` still approximates without its loading
   indicator (§ Rendering).
+- [1501 architecture doc](../../specs/architecture/1501-prompt-measured-spacing.md) — the Other row's
+  measured-spacing fix against `636:3279`, the shared `Trim.None` line-box cause, and the compact-frame
+  platform-scaling branch.
 - [Permission-modal overlay](permission-modal-overlay.md) — the sibling gate consumer this ticket's
   ViewModel/render split and lock/send idiom mirrors; still dialog-presented, not moved inline by #1305 —
   see that ticket's scope note and #1220 (kept in Inbox) for the application-wide comparison.
