@@ -1,5 +1,12 @@
 package de.pyryco.mobile.design
 
+import android.content.ContentValues
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.net.Uri
+import android.provider.MediaStore
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasClickAction
@@ -11,11 +18,12 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
-import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.lifecycle.SavedStateHandle
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.model.BackgroundTask
 import de.pyryco.mobile.data.model.BackgroundTaskProgress
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
@@ -38,14 +46,17 @@ import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.di.ConversationViewing
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
+import de.pyryco.mobile.ui.conversations.thread.PickedAttachment
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.Instant
+import org.junit.After
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -75,9 +86,19 @@ class ThreadDesignCaptureTest {
     private val inputs get() = design.inputs
     private val extraItems = MutableStateFlow<List<ThreadItem>>(emptyList())
     private val refusals = MutableSharedFlow<LiveRefusalEvent>(replay = 1)
+    private val turnPhase = MutableStateFlow(LiveSessionEvent.TurnState.Phase.Idle)
+    private val usageLimit = MutableStateFlow<UsageLimitReading?>(null)
+    private val images = mutableListOf<Uri>()
+
+    @After fun clearStaged() {
+        inputs.thread.value?.let { vm -> vm.pendingAttachments.value.forEach { vm.removeAttachment(it.key) } }
+        val resolver = InstrumentationRegistry.getInstrumentation().targetContext.contentResolver
+        images.forEach { resolver.delete(it, null, null) }
+    }
 
     @Test fun threadStatusFramesAt412By892() {
         openThread()
+        stageAttachments()
         inputs.contextUsage.value = ContextUsage(168_000, 200_000, 84, null)
         thinking()
         design.capture(FOLDER, "thread", "16:8")
@@ -96,6 +117,7 @@ class ThreadDesignCaptureTest {
 
         inputs.connectionState.value = ConnectionState.Connected
         inputs.pairingRejected.value = true
+        usageLimit.value = UsageLimitReading("allowed_warning", "seven_day", 0, 0.94, null)
         inputs.backgroundTaskCount.value = 2
         thinking()
         soft { rule.onNodeWithText("2 tasks running").fetchSemanticsNode() }
@@ -147,7 +169,7 @@ class ThreadDesignCaptureTest {
 
     @Test fun runConfigurationAndReaderAt412By892() {
         openThread()
-        fake().setModelMenu(CONVERSATION, ModelMenu(listOf("Fable", "Opus", "Sonnet", "Haiku").map(::menuRow), 0))
+        fake().setModelMenu(CONVERSATION, ModelMenu(MODELS.map { (name, id) -> menuRow(name, id) }, 0))
         fake().setSessionSettingsReading(CONVERSATION, settings("sonnet", effort = "high"))
         rule.onNodeWithContentDescription("Expand status details").performClick()
         soft { rule.onNodeWithText("Sonnet").fetchSemanticsNode() }
@@ -197,7 +219,7 @@ class ThreadDesignCaptureTest {
 
         val composer = rule.onNode(hasSetTextAction())
         design.openKeyboard(composer)
-        composer.performTextInput("My message")
+        composer.performTextReplacement("My message")
         design.capture(FOLDER, "${prefix}keyboard", "16:8")
         design.closeKeyboard()
     }
@@ -221,10 +243,45 @@ class ThreadDesignCaptureTest {
         design.launch()
         rule.onNodeWithText("Pyrycode Mobile").performScrollTo().performClick()
         rule.waitUntil(5_000) { inputs.thread.value != null }
+        // The draft store outlives one test in this process; every capture starts from the frames' text.
+        checkNotNull(inputs.thread.value).onDraftChange("My message")
         rule.waitForIdle()
     }
 
+    /** The frames' composer strip: image, image, PDF, image. Images go through MediaStore so thumbnails load. */
+    private fun stageAttachments() {
+        val picked =
+            listOf(
+                PickedAttachment(image("design-stone-1.png"), "stone-1.png", "image/png", 4_096),
+                PickedAttachment(image("design-stone-2.png"), "stone-2.png", "image/png", 4_096),
+                PickedAttachment("content://de.pyryco.design.files/brief.pdf", "brief.pdf", "application/pdf", 4_096),
+                PickedAttachment(image("design-stone-3.png"), "stone-3.png", "image/png", 4_096),
+            )
+        checkNotNull(inputs.thread.value).addPickedAttachments(picked)
+        rule.waitForIdle()
+    }
+
+    private fun image(name: String): String {
+        val resolver = InstrumentationRegistry.getInstrumentation().targetContext.contentResolver
+        val values =
+            ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, name)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+            }
+        val uri = checkNotNull(resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values))
+        images += uri
+        val bitmap = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
+        Canvas(bitmap).apply {
+            drawColor(Color.rgb(226, 226, 222))
+            drawOval(28f, 10f, 68f, 90f, Paint().apply { color = Color.rgb(140, 136, 120) })
+        }
+        checkNotNull(resolver.openOutputStream(uri)).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        return uri.toString()
+    }
+
     private fun thinking() {
+        // The band reads the repository's held phase, so set it there as well as on the live event stream.
+        turnPhase.value = LiveSessionEvent.TurnState.Phase.Thinking
         runBlocking { inputs.liveSessionEvents.emit(LiveSessionEvent.TurnState(CONVERSATION, LiveSessionEvent.TurnState.Phase.Thinking)) }
         soft { rule.onNodeWithText("Thinking", substring = true).fetchSemanticsNode() }
     }
@@ -252,7 +309,8 @@ class ThreadDesignCaptureTest {
 
     /**
      * Redefines the thread view model over [DesignInputs]' flows, as `DesignInputs` does, with a repository
-     * that also appends [extraItems] to the thread, serves [refusals], and reads one markdown note.
+     * that also appends [extraItems] to the thread, serves [refusals], [turnPhase] and [usageLimit], and reads
+     * one markdown note.
      */
     private fun install() {
         loadKoinModules(
@@ -265,6 +323,10 @@ class ThreadDesignCaptureTest {
                                 combine(fake.observeMessages(conversationId), extraItems) { items, extra -> items + extra }
 
                             override fun observeLiveRefusalEvents(conversationId: String) = refusals
+
+                            override fun observeTurnPhase(conversationId: String) = turnPhase
+
+                            override fun observeUsageLimit(conversationId: String) = usageLimit
 
                             override fun observeAttachmentOffers(conversationId: String) = inputs.attachmentOffers
 
@@ -340,8 +402,10 @@ class ThreadDesignCaptureTest {
         windowTokens = 0,
     )
 
-    private fun menuRow(name: String) =
-        ModelMenuRow(name.lowercase(), name.lowercase(), name, listOf("low", "medium", "high", "max"), false, null)
+    private fun menuRow(
+        name: String,
+        resolved: String,
+    ) = ModelMenuRow(resolved, name.lowercase(), name, listOf("low", "medium", "high", "max"), false, null)
 
     private fun task(
         id: String,
@@ -351,21 +415,18 @@ class ThreadDesignCaptureTest {
         finish: String? = null,
         status: String = "",
         truncated: List<String>? = null,
+        updateCut: List<String>? = null,
+        progress: BackgroundTaskProgress? = null,
     ) = BackgroundTask(
         taskId = id,
         toolCallId = null,
         taskType = type,
         description = description,
         truncatedFields = truncated,
-        latestUpdate = update?.let { BackgroundTaskUpdate(it, "running", "", null) },
+        latestUpdate = update?.let { BackgroundTaskUpdate(it, "running", "", updateCut) },
         finish = finish?.let { BackgroundTaskUpdate("", status, it, null) },
         isFinished = finish != null,
-        progress =
-            if (finish == null && type == "local_agent") {
-                BackgroundTaskProgress("Reading internal/relay/conn.go", "", "Read", 42_000, 7, 65_000, null)
-            } else {
-                null
-            },
+        progress = progress,
     )
 
     private fun populated() =
@@ -376,8 +437,14 @@ class ThreadDesignCaptureTest {
                     "local_bash",
                     "go test ./internal/relay/... -run TestReconnect -count=20 -race",
                     update = """{"output_tail":"--- PASS: TestReconnect/drop_mid_frame (0.84s)"}""",
+                    progress = BackgroundTaskProgress("Running go test with the race detector", "", "Bash", 18_000, 4, 161_000, null),
                 ),
-                task("t2", "local_agent", "Review the relay reconnect diff for data races"),
+                task(
+                    "t2",
+                    "local_agent",
+                    "Review the relay reconnect diff for data races",
+                    progress = BackgroundTaskProgress("Reading internal/relay/conn.go", "", "Read", 42_000, 7, 65_000, null),
+                ),
                 task("t3", "local_bash", "npm run build", finish = "Build finished in 38s with no warnings.", status = "completed"),
                 task(
                     "t4",
@@ -403,9 +470,10 @@ class ThreadDesignCaptureTest {
                     "c2",
                     "local_bash",
                     "python3 scripts/replay_capture.py",
-                    update = """{"output_tail":"replayed 214 frames, 3 roste"}""",
+                    update = """{"output_tail":"replayed 214 frames, 3 roste""",
+                    updateCut = listOf("patch"),
                 ),
-                task("c3", "local_agent", "Summarise the open tickets that mention the relay"),
+                task("c3", "local_agent", "Summarise the open tickets that mention the relay", update = ""),
             ) + (4..8).map { task("c$it", "local_bash", "sleep $it") },
             3,
         )
@@ -413,6 +481,13 @@ class ThreadDesignCaptureTest {
     private companion object {
         const val FOLDER = "thread"
         const val CONVERSATION = "seed-channel-pyrycode-mobile"
+        val MODELS =
+            listOf(
+                "Fable" to "claude-fable-5-1",
+                "Opus" to "claude-opus-5-5",
+                "Sonnet" to "claude-sonnet-5",
+                "Haiku" to "claude-haiku-4-5",
+            )
         val NOTE =
             """
             # Builder Pipeline Plan
