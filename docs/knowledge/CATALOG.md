@@ -187,5 +187,6 @@ _(none yet — system overview will land when there's more than one screen to ma
 ## Shared topics added by the knowledge migration
 
 - [Development verification](features/development-verification.md) — Kotlin, Compose, Gradle, emulator and real-evidence checks.
+- [Development verification — Compose evidence](features/development-verification-compose-evidence.md) — split out of Development verification (search size cap): Compose test-contract conventions, ATD IME/system-bar hazards, the `wm size`/IME ordering hazard, the shared `ViewportRule`/`@Viewport` and `design-1220/` capture harness (`DesignCapture`, `DesignInputs`), `BasicTextField` test gaps, Robolectric-vs-device divergences and the `captureToImage()` retry helper.
 - [Shared knowledge workflow](../shared-knowledge.md) — document ownership, reading order and capture rules.
 - [Project-memory compatibility pointer](../PROJECT-MEMORY.md) — legacy path retained without new status or lessons.
