@@ -106,7 +106,7 @@ import de.pyryco.mobile.ui.conversations.components.SystemPromptEditorState
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
 import de.pyryco.mobile.ui.conversations.components.ThreadStatusGlyph
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeIndicator
-import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
+import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
 import de.pyryco.mobile.ui.conversations.components.UnrecognizedMessageRow
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.conversations.components.formatRelativeTime
@@ -180,7 +180,7 @@ fun ThreadScreen(
     usageLimit: UsageLimitReading? = null, // #804: claude's usage-limit report; #1002 draws it in the Top overlay
     resetting: ResetStatus? = null, // #872: Reset session's phase, below usage limit and above compaction
     isCompacting: Boolean = false, // #597: claude is auto-compacting its context, replaces the spinner
-    turnOutcome: TurnOutcomeReport? = null, // #805: how the last turn failed or was interrupted, above thinking
+    turnOutcome: TurnRecoveryNotice? = null, // #1357: recovery advice after a stopped turn, above thinking
     thinkingProgress: ThinkingProgress? = null, // #803: claude's live token reading, decorates the thinking arm
     isBusy: Boolean = false, // #459: a turn is in flight (thinking OR responding) → show the interrupt affordance
     isStalled: Boolean = false, // #1311: the daemon reported a stall; the band's stall arm
@@ -453,12 +453,23 @@ fun ThreadScreen(
                 ) {
                     // #897: the open tool call names itself in the thinking arm's slot, only while a turn runs.
                     val openTool = remember(state.items) { openToolCall(state.items) }
+                    // #1357: the context notice's Compact pill takes the Actions menu's path, and no tap while
+                    // the published menu proves the command absent.
+                    val onCompact =
+                        remember(state.absentActions, onComposerCommand) {
+                            if (ComposerAction.CompactSession in state.absentActions) {
+                                null
+                            } else {
+                                { onComposerCommand(ComposerAction.CompactSession) }
+                            }
+                        }
                     ThreadStatusArea(
                         apiRetry = apiRetry,
                         resetting = resetting,
                         isCompacting = isCompacting,
                         isStalled = isStalled,
                         turnOutcome = turnOutcome,
+                        onCompact = onCompact,
                         isThinking = isThinking,
                         isBusy = isBusy,
                         localSendPending = localSendPending,
@@ -950,7 +961,8 @@ private fun ThreadStatusArea(
     resetting: ResetStatus?,
     isCompacting: Boolean,
     isStalled: Boolean,
-    turnOutcome: TurnOutcomeReport?,
+    turnOutcome: TurnRecoveryNotice?,
+    onCompact: (() -> Unit)?,
     isThinking: Boolean,
     isBusy: Boolean,
     localSendPending: Boolean,
@@ -1006,6 +1018,7 @@ private fun ThreadStatusArea(
                     apiRetry = apiRetry,
                     resetting = resetting,
                     turnOutcome = turnOutcome,
+                    onCompact = onCompact,
                     isThinking = isThinking,
                     thinkingProgress = thinkingProgress,
                     runningTool = runningTool,
@@ -1044,8 +1057,7 @@ internal enum class StatusArm { None, Connection, Resetting, ApiRetry, Compactin
  * pill owns it.
  *
  * A pending local send hides a turn outcome: that outcome belongs to the turn before the send, and the new
- * turn's first `thinking` / `responding` would clear it anyway. An `idle` answer closes the window and the
- * outcome shows again, since the outcome fold keeps it on `idle`.
+ * turn's first `thinking` / `responding` would clear it anyway. Since #1357 the send itself clears it too.
  */
 internal fun statusArm(
     connectionState: ConnectionState,
@@ -1080,7 +1092,8 @@ private fun StatusReading(
     arm: StatusArm,
     apiRetry: ApiRetryStatus,
     resetting: ResetStatus?,
-    turnOutcome: TurnOutcomeReport?,
+    turnOutcome: TurnRecoveryNotice?,
+    onCompact: (() -> Unit)?,
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
     runningTool: ToolCall?,
@@ -1094,7 +1107,7 @@ private fun StatusReading(
         StatusArm.Resetting -> ResettingIndicator(status = resetting, modifier = modifier, agent = agent)
         StatusArm.ApiRetry -> ApiRetryIndicator(status = apiRetry, modifier = modifier, agent = agent)
         StatusArm.Compacting -> CompactingIndicator(isCompacting = true, modifier = modifier, agent = agent)
-        StatusArm.TurnOutcome -> TurnOutcomeIndicator(report = turnOutcome, agent = agent, modifier = modifier)
+        StatusArm.TurnOutcome -> TurnOutcomeIndicator(notice = turnOutcome, agent = agent, onCompact = onCompact, modifier = modifier)
         StatusArm.Stalled, StatusArm.Thinking, StatusArm.Working, StatusArm.RunningTool ->
             ThinkingIndicator(
                 isThinking = arm == StatusArm.Thinking,

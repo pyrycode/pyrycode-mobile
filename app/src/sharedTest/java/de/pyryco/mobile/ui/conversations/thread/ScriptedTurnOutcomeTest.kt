@@ -14,11 +14,11 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Rung 2 (#805): a failed or interrupted turn's outcome, decoded from `turn_end` by the real
+ * Rung 2 (#805, reworked by #1357): a stopped turn's recovery advice, decoded from `turn_end` by the real
  * [de.pyryco.mobile.data.repository.RemoteConversationRepository] and rendered by `TurnOutcomeIndicator`
  * on the [ScriptedThreadHarness], in [ScriptedUsageLimitTest]'s shape. Live behaviour is #679's.
  *
- * Assertions are on the row's content description, which is its visible label. Where a scenario proves an
+ * Assertions are on the pill's content description, which is its visible label. Where a scenario proves an
  * **absence**, a later `turn_state thinking` frame is the sync point: frames fold in order on the one
  * inbound collector, and the thinking arm only renders when no higher arm holds the slot.
  */
@@ -35,9 +35,9 @@ class ScriptedTurnOutcomeTest {
 
     private val compactingDescription: String = string(R.string.cd_thread_compacting)
 
-    private val failedLabel: String =
-        string(R.string.thread_turn_outcome_failed) +
-            string(R.string.thread_turn_outcome_agent_reports, string(R.string.agent_name_claude), "prompt_too_long")
+    private val contextNotice: String = string(R.string.thread_recovery_context)
+
+    private val compactPill: String = string(R.string.thread_recovery_compact)
 
     @Before
     fun setUp() {
@@ -50,80 +50,66 @@ class ScriptedTurnOutcomeTest {
         harness.close()
     }
 
-    // AC #2 + #4: `success` with `is_error` is the failure it is, and the turn ending takes the spinner and
-    // the Stop affordance with it.
+    // `success` with `is_error` and `prompt_too_long` is a context overflow: the advice and Compact replace
+    // the spinner, and the Stop affordance goes with the turn.
     @Test
-    fun successWithIsError_rendersAsAFailure_andClearsSpinnerAndStop() {
+    fun contextOverflow_offersCompact_andClearsSpinnerAndStop() {
         harness.pushTurnState("thinking")
         awaitDisplayed(thinkingDescription)
         awaitDisplayed(interruptDescription)
 
         harness.pushTurnEnd("t1", outcome = "success", isError = true, terminalReason = "prompt_too_long")
 
-        awaitDisplayed(failedLabel)
+        awaitDisplayed(contextNotice)
+        awaitDisplayed(compactPill)
         composeRule.onNodeWithContentDescription(thinkingDescription).assertDoesNotExist()
         awaitGone(interruptDescription)
     }
 
-    // AC #2: an interrupted turn says so.
+    // A billing failure names the agent's billing, never the daemon's token.
     @Test
-    fun cancelledTurn_rendersAsInterrupted() {
-        harness.pushTurnState("thinking")
-        harness.pushTurnEnd("t1", stopReason = "cancelled")
+    fun billingFailure_namesTheAgentsBilling() {
+        harness.pushTurnEnd("t1", isError = true, errorCategory = "billing_error")
 
-        awaitDisplayed(string(R.string.thread_turn_outcome_interrupted))
-        composeRule.onNodeWithContentDescription(thinkingDescription).assertDoesNotExist()
+        awaitDisplayed(string(R.string.thread_recovery_billing, string(R.string.agent_name_claude)))
+        composeRule.onNodeWithContentDescription(compactPill).assertDoesNotExist()
     }
 
-    // AC #4: the outcome clears when the next turn starts.
+    // The advice clears when the next turn starts.
     @Test
-    fun nextTurnStarting_clearsTheOutcome() {
+    fun nextTurnStarting_clearsTheNotice() {
         harness.pushTurnEnd("t1", outcome = "success", isError = true, terminalReason = "prompt_too_long")
-        awaitDisplayed(failedLabel)
+        awaitDisplayed(contextNotice)
 
         harness.pushTurnState("thinking")
 
         awaitDisplayed(thinkingDescription)
-        composeRule.onNodeWithContentDescription(failedLabel).assertDoesNotExist()
+        composeRule.onNodeWithContentDescription(contextNotice).assertDoesNotExist()
     }
 
-    // AC #1: a clean turn, with or without the stop-shape fields, raises no outcome.
+    // A cancelled turn, a clean one and any other stopped turn give no advice.
     @Test
-    fun cleanTurnEnd_showsNoOutcome() {
-        harness.pushTurnEnd("t1")
+    fun cancelledCleanAndOtherStoppedTurns_showNothing() {
+        harness.pushTurnEnd("t1", stopReason = "cancelled", isError = true, terminalReason = "prompt_too_long")
         harness.pushTurnEnd("t2", outcome = "success", isError = false, terminalReason = "completed", errorCategory = "")
+        harness.pushTurnEnd("t3", outcome = "error_max_turns", errorCategory = "\u001b[31mrate_limit")
         harness.pushTurnState("thinking")
 
         awaitDisplayed(thinkingDescription)
-        composeRule.onNodeWithContentDescription(string(R.string.thread_turn_outcome_failed), substring = true).assertDoesNotExist()
-        composeRule.onNodeWithContentDescription(string(R.string.thread_turn_outcome_stopped), substring = true).assertDoesNotExist()
+        composeRule.onNodeWithContentDescription(contextNotice).assertDoesNotExist()
+        composeRule.onNodeWithContentDescription(compactPill).assertDoesNotExist()
     }
 
-    // AC #3: terminal escapes, line breaks and bidi overrides reach the composable only as spaces.
+    // Ladder: compaction outranks the advice; the two never stack.
     @Test
-    fun controlCharacters_renderAsInertText() {
-        harness.pushTurnEnd("t1", outcome = "error_\u001b[31mx\n‮y", errorCategory = "billing_error")
-
-        awaitDisplayed(
-            string(R.string.thread_turn_outcome_stopped) +
-                string(
-                    R.string.thread_turn_outcome_agent_reports,
-                    string(R.string.agent_name_claude),
-                    "error_ [31mx  y, " + string(R.string.thread_turn_outcome_api_error, "billing_error"),
-                ),
-        )
-    }
-
-    // Ladder: compaction outranks the outcome; the two never stack.
-    @Test
-    fun compaction_winsTheSlotOverTheOutcome() {
+    fun compaction_winsTheSlotOverTheNotice() {
         harness.pushTurnEnd("t1", outcome = "success", isError = true, terminalReason = "prompt_too_long")
-        awaitDisplayed(failedLabel)
+        awaitDisplayed(contextNotice)
 
         harness.pushCompacting(active = true)
 
         awaitDisplayed(compactingDescription)
-        composeRule.onNodeWithContentDescription(failedLabel).assertDoesNotExist()
+        composeRule.onNodeWithContentDescription(contextNotice).assertDoesNotExist()
     }
 
     private fun string(

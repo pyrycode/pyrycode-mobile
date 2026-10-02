@@ -164,9 +164,11 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    the daemon's wrapping-up phase to show live, with no delimiter yet, before the phase clears and the
    delimiter appears; the restarting phase has no live hold and stays proven only by
    `ScriptedResettingTest`. The **stop-running-turn** scenario (#965 —
-   `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`) holds a turn open on a command that
-   never returns on its own, taps the composer's Stop, and asserts the Interrupted outcome and a real reply
-   to a same-thread follow-up — covered in its own paragraph below, after the reset scenario. The **model
+   `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`, method name kept though
+   [#1357](knowledge/features/turn-outcome-indicator.md) dropped its Interrupted-label assertion) holds a
+   turn open on a command that never returns on its own, taps the composer's Stop, and asserts the stopped
+   turn's `cancelled` `stop_reason` and a real reply to a same-thread follow-up — covered in its own
+   paragraph below, after the reset scenario. The **model
    and effort settings round trip** (#545 — `interactiveTurn_modelChange_roundTripsAndStaysPerConversation`,
    `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn`,
    `interactiveTurn_chosenEffort_appliesFromTheFirstTurn`,
@@ -414,8 +416,12 @@ turn plus the daemon's reset wrap-up turn.
 
 The **stop-running-turn** scenario (#965 —
 `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`) is likewise **always-on** (not
-`@Ignore`d): the Interrupted outcome and a real reply to a same-thread follow-up are **durable**
-post-conditions, so it belongs in the always-on gate alongside the new-session delimiter. It holds a turn
+`@Ignore`d): the stopped turn's `cancelled` `stop_reason` and a real reply to a same-thread follow-up are
+**durable** post-conditions, so it belongs in the always-on gate alongside the new-session delimiter.
+Since [#1357](knowledge/features/turn-outcome-indicator.md) a cancelled turn shows nothing in the status
+area, so the method no longer asserts an Interrupted label there — only that the Stop control itself
+leaves once the `cancelled` `turn_end` arrives; the method name is kept because other docs reference it.
+It holds a turn
 open on a command that cannot end on its own — `STOP_HOLD_PROMPT` asks claude to run, in the foreground,
 `python3 -c "import threading; threading.Event().wait()"` and then reply with a fixed token
 (`STOP_HOLD_REPLY`) — never a fixed delay; the command ends only when the interrupt kills it, or, far

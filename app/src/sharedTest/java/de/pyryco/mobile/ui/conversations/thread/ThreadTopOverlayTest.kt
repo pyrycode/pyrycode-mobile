@@ -30,7 +30,7 @@ import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
-import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
+import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -67,7 +67,7 @@ class ThreadTopOverlayTest {
     private var showRePair by mutableStateOf(false)
     private var isBusy by mutableStateOf(false)
     private var resetting by mutableStateOf<ResetStatus?>(null)
-    private var turnOutcome by mutableStateOf<TurnOutcomeReport?>(null)
+    private var turnOutcome by mutableStateOf<TurnRecoveryNotice?>(null)
     private var connectionState by mutableStateOf<ConnectionState>(ConnectionState.Connected)
     private var mcpFailure by mutableStateOf<String?>(null)
     private var rePairTaps = 0
@@ -273,9 +273,9 @@ class ThreadTopOverlayTest {
 
         resetting = null
         isBusy = false
-        turnOutcome = TurnOutcomeReport(TurnOutcomeReport.Kind.Interrupted, emptyList(), null)
+        turnOutcome = TurnRecoveryNotice.ContextTooLong
         composeRule
-            .onNodeWithText(context.getString(R.string.thread_turn_outcome_interrupted), substring = true, useUnmergedTree = true)
+            .onNodeWithText(context.getString(R.string.thread_recovery_context), substring = true, useUnmergedTree = true)
             .assertIsDisplayed()
         composeRule.onNodeWithContentDescription(label("allowed_warning")).assertIsDisplayed()
     }
