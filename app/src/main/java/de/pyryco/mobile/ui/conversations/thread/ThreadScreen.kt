@@ -637,6 +637,9 @@ fun ThreadScreen(
                             state = listState,
                             modifier = Modifier.fillMaxSize().olderHistoryPull(listPull),
                             reverseLayout = true,
+                            // #1509: a reversed list defaults to bottom-anchored; Figma `640:2646` starts a
+                            // short stream under the header. An overflowing stream is unaffected.
+                            verticalArrangement = Arrangement.Top,
                         ) {
                             openRequest?.let { open ->
                                 permissionRequestItems(
