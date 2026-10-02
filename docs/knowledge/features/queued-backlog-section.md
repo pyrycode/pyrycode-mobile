@@ -201,7 +201,7 @@ Why this is the right seam, and what it changes about the list the row now sits 
   cutoff itself.
 - **The oldest-end history demand's `historyRowCount` now reads `rows.size`, not `state.items.size`** —
   same reasoning as the cutoff, folded into
-  [that section](thread-screen-how-it-works-list-and-status-row.md#the-oldest-end-history-demand-777).
+  [that section](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777).
 - **The `EmptyThreadState` gate widened to `!state.hasMessages && state.queuedMessages.isEmpty()`.** A
   backlog item this device minted no echo for is its own row with nothing else in the thread to anchor
   it, so the empty-state prompt must yield to it (AC #3 of #782) — when an item *is* matched its echo is
