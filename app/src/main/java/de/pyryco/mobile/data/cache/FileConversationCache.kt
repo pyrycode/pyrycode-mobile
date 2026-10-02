@@ -12,6 +12,7 @@ import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.BoundaryReason
+import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -104,8 +105,54 @@ class FileConversationCache(
         rows: List<ThreadItem>,
     ): Result<Unit> =
         mutate("write_thread") {
-            val record = CachedThread(VERSION, cacheableThreadRows(rows).map { it.toRecord() })
-            writeAtomically(threadDocumentFor(serverId, conversationId), MobileJson.encodeToString(record))
+            val document = threadDocumentFor(serverId, conversationId)
+            val kept = cacheableThreadRows(rows)
+            // #1354: keep the saved history position, unless trimming moved the oldest row away from it.
+            val trimmed = kept.size < settledThreadRows(rows).count { it !is ThreadItem.UnrecognizedMessage }
+            val history = if (trimmed) null else storedHistoryOrNull(document)
+            val record = CachedThread(VERSION, kept.map { it.toRecord() }, history)
+            writeAtomically(document, MobileJson.encodeToString(record))
+        }
+
+    override suspend fun readHistoryPosition(
+        serverId: String,
+        conversationId: String,
+    ): HistoryPosition? =
+        withContext(ioDispatcher) {
+            mutex.withLock {
+                try {
+                    decodeThreadDocument(threadDocumentFor(serverId, conversationId))?.history?.toDomain()
+                } catch (error: Exception) {
+                    val code = failureCode(error) ?: throw error
+                    RelayLog.d { "conversation_cache operation=read_history status=failed code=$code" }
+                    null
+                }
+            }
+        }
+
+    /**
+     * Rewrites the thread document with [position] beside the rows currently readable in it (#1354), the
+     * same read-modify-write rule as [removeConversation]: rows that cannot be read are not kept. Clearing a
+     * thread that was never written writes nothing, so a clear never conjures a document.
+     */
+    override suspend fun writeHistoryPosition(
+        serverId: String,
+        conversationId: String,
+        position: HistoryPosition?,
+    ): Result<Unit> =
+        mutate("write_history") {
+            val document = threadDocumentFor(serverId, conversationId)
+            if (position == null && !document.isFile) return@mutate
+            val rows =
+                try {
+                    decodeThreadDocument(document)?.rows.orEmpty()
+                } catch (error: Exception) {
+                    val code = failureCode(error) ?: throw error
+                    RelayLog.d { "conversation_cache operation=write_history_read status=failed code=$code" }
+                    emptyList()
+                }
+            val record = CachedThread(VERSION, rows, position?.let { CachedHistoryPosition(it.cursor, it.atStart) })
+            writeAtomically(document, MobileJson.encodeToString(record))
         }
 
     override suspend fun readReadPositions(serverId: String): Map<String, ReadPosition> =
@@ -186,8 +233,23 @@ class FileConversationCache(
         MobileJson.encodeToString(CachedConversations(VERSION, conversations.map { it.toRecord() })),
     )
 
+    private fun decodeThread(document: File): List<ThreadItem> = readThreadRecord(document)?.let(::validatedRows).orEmpty()
+
     /**
-     * Decodes a thread document, rejecting what would mislead or crash the thread: a row of no kind or
+     * The thread document, or `null` when none was written, rejected whole unless every row passes
+     * [validatedRows], so a position is never read from a document whose rows are unreadable (#1354).
+     */
+    private fun decodeThreadDocument(document: File): CachedThread? = readThreadRecord(document)?.also { validatedRows(it) }
+
+    private fun readThreadRecord(document: File): CachedThread? {
+        if (!document.isFile) return null
+        val stored = MobileJson.decodeFromString<CachedThread>(document.readText())
+        require(stored.version == VERSION) { "unsupported conversation cache version" }
+        return stored
+    }
+
+    /**
+     * Decodes a thread document's rows, rejecting what would mislead or crash the thread: a row of no kind or
      * of several, a running tool (a permanent spinner), and a repeated list key (two `LazyColumn` rows
      * with one key). A writer never produces any of these. A boundary's identity is its session pair and
      * instant, the triple its list key encodes (#775): an idle-evicted session keeps its id, so two
@@ -195,10 +257,7 @@ class FileConversationCache(
      * refusal on its frame type and instant (#1353) — the keys `holdsBanner`, `holdsCompactionBoundary`
      * and `holdsModelRefusal` dedupe on.
      */
-    private fun decodeThread(document: File): List<ThreadItem> {
-        if (!document.isFile) return emptyList()
-        val stored = MobileJson.decodeFromString<CachedThread>(document.readText())
-        require(stored.version == VERSION) { "unsupported conversation cache version" }
+    private fun validatedRows(stored: CachedThread): List<ThreadItem> {
         val rows = stored.rows.map { it.toDomain() }
         val messages = rows.filterIsInstance<ThreadItem.MessageItem>().map { it.message }
         require(messages.none { it.toolCall?.status == ToolCallStatus.Running }) { "running tool in thread cache" }
@@ -216,6 +275,23 @@ class FileConversationCache(
             "duplicate thread cache refusal identity"
         }
         return rows
+    }
+
+    /**
+     * The history position in [document], read without decoding its rows, for the row writer to keep
+     * (#1354). Anything unreadable is no position: the row writer replaces the document either way.
+     */
+    private fun storedHistoryOrNull(document: File): CachedHistoryPosition? {
+        if (!document.isFile) return null
+        return try {
+            MobileJson
+                .decodeFromString<CachedThreadHeader>(document.readText())
+                .takeIf { it.version == VERSION }
+                ?.history
+        } catch (error: Exception) {
+            failureCode(error) ?: throw error
+            null
+        }
     }
 
     private fun readPositionsOrEmpty(
@@ -401,12 +477,35 @@ private fun CachedConversation.toDomain() =
         workspaceLabel = workspaceLabel,
     )
 
-/** Versioned envelope for one conversation's settled thread rows (#797), newest last. */
+/**
+ * Versioned envelope for one conversation's settled thread rows (#797), newest last, and the history
+ * position received for them (#1354). [history] defaults to `null`, so a document written before positions
+ * were kept reads as rows with no position, and the row writer never adds one.
+ */
 @Serializable
 private data class CachedThread(
     val version: Int,
     val rows: List<CachedThreadRow>,
+    val history: CachedHistoryPosition? = null,
 )
+
+/** [CachedThread] without its rows: the row writer reads only the position it keeps (#1354). */
+@Serializable
+private data class CachedThreadHeader(
+    val version: Int,
+    val history: CachedHistoryPosition? = null,
+)
+
+/** A [HistoryPosition] (#1354). [cursor] is opaque and stays out of [toString]. */
+@Serializable
+private data class CachedHistoryPosition(
+    val cursor: String,
+    val atStart: Boolean,
+) {
+    fun toDomain() = HistoryPosition(cursor, atStart)
+
+    override fun toString(): String = "CachedHistoryPosition(atStart=$atStart)"
+}
 
 /**
  * Exactly one field set; a row with none or several is unreadable. Every field defaults to `null`, so a

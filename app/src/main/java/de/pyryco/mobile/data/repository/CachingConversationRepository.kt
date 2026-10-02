@@ -46,6 +46,9 @@ import java.util.concurrent.ConcurrentHashMap
  * writes nothing until the turn settles. Holds no scope and launches nothing; cancellation is the
  * collector's.
  *
+ * The thread's saved history position (#1354) passes straight through to the cache under [serverId]: the
+ * row writer above keeps it, and the thread screen reads it at open and writes it when an ask settles.
+ *
  * A confirmed [delete] also removes the conversation's cached content (#798) — the host is this
  * wrapper's own [serverId], captured from the destination that issued the call, never a global
  * selection. Archive and unarchive stay plain delegation: they are not removals.
@@ -87,6 +90,24 @@ class CachingConversationRepository(
                 }
             }
         }
+
+    /** This thread's saved history position (#1354), under this wrapper's own [serverId]. */
+    override suspend fun readHistoryPosition(conversationId: String): HistoryPosition? = cache.readHistoryPosition(serverId, conversationId)
+
+    /**
+     * Saves [position] beside the thread's cached rows (#1354). Skipped for a conversation this destination
+     * deleted, so a page settling after the delete cannot put the document back. A failed write is logged
+     * and not surfaced: the next open re-fetches one page.
+     */
+    override suspend fun writeHistoryPosition(
+        conversationId: String,
+        position: HistoryPosition?,
+    ) {
+        if (conversationId in deleted) return
+        cache
+            .writeHistoryPosition(serverId, conversationId, position)
+            .onFailure { RelayLog.d { "event=history_position_write_failed" } }
+    }
 
     override suspend fun retrieveAttachment(
         conversationId: String,

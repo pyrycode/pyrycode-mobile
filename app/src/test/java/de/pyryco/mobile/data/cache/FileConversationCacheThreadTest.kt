@@ -11,6 +11,7 @@ import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.BoundaryReason
+import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UnrecognizedSite
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -19,6 +20,8 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -518,6 +521,134 @@ class FileConversationCacheThreadTest {
 
             assertTrue("expected a ConversationCacheException, got $error", error is ConversationCacheException)
             assertEquals(null, error?.cause)
+        }
+
+    // --- #1354: the saved history position, beside the rows in the thread document ---------------------
+
+    @Test
+    fun `a history position round-trips beside the rows through a fresh instance`() =
+        runTest {
+            val position = HistoryPosition(cursor = "opaque-cursor", atStart = false)
+            cache().writeThread("server-a", "conv-1", listOf(message("m1"))).getOrThrow()
+            cache().writeHistoryPosition("server-a", "conv-1", position).getOrThrow()
+
+            assertEquals(position, cache().readHistoryPosition("server-a", "conv-1"))
+            assertEquals(listOf(message("m1")), cache().readThread("server-a", "conv-1"))
+            assertEquals(1, threadFiles().size)
+        }
+
+    @Test
+    fun `a row write keeps the stored position and a position write keeps the stored rows`() =
+        runTest {
+            val first = HistoryPosition(cursor = "c1", atStart = false)
+            cache().writeHistoryPosition("server-a", "conv-1", first).getOrThrow()
+            cache().writeThread("server-a", "conv-1", listOf(message("m1"), message("m2"))).getOrThrow()
+            assertEquals(first, cache().readHistoryPosition("server-a", "conv-1"))
+
+            val atStart = HistoryPosition(cursor = "", atStart = true)
+            cache().writeHistoryPosition("server-a", "conv-1", atStart).getOrThrow()
+            assertEquals(listOf(message("m1"), message("m2")), cache().readThread("server-a", "conv-1"))
+            assertEquals(atStart, cache().readHistoryPosition("server-a", "conv-1"))
+        }
+
+    @Test
+    fun `a received empty page stores a position even with no rows`() =
+        runTest {
+            val position = HistoryPosition(cursor = "", atStart = true)
+            cache().writeHistoryPosition("server-a", "conv-1", position).getOrThrow()
+
+            assertEquals(position, cache().readHistoryPosition("server-a", "conv-1"))
+            assertEquals(emptyList<ThreadItem>(), cache().readThread("server-a", "conv-1"))
+        }
+
+    @Test
+    fun `a thread only ever fed rows stores no position`() =
+        runTest {
+            cache().writeThread("server-a", "conv-1", listOf(message("m1"))).getOrThrow()
+            cache().writeThread("server-a", "conv-1", listOf(message("m1"), message("m2"))).getOrThrow()
+
+            assertNull(cache().readHistoryPosition("server-a", "conv-1"))
+            assertFalse(threadFiles().single().readText().contains("history"))
+        }
+
+    @Test
+    fun `a thread document written before positions were kept reads as rows with no position`() =
+        runTest {
+            cache().writeThread("server-a", "conv-1", listOf(message("m1"))).getOrThrow()
+            threadFiles().single().writeText(
+                """{"version":1,"rows":[{"message":{"id":"m0","sessionId":"session-1","role":"User","content":"hi",""" +
+                    """"timestamp":"2026-09-22T10:11:12.123456789Z"}}]}""",
+            )
+
+            val expected = message("m0", role = Role.User).let { it.copy(message = it.message.copy(content = "hi")) }
+            assertEquals(listOf(expected), cache().readThread("server-a", "conv-1"))
+            assertNull(cache().readHistoryPosition("server-a", "conv-1"))
+        }
+
+    @Test
+    fun `clearing the position keeps the rows and a clear with no document writes nothing`() =
+        runTest {
+            cache().writeHistoryPosition("server-a", "conv-2", null).getOrThrow()
+            assertEquals(emptyList<File>(), threadFiles())
+
+            cache().writeThread("server-a", "conv-1", listOf(message("m1"))).getOrThrow()
+            cache().writeHistoryPosition("server-a", "conv-1", HistoryPosition("c1", false)).getOrThrow()
+            cache().writeHistoryPosition("server-a", "conv-1", null).getOrThrow()
+
+            assertNull(cache().readHistoryPosition("server-a", "conv-1"))
+            assertEquals(listOf(message("m1")), cache().readThread("server-a", "conv-1"))
+        }
+
+    @Test
+    fun `a position in an unreadable thread document reads as none`() =
+        runTest {
+            cache().writeThread("server-a", "conv-1", listOf(message("m1"))).getOrThrow()
+            cache().writeHistoryPosition("server-a", "conv-1", HistoryPosition("c1", false)).getOrThrow()
+            val document = threadFiles().single()
+            document.writeText(document.readText().replace("\"version\":1", "\"version\":99"))
+
+            assertNull(cache().readHistoryPosition("server-a", "conv-1"))
+        }
+
+    @Test
+    fun `a row write trimmed at the row limit drops the position`() =
+        runTest {
+            cache().writeHistoryPosition("server-a", "conv-1", HistoryPosition("c1", false)).getOrThrow()
+            val atLimit = (1..MAX_CACHED_THREAD_ROWS).map { message("m$it") }
+            cache().writeThread("server-a", "conv-1", atLimit).getOrThrow()
+            // Exactly at the limit nothing was trimmed, so the oldest saved row still matches the position.
+            assertEquals(HistoryPosition("c1", false), cache().readHistoryPosition("server-a", "conv-1"))
+
+            cache().writeThread("server-a", "conv-1", atLimit + message("newest")).getOrThrow()
+
+            assertNull(cache().readHistoryPosition("server-a", "conv-1"))
+        }
+
+    @Test
+    fun `removing a conversation or a host removes its position`() =
+        runTest {
+            cache().writeHistoryPosition("server-a", "conv-1", HistoryPosition("c1", false)).getOrThrow()
+            cache().writeHistoryPosition("server-a", "conv-2", HistoryPosition("c2", false)).getOrThrow()
+            cache().writeHistoryPosition("server-b", "conv-1", HistoryPosition("b1", false)).getOrThrow()
+
+            cache().removeConversation("server-a", "conv-1").getOrThrow()
+            assertNull(cache().readHistoryPosition("server-a", "conv-1"))
+            assertEquals(HistoryPosition("c2", false), cache().readHistoryPosition("server-a", "conv-2"))
+
+            cache().removeHost("server-a").getOrThrow()
+            assertNull(cache().readHistoryPosition("server-a", "conv-2"))
+            assertEquals(HistoryPosition("b1", false), cache().readHistoryPosition("server-b", "conv-1"))
+        }
+
+    @Test
+    fun `position writes log no cursor`() =
+        runTest {
+            cache().writeHistoryPosition("server-a", "conv-1", HistoryPosition("SECRET-CURSOR", false)).getOrThrow()
+            cache().writeThread("server-a", "conv-1", listOf(message("m1"))).getOrThrow()
+            cache().readHistoryPosition("server-a", "conv-1")
+
+            assertTrue("$logs", logs.any { it == "conversation_cache operation=write_history status=ok" })
+            logs.forEach { assertFalse("log leaked the cursor: $it", it.contains("SECRET-CURSOR")) }
         }
 
     private fun conversation(id: String) =

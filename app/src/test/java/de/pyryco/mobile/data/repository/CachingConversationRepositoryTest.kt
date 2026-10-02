@@ -466,6 +466,42 @@ class CachingConversationRepositoryTest {
             logs.forEach { assertTrue("log leaked an identifier: $it", !it.contains("SECRET")) }
         }
 
+    @Test
+    fun `a saved history position survives the row writer and reads back under this host`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val cache = fileCache().also { it.seed() }
+            val repository = CachingConversationRepository(delegate, cache, "server-a")
+            val job = launch { repository.observeMessages("conv-1").collect { } }
+            val position = HistoryPosition(cursor = "opaque-cursor", atStart = false)
+
+            repository.writeHistoryPosition("conv-1", position)
+            // A row write after the position write keeps it.
+            live.value = listOf(message("m0"), message("m1"))
+            assertEquals(listOf(message("m0"), message("m1")), cache.readThread("server-a", "conv-1"))
+
+            assertEquals(position, repository.readHistoryPosition("conv-1"))
+            assertEquals(position, CachingConversationRepository(delegate, cache, "server-a").readHistoryPosition("conv-1"))
+            assertEquals(null, CachingConversationRepository(delegate, cache, "server-b").readHistoryPosition("conv-1"))
+
+            repository.writeHistoryPosition("conv-1", null)
+            assertEquals(null, repository.readHistoryPosition("conv-1"))
+            assertEquals(listOf(message("m0"), message("m1")), cache.readThread("server-a", "conv-1"))
+            job.cancel()
+        }
+
+    @Test
+    fun `a deleted conversation's history position is never written back`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val cache = fileCache().also { it.seed() }
+            val repository = CachingConversationRepository(delegate, cache, "server-a")
+
+            repository.delete("conv-1")
+            repository.writeHistoryPosition("conv-1", HistoryPosition(cursor = "c1", atStart = false))
+
+            assertEquals(null, cache.readHistoryPosition("server-a", "conv-1"))
+            assertEquals(emptyList<ThreadItem>(), cache.readThread("server-a", "conv-1"))
+        }
+
     private fun TestScope.fileCache() = FileConversationCache(tmp.newFolder(), UnconfinedTestDispatcher(testScheduler))
 
     /** Two conversations under one host, and a conversation of the same id under another. */

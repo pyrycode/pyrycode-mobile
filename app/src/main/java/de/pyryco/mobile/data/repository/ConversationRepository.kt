@@ -622,6 +622,26 @@ interface ConversationRepository {
     ): HistoryPage = error("requestHistory is not implemented for this ConversationRepository")
 
     /**
+     * The history position saved for [conversationId] (#1354), or `null` when none is: never received,
+     * cleared, or unreadable. Read once when a thread opens, to resume its walk where the saved rows end.
+     *
+     * Default `null` — a repository with no cache always starts from the newest page.
+     */
+    suspend fun readHistoryPosition(conversationId: String): HistoryPosition? = null
+
+    /**
+     * Save [position] for [conversationId] beside its cached rows (#1354), or clear it with `null`. Called
+     * when an ask settles; a failed ask never calls it. Never throws for a storage failure: losing a
+     * position costs only a re-fetched page.
+     *
+     * Default does nothing.
+     */
+    suspend fun writeHistoryPosition(
+        conversationId: String,
+        position: HistoryPosition?,
+    ) {}
+
+    /**
      * Read the system prompt stored for [conversationId] (#823), one `request_system_prompt` per call.
      * Keyed by **conversation**, never by session: a conversation with nothing running reads normally,
      * and the read changes nothing on the daemon. The stored value keeps its three states apart (see
@@ -1058,6 +1078,21 @@ data class HistoryPage(
     val cursor: String,
     val atStart: Boolean,
 )
+
+/**
+ * How far back one thread's history has been received (#1354), saved beside its cached rows: the last
+ * received [HistoryPage]'s [cursor] and [atStart], desktop's received `coverage`. Only a received page sets
+ * it, even an empty one; the row count never implies it, and a thread only ever fed live has none.
+ *
+ * [cursor] is the daemon's opaque value, echoed verbatim and never logged, parsed, or used as a path or
+ * key — so [toString] leaves it out.
+ */
+data class HistoryPosition(
+    val cursor: String,
+    val atStart: Boolean,
+) {
+    override fun toString(): String = "HistoryPosition(atStart=$atStart)"
+}
 
 /**
  * One stored frame in a conversation's history log (#623) — a wire type, its payload, a timestamp and

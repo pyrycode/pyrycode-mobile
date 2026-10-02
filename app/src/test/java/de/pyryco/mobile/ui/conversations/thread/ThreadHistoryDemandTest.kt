@@ -226,4 +226,22 @@ class ThreadHistoryDemandTest {
         }
         assertEquals(ThreadHistoryTail.None, ThreadHistoryDemand(stoppedBy = HistoryWalkStop.AtStart).tail(connected = false))
     }
+
+    @Test
+    fun restored_resumesFromTheSavedCursorAndKeepsThePageBudget() {
+        val restored = ThreadHistoryDemand(pagesLoaded = 3).restored(cursor = "saved", atStart = false)
+        assertEquals("saved", restored.cursor)
+        assertEquals(3, restored.pagesLoaded)
+        assertNull(restored.stoppedBy)
+        assertTrue(restored.canAsk)
+        assertEquals("saved", restored.asking().cursor)
+    }
+
+    @Test
+    fun restoredAtStart_asksNothingAndShowsNoOfflineNotice() {
+        val restored = ThreadHistoryDemand().restored(cursor = "", atStart = true)
+        assertEquals(HistoryWalkStop.AtStart, restored.stoppedBy)
+        assertFalse(restored.canAsk)
+        assertEquals(ThreadHistoryTail.None, restored.tail(connected = false))
+    }
 }

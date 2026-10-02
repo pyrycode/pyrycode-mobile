@@ -25,6 +25,7 @@ import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.HistoryEntry
 import de.pyryco.mobile.data.repository.HistoryPage
+import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
@@ -4619,6 +4620,127 @@ class ThreadViewModelTest {
                 }
         }
 
+    // --- #1354: the walk resumes from the position saved beside the cached rows ------------------------
+
+    @Test
+    fun history_withASavedPosition_theFirstPullAsksWithTheSavedCursorAndOpeningAsksNothing() =
+        runTest {
+            val repo = HistoryRepo(saved = HistoryPosition("saved-cursor", atStart = false)) { page(cursor = "older") }
+            val vm = makeVm(historyHandle(), repo)
+            advanceUntilIdle()
+            assertEquals(emptyList<String>(), repo.asks)
+
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+
+            assertEquals(listOf("saved-cursor"), repo.asks)
+            assertEquals(listOf<HistoryPosition?>(HistoryPosition("older", atStart = false)), repo.positionWrites)
+        }
+
+    @Test
+    fun history_withNoSavedPosition_theFirstPullAsksFromTheNewestAndSavesThePage() =
+        runTest {
+            val repo = HistoryRepo { HistoryPage(entries = emptyList(), cursor = "", atStart = true) }
+            val vm = makeVm(historyHandle(), repo)
+            advanceUntilIdle()
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+
+            assertEquals(listOf(""), repo.asks)
+            // Even an empty page sets the position.
+            assertEquals(listOf<HistoryPosition?>(HistoryPosition("", atStart = true)), repo.positionWrites)
+        }
+
+    @Test
+    fun history_aPullWhileTheSavedPositionIsBeingRead_asksWithTheSavedCursor() =
+        runTest {
+            val gate = CompletableDeferred<Unit>()
+            val repo = HistoryRepo(saved = HistoryPosition("saved-cursor", atStart = false), readGate = gate) { page(cursor = "older") }
+            val vm = makeVm(historyHandle(), repo)
+            advanceUntilIdle()
+            repeat(3) { vm.onDemandOlderHistory() }
+            advanceUntilIdle()
+            assertEquals(emptyList<String>(), repo.asks)
+
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(listOf("saved-cursor"), repo.asks)
+        }
+
+    @Test
+    fun history_aSavedAtStart_asksNothingAndHidesTheOfflineNotice() =
+        runTest {
+            val available = MutableStateFlow(true)
+            val repo = HistoryRepo(saved = HistoryPosition("", atStart = true)) { page(cursor = "c1") }
+            val vm = makeVm(historyHandle(), repo, repositoryAvailable = available)
+            val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+            advanceUntilIdle()
+
+            repeat(3) { vm.onDemandOlderHistory() }
+            advanceUntilIdle()
+            assertEquals(emptyList<String>(), repo.asks)
+
+            available.value = false
+            advanceUntilIdle()
+            assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
+            collector.cancel()
+        }
+
+    @Test
+    fun history_aFailedAsk_leavesTheSavedPositionUnchanged() =
+        runTest {
+            val saved = HistoryPosition("saved-cursor", atStart = false)
+            var asks = 0
+            val repo =
+                HistoryRepo(saved = saved) {
+                    if (asks++ == 0) {
+                        throw RelayErrorException("history.unavailable", true, "busy")
+                    } else {
+                        throw IllegalStateException("not connected")
+                    }
+                }
+            val vm = makeVm(historyHandle(), repo)
+            advanceUntilIdle()
+            repeat(2) {
+                vm.onDemandOlderHistory()
+                advanceUntilIdle()
+            }
+
+            assertEquals(listOf("saved-cursor", "saved-cursor"), repo.asks)
+            assertEquals(emptyList<HistoryPosition?>(), repo.positionWrites)
+            assertEquals(saved, repo.saved)
+        }
+
+    @Test
+    fun history_aRefusedSavedCursor_clearsTheSavedPositionAndTheNextPullAsksFromTheNewest() =
+        runTest {
+            val repo =
+                HistoryRepo(saved = HistoryPosition("stale-cursor", atStart = false)) { cursor ->
+                    if (cursor.isNotEmpty()) throw RelayErrorException("history.invalid_cursor", false, "stale")
+                    page(cursor = "fresh")
+                }
+            val vm = makeVm(historyHandle(), repo)
+            advanceUntilIdle()
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+            assertEquals(listOf<HistoryPosition?>(null), repo.positionWrites)
+            assertEquals(null, repo.saved)
+
+            // The next open starts from the newest page...
+            val reopened = HistoryRepo(saved = repo.saved) { page(cursor = "c1") }
+            val next = makeVm(historyHandle(), reopened)
+            advanceUntilIdle()
+            next.onDemandOlderHistory()
+            advanceUntilIdle()
+            assertEquals(listOf(""), reopened.asks)
+
+            // ...and so does the next pull.
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+            assertEquals(listOf("stale-cursor", ""), repo.asks)
+        }
+
     private fun historyHandle() = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
 
     private fun page(cursor: String) = HistoryPage(entries = emptyList(), cursor = cursor, atStart = false)
@@ -4644,10 +4766,30 @@ class ThreadViewModelTest {
      */
     private class HistoryRepo(
         private val delegate: FakeConversationRepository = FakeConversationRepository(),
+        /** #1354: the position saved beside the cached rows, read once at open and replaced by every write. */
+        var saved: HistoryPosition? = null,
+        /** #1354: when set, the saved-position read suspends until it completes. */
+        private val readGate: CompletableDeferred<Unit>? = null,
         private val answer: suspend (String) -> HistoryPage,
     ) : ConversationRepository by delegate {
         val asks = mutableListOf<String>()
         val messages = MutableStateFlow<List<ThreadItem>>(emptyList())
+
+        /** Every position write, in order; `null` is a clear. */
+        val positionWrites = mutableListOf<HistoryPosition?>()
+
+        override suspend fun readHistoryPosition(conversationId: String): HistoryPosition? {
+            readGate?.await()
+            return saved
+        }
+
+        override suspend fun writeHistoryPosition(
+            conversationId: String,
+            position: HistoryPosition?,
+        ) {
+            positionWrites += position
+            saved = position
+        }
 
         override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = messages
 
