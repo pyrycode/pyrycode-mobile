@@ -33,10 +33,13 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.text.style.TextMotion
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -52,7 +55,7 @@ import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 internal const val EDIT_HOST_NAME_FIELD_TAG: String = "edit-host-name"
 internal const val EDIT_HOST_UNPAIR_OUTLINE_TAG: String = "edit-host-unpair-outline"
 
-// The design's 20dp identity rows, its 10dp label/value gap and the 8dp gap above the name field.
+// The design's 20dp identity rows, its 10dp label/value gap and the 8dp gap between the name label and its field.
 private val IdentityRowMinHeight = 20.dp
 private val IdentityLabelGap = 10.dp
 private val FieldLabelGap = 8.dp
@@ -63,6 +66,30 @@ private val NameWellInset = 16.dp
 private val NameTrailingInset = 56.dp
 private val ActionTouchHeight = 48.dp
 private val ActionVisibleHeight = 40.dp
+
+// The frame's full 20 px line box with the glyphs centred in it. Without it Compose trims a single line to the
+// font's own height, which pulls the name well up under its label (#1489).
+private val FrameLineBox = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
+
+/**
+ * The frame's label-large emphasized (Roboto 14/20, weight 600, tracking 0.1) on the frame's line box.
+ *
+ * [TextMotion.Animated] turns hinting off. At low densities Android otherwise rounds every glyph advance to a
+ * whole pixel, which at density 1.0 drew "Server identity:" 4 px wider than the frame's 94 (#1489); the
+ * unhinted width is the frame's at every density.
+ */
+@Composable
+private fun frameLabelStyle(): TextStyle =
+    MaterialTheme.typography.labelLarge.copy(
+        fontWeight = FontWeight.SemiBold,
+        lineHeightStyle = FrameLineBox,
+        textMotion = TextMotion.Animated,
+    )
+
+/** The frame's body-medium, unhinted and on the frame's line box for the same reasons as [frameLabelStyle]. */
+@Composable
+private fun frameBodyStyle(): TextStyle =
+    MaterialTheme.typography.bodyMedium.copy(lineHeightStyle = FrameLineBox, textMotion = TextMotion.Animated)
 
 /**
  * The Edit host frame, drawn through [MobileModal] and driven entirely by its caller.
@@ -182,7 +209,7 @@ private fun UnpairConfirmation(hostName: String) {
                 hostName.ifBlank { stringResource(R.string.unnamed_host) },
             ),
         modifier = Modifier.fillMaxWidth(),
-        style = MaterialTheme.typography.bodyMedium,
+        style = frameBodyStyle(),
     )
 }
 
@@ -202,9 +229,9 @@ private fun IdentityRow(
 ) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         // On compact viewports reserve a stable fraction for the label; the Figma-sized frame can
-        // use the label's natural width and put its value immediately after the 10 dp gap. The
-        // device's Roboto metrics make Server identity a few dp wider than Figma's sample; keep the
-        // label legible instead of clipping it to that sample width.
+        // use the label's natural width and put its value immediately after the 10 dp gap. Two fifths,
+        // not a third: at 320 dp and 150 % a third is narrower than the unhinted "address:", which then
+        // breaks inside the word and leaves its colon on a line of its own (#1489).
         val compact = maxWidth < 320.dp
         Row(
             modifier = Modifier.fillMaxWidth().heightIn(min = IdentityRowMinHeight).semantics(mergeDescendants = true) {},
@@ -212,16 +239,15 @@ private fun IdentityRow(
         ) {
             Text(
                 text = label,
-                modifier = if (compact) Modifier.weight(1f) else Modifier,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
+                modifier = if (compact) Modifier.weight(2f) else Modifier,
+                style = frameLabelStyle(),
             )
             // The design already draws its own sample identity ellipsised: an over-long value truncates
             // inside the row rather than stretching it.
             Text(
                 text = value,
-                modifier = Modifier.weight(if (compact) 2f else 1f),
-                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(if (compact) 3f else 1f),
+                style = frameBodyStyle(),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -242,8 +268,7 @@ private fun HostNameField(
     ) {
         Text(
             text = stringResource(R.string.edit_host_name_label),
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.SemiBold,
+            style = frameLabelStyle(),
         )
         val label = stringResource(R.string.edit_host_name_label)
         BasicTextField(
@@ -275,7 +300,13 @@ private fun HostNameField(
     }
 }
 
-/** The frame's outlined `Unpair host` action, with the shell's 48 dp touch floor. */
+/**
+ * The frame's outlined `Unpair host` action, with the shell's 48 dp touch floor.
+ *
+ * The frame's Actions slot is 8 dp of top padding over the 40 dp button, 48 dp in all. The padding sits inside
+ * the clickable surface, so the touch floor is those same 48 dp rather than 8 dp more below the outline, which
+ * grew the centred block and lifted it 4 dp (#1489).
+ */
 @Composable
 internal fun UnpairAction(onClick: () -> Unit) {
     val textLineHeight =
@@ -284,29 +315,27 @@ internal fun UnpairAction(onClick: () -> Unit) {
                 .toDp()
         }
     val visibleHeight = maxOf(ActionVisibleHeight, textLineHeight + 16.dp)
-    Column(modifier = Modifier.padding(top = UnpairTopPadding)) {
-        Surface(
-            onClick = onClick,
-            modifier = Modifier.heightIn(min = ActionTouchHeight),
-            color = androidx.compose.ui.graphics.Color.Transparent,
-            contentColor = MaterialTheme.colorScheme.primary,
-        ) {
-            Box(contentAlignment = Alignment.TopCenter) {
-                Box(
-                    modifier =
-                        Modifier
-                            .heightIn(min = visibleHeight)
-                            .testTag(EDIT_HOST_UNPAIR_OUTLINE_TAG)
-                            .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary), MaterialTheme.shapes.modalControl)
-                            .padding(horizontal = 20.dp, vertical = 7.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = stringResource(R.string.edit_host_unpair),
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.heightIn(min = ActionTouchHeight),
+        color = androidx.compose.ui.graphics.Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.primary,
+    ) {
+        Box(modifier = Modifier.padding(top = UnpairTopPadding), contentAlignment = Alignment.TopCenter) {
+            Box(
+                modifier =
+                    Modifier
+                        .heightIn(min = visibleHeight)
+                        .testTag(EDIT_HOST_UNPAIR_OUTLINE_TAG)
+                        .border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary), MaterialTheme.shapes.modalControl)
+                        .padding(horizontal = 20.dp, vertical = 7.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = stringResource(R.string.edit_host_unpair),
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                )
             }
         }
     }

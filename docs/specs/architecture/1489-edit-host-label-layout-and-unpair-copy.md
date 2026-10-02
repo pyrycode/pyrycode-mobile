@@ -130,3 +130,26 @@ test is added.
 - `app/src/androidTest/assets/design-1220/list/index.md`, section "Modal › Edit host — `533:2369`" and the
   Unpair host confirmation row in the gaps table: pending for the documentation stage, to record the
   re-measured verdicts and that the confirmation copy no longer names a workspace.
+
+## Revisions
+
+### 2026-10-03: body text unhinted, compact label column, residual offset attributed
+
+- **Body text is unhinted too.** The first recapture showed the confirmation message and identity values with
+  the same whole-pixel hinting gaps ("it s", "pai ring") at density 1.0. `frameBodyStyle` now also sets
+  `TextMotion.Animated`. Contract: every text `EditHostModal` draws itself uses the frame's line box and
+  unhinted advances.
+- **Compact label column is two fifths, not a third.** With the unhinted label, "address:" at 320 dp and 150 %
+  was wider than a third of the row and broke inside the word, leaving the colon on its own line. On a real
+  high-density phone hinting never gave that slack, so the third was already too narrow there. The compact row
+  now weights label and value 2:3. `ListDesignCaptureTest` asserts on the device, in both walks, that the
+  identity labels break only between words; Robolectric's font metrics do not reproduce the break, so a shared
+  test would pass while broken.
+- **Open question resolved.** `TextMotion` is stable in the pinned BOM; no opt-in is needed.
+- **Residual offset is the shell's.** After the fix the block's internal geometry matches the frame (identity
+  to field 87.5 against 88, field to Unpair outline 71.5 against 72), and the header rule to footer midpoint is
+  446 in both, but the block sits 3 px high. The cause is `MobileModal`'s content slot, not the 2 px of shell
+  height the Context section assumed: it starts 21 px below the header rule against the frame's 25 (no 4 px
+  header bottom padding) and ends further above the footer buttons than the frame's 24, because the footer
+  row is 48 dp touch targets. Moving it would move every modal on the shell, which this ticket rules out, so
+  it is filed as #1588.
