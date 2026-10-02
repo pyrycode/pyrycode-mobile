@@ -264,8 +264,11 @@ Light and dark previews remain at 412 × 892 dp.
 
 The shared [type ramp](shared-typography.md) supplies the modal text metrics;
 Edit host uses natural-width identity labels at the reference viewport and a
-one-to-two weighted label/value split below 320 dp of content width, with a 10 dp
-gap. At compact width and 1.5× Android text, both labels wrap within their bounds
+two-to-three weighted label/value split below 320 dp of content width (#1489,
+widened from 1:2 once the labels' hinting fix — see
+[shared typography § Density-1.0 hinting](shared-typography.md#density-10-hinting-and-the-trimmed-line-box-1489)
+— stopped fitting in the narrower column), with a 10 dp gap. At compact width
+and 1.5× Android text, both labels wrap between words, within their bounds and
 without overlapping the values. See [the caller geometry](mobile-modal-callers.md#callers).
 Long identity and relay display text remains clamped before layout and
 ellipsized to one line in the value slot. The shell's scrolling keeps the name
