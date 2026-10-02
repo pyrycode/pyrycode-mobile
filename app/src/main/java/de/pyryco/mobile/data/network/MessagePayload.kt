@@ -30,7 +30,8 @@ import kotlinx.serialization.Serializable
  *
  * [attachmentIds] (#1020) is the optional fifth field a stored `role: "user"` history entry carries when
  * the turn named files (pyrycode#2596), with [SendMessagePayloadDto.attachmentIds]'s name and shape. Absent
- * everywhere else, so [toMessage] ignores it; only the history reducer reads it, and only on a user row.
+ * everywhere else, so [toMessage] ignores it; the history reducer and the live `message` arm read it
+ * (#1351), and only on a user row.
  */
 @Serializable
 data class MessagePayloadDto(

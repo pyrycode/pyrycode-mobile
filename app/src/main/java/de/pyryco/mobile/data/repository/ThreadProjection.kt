@@ -41,13 +41,14 @@ import java.util.concurrent.atomic.AtomicLong
 internal class ThreadProjection {
     /**
      * `conversationId -> ordered thread rows` ([ThreadItem.MessageItem] + [ThreadItem.SessionBoundary])
-     * for the conversation — backfilled history (`message_chunk`) plus live `message`s and structured
+     * for the conversation — backfilled history (`message_chunk`) plus live user `message`s and structured
      * turns, deduped by `message_id`, interleaved in wire/arrival order with `session_transition`
      * boundaries (#313, #336). Written by the repository's single inbound collector **and** by [RemoteConversationRepository.sendMessage]'s
      * confirmed insert (#346) — two writers, but every write goes through the atomic
      * [appendMessages] / [appendSessionBoundary] / [MutableStateFlow.update] fold, so concurrent updates
      * retry-merge correctly. [RemoteConversationRepository.observeMessages] fans out from it through [observe]. Message rows are order-preserving: first
-     * insertion fixes a message's position, a repeat `message_id` updates it in place (the dedup rule);
+     * insertion fixes a message's position; through [appendMessages] a repeat `message_id` updates it in
+     * place (the dedup rule), while [appendLiveMessage] keeps the held row unchanged (#1351);
      * boundaries append in arrival order, skipping one the thread already holds ([holdsBoundary]). The thread is
      * complete-on-first-emission once backfill arrives and live rows append after.
      */
@@ -171,6 +172,25 @@ internal class ThreadProjection {
                 updated[conversationId] = updated[conversationId].orEmpty().withMessage(message)
             }
             updated
+        }
+    }
+
+    /**
+     * Append one live `message` [message] to [conversationId]'s thread (#1351), **keeping a row the thread
+     * already holds** under the same `message_id` rather than replacing it the way [appendMessages] does.
+     * The daemon pushes the operator's delivered message to every conn, the sender's included, and the
+     * sender's confirmed row carries the attachment names and send time that the pushed copy lacks. The
+     * identity is [withMessage]'s, id-only and role-agnostic. A held id returns the map unchanged, so
+     * nothing re-emits.
+     */
+    fun appendLiveMessage(
+        conversationId: String,
+        message: Message,
+    ) {
+        threadByConversation.update { current ->
+            val thread = current[conversationId].orEmpty()
+            val held = thread.any { it is ThreadItem.MessageItem && it.message.id == message.id }
+            if (held) current else current + (conversationId to (thread + ThreadItem.MessageItem(message)))
         }
     }
 
