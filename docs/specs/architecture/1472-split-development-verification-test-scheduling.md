@@ -24,3 +24,24 @@ documentation-only ticket explicitly assigns these `docs/knowledge/` edits to th
 
 `scripts/docs-guard.sh` exits 0, both files under 50000 bytes, and a grep confirms every
 `development-verification.md#<anchor>` in `docs/` and `CLAUDE.md` names a `##` heading still in the parent.
+
+## Revisions
+
+### 2026-10-02 — superseded by #1354 on `main`
+
+PR #1470 (#1354) merged into `main` at `8cfd7c8e` after this plan was written. It split
+`development-verification.md` four ways, into `development-verification-gates.md`,
+`-compose-evidence.md`, `-test-scheduling.md` and `-emulator-evidence.md`, and reduced the parent to a map
+that links to each child. The child this plan creates is one of the four, under the same name. Merging
+`main` into `feature/1472` took `main`'s version of all three docs files, so this branch's diff against
+`main` is now this plan alone.
+
+New contract: the ticket's "check `main` first" branch applies, and this ticket makes no docs change.
+`scripts/docs-guard.sh` exits 0 on `origin/main` (parent 1208 bytes, test-scheduling child 14487 bytes).
+The parent's map links to `development-verification-test-scheduling.md`.
+
+One inbound anchor no longer resolves in the parent: `CLAUDE.md`'s link to
+`development-verification.md#where-a-screen-test-goes`. That heading now lives in
+`development-verification-gates.md`. `CLAUDE.md` is outside the builder's writable files, so the anchor is
+handed off rather than fixed here. #1354 repointed the inbound `#test-scheduling-and-harnesses` links under
+`docs/` to the children, and a grep finds no other `development-verification.md#…` link in `docs/`.
