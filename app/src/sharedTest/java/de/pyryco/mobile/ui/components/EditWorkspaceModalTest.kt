@@ -13,6 +13,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
+import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
@@ -162,12 +163,19 @@ class EditWorkspaceModalTest {
         rule.onNodeWithText("Cancel").performClick()
         field().assertTextContains("Typed")
 
+        // Espresso does not wait for Compose, so Back is pressed only once the confirmation is drawn.
+        archive().performClick()
+        rule.onNodeWithText(string(R.string.edit_workspace_archive_confirm_title)).assertIsDisplayed()
+        Espresso.pressBack()
+        field().assertTextContains("Typed")
+
+        // In the confirmation the close glyph closes the whole modal rather than declining (#1560).
         archive().performClick()
         ok().performClick()
         rule.onNodeWithContentDescription("Close").performClick()
 
         rule.runOnIdle {
-            assertEquals(listOf("request", "decline", "request", "confirm", "decline"), events)
+            assertEquals(listOf("request", "decline", "request", "decline", "request", "confirm", "dismiss"), events)
             assertTrue(submitted.isEmpty())
         }
     }

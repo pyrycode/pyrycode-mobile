@@ -268,7 +268,7 @@ class EditHostModalTest {
      * no route out of the step can be mistaken for the one that removes the host.
      */
     @Test
-    fun unpairConfirmationReplacesTheContentInPlaceAndEveryDismissalRouteDeclines() {
+    fun unpairConfirmationReplacesTheContentInPlace_cancelAndBackDecline_closeDismisses() {
         show()
         rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).performTextClearance()
         rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).performTextInput("Draft name")
@@ -285,14 +285,18 @@ class EditHostModalTest {
         rule.onNodeWithText(identity).assertDoesNotExist()
         rule.onNodeWithText(string(R.string.edit_host_unpair)).assertDoesNotExist()
 
-        // Cancel, the close glyph and system Back all decline; none of the three dismisses the modal,
-        // and none of them removes anything.
+        // Cancel and system Back decline back to the editor; the close glyph closes the whole modal (#1560).
+        // None of the three removes anything.
         rule.onNodeWithText("Cancel").performClick()
-        rule.onNodeWithContentDescription("Close").performClick()
         Espresso.pressBack()
         rule.runOnIdle {
-            assertEquals(3, unpairDeclines)
+            assertEquals(2, unpairDeclines)
             assertEquals(0, dismissals)
+        }
+        rule.onNodeWithContentDescription("Close").performClick()
+        rule.runOnIdle {
+            assertEquals(2, unpairDeclines)
+            assertEquals(1, dismissals)
             assertEquals(0, unpairConfirms)
         }
 
