@@ -1,0 +1,49 @@
+# #1431 — list-side design audit and retired workspace routes
+
+## Files read
+
+- `app/src/androidTest/assets/design-1220/README.md` and `onboarding/index.md` — the index format and the evidence layout this audit follows.
+- `app/src/androidTest/java/de/pyryco/mobile/design/` — `ViewportRule`, `DesignCapture` (`paired`, `launch`, `capture`, `openKeyboard`, `openMenu`), `DesignInputs`, and `OnboardingDesignCaptureTest` as the shape to mirror. Used unchanged.
+- `MainActivity.kt` — the channel-list route's event `when` (no branch calls `openAddWorkspace` or `openWorkspaceEditor`), the thread route (`onWorkspaceChipTapped = vm::onWorkspaceChipTapped`) and the Settings route (`SettingsScreen` gets only notifications and dismiss); `Routes.DISCUSSION_LIST` has a destination but no `navigate` call.
+- `ui/conversations/list/ChannelListScreen.kt` — `ChannelListTopBar`, `ConversationTree`/`treeHost` (host row, Channels and Chats sections, conversation rows with pens), `AddWorkspaceModalBinding`, `WorkspaceEditorModal`.
+- `ui/conversations/list/ChannelListViewModel.kt` — `openAddWorkspace` and `openWorkspaceEditor`, the only writers of a non-null `addWorkspace` and `workspaceEditor`.
+- `ui/settings/SettingsViewModel.kt` — `onDefaultWorkspaceTapped`, the only writer of `pendingWorkspacePicker`; `ui/settings/SettingsScreen.kt` — Notifications section and the Notification sound row.
+- `ui/conversations/thread/ThreadViewModel.kt` (`onWorkspaceChipTapped`, the `ThreadEvent.ChangeWorkspace` branch of `onOverflowEvent`), `ThreadScreen.kt` (`WorkspacePicker(visible = state.workspacePickerVisible)`, the unused `onWorkspaceChipTapped` parameter), `ThreadOverflowMenu.kt` (Channel info entry, no Change workspace entry).
+- `ui/settings/ArchivedDiscussionsScreen.kt`, `ui/host/HostEditor.kt`, `ui/conversations/components/ChannelInfoSheet.kt` — the audited surfaces.
+
+## Design source
+
+**Figma:** https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=15-8
+
+Mobile page, re-read 2026-10-02: Channel List `15:8`, Archive `18:2`, Channel Info Sheet `20:48` (412×596 bottom sheet), Settings / Notifications modal / Dark `17:2`, Modal › Edit host `533:2369`. Fixed dark theme only. `Workspace Picker Sheet` `20:2` is retired product and not audited. No Mobile frame covers Edit channel, Edit chat, Create channel, Unpair confirmation or Archive's Discussions tab; those are gaps.
+
+## Context
+
+Split from #1220. Audits the list-side surfaces of the assembled app with the #1430 harness, and settles from source whether the retired workspace surfaces are reachable. Test and evidence only: no file under `app/src/main/` changes. No decision record.
+
+## Design
+
+- `app/src/androidTest/java/de/pyryco/mobile/design/ListDesignCaptureTest.kt` — two methods on `ViewportRule`, `createEmptyComposeRule` and `DesignCapture` with `paired = true`:
+  - default 412×892 at font scale 1.0: channel list; Settings; Archive (Channels tab, Discussions tab); Edit host, then Edit host with the keyboard on its name field; Edit channel through a row pen (gap); the thread overflow menu open, then Channel Info.
+  - `@Viewport("320x700", fontScale = 1.5f)`: the same walk, names suffixed `-compact`.
+  Each step waits on a visible text or content description before `capture`, so a missed navigation fails rather than captures the wrong screen.
+- `app/src/androidTest/assets/design-1220/list/` — PNG and `.txt` captures, Figma exports, `scripts/design-compare.py` side-by-sides and overlays, the run's JUnit XML, and `index.md` in the README's per-item format with a Gaps section and a Retired workspace reachability section.
+- Channel Info is a 412×596 sheet; its export is padded onto a 412×892 canvas at the bottom before comparison, in scratch, so `design-compare.py` does not stretch it.
+
+Overlap: none expected; `design-1220/list/` and the new class are this ticket's alone.
+
+## State and concurrency model
+
+Test-only; the harness owns scopes and restoration.
+
+## Error handling
+
+A navigation that does not reach its screen fails `waitUntil`/`assertIsDisplayed`; a blank frame or synthetic bars fail `capture`.
+
+## Testing strategy
+
+Device-only (real pixels, real `MainActivity`, `wm` viewport and IME): `./gradlew :app:pixel8Api35DebugAndroidTest --rerun` with `class=de.pyryco.mobile.design.ListDesignCaptureTest` and `requireRealSystemBars=true`. The XML is copied to `list/list-results.xml`. No rung-3 scenario: an audit, not an operator flow.
+
+## Open Questions
+
+- Whether the list has any row or folder menu to open. Source shows none at this commit (pens open modals); the index records the menu-open check against the thread overflow menu, the only menu on the path to a list-side surface.
