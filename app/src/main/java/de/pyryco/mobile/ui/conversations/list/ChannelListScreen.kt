@@ -106,11 +106,12 @@ private val TreeConversationInset = 12.dp
 private val TreeBottomInset = 16.dp
 
 // Adjacent 44dp click regions keep the Figma's 44dp icon centres without overlapping.
-// The icon frame starts 28dp from the panel top; the first host follows the rule by 24dp.
+// The icon frame starts 32dp from the panel top (15:8 stacks body 4, sidebar 24 and button row 4);
+// the first host follows the rule by 24dp.
 private val BarGlyphSize = 24.dp
 private val BarTouchSize = 44.dp
 private val BarTouchSlack = (BarTouchSize - BarGlyphSize) / 2
-private val BarTopGap = 28.dp - BarTouchSlack
+private val BarTopGap = 32.dp - BarTouchSlack
 private val BarRuleGap = 16.dp - BarTouchSlack
 private val BarBottomGap = 24.dp
 
