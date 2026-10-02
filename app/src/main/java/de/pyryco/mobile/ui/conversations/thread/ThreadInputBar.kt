@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.InputTransformation
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.TextFieldState
@@ -46,7 +45,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
@@ -212,8 +210,6 @@ fun ThreadInputBar(
                     ),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                 lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 5),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                onKeyboardAction = { onSend() },
                 decorator = { innerTextField ->
                     Box {
                         if (fieldState.text.isEmpty()) {
