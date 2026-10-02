@@ -7,7 +7,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,9 +19,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -41,6 +37,7 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -154,32 +151,18 @@ private fun ScannerViewport(
                     .scannerAtmosphere(colors.primaryContainer, colors.surfaceContainerLowest, colors.surface)
                     .systemBarsPadding(),
         ) {
-            Row(
-                Modifier.fillMaxWidth().padding(start = 8.dp, end = 20.dp, top = 18.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onNavigateBack, modifier = Modifier.size(48.dp)) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                    )
-                }
-                Text(
-                    text = "Pairing",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                )
-            }
-            HorizontalDivider(
-                modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 24.dp).testTag("scanner_divider"),
-                color = MaterialTheme.colorScheme.inversePrimary.copy(alpha = 0.6f),
+            PairingHeader(
+                title = "Pairing",
+                titleColor = colors.onPrimaryContainer,
+                onBack = onNavigateBack,
+                backIcon = rememberVectorPainter(Icons.AutoMirrored.Filled.ArrowBack),
             )
             Box(
                 modifier =
                     Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
+                        .padding(start = 16.dp, end = 16.dp, top = 24.dp)
                         .clip(RoundedCornerShape(24.dp))
                         .background(MaterialTheme.colorScheme.surfaceContainerLowest),
             ) {

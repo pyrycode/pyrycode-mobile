@@ -79,7 +79,7 @@ class ScannerFrameTest {
         repeat(2) { mode ->
             rule.runOnIdle { dark = mode == 0 }
             rule.onNodeWithText("Pairing").assertIsDisplayed()
-            rule.onNodeWithTag("scanner_divider").assertIsDisplayed()
+            rule.onNodeWithTag("pairing_header_divider", useUnmergedTree = true).assertIsDisplayed()
             rule.onNodeWithTag("camera").assertIsDisplayed()
             val reticle = rule.onNodeWithTag("scanner_reticle").assertIsDisplayed().getUnclippedBoundsInRoot()
             rule.onNodeWithText("Run pyry pair on your pyrycode server to generate a QR code.").assertIsDisplayed()

@@ -22,6 +22,19 @@ Retry, except a held `PairCodeState.failure` that is not retryable
 Cancel and the toolbar back arrow share the Android Back event.
 The footer opens `https://github.com/pyrycode/pyrycode-mobile`.
 
+While Saving or Connecting, the Pair button draws a 20 dp indeterminate
+`CircularProgressIndicator` (2 dp stroke, `colors.primary`, 8 dp end padding) before its
+label, mirroring the modal's `State=Loading` button; the container, label colour and
+enablement are unchanged (#1464, `663:2887`/`663:2963`). `PairCodeField` draws its
+trailing clear `IconButton` only when `enabled` — a read-only field (both fields while
+Saving/Connecting or holding a verification failure, and Host name in re-pair mode) shows
+no clear icon, while an editable field keeps it even with an inline error
+(`INVALID_CODE_ERROR`); without the icon the decoration box takes the 16 dp end padding
+itself so the text keeps the frame's right inset. The decision that the code path's
+wait and failures stay on this form rather than moving into the shared modal — only
+`PairCodePhase.Confirming` uses that modal — was made explicit in #1464; see the Related
+section's #1464 spec for the Figma frames this form was compared against.
+
 The 412×892 mobile design uses theme colors and typography, an atmospheric glow,
 the supplied 24 dp back-arrow asset and bottom-aligned 56 dp actions. Since #1462
 the glow is the shared `Modifier.onboardingGlow()` from
@@ -46,8 +59,10 @@ The [412×892 Figma/emulator comparison](../../../app/src/androidTest/assets/pai
 and [compact, enlarged-text and visible-IME captures](../../../app/src/androidTest/assets/pair-code-1269/)
 record the route against the mobile frame. The older form reference has a
 different field order and desktop card; the mobile frame supplies this route's
-geometry. Figma has no target-host, error, saving/connecting or keyboard frame,
-so those states follow the existing product controls and behavior.
+geometry. Figma has no keyboard frame, so that state follows the existing product
+controls and behavior. The target-host, error, saving and connecting states are now
+compared against the Pair Code States frames (`663:2887`–`663:3331`, #1464; see
+[Testing](#testing) and `app/src/androidTest/assets/design-1220/onboarding/index.md`).
 
 The form applies `imePadding()` and scrolls at smaller heights. The scrolled
 column combines a viewport minimum height with `height(IntrinsicSize.Min)` before
@@ -65,9 +80,20 @@ When hosted alone, that modifier reserves and consumes the bars itself.
 `imePadding()` then adds only keyboard height beyond the bottom inset already
 consumed by the activity or the screen. See
 [navigation § Insets](navigation.md#configuration) for once-only ownership.
-The toolbar Back `IconButton` is explicitly sized `Modifier.size(48.dp)`.
-The pair route starts this target at the consumed status inset; the scanner
-retains its separate 18 dp header offset. The
+
+The header is the shared [`PairingHeader`](scanner-screen.md#pairingheader--one-header-for-scanner-denied-and-pair-screen)
+(#1463): `title = "Pairing"`, `onPrimaryContainer`, divider on, `backEnabled = !saving`,
+with its own `ic_pair_back` painter. Before #1463 this screen drew a 48 dp header
+row at the inset edge with its own Back `IconButton`, which put the title 6 px
+low against Figma; the shared header puts the title's line box 24 dp below the
+status inset, matching Scanner and Denied. The form's top padding grew from 28
+to 32 dp (69 + 32 = 101 dp from the inset, Figma's hero-container position) so
+the form moves down with the header rather than leaving a gap. The footer's
+bottom padding is 28 dp, the frame's own gutter above the navigation bar — not
+a value this header move picked, but the padding that keeps the whole form
+"inside the bars" the way Denied's layout already was (see the
+[header's doc](scanner-screen.md#pairingheader--one-header-for-scanner-denied-and-pair-screen)
+for that rule). The
 `Confirming` phase returns `ScannerScreen` before this `Column` is composed,
 so it does not gain a second system-bar inset.
 
@@ -243,6 +269,15 @@ still applies; this screen adds no such hardening contract.
 
 ## Testing
 
+New `PairCodeScreenFormStatesTest` (Robolectric, `app/src/sharedTest`, #1464) covers the busy
+ring and read-only clear icons: Saving and Connecting each show an indeterminate
+`ProgressBarRangeInfo` node alongside their busy label, Editing shows neither; Saving,
+Connecting and a held verification failure show no clear icon on either field, and re-pair
+mode shows none on Host name while keeping "Clear pairing code"; a drafting field holding
+`INVALID_CODE_ERROR` keeps both clear icons. `targetModeNamesTheHostReadOnlyAndShowsWrongHostOnTheCode`
+(below) now asserts "Clear host name" with `assertDoesNotExist` rather than disabled, matching
+the read-only field no longer drawing the icon at all.
+
 New `PairingVerificationTest` (`ui/onboarding/`, no Android, `runTest` with virtual time) covers the
 shared `verifySavedPairing` step directly over scripted `ConnectionStatus` flows (#1385): `Offline` then
 relay+pyrycode `Connected` succeeds, as do `null`/`Idle`/`Connecting`/`Reconnecting` before `Connected`;
@@ -321,7 +356,7 @@ Two (#842) additions: `targetedRouteNamesItsHostAndBackReturnsWithoutSaving` nav
 disabled Host name field shows the target's name, and Back returns to `Routes.WELCOME` without a
 save — proving the `SavedStateHandle` → `target` wiring through `PyryNavHost` itself, not just the
 ViewModel in isolation. `targetModeNamesTheHostReadOnlyAndShowsWrongHostOnTheCode` asserts the disabled
-Host name field and its disabled clear control, and that `WRONG_HOST_ERROR` renders under the code field
+Host name field and that its clear control does not exist (#1464), and that `WRONG_HOST_ERROR` renders under the code field
 while the action button still reads "Pair" (a field error, not the "Retry" case).
 
 `ChannelListScreenTest.hostRowPlugControl_onARejectedPairing_opensRePairingForItsOwnHost` (#842) asserts a
@@ -344,7 +379,11 @@ remains [#676](https://github.com/pyrycode/pyrycode-mobile/issues/676)'s scope.
 
 - [Pair-with-code design and revisions](../../specs/architecture/639-pair-with-code.md);
   [system-bar insets and the 48 dp Back target](../../specs/architecture/1141-pair-code-system-bar-insets.md)
-  (#1141); [full-screen Figma glow](../../specs/architecture/1462-pair-code-full-screen-glow.md) (#1462)
+  (#1141); [full-screen Figma glow](../../specs/architecture/1462-pair-code-full-screen-glow.md) (#1462);
+  [busy ring and read-only clear icons](../../specs/architecture/1464-pair-code-form-states.md) (#1464);
+  [one pairing header for Scanner, Denied and Pair Screen](../../specs/architecture/1463-shared-pairing-header.md)
+  (#1463) — the shared [`PairingHeader`](scanner-screen.md#pairingheader--one-header-for-scanner-denied-and-pair-screen)
+  this screen now draws its header from
 - [Navigation](navigation.md) § [Insets](navigation.md#configuration), [scanner](scanner-screen.md) and
   [paired-server collection](paired-server-store.md)
 - [Legacy dialog history](../codebase/501.md): store-free callback contract retained

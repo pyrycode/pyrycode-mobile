@@ -25,7 +25,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.material3.Button
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -80,6 +80,7 @@ internal fun PairCodeScreen(
         val drafting = editing && state.failure == null
         val canRetry = state.failure?.retryable != false
         val saving = state.phase == PairCodePhase.Saving
+        val busy = saving || state.phase == PairCodePhase.Connecting
         val colors = MaterialTheme.colorScheme
         val uriHandler = LocalUriHandler.current
         val codeError = state.error?.takeIf { it == INVALID_CODE_ERROR || it == WRONG_HOST_ERROR }
@@ -91,13 +92,13 @@ internal fun PairCodeScreen(
                 .systemBarsPadding()
                 .imePadding(),
         ) {
-            Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { onEvent(PairCodeEvent.Back) }, enabled = !saving, modifier = Modifier.size(48.dp)) {
-                    Icon(painterResource(R.drawable.ic_pair_back), contentDescription = "Back")
-                }
-                Text("Pairing", style = MaterialTheme.typography.titleLarge, color = colors.onPrimaryContainer)
-            }
-            HorizontalDivider(Modifier.padding(start = 20.dp, end = 20.dp), color = colors.inversePrimary.copy(alpha = 0.6f))
+            PairingHeader(
+                title = "Pairing",
+                titleColor = colors.onPrimaryContainer,
+                onBack = { onEvent(PairCodeEvent.Back) },
+                backIcon = painterResource(R.drawable.ic_pair_back),
+                backEnabled = !saving,
+            )
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                 Column(
                     Modifier
@@ -106,7 +107,7 @@ internal fun PairCodeScreen(
                             rememberScrollState(),
                         ).heightIn(min = maxHeight)
                         .height(IntrinsicSize.Min)
-                        .padding(start = 32.dp, end = 32.dp, top = 28.dp, bottom = 4.dp),
+                        .padding(start = 32.dp, end = 32.dp, top = 32.dp, bottom = 28.dp),
                 ) {
                     Column(
                         Modifier.weight(1f).heightIn(min = 200.dp).fillMaxWidth(),
@@ -138,6 +139,14 @@ internal fun PairCodeScreen(
                             enabled = editing && canRetry,
                             modifier = Modifier.fillMaxWidth().height(56.dp),
                         ) {
+                            // The Button's State=Loading variant (663:2887, 663:2963), as the modal's loading button.
+                            if (busy) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.padding(end = 8.dp).size(20.dp),
+                                    color = colors.primary,
+                                    strokeWidth = 2.dp,
+                                )
+                            }
                             Text(
                                 when {
                                     saving -> "Saving…"
@@ -221,7 +230,7 @@ private fun PairCodeField(
                 interactionSource = interactionSource,
                 decorationBox = { innerTextField ->
                     Column(
-                        Modifier.fillMaxWidth().padding(start = 16.dp, top = 8.dp, bottom = 8.dp),
+                        Modifier.fillMaxWidth().padding(start = 16.dp, top = 8.dp, end = if (enabled) 0.dp else 16.dp, bottom = 8.dp),
                         verticalArrangement = Arrangement.Center,
                     ) {
                         Text(
@@ -233,8 +242,11 @@ private fun PairCodeField(
                     }
                 },
             )
-            IconButton(onClick = { onChange("") }, enabled = enabled) {
-                Icon(Icons.Outlined.Cancel, contentDescription = clearLabel)
+            // A field that cannot be edited has nothing to clear, so it shows no clear icon (#1464).
+            if (enabled) {
+                IconButton(onClick = { onChange("") }) {
+                    Icon(Icons.Outlined.Cancel, contentDescription = clearLabel)
+                }
             }
         }
         if (error != null) {

@@ -12,6 +12,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.core.view.ViewCompat
@@ -117,7 +118,8 @@ class ScannerDeniedRouteDeviceTest {
         val density = root.resources.displayMetrics.density
         assertEquals(1f, density, 0.01f)
         val back = rule.onNodeWithContentDescription("Back").fetchSemanticsNode().boundsInWindow
-        assertEquals(bars.top + 12f, back.top, 1f)
+        val title = rule.onNodeWithTag("pairing_header_title").fetchSemanticsNode().boundsInWindow
+        assertEquals(bars.top + 24 * density, title.top, 1f)
         val output = File(checkNotNull(InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")), "scanner-denied-1151")
         output.mkdirs()
         val bitmap = checkNotNull(automation.takeScreenshot())
@@ -135,7 +137,7 @@ class ScannerDeniedRouteDeviceTest {
             "activity=MainActivity route=welcome->real-camera-denial theme=Dark\n" +
                 "sizeDp=412x892 density=$density systemBarsPx=$bars syntheticBars=false\n" +
                 "api=${Build.VERSION.SDK_INT} device=${Build.MODEL} fingerprint=${Build.FINGERPRINT}\n" +
-                "build=${BuildConfig.VERSION_NAME} backBoundsPx=$back\n",
+                "build=${BuildConfig.VERSION_NAME} backBoundsPx=$back titleBoundsPx=$title\n",
         )
     }
 
