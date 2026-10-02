@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
-import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import android.view.View
 import androidx.activity.ComponentActivity
@@ -38,6 +37,8 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.design.Viewport
+import de.pyryco.mobile.design.ViewportRule
 import de.pyryco.mobile.ui.conversations.thread.ATTACHMENT_STRIP_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStrip
 import de.pyryco.mobile.ui.conversations.thread.PendingAttachment
@@ -49,13 +50,22 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TestRule
 import org.junit.runner.RunWith
 import java.io.File
 
 /** Real device pixels for the current dark-theme attachment design. */
 @RunWith(AndroidJUnit4::class)
 class AttachmentVisualCaptureTest {
-    @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
+    /** Sets a `@Viewport` method's size before the activity launches (#1402); other methods keep the device display. */
+    @get:Rule(order = 0)
+    val viewport =
+        TestRule { base, description ->
+            if (description.getAnnotation(Viewport::class.java) == null) base else ViewportRule().apply(base, description)
+        }
+
+    @get:Rule(order = 1)
+    val rule = createAndroidComposeRule<ComponentActivity>()
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private var screenView: View? = null
     private var draft by mutableStateOf("My message")
@@ -146,10 +156,43 @@ class AttachmentVisualCaptureTest {
         return (lighter + 0.05) / (darker + 0.05)
     }
 
+    @Viewport("412x892")
     @Test
     fun pendingAndSentAttachments_matchReferenceGeometryAt412By892() {
-        val oldSize = overrideOf(shell("wm size"))
-        val oldDensity = overrideOf(shell("wm density"))
+        withThreadFixture { state, states, pending, decoder ->
+            showThread(state, states, pending, decoder)
+            rule.waitForIdle()
+            rule.waitUntil(10_000) {
+                listOf("rock.png", "rock-2.png", "rock-3.png").all { name ->
+                    val tile =
+                        rule
+                            .onNode(hasContentDescription(name) and hasAnyAncestor(hasTestTag(ATTACHMENT_STRIP_TEST_TAG)))
+                            .captureToImage()
+                            .asAndroidBitmap()
+                    Color.red(tile.getPixel(10, 10)) > 80
+                }
+            }
+            val strip = rule.onNodeWithTag(ATTACHMENT_STRIP_TEST_TAG).getUnclippedBoundsInRoot()
+            assertTrue(strip.width >= 45.dp * 4 + 12.dp * 3)
+            capture("emulator-412x892.png", 412, 892)
+        }
+    }
+
+    @Viewport("320x640")
+    @Test
+    fun compactLargeText_fileRowFitsAt320By640() {
+        withThreadFixture { state, states, pending, decoder ->
+            showThread(state, states, pending, decoder, fontScale = 1.5f)
+            val file = rule.onNodeWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG).getUnclippedBoundsInRoot()
+            assertTrue("file row overflows compact viewport: $file", file.right <= 320.dp)
+            capture("emulator-320x640-large-text.png", 320, 640)
+        }
+    }
+
+    /** Inserts the rock image into MediaStore for the pending strip, runs [block] on the thread fixture, then deletes it. */
+    private fun withThreadFixture(
+        block: (ThreadUiState, Map<String, AttachmentViewState>, List<PendingAttachment>, AttachmentThumbnailDecoder) -> Unit,
+    ) {
         val resolver = instrumentation.targetContext.contentResolver
         val imageUri =
             resolver.insert(
@@ -210,36 +253,9 @@ class AttachmentVisualCaptureTest {
                     PendingAttachment(3, imageUri.toString(), "report.pdf", "application/pdf", 1),
                     PendingAttachment(4, imageUri.toString(), "rock-3.png", "image/png", 1),
                 )
-
-            shell("wm density 160")
-            shell("wm size 412x892")
-            instrumentation.waitForIdleSync()
-            showThread(state, states, pending, decoder)
-            rule.waitForIdle()
-            rule.waitUntil(10_000) {
-                listOf("rock.png", "rock-2.png", "rock-3.png").all { name ->
-                    val tile =
-                        rule
-                            .onNode(hasContentDescription(name) and hasAnyAncestor(hasTestTag(ATTACHMENT_STRIP_TEST_TAG)))
-                            .captureToImage()
-                            .asAndroidBitmap()
-                    Color.red(tile.getPixel(10, 10)) > 80
-                }
-            }
-            val strip = rule.onNodeWithTag(ATTACHMENT_STRIP_TEST_TAG).getUnclippedBoundsInRoot()
-            assertTrue(strip.width >= 45.dp * 4 + 12.dp * 3)
-            capture("emulator-412x892.png", 412, 892)
-
-            shell("wm size 320x640")
-            instrumentation.waitForIdleSync()
-            showThread(state, states, pending, decoder, fontScale = 1.5f)
-            val file = rule.onNodeWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG).getUnclippedBoundsInRoot()
-            assertTrue("file row overflows compact viewport: $file", file.right <= 320.dp)
-            capture("emulator-320x640-large-text.png", 320, 640)
+            block(state, states, pending, decoder)
         } finally {
             resolver.delete(imageUri, null, null)
-            shell("wm size $oldSize")
-            shell("wm density $oldDensity")
         }
     }
 
@@ -313,13 +329,4 @@ class AttachmentVisualCaptureTest {
         File(directory, "$name.txt").writeText("size=${width}x$height design=16:8,132:4605,390:7181,390:7159 inspected=2026-09-30\n")
         bitmap.recycle()
     }
-
-    private fun shell(command: String): String =
-        ParcelFileDescriptor
-            .AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command))
-            .bufferedReader()
-            .use { it.readText() }
-
-    private fun overrideOf(output: String) =
-        output.lineSequence().firstOrNull { it.startsWith("Override") }?.substringAfter(": ") ?: "reset"
 }
