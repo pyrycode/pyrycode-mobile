@@ -617,6 +617,11 @@ fun ThreadScreen(
                             promptRows = promptRowCount,
                             sentMessages = sentMessages,
                         )
+                        // #1484: scrolls the question's actions item to the stream's bottom edge; only the
+                        // refused-answer notice can precede it.
+                        val actionsIndex = if (answerRejected) 1 else 0
+                        val revealActions: suspend () -> Unit =
+                            remember(listState, actionsIndex) { { listState.scrollToItem(actionsIndex) } }
                         LazyColumn(
                             state = listState,
                             modifier = Modifier.fillMaxSize().olderHistoryPull(listPull),
@@ -668,6 +673,7 @@ fun ThreadScreen(
                                             pending.selections[index],
                                             !pending.locked,
                                             dispatch,
+                                            revealActions,
                                         )
                                     }
                                 }

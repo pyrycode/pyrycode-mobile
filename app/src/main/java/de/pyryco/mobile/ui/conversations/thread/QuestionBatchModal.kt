@@ -44,6 +44,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.SolidColor
@@ -120,10 +121,22 @@ internal fun QuestionBatchActions(
                 }
             }
             val submit: @Composable () -> Unit = {
+                val enabled = state.canContinue && connected
+                // Figma 636:3535: disabled is the enabled button at 38 % layer opacity, so the label fades with its fill.
+                val primary = MaterialTheme.colorScheme.primary
+                val onPrimary = MaterialTheme.colorScheme.onPrimary
                 Button(
                     onClick = { onEvent(QuestionModalEvent.Continue) },
-                    enabled = state.canContinue && connected,
+                    modifier = if (enabled) Modifier else Modifier.alpha(DISABLED_CONTINUE_ALPHA),
+                    enabled = enabled,
                     shape = MaterialTheme.shapes.modalControl,
+                    colors =
+                        ButtonDefaults.buttonColors(
+                            containerColor = primary,
+                            contentColor = onPrimary,
+                            disabledContainerColor = primary,
+                            disabledContentColor = onPrimary,
+                        ),
                     contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
                 ) {
                     Text(
@@ -134,8 +147,8 @@ internal fun QuestionBatchActions(
                 }
             }
             if (stacked) {
+                // Figma 636:4325: the column wraps the wider Continue at the card's start, Cancel centred over it.
                 Column(
-                    Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
@@ -151,6 +164,8 @@ internal fun QuestionBatchActions(
         }
     }
 }
+
+private const val DISABLED_CONTINUE_ALPHA = 0.38f
 
 /** Protect the activity surface for the full lifetime of a mounted batch, including offscreen rows. */
 @Composable
@@ -213,7 +228,12 @@ private object QuestionProtectionOwners {
 /** Bounds each daemon-authored string rendered by a question row. */
 private const val MAX_QUESTION_TEXT = 8192
 
-/** Figma `347:6697`: a tertiary header line above a bordered card holding the question and its rows. */
+/**
+ * Figma `347:6697`: a tertiary header line above a bordered card holding the question and its rows.
+ *
+ * [revealActions] scrolls the batch's actions into view; a focused Other field runs it before bringing itself into
+ * view, so the field and both actions show above the keyboard (#1484, Figma `636:3803`).
+ */
 @Composable
 internal fun QuestionBlock(
     index: Int,
@@ -221,6 +241,7 @@ internal fun QuestionBlock(
     selection: QuestionSelection,
     enabled: Boolean,
     onEvent: (QuestionModalEvent) -> Unit,
+    revealActions: suspend () -> Unit = {},
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
@@ -291,8 +312,13 @@ internal fun QuestionBlock(
                             val scope = rememberCoroutineScope()
                             var focused by remember { mutableStateOf(false) }
                             val imeBottom = WindowInsets.ime.getBottom(LocalDensity.current)
+                            // The last run sees the settled inset, so every run ends at the same position.
+                            val reveal: suspend () -> Unit = {
+                                revealActions()
+                                requester.bringIntoView()
+                            }
                             LaunchedEffect(focused, imeBottom) {
-                                if (focused) requester.bringIntoView()
+                                if (focused) reveal()
                             }
                             val placeholder = stringResource(R.string.question_other_placeholder)
                             // Keep the existing 48dp focus region around the reference's 32dp visible well.
@@ -307,7 +333,7 @@ internal fun QuestionBlock(
                                         .bringIntoViewRequester(requester)
                                         .onFocusChanged { focus ->
                                             focused = focus.isFocused
-                                            if (focused) scope.launch { requester.bringIntoView() }
+                                            if (focused) scope.launch { reveal() }
                                         }.testTag("question_other_$index"),
                                 enabled = enabled,
                                 textStyle = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.modalFieldText),
