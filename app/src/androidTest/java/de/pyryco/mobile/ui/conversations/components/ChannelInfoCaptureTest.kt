@@ -7,18 +7,28 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.Density
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import de.pyryco.mobile.data.repository.McpServerStatus
+import de.pyryco.mobile.data.repository.McpStatus
+import de.pyryco.mobile.data.repository.McpStatusReport
 import de.pyryco.mobile.data.repository.MemorySearchAvailability
 import de.pyryco.mobile.data.repository.MemorySearchProvider
 import de.pyryco.mobile.data.repository.MemorySearchReport
+import de.pyryco.mobile.data.repository.SessionFacts
+import de.pyryco.mobile.data.repository.SessionPromptStatus
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -88,11 +98,34 @@ class ChannelInfoCaptureTest {
         capture("emulator-320x692-provider.png", 320, 692)
     }
 
+    /** #1488: the top of the full-height sheet in the sample state of Figma `668:5355`. */
+    @Test fun channelInfoTopMatches668_5355() {
+        showSheet(frameState = true)
+        rule.onNodeWithText("Folder").assertIsDisplayed()
+        rule.onNodeWithText("None").assertIsDisplayed()
+        rule.onNodeWithText("Install").assertIsDisplayed()
+        rule.onNodeWithText("Change workspace").assertDoesNotExist()
+        capture("emulator-668-5355.png", 412, 892, FRAMES_FOLDER)
+    }
+
+    /** #1488: the same sheet scrolled to its end, as Figma `668:5460` shows the Actions grid and the footer. */
+    @Test fun channelInfoScrolledMatches668_5460() {
+        showSheet(frameState = true)
+        val content = hasScrollAction() and SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange)
+        rule.onNode(content).performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 10_000f) }
+        rule.onNodeWithText("Rename").assertIsDisplayed()
+        rule.onNodeWithText("Archive").assertIsDisplayed()
+        rule.onNodeWithText("Delete").assertIsDisplayed()
+        rule.onNodeWithText("Channel ID: ch_a8f3c2d1e9b7").assertIsDisplayed()
+        capture("emulator-668-5460.png", 412, 892, FRAMES_FOLDER)
+    }
+
     @OptIn(ExperimentalMaterial3Api::class)
     private fun showSheet(
         fontScale: Float = 1f,
         longContent: Boolean = false,
         memorySearch: MemorySearchReport = MemorySearchReport(MemorySearchAvailability.Absent, emptyList()),
+        frameState: Boolean = false,
     ) {
         val name =
             if (longContent) "A very long channel name that should never overlap the close button" else "kitchenclaw refactor"
@@ -108,6 +141,9 @@ class ChannelInfoCaptureTest {
                 messageCount = 347,
                 memorySearch = memorySearch,
                 channelId = "ch_a8f3c2d1e9b7",
+                sessionFacts = if (frameState) SessionFacts("2.1.143", "acceptEdits", null) else null,
+                sessionCostUsd = if (frameState) 0.42 else null,
+                mcpServers = if (frameState) FRAME_MCP else null,
             )
         rule.setContent {
             CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale)) {
@@ -119,6 +155,7 @@ class ChannelInfoCaptureTest {
                         onDelete = {},
                         onInstallMemoryPlugin = {},
                         onDismiss = {},
+                        systemPrompt = if (frameState) FRAME_PROMPT else null,
                     )
                 }
             }
@@ -129,6 +166,7 @@ class ChannelInfoCaptureTest {
         name: String,
         width: Int,
         height: Int,
+        folder: String = "channel-info-1266",
     ) {
         rule.waitForIdle()
         val bitmap = rule.onNode(isDialog()).captureToImage().asAndroidBitmap()
@@ -139,7 +177,7 @@ class ChannelInfoCaptureTest {
         val output =
             File(
                 checkNotNull(InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")),
-                "channel-info-1266",
+                folder,
             ).apply { mkdirs() }
         File(output, name).outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         bitmap.recycle()
@@ -156,4 +194,26 @@ class ChannelInfoCaptureTest {
 
     private fun overrideOf(output: String) =
         output.lineSequence().firstOrNull { it.startsWith("Override") }?.substringAfter(": ") ?: "reset"
+
+    private companion object {
+        const val FRAMES_FOLDER = "channel-info-1488"
+        val FRAME_PROMPT =
+            SystemPromptEditorState.Loaded(
+                confirmed = "Answer in short paragraphs.",
+                appliedStatus = SessionPromptStatus.Matches,
+                draft = "Answer in short paragraphs.",
+            )
+        val FRAME_MCP =
+            McpStatus(
+                report =
+                    McpStatusReport(
+                        servers =
+                            listOf(
+                                McpServerStatus("github", "connected", "", "user", ""),
+                                McpServerStatus("postgres", "failed", "MCP error -32000: Connection closed", "user", ""),
+                            ),
+                        droppedServers = 0,
+                    ),
+            )
+    }
 }

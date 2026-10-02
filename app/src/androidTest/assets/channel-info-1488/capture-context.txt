@@ -1,0 +1,14 @@
+Figma: https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=668-5355 (Channel Info Sheet / Top)
+Figma: https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=668-5460 (Channel Info Sheet / Scrolled to Actions)
+Inspected: 2026-10-03. Both nodes 412 x 892, exported at 1x as figma-668-5355.png and figma-668-5460.png.
+Emulator: pixel2Api33Atd, API 33, wm size 412x892, wm density 160 (density 1.0), fontScale 1, static dark colours.
+Capture: ChannelInfoCaptureTest#channelInfoTopMatches668_5355 and #channelInfoScrolledMatches668_5460, Compose dialog pixels
+in the frames' sample state: 2.1.143 / acceptEdits / $0.42, memory Absent, loaded prompt "Answer in short paragraphs.",
+MCP github (connected) and postgres (failed, "MCP error -32000: Connection closed"), Show built-in off.
+Scrolled capture: the sheet content scrolled to its end, as the frame is (content 1320 px, viewport 868 px).
+Comparison: scripts/design-compare.py APP FIGMA compare-<node>; side-by-side is Figma left, app right.
+Matched: section order and headings, 40 px About pitch, 32 px About label to first row, Memory row None / + Install,
+Rename / Archive / Delete typography, colour and pill radius, Channel ID footer at 0.55 opacity.
+Known difference: buttons draw the 40 px pill but lay out 48 dp for touch targets, so each button row is 4 px taller.
+The isolated Figma nodes round their bottom corners; the Android sheet meets the viewport bottom.
+Device result: device-results.xml; 5 executed, 0 failed, 0 skipped.
