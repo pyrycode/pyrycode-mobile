@@ -8,6 +8,7 @@ import android.graphics.Paint
 import android.net.Uri
 import android.provider.MediaStore
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasSetTextAction
@@ -35,7 +36,9 @@ import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.AttachmentContent
 import de.pyryco.mobile.data.repository.AttachmentFetchResult
+import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
 import de.pyryco.mobile.data.repository.BannerLevel
+import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.data.repository.ConversationRepository
@@ -48,6 +51,7 @@ import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.di.ConversationViewing
+import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.PickedAttachment
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
@@ -64,13 +68,14 @@ import org.koin.core.context.GlobalContext
 import org.koin.core.context.loadKoinModules
 import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.module
+import java.io.File
 
 /**
  * Thread, composer and thread status states of the assembled app at the Figma frames' viewports
  * (design-1220/thread). Each state is reached through [DesignInputs] or, for thread rows the fake graph
- * cannot emit (banner, refusal, attachment message) and the linked-note reader, through this class's own
- * thread override. A state that does not appear within its wait is still captured, so the index records
- * what the app showed instead of the run stopping.
+ * cannot emit (banner, refusal, attachment messages, idle and clear delimiters) and the linked-note reader,
+ * through this class's own thread override. Every frame state waits strictly for its marker, so a state
+ * that never renders fails the run instead of being captured under the frame's node.
  */
 @RunWith(AndroidJUnit4::class)
 class ThreadDesignCaptureTest {
@@ -89,30 +94,46 @@ class ThreadDesignCaptureTest {
     private val turnPhase = MutableStateFlow(LiveSessionEvent.TurnState.Phase.Idle)
     private val usageLimit = MutableStateFlow<UsageLimitReading?>(null)
     private val images = mutableListOf<Uri>()
+    private val photo by lazy { photoFile() }
 
+    /** Clears what outlives one test in this process: staged files, the draft, and the fake's per-channel readings. */
     @After fun clearStaged() {
-        inputs.thread.value?.let { vm -> vm.pendingAttachments.value.forEach { vm.removeAttachment(it.key) } }
+        inputs.thread.value?.let { vm ->
+            vm.pendingAttachments.value.forEach { vm.removeAttachment(it.key) }
+            vm.onDraftChange("")
+        }
         val resolver = InstrumentationRegistry.getInstrumentation().targetContext.contentResolver
         images.forEach { resolver.delete(it, null, null) }
+        photo.delete()
+        fake().setModelMenu(CONVERSATION, null)
+        fake().setSessionSettingsReading(CONVERSATION, null)
     }
 
     @Test fun threadStatusFramesAt412By892() {
         openThread()
         stageAttachments()
-        inputs.contextUsage.value = ContextUsage(168_000, 200_000, 84, null)
+        inputs.contextUsage.value = CONTEXT
+        extraItems.value = listOf(imageMessage(), refusal(), pdfMessage())
         thinking()
+        await("Show details")
+        awaitImageLoaded()
         design.capture(FOLDER, "thread", "16:8")
 
+        extraItems.value = emptyList()
+        await("Read")
+        design.capture(FOLDER, "tool-row", "674:5853")
+
+        extraItems.value = listOf(pdfMessage())
         inputs.connectionState.value = ConnectionState.Connecting
-        soft { rule.onNodeWithText("Connecting…").fetchSemanticsNode() }
+        await("Connecting…")
         design.capture(FOLDER, "connecting", "627:1740")
 
         inputs.connectionState.value = ConnectionState.Reconnecting(12)
-        soft { rule.onNodeWithText("Reconnecting in 12s").fetchSemanticsNode() }
+        await("Reconnecting in 12s")
         design.capture(FOLDER, "reconnecting", "627:4657")
 
         inputs.connectionState.value = ConnectionState.Offline
-        soft { rule.onNodeWithText("Offline · Retry").fetchSemanticsNode() }
+        await("Offline · Retry")
         design.capture(FOLDER, "offline", "627:4910")
 
         inputs.connectionState.value = ConnectionState.Connected
@@ -120,25 +141,28 @@ class ThreadDesignCaptureTest {
         usageLimit.value = UsageLimitReading("allowed_warning", "seven_day", 0, 0.94, null)
         inputs.backgroundTaskCount.value = 2
         thinking()
-        soft { rule.onNodeWithText("2 tasks running").fetchSemanticsNode() }
+        await("2 tasks running")
+        await("usage", substring = true)
         design.capture(FOLDER, "task-count-pill", "568:3139")
     }
 
     @Test fun threadNoticeFramesAt412By892() {
         openThread()
-        inputs.contextUsage.value = ContextUsage(168_000, 200_000, 84, null)
-        extraItems.value = listOf(attachmentMessage(), ThreadItem.Banner(BannerLevel.Warning, "A hook blocked this request.", false, at(2)))
+        stageAttachments()
+        inputs.contextUsage.value = CONTEXT
+        extraItems.value = listOf(pdfMessage(), ThreadItem.Banner(BannerLevel.Warning, "A hook blocked this request.", false, at(2)))
         thinking()
+        await("A hook blocked this request.", substring = true)
         design.capture(FOLDER, "session-notice", "627:5466")
 
-        val refusal = refusal(fallback = "claude-sonnet-5")
-        extraItems.value = listOf(attachmentMessage(), refusal)
-        thinking()
+        val refusal = refusal()
+        extraItems.value = listOf(pdfMessage(), refusal)
+        await("Show details")
         design.capture(FOLDER, "notification-text", "620:1577")
 
         fake().setSessionSettingsReading(CONVERSATION, settings("claude-sonnet-5"))
         runBlocking { refusals.emit(LiveRefusalEvent.Refused(refusal, "session")) }
-        soft { rule.onNodeWithText("Switch back to", substring = true).fetchSemanticsNode() }
+        await("Switch back to", substring = true)
         design.capture(FOLDER, "refusal-switch-back", "646:4707")
     }
 
@@ -147,12 +171,14 @@ class ThreadDesignCaptureTest {
         inputs.backgroundTasks.value = populated()
         inputs.backgroundTaskCount.value = 2
         openPanel()
+        await("npm run build")
         design.capture(FOLDER, "tasks-populated", "568:877")
         closePanel()
 
         inputs.backgroundTasks.value = capped()
         inputs.backgroundTaskCount.value = 11
         openPanel()
+        await("python3 scripts/replay_capture.py")
         design.capture(FOLDER, "tasks-capped", "568:932")
         closePanel()
 
@@ -169,59 +195,121 @@ class ThreadDesignCaptureTest {
 
     @Test fun runConfigurationAndReaderAt412By892() {
         openThread()
-        fake().setModelMenu(CONVERSATION, ModelMenu(MODELS.map { (name, id) -> menuRow(name, id) }, 0))
-        fake().setSessionSettingsReading(CONVERSATION, settings("sonnet", effort = "high"))
-        rule.onNodeWithContentDescription("Expand status details").performClick()
-        soft { rule.onNodeWithText("Sonnet").fetchSemanticsNode() }
-        rule.onAllNodesWithText("Default").assertCountEquals(0)
+        openRunConfiguration()
         design.capture(FOLDER, "run-configuration", "600:1694")
         Espresso.pressBack()
         rule.waitForIdle()
 
         checkNotNull(inputs.thread.value).onOpenMarkdownLink("docs/Builder Pipeline - Plan.md")
-        soft { rule.onNodeWithText("Builder Pipeline Plan").fetchSemanticsNode() }
+        await("Builder Pipeline Plan")
         design.capture(FOLDER, "markdown-reader", "553:2574")
     }
 
     @Test fun menusAndKeyboardAt412By892() {
         openThread()
-        menusAndKeyboard("")
+        inputs.contextUsage.value = CONTEXT
+        extraItems.value = delimiters()
+        await("Idle session ended", substring = true)
+        rule.onNodeWithText("Vivamus sagittis lacus vel augue.").performScrollTo()
+        rule.waitForIdle()
+        design.capture(FOLDER, "session-delimiter", "675:3682")
+        design.openMenu(rule.onNodeWithContentDescription("More actions"))
+        noWorkspaceAction()
+        design.capture(FOLDER, "overflow-menu", "675:5883")
+        Espresso.pressBack()
+        rule.waitForIdle()
+
+        extraItems.value = emptyList()
+        await("Read")
+        openActions()
+        noWorkspaceAction()
+        design.capture(FOLDER, "actions-menu", "675:5938")
+        Espresso.pressBack()
+        rule.waitForIdle()
+
+        keyboard()
+        design.capture(FOLDER, "keyboard", "675:6160")
+        design.closeKeyboard()
     }
 
+    /** The frame's compact keyboard state plus every overlay, sheet and row that could clip at 320x700 and 1.5x. */
     @Viewport("320x700", fontScale = 1.5f)
     @Test
     fun compactAt320By700() {
         openThread()
-        inputs.contextUsage.value = ContextUsage(168_000, 200_000, 84, null)
+        inputs.contextUsage.value = CONTEXT
         inputs.backgroundTaskCount.value = 2
         thinking()
+        await("2 tasks running")
         design.capture(FOLDER, "compact-thread", "16:8")
+
         inputs.connectionState.value = ConnectionState.Offline
+        await("Offline · Retry")
+        design.capture(FOLDER, "compact-offline", "627:4910")
         inputs.pairingRejected.value = true
         design.capture(FOLDER, "compact-offline-overlays", "627:4910")
+        inputs.pairingRejected.value = false
         inputs.connectionState.value = ConnectionState.Connected
-        menusAndKeyboard("compact-")
-    }
 
-    /** Overflow menu, Actions menu and the composer with the keyboard up; no workspace action in either menu. */
-    private fun menusAndKeyboard(prefix: String) {
+        stageAttachments()
+        usageLimit.value = UsageLimitReading("allowed_warning", "seven_day", 0, 0.94, null)
+        val refusal = refusal()
+        extraItems.value = listOf(refusal)
+        fake().setSessionSettingsReading(CONVERSATION, settings("claude-sonnet-5"))
+        runBlocking { refusals.emit(LiveRefusalEvent.Refused(refusal, "session")) }
+        await("Switch back to", substring = true)
+        rule.onNodeWithText("Switch back to", substring = true).performScrollTo()
+        await("usage", substring = true)
+        design.capture(FOLDER, "compact-notices", "646:4707")
+        stageNone()
+        extraItems.value = emptyList()
+        usageLimit.value = null
+
         design.openMenu(rule.onNodeWithContentDescription("More actions"))
         noWorkspaceAction()
-        design.capture(FOLDER, "${prefix}overflow-menu", "16:8")
+        design.capture(FOLDER, "compact-overflow-menu", "675:5883")
         Espresso.pressBack()
         rule.waitForIdle()
-
         openActions()
         noWorkspaceAction()
-        design.capture(FOLDER, "${prefix}actions-menu", "16:8")
+        design.capture(FOLDER, "compact-actions-menu", "675:5938")
         Espresso.pressBack()
         rule.waitForIdle()
 
+        inputs.backgroundTasks.value = populated()
+        openPanel()
+        await("npm run build")
+        design.capture(FOLDER, "compact-tasks", "568:877")
+        closePanel()
+
+        openRunConfiguration()
+        rule.onNodeWithText("Done").performScrollTo().assertIsDisplayed()
+        design.capture(FOLDER, "compact-run-configuration", "600:1694")
+        Espresso.pressBack()
+        rule.waitForIdle()
+
+        // Last: the focused composer's cursor handle is its own popup root, which would confuse openMenu.
+        inputs.backgroundTasks.value = null
+        keyboard()
+        design.capture(FOLDER, "compact-keyboard", "676:3981")
+        design.closeKeyboard()
+    }
+
+    /** Run configuration with a four-model menu and Sonnet selected; no "Default" option in any spelling. */
+    private fun openRunConfiguration() {
+        fake().setModelMenu(CONVERSATION, ModelMenu(MODELS.map { (name, id) -> menuRow(name, id) }, 0))
+        fake().setSessionSettingsReading(CONVERSATION, settings("sonnet", effort = "high", permission = "default"))
+        rule.onNodeWithContentDescription("Expand status details").performClick()
+        await("Sonnet")
+        await("Manual approval")
+        rule.onAllNodesWithText("Default", substring = true, ignoreCase = true).assertCountEquals(0)
+    }
+
+    private fun keyboard() {
         val composer = rule.onNode(hasSetTextAction())
         design.openKeyboard(composer)
         composer.performTextReplacement("My message")
-        design.capture(FOLDER, "${prefix}keyboard", "16:8")
-        design.closeKeyboard()
+        rule.waitForIdle()
     }
 
     /** No clickable workspace row; the seeded demo reply itself mentions a workspace picker in plain text. */
@@ -232,9 +320,8 @@ class ThreadDesignCaptureTest {
     /** The footer's Actions menu draws in the screen's own window, not a popup, so wait for its last row. */
     private fun openActions() {
         rule.onNodeWithText("Actions").performTouchInput { click() }
-        // The row reads "Background tasks (N)" while tasks run.
-        rule.waitUntil(5_000) { rule.onAllNodesWithText("Background tasks", substring = true).fetchSemanticsNodes().isNotEmpty() }
-        rule.waitForIdle()
+        // The row reads "Background tasks (N)".
+        await("Background tasks", substring = true)
     }
 
     private fun openThread() {
@@ -258,6 +345,12 @@ class ThreadDesignCaptureTest {
                 PickedAttachment(image("design-stone-3.png"), "stone-3.png", "image/png", 4_096),
             )
         checkNotNull(inputs.thread.value).addPickedAttachments(picked)
+        rule.waitUntil(5_000) { checkNotNull(inputs.thread.value).pendingAttachments.value.size == picked.size }
+        rule.waitForIdle()
+    }
+
+    private fun stageNone() {
+        inputs.thread.value?.let { vm -> vm.pendingAttachments.value.forEach { vm.removeAttachment(it.key) } }
         rule.waitForIdle()
     }
 
@@ -270,28 +363,47 @@ class ThreadDesignCaptureTest {
             }
         val uri = checkNotNull(resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values))
         images += uri
-        val bitmap = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
-        Canvas(bitmap).apply {
-            drawColor(Color.rgb(226, 226, 222))
-            drawOval(28f, 10f, 68f, 90f, Paint().apply { color = Color.rgb(140, 136, 120) })
-        }
-        checkNotNull(resolver.openOutputStream(uri)).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        checkNotNull(resolver.openOutputStream(uri)).use { stone(96, 96).compress(Bitmap.CompressFormat.PNG, 100, it) }
         return uri.toString()
     }
+
+    /** The kept file the override's [ConversationRepository.retrieveAttachment] serves for the image bubble. */
+    private fun photoFile(): File {
+        val file = File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "design-photo")
+        file.outputStream().use { stone(320, 320).compress(Bitmap.CompressFormat.PNG, 100, it) }
+        return file
+    }
+
+    private fun stone(
+        width: Int,
+        height: Int,
+    ): Bitmap =
+        Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also {
+            Canvas(it).apply {
+                drawColor(Color.rgb(226, 226, 222))
+                val paint = Paint().apply { color = Color.rgb(140, 136, 120) }
+                drawOval(width * 0.29f, height * 0.1f, width * 0.71f, height * 0.94f, paint)
+            }
+        }
 
     private fun thinking() {
         // The band reads the repository's held phase, so set it there as well as on the live event stream.
         turnPhase.value = LiveSessionEvent.TurnState.Phase.Thinking
         runBlocking { inputs.liveSessionEvents.emit(LiveSessionEvent.TurnState(CONVERSATION, LiveSessionEvent.TurnState.Phase.Thinking)) }
-        soft { rule.onNodeWithText("Thinking", substring = true).fetchSemanticsNode() }
+        await("Thinking", substring = true)
+    }
+
+    /** The bubble's photo is ready once the view model holds it; the next idle draws it. */
+    private fun awaitImageLoaded() {
+        rule.waitUntil(10_000) { checkNotNull(inputs.thread.value).attachmentStates.value["design-photo"] is AttachmentViewState.Ready }
+        rule.waitForIdle()
     }
 
     private fun openPanel() {
         rule.waitForIdle()
         openActions()
         rule.onNodeWithText("Background tasks", substring = true).performTouchInput { click() }
-        soft { rule.onNodeWithText("Close").fetchSemanticsNode() }
-        rule.waitForIdle()
+        await("Close")
     }
 
     private fun closePanel() {
@@ -299,9 +411,12 @@ class ThreadDesignCaptureTest {
         rule.waitForIdle()
     }
 
-    /** Waits up to five seconds for [check] to pass, and carries on either way. */
-    private fun soft(check: () -> Unit) {
-        runCatching { rule.waitUntil(5_000) { runCatching(check).isSuccess } }
+    /** Fails the test unless [text] shows within five seconds. */
+    private fun await(
+        text: String,
+        substring: Boolean = false,
+    ) {
+        rule.waitUntil(5_000) { rule.onAllNodesWithText(text, substring = substring).fetchSemanticsNodes().isNotEmpty() }
         rule.waitForIdle()
     }
 
@@ -333,6 +448,11 @@ class ThreadDesignCaptureTest {
                             override fun observeSessionFacts(conversationId: String) = inputs.sessionFacts
 
                             override fun observeContextUsage(conversationId: String) = inputs.contextUsage
+
+                            override suspend fun retrieveAttachment(
+                                conversationId: String,
+                                attachmentId: String,
+                            ) = AttachmentRetrievalResult.Retrieved(photo, "stone.png", "image/png")
 
                             override suspend fun readWorkspaceFile(
                                 conversationId: String,
@@ -372,31 +492,67 @@ class ThreadDesignCaptureTest {
         )
     }
 
-    private fun attachmentMessage() =
-        ThreadItem.MessageItem(
-            Message(
-                id = "design-attachment",
-                sessionId = "seed-session-pyrycode-mobile",
-                role = Role.Assistant,
-                content = "Lorem ipsum dolor sit amet, consectetur adipiscing elit.",
-                timestamp = at(1),
-                isStreaming = false,
-                attachments = listOf(MessageAttachment("design-pdf", "Filename of the Best file attachment.pdf", "application/pdf")),
-            ),
+    private fun message(
+        id: String,
+        role: Role,
+        content: String,
+        second: Int,
+        attachment: MessageAttachment? = null,
+    ) = ThreadItem.MessageItem(
+        Message(
+            id = id,
+            sessionId = "seed-session-pyrycode-mobile",
+            role = role,
+            content = content,
+            timestamp = at(second),
+            isStreaming = false,
+            attachments = listOfNotNull(attachment),
+        ),
+    )
+
+    /** The frame's user bubble with a photo, served by the override's retrieveAttachment. */
+    private fun imageMessage() =
+        message(
+            "design-image",
+            Role.User,
+            "Morbi efficitur scelerisque augue, in pretium erat tempor in.",
+            1,
+            MessageAttachment("design-photo", "stone.png", "image/png"),
         )
 
-    private fun refusal(fallback: String?) =
-        ThreadItem.ModelRefusal("claude-opus-5-5", fallback, "This request was declined on Opus.", false, at(3))
+    private fun pdfMessage() =
+        message(
+            "design-attachment",
+            Role.Assistant,
+            "Lorem ipsum dolor sit amet, consectetur adipiscing elit.",
+            4,
+            MessageAttachment("design-pdf", "Filename of the Best file attachment.pdf", "application/pdf"),
+        )
+
+    /** Session delimiter and overflow menu frames: a clear boundary, then an idle-evict boundary. */
+    private fun delimiters() =
+        listOf(
+            ThreadItem.SessionBoundary("seed-session-pyrycode-mobile", "design-session-2", BoundaryReason.Clear, at(5)),
+            message("design-d1", Role.User, "Lorem ipsum dolor sit amet, consectetur adipiscing elit.", 6),
+            message("design-d2", Role.Assistant, "Mauris at quam euismod.", 7),
+            ThreadItem.SessionBoundary("design-session-2", "design-session-3", BoundaryReason.IdleEvict, at(8)),
+            message("design-d3", Role.User, "Morbi efficitur scelerisque augue, in pretium erat tempor in.", 9),
+            message("design-d4", Role.Assistant, "Vivamus sagittis lacus vel augue.", 9),
+        )
+
+    private fun refusal() =
+        ThreadItem.ModelRefusal("claude-opus-5-5", "claude-sonnet-5", "This request was declined on Opus.", false, at(3))
 
     private fun settings(
         model: String,
         effort: String = "",
+        permission: String = "",
     ) = SessionSettings(
         sessionId = "seed-session-pyrycode-mobile",
         model = model,
         effort = effort,
         effectiveEffort = if (effort.isEmpty()) EffectiveEffort.NotReported else EffectiveEffort.Applied(effort),
-        permissionMode = "",
+        permissionMode = permission,
         yolo = false,
         usedTokens = 0,
         windowTokens = 0,
@@ -481,6 +637,7 @@ class ThreadDesignCaptureTest {
     private companion object {
         const val FOLDER = "thread"
         const val CONVERSATION = "seed-channel-pyrycode-mobile"
+        val CONTEXT = ContextUsage(168_000, 200_000, 84, null)
         val MODELS =
             listOf(
                 "Fable" to "claude-fable-5-1",

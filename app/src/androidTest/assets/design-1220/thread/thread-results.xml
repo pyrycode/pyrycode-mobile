@@ -1,16 +1,16 @@
 <?xml version='1.0' encoding='UTF-8' ?>
-<testsuites tests="6" failures="0" errors="0" skipped="0" time="63.095" timestamp="2026-10-02T07:41:11" hostname="localhost">
-  <testsuite name="de.pyryco.mobile.design.ThreadDesignCaptureTest" tests="6" failures="0" errors="0" skipped="0" time="59.001" timestamp="2026-10-02T07:41:11" hostname="localhost">
+<testsuites tests="6" failures="0" errors="0" skipped="0" time="86.523" timestamp="2026-10-02T10:43:17" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.design.ThreadDesignCaptureTest" tests="6" failures="0" errors="0" skipped="0" time="79.956" timestamp="2026-10-02T10:43:17" hostname="localhost">
     <properties>
       <property name="device" value="pixel8Api35" />
       <property name="flavor" value="" />
       <property name="project" value=":app" />
     </properties>
-    <testcase name="menusAndKeyboardAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="13.815" />
-    <testcase name="threadStatusFramesAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="7.735" />
-    <testcase name="runConfigurationAndReaderAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="10.727" />
-    <testcase name="threadNoticeFramesAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="5.874" />
-    <testcase name="backgroundTaskPanelAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="10.83" />
-    <testcase name="compactAt320By700" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="10.02" />
+    <testcase name="menusAndKeyboardAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="19.689" />
+    <testcase name="threadStatusFramesAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="12.715" />
+    <testcase name="runConfigurationAndReaderAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="7.352" />
+    <testcase name="threadNoticeFramesAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="7.023" />
+    <testcase name="backgroundTaskPanelAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="15.147" />
+    <testcase name="compactAt320By700" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="18.03" />
   </testsuite>
 </testsuites>
