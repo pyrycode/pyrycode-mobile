@@ -72,7 +72,8 @@ class SharedDarkColourCaptureTest {
             (0 until bitmap.height step 2).any { y ->
                 (0 until bitmap.width step 2).any { x -> bitmap.getPixel(x, y) == color }
             }
-        assertTrue("selected row uses Schemes/On Primary", contains(android.graphics.Color.rgb(0, 51, 85)))
+        // 15:8's Hover row is the selected one (#1523); its darker On Primary row is the pressed state.
+        assertTrue("selected row uses Schemes/Primary Container", contains(android.graphics.Color.rgb(19, 74, 116)))
         assertTrue("unread dot uses Schemes/Success", contains(android.graphics.Color.rgb(47, 192, 56)))
         val output =
             File(
