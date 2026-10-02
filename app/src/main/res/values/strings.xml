@@ -293,6 +293,8 @@
     <string name="modal_dismissed_timeout">Request timed out</string>
     <string name="modal_dismissed_resolved">Request resolved</string>
     <string name="modal_armed_option_desc">Tap again to confirm</string>
+    <!-- #1483: the visible hint under an armed choice; %1$s is the choice's server label. -->
+    <string name="modal_armed_option_hint">Tap %1$s again to confirm.</string>
     <string name="modal_cancel">Cancel</string>
     <!-- #817: labels for claude's decision context on a permission prompt; the values themselves are claude-authored. -->
     <string name="modal_context_reason">Reason</string>
@@ -300,7 +302,7 @@
     <string name="modal_context_reason_rule">A permission rule asks</string>
     <string name="modal_context_reason_type">Reason type: %1$s</string>
     <string name="modal_context_description">Description</string>
-    <string name="modal_context_blocked_path">Blocked path</string>
+    <string name="modal_context_blocked_path">Folder</string>
     <string name="modal_always_allow_label">Don\'t ask again this session for:</string>
     <string name="permission_answer_rejected">Your answer was rejected.</string>
     <string name="question_modal_title">Claude has questions</string>
@@ -309,6 +311,8 @@
     <string name="question_other">Other</string>
     <string name="question_other_placeholder">Type your answer</string>
     <string name="question_waiting_for_answers">Waiting for answers</string>
+    <!-- #1483: the status band's reading while a permission or trust request waits. -->
+    <string name="thread_status_waiting_for_permission">Waiting for permission</string>
     <string name="question_continue">Continue</string>
     <string name="question_send_failed">Couldn\'t send. Try again.</string>
     <string name="new_session_failed">Couldn\'t reset the session. Check your connection.</string>
