@@ -84,7 +84,7 @@ private const val META_SEPARATOR = " · "
 
 /**
  * The read-only background-task list (#678), redrawn to its Figma frames (#1041), in the shared mobile
- * modal shell with only a Close action. Closing sends nothing and changes nothing.
+ * modal shell, closed from its header glyph or Back. Closing sends nothing and changes nothing.
  *
  * [roster] is branched on before its tasks are read: `null` means nothing has been reported, an empty
  * roster is the daemon saying nothing is alive, and the two read as different sentences. The partial-list
@@ -120,7 +120,6 @@ internal fun BackgroundTaskPanel(
     }
     MobileReadOnlyModal(
         title = stringResource(R.string.background_tasks_title),
-        closeLabel = stringResource(R.string.background_tasks_close),
         onDismissRequest = onDismiss,
         modifier = modifier,
     ) {
@@ -408,7 +407,7 @@ private fun EmptyReading(
 ) {
     val ringColor = MaterialTheme.colorScheme.outline
     Column(
-        // Figma's content-relative inset; the shared modal retains its accessible header and footer.
+        // Figma's content-relative inset below the shared modal's accessible header.
         modifier = Modifier.fillMaxWidth().padding(top = 160.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,

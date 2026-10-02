@@ -5646,9 +5646,9 @@ class InteractiveStreamE2ETest {
         }
     }
 
-    /** A node inside the open background-task panel, the window holding its Close. */
+    /** A node inside the open background-task panel, the dialog holding its title. */
     private fun inBackgroundPanel(): SemanticsMatcher =
-        hasAnyAncestor(hasAnyDescendant(hasText(string(R.string.background_tasks_close)) and hasClickAction()))
+        hasAnyAncestor(isDialog() and hasAnyDescendant(hasText(string(R.string.background_tasks_title))))
 
     /**
      * The `background_task_progress` frames [peer] recorded for [conversationId], decoded, that join on the
@@ -5688,7 +5688,7 @@ class InteractiveStreamE2ETest {
 
     /** Close the background-task panel and wait until it is gone. */
     private fun closeBackgroundTasks() {
-        composeTestRule.onNode(hasText(string(R.string.background_tasks_close)) and hasClickAction()).performClick()
+        composeTestRule.onNode(hasContentDescription(CD_CLOSE_SHEET) and inBackgroundPanel()).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_title))).fetchSemanticsNodes().isEmpty()
         }

@@ -272,7 +272,7 @@ class TaskCountPillTest {
             click(Offset((pillBounds.left + pillBounds.right).toPx() / 2f, (pillBounds.top + pillBounds.bottom).toPx() / 2f))
         }
         composeTestRule.onNodeWithText("Background tasks").assertIsDisplayed()
-        composeTestRule.onNodeWithText(string(R.string.background_tasks_close)).performClick()
+        composeTestRule.onNodeWithContentDescription("Close").performClick()
 
         root.performTouchInput {
             click(Offset((actionsBounds.left + actionsBounds.right).toPx() / 2f, (actionsBounds.top + actionsBounds.bottom).toPx() / 2f))

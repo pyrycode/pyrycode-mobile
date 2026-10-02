@@ -19,6 +19,7 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.BackgroundTask
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
@@ -134,11 +135,8 @@ class BackgroundTaskPanelLayoutTest {
                 "Claude has nothing running in the background for this conversation."
             }
         rule.onNodeWithText(support).performScrollTo().assertIsDisplayed()
-        rule
-            .onNode(hasText("Close") and hasClickAction())
-            .performScrollTo()
-            .assertIsDisplayed()
-            .performClick()
+        rule.onNode(hasText("Close") and hasClickAction()).assertDoesNotExist()
+        Espresso.pressBack()
         rule.onNodeWithText("Background tasks").assertDoesNotExist()
         rule.runOnIdle { open.value = true }
         rule.onNodeWithContentDescription("Close").assertIsDisplayed().performClick()
