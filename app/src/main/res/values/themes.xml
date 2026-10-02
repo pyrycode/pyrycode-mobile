@@ -4,7 +4,7 @@
     <style name="Theme.PyrycodeMobile" parent="android:Theme.Material.Light.NoActionBar" />
 
     <style name="Theme.PyrycodeMobile.SplashScreen" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenBackground">@color/ic_launcher_background</item>
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_logo</item>
         <item name="postSplashScreenTheme">@style/Theme.PyrycodeMobile</item>
     </style>
