@@ -95,9 +95,31 @@ the test method (`@Viewport("320x692")`) instead of branching on the method
 name, so the size stays attached to the test it belongs to.
 `ToolRowDesignCaptureTest` (#1425) copied the same shape for its own
 412x892/320x700 pair, and `MarkdownReaderCaptureTest` (#1467) copied it again
-for the same pair. Several androidTest capture classes now carry their own
-copy of this rule; extracting a shared `TestRule` is separate work, not a
-prerequisite for adding another copy.
+for the same pair. #1430 extracted the copy into a shared
+`app/src/androidTest/java/de/pyryco/mobile/design/ViewportRule.kt` with a
+public `@Viewport(size, fontScale)` annotation;
+`ThreadActivityIndicatorCaptureTest` and `ToolRowDesignCaptureTest` now use it
+unchanged otherwise. `MarkdownReaderCaptureTest` and other androidTest capture
+classes still carry their own copy of the rule; moving them onto the shared
+rule is separate work. The same package holds the
+[`design-1220/` capture harness](../../../app/src/androidTest/assets/design-1220/README.md):
+`DesignCapture` (launch, real-bar capture, keyboard and menu helpers) and
+`DesignInputs`, a Koin override loaded over the app graph that redefines
+`ThreadViewModel`, `ScannerViewModel` and `PairCodeViewModel` so a capture test
+can drive any state a Figma audit needs, with no file under `app/src/main/`
+changed. Five lessons from building it: Koin 4.0.4's `loadKoinModules`
+overrides a `viewModel` definition the same way it overrides `single`, keyed
+by type and qualifier; restore by reloading copies of only the overridden
+definitions, not by reloading `appModule` itself, which would re-create its
+`createdAtStart` eager singletons (the relay registry, the lifecycle driver);
+revoking a granted runtime permission such as `CAMERA` or
+`POST_NOTIFICATIONS` kills the app process, and the instrumentation with it, so
+a capture rule's grant cannot be undone in `finally`; `ThreadViewModel` reads
+`questionBatch` only when it gets no `QuestionDraftStore`, so an override that
+passes the app's store, as production does, silently drops a test-supplied
+question batch; and no thread code reads
+`ConversationRepository.observeAttachmentOffers`, so overriding it changes
+nothing on screen.
 
 `MarkdownReaderCaptureTest#compactLargeTextKeepsControlsAndBodyReachable`
 (unrelated to the #1352 history-paging change, caught in its PR's UI gate and

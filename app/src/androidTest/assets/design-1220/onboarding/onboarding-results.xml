@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="3" failures="0" errors="0" skipped="0" timestamp="2026-10-02T00:24:05">
+  <testsuite name="de.pyryco.mobile.design.OnboardingDesignCaptureTest" tests="3" failures="0" errors="0" skipped="0" time="38.513" timestamp="2026-10-02T00:24:05" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="scannerFramesAt412By892" classname="de.pyryco.mobile.design.OnboardingDesignCaptureTest" time="17.416" />
+    <testcase name="pairCodeFramesAt412By892" classname="de.pyryco.mobile.design.OnboardingDesignCaptureTest" time="14.838" />
+    <testcase name="rePairFramesAt412By892" classname="de.pyryco.mobile.design.OnboardingDesignCaptureTest" time="6.259" />
+  </testsuite>
+</testsuites>
