@@ -1313,7 +1313,7 @@ file"; back returns to the thread, and the same tapped link shows the new headin
 re-fetches on every open rather than caching. No rung-4 twin: the scripted `fakeclaude` backend has no
 workspace-file read path to hold open, and the phone-side behaviour (classification, the one-read guard, the
 failure notice, the copy conversions) is covered by unit and Robolectric tests instead — see [MarkdownText §
-Markdown-path links](knowledge/features/markdown-text.md#markdown-path-links-since-1050) and [Markdown reader
+Markdown-path links](knowledge/features/markdown-text-internals.md#markdown-path-links-since-1050) and [Markdown reader
 screen § Copy and refresh menu](knowledge/features/markdown-reader-screen.md#copy-and-refresh-menu-since-1067).
 
 The **second-host rename and unpair** scenario (#1085 —
