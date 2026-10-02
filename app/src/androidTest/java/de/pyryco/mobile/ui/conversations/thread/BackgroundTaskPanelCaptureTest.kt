@@ -84,7 +84,7 @@ class BackgroundTaskPanelCaptureTest {
     }
 
     @Test
-    fun compactLargeTextKeepsScrolledContentAndBothCloseRoutesReachable() {
+    fun compactLargeTextKeepsScrolledContentAndCloseGlyphReachable() {
         shell("wm size 320x640")
         instrumentation.waitForIdleSync()
         roster = CAPPED
@@ -94,14 +94,7 @@ class BackgroundTaskPanelCaptureTest {
         rule.onNodeWithText("python3 scripts/replay_capture.py").performScrollTo()
         assertWithinCompactWidth("python3 scripts/replay_capture.py")
         rule.onNodeWithText("No change reported").performScrollTo().assertIsDisplayed()
-        rule
-            .onNode(hasText("Close") and hasClickAction())
-            .performScrollTo()
-            .assertIsDisplayed()
-            .performClick()
-        rule.onNodeWithText("Background tasks").assertDoesNotExist()
-
-        open = true
+        rule.onNode(hasText("Close") and hasClickAction()).assertDoesNotExist()
         rule.onNodeWithContentDescription("Close").assertIsDisplayed().performClick()
         rule.onNodeWithText("Background tasks").assertDoesNotExist()
 

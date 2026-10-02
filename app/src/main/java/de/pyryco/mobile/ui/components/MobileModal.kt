@@ -15,11 +15,13 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.safeDrawing
@@ -148,14 +150,13 @@ internal fun MobileGateModal(
 }
 
 /**
- * The editing shell with nothing to submit (#678): its footer holds one [closeLabel] button, which
- * dismisses exactly as the close glyph and Back do. For a read-only panel such as the background-task
- * list; outside taps still do not dismiss.
+ * The editing shell with nothing to submit (#678), for a read-only panel such as the background-task
+ * list. It has no footer (#1496): the close glyph and Back dismiss, outside taps do not. The sheet runs to
+ * the screen's bottom edge, as in the 568:876 frames, while its content stays above the navigation bar.
  */
 @Composable
 internal fun MobileReadOnlyModal(
     title: String,
-    closeLabel: String,
     onDismissRequest: () -> Unit,
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
@@ -166,7 +167,9 @@ internal fun MobileReadOnlyModal(
         gate = false,
         modifier = modifier,
         error = null,
-        footer = { dismiss -> ModalCancelButton(label = closeLabel, onClick = dismiss) },
+        footer = null,
+        extendToBottom = true,
+        bottomPadding = 24.dp,
         content = content,
     )
 }
@@ -197,15 +200,20 @@ internal fun MobileDismissModal(
     )
 }
 
-/** [gate] is the only switch between the editing shell and the hardened decision gate. */
+/**
+ * [gate] is the only switch between the editing shell and the hardened decision gate. A null [footer]
+ * draws no footer row. [extendToBottom] lets the sheet reach the screen's bottom edge and moves the bottom
+ * safe-drawing inset inside it, so the content still ends above the navigation bar and keyboard.
+ */
 @Composable
 private fun MobileModalShell(
     title: String,
     onDismissRequest: () -> Unit,
     gate: Boolean,
     error: String?,
-    footer: @Composable RowScope.(dismiss: () -> Unit) -> Unit,
+    footer: (@Composable RowScope.(dismiss: () -> Unit) -> Unit)?,
     modifier: Modifier = Modifier,
+    extendToBottom: Boolean = false,
     contentAlignment: Alignment.Vertical = Alignment.CenterVertically,
     footerAlignment: Alignment.Horizontal = Alignment.CenterHorizontally,
     bottomPadding: androidx.compose.ui.unit.Dp = 20.dp,
@@ -243,9 +251,15 @@ private fun MobileModalShell(
             modifier =
                 modifier
                     .fillMaxSize()
-                    .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .imePadding()
-                    .semantics { paneTitle = title },
+                    .then(
+                        if (extendToBottom) {
+                            Modifier.windowInsetsPadding(
+                                WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
+                            )
+                        } else {
+                            Modifier.windowInsetsPadding(WindowInsets.safeDrawing).imePadding()
+                        },
+                    ).semantics { paneTitle = title },
             shape = RoundedCornerShape(44.dp),
             color = MaterialTheme.colorScheme.modalContainer,
             contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -264,7 +278,15 @@ private fun MobileModalShell(
                         Modifier
                             .verticalScroll(shellScroll)
                             .then(if (pinned) Modifier.height(maxHeight) else Modifier)
-                            .padding(start = 28.dp, end = 28.dp, top = 24.dp, bottom = bottomPadding),
+                            .then(
+                                if (extendToBottom) {
+                                    Modifier.windowInsetsPadding(
+                                        WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom),
+                                    )
+                                } else {
+                                    Modifier
+                                },
+                            ).padding(start = 28.dp, end = 28.dp, top = 24.dp, bottom = bottomPadding),
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -322,12 +344,14 @@ private fun MobileModalShell(
                             }
                         }
                     }
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(20.dp, footerAlignment),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        footer(dismiss)
+                    if (footer != null) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(20.dp, footerAlignment),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            footer(dismiss)
+                        }
                     }
                 }
             }

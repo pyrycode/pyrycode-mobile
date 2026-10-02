@@ -514,8 +514,10 @@ ToolCall(toolName = "Bash", status = ToolCallStatus.Running, elapsedSeconds = 65
   its existing held-open window, and a new `tool-progress` scenario proves the label adds claude's elapsed
   reading after a scripted `tool_progress` heartbeat and clears when the call's `tool_result` lands while
   the turn stays busy. On rung 3, `interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool`
-  (`InteractiveStreamE2ETest`) holds a real tool call open on a permission prompt (the #849 lever) and
-  proves the label without an elapsed reading against real claude; the elapsed half stays
+  (`InteractiveStreamE2ETest`) holds a real tool call open on a permission prompt (the #849 lever); since
+  #1483 that hold reads "Waiting for permission" instead of the label, so #1528 repaired the test to prove
+  the label — without an elapsed reading, against real claude — only after the peer allows the command,
+  while it runs. The elapsed half stays
   `@Ignore`-gated as `interactiveTurn_longRunningTool_statusAreaShowsElapsed` — claude's first heartbeat
   lands at ~30s on the one committed capture and cannot be held reliably, so only that half remains
   manual. See `docs/e2e-interactive-stream.md` § "What rung 3 is made of" and § "Scenarios (#454)" for
