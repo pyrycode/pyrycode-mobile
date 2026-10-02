@@ -309,6 +309,16 @@ the skip path fires. `ChannelInfoCaptureTest` and `AttachmentVisualCaptureTest`
 still call `captureToImage` unprotected; that sweep is tracked under #1046, not
 fixed here.
 
+`captureToImage()` also times out under Robolectric itself, not only on a
+loaded emulator: a full `ThreadScreen` set under `createComposeRule` throws
+`ComposeTimeoutException` after 2000 ms even with `@GraphicsMode(NATIVE)`,
+because the thread's own animations keep redrawing and `forceRedraw` never
+settles (`ComposerFileTileTintTest`, #1532). Drawing `LocalView.current` into a
+`Bitmap` by hand — `root.draw(Canvas(bitmap))` inside `composeRule.runOnIdle`
+— and cropping to the target node's `fetchSemanticsNode().boundsInRoot`, the
+way `ConversationTreeRowsTest` does, samples the same real pixels without
+going through `forceRedraw` at all.
+
 ## Probe the evidence itself
 
 An injection or sanitizer test must forge the exact line shape its reader matches.
