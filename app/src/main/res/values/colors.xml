@@ -15,4 +15,10 @@
       locations together when the branding ticket lands.
     -->
     <color name="ic_launcher_background">#FF32628D</color>
+    <!--
+      Launch splash background: the dark scheme's background (backgroundDark in
+      ui/theme/Color.kt, Figma 701:5001). The splash window is drawn before the
+      app theme exists, so it cannot reference ?attr/... either.
+    -->
+    <color name="splash_background">#FF101418</color>
 </resources>
