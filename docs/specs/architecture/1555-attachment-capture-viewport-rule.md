@@ -1,0 +1,23 @@
+# #1555 — Attachment capture: set each viewport before the activity launches
+
+## Files read
+
+- `app/src/androidTest/java/de/pyryco/mobile/ui/conversations/components/AttachmentVisualCaptureTest.kt` → `pendingAndSentAttachments_matchReferenceGeometryAt412By892`, `fileArtworkAndLabels_haveReadableContrastOnBothBubblesAndThread`, `shell`, `overrideOf` — the only file that changes.
+- `app/src/androidTest/java/de/pyryco/mobile/design/ViewportRule.kt` → `ViewportRule`, `Viewport` — the shared order-0 rule, used unchanged.
+- `app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/ThreadActivityIndicatorCaptureTest.kt` → its `viewport` / `rule` pair — the #1402 shape to mirror.
+
+## Design source
+
+N/A — test-infrastructure change; the captured output and its sizes stay the same.
+
+## Change
+
+`createAndroidComposeRule<ComponentActivity>()` launches its activity before the test body, which then runs `wm density 160`, `wm size 412x892` and later `wm size 320x640` under the live activity. A resize there can recreate or refocus the activity while the launcher holds focus, which is the observed `forceRedraw` timeout with `EmptyHomeActivity` focused (#1402).
+
+Split the geometry test into one method per viewport: `pendingAndSentAttachments_matchReferenceGeometryAt412By892` (`@Viewport("412x892")`, strip-width assertion, thumbnail wait, `emulator-412x892.png`) and `compactLargeText_fileRowFitsAt320By640` (`@Viewport("320x640")`, in-composition `fontScale = 1.5f`, file-row overflow assertion, `emulator-320x640-large-text.png`). The MediaStore image fixture, the decoder and the thread state move into one private helper that both methods call, with the fixture deleted in its `finally`. The in-body `wm` calls and the saved-override restore go; the shared `ViewportRule` applies density 160, the final size and system font scale 1.0 before launch and restores all three after.
+
+The rule is at `order = 0` with the compose rule at `order = 1`, but wrapped so it applies only to methods carrying `@Viewport`. Without an annotation `ViewportRule` would force 412x892 at density 160 onto `fileArtworkAndLabels_haveReadableContrastOnBothBubblesAndThread`, whose pixel regions (for example rows 35–55 of the pending tile) were measured at the device's own density; that test makes no viewport change today and keeps none.
+
+## Testing strategy
+
+Device-only by nature: real `wm size` / density and real window pixels on the managed device, which Robolectric cannot give. Run the class five times with `./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun -Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.components.AttachmentVisualCaptureTest` and record each XML's executed count (3) and failures (0) on the PR, plus the presence and pixel sizes of the two captures and their sidecars.
