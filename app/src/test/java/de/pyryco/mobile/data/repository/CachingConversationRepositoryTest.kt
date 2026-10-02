@@ -4,6 +4,8 @@ import de.pyryco.mobile.data.cache.AttachmentStore
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.ConversationCacheException
 import de.pyryco.mobile.data.cache.FileConversationCache
+import de.pyryco.mobile.data.cache.MAX_CACHED_THREAD_ROWS
+import de.pyryco.mobile.data.cache.cacheableThreadRows
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
@@ -490,6 +492,26 @@ class CachingConversationRepositoryTest {
         }
 
     @Test
+    fun `a drawn thread trimmed at the row limit drops the saved history position`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val cache = fileCache().also { it.seed() }
+            val repository = CachingConversationRepository(delegate, cache, "server-a")
+            val job = launch { repository.observeMessages("conv-1").collect { } }
+            val position = HistoryPosition(cursor = "opaque-cursor", atStart = false)
+            repository.writeHistoryPosition("conv-1", position)
+            val atLimit = (1..MAX_CACHED_THREAD_ROWS).map { message("m$it") }
+
+            live.value = atLimit
+            // Exactly at the limit nothing was trimmed, so the oldest saved row still matches the position.
+            assertEquals(position, repository.readHistoryPosition("conv-1"))
+
+            live.value = atLimit + message("newest")
+            assertEquals(MAX_CACHED_THREAD_ROWS, cache.readThread("server-a", "conv-1").size)
+            assertEquals(null, repository.readHistoryPosition("conv-1"))
+            job.cancel()
+        }
+
+    @Test
     fun `a deleted conversation's history position is never written back`() =
         runTest(UnconfinedTestDispatcher()) {
             val cache = fileCache().also { it.seed() }
@@ -547,7 +569,8 @@ class CachingConversationRepositoryTest {
             conversationId: String,
             rows: List<ThreadItem>,
         ): Result<Unit> {
-            writes += rows
+            // What the cache keeps, per writeThread's contract: the repository hands it the drawn rows (#1354).
+            writes += cacheableThreadRows(rows)
             return if (failWrites) {
                 Result.failure(
                     ConversationCacheException("conversation cache write_thread failed: io"),

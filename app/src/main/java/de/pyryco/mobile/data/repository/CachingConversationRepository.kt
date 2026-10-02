@@ -37,8 +37,10 @@ import java.util.concurrent.ConcurrentHashMap
  * cache with the open-time snapshot, and the next connection's rows merge over everything drawn so far.
  *
  * If more than one page arrived while offline, a reconnect's newest page does not overlap the base's
- * tail: the base draws above a gap in arrival order until the reader scrolls up and the history walk,
- * whose pages land in the live projection, fills it.
+ * tail: the base draws above a gap in arrival order. With no saved history position the reader's first
+ * pull asks for the newest page, and the walk, whose pages land in the live projection, can fill it. Once
+ * a position is saved (#1354) the walk continues from older than the cached rows and never returns to
+ * the newest page, so the gap stays until that position is cleared.
  *
  * What is written is the thread as drawn, restored-plus-live, not the live projection alone: right
  * after a reconnect the live side holds only the newest page and would shrink the cache. It is written
@@ -81,8 +83,10 @@ class CachingConversationRepository(
                 emit(drawn)
                 val cacheable = cacheableThreadRows(drawn)
                 if (cacheable != lastWritten && conversationId !in deleted) {
-                    // A failed write leaves lastWritten behind, so the next change retries it.
-                    if (cache.writeThread(serverId, conversationId, cacheable).isSuccess) {
+                    // A failed write leaves lastWritten behind, so the next change retries it. The cache is
+                    // handed the drawn rows, not the already-trimmed cacheable ones, so it can see a trim at
+                    // MAX_CACHED_THREAD_ROWS and drop the saved history position (#1354).
+                    if (cache.writeThread(serverId, conversationId, drawn).isSuccess) {
                         lastWritten = cacheable
                     } else {
                         RelayLog.d { "event=thread_cache_write_failed" }

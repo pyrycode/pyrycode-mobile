@@ -70,7 +70,8 @@ interface ConversationCache {
      * [writeConversations]; a failed write leaves the previous document intact.
      *
      * Keeps the stored [HistoryPosition] (#1354), unless [rows] were trimmed at [MAX_CACHED_THREAD_ROWS]:
-     * the oldest kept row then no longer matches it, so the position is dropped.
+     * the oldest kept row then no longer matches it, so the position is dropped. A caller must pass the
+     * untrimmed rows for that to be seen.
      */
     suspend fun writeThread(
         serverId: String,
