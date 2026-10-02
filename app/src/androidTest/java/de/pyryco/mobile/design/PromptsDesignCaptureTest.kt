@@ -19,6 +19,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -35,6 +36,8 @@ import de.pyryco.mobile.ui.conversations.thread.QuestionModalEvent
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -140,32 +143,47 @@ class PromptsDesignCaptureTest {
 
         open(CLIENT, ids)
         awaitQuestion()
-        assertTrue(rule.onAllNodesWithTagCount("permission-request-card") == 0)
+        assertNoPermission()
         secureCapture("switch-question-chat", "636:3279")
 
         back()
-        secureCapture("switch-list", "640:2440")
+        secureCapture("switch-list", "640:2440", expectSecure = false)
 
         open(OTHER, ids)
-        assertTrue(rule.onAllNodesWithTagCount("question-batch-title") == 0)
-        assertTrue(rule.onAllNodesWithTagCount("permission-request-card") == 0)
-        // The composer is the only text field in a chat with no prompt.
-        rule.onNode(hasSetTextAction()).performTextInput("Release notes draft")
+        assertNoQuestion()
+        assertNoPermission()
+        // The composer is the only text field in a chat with no prompt. Open the keyboard first so closing it
+        // is awaited, rather than racing the IME that text input would show (#1433 rework).
+        val composer = rule.onNode(hasSetTextAction())
+        design.openKeyboard(composer)
+        composer.performTextInput("Release notes draft")
         rule.waitUntil(5_000) { thread().draft.value == "Release notes draft" }
-        if (design.insets().isVisible(WindowInsetsCompat.Type.ime())) design.closeKeyboard()
-        secureCapture("switch-other-chat", "640:2646")
+        design.closeKeyboard()
+        assertFalse(design.insets().isVisible(WindowInsetsCompat.Type.ime()))
+        secureCapture("switch-other-chat", "640:2646", expectSecure = false)
 
         back()
         open(KITCHEN, ids)
         rule.waitUntil(5_000) { thread().currentModal.value is ModalUiState.Open }
         rule.onNodeWithTag("permission-request-card").assertIsDisplayed()
-        assertTrue(rule.onAllNodesWithTagCount("question-batch-title") == 0)
+        assertNoQuestion()
         secureCapture("switch-permission-chat", "639:2451")
 
         back()
         open(CLIENT, ids)
         awaitQuestion()
-        assertTrue(rule.onAllNodesWithTagCount("permission-request-card") == 0)
+        assertNoPermission()
+    }
+
+    /** The view model's own state, not a lazily composed node, decides that no batch reached this chat. */
+    private fun assertNoQuestion() {
+        rule.waitForIdle()
+        assertNull(thread().questionModal.value)
+    }
+
+    private fun assertNoPermission() {
+        rule.waitForIdle()
+        assertFalse(thread().currentModal.value is ModalUiState.Open)
     }
 
     /** The batch reached this chat: its actions show at the stream's end. */
@@ -260,16 +278,16 @@ class PromptsDesignCaptureTest {
         }
     }
 
-    private fun androidx.compose.ui.test.junit4.ComposeTestRule.onAllNodesWithTagCount(tag: String): Int =
-        onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().size
-
     /**
      * Draws the decor view into `<additionalTestOutputDir>/design-1220/prompts/<name>.png`, cropped above an
      * open keyboard, with a `.txt` of the same fields [DesignCapture.capture] writes plus the secure flag.
+     * Fails unless the window's `FLAG_SECURE` is [expectSecure], on a blank or black frame, and under
+     * `requireRealSystemBars=true` unless the platform reported real bars to the decor view.
      */
     private fun secureCapture(
         name: String,
         figmaNode: String,
+        expectSecure: Boolean = true,
     ) {
         rule.waitForIdle()
         instrumentation.uiAutomation.waitForIdle(500, 5_000)
@@ -281,7 +299,10 @@ class PromptsDesignCaptureTest {
         val bars = design.insets().getInsets(WindowInsetsCompat.Type.systemBars())
         val ime = design.insets().getInsets(WindowInsetsCompat.Type.ime())
         if (InstrumentationRegistry.getArguments().getString("requireRealSystemBars") == "true") {
-            assertTrue("real system bars required for design evidence", bars.top > 0 && bars.bottom > 0)
+            // insets() substitutes synthetic bars when the platform reports none; the decor view's own insets do not.
+            val platform = rule.runOnIdle { ViewCompat.getRootWindowInsets(root) }
+            val real = platform?.getInsets(WindowInsetsCompat.Type.systemBars())
+            assertTrue("real system bars required for design evidence", real != null && real.top > 0 && real.bottom > 0)
         }
         var secure = false
         val image = Bitmap.createBitmap(root.width, root.height - ime.bottom, Bitmap.Config.ARGB_8888)
@@ -293,6 +314,8 @@ class PromptsDesignCaptureTest {
         }
         val colors = (0 until image.height step 8).flatMap { y -> (0 until image.width step 8).map { x -> image.getPixel(x, y) } }
         assertTrue("capture must contain rendered content", colors.toSet().size > 10)
+        assertTrue("capture must not be black", colors.any { (it and 0xFFFFFF) > 0x101010 })
+        assertEquals("FLAG_SECURE on the window while capturing $name", expectSecure, secure)
         assertEquals("capture matches the window width", metrics.widthPixels, image.width)
         File(output, "$name.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
         File(output, "$name.txt").writeText(
