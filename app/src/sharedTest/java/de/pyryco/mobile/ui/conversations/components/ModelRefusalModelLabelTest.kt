@@ -140,7 +140,8 @@ class ModelRefusalModelLabelTest {
 
         val title = annotated("Refused on claude-opus-5-5, continued on Sonnet")
         assertEquals(FontFamily.Monospace, title.isolatedSpan("claude-opus-5-5").item.fontFamily)
-        annotated("Switch back to claude-opus-5-5")
+        val button = annotated("Switch back to claude-opus-5-5")
+        assertEquals(FontFamily.Monospace, button.isolatedSpan("claude-opus-5-5").item.fontFamily)
     }
 
     @Test
