@@ -18,10 +18,12 @@
   (`thread-rerun-results.xml`, 1 executed, 0 failures), and `runConfigurationAndReaderAt412By892` uses a model menu
   that supports auto mode (`run-configuration-rerun-results.xml`, 1 executed, 0 failures). `compactAt320By700` was
   rerun in the second rework (`compact-rerun-results.xml`, 1 executed, 0 failures) and its captures replace the
-  earlier ones.
+  earlier ones. The 412x892 images come from `thread-results.xml` and its two reruns, which ran before the second
+  rework changed the waits and the panel helpers; the dispatcher's UI gate shows the current waits pass, but did not
+  produce these images.
 - **Strict waits:** every frame state waits for its marker text ("Connecting…", "Offline · Retry", "Thinking",
   "2 tasks running", "Pairing error", "Switch back to", "Sonnet", "Manual approval", "Builder Pipeline Plan",
-  "No background tasks", "No background-task report yet" and so on) and fails the run if it does not appear within 5 s. No capture is taken of a state that did not render.
+  "No background tasks", "No background-task report yet" and so on) and fails the run if it does not appear within 5 s. The bubble photo's decode gets 10 s. No capture is taken of a state that did not render.
 
 Verdicts compare each capture with its frame at 1:1 in the side-by-side and overlay images. Figma's frames have no
 system chrome, and the thread lays out inside the bars: every thread element sits 24 px below its frame position at
@@ -36,7 +38,8 @@ locale ("5/10/26 - 12:00 PM" for the frames' "13.01.2026 - 13:55"). Neither is c
 
 **Routed defects.** #1494 refusal model names · #1496 inset sheets and the task panel's Close · #1497 Run
 configuration · #1498 workspace delimiter in the seed · #1499 Offline and usage-limit pills · #1485 compact footer ·
-#1512 delimiter rule inset · #1513 photo above text · #1529 states with no frame (Gaps) · #1118 agent switch
+#1512 delimiter rule inset · #1513 photo above text and photo bubble width · #1529 states with no frame (Gaps) ·
+#1532 PDF tile not dimmed while disconnected · #1533 reader list indent · #1534 task panel spacing · #1118 agent switch
 (pending) · #1510 dark status-bar icons (fixed after these captures; see Status bar). #1493, #1495 and #1500 asked
 for these captures against the updated frames; their verdicts are below, and the states #1500 could not cover moved
 to #1529.
@@ -53,13 +56,14 @@ verdicts apply to each of those frames, which list only what differs.
 | Padding | match: 20 px gutters |
 | Spacing | match |
 | Typography | match: input, band label and footer |
-| Colour | match: "Cxt high: 84%" in the error colour, as every updated frame draws it; PDF tile outline and label in primary, as Input area `134:5013` now draws them |
+| Colour | match: "Cxt high: 84%" in the error colour, as every updated frame draws it; PDF tile outline and label in primary, as Input area `134:5013` now draws them, on the connected frames. The disconnected frames `627:1740`, `627:4657` and `627:4910` dim the PDF tile; see those frames |
 | Borders | match: input has none; PDF tile outlined |
 | Radii | match: input and tile corners |
 | Icon paths | match: snowflake, remove badges, PDF glyph, paperclip and tune Status opener |
 | Component state | match: send enabled with text, Actions with chevron while connected |
 
-- **Routed:** none at 412 px. The compact footer is under "Keyboard open / Compact 150%".
+- **Routed:** #1532 for the PDF tile while disconnected. The compact footer is under "Keyboard open / Compact
+  150%".
 
 ### Conversation Thread — `16:8`
 
@@ -72,7 +76,7 @@ verdicts apply to each of those frames, which list only what differs.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: the user bubble draws its text first and the photo below it; the frame draws the photo at the top of the bubble. The refusal title wraps to two lines (see `620:1577`). Bubble widths, photo size and file row match |
+| Geometry | mismatch: the user bubble draws its text first and the photo below it; the frame draws the photo at the top of the bubble. The refusal title wraps to two lines (see `620:1577`). The photo message bubble is about 272 px wide where the frame's (`I533:1956;132:4567`) is 222 px, so the bubble and photo sit about 50 px further left. Photo size, the other bubble widths and the file row match |
 | Padding | match: 20 px bubble padding |
 | Spacing | match |
 | Typography | mismatch: refusal model names (see `620:1577`). File row name middle-ellipsized ("Filename of th…ttachment.pdf"), as the updated frame |
@@ -82,7 +86,7 @@ verdicts apply to each of those frames, which list only what differs.
 | Icon paths | match: back, overflow, copy, document outline, snowflake |
 | Component state | match: thinking, send enabled, photo loaded |
 
-- **Routed:** #1513 (photo position), #1494 (model names). The frame's PDF row between two paragraphs cannot be
+- **Routed:** #1513 (photo position and photo bubble width), #1494 (model names). The frame's PDF row between two paragraphs cannot be
   expressed by the app's message model; #1513 asks for that decision too.
 
 ### Conversation Thread / Tool row — `674:5853`
@@ -181,7 +185,7 @@ verdicts apply to each of those frames, which list only what differs.
 - **Capture:** `connecting.png`, `reconnecting.png` (412x892, 1.0)
 - **Side-by-side:** `connecting-side-by-side.png`, `reconnecting-side-by-side.png`
 - **Overlay:** `connecting-overlay.png`, `reconnecting-overlay.png`
-- **Verdict:** match
+- **Verdict:** mismatch
 
 | Aspect | Verdict |
 |---|---|
@@ -189,13 +193,13 @@ verdicts apply to each of those frames, which list only what differs.
 | Padding | match |
 | Spacing | match |
 | Typography | match: "Connecting…", "Reconnecting in 12s" |
-| Colour | match: Send dimmed; paperclip and tune at full strength |
+| Colour | mismatch: the staged PDF tile's outline, glyph and "PDF" label stay in primary; the frames dim them. Send dimmed and paperclip and tune at full strength match |
 | Borders | match |
 | Radii | match |
 | Icon paths | match: snowflake |
 | Component state | match: Actions without its chevron, Send disabled |
 
-- **Routed:** none
+- **Routed:** #1532
 
 ### Offline — `627:4910`
 
@@ -211,13 +215,13 @@ verdicts apply to each of those frames, which list only what differs.
 | Padding | mismatch: pill text inset (see geometry) |
 | Spacing | match: pill 12 px under the header |
 | Typography | match |
-| Colour | match: error-container pill; Send dimmed |
+| Colour | mismatch: the staged PDF tile stays in primary where the frame dims it, as in Connecting. Error-container pill and dimmed Send match |
 | Borders | match |
 | Radii | match: pill radius |
 | Icon paths | match: the band shows the snowflake alone, as the updated frame |
 | Component state | match: Actions and Send disabled, as the updated frame |
 
-- **Routed:** #1499 (pill)
+- **Routed:** #1499 (pill), #1532 (PDF tile)
 
 ### Task count pill — `568:3139`, with the usage-limit and pairing-error pills
 
@@ -254,15 +258,15 @@ verdicts apply to each of those frames, which list only what differs.
 |---|---|
 | Geometry | mismatch: the sheet ends above the navigation bar with rounded bottom corners; the frames run it to the screen's bottom. Header, groups and cards match |
 | Padding | match: 28 px sheet gutters, 14 px card padding |
-| Spacing | match |
-| Typography | match: title, group headings, monospace commands and patches, meta lines. In Capped the second patch fits one line where the frame wraps "roste" by a few pixels |
+| Spacing | mismatch in Populated and Capped, measured at x 31 with the 24 px bar shift removed. Capped: the "Partial list" banner ends at 137 against the frame's 143, the first card starts at 156 against 163, and card 1 ends at 334 against 342. Populated: content drifts higher down the panel, by 3, 4, 5, 7, 8 and then 9 px. Empty and Never reported match |
+| Typography | match: title, group headings, monospace commands and patches, meta lines. In Capped the second patch fits one line where the frame wraps "roste" by a few pixels, and card 1 wraps "staticcheck" / "-checks" where the frame wraps "staticcheck -" / "checks" |
 | Colour | match: card, tag and cut-marker colours |
 | Borders | match: header divider, dashed cut markers, empty-state rings |
 | Radii | mismatch: rounded bottom corners (see geometry) |
 | Icon paths | match: close X, tag dots, empty and never-reported rings |
 | Component state | mismatch: an outlined Close button at the bottom of all four panels; the frames close from the header X only |
 
-- **Routed:** #1496
+- **Routed:** #1496 (Close button, inset sheet), #1534 (spacing)
 
 ### Run configuration / Sonnet selected / Dark — `600:1694`
 
@@ -294,12 +298,12 @@ verdicts apply to each of those frames, which list only what differs.
 - **Capture:** `markdown-reader.png` (412x892, 1.0)
 - **Side-by-side:** `markdown-reader-side-by-side.png`
 - **Overlay:** `markdown-reader-overlay.png`
-- **Verdict:** match
+- **Verdict:** mismatch
 - Opened through the published view model's `onOpenMarkdownLink` with the frame's note.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | match: header, divider, headings, list, code block and quote at the frame's coordinates inside the bars |
+| Geometry | mismatch: the first list item's wrapped line ("version") hangs under the item text at x≈34; the frame returns it to the 20 px gutter. Header, divider, headings, code block and quote sit at the frame's coordinates inside the bars |
 | Padding | match: 20 px gutters |
 | Spacing | match |
 | Typography | match: heading, body, link, code and quote styles at 24 px line height. The first paragraph breaks after "2026-09-01." where the frame breaks after "since"; that line is within 2 px of the measure in both |
@@ -309,7 +313,7 @@ verdicts apply to each of those frames, which list only what differs.
 | Icon paths | match: back, overflow |
 | Component state | match: rendered note |
 
-- **Routed:** none
+- **Routed:** #1533. It also allows the frame to change instead, if a hanging indent is preferred.
 
 ### Conversation Thread / Session delimiter — `675:3682`
 
@@ -387,6 +391,8 @@ verdicts apply to each of those frames, which list only what differs.
 - **Overlay:** `keyboard-overlay.png`
 - **Verdict:** match
 - The test IME stands in for the frame's 240 px keyboard placeholder; the keyboard itself is not compared.
+- The teardrop over the footer row in `keyboard.png` and `compact-keyboard.png` is the focused field's text-selection
+  handle, a popup above the layout, not a layout overlap.
 
 | Aspect | Verdict |
 |---|---|
@@ -465,7 +471,7 @@ not apply to the seeded thread's full list) and #1510 (status-bar icons).
 | Overflow menu, compact | `compact-overflow-menu.png` | All four rows visible and reachable; no workspace action |
 | Actions menu, compact | `compact-actions-menu.png` | All four rows visible above the footer; it covers the count pill while open, which is the menu's overlay, not a layout overlap |
 | Task panel, compact | `compact-tasks.png` | Title wraps to two lines beside the close X; cards scroll and the Close button stays reachable (#1496 removes it; the test closes through the header X) |
-| Run configuration, compact | `compact-run-configuration.png` | Model and effort rows fit; the sheet scrolls to Running model and the Permission section, and Done is pinned, displayed and reachable (asserted). The fixture supports auto mode, and "Auto approval" rendering is asserted |
+| Run configuration, compact | `compact-run-configuration.png` | Model and effort rows fit, and Done is pinned, displayed and reachable (asserted). The capture ends at "Running model"; the Permission section lies below it in the sheet's scrolling column. The test asserts only that the "Auto approval" row is composed, not that it or "Bypass approvals" scrolls into view, so reaching the Permission rows at this size is not shown |
 
 Approved geometry is unchanged: the audit changes no production code.
 
@@ -479,8 +485,15 @@ The six states the first pass listed here now have frames in `674:5852` and are 
 | Status-band arms `Resetting`, `ApiRetry`, `Compacting`, `TurnOutcome`, `Working`, `Stalled`, `RunningTool` | none | #1312, #897, #803 | #1529 |
 | `StoppedTurn`, `CompactionBoundary` and `UnrecognizedMessage` rows | none | #1356, #874, #1358, #608 | #1529 |
 | Slash-command type-ahead and thread snackbars | none | #885, #1149 | #1529 |
+| Send button's Stop variant (busy turn, empty draft) | none | #459, #643 | #1529 |
+| History tail rows: loading, retry, dead end, offline | none | #777, #778, #1352 | #1529 |
+| Composer strip while sending: "Uploading… N%" and dimmed tiles | none | #1327 | #1529 |
+| Top overlay Error pills: failed MCP server, and a usage-limit reading that is not a warning | none | #1345, #1002, #1115 | #1529 |
 
 No Mobile-page frame or Components-page component shows these states on 2026-10-02, so they are not captured. The
+Input area component `134:5013` has no Stop variant, and `ThreadInputBar` says so. For the two Error pills, the
+Components page's Pill `State=Error` (`347:6619`) gives the pill style, which the pairing-error pill already matches
+in `568:3139`, but no frame shows their text, tap target or place in the stack. The
 owning tickets are closed; #1529 asks for a frame or a recorded out-of-reference decision for each. The
 thread dialogs (Channel Info `668:5355` and `668:5460`, Rename `671:5664`, Save as channel `671:5718`, Delete
 confirmation `673:3665`) belong to #1431's list-side audit in `design-1220/list/`.

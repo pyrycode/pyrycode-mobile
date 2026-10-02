@@ -74,6 +74,8 @@ Pending for the documentation stage, from the verifier's second review:
   progress indicator to clear after an image attachment is ready; re-export and diff every frame at capture time.
 - Same topic: `ThreadDesignCaptureTest` runs in the UI gate on ATD, so a thread panel, menu or status-band change can
   break it.
+- Same topic, from the third review: check a shared-row verdict, such as "Composer and footer", against each frame's
+  own node data. Disconnected frames restyle shared parts.
 
 ## Revisions
 
@@ -122,3 +124,18 @@ Driven by the verifier's second FAIL on PR #1491.
 - **Waits and panel helpers.** Pairing-error, empty and never-reported panel states wait for their own text. The
   panel opens and closes through the header X's "Close" description, which survives #1496 removing the text button.
   The bubble photo is written only when `retrieveAttachment` first asks for it.
+
+### 2026-10-02 — third rework, by hand
+
+The ticket halted at `rework-count:3` after the verifier's third FAIL on PR #1491. The findings were index and
+routing work, so they were fixed by hand instead of another builder run. No capture was retaken.
+
+- **Verdicts corrected.** The disconnected PDF tile (Connecting, Reconnecting, Offline), the photo bubble width in
+  `16:8`, the reader's list indent and the task panel spacing in Populated and Capped are now mismatches. They are
+  routed to the new #1532, #1533 and #1534, and the bubble width was added to #1513.
+- **Gaps.** The Stop variant, the history tail rows, the uploading strip and the two Top overlay Error pills are
+  listed and added to #1529's table.
+- **Compact Run configuration.** The row no longer claims the Permission rows are reached by scrolling; it says the
+  capture does not show it.
+- **Nits.** The index states which run produced the 412x892 images and the 10 s photo wait, and names the
+  text-selection handle in the keyboard captures. `at` pads its seconds to two digits.

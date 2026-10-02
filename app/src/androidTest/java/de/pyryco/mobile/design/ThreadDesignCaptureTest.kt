@@ -677,6 +677,6 @@ class ThreadDesignCaptureTest {
             > Tokens first, running time second.
             """.trimIndent()
 
-        fun at(second: Int) = Instant.parse("2026-05-10T09:00:0${second}Z")
+        fun at(second: Int) = Instant.parse("2026-05-10T09:00:%02dZ".format(second))
     }
 }
