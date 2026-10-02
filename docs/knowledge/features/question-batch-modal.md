@@ -330,11 +330,15 @@ question rows).
   [Real-claude e2e coverage](../../e2e-interactive-stream.md)). The full rung-3 live suite at `7fba6c4b`
   merged with `origin/main` `207ff366` reported **44 executed, 43 passed, 1 failed, 0 skipped**, with this
   method executed and passed. The one failure,
-  `interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost`, is an inherited, unrelated regression
-  (also fails on `origin/main` alone, traced to daemon #2699) and was isolated in the same branch
-  (`@Ignore`, removed from the LIVE list, `LIVE_MINIMUM` lowered to 43) with no production change — tracked
-  by #1369, which is expected to restore all three. See the `LIVE_MINIMUM` history in [Real-claude e2e
-  coverage](../../e2e-interactive-stream.md) for the full chain.
+  `interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost`, was an inherited, unrelated regression
+  (also failed on `origin/main` alone, traced to daemon #2699) and was isolated in the same branch
+  (`@Ignore`, removed from the LIVE list, `LIVE_MINIMUM` lowered to 43) with no production change. #1351
+  fixed the underlying cause — the live `message` arm now keeps a held row's attachments instead of
+  replacing them — and #1369 reverted the isolation; `android-test-gate.py`'s floor is counted from the
+  curated list since 2026-10-01, so only the `@Ignore` and the LIVE-list entry needed restoring. The
+  dispatcher's full live gate at `6e79da4f` merged with `origin/main` `b6c06182` reported **50 executed,
+  50 passed, 0 failed, 0 skipped**, with the restored method passing. See the `LIVE_MINIMUM` history in
+  [Real-claude e2e coverage](../../e2e-interactive-stream.md) for the full chain.
 
 ## Related
 
