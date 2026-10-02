@@ -116,13 +116,14 @@ python3 scripts/design-compare.py <state>.png figma-<node>.png <folder>/<state>
 Every screen, modal, sheet, menu and material UI state reachable from the `MainActivity` routes and the
 `ThreadScreen` overlays, joined from the four audit indexes and checked against source and Figma.
 
-- **App commit:** `main` at `2ca77577`. No code or test source changed for this inventory; the audits' own
+- **App commit:** `main` at `5dfa507a`. No code or test source changed for this inventory; the audits' own
   commits are in their indexes.
 - **Figma inspection:** the Mobile page `0:1` and the Components page `347:5692`, read with `get_metadata` on
   2026-10-02, and the Mobile page's section Reachable states · #1539 `696:4676` re-read the same day after it
-  was drawn. The audit rows were re-read against the indexes as merged at `2ca77577`.
+  was drawn. The audit rows were re-read against the indexes as merged at `5dfa507a`.
 - **Status:** each row takes one of these values.
-  - `audited, match` and `audited, mismatch` have a verdict in the linked index section.
+  - `audited, match` and `audited, mismatch` have a verdict in the linked index section, or, for the launch
+    splash, on the issue that compared it.
   - `audited, unverified` was in an audit's scope, but the capture did not reach the state; its linked issue
     owns the check.
   - `audited for clipping` has no frame at that size; the audit judged clipping and reachability only.
@@ -131,10 +132,12 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
   - `component only` is a Components-page variant with no Mobile frame and no capture yet.
   - `gap` is a reachable state with no frame or component; its linked issue asks for one or for an
     out-of-reference decision.
+  - An `audited` row's verdict can include gaps its audit recorded as accepted by decision rather than routed;
+    the row says so.
   - `out of scope` is drawn by the platform, not the app.
   - `not shipped` is a frame for a feature the app does not have; it does not count toward parity.
   - `retired` is a frame replaced by a later one.
-- **Linked issues** are the routed mismatches and gaps; each one's state at `2ca77577` is under
+- **Linked issues** are the routed mismatches and gaps; each one's state at `5dfa507a` is under
   [Linked issues](#linked-issues). An `audited` row whose only issues are closed matched, or was fixed after
   its capture; no app-wide re-check follows (see [Verdict](#verdict)). When an issue closed as a family
   root, its split children are linked on the same row.
@@ -146,7 +149,7 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 | Welcome | `6:32` | audited, match | `onboarding/index.md` › Welcome | #1212 | none |
 | Scanner | `13:2` | audited, match | › Scanner | #1213 | none |
 | Scanner — Denied | `32:2` | audited, match | › Scanner — Denied | #1213 | none |
-| Scanner — Camera error; scanner invalid-QR error (`ScannerUiState.Error`, same layout) | `654:5032` | audited, match | › Scanner — Camera error | #326 | none |
+| Scanner — Camera error; scanner invalid-QR and save-failed errors (`ScannerUiState.Error`, including `SAVE_FAILED_MESSAGE`, same layout) | `654:5032` | audited, match | › Scanner — Camera error | #326 | none |
 | Pairing — Confirm fingerprint (scanner and code path) | `654:4834` | audited, match | › Pairing — Confirm fingerprint | #1270, #1214 | none |
 | Pairing — Connecting | `654:4882` | audited, mismatch | › Pairing — Connecting | #1386 | #1461 |
 | Pairing — Verification failed, retry | `654:4932` | audited, match | › Pairing — Verification failed, retry | #1386 | none |
@@ -157,17 +160,17 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 | Pair code — Invalid code | `663:3191` | audited, mismatch | › Pair code — Invalid code | #1269 | #1462, #1506 |
 | Re-pair, Re-pair — Wrong host | `663:3266`, `663:3331` | audited, mismatch | › Re-pair; › Re-pair — Wrong host | #842 | #1462, #1506 |
 | Scanner — Connecting | `32:20` | retired | replaced by `654:4882` | — | none |
-| Launch splash window | `701:5001`, icon spec `701:5005` | frame only | not audited; the harness cannot capture it, #1545 checks it on the emulator display | #1545 | #1539, #1545 |
+| Launch splash window | `701:5001`, icon spec `701:5005` | audited, mismatch (fixed by #1545, which compared a cold launch on the emulator display with `701:5001`) | no index row: the harness cannot capture the splash; the comparison is on #1545 | #1545 | #1539, #1545 |
 
 ### Channel list (sidebar)
 
 | Surface or state | Node | Status | Audit row | Owner | Linked issues |
 |---|---|---|---|---|---|
 | Channel List, connected host, expanded tree | `15:8` | audited, mismatch | `list/index.md` › Channel List | #737, #738 | #1486 (family root), #1521, #1522, #1523, #1525 |
-| Selected and pressed (darker-filled) conversation rows, edit pen on the selected row | `15:8` | audited, unverified | › Channel List | #737, #738 | #1486, #1523 |
+| Selected and pressed (darker-filled) conversation rows, edit pen on the selected row | `15:8` | audited, mismatch (fixed and verified against `15:8` by #1523) | › Channel List | #737, #738 | #1486, #1523 |
 | Host-row edit pen | `15:8` draws none | audited, mismatch | › Channel List (Icon paths) | #744 | #1525 |
-| Collapsed folders and hosts | `15:8` | audited, unverified | › Channel List | #738 | #1486, #1521 |
-| Conversation status dot: Waiting, Running, Unread | `15:8` | audited, unverified | › Channel List (Colour) | #738 | #1486, #1524 |
+| Collapsed folders and hosts | `15:8` | audited, mismatch (verified against `15:8` by #1521's screen test) | › Channel List | #738 | #1486, #1521 |
+| Conversation status dot: Waiting, Running, Unread | `15:8` | audited, mismatch (verified against the frame's dot nodes by #1524) | › Channel List (Colour) | #738 | #1486, #1524 |
 | Disconnected, re-pair-required and update-required host rows | `672:3493` | frame only | `list/index.md` › Gaps | #840, #1336, #842, #1009 | #1504 |
 | Waiting marks while prompts wait | `640:2440` | audited, unverified | `prompts/index.md` › Switch chats while prompts wait (`switch-list.png` captured, marks unjudged) | #1338 | #1507 |
 | Create-chat failure snackbar | none | gap | #1504's comment | #958 | #1504 |
@@ -185,7 +188,7 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 | Overflow menu | `675:5883` | audited, match | › Overflow menu | #1199 | #1500 |
 | Actions menu | `675:5938` | audited, match | › Actions menu | #884 | #1500 |
 | Keyboard open | `675:6160` | audited, match | › Keyboard open | #1149 | #1500 |
-| Keyboard open, compact 150 % | `676:3981` | audited, mismatch | › Keyboard open / Compact 150% | #1149, #1347, #1412 | #1485, #1500 |
+| Keyboard open, compact 150 % | `676:3981` | audited, mismatch | › Keyboard open / Compact 150% | #1149, #1347, #1412 | #1485, #1500; Line-box and Cancel-height gaps accepted by decision, not routed (`prompts/index.md` › Compact frames at 150 %) |
 | Compact thread, notices, menus, task panel, Run configuration | none at 320x700 | audited for clipping | › Compact, keyboard and menus | #1149, #1347, #1412 (compact layout); #1199, #884 (menus); #1295 (task panel); #1195 (Run configuration); #1002 (usage-limit pill) | #1485, #1499 (family root), #1519, #1496 |
 | Status bar icons | none | audited, mismatch (captured with the dark-icon defect, fixed after capture) | › Status bar | #1149 (edge-to-edge window) | #1510 |
 | Turn outcome pill and stopped-turn row | `685:3992`, `620:1574` | frame only | `thread/index.md` › Gaps | #1356, #897 | #1529 |
@@ -242,6 +245,7 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 | Archive, Discussions tab | none | gap | `list/index.md` › Gaps | #1265 | #1487 |
 | Archive, empty Channels and Discussions | `673:3577`, `673:3621` | frame only | › Gaps | #1265 | #1504 |
 | Restore snackbars | none | gap | #1504's comment | #1265 | #1504 |
+| Loading ("Loading…") and load error ("Couldn't load archived discussions: …") | none | gap | #1504's second comment | #1265 | #1504 |
 
 ### Channel Info
 
@@ -249,7 +253,7 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 |---|---|---|---|---|---|
 | Channel Info, top of the sheet | `668:5355` (was `20:48`) | frame only | `list/index.md` › Channel Info Sheet, audited against the retired `20:48` | #1266 | #1488 |
 | Channel Info, scrolled to Actions | `668:5460` | frame only | › Channel Info Sheet (Actions unverified) | #1266 | #1488 |
-| System prompt editor while editing, saving or failed; MCP server rows with Reconnect and toggle | `668:5355`, `668:5460` (decision on #1539) | no separate frame | not audited | #1342, #1344 | #1539, #1488 |
+| System prompt editor while loading, unavailable, editing, saving or failed; MCP server rows with Reconnect and toggle | `668:5355`, `668:5460` (decision on #1539) | no separate frame | not audited | #1342, #1344 | #1539, #1488 |
 | Delete confirmation | `673:3665` | frame only | `list/index.md` › Gaps | #227 | #1504 |
 
 ### Settings
@@ -264,12 +268,17 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 |---|---|---|---|---|---|
 | Edit host, keyboard closed and open | `533:2369` | audited, mismatch | `list/index.md` › Modal › Edit host | #1277 | #1489 |
 | Edit host save and unpair failure messages | none | gap | #1504's comment | #1277 | #1504 |
+| Edit host saving | none | gap | #1504's second comment | #1277 | #1504 |
 | Unpair host confirmation | `671:5620` | frame only | `list/index.md` › Gaps | #745 | #1504, #1489 |
 | Edit channel | `671:5415` | frame only | › Gaps | #667 | #1504 |
+| Edit channel saving, archive failed, save failed, host unavailable | none | gap | #1504's second comment | #667 | #1504 |
 | Edit chat | `671:5499` | frame only | › Gaps | #827 | #1504 |
+| Edit chat saving, archive failed, save failed, host unavailable | none | gap | #1504's second comment | #827 | #1504 |
 | Create channel | `671:5558` | frame only | › Gaps | #958 | #1504 |
+| Create channel saving, create failed, prompt failed with the name locked, host unavailable | none | gap | #1504's second comment | #958 | #1504 |
 | Rename | `671:5664` | frame only | › Gaps | #957 | #1504 |
 | Save as channel | `671:5718` | frame only | › Gaps | #957 | #1504 |
+| Save as channel saving, save failed, prompt failed with the name locked | none | gap | #1504's second comment | #957 | #1504 |
 
 ### Run configuration
 
@@ -297,12 +306,12 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 | Questions · Unanswered | `636:3279` | audited, mismatch | `prompts/index.md` › Questions · Unanswered | #1305, #1299 | #1485; #1501 and #1484 fixed |
 | Questions · Answers selected | `636:3540` | audited, mismatch | › Questions · Answers selected | #1305, #1299 | #1485; #1501 fixed |
 | Questions · Other and keyboard | `636:3803` | audited, mismatch | › Questions · Other and keyboard | #1305 | #1485; #1501 and #1484 fixed |
-| Questions · Compact 150 % | `636:4066` | audited, mismatch | › Questions · Compact text at 150% | #1305 | #1485; #1543 redrew the frame, #1501 fixed |
+| Questions · Compact 150 % | `636:4066` | audited, mismatch | › Questions · Compact text at 150% | #1305 | #1485; #1543 redrew the frame, #1501 fixed; Line-box and Cancel-height gaps accepted by decision, not routed (`prompts/index.md` › Compact frames at 150 %) |
 | Permission · Safe default | `639:2242` | audited, mismatch | › Permission · Safe default | #1306, #1300, #1483 | #1509, #1485; #1501 fixed |
 | Permission · Session grant offered, selected | `639:2451`, `639:2666` | audited, mismatch | › Permission · Session grant offered; › … selected | #1306, #818, #1483 | #1509, #1485; #1501 fixed |
 | Permission · Confirm Allow once | `639:2882` | audited, mismatch | › Permission · Confirm Allow once (armed) | #1306, #451, #1483 | #1509, #1485; #1501 fixed |
 | Trust · Safe default | `639:3099` | audited, mismatch | › Trust · Safe default | #1306, #1483 | #1509, #1485; #1501 fixed |
-| Permission · Compact 150 % | `639:3308` | audited, mismatch | › Permission · Compact text at 150% | #1306, #1483 | #1485; #1543 redrew the frame, #1501 fixed |
+| Permission · Compact 150 % | `639:3308` | audited, mismatch | › Permission · Compact text at 150% | #1306, #1483 | #1485; #1543 redrew the frame, #1501 fixed; Line-box and Cancel-height gaps accepted by decision, not routed (`prompts/index.md` › Compact frames at 150 %) |
 | Switch chats while prompts wait | `640:2437` | audited, unverified | › Switch chats while prompts wait (the list's waiting marks unjudged) | #1305, #1306, #1337, #1338 | #1507 |
 | Refused answer, send failure, prompts while disconnected | `668:3054`, `668:3094`, `668:3169` | frame only | `prompts/index.md` › Gaps | #1340, #1305, #1321 | #1502 |
 
@@ -323,13 +332,19 @@ interactive states, and the launch splash window, and routed them to #1539. Its 
 drew the section Reachable states · #1539 `696:4676` and recorded the rest as needing no separate frame, so
 those rows are now `frame only` or `no separate frame`, and #1539 owns their capture. The Run configuration
 sheet's pending, read-only, menu-unavailable, truncated-menu, note and not-reported states, found after that
-decision, have no frame either; a comment on #1539 routes them there as `gap` rows.
+decision, have no frame either; a comment on #1539 routes them there as `gap` rows. Archive's loading and
+load-error states and the form modals' saving, failure, host-unavailable and name-locked states have no frame
+in List states `670:5299`, which draws each form at rest; a second comment on #1504 routes them there. The
+Rename dialog has no saving or failure state. A sweep of `ui/` for `loading =` and `error =` bindings,
+`UiState.Loading` and `UiState.Error` branches and `showSnackbar(` calls maps every hit to a row above or to
+an unreachable or retired surface.
 
 **Outside the inventory.** Platform-drawn surfaces are not the app's to match: the system file picker, the
 camera permission dialog the scanner requests, and the notifications permission dialog `MainActivity` requests.
 So are the pages and apps that app actions open: the browser for Channel Info's Memory plugin Install
 (`MEMORY_PLUGIN_DOCS_URL`) and for the Welcome setup link (`SETUP_URL`), the Play Store opened from an
-update-required host row, the share chooser and the save-to-document picker. The Mobile page's section Launcher
+update-required host row, the system app-details page Scanner — Denied's Open settings opens
+(`Settings.ACTION_APPLICATION_DETAILS_SETTINGS`), the share chooser and the save-to-document picker. The Mobile page's section Launcher
 icon `703:5001`, drawn after this inspection, is the home-screen icon rather than a surface reachable from the
 `MainActivity` routes; #1546 owns it. The sections Play store assets `718:5001` (Play icon `718:5002`, Feature
 graphic `718:5004`) and Play store screenshots `720:5001` (`720:7834` to `720:7842`), drawn on 2026-10-02, are
@@ -356,7 +371,7 @@ reachable, so none links an issue.
 
 ## Linked issues
 
-State of every issue linked above, read with `gh issue view` against `main` at `2ca77577` on 2026-10-02.
+State of every issue linked above, read with `gh issue view` against `main` at `5dfa507a` on 2026-10-02.
 
 | Issue | State | Subject |
 |---|---|---|
@@ -380,7 +395,7 @@ State of every issue linked above, read with `gh issue view` against `main` at `
 | #1501 | closed | prompt spacing and button heights |
 | #1502 | open | capture the prompt edge states `668:3051` |
 | #1503 | open | Settings rows spacing |
-| #1504 | open | capture the List states `670:5299` and list snackbars |
+| #1504 | open | capture the List states `670:5299` and list snackbars; Archive loading and error, form saving and failure states (comment) |
 | #1506 | open | pair-code error text and ellipsis |
 | #1507 | open | capture the list's waiting marks against `640:2440` |
 | #1509 | closed | short stream starts under the header |
@@ -401,15 +416,15 @@ State of every issue linked above, read with `gh issue view` against `main` at `
 | #1540 | open | capture the refusal row's component states (filed by #1434) |
 | #1541 | closed, not planned | re-verify app-wide parity (filed by #1434); retired by the owner, see [Verdict](#verdict) |
 | #1543 | closed | redraw the compact prompt frames at Android's 150 % |
-| #1545 | open | launch splash against `701:5001` |
+| #1545 | closed | launch splash against `701:5001` |
 | #1546 | open | launcher icon against `703:5001` |
 
 ## Verdict
 
-**Parity not reached.** 21 linked issues that count toward parity are open at `2ca77577`:
+**Parity not reached.** 20 linked issues that count toward parity are open at `5dfa507a`:
 
-- #1487, #1488, #1489, #1494, #1495, #1497, #1500, #1502, #1503, #1504, #1506
-- #1507, #1512, #1513, #1519, #1525, #1529, #1539, #1540, #1545, #1546
+- #1487, #1488, #1489, #1494, #1495, #1497, #1500, #1502, #1503, #1504
+- #1506, #1507, #1512, #1513, #1519, #1525, #1529, #1539, #1540, #1546
 
 Issue #1118 is also open, but its Codex agent switch frames draw a feature the app has not shipped, so they
 do not count until #1118 ships.

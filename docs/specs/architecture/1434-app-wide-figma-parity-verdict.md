@@ -81,3 +81,20 @@ Driven by the verifier's third review on PR #1542.
   audit indexes did not change between `cb21e634` and `2ca77577`.
 - **Nits.** Status bar row is `audited, mismatch` with closed #1510; #1495 is linked on the Conversation Thread
   and Composer band rows; the empty-thread Owner names no symbol; no wrapped line starts with a ticket number.
+
+### 2026-10-02 — fourth verifier rework
+
+Driven by the verifier's fourth review on PR #1542.
+
+- **Archive and form states.** Archive's loading and load-error states and the form modals' saving, failure,
+  host-unavailable and name-locked states (Edit channel, Edit chat, Create channel, Save as channel, Edit host
+  saving) are added as `gap` rows and routed by a second comment on #1504. No new issue was filed. A sweep of
+  `ui/` for `loading =` and `error =` bindings, `UiState.Loading` and `UiState.Error` branches and
+  `showSnackbar(` calls maps every hit to a row or to an unreachable or retired surface.
+- **States.** Re-recorded at `main` `5dfa507a`; #1545 closed, so 20 counted issues are open. The launch splash
+  row becomes `audited, mismatch`, fixed and compared on the emulator display by #1545. The audit indexes did
+  not change between `2ca77577` and `5dfa507a`.
+- **Nits.** The channel list rows #1521, #1523 and #1524 verified become `audited, mismatch`; the three compact
+  150 % rows name the line-box gaps accepted by decision in `prompts/index.md`; the system app-details page is
+  outside the inventory; the scanner error row names `SAVE_FAILED_MESSAGE`; the System prompt row names the
+  loading and unavailable states #1539's decision covers.
