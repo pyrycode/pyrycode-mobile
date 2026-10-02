@@ -66,3 +66,18 @@ Driven by the verifier's second review on PR #1542.
 - **#1541 retired.** Juhana closed #1541 as not planned: no app-wide re-verification follows. The verdict stays "parity not reached", records #1541's closure as an owner-decided deviation from the re-verification criterion, and names the open issues as the only route to the remaining captures. New contract: the verdict counts the open linked issues itself rather than through #1541's blockers.
 - **Merged indexes re-read.** After merging `main` at `cb21e634`, the prompts rows follow the merged `prompts/index.md`: #1485 stays linked, #1501 (and #1484 where the index says so) are recorded as fixed, and the compact rows link #1543's redraw. Issue states are re-recorded at `cb21e634`; 23 counted issues are open.
 - **Routing and rows.** The Launcher icon section `703:5001` is routed to #1546. The compact thread row links #1519 beside its family root #1499 and names its owners. The waiting-marks rows use the defined `audited, unverified` status. The Markdown reader table adds the linked-reader entry point `Routes.MARKDOWN_LINK`.
+
+### 2026-10-02 — third verifier rework
+
+Driven by the verifier's third review on PR #1542.
+
+- **Run configuration states.** The `StatusSheet` pending, permission-pending, read-only, menu-unavailable or
+  empty, truncated-menu, note and not-reported states are reachable and had no row. They are added as `gap` rows
+  and routed to #1539 by a comment, as #1504's comment routed the list snackbars. No new issue was filed, so the
+  verdict count does not grow.
+- **Outside the inventory.** The Play store sections `718:5001` and `720:5001` are store-listing assets and are
+  listed there, as are the external pages and apps that app actions open.
+- **States.** Re-recorded at `main` `2ca77577`; #1493 and #1523 closed, so 21 counted issues are open. The
+  audit indexes did not change between `cb21e634` and `2ca77577`.
+- **Nits.** Status bar row is `audited, mismatch` with closed #1510; #1495 is linked on the Conversation Thread
+  and Composer band rows; the empty-thread Owner names no symbol; no wrapped line starts with a ticket number.
