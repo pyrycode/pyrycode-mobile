@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
@@ -48,7 +49,7 @@ fun SettingsScreen(
         Text(
             text = "Notifications",
             modifier = Modifier.fillMaxWidth(),
-            style = MaterialTheme.typography.labelLarge,
+            style = MaterialTheme.typography.labelLarge.copy(lineHeightStyle = FrameLineBox),
             color = MaterialTheme.colorScheme.onPrimaryContainer,
         )
         Row(
@@ -59,7 +60,7 @@ fun SettingsScreen(
             Text(
                 text = "Push notifications when claude responds",
                 modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodyLarge,
+                style = MaterialTheme.typography.bodyLarge.copy(lineHeightStyle = FrameLineBox),
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Switch(checked = pushNotifications, onCheckedChange = onTogglePushNotifications)
@@ -73,13 +74,13 @@ fun SettingsScreen(
                 Text(
                     "Notification sound",
                     modifier = Modifier.fillMaxWidth(),
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyLarge.copy(lineHeightStyle = FrameLineBox),
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
                     "Default",
                     modifier = Modifier.fillMaxWidth(),
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.copy(lineHeightStyle = FrameLineBox),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -92,6 +93,9 @@ fun SettingsScreen(
         }
     }
 }
+
+// Untrimmed line boxes keep the frame's 20, 24 and 16 px text heights, so the rows below stay at 17:2 offsets (#1503).
+private val FrameLineBox = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
 
 /** Also used by the separate About screen. */
 @Composable
