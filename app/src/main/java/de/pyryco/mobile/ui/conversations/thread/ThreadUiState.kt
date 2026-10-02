@@ -365,6 +365,21 @@ data class ThreadRunConfig(
             return choices.filter { it.resolvedModel == resolved }.singleOrNull()
         }
 
+    /**
+     * The menu's label for a raw model [identifier] (#1494), as the refusal row names it, or `null` when the
+     * menu does not know it: the identifier must equal a published row's `value` or `resolvedModel` exactly,
+     * counted over rendered and overflow rows alike, and every matching row must give the same label. No
+     * family or prefix guess, and no menu means unknown. An empty identifier never matches a cut `resolvedModel`.
+     */
+    fun knownModelLabel(identifier: String): String? {
+        if (identifier.isEmpty()) return null
+        return (choices + overflowChoices)
+            .filter { it.value == identifier || it.resolvedModel == identifier }
+            .map { it.label }
+            .distinct()
+            .singleOrNull()
+    }
+
     /** Metadata follows the saved inherited setting even when no ordinary row can represent it. */
     val selectedMetadata: ThreadModelChoice?
         get() =

@@ -749,6 +749,8 @@ fun ThreadScreen(
                                                         agent = state.agent,
                                                         switchBack = switchBackOffer?.takeIf { it.armedBy(item) },
                                                         onSwitchBack = onSwitchBack,
+                                                        // #1494: a model the menu knows reads as its menu label.
+                                                        modelLabel = state.runConfig::knownModelLabel,
                                                     )
                                                 is ThreadItem.StoppedTurn -> StoppedTurnRow(item = item, agent = state.agent)
                                             }

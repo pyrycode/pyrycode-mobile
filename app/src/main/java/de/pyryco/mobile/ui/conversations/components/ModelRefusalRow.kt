@@ -72,12 +72,16 @@ data class SwitchBackOffer(
  *   [bannerDisplayText], each model identifier by [refusalModelDisplay], which also drops line breaks.
  * - **Inert** — plain [Text] only: never markdown, no link detection, no `SelectionContainer`. The one click
  *   is the expand toggle, and a row with no explanation has none.
- * - **Unforgeable copy** — the title is client-owned spans with each model identifier as its own monospace
- *   span, so an identifier cannot pass itself off as the surrounding words; the banner's "<agent>: " is its
- *   own medium-weight span, as in [BannerNoticeRow], naming the conversation's [agent] (#1113). Keep both
- *   separate spans.
+ * - **Unforgeable copy** — the title is client-owned spans with each model name as its own span: a model the
+ *   thread's menu knows ([modelLabel], #1494) as its menu label in the title's style, any other identifier in
+ *   monospace, so an unknown identifier cannot pass itself off as the surrounding words; the banner's
+ *   "<agent>: " is its own medium-weight span, as in [BannerNoticeRow], naming the conversation's [agent]
+ *   (#1113). Keep all of them separate spans.
  * - **No logging** — only the expand [Boolean] reaches saved state. The thread cache stores the row as held
  *   (#1353), so a restored row renders through this same boundary.
+ *
+ * [modelLabel] maps a raw identifier to the menu's label for it, or `null` when the menu does not know it
+ * (`ThreadRunConfig.knownModelLabel`); the default knows nothing.
  */
 @Composable
 fun ModelRefusalRow(
@@ -86,6 +90,7 @@ fun ModelRefusalRow(
     modifier: Modifier = Modifier,
     switchBack: SwitchBackOffer? = null,
     onSwitchBack: () -> Unit = {},
+    modelLabel: (String) -> String? = { null },
 ) {
     // Only the toggle is saved, scoped by the row's LazyColumn key.
     var expanded by rememberSaveable { mutableStateOf(false) }
@@ -97,6 +102,7 @@ fun ModelRefusalRow(
         modifier = modifier,
         switchBack = switchBack,
         onSwitchBack = onSwitchBack,
+        modelLabel = modelLabel,
     )
 }
 
@@ -109,6 +115,7 @@ private fun ModelRefusalRowContent(
     modifier: Modifier = Modifier,
     switchBack: SwitchBackOffer? = null,
     onSwitchBack: () -> Unit = {},
+    modelLabel: (String) -> String? = { null },
 ) {
     val banner = bannerDisplayText(item.banner)
     val expandable = banner.isNotBlank()
@@ -135,7 +142,7 @@ private fun ModelRefusalRowContent(
             verticalArrangement = Arrangement.spacedBy(if (expanded) RefusalExpandedGap else RefusalCollapsedGap),
         ) {
             Text(
-                text = refusalTitle(item),
+                text = refusalTitle(item, modelLabel),
                 style = MaterialTheme.typography.bodyMedium,
             )
             if (expandable && expanded) {
@@ -157,6 +164,7 @@ private fun ModelRefusalRowContent(
             SwitchBackAction(
                 offer = switchBack,
                 onSwitchBack = onSwitchBack,
+                modelLabel = modelLabel,
                 modifier = Modifier.padding(bottom = RefusalVerticalPadding),
             )
         }
@@ -172,6 +180,7 @@ private fun ModelRefusalRowContent(
 private fun SwitchBackAction(
     offer: SwitchBackOffer,
     onSwitchBack: () -> Unit,
+    modelLabel: (String) -> String?,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(RefusalCollapsedGap)) {
@@ -186,7 +195,7 @@ private fun SwitchBackAction(
             modifier = Modifier.alpha(if (offer.pending) SWITCH_BACK_PENDING_ALPHA else 1f),
         ) {
             Text(
-                text = switchBackLabel(offer.originalModel),
+                text = switchBackLabel(offer.originalModel, modelLabel),
                 style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.padding(horizontal = SwitchBackHorizontalPadding, vertical = SwitchBackVerticalPadding),
@@ -202,40 +211,40 @@ private fun SwitchBackAction(
     }
 }
 
-/** "Switch back to " in client copy, then the stripped model as its own monospace span, as the title does. */
+/** "Switch back to " in client copy, then the model as its own span by the title's rule, in the button's style. */
 @Composable
-private fun switchBackLabel(model: String): AnnotatedString {
+private fun switchBackLabel(
+    model: String,
+    modelLabel: (String) -> String?,
+): AnnotatedString {
     val prefix = stringResource(R.string.thread_refusal_switch_back)
     val unknownModel = stringResource(R.string.thread_refusal_unknown_model)
     return buildAnnotatedString {
         append(prefix)
-        val display = refusalModelDisplay(model)
-        if (display == null) {
-            append(unknownModel)
-        } else {
-            withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) { append(display) }
-        }
+        appendModel(
+            model = model,
+            modelLabel = modelLabel,
+            unknownModel = unknownModel,
+            clientStyle = SpanStyle(),
+            identifierStyle = SpanStyle(fontFamily = FontFamily.Monospace),
+        )
     }
 }
 
-/** The title: client-owned copy in the muted style, each claude-named model its own monospace span. */
+/** The title: client-owned copy in the muted style, each claude-named model its own span by [appendModel]. */
 @Composable
-private fun refusalTitle(item: ThreadItem.ModelRefusal): AnnotatedString {
+private fun refusalTitle(
+    item: ThreadItem.ModelRefusal,
+    modelLabel: (String) -> String?,
+): AnnotatedString {
     val clientStyle = SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)
-    val modelStyle = SpanStyle(color = MaterialTheme.colorScheme.onSurface, fontFamily = FontFamily.Monospace)
+    val identifierStyle = SpanStyle(color = MaterialTheme.colorScheme.onSurface, fontFamily = FontFamily.Monospace)
     val unknownModel = stringResource(R.string.thread_refusal_unknown_model)
     val refusedOn = stringResource(R.string.thread_refusal_refused_on)
     val continuedOn = stringResource(R.string.thread_refusal_continued_on)
     val refusedBy = stringResource(R.string.thread_refusal_refused_by)
     return buildAnnotatedString {
-        fun model(value: String) {
-            val display = refusalModelDisplay(value)
-            if (display == null) {
-                withStyle(clientStyle) { append(unknownModel) }
-            } else {
-                withStyle(modelStyle) { append(display) }
-            }
-        }
+        fun model(value: String) = appendModel(value, modelLabel, unknownModel, clientStyle, identifierStyle)
         val fallbackModel = item.fallbackModel
         if (fallbackModel != null) {
             withStyle(clientStyle) { append(refusedOn) }
@@ -246,6 +255,28 @@ private fun refusalTitle(item: ThreadItem.ModelRefusal): AnnotatedString {
             withStyle(clientStyle) { append(refusedBy) }
             model(item.originalModel)
         }
+    }
+}
+
+/**
+ * One claude-named model as its own span (#1494): nothing readable left reads [unknownModel]; a model the
+ * menu knows reads as its stripped menu label in [clientStyle], a span of its own even where the style matches
+ * the copy around it; any other identifier is stripped and drawn in [identifierStyle]. The lookup takes the
+ * raw [model]; stripping is only for what is drawn.
+ */
+private fun AnnotatedString.Builder.appendModel(
+    model: String,
+    modelLabel: (String) -> String?,
+    unknownModel: String,
+    clientStyle: SpanStyle,
+    identifierStyle: SpanStyle,
+) {
+    val display = refusalModelDisplay(model)
+    val label = display?.let { modelLabel(model) }?.let(::refusalModelDisplay)
+    when {
+        display == null -> withStyle(clientStyle) { append(unknownModel) }
+        label != null -> withStyle(clientStyle) { append(label) }
+        else -> withStyle(identifierStyle) { append(display) }
     }
 }
 
