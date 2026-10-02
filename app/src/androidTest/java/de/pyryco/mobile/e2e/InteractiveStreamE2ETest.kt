@@ -59,6 +59,7 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -356,9 +357,43 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * #1344: after one real turn (the daemon queries the conversation's live child), opening Channel info asks
+     * for the MCP reading; ticking "Show built-in" lists the daemon's own `pyry_approve` server. Asserts only the
+     * built-in name — the operator's other MCP servers vary and are never hard-coded.
+     */
+    @Test
+    fun interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn() {
+        awaitChannelList()
+        awaitConnected()
+        createChat()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
+        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+        composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+
+        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).onFirst().performClick()
+
+        // The Show built-in row appears only once a report has arrived for this conversation.
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithContentDescription(MCP_SHOW_BUILT_IN).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithContentDescription(MCP_SHOW_BUILT_IN).performScrollTo().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(MCP_BUILT_IN_APPROVE).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithText(MCP_BUILT_IN_APPROVE).performScrollTo().assertIsDisplayed()
+    }
+
+    /**
      * #946: after one real turn, the composer footer's `Cxt:` segment shows the percentage Claude reported
      * (`context_usage`, published after every completed turn and answered on the screen's own ask). Asserts
-     * only the `Cxt: N%` shape — the figure depends on the operator's claude and is never hard-coded.
+     * only the `Cxt: N%` shape (or `Cxt high: N%` from 70, #1412) — the figure depends on the operator's claude and is never hard-coded.
      */
     @Test
     fun interactiveTurn_pingPrompt_footerShowsContextUsage() {
@@ -372,11 +407,85 @@ class InteractiveStreamE2ETest {
         composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
         composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
 
-        val reported = Regex("Cxt: \\d+%")
+        val reported = Regex("Cxt(?: high)?: \\d+%")
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasTestTag(CONTEXT_USAGE_TEST_TAG)).fetchSemanticsNodes().any { node ->
                 reported.matches(node.config[SemanticsProperties.Text].joinToString("") { it.text })
             }
+        }
+    }
+
+    /**
+     * #1410: opening an existing chat after a fresh connection shows its context reading before any new turn, from
+     * the thread's own `request_context_usage`. The [SecondClientPeer] runs the chat's only turn while the phone's
+     * link is cut, so the post-turn push never reaches the phone: the chat had no ring events before the cut, and a
+     * reconnect replays only the conversation the phone's cursor names. Back on the list, the host's held reading for
+     * the chat is still empty, which is what makes the footer's later percentage the answer to the open's ask. The
+     * creating open also asks and is refused (no reading yet); the peer's whole turn separates that refusal from the
+     * reopen, longer than the daemon's short per-conversation collapse window.
+     *
+     * **One real-claude turn** (the peer's ping) plus one on-demand reading.
+     */
+    @Test
+    fun interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn() {
+        val args = InstrumentationRegistry.getArguments()
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer =
+            SecondClientPeer(
+                PairedServer(
+                    serverId = serverId,
+                    token = twoHostArg(ARG_PEER_TOKEN),
+                    relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                    serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
+                ),
+            )
+        try {
+            // 1. The phone creates and names a chat, then leaves it without sending anything.
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val before = hostConversationIds(serverId)
+            createChat()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+            }
+            val conversationId = newHostConversationId(serverId, before)
+            val chatName = CONTEXT_ASK_CHAT_NAME_PREFIX + System.currentTimeMillis()
+            renameOpenThread(chatName)
+            leaveThread()
+
+            // 2. With the phone's link cut, the peer's turn runs to its end and the daemon publishes its reading.
+            setHostLink(serverId, up = false)
+            runBlocking {
+                peer.sendMessage(conversationId, PING_PROMPT, THREAD_TIMEOUT_MS)
+                peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS)
+                peer.awaitFrame(conversationId, "context_usage", THREAD_TIMEOUT_MS)
+            }
+
+            // 3. A fresh connection: the phone holds no reading for the chat, so only the open's ask can fill it.
+            setHostLink(serverId, up = true)
+            awaitChannelList()
+            assertNull(
+                "the reconnect alone delivered the chat's reading; the open's ask would prove nothing",
+                runBlocking { hostRepository(serverId).observeContextUsage(conversationId).first() },
+            )
+
+            // 4. Open the chat and send nothing: the open's ask fills the reading. Waiting on the reading itself,
+            // not only the footer, because the footer also renders a percentage from session_settings alone.
+            openChatRow(chatName)
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    hostRepository(serverId).observeContextUsage(conversationId).filterNotNull().first()
+                }
+            }
+            val reported = Regex("Cxt: \\d+%")
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasTestTag(CONTEXT_USAGE_TEST_TAG)).fetchSemanticsNodes().any { node ->
+                    reported.matches(node.config[SemanticsProperties.Text].joinToString("") { it.text })
+                }
+            }
+        } finally {
+            peer.close()
         }
     }
 
@@ -993,6 +1102,8 @@ class InteractiveStreamE2ETest {
         // 7. Open Channel info → tap the sheet's Delete. "Channel info" is ungated; the sheet's Delete
         //    ActionCell is unique while only the sheet is open. Tapping it opens the confirm dialog OVER the
         //    still-composed sheet (ThreadEvent.Delete leaves pendingChannelInfo true) → two "Delete" nodes.
+        //    The System prompt and MCP servers sections push Actions below the fold, so scroll to Delete
+        //    before tapping; an off-screen tap lands outside the sheet and opens nothing (#1344).
         composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).fetchSemanticsNodes().isNotEmpty()
@@ -1001,7 +1112,7 @@ class InteractiveStreamE2ETest {
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(DELETE_ACTION).fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithText(DELETE_ACTION).performClick()
+        composeTestRule.onNodeWithText(DELETE_ACTION).performScrollTo().performClick()
 
         // 8. Confirm the delete. Wait for the dialog's unique title, then tap the CONFIRM "Delete" — the sheet's
         //    "Delete" is also on screen, so disambiguate by the dialog's sibling "Cancel" button (the sheet has
@@ -2637,9 +2748,10 @@ class InteractiveStreamE2ETest {
      * [SecondClientPeer], paired with `--allow-remote-permissions`, allows it once so the dialog is gone and
      * the Stop control is reachable the way an operator would reach it.
      *
-     * After the tap the turn ends as cancelled (the peer's `turn_end`), the status area shows the Interrupted
-     * outcome, and a ping sent in the same thread gets claude's real reply. The held turn's reply token is
-     * never drawn, because the stopped turn never finished.
+     * After the tap the turn ends as cancelled (the peer's `turn_end`), the Stop control goes, and a ping sent
+     * in the same thread gets claude's real reply. The held turn's reply token is never drawn, because the
+     * stopped turn never finished. Since #1357 a cancelled turn puts no notice in the status area, so the
+     * method's name outlives the Interrupted label it once asserted.
      *
      * **Two real-claude turns**: the stopped turn and the ping.
      */
@@ -2683,7 +2795,7 @@ class InteractiveStreamE2ETest {
             }
             composeTestRule.onNode(stopControl).performClick()
 
-            // 4. AC-1: the turn ends as cancelled, the Stop control goes, and the status area says Interrupted.
+            // 4. AC-1: the turn ends as cancelled and the Stop control goes.
             val turnEnd =
                 peerStep(peer, "await the stopped turn's turn_end") { peer.awaitFrame(conversationId, "turn_end", THREAD_TIMEOUT_MS) }
             assertEquals(
@@ -2691,16 +2803,14 @@ class InteractiveStreamE2ETest {
                 "cancelled",
                 (turnEnd.payload as? JsonObject)?.get("stop_reason")?.jsonPrimitive?.contentOrNull,
             )
-            val interrupted = hasContentDescription(string(R.string.thread_turn_outcome_interrupted), substring = true)
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(interrupted).fetchSemanticsNodes().isNotEmpty() &&
-                    composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isEmpty()
+                composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isEmpty()
             }
 
             // 5. AC-1: a following message in the same thread gets a real reply, and that turn is the
             //    conversation's second; the stopped turn's own reply was never drawn.
             sendFromPhone(PING_PROMPT)
-            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            awaitPingReplyNamingLayer(peer, serverId, conversationId, priorTurnEnds = 1)
             peerStep(
                 peer,
                 "await the ping turn's turn_end",
@@ -2720,9 +2830,10 @@ class InteractiveStreamE2ETest {
      *    list, and reopening the row draws both again (the on-disk thread restore, not the in-memory rows);
      *  * **meanwhile** — the [SecondClientPeer] sends [OFFLINE_PROMPT] and its turn ends, and the phone
      *    draws none of it, which is what shows it really was offline;
-     *  * **reconnected** — the still-open thread draws the peer's reply from the ring replay and its prompt
-     *    from the reconnect history re-ask (#861), that turn after the ping, and each of the four messages
-     *    once. The prompt comes only from a history page.
+     *  * **reconnected** — the still-open thread draws the peer's prompt and reply from the reconnect's ring
+     *    replay with no pull, that turn after the ping, and each of the four messages once. The daemon pushes
+     *    each delivered user message live and into the replay ring (pyrycode#2699), and the phone draws it
+     *    (#1351); a reconnect no longer asks for history (#1352).
      *
      * The cut waits until the phone itself has settled the ping reply — its thread cache holds it, which
      * the open thread's collector writes only after drawing the settled row. A disconnect keeps only settled
@@ -2791,9 +2902,8 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(inThreadList(OFFLINE_PROMPT), useUnmergedTree = true).assertCountEquals(0)
             composeTestRule.onAllNodes(offlineReplyMatcher(), useUnmergedTree = true).assertCountEquals(0)
 
-            // 6. AC-2: reconnect with the thread open; the ring replay brings the peer's reply into it. No live
-            //    frame carries another device's message text, so the prompt comes only from a history page:
-            //    the still-open thread's reconnect re-ask, which waits for the published repository (#861).
+            // 6. AC-2: reconnect with the thread open; the ring replay brings the peer's prompt and reply into it,
+            //    with no pull. The reconnect itself asks for no history (#1352).
             setHostLink(serverId, up = true)
             composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
                 composeTestRule.onNode(offlineReplyMatcher(), useUnmergedTree = true).isDisplayed() &&
@@ -3309,13 +3419,9 @@ class InteractiveStreamE2ETest {
                 }
             val endedAfterMs = SystemClock.elapsedRealtime() - allowedAt
             val reply = hasText(token, substring = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
-            // #1312: the always-present status band shortens the message area, so the reply row can sit
-            // outside the lazy list's composed window; bring it into view before judging it absent.
+            // #1449: the reply is judged where the follow rule leaves it, at the newest end, with no scroll.
             try {
                 composeTestRule.waitUntil(PHONE_TRAIL_MS) {
-                    runCatching {
-                        composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasText(token, substring = true))
-                    }
                     composeTestRule.onAllNodes(reply, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
                 }
             } catch (e: ComposeTimeoutException) {
@@ -3355,7 +3461,6 @@ class InteractiveStreamE2ETest {
      * **Three real-claude turns**: A's allowed command, its repeat, and B's command.
      */
     @Test
-    @Ignore("blocked on #1445 — reopening the asking chat times out in openChatRow; fails on main")
     fun interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation() {
         val (serverId, peer) = answerHostPeer()
         try {
@@ -3670,7 +3775,8 @@ class InteractiveStreamE2ETest {
      * The composer footer's readings and a model change survive a cut-and-restore of the phone's link (#967).
      * The chat is prepared as #545's are: nothing remembered and no saved model.
      *  * **The context reading is held.** After a real turn the footer shows `Cxt: N%`. The host's readings are
-     *    kept for the life of its pairing (#1317), so after the reconnect it still shows that same reading.
+     *    kept for the life of its pairing (#1317), so with the link cut it still shows that same reading. Once the
+     *    link is back the thread asks for a fresh one (#1410), and the footer shows a percentage.
      *  * **The readings come back.** Effort and permission settle, none pending, on what a fresh reading
      *    taken on the new connection reports. The model is inherited, and the first turn's announcement is
      *    held too (#1317), so the mark follows that announcement (#1308) rather than the default row.
@@ -3696,11 +3802,23 @@ class InteractiveStreamE2ETest {
             sendFromPhone(PING_PROMPT)
             composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
             val held = awaitContextSegment(REPLY_TIMEOUT_MS, "a percentage after the first turn") { CONTEXT_REPORTED.matches(it) }
+            // The reading the first turn pushed. Its repository reads the host's readings (#1317), so it stays
+            // readable while the link is cut.
+            val preCutRepository = hostRepository()
+            val preCut =
+                runBlocking { withTimeout(REPLY_TIMEOUT_MS) { preCutRepository.observeContextUsage(chat.id).filterNotNull().first() } }
 
-            // 2. Cut and restore the link. The host's context reading is held across it (#1317).
+            // 2. Cut the link: the host's context reading is held across it (#1317). Checked while the link is down,
+            //    because once it is back the thread's reconnect ask (#1410) may replace the reading with its answer.
             setHostLink(serverId, up = false)
+            assertEquals(
+                "the held context reading while the link is cut",
+                preCut,
+                runBlocking { preCutRepository.observeContextUsage(chat.id).first() },
+            )
+            awaitContextSegment(THREAD_TIMEOUT_MS, "the held '$held' while the link is cut") { it == held }
             setHostLink(serverId, up = true)
-            awaitContextSegment(THREAD_TIMEOUT_MS, "the held '$held' after the reconnect") { it == held }
+            awaitContextSegment(THREAD_TIMEOUT_MS, "a percentage after the reconnect") { CONTEXT_REPORTED.matches(it) }
 
             // 3. Model, effort and permission settle on a fresh reading taken on the new connection.
             val fresh = freshSettings(chat.id)
@@ -3724,10 +3842,16 @@ class InteractiveStreamE2ETest {
             //    the Stop control has gone. Two ping replies in a two-ping thread are both composed in the list.
             //    Then the reading must be newer than the held one: the footer's percentage can round to the same
             //    text, so freshness is the repository's token count growing past the held reading's.
-            val heldUsage =
-                hostRepository().let { repository ->
-                    runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.observeContextUsage(chat.id).filterNotNull().first() } }
-                }
+            //    The reconnect ask's answer (#1410) is a detail:"full" count, which need not agree with a post-turn
+            //    detail:"summary" push, so it is neither the baseline nor allowed to pass the growth check. The
+            //    baseline is the pre-cut push. The answer is let land first, moving the reading off the pre-cut
+            //    one; an answer equal to it emits nothing and a refused ask sends none, so that wait may time out.
+            //    The growth check then accepts only a reading other than the settled one.
+            val repository = hostRepository()
+            val settled =
+                runBlocking {
+                    withTimeoutOrNull(THREAD_TIMEOUT_MS) { repository.observeContextUsage(chat.id).filterNotNull().first { it != preCut } }
+                } ?: preCut
             sendFromPhone(PING_PROMPT)
             val stopControl = hasContentDescription(string(R.string.cd_thread_interrupt))
             try {
@@ -3739,15 +3863,16 @@ class InteractiveStreamE2ETest {
                 throw AssertionError("the turn on the new connection never ended with its reply drawn", e)
             }
             try {
-                val repository = hostRepository()
                 runBlocking {
                     withTimeout(REPLY_TIMEOUT_MS) {
-                        repository.observeContextUsage(chat.id).filterNotNull().first { it.totalTokens > heldUsage.totalTokens }
+                        repository.observeContextUsage(chat.id).filterNotNull().first {
+                            it != settled && it.totalTokens > preCut.totalTokens
+                        }
                     }
                 }
             } catch (e: TimeoutCancellationException) {
                 throw AssertionError(
-                    "no context reading newer than the held one (${heldUsage.totalTokens} tokens) after the turn on the new connection",
+                    "no context reading newer than the held one (${preCut.totalTokens} tokens) after the turn on the new connection",
                     e,
                 )
             }
@@ -3777,7 +3902,8 @@ class InteractiveStreamE2ETest {
      *    publishes for the chat on the new connection, and picking the first puts its completion in the
      *    composer. The rows, labels and completion come from the production rules, not restated here.
      *  * **Compaction feedback.** Compact session shows the compacting indicator, then the divider for a
-     *    compaction by you, and the indicator goes.
+     *    compaction by you, and the indicator goes. The thread holds exactly one compaction divider (#1358):
+     *    the boundary fills in the divider the falling edge drew rather than adding a second.
      *
      * **Two real-claude turns**: the ping and the compaction.
      */
@@ -3853,15 +3979,26 @@ class InteractiveStreamE2ETest {
         } catch (e: ComposeTimeoutException) {
             throw AssertionError("no compaction divider followed the compacting indicator", e)
         }
-        val dividerText =
+
+        // #1358: the falling edge draws "Conversation compacted" first and the `compaction_boundary` after it
+        // fills that same divider in, so wait for the filled-in text rather than reading the first one shown.
+        fun dividerText(): String =
             composeTestRule
                 .onAllNodes(divider)
                 .onFirst()
                 .fetchSemanticsNode()
                 .config[SemanticsProperties.Text]
                 .joinToString("") { it.text }
-        assertTrue("the divider does not credit the compaction to you", dividerText.endsWith(COMPACTION_BY_YOU))
+        try {
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { dividerText().endsWith(COMPACTION_BY_YOU) }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("the divider does not credit the compaction to you", e)
+        }
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(compacting).fetchSemanticsNodes().isEmpty() }
+        // One compaction leaves one divider: the boundary replaced the edge's divider rather than adding a second.
+        val anyDivider =
+            (hasText(COMPACTION_DIVIDER, substring = true) or hasText(COMPACTION_FAILED)) and hasAnyAncestor(hasScrollToNodeAction())
+        composeTestRule.onAllNodes(anyDivider).assertCountEquals(1)
     }
 
     /**
@@ -4420,7 +4557,8 @@ class InteractiveStreamE2ETest {
      * [SecondClientPeer] uploads a ~100 KB document into chat X — three chunks, so the phone's reassembly
      * runs — and names it on a message, as the desktop does. The phone never opens X before a restart
      * ([E2eTestApplication.rebuildGraph]) with X's thread cache cleared, so X's rows can only come from
-     * history replay, whose user `message` entry keeps the id but no name (#1020). Then:
+     * history replay, whose user `message` entry keeps the id but no name (#1020). Opening X asks for no
+     * history, so the test pulls toward older messages once X is open (#1352). Then:
      *  * the row shows the uploaded filename, which only retrieval supplies, exactly once;
      *  * a tap hands `ACTION_VIEW` a content URI whose bytes have the fixture's digest;
      *  * a long-press writes the same bytes to the `ACTION_CREATE_DOCUMENT` target.
@@ -4466,8 +4604,9 @@ class InteractiveStreamE2ETest {
             awaitConnected()
             openChatRow(nameX)
 
-            // 3. AC-2: the retrieved name shows once, and open and save both carry the fixture's bytes.
-            awaitReadyAttachmentRow(documentName, REPLY_TIMEOUT_MS)
+            // 3. AC-2: pull for X's history; the retrieved name shows once, and open and save both carry the
+            //    fixture's bytes.
+            awaitReadyAttachmentRow(documentName, REPLY_TIMEOUT_MS, poll = ::pullForOlderHistory)
             composeTestRule.onAllNodes(readyAttachmentRow(documentName)).assertCountEquals(1)
             assertOpensAndSaves(stub, documentName, sha256(document), inserted)
         } finally {
@@ -4630,8 +4769,9 @@ class InteractiveStreamE2ETest {
      * A retrieval whose link drops fails visibly, and Retry recovers it (#1017, rung 3). The [SecondClientPeer]
      * uploads a ~100 KB document into chat X, which the phone does not open, and names it on a message, as
      * the desktop does. The phone restarts with X's thread cache cleared, so X's row can only come from
-     * history replay (#1020), which keeps the id but no name. When the phone opens X, the link is cut at the
-     * retrieval's request for that id ([cutLinkOn]), before the request is sent.
+     * history replay (#1020), which keeps the id but no name. Opening X asks for no history, so the test pulls
+     * toward older messages once X is open (#1352). The link is cut at the retrieval's request for that id
+     * ([cutLinkOn]), before the request is sent.
      *  * **Failed with Retry.** The row, unnamed since only retrieval supplies the name, shows the failed state
      *    and its Retry control.
      *  * **Retry recovers.** With the link restored, Retry brings the row to ready under the uploaded name, and
@@ -4680,8 +4820,12 @@ class InteractiveStreamE2ETest {
             awaitConnected()
             cut = cutLinkOn(serverId) { it.startsWith(RETRIEVAL_REQUEST_EVENT + "id=$id") }
             openChatRow(nameX)
-            // The row loads once it is drawn, so keep it on screen until the cut.
+            // Pull for X's history until its row is drawn. The row loads once it is drawn, so keep it on screen
+            // until the cut.
             cut.await("the phone never requested the peer's file") {
+                if (composeTestRule.onAllNodes(hasTestTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG)).fetchSemanticsNodes().isEmpty()) {
+                    pullForOlderHistory()
+                }
                 runCatching { scrollListTo(hasTestTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG)) }
             }
             cut.close()
@@ -4731,11 +4875,7 @@ class InteractiveStreamE2ETest {
      *    no such id, and host B itself answers the id as not found.
      *
      * **One real-claude turn**: the phone's message on host A.
-     *
-     * Ignored and left out of the live list since daemon #2699 pushes the sender's own message back: the
-     * phone's ready file row never appears, on `main` too. #1369 tracks the fix and restores both.
      */
-    @Ignore("blocked on #1369 — the phone's file row is missing after daemon #2699 pushes the sent message back")
     @Test
     fun interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost() {
         val serverIdA = twoHostArg(ARG_SERVER_ID)
@@ -5053,13 +5193,20 @@ class InteractiveStreamE2ETest {
     private fun readyAttachmentRow(name: String): SemanticsMatcher =
         hasTestTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG) and hasText(name) and hasClickAction()
 
-    /** Scroll the thread until [readyAttachmentRow] for [name] is on screen. The name is a fixture's. */
+    /**
+     * Scroll the thread until [readyAttachmentRow] for [name] is on screen. The name is a fixture's. [poll] runs
+     * before each look, while the row is not yet drawn.
+     */
     private fun awaitReadyAttachmentRow(
         name: String,
         timeoutMs: Long,
+        poll: () -> Unit = {},
     ) {
         try {
-            composeTestRule.waitUntil(timeoutMs) { runCatching { scrollListTo(readyAttachmentRow(name)) }.isSuccess }
+            composeTestRule.waitUntil(timeoutMs) {
+                if (composeTestRule.onAllNodes(hasTestTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG)).fetchSemanticsNodes().isEmpty()) poll()
+                runCatching { scrollListTo(readyAttachmentRow(name)) }.isSuccess
+            }
         } catch (e: ComposeTimeoutException) {
             throw AssertionError("no ready attachment row named $name within $timeoutMs ms", e)
         }
@@ -5578,13 +5725,12 @@ class InteractiveStreamE2ETest {
                 { node -> attentionOf(node) },
             ).mapValues { (_, states) -> states.sorted() }
 
-    /** The attention state a tree row's merged node carries: whichever of the dot's five descriptions it holds. */
+    /** The attention state a tree row's merged node carries: whichever of the dot's four descriptions it holds. */
     private fun attentionOf(node: SemanticsNode): String {
         val states =
             listOf(
                 R.string.cd_conversation_attention_waiting,
                 R.string.cd_conversation_attention_running,
-                R.string.cd_conversation_attention_failed,
                 R.string.cd_conversation_attention_unread,
                 R.string.cd_conversation_attention_idle,
             ).map(::string)
@@ -6298,6 +6444,19 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /**
+     * Pull toward older messages on the open thread (#1352): a touch drag down its message region. Only this
+     * gesture asks for history, and it asks when it starts at the thread's oldest end, as on a fresh or short
+     * thread. A pull while the repository is not yet published asks nothing, so callers repeat it in a wait.
+     */
+    private fun pullForOlderHistory() {
+        runCatching {
+            composeTestRule.onNodeWithTag(THREAD_MESSAGE_REGION_TEST_TAG).performTouchInput {
+                swipeDown(startY = height * 0.3f, endY = height * 0.7f)
+            }
+        }
+    }
+
     /** Leave the open thread for the channel list. */
     private fun leaveThread() {
         composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
@@ -6430,6 +6589,51 @@ class InteractiveStreamE2ETest {
         } catch (e: TimeoutCancellationException) {
             throw AssertionError("peer step '$step' timed out; ${peer.linkState()}", e)
         }
+
+    /**
+     * [awaitDisplayedPingReply] for a ping sent after [priorTurnEnds] of [conversationId]'s turns ended. On
+     * timeout it names the first layer that did not hold the reply (#1456): the [peer]'s recorded frames, the
+     * phone's live repository for [serverId], or the thread screen's nodes.
+     */
+    private fun awaitPingReplyNamingLayer(
+        peer: SecondClientPeer,
+        serverId: String,
+        conversationId: String,
+        priorTurnEnds: Int,
+    ) {
+        try {
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+        } catch (e: ComposeTimeoutException) {
+            val frames = peer.recorded(conversationId)
+            val nodes = composeTestRule.onAllNodes(pingReplyMatcher(), useUnmergedTree = true).fetchSemanticsNodes().size
+            throw PingReplyEvidence(
+                peerTurnEnds = frames.count { it.type == "turn_end" },
+                peerSawReply = followUpPingReplyRecorded(frames, priorTurnEnds),
+                repositoryHoldsReply = liveRepositoryHoldsPingReply(serverId, conversationId),
+                replyNodes = nodes,
+                replyDisplayed = nodes == 1 && composeTestRule.onNode(pingReplyMatcher(), useUnmergedTree = true).isDisplayed(),
+            ).failure(expectedTurnEnds = priorTurnEnds + 1, cause = e)
+        }
+    }
+
+    /**
+     * Whether [serverId]'s current live repository holds an assistant `ping` row for [conversationId] (#1456),
+     * or null when there is no repository or its thread does not emit in time.
+     */
+    private fun liveRepositoryHoldsPingReply(
+        serverId: String,
+        conversationId: String,
+    ): Boolean? {
+        val repository =
+            GlobalContext
+                .get()
+                .get<RelayConnectionRegistry>()
+                .connectionFor(serverId)
+                ?.coordinator
+                ?.currentRepository
+                ?.value ?: return null
+        return runBlocking { withTimeoutOrNull(THREAD_TIMEOUT_MS) { holdsPingReply(repository.observeMessages(conversationId).first()) } }
+    }
 
     /** The #849 peer on the first test daemon, the one device allowed to answer its permission prompts. */
     private fun runningToolPeer(): SecondClientPeer {
@@ -6998,6 +7202,10 @@ class InteractiveStreamE2ETest {
         const val RENAME_ITEM = "Rename"
         const val RENAME_SAVE = "Save"
         const val CHANNEL_INFO_ITEM = "Channel info"
+
+        // #1344: Channel info's MCP section — the Show built-in switch's label and the daemon's own approval server.
+        const val MCP_SHOW_BUILT_IN = "Show built-in"
+        const val MCP_BUILT_IN_APPROVE = "pyry_approve"
         const val DELETE_ACTION = "Delete"
         const val DELETE_DIALOG_TITLE = "Delete conversation?"
         const val DELETE_DIALOG_CANCEL = "Cancel"
@@ -7124,6 +7332,9 @@ class InteractiveStreamE2ETest {
         const val OFFLINE_REPLY = "pyryoffline"
         const val OFFLINE_CHAT_NAME_PREFIX = "e2e850-"
 
+        /** #1410: the chat the peer runs a turn in while the phone is offline. */
+        const val CONTEXT_ASK_CHAT_NAME_PREFIX = "e2e1410-"
+
         // #965 stop scenario. The command waits on an event nothing sets, so only the phone's Stop (or, far
         // outside the test's step, claude's own Bash timeout) ends it; no time value is involved. It is a
         // `python3` command, so it needs permission, which the peer grants — see WAIT_PROMPT for why it is not
@@ -7247,6 +7458,9 @@ class InteractiveStreamE2ETest {
         // #1016: the attachment exchange. Fixture names are plain ASCII, which the daemon stores unchanged, and
         // run-unique, so MediaStore never renames one. The document is about 100 KB: three 45000-byte chunks.
         const val ATTACH_CHAT_NAME_PREFIX = "e2e1016-"
+
+        // #1352: ThreadScreen's message region, where the reader's pull toward older messages starts.
+        const val THREAD_MESSAGE_REGION_TEST_TAG = "thread-message-region"
         const val ATTACH_OTHER_NAME_PREFIX = "e2e1016-other-"
         const val ATTACH_FILE_PREFIX = "e2e1016-"
         const val OFFER_CONTENT_PREFIX = "pyrycode-mobile-offer-"
@@ -7334,8 +7548,8 @@ class InteractiveStreamE2ETest {
         // The published row value of the inherited-default model (#972), which the model change skips.
         const val INHERITED_MODEL_VALUE = "default"
 
-        // The footer's `Cxt:` segment with a reported percentage (#946), the app's own format.
-        val CONTEXT_REPORTED = Regex("Cxt: \\d+%")
+        // The footer's `Cxt:` segment with a reported percentage (#946), `Cxt high:` from 70 (#1412).
+        val CONTEXT_REPORTED = Regex("Cxt(?: high)?: \\d+%")
 
         // How many of the published commands the suggestions must list after the reconnect.
         const val SLASH_ROWS_CHECKED = 3
@@ -7344,6 +7558,7 @@ class InteractiveStreamE2ETest {
         // compaction, ends with the second.
         const val COMPACTION_DIVIDER = "Conversation compacted"
         const val COMPACTION_BY_YOU = " by you"
+        const val COMPACTION_FAILED = "Compaction failed"
 
         // A `python3` command, so it needs permission (see WAIT_PROMPT) and no `sleep` refusal applies, run in
         // the background so it outlives the turn. Forty seconds is long enough to open the menu while it runs.

@@ -26,6 +26,10 @@ import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
+import de.pyryco.mobile.data.repository.HistoryPage
+import de.pyryco.mobile.data.repository.HistoryPosition
+import de.pyryco.mobile.data.repository.LiveRefusalEvent
+import de.pyryco.mobile.data.repository.McpStatus
 import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
@@ -40,12 +44,13 @@ import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentSource
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
+import de.pyryco.mobile.ui.conversations.components.SwitchBackOffer
 import de.pyryco.mobile.ui.conversations.components.SystemPromptEditor
 import de.pyryco.mobile.ui.conversations.components.SystemPromptEditorState
-import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
+import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
 import de.pyryco.mobile.ui.conversations.components.attachmentTarget
 import de.pyryco.mobile.ui.conversations.components.loadsOnShow
-import de.pyryco.mobile.ui.conversations.components.turnOutcomeReport
+import de.pyryco.mobile.ui.conversations.components.turnRecoveryNotice
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
 import kotlinx.coroutines.CancellationException
@@ -65,30 +70,33 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
-import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.datetime.Instant
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.floor
 
 /**
  * The one `history.*` wire code this screen branches on (#778) — the daemon refused the cursor, so the
- * walk restarts from the newest page instead of surfacing a dead end. Every other code, known or not,
- * falls through to a failure, so a hostile daemon cannot reach the restart branch by guessing. The code
- * vocabulary's SSOT is the protocol document, not this constant.
+ * walk's next ask starts from the newest page instead of surfacing a dead end (#1352). Every other code,
+ * known or not, falls through to a failure. The code vocabulary's SSOT is the protocol document, not
+ * this constant.
  */
 private const val HISTORY_INVALID_CURSOR = "history.invalid_cursor"
 
@@ -132,14 +140,18 @@ class ThreadViewModel(
     // #1306: the app-scoped session-grant drafts, so Back keeps the checkbox for the same request. Absent in
     // tests and the demo host, where a private store stands in.
     permissionDraftStore: PermissionDraftStore? = null,
+    // #1345: the app-scoped acknowledgements of failed MCP servers, so a tapped notice stays quiet when the chat
+    // is reopened. Absent in tests and the demo host, where a private holder stands in.
+    mcpFailureAcknowledgements: McpFailureAcknowledgements? = null,
     // #678: the coordinator's per-conversation background-task roster and its live count (#677). Read
     // only: nothing here sends. Defaulted to "nothing reported" and 0, which is what a demo host shows.
     backgroundTasks: (conversationId: String) -> Flow<BackgroundTaskRoster?> = { flowOf(null) },
     backgroundTaskCount: (conversationId: String) -> Flow<Int> = { flowOf(0) },
     // #861: whether this thread's host has a live repository published — for a relay host, the
     // coordinator's `currentRepository` being non-null, which happens only after the Noise handshake,
-    // later than the socket-level `Connected` [connectionStateSource] reports. Keys the #778 walk
-    // restart. Defaulted to always-available, as the demo path's fake repository is.
+    // later than the socket-level `Connected` [connectionStateSource] reports. Gates the history ask
+    // (#1352), and keys the #1309 settings re-read and the #1410 context-usage ask. Defaulted to
+    // always-available, as the demo path's fake repository is.
     private val repositoryAvailable: Flow<Boolean> = flowOf(true),
     // #843: whether this thread's own host rejected the saved pairing — the relay leg's distinct state,
     // which [connectionStateSource]'s legacy four cases fold into Offline. Defaulted to never, as the
@@ -319,6 +331,13 @@ class ThreadViewModel(
     /** The [pendingModel] twin for effort (#807). */
     private val pendingEffort = MutableStateFlow<String?>(null)
 
+    /**
+     * This thread's switch-back offer (#1360), or `null`: at most one, armed only by a live session-scoped
+     * fallback refusal ([onLiveRefusalEvent]), never by a row, so a restored refusal cannot arm it. Written on
+     * Main only.
+     */
+    private val refusalOffer = MutableStateFlow<RefusalOffer?>(null)
+
     /** This opening's recall of the remembered effort (#686); its write is [startEffortRecall]. */
     private val effortRecall = EffortRecall(viewModelScope, rememberedEffort, ::startEffortRecall)
 
@@ -458,6 +477,13 @@ class ThreadViewModel(
             ::Pair,
         ).distinctUntilChanged()
 
+    /** This conversation's MCP server reading (#1344), seeded so a source that never emits cannot stall [state]. */
+    private val mcpStatusReading: Flow<McpStatus> =
+        repository
+            .observeMcpStatus(conversationId)
+            .onStart { emit(McpStatus()) }
+            .distinctUntilChanged()
+
     private val transientDialogs: Flow<TransientDialogs> =
         combine(
             pendingRenameDialog,
@@ -474,18 +500,38 @@ class ThreadViewModel(
         }
 
     /**
-     * This conversation's backward history walk (#777) — cursor, in-flight, page count, stop reason and
-     * walk generation in one value. Written from four places, all CAS-shaped: [claimHistorySlot]'s
-     * [MutableStateFlow.compareAndSet] loop for the ask and the retry claims, [restartHistoryWalk]'s own
-     * loop, and [applyToWalk]'s generation-guarded [MutableStateFlow.update] for every settle and fail. A
-     * plain read-then-assign would open a real window, because the settle runs in a launched coroutine
-     * while the claim runs on the caller's.
+     * This conversation's backward history walk (#777) — cursor, in-flight, page count and stop reason in
+     * one value. Written CAS-shaped: [claimHistorySlot]'s [MutableStateFlow.compareAndSet] loop for the
+     * ask and the retry claims, and [MutableStateFlow.update] for every settle and fail. A plain
+     * read-then-assign would open a real window, because the settle runs in a launched coroutine while the
+     * claim runs on the caller's.
      *
-     * Not persisted — no [SavedStateHandle], no DataStore. The repository's projections are
-     * connection-scoped, so a cursor that outlived its connection would be a stale-cursor bug; #778
-     * restarts the walk on a new connection instead of resuming it.
+     * It survives a reconnect (#1352): the cursor names a position in the daemon's append-only log, so the
+     * next gesture after a reconnect continues from it. Its position is saved beside the cached rows when
+     * an ask settles and restored at open by [historySeed] (#1354); the page count and failures are not.
      */
     private val historyDemand = MutableStateFlow(ThreadHistoryDemand())
+
+    /**
+     * Restores the history position saved when this thread was last open (#1354), so the first pull asks
+     * past the rows the cache already drew instead of re-fetching the newest page. Reading asks nothing.
+     * [onDemandOlderHistory] waits for it, so no ask can carry the opening empty cursor once a saved one
+     * exists.
+     */
+    private val historySeed: Job =
+        viewModelScope.launch {
+            val saved = repository.readHistoryPosition(conversationId) ?: return@launch
+            historyDemand.update { it.restored(cursor = saved.cursor, atStart = saved.atStart) }
+        }
+
+    /**
+     * Whether this thread's host has a live repository right now (#1352), desktop's
+     * `connectedConversationHostNow`: a history ask is sent only while it holds, and the oldest-end slot
+     * shows the offline notice while it does not. Keyed on the published repository, not the socket, for
+     * the #861 reason on [repositoryAvailable].
+     */
+    private val hostAvailable: StateFlow<Boolean> =
+        repositoryAvailable.distinctUntilChanged().stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     /**
      * The thread rows (#337): the #313 finished-message projection from [ConversationRepository.observeMessages]
@@ -505,6 +551,8 @@ class ThreadViewModel(
         ).scan(ThreadFold(emptyList(), null)) { fold, input -> fold.reduce(input, conversationId) }
             .map { it.render() }
             .distinctUntilChanged()
+            // #1357: a session transition reaches this thread only as a new boundary row.
+            .onEach(::noteNewestBoundary)
 
     /**
      * The thread's content surface: the [threadItems] rows folded with the conversation's queued-message
@@ -516,8 +564,13 @@ class ThreadViewModel(
      * `distinctUntilChanged`, so this never stalls and adds no operator.
      */
     private val threadContent: Flow<ThreadContent> =
-        combine(threadItems, repository.observeQueue(conversationId), historyDemand) { items, queued, demand ->
-            ThreadContent(items, queued, demand.tail())
+        combine(
+            threadItems,
+            repository.observeQueue(conversationId),
+            historyDemand,
+            hostAvailable,
+        ) { items, queued, demand, connected ->
+            ThreadContent(items, queued, demand.tail(connected))
         }
 
     val state: StateFlow<ThreadUiState> =
@@ -560,6 +613,8 @@ class ThreadViewModel(
             uiState.copy(absentActions = absentComposerActions(menu, slashCommandsAccepted), slashCommands = menu?.rows)
         }.combine(backgroundTaskReading) { uiState, (roster, count) ->
             uiState.copy(backgroundTasks = roster, backgroundTaskCount = count)
+        }.combine(mcpStatusReading) { uiState, mcp ->
+            uiState.copy(mcpStatus = mcp)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -570,6 +625,46 @@ class ThreadViewModel(
                     mutationsSupported = mutationsSupported,
                 ),
         )
+
+    /**
+     * The switch-back offer as the refusal row draws it (#1360), or `null`. Shown only while the latest
+     * settings reading names a session to address, as desktop shows it, so the button is never one whose tap
+     * [onSwitchBack] would drop. Pending while any model write is outstanding, the switch-back's own or the
+     * menu's. Eager, so it holds while no screen collects it; [settingsReadings] is a plain state holder, so
+     * reading it opens no settings subscription.
+     */
+    val switchBackOffer: StateFlow<SwitchBackOffer?> =
+        combine(
+            refusalOffer,
+            pendingModel,
+            settingsReadings
+                .map {
+                    it.settings
+                        ?.sessionId
+                        .orEmpty()
+                        .isNotEmpty()
+                }.distinctUntilChanged(),
+        ) { offer, pending, addressable ->
+            offer?.takeIf { addressable }?.let {
+                SwitchBackOffer(it.occurredAt, it.originalModel, pending = pending != null, failed = it.failed)
+            }
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    init {
+        // #1360: the offer's live inputs, for the life of the thread. A reconnect is neither, so it keeps
+        // the offer. The announced model is a held reading; `distinctUntilChanged` keeps the same model handed
+        // over again on a reconnect from counting as a new announcement.
+        viewModelScope.launch { repository.observeLiveRefusalEvents(conversationId).collect(::onLiveRefusalEvent) }
+        viewModelScope.launch {
+            repository
+                .observeAnnouncedModel(conversationId)
+                .mapNotNull { it?.model }
+                .distinctUntilChanged()
+                .collect { model ->
+                    if (model.isNotEmpty() && model != refusalOffer.value?.fallbackModel) clearRefusalOffer("announced")
+                }
+        }
+    }
 
     /**
      * This thread's host connection, `Connected` once the host has answered the handshake (#1318). Started
@@ -592,6 +687,24 @@ class ThreadViewModel(
      */
     private val hostConnection: StateFlow<ConnectionState?> =
         connectionStateSource.observe().stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    private val mcpAcknowledgements = mcpFailureAcknowledgements ?: McpFailureAcknowledgements()
+
+    /**
+     * The failed MCP server the Top overlay's notice names (#1345), desktop's `selectUnacknowledgedMcpFailureFor`:
+     * the first server in report order whose status is exactly `failed` and that this host and conversation
+     * have not acknowledged. `null` unless the host is [ConnectionState.Connected]. The name is Claude-authored:
+     * the screen renders it bounded and inert, and nothing here logs it.
+     */
+    val mcpFailure: StateFlow<String?> =
+        combine(
+            mcpStatusReading,
+            mcpAcknowledgements.observe(serverId, conversationId),
+            hostConnection,
+        ) { mcp, acknowledged, connection ->
+            if (connection == ConnectionState.Connected) firstUnacknowledgedMcpFailure(mcp.report, acknowledged) else null
+        }.distinctUntilChanged()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /**
      * Whether a prompt answer may be sent now (#1321): only while the host is [ConnectionState.Connected].
@@ -668,24 +781,25 @@ class ThreadViewModel(
                 initialValue = false,
             )
 
+    private val _turnOutcome = MutableStateFlow<TurnRecoveryNotice?>(null)
+
     /**
-     * How this conversation's last turn ended, when it did not end cleanly (#805) — drives the status
-     * area's turn-outcome arm. A sibling [StateFlow] beside [isThinking] / [isBusy] over the same live
-     * events, with the same lifetime. `null` covers no event yet, a clean last turn, and a next turn that
-     * has started.
+     * The recovery advice for this conversation's last stopped turn (#1357), desktop's `latestTurnEnd` read by
+     * `ComposerErrorSlotControl` — drives the status area's turn-outcome arm. A `turn_end` sets or replaces it
+     * through [turnRecoveryNotice]; the next sign of activity clears it: a non-idle `turn_state`, an
+     * assistant delta, a tool use or result ([nextTurnOutcome]), a new thinking reading, a new session
+     * boundary ([noteNewestBoundary]), the user's send, and a reconnect. An `idle` `turn_state` never clears it,
+     * since it may arrive on either side of the `turn_end` it accompanies.
      *
-     * A `turn_end` replaces the value outright (a clean one clears a stale report), and only `thinking` /
-     * `responding` clear it otherwise — never `idle`, which may arrive on either side of the `turn_end` it
-     * accompanies. [isThinking] and [isBusy] are untouched: they already turn off on any `turn_end`.
+     * Held, not folded per subscriber, so a `turn_end` that lands while the screen is not collecting still
+     * counts. Every writer runs on `viewModelScope`'s main dispatcher.
      */
-    val turnOutcome: StateFlow<TurnOutcomeReport?> =
-        liveSessionEvents
-            .runningFold(null as TurnOutcomeReport?) { current, event -> nextTurnOutcome(current, event) }
-            .stateIn(
-                scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(5_000),
-                initialValue = null,
-            )
+    val turnOutcome: StateFlow<TurnRecoveryNotice?> = _turnOutcome.asStateFlow()
+
+    /** The newest boundary row [threadItems] has drawn, once it has drawn a non-empty thread (#1357). */
+    private var newestBoundary: ThreadItem.SessionBoundary? = null
+
+    private var boundaryBaselineSeen = false
 
     /** The open Channel info sheet's System prompt state (#1342), or `null` while the sheet is closed. */
     val systemPrompt: StateFlow<SystemPromptEditorState?> =
@@ -1086,52 +1200,87 @@ class ThreadViewModel(
 
     /** Folds one live event into [turnOutcome]; events for other conversations leave it unchanged. */
     private fun nextTurnOutcome(
-        current: TurnOutcomeReport?,
+        current: TurnRecoveryNotice?,
         event: LiveSessionEvent,
-    ): TurnOutcomeReport? {
+    ): TurnRecoveryNotice? {
         if (event.conversationId != conversationId) return current
         return when (event) {
-            is LiveSessionEvent.TurnEnd -> turnOutcomeReport(event)
+            is LiveSessionEvent.TurnEnd -> turnRecoveryNotice(event)
             is LiveSessionEvent.TurnState ->
                 if (event.phase == LiveSessionEvent.TurnState.Phase.Idle) current else null
             is LiveSessionEvent.AssistantDelta,
             is LiveSessionEvent.ToolUse,
             is LiveSessionEvent.ToolResult,
-            is LiveSessionEvent.ReplayGap,
-            -> current
+            -> null
+            is LiveSessionEvent.ReplayGap -> current
         }
     }
 
-    init {
-        // AC #1 of #777: opening a thread asks for the newest page. A phone that only ever rendered the
-        // live stream showed nothing that predated its connection.
-        requestOlderHistory()
+    private fun setTurnOutcome(
+        notice: TurnRecoveryNotice?,
+        reason: String,
+    ) {
+        val current = _turnOutcome.value
+        if (notice == current) return
+        _turnOutcome.value = notice
+        RelayLog.d {
+            if (notice == null) {
+                "event=turn_recovery_notice state=cleared reason=$reason"
+            } else {
+                "event=turn_recovery_notice state=shown notice=${notice.name}"
+            }
+        }
+    }
 
-        // #778: a new connection restarts the walk from the newest page. The repository's projections are
-        // connection-scoped, so a cursor minted on one connection is not valid on the next — the walk
-        // restarts rather than resumes.
+    private fun clearTurnOutcome(reason: String) = setTurnOutcome(null, reason)
+
+    /**
+     * Clear [turnOutcome] when [items] end on a boundary newer than the last one drawn (#1357). An empty list,
+     * the fold's seed or a thread not loaded yet, sets no baseline, so the first load never reads as a
+     * transition. An older history page prepends rows and leaves the newest boundary as it was.
+     */
+    private fun noteNewestBoundary(items: List<ThreadItem>) {
+        if (items.isEmpty()) return
+        val newest = items.lastOrNull { it is ThreadItem.SessionBoundary } as ThreadItem.SessionBoundary?
+        if (boundaryBaselineSeen && newest != null && newest != newestBoundary) clearTurnOutcome("session_boundary")
+        newestBoundary = newest
+        boundaryBaselineSeen = true
+    }
+
+    init {
+        // #1352: neither opening the thread nor a reconnect asks for history; only the reader does
+        // (onDemandOlderHistory). The walk keeps its cursor across a reconnect.
         //
-        // #861: keyed on the repository becoming available, not on the socket. A relay host's supervisor
-        // reports Connected at socket-open, before the Noise handshake publishes the repository, so a
-        // restart keyed there asked a null repository and settled as a permanent dead end.
-        //
-        // `drop(1)` after `distinctUntilChanged` drops exactly the availability the thread opened on — the
-        // flow hands every collector its current value on subscription, so restarting on it would restart
-        // the walk this init has just started, spending a page of budget and a round trip on every open.
-        // Only a RETURN to available counts. A first value of unavailable correctly makes the repository's
-        // arrival a restart: the opening ask on the absent repository already failed.
+        // #1311: a drop and the return both end the round trip the local-send window was waiting on.
+        // `drop(1)` skips the availability the thread opened on, which the flow hands every collector.
         viewModelScope.launch {
             repositoryAvailable
                 .distinctUntilChanged()
                 .drop(1)
-                .collect { available ->
-                    // #1311: a drop and the return both end the round trip the window was waiting on.
+                .collect {
                     closeLocalSendWindow("reconnect")
-                    if (available) {
-                        RelayLog.d { "event=history_walk_restart reason=reconnect" }
-                        restartHistoryWalk(fromWalk = historyDemand.value.walk)
-                    }
+                    clearTurnOutcome("reconnect")
                 }
+        }
+
+        // #1357: the live events set and clear the recovery notice, and a new thinking reading clears it. The
+        // repository drops a reading on `turn_end`, so any reading that follows belongs to a later step.
+        viewModelScope.launch {
+            liveSessionEvents.collect { event ->
+                val reason =
+                    when (event) {
+                        is LiveSessionEvent.TurnEnd -> "turn_end"
+                        is LiveSessionEvent.TurnState -> "turn_state"
+                        is LiveSessionEvent.AssistantDelta -> "assistant_delta"
+                        is LiveSessionEvent.ToolUse -> "tool_use"
+                        is LiveSessionEvent.ToolResult -> "tool_result"
+                        is LiveSessionEvent.ReplayGap -> "replay_gap"
+                    }
+                setTurnOutcome(nextTurnOutcome(_turnOutcome.value, event), reason)
+            }
+        }
+        viewModelScope.launch {
+            repository.observeThinkingProgress(conversationId).filterNotNull().collect { clearTurnOutcome("thinking") }
         }
 
         // #1311: the daemon's first `turn_state` for this conversation, of any phase, closes the local-send
@@ -1149,6 +1298,49 @@ class ThreadViewModel(
         // so the open thread asks again when any turn on its host ends and when a reset ends. Each new
         // connection starts a fresh running set. A bump while nothing collects [sessionSettings] sends nothing.
         viewModelScope.launch { runSettingsRereadEdges(liveSessionEvents).collect(::rereadRunSettings) }
+
+        // #1345: the MCP reading starts empty on every connection, so the thread asks once when its repository is
+        // first available and again on each return, keyed there for the #861 reason. Gated as Channel
+        // info's ask is. Only the reconnect ask logs: construction stays log-free, and the opening is already
+        // logged as `thread_destination_bound`.
+        viewModelScope.launch {
+            var opened = false
+            repositoryAvailable.distinctUntilChanged().collect { available ->
+                if (!available) return@collect
+                if (state.value.runConfig.mcpServersSupported) {
+                    repository.requestMcpStatus(conversationId)
+                    if (opened) RelayLog.d { "event=mcp_status_requested reason=reconnect" }
+                }
+                opened = true
+            }
+        }
+
+        // #1410: ask for a fresh context reading when the thread opens on a live host and each time the host's
+        // repository returns, as desktop does on open. Unlike the local-send collector above there is no
+        // `drop(1)`: the opening availability is the open's own ask, and nothing else sends it. An opening `false` waits for the
+        // repository's arrival. Each ask is one fire-and-forget frame; the reply lands on observeContextUsage.
+        viewModelScope.launch {
+            var opened = false
+            repositoryAvailable
+                .distinctUntilChanged()
+                .filter { it }
+                .collect {
+                    askForContextUsage(reconnect = opened)
+                    opened = true
+                }
+        }
+    }
+
+    /**
+     * The Top overlay's MCP notice was tapped (#1345), desktop's `openMcpFailure`: acknowledge every server the
+     * current report shows as failed, not only the one named, then open Channel info, which asks for fresh
+     * status. Logs the count only.
+     */
+    fun onMcpFailureTapped() {
+        val failed = failedMcpServerNames(state.value.mcpStatus.report)
+        mcpAcknowledgements.acknowledge(serverId, conversationId, failed)
+        RelayLog.d { "event=mcp_failure_acknowledged count=${failed.size}" }
+        onOverflowEvent(ThreadEvent.ChannelInfo)
     }
 
     private fun openLocalSendWindow() {
@@ -1166,6 +1358,7 @@ class ThreadViewModel(
      * that returns was accepted, and tells the screen to follow the newest end again (#1314).
      */
     private suspend fun <T> sendInLocalWindow(send: suspend () -> T): T {
+        clearTurnOutcome("send")
         openLocalSendWindow()
         val sent =
             try {
@@ -1200,29 +1393,50 @@ class ThreadViewModel(
     }
 
     /**
-     * The reader has reached the oldest loaded row (#777) — ask for the next page back. Safe to call as
-     * often as the list's scroll predicate fires: [ThreadHistoryDemand.canAsk] drops an ask that arrives
-     * while a request is outstanding or after the walk has stopped, and drops it rather than queuing it.
+     * Ask for a fresh context reading of this thread (#1410). Only a [reconnect] ask logs, with a static reason and
+     * never the id: the open is already logged as the thread destination binds, and the opening ask runs during
+     * construction.
+     */
+    private fun askForContextUsage(reconnect: Boolean) {
+        if (reconnect) RelayLog.d { "event=context_usage_ask reason=reconnect" }
+        repository.requestContextUsage(conversationId)
+    }
+
+    /**
+     * The reader pulled toward older messages at the thread's oldest end (#1352) — ask for the next page
+     * back. The only ask besides Retry: opening, a reconnect and a page arriving never ask.
+     *
+     * Sends nothing while the host is not connected. [ThreadHistoryDemand.canAsk] drops an ask that
+     * arrives while a request is outstanding or after the walk reached a terminal stop, and drops it
+     * rather than queuing it.
      */
     fun onDemandOlderHistory() {
-        requestOlderHistory()
+        if (!historySeed.isCompleted) {
+            // #1354: a pull while the saved position is still being read asks once it has been.
+            viewModelScope.launch {
+                historySeed.join()
+                onDemandOlderHistory()
+            }
+            return
+        }
+        if (!hostAvailable.value) {
+            RelayLog.d { "event=history_ask_skipped reason=offline" }
+            return
+        }
+        val claimed = claimHistorySlot { if (it.canAsk) it.asking() else null } ?: return
+        launchHistoryAsk(claimed)
     }
 
     /**
      * The reader pressed the oldest-end retry affordance (#778) — ask again for the page that failed.
      *
      * Gated on [ThreadHistoryDemand.canRetry], so it is inert unless the walk actually stopped on a
-     * retryable failure. The retry resumes from the **same** cursor, keeping every loaded row and the
-     * walk's position across both the failure and the retry.
+     * retryable failure, and on the host being connected. The retry resumes from the **same** cursor,
+     * keeping every loaded row and the walk's position across both the failure and the retry.
      */
     fun onRetryOlderHistory() {
-        val claimed = claimHistorySlot { if (it.canRetry) it.retrying() else null } ?: return
-        launchHistoryAsk(claimed)
-    }
-
-    /** Issue one backward step of the walk, if the demand allows one (#777). */
-    private fun requestOlderHistory() {
-        val claimed = claimHistorySlot { if (it.canAsk) it.asking() else null } ?: return
+        if (!hostAvailable.value) return
+        val claimed = claimHistorySlot { if (it.canRetry) it.asking() else null } ?: return
         launchHistoryAsk(claimed)
     }
 
@@ -1234,86 +1448,58 @@ class ThreadViewModel(
      * entries into the thread this VM reads through `observeMessages`, so folding them here as well
      * would render every loaded row twice. Nothing needs a second fold.
      *
-     * Every write back is guarded on [claimed]'s [ThreadHistoryDemand.walk] (#778), so an ask superseded
-     * by a restart writes nothing at all. On reconnect that case is real, not theoretical: the ask issued
-     * on the connection that just died is still in flight, and its late settle would otherwise store that
-     * dead connection's cursor as the live walk's.
+     * Exactly one ask is outstanding at a time ([claimHistorySlot]), so every settle and fail belongs to
+     * the current ask. A page that settles across a reconnect still applies: its cursor stays valid.
+     *
+     * A received page's position is saved (#1354) before the settle releases the slot, so the one
+     * outstanding ask also orders the saves. A failed ask saves nothing, leaving the saved position as it
+     * was; a refused cursor clears it.
      */
     private fun launchHistoryAsk(claimed: ThreadHistoryDemand) {
-        val walk = claimed.walk
         viewModelScope.launch {
-            try {
-                val page = repository.requestHistory(conversationId, claimed.cursor)
-                applyToWalk(walk) { it.settled(pageCursor = page.cursor, atStart = page.atStart) }
-            } catch (e: CancellationException) {
-                throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
-            } catch (e: RelayErrorException) {
-                // A server error frame. Only the CODE is read, and only to choose a branch; e.message is
-                // server-supplied and is never read, logged or surfaced. An unknown or differently-cased
-                // code falls through to the failure branch, so the fallback here is the safe one.
-                if (e.code == HISTORY_INVALID_CURSOR && claimed.cursor.isNotEmpty()) {
-                    // AC #3: the daemon refused the cursor, so walk the log again from the newest page
-                    // rather than surfacing a dead end. Bounded because restartHistoryWalk carries the
-                    // page budget.
-                    RelayLog.d { "event=history_walk_restart reason=invalid_cursor" }
-                    restartHistoryWalk(fromWalk = walk)
-                } else {
-                    // A refusal of the NEWEST-page ask is permanent, not a restart: restarting would
-                    // re-send the same empty cursor for the same refusal, at round-trip speed with no
-                    // user input. There is nothing to restart to when the walk is already at the newest
-                    // page, and this is what keeps the restart cycle structurally impossible rather than
-                    // merely capped.
-                    failWalk(walk, retryable = e.retryable)
-                }
-            } catch (e: IllegalStateException) {
-                // A not-connected session, #488's teardown sweep, or the not-wired interface default.
-                // Not retryable: a button with no connection behind it cannot work, and the reconnect
-                // restart above is what actually recovers this case.
-                failWalk(walk, retryable = false)
-            } catch (e: IllegalArgumentException) {
-                // An unknown conversation id, or a malformed page — kotlinx.serialization's
-                // SerializationException is an IllegalArgumentException, so the decode failure lands here.
-                failWalk(walk, retryable = false)
-            }
+            val page = fetchHistoryPage(claimed) ?: return@launch
+            repository.writeHistoryPosition(conversationId, HistoryPosition(page.cursor, page.atStart))
+            historyDemand.update { it.settled(pageCursor = page.cursor, atStart = page.atStart) }
         }
     }
 
-    /** Settle a failed ask, if it still belongs to the current walk. [retryable] is a flag, never text. */
-    private fun failWalk(
-        walk: Int,
-        retryable: Boolean,
-    ) {
+    /** Ask for the page at [claimed]'s cursor, or settle the failure and return `null`. */
+    private suspend fun fetchHistoryPage(claimed: ThreadHistoryDemand): HistoryPage? {
+        try {
+            return repository.requestHistory(conversationId, claimed.cursor)
+        } catch (e: CancellationException) {
+            throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
+        } catch (e: RelayErrorException) {
+            // A server error frame. Only the CODE is read, and only to choose a branch; e.message is
+            // server-supplied and is never read, logged or surfaced. An unknown or differently-cased
+            // code falls through to the failure branch, so the fallback here is the safe one.
+            if (e.code == HISTORY_INVALID_CURSOR && claimed.cursor.isNotEmpty()) {
+                // #1352: the daemon refused the cursor. The next gesture asks from the newest page;
+                // nothing asks now. #1354: the saved position goes too, so the next open does the same.
+                RelayLog.d { "event=history_cursor_refused" }
+                repository.writeHistoryPosition(conversationId, null)
+                historyDemand.update { it.cursorRefused() }
+            } else {
+                // A refusal of the NEWEST-page ask has nothing to fall back to, so it is a failure.
+                failWalk(retryable = e.retryable)
+            }
+        } catch (e: IllegalStateException) {
+            // A not-connected session, #488's teardown sweep, or the not-wired interface default. Not
+            // retryable: a button with no connection behind it cannot work. A gesture after the
+            // reconnect asks again (#1352).
+            failWalk(retryable = false)
+        } catch (e: IllegalArgumentException) {
+            // An unknown conversation id, or a malformed page — kotlinx.serialization's
+            // SerializationException is an IllegalArgumentException, so the decode failure lands here.
+            failWalk(retryable = false)
+        }
+        return null
+    }
+
+    /** Settle a failed ask. [retryable] is a flag, never text. */
+    private fun failWalk(retryable: Boolean) {
         RelayLog.d { "event=history_ask_failed retryable=$retryable" }
-        applyToWalk(walk) { it.failed(retryable = retryable) }
-    }
-
-    /** Apply [transform] only while the walk is still the one the ask was issued on (#778). */
-    private fun applyToWalk(
-        walk: Int,
-        transform: (ThreadHistoryDemand) -> ThreadHistoryDemand,
-    ) {
-        historyDemand.update { if (it.walk == walk) transform(it) else it }
-    }
-
-    /**
-     * Restart the walk from the newest page on the **same** page budget (#778), and ask for that page
-     * unless the budget is already spent.
-     *
-     * Returns without a write when the generation has already moved — two restarts can genuinely race
-     * (a refused cursor and a reconnect), and each taking a distinct generation means at most one settle
-     * applies: two round trips for one page of budget, which spends the bound faster rather than
-     * laundering it.
-     */
-    private fun restartHistoryWalk(fromWalk: Int) {
-        while (true) {
-            val current = historyDemand.value
-            if (current.walk != fromWalk) return
-            val restarted = current.restarted()
-            if (historyDemand.compareAndSet(current, restarted)) {
-                if (restarted.inFlight) launchHistoryAsk(restarted)
-                return
-            }
-        }
+        historyDemand.update { it.failed(retryable = retryable) }
     }
 
     /**
@@ -1364,7 +1550,11 @@ class ThreadViewModel(
         // #1328: text is required even with files pending, as on desktop; blank leaves them for the next send.
         if (text.isBlank()) return
         val attachments = draftStore.attachmentsFor(serverId, conversationId)
-        if (attachments.isNotEmpty()) return sendWithAttachments(text, attachments)
+        if (attachments.isNotEmpty()) {
+            return sendWithAttachments(text, attachments) {
+                if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
+            }
+        }
         launchGuardedRepoCall {
             // #686: a message sent while this opening's recall write is outstanding follows it.
             effortRecall.awaitWrite()
@@ -1383,12 +1573,14 @@ class ThreadViewModel(
      * anything else is uploaded or sent; a thrown upload or send is swallowed by [launchGuardedRepoCall].
      * Either way the text and every entry stay in the draft — the way a failed text send is reported.
      *
-     * On success the text clears under [sendMessage]'s in-flight guard, and only the snapshot's entries
-     * are removed, so an attachment added while this send was in flight survives it.
+     * On success [onSent] runs — [sendMessage]'s guarded draft clear, or [onComposerCommand]'s log, which
+     * leaves the draft alone (#1348) — and only the snapshot's entries are removed, so an attachment added
+     * while this send was in flight survives it.
      */
     private fun sendWithAttachments(
         text: String,
         attachments: List<PendingAttachment>,
+        onSent: () -> Unit,
     ) {
         _attachmentsSending.value = true
         launchGuardedRepoCall {
@@ -1408,7 +1600,7 @@ class ThreadViewModel(
                 // #686: a message sent while this opening's recall write is outstanding follows it.
                 effortRecall.awaitWrite()
                 sendInLocalWindow { repository.sendMessage(target, text, references) }
-                if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
+                onSent()
                 draftStore.removeAttachments(serverId, conversationId, attachments.mapTo(HashSet()) { it.key })
             } finally {
                 // #933: however the send ended — sent, stopped by a failed read or upload, or a swallowed throw.
@@ -1637,10 +1829,13 @@ class ThreadViewModel(
 
     /**
      * Send the Actions menu's [action] command (#884) as an ordinary message to this conversation, through
-     * the same guarded send [sendMessage] runs, so a failed send is handled exactly as a composer message's.
-     * It leaves the typed draft alone, so there is no clear on success. A command the published menu proves
-     * absent is refused here too, behind the greyed-out row. Reset session carries no command and never
-     * comes this way. Logs static codes only.
+     * a guarded send, so a failed send is handled exactly as a composer message's. With pending files it goes
+     * through [sendWithAttachments], as desktop's `sendText` takes them for both its callers (#1348), and so
+     * opens the local send window that a text-only command does not; it is refused while an earlier
+     * attachment send still owns them. It leaves the
+     * typed draft alone, so there is no clear on success. A command the published menu proves absent is
+     * refused here too, behind the greyed-out row. Reset session carries no command and never comes this
+     * way. Logs static codes only.
      */
     fun onComposerCommand(action: ComposerAction) {
         if (!connectedFor("composer_action")) return
@@ -1649,8 +1844,19 @@ class ThreadViewModel(
             RelayLog.d { "event=composer_action action=${action.value} outcome=absent" }
             return
         }
+        if (_attachmentsSending.value) {
+            RelayLog.d { "event=composer_action action=${action.value} outcome=busy" }
+            return
+        }
+        val attachments = draftStore.attachmentsFor(serverId, conversationId)
+        if (attachments.isNotEmpty()) {
+            return sendWithAttachments(command, attachments) {
+                RelayLog.d { "event=composer_action action=${action.value} outcome=sent" }
+            }
+        }
         launchGuardedRepoCall {
             effortRecall.awaitWrite()
+            clearTurnOutcome("send")
             repository.sendMessage(conversationId, command)
             RelayLog.d { "event=composer_action action=${action.value} outcome=sent" }
         }
@@ -1998,8 +2204,77 @@ class ThreadViewModel(
         val config = state.value.runConfig
         if (config.pending || value == config.selectedModel) return
         if (!skipUnlessWritable(config)) return
+        // #1360: a model the user picks replaces the way back to the refused one.
+        clearRefusalOffer("menu")
         pendingModel.value = value
         sendSessionSettings(config.sessionId, model = value) { pendingModel.value = null }
+    }
+
+    /**
+     * Switch back to the model claude refused on (#1360, desktop's `switchBack`): one write of the offer's
+     * original model, verbatim, to the session the settings reading names. Unlike [onModelSelected] there is no
+     * equal-value guard: after a session-scoped fallback the reading can still name the original model while
+     * claude runs the fallback, so the write must go out anyway.
+     *
+     * Dropped while the host is not connected, without an offer, while any model write is pending, or without
+     * a session to address. An acknowledged write ends the offer; a refused or failed one keeps it, marked
+     * failed until the next tap. Both act only on the offer the write was sent for. Logs static codes only:
+     * the model is claude's text.
+     */
+    fun onSwitchBack() {
+        if (!connectedFor("switch_back")) return
+        val offer = refusalOffer.value ?: return
+        if (pendingModel.value != null) {
+            RelayLog.d { "event=refusal_switch_back outcome=skipped reason=pending" }
+            return
+        }
+        val config = state.value.runConfig
+        if (!skipUnlessWritable(config)) return
+        refusalOffer.value = offer.copy(failed = false)
+        pendingModel.value = offer.originalModel
+        RelayLog.d { "event=refusal_switch_back outcome=sent" }
+        sendSessionSettings(
+            config.sessionId,
+            model = offer.originalModel,
+            onAcked = {
+                RelayLog.d { "event=refusal_switch_back outcome=acked" }
+                refusalOffer.update { if (it?.occurredAt == offer.occurredAt) null else it }
+            },
+        ) {
+            RelayLog.d { "event=refusal_switch_back outcome=failed" }
+            pendingModel.value = null
+            refusalOffer.update { if (it?.occurredAt == offer.occurredAt) it.copy(failed = true) else it }
+        }
+    }
+
+    /**
+     * Fold one live refusal event into the offer (#1360), after desktop's `reduceRefusalOffer`. Only a fallback
+     * refusal whose `scope` is exactly `session` and that names both models arms; any other fallback refusal
+     * clears; a no-fallback refusal changes nothing; a session transition clears. `scope` is claude's open
+     * string, compared and never shown: a value this client does not know can only withhold the offer.
+     */
+    private fun onLiveRefusalEvent(event: LiveRefusalEvent) {
+        when (event) {
+            is LiveRefusalEvent.Refused -> {
+                val refusal = event.refusal
+                val fallbackModel = refusal.fallbackModel ?: return
+                if (event.scope == SESSION_SCOPE && refusal.originalModel.isNotEmpty() && fallbackModel.isNotEmpty()) {
+                    refusalOffer.value = RefusalOffer(refusal.originalModel, fallbackModel, refusal.occurredAt)
+                    RelayLog.d { "event=refusal_offer outcome=armed" }
+                    // The refusal means a session is running, but a reading taken before it spawned names none.
+                    repository.refreshSessionSettings(conversationId)
+                } else {
+                    clearRefusalOffer("unqualified")
+                }
+            }
+            LiveRefusalEvent.SessionReplaced -> clearRefusalOffer("session")
+        }
+    }
+
+    private fun clearRefusalOffer(reason: String) {
+        if (refusalOffer.value == null) return
+        refusalOffer.value = null
+        RelayLog.d { "event=refusal_offer outcome=cleared reason=$reason" }
     }
 
     /** The [onModelSelected] twin for effort (#807). [level] is a published [ThreadEffortChoice.value] of
@@ -2163,6 +2438,7 @@ class ThreadViewModel(
         sessionId: String,
         model: String? = null,
         effort: String? = null,
+        onAcked: () -> Unit = {},
         revert: () -> Unit,
     ): Job =
         viewModelScope.launch {
@@ -2175,6 +2451,8 @@ class ThreadViewModel(
                 // asks for a fresh reading rather than promoting the optimistic one. The pending survives
                 // until that reading lands (see [sessionSettings]); only the failure paths below clear it.
                 repository.refreshSessionSettings(conversationId)
+                // #1360: the switch-back's ack ends its offer.
+                onAcked()
             } catch (e: CancellationException) {
                 throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
             } catch (e: RelayErrorException) {
@@ -2188,8 +2466,17 @@ class ThreadViewModel(
 
     /** Closes the Channel info sheet and drops its System prompt editor; a write already sent still lands. */
     private fun closeChannelInfo() {
+        // #1344: by any path — dismiss, Archive or a confirmed Delete. Only the call that actually closes the
+        // sheet releases the MCP reconnect and toggle waits it may have started, so a daemon that never answers
+        // cannot leave the section's controls disabled after the sheet reopens. Every caller is on the main
+        // thread via [onOverflowEvent], so the read and the write below cannot interleave with another close.
+        val wasOpen = pendingChannelInfo.value
         pendingChannelInfo.value = false
         promptEditor.value = null
+        if (!wasOpen) return
+        repository.endMcpReconnectWait(conversationId)
+        repository.endMcpToggleWait(conversationId)
+        RelayLog.d { "event=mcp_wait_released" }
     }
 
     fun onOverflowEvent(event: ThreadEvent) {
@@ -2237,17 +2524,31 @@ class ThreadViewModel(
                 pendingSaveAsChannelDialog.value = null
                 RelayLog.d { "event=save_as_channel_dismissed" }
             }
-            // #1309: opening either sheet re-reads the settings it shows; closing sends nothing.
+            // #1309: opening either sheet re-reads the settings it shows. #1344: Channel info also asks for the
+            // MCP reading, which starts empty on every connection, unless the session reports it cannot answer.
             // #1342: each open also mounts a fresh System prompt editor, whose construction reads the prompt.
             ThreadEvent.ChannelInfo ->
                 if (pendingChannelInfo.compareAndSet(false, true)) {
                     promptEditor.value = SystemPromptEditor(viewModelScope, repository, conversationId)
                     rereadRunSettings("channel_info_open")
+                    if (state.value.runConfig.mcpServersSupported) {
+                        repository.requestMcpStatus(conversationId)
+                        RelayLog.d { "event=mcp_status_requested" }
+                    }
                 }
             ThreadEvent.ChannelInfoDismiss -> closeChannelInfo()
             is ThreadEvent.SystemPromptEdit -> promptEditor.value?.edit(event.text)
             ThreadEvent.SystemPromptSave -> promptEditor.value?.save()
             ThreadEvent.SystemPromptClear -> promptEditor.value?.clear()
+            // #1344: always the route's own conversation; the Claude-authored name only goes on the wire.
+            is ThreadEvent.McpReconnect -> {
+                repository.reconnectMcpServer(conversationId, event.serverName)
+                RelayLog.d { "event=mcp_reconnect_sent" }
+            }
+            is ThreadEvent.McpToggle -> {
+                repository.toggleMcpServer(conversationId, event.serverName, event.enabled)
+                RelayLog.d { "event=mcp_toggle_sent enabled=${event.enabled}" }
+            }
             ThreadEvent.RunConfigOpen -> rereadRunSettings("run_config_open")
             ThreadEvent.ChangeWorkspace -> pendingWorkspacePicker.value = true
             ThreadEvent.NewSession -> sendNewSession()
@@ -2561,6 +2862,20 @@ internal fun String.modelFamily(): String {
     val head = bare.take(MAX_RUN_CONFIG_LABEL_CHARS).takeWhile { it in 'A'..'Z' || it in 'a'..'z' }
     return head.replaceFirstChar { it.uppercaseChar() }.inert()
 }
+
+/**
+ * The ViewModel's switch-back offer (#1360): the arming refusal's two models, verbatim, and its row identity.
+ * [failed] marks the last write for this offer as refused or failed.
+ */
+private data class RefusalOffer(
+    val originalModel: String,
+    val fallbackModel: String,
+    val occurredAt: Instant,
+    val failed: Boolean = false,
+)
+
+/** The one `model_refusal_fallback.scope` that arms a switch-back offer (#1360, desktop's rule). */
+private const val SESSION_SCOPE = "session"
 
 /**
  * How full the context window is, as a whole percent in 0..100, or `null` when unavailable (#1411, desktop's

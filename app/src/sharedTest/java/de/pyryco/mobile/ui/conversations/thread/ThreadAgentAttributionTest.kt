@@ -13,7 +13,7 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.ThreadItem
-import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
+import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Rule
@@ -23,7 +23,7 @@ import org.junit.runner.RunWith
 /**
  * #1113: the notice, refusal and turn-outcome rows name the conversation's agent, wired from
  * [ThreadUiState.agent] through [ThreadScreen]. The Claude cases assert today's literal copy, so a Claude
- * conversation provably reads as it did before.
+ * conversation provably reads as it did before. Since #1357 the turn-outcome row is recovery advice.
  *
  * Fixtures are hand-written literals, never captured live payloads.
  */
@@ -36,8 +36,7 @@ class ThreadAgentAttributionTest {
 
     private fun setScreen(
         agent: ConversationAgent,
-        turnOutcome: TurnOutcomeReport? =
-            TurnOutcomeReport(TurnOutcomeReport.Kind.Failed, listOf("prompt_too_long"), null),
+        turnOutcome: TurnRecoveryNotice? = TurnRecoveryNotice.BillingError,
     ) {
         val state =
             ThreadUiState(
@@ -76,7 +75,7 @@ class ThreadAgentAttributionTest {
 
         composeRule.onNodeWithText("Warning · Codex: Blocked by hook").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Warning from Codex").assertDoesNotExist()
-        composeRule.onNodeWithContentDescription("Turn failed · Codex reports prompt_too_long").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Codex reported a billing error. Check Codex billing on this server.").assertIsDisplayed()
         composeRule.onNodeWithText("Show details").assertIsDisplayed()
         composeRule.onNode(hasClickLabel("Show Codex's explanation")).performClick()
         composeRule.onNodeWithText("Codex: Retried on another model.").assertIsDisplayed()
@@ -86,10 +85,12 @@ class ThreadAgentAttributionTest {
     }
 
     @Test
-    fun a_codex_failure_with_no_details_is_codex_reporting_an_error() {
-        setScreen(ConversationAgent.Codex, TurnOutcomeReport(TurnOutcomeReport.Kind.Failed, emptyList(), null))
+    fun a_codex_sign_in_failure_names_codex() {
+        setScreen(ConversationAgent.Codex, TurnRecoveryNotice.AuthenticationFailed)
 
-        composeRule.onNodeWithContentDescription("Turn failed · Codex reports an error").assertIsDisplayed()
+        composeRule
+            .onNodeWithContentDescription("Codex reported an authentication failure. Check Codex sign-in on this server.")
+            .assertIsDisplayed()
     }
 
     @Test
@@ -98,16 +99,21 @@ class ThreadAgentAttributionTest {
 
         composeRule.onNodeWithText("Warning · Claude: Blocked by hook").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Warning from Claude").assertDoesNotExist()
-        composeRule.onNodeWithContentDescription("Turn failed · Claude reports prompt_too_long").assertIsDisplayed()
+        composeRule
+            .onNodeWithContentDescription(
+                "Claude reported a billing error. Check Claude billing on this server.",
+            ).assertIsDisplayed()
         composeRule.onNode(hasClickLabel("Show Claude's explanation")).performClick()
         composeRule.onNodeWithText("Claude: Retried on another model.").assertIsDisplayed()
         composeRule.onNode(hasClickLabel("Hide Claude's explanation")).assertExists()
     }
 
     @Test
-    fun a_claude_failure_with_no_details_reads_as_today() {
-        setScreen(ConversationAgent.Claude, TurnOutcomeReport(TurnOutcomeReport.Kind.Failed, emptyList(), null))
+    fun a_claude_sign_in_failure_names_claude() {
+        setScreen(ConversationAgent.Claude, TurnRecoveryNotice.AuthenticationFailed)
 
-        composeRule.onNodeWithContentDescription("Turn failed · Claude reports an error").assertIsDisplayed()
+        composeRule
+            .onNodeWithContentDescription("Claude reported an authentication failure. Check Claude sign-in on this server.")
+            .assertIsDisplayed()
     }
 }

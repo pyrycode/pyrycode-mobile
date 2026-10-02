@@ -124,8 +124,8 @@ class RelayRepositoryCoordinator(
     internal val finishedBackgroundTasks: FinishedBackgroundTasks = FinishedBackgroundTasks()
 
     /**
-     * The five readings this host pushes and the phone never asks for again (#1317), held for the host's
-     * pairing as desktop does, so a return to the foreground does not blank them until the next turn ends.
+     * The five readings this host pushes (#1317), of which the phone also asks only for context usage (#1410),
+     * held for the host's pairing as desktop does, so a return to the foreground does not blank them until the next turn ends.
      * Lives here for [replayCursor]'s reason, and [teardownActive] never touches it. Threaded into each
      * repository in [onConnection]; the thread reads it while disconnected. [close] drops it, which is the
      * pairing-scoped clear: registry reconcile closes the coordinator on unpair and re-pair. Built with [now]

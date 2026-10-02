@@ -23,7 +23,7 @@ import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.ThinkingProgress
-import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
+import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -83,7 +83,7 @@ class ThreadActivityIndicatorCaptureTest {
                 Triple(1, "Claude is retrying, attempt 3 of 10", "retry"),
                 Triple(2, "Claude is compacting the conversation", "compacting"),
                 Triple(3, "Restarting", "reset"),
-                Triple(4, "Turn interrupted", "outcome"),
+                Triple(4, "Context too long. Compact or reset the session.", "outcome"),
             )
         readings.forEach { (value, description, name) ->
             reading = value
@@ -105,7 +105,7 @@ class ThreadActivityIndicatorCaptureTest {
             Triple(1, "Claude is retrying, attempt 3 of 10", "retry"),
             Triple(2, "Claude is compacting the conversation", "compacting"),
             Triple(7, "Claude is writing a handoff note for the next session", "reset-wrap"),
-            Triple(5, "Turn failed · Claude reports prompt_too_long, API error invalid_request", "outcome-tasks"),
+            Triple(5, "Claude reported a billing error. Check Claude billing on this server.", "outcome-tasks"),
         ).forEach { (value, description, name) ->
             reading = value
             rule.onNodeWithContentDescription(description).assertIsDisplayed()
@@ -143,8 +143,8 @@ class ThreadActivityIndicatorCaptureTest {
                             },
                         turnOutcome =
                             when (reading) {
-                                4 -> TurnOutcomeReport(TurnOutcomeReport.Kind.Interrupted, emptyList(), null)
-                                5 -> TurnOutcomeReport(TurnOutcomeReport.Kind.Failed, listOf("prompt_too_long"), "invalid_request")
+                                4 -> TurnRecoveryNotice.ContextTooLong
+                                5 -> TurnRecoveryNotice.BillingError
                                 else -> null
                             },
                     )

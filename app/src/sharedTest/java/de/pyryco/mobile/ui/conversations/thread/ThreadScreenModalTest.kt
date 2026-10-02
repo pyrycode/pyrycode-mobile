@@ -184,10 +184,11 @@ class ThreadScreenModalTest {
         assertEquals(anchor, composeTestRule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot)
         composeTestRule.onNodeWithTag("permission-request-card").assertDoesNotExist()
         composeTestRule.onNode(hasScrollToIndexAction()).performScrollToIndex(32)
-        composeTestRule.runOnIdle { assertEquals(1, demands) }
+        // #1352: reaching the oldest row is not a pull, so it asks nothing.
+        composeTestRule.runOnIdle { assertEquals(0, demands) }
         composeTestRule.runOnIdle { modal = openModal().copy(modalId = "m2") }
         composeTestRule.waitForIdle()
-        composeTestRule.runOnIdle { assertEquals("a replaced request cannot manufacture another history demand", 1, demands) }
+        composeTestRule.runOnIdle { assertEquals("a replaced request cannot manufacture a history demand", 0, demands) }
     }
 
     @Test

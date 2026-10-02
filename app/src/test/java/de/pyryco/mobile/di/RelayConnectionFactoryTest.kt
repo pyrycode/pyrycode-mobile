@@ -1118,7 +1118,7 @@ class RelayConnectionFactoryTest {
                             """{"conversations":[{"id":"c","name":"$name","is_promoted":true,"cwd":"/same","last_message_ts":"2026-09-01T00:00:00Z","last_used_at":"2026-09-01T00:00:00Z"}]}""",
                         ),
                     )
-                    t.emit(envelope("message", """{"conversation_id":"c","message_id":"same","role":"assistant","text":"$name"}"""))
+                    t.emit(envelope("message", """{"conversation_id":"c","message_id":"same","role":"user","text":"$name"}"""))
                 }
                 replyRows(ta, "A content")
                 replyRows(tb, "B content")

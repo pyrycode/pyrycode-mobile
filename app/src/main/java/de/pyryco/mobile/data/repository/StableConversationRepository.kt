@@ -8,6 +8,7 @@ import de.pyryco.mobile.data.model.Session
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 
@@ -118,14 +119,22 @@ class StableConversationRepository(
         heldReadings?.observeAnnouncedModel(conversationId)
             ?: switchToLive<AnnouncedModel?>(null) { it.observeAnnouncedModel(conversationId) }
 
+    /**
+     * The live refusal events for [conversationId] (#1360), switched over the live connection. Never held:
+     * they are events, so the gap between connections emits nothing and a reconnect replays nothing.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    override fun observeLiveRefusalEvents(conversationId: String): Flow<LiveRefusalEvent> =
+        currentRepository.flatMapLatest { repo -> repo?.observeLiveRefusalEvents(conversationId) ?: emptyFlow() }
+
     /** The session-facts reading for [conversationId] (#890), held or switched as [observeAnnouncedModel] is. */
     override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> =
         heldReadings?.observeSessionFacts(conversationId) ?: switchToLive<SessionFacts?>(null) { it.observeSessionFacts(conversationId) }
 
     /**
-     * The context-usage reading for [conversationId] (#945), held or switched as [observeAnnouncedModel] is. The
-     * phone never asks for it, so without [heldReadings] it stays absent after a reconnect until the
-     * conversation's next turn ends.
+     * The context-usage reading for [conversationId] (#945), held or switched as [observeAnnouncedModel] is. Held,
+     * it survives a reconnect until the open thread's [requestContextUsage] answer (#1410) or the next turn's push
+     * replaces it; without [heldReadings] it stays absent until one of them lands.
      */
     override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> =
         heldReadings?.observeContextUsage(conversationId) ?: switchToLive<ContextUsage?>(null) { it.observeContextUsage(conversationId) }
@@ -245,6 +254,11 @@ class StableConversationRepository(
      */
     override fun refreshSessionSettings(conversationId: String) {
         currentRepository.value?.refreshSessionSettings(conversationId)
+    }
+
+    /** Ask the live repository for a fresh context reading (#1410); a no-op with no connection, like [refreshSessionSettings]. */
+    override fun requestContextUsage(conversationId: String) {
+        currentRepository.value?.requestContextUsage(conversationId)
     }
 
     /**

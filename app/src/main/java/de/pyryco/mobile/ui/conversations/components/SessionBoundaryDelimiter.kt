@@ -208,11 +208,13 @@ internal fun boundaryLabel(
 }
 
 /**
- * Desktop's `compactionBoundaryTitle`, without its failed branch (mobile draws the divider from
- * `compaction_boundary` only): "Conversation compacted", then the sizes only when both counts are known,
- * then " by you" for a manual compaction. A null count claims no size — never "→ 0".
+ * Desktop's `compactionBoundaryTitle`: "Compaction failed" for a divider whose falling edge reported a
+ * failure (#1358); otherwise "Conversation compacted", then the sizes only when both counts are known, then
+ * " by you" for a manual compaction. A null count claims no size — never "→ 0" — so a divider no boundary
+ * has filled in yet reads "Conversation compacted".
  */
 internal fun compactionBoundaryLabel(item: ThreadItem.CompactionBoundary): String {
+    if (item.failed) return "Compaction failed"
     val pre = item.preTokens
     val post = item.postTokens
     val sizes = if (pre != null && post != null) ", ${compactionTokenCount(pre)} → ${compactionTokenCount(post)} tokens" else ""

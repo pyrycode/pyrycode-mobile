@@ -56,9 +56,12 @@ Single scrollable `Column(fillMaxWidth)` inside the `ModalBottomSheet`:
 3. **Five `AboutRow`s**: read-only `Folder` (with `valueIsPath = true`), `Created`, `Last activity`, `Total sessions`, `Total messages`. The model retains the `workspacePath` field name as its folder-path source. See "Row contracts" below.
 4. **`SectionHeader("Memory")`** then **`MemoryRow(model.memorySearch, onInstall)`**. See "Memory row" below.
 5. **`SectionHeader("System prompt")`** then **`SystemPromptSection(systemPrompt, ...)`** (#1342) — only when `systemPrompt != null`. Sits here regardless of `mutationsSupported`: desktop shows this section for every conversation, and `set_system_prompt` is not one of the gated mutations. See "System prompt section" below.
-6. **`SectionHeader("Actions")`** then **`ActionsGrid`** — equal-width `Rename` and `Archive` cells above full-width `Delete`. Each cell is a `FilledTonalButton` with one-line text. The section is hidden when `mutationsSupported` is false; About, Memory, System prompt and the Channel-ID footer remain visible. No workspace action or Settings storage section appears.
-7. **`Footer(channelId)`** — see "Footer + clipboard" below.
-8. **`Spacer(height = 24.dp)`** — bottom inner padding above the system-inset that `ModalBottomSheet` already applies. The body scrolls vertically so actions and footer remain reachable with enlarged text.
+6. **`SectionHeader("MCP servers")`** then **`McpServersSection(status, onReconnect, onToggle)`** (#1344) — only when `model.mcpServers != null`. Sits after System prompt and before Actions, desktop's position. See "MCP servers section" below.
+7. **`SectionHeader("Actions")`** then **`ActionsGrid`** — equal-width `Rename` and `Archive` cells above full-width `Delete`. Each cell is a `FilledTonalButton` with one-line text. The section is hidden when `mutationsSupported` is false; About, Memory, System prompt, MCP servers and the Channel-ID footer remain visible. No workspace action or Settings storage section appears.
+8. **`Footer(channelId)`** — see "Footer + clipboard" below.
+9. **`Spacer(height = 24.dp)`** — bottom inner padding above the system-inset that `ModalBottomSheet` already applies. The body scrolls vertically so actions and footer remain reachable with enlarged text.
+
+With both the System prompt (#1342) and MCP servers (#1344) sections present, Actions and the footer sit below the fold on the Robolectric default viewport, and on-device. Any screen test or live test that taps Rename, Archive or Delete must `performScrollTo()` on that node first — a bare `performClick()` lands outside the sheet and nothing is recorded. `ThreadScreenChannelInfoTest` and `InteractiveStreamE2ETest#interactiveTurn_deleteConversation_removesFromListAndClosesThread` both needed this fix; the live method's miss showed up as a 30-second wait for a confirm dialog that never opened.
 
 ### Row contracts
 
@@ -109,6 +112,102 @@ channel."; `Unclassified` → "Not saved: the daemon refused the write." See
 [System prompt editor](system-prompt-editor.md) for `canSave`/`canClear`, the refusal classification and
 the write lifecycle; see [ChannelListViewModel § Wiring](channel-list-viewmodel.md#wiring) for the
 companion Edit channel clear rule.
+
+### MCP servers section
+
+Private `McpServersSection(status: McpStatus, onReconnect, onToggle)` (#1344, new file
+`McpServersSection.kt`), desktop's `McpServersSectionView`. The section shows only while the thread's
+session reports the `mcp_servers` capability as other than `false` — `SessionCapabilitiesDto.mcpServers`
+(`@SerialName("mcp_servers")`) defaults to `true`, as `slash_commands` does, so a daemon that never sends
+the key still gets the section. `ThreadRunConfig.mcpServersSupported` is the one reading both
+`ThreadViewModel` and `toChannelInfoUiModel` use; Codex sessions report `false` and get no section and no
+request. `ChannelInfoUiModel.mcpServers` is `null` to hide the section — `ThreadScreen.toChannelInfoUiModel`
+sets it to the current `McpStatus` only when `mcpServersSupported`, else `null`.
+
+**Asking on open.** `ConversationRepository`'s MCP reading (#1343) starts empty on every new connection, so
+the section has to ask for it. Every real opening of the sheet — `ThreadEvent.ChannelInfo`, inside the
+`pendingChannelInfo.compareAndSet(false, true)` guard that also mounts the System prompt editor and rereads
+settings — calls `repository.requestMcpStatus(conversationId)`, but only when `mcpServersSupported`; a
+second `ChannelInfo` event while the sheet is already open asks nothing. `ThreadViewModel.mcpStatusReading`
+is one more arm on the `state` combine chain, `observeMcpStatus(conversationId).onStart { emit(McpStatus()) }`
+collected under the same `WhileSubscribed(5_000)` lifecycle as every other reading.
+
+**Asking again on open and on every reconnect ([#1345](https://github.com/pyrycode/pyrycode-mobile/issues/1345)).**
+The Channel info ask above only fires while the sheet is open. #1345's [Top overlay MCP-failure
+pill](thread-top-overlay.md#the-failed-mcp-server-pill-1345) needs a current reading even when the sheet has
+never been opened, and desktop keeps its last report across a reconnect while mobile's per-connection reading
+starts empty — so `ThreadViewModel` runs a second, independent ask: a `viewModelScope` collector over
+`repositoryAvailable.distinctUntilChanged()` calls `repository.requestMcpStatus(conversationId)` on every
+`true`, gated on the same `mcpServersSupported` reading the Channel info branch uses. The first `true` is the
+thread opening; every later one is a reconnect. Only the reconnect case logs
+(`event=mcp_status_requested reason=reconnect`) — logging from the view model's construction path crashed six
+existing JVM suites that construct it without a `RelayLog` sink, and the opening is already logged by the
+destination factory's `thread_destination_bound`. **This ask shares the daemon's per-connection FIFO
+app-frame worker with `send_message`:** if the child doesn't answer, the next send on that connection waits
+behind it with no timeout of its own. See [Development verification § Emulator and real
+evidence](development-verification-emulator-evidence.md#emulator-and-real-evidence) for the scripted `reconnect` hang this
+caused and the harness fix, and pyrycode/pyrycode#2702 for the upstream daemon issue.
+
+**Raising a notice from a failure — `McpFailureAcknowledgements`.** The [Top overlay's MCP-failure
+pill](thread-top-overlay.md#the-failed-mcp-server-pill-1345) reads this same `mcpStatusReading`: the first
+server in report order whose status is exactly `"failed"` and that this host and conversation have not
+acknowledged, shown only while the host is `Connected`. Tapping it acknowledges every currently-failed
+server and opens this sheet through `ThreadEvent.ChannelInfo`, so opening Channel info after a tap always
+re-asks for status too. `McpFailureAcknowledgements` is an app-scoped, in-memory holder keyed by host then
+conversation — see [Thread top overlay §
+Acknowledgement](thread-top-overlay.md#acknowledgement--mcpfailureacknowledgements) for its shape, and
+`ObservablePairedServerStore.forgetRemovedHost` for why unpairing a host clears its entries alongside
+`ComposerDraftStore`'s.
+
+**Built-in servers.** `pyry_approve` and `pyry_files` (client-owned `BUILT_IN_SERVER_NAMES`, compared only
+for display) stay hidden behind a "Show built-in" row until it is ticked. The tick is `rememberSaveable`
+local state, not part of `McpStatus` — since the host composes the section only while the sheet is open,
+remounting it on the next opening resets the tick to off, matching desktop's "off on every mount".
+
+**Rows and controls.** Each shown server renders its bounded name and status, plus a bounded error line
+when the error is non-empty. Any status other than exactly `connected` — including `disabled` — gets a
+Reconnect button; the switch is on unless the status is exactly `disabled`, and a tap sends the opposite of
+the rendered state (`onToggle(name, !on)`), never the switch's own proposed value. `Reconnect` calls
+`reconnectMcpServer(conversationId, name)`; the switch calls `toggleMcpServer(conversationId, name, enabled)`
+— both always the thread's own route `conversationId`, never anything carried on the report. Rows render in
+report order with no `key()` on the name.
+
+**The wait.** `busy = status.reconnecting || status.toggling` disables every Reconnect button and every
+server switch in the section; "Show built-in" is a local filter that sends nothing, so it stays enabled
+while busy, matching desktop (`disabled={busy}` sits only on Reconnect and the per-server switch there too).
+A report or a refusal clears the flags in the repository. Dismissing the sheet releases both waits so a
+daemon that never answers cannot leave the controls stuck disabled the next time the sheet opens — see
+`closeChannelInfo` below.
+
+**Closing.** `ThreadViewModel.closeChannelInfo()` is the single place that flips `pendingChannelInfo` to
+false; `ThreadEvent.ChannelInfoDismiss`, `Archive` and a confirmed `DeleteConfirm` all route through it (the
+same function also drops the System prompt editor, #1342). It reads `pendingChannelInfo` before clearing it
+and calls `repository.endMcpReconnectWait(conversationId)` / `endMcpToggleWait(conversationId)` only when the
+sheet was actually open, so a repeat close — e.g. `Archive` fired from the overflow menu while the sheet was
+already closed — releases nothing a second time. Every caller runs on the main thread via `onOverflowEvent`,
+so the read-then-clear cannot race a second close.
+
+**Copy.** Seven states, all client-owned (no daemon text reaches a notice):
+`report == null` → "No MCP report has arrived yet." (no Show built-in row); an empty `report.servers` →
+"Claude reported no MCP servers."; every server filtered out → "Only built-in servers are reported.";
+`droppedServers > 0` → "Partial list: N more servers were left out by the daemon."; and the three refusal
+notices `unavailable` ("The daemon could not report MCP status right now."), `reconnectRefused` ("The
+daemon refused to reconnect the MCP server.") and `toggleRefused` ("The daemon refused to change the MCP
+server."), each independent and shown whenever its flag is set, in any report state.
+
+**Plain text only.** Server names, statuses and errors are Claude-authored and unsanitized —
+`boundMcpText` (desktop's `boundMcpText`) cuts each to its first 256 Unicode code points (counted by code
+point, so a surrogate pair is never split), appending "…" only when it was longer. The bounded text is
+rendered only as `Text`, and the same bounded name becomes the switch's accessibility label via
+`Modifier.semantics { contentDescription = ... }` — never a `testTag`, a `key()`, a log field or an
+exception message. `McpServerStatus.toString()` is itself redacted for the same reason. The two new
+`ThreadEvent`s, `McpReconnect` and `McpToggle`, override `toString()` to redact the server name, and the
+ViewModel's own logs (`event=mcp_status_requested`, `event=mcp_reconnect_sent`,
+`event=mcp_toggle_sent enabled=…`, `event=mcp_wait_released`) carry no name, status, error or conversation
+id.
+
+See [Remote `ConversationRepository` § MCP status](remote-conversation-repository-mcp-status.md) for
+`McpStatus`, `McpStatusReport`, `McpServerStatus` and the five repository members this section calls.
 
 ### Footer + clipboard
 
@@ -165,6 +264,44 @@ The [committed visual evidence](../../../app/src/androidTest/assets/channel-info
 
 `ThreadScreenSystemPromptTest` (shared/Robolectric, #1342) is a separate test class that sets up its own `ThreadScreen` host with a `systemPrompt` state, rather than adding cases to `ThreadScreenChannelInfoTest` — the System prompt section's own coverage doesn't need the rest of that class's fixture. It checks the section renders after Memory and before Actions; the Loading and Unavailable lines; the Loaded field, byte count, over-limit line (with its `error(...)` semantics), differs line, and each write line (Saving, Saved, and the three refusal lines); and that Save/Clear fire their callbacks and reflect `canSave`/`canClear`'s disabled states. `ThreadViewModelSystemPromptTest` (unit) covers the host side: opening Channel info constructs an editor and reads once, each close path drops it, a reopen reads again, and the three `ThreadEvent`s forward to it.
 
+`ThreadScreenMcpServersTest` (shared/Robolectric, #1344) covers the section's own rules: presence after
+System prompt and before Actions and absence when `mcpServersSupported` is false; rows with name/status;
+the built-in filter and its reset after a close-and-reopen; the error line shown only when non-empty; the
+256-code-point cut on name, status and error (and no "…" at exactly 256); the partial-list line; the three
+empty states; the three notices together; Reconnect appearing only on a non-`connected` status; the switch
+checked unless `disabled`; one `McpReconnect(name)` / `McpToggle(name, !on)` per tap; and every Reconnect and
+switch disabled while `reconnecting` and while `toggling` (Show built-in stays enabled). `ThreadScreenMapperTest`
+covers `toChannelInfoUiModel` mapping the capability to the status or to `null`. `ThreadViewModelMcpServersTest`
+(unit) covers the host side: `requestMcpStatus` once per real opening and not on a second `ChannelInfo` while
+open, again on reopen, never when the capability is false; one repository call per `McpReconnect`/`McpToggle`
+with the route's own conversation id; both end-waits called once from `ChannelInfoDismiss` and from `Archive`,
+and not again on a repeat dismiss; and that the repository's `McpStatus` reaches `state.mcpStatus`.
+`SessionSettingsPayloadsTest` covers the `mcp_servers` decode, present-`true`, present-`false` and absent (default
+`true`). Rung 3: `InteractiveStreamE2ETest#interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn`
+runs one ping turn (the daemon answers only for a running Claude process), opens Channel info, ticks Show
+built-in and waits for `pyry_approve`; it is on the `LIVE=1` curated list in `scripts/e2e-emulator.sh`. No
+rung-4 twin — the scripted `fakeclaude` has no MCP child to query.
+
+**#1345 (failure notice):** `McpFailureAcknowledgementsTest` (unit) covers the holder alone — selection is
+the first failed server in report order, exact `"failed"` (not `"Failed"` or `"pending"`), built-in names
+count, an acknowledged name is skipped, a `null` report selects nothing; the holder's per-host and
+per-conversation isolation, `clearHost` leaving other hosts untouched, and an empty `acknowledge` emitting
+nothing new. `ThreadViewModelMcpFailureTest` (unit, the `ThreadViewModelMcpServersTest` rig with a
+controllable connection and `repositoryAvailable`) covers `mcpFailure` / `onMcpFailureTapped` / the ask: the
+notice shows the first unacknowledged failure; a tap acknowledges every failed server in one pass and opens
+Channel info with one status request; a repeat report stays quiet, a newly failed server raises its own
+notice, a recovered server stops showing; acknowledgements survive a second view model on the shared holder
+(a reopen) and a reconnect; another conversation's notice still shows; the pill is hidden while not
+`Connected`; exactly one ask on open and one per return of `repositoryAvailable`, none while
+`mcpServersSupported` is false; and no log line ever carries a server name.
+`ThreadViewModelMcpServersTest`'s `rig` clears the open-time ask and its log before its own exact-call
+assertions, since #1345 added one more call on construction. `ThreadTopOverlayTest` (shared screen test)
+covers the pill itself — see [Thread top overlay §
+Testing](thread-top-overlay.md#testing). `HostChannelListViewModelTest` confirms the production
+`forgetRemovedHost` drops a removed host's acknowledgements and keeps another host's. Not rung-3: a failed
+MCP server needs a deliberately broken MCP config on the live e2e host, tracked as a follow-up
+([#1457](https://github.com/pyrycode/pyrycode-mobile/issues/1457)).
+
 `ChannelInfoCaptureTest` renders the real sheet on the managed Android 13 emulator. Its [result XML](../../../app/src/androidTest/assets/channel-info-1266/device-results.xml) records three executed tests with no failures or skips. The [412 × 892 comparison](../../../app/src/androidTest/assets/channel-info-1266/channel-info-comparison.png) and 320 × 692 provider and enlarged-text captures provide visual checks for sheet geometry and clipping. The capture also exposed the default handle spacing and equal-width Folder truncation, both corrected in the implementation; content assertions alone did not reveal them.
 
 ## Edge cases / limitations
@@ -178,8 +315,10 @@ The [committed visual evidence](../../../app/src/androidTest/assets/channel-info
 ## Related
 
 - Ticket notes: [`../codebase/217.md`](../codebase/217.md) (stateless composable), [`../codebase/226.md`](../codebase/226.md) (thread-overflow host), [`../codebase/227.md`](../codebase/227.md) (Archive/Delete wiring), [`../codebase/508.md`](../codebase/508.md) (`mutationsSupported` relay-mode gate hiding the Actions section)
-- Spec: `docs/specs/architecture/217-channelinfosheet-stateless-composable.md`, `docs/specs/architecture/508-hide-unavailable-conversation-actions.md`, `docs/specs/architecture/1342-channel-info-system-prompt.md` (System prompt section)
+- Spec: `docs/specs/architecture/217-channelinfosheet-stateless-composable.md`, `docs/specs/architecture/508-hide-unavailable-conversation-actions.md`, `docs/specs/architecture/1342-channel-info-system-prompt.md` (System prompt section), `docs/specs/architecture/1344-channel-info-mcp-servers.md` (MCP servers section), `docs/specs/architecture/1345-mcp-failure-notice.md` (the Top overlay failure pill and the open/reconnect ask)
 - [System prompt editor](system-prompt-editor.md) (#824, mounted here by #1342) — `SystemPromptEditorState`, `canSave`/`canClear`, refusal classification, the construction-per-open/drop-on-close lifecycle
+- [Remote `ConversationRepository` § MCP status](remote-conversation-repository-mcp-status.md) (#1343, surfaced here by #1344) — `McpStatus`/`McpStatusReport`/`McpServerStatus`, why the reading starts empty per connection, `requestMcpStatus`/`reconnectMcpServer`/`toggleMcpServer`/`endMcpReconnectWait`/`endMcpToggleWait`
+- [Thread top overlay § The failed-MCP-server pill](thread-top-overlay.md#the-failed-mcp-server-pill-1345) (#1345) — the notice this section's status report feeds, `McpFailureAcknowledgements`, and the open/reconnect ask's daemon FIFO-worker coupling
 - [ChannelListViewModel § Wiring](channel-list-viewmodel.md#wiring) — Edit channel's own system-prompt editing, including the #1342 clear rule this sheet's Clear button shares
 - Parent: split from [#144](https://github.com/pyrycode/pyrycode-mobile/issues/144) (Channel Info bottom sheet — host + sheet bundle).
 - Sibling sheet: [`WorkspacePickerSheet`](./workspace-picker-sheet.md) (#212) — same `ModalBottomSheet` shell + `*Content` body split, same `internal` visibility posture, same preview wrap. Worth reading first if you're picking up this file.
@@ -191,3 +330,4 @@ The [committed visual evidence](../../../app/src/androidTest/assets/channel-info
   - Open: destructive-emphasis on the host's `DeleteConfirmationDialog` confirm button — it ships as a plain `TextButton` (per the #78 convention) since [#227](../codebase/227.md); `MaterialTheme.colorScheme.error` on the confirm label is the M3 touch if the team ever wants it (a deferred, non-blocking NIT). The Delete *cell* on this sheet stays a plain `FilledTonalButton`.
   - Open: migrate `LocalClipboardManager` → `LocalClipboard` / `Clipboard.setClipEntry` once the legacy API is removed.
   - Open: localise the inline literals alongside the rest of `ui/conversations/components/`'s first `strings.xml` pass.
+  - Open: no `@Preview` renders the MCP servers section — `SAMPLE_MODEL` leaves `mcpServers = null`. A sample `McpStatus` with one `connected`, one `failed` (with an error), one `disabled` server and `droppedServers > 0` would let it be checked in both themes without a device. `McpServerRow`'s Reconnect button also duplicates this file's private `ActionCell` rather than reusing it (#1344 verifier NITs, non-blocking).

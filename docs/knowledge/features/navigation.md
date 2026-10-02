@@ -276,7 +276,7 @@ production doubles the padding. Varying insets also catches fixed compensation.
 [`MainActivityInsetsDeviceTest`](../../../app/src/androidTest/java/de/pyryco/mobile/MainActivityInsetsDeviceTest.kt)
 covers that boundary across onboarding, list, thread and settings at 412×892 and
 360×800 dp, including pair fields/actions above a visibly open test IME. See
-[Compose evidence](development-verification.md#compose-evidence) for the distinction
+[Compose evidence](development-verification-compose-evidence.md#compose-evidence) for the distinction
 between synthetic-bar geometry and real-bar screenshots.
 
 `PairCodeScreenTest.cancelToolbarAndAndroidBackReturnToCallerWithoutSaving`

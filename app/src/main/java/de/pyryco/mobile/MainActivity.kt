@@ -457,8 +457,11 @@ internal fun PyryNavHost(
                 val attachmentUploadProgress by vm.attachmentUploadProgress.collectAsStateWithLifecycle()
                 val attachmentStates by vm.attachmentStates.collectAsStateWithLifecycle()
                 val rePairAvailable by vm.rePairAvailable.collectAsStateWithLifecycle()
+                // #1360: the refusal row's way back to the refused model.
+                val switchBackOffer by vm.switchBackOffer.collectAsStateWithLifecycle()
                 val usageLimitDismissals = koinInject<UsageLimitDismissals>()
                 val dismissedUsageLimits by usageLimitDismissals.dismissed.collectAsStateWithLifecycle()
+                val mcpFailure by vm.mcpFailure.collectAsStateWithLifecycle()
                 // #1050: composed again means the operator is back on the thread, so a linked note's reader has
                 // closed. Its reader remembered the note, so dropping it here cannot empty that reader.
                 LaunchedEffect(vm) { vm.releaseLinkedMarkdown() }
@@ -510,6 +513,8 @@ internal fun PyryNavHost(
                     onDropQueued = vm::onDropQueued,
                     onOverflowEvent = vm::onOverflowEvent,
                     onModelSelected = vm::onModelSelected,
+                    switchBackOffer = switchBackOffer,
+                    onSwitchBack = vm::onSwitchBack,
                     onEffortSelected = vm::onEffortSelected,
                     onPermissionModeSelected = vm::onPermissionModeSelected,
                     onComposerCommand = vm::onComposerCommand,
@@ -545,6 +550,9 @@ internal fun PyryNavHost(
                     // #1002: app-scoped, so a usage reading hidden here stays hidden in every thread.
                     dismissedUsageLimits = dismissedUsageLimits,
                     onDismissUsageLimit = usageLimitDismissals::dismiss,
+                    // #1345: a failed MCP server's notice; its tap acknowledges and opens Channel info.
+                    mcpFailure = mcpFailure,
+                    onOpenMcpFailure = vm::onMcpFailureTapped,
                     // #1027: a markdown attachment opens in the in-app reader, or says it could not be read.
                     onOpenMarkdownAttachment = vm::onOpenMarkdownAttachment,
                     markdownOpenFailures = vm.markdownOpenFailures,

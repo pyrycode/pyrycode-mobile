@@ -308,7 +308,7 @@ the bottom. With messages unchanged, dismissing the keyboard restores the prior
 message index/offset, including a scrolled-away anchor, and reopening preserves
 the draft. This uses the existing heap-only draft and list state. Test the full
 open/dismiss/reopen cycle in the real activity: an initial opening or an empty
-thread can miss the pan. See [Compose evidence](development-verification.md#compose-evidence)
+thread can miss the pan. See [Compose evidence](development-verification-compose-evidence.md#compose-evidence)
 for the populated regression and retained captures.
 
 ### `ThreadScreen` mount point — three-part `Input area`

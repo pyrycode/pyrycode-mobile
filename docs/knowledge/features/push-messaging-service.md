@@ -158,7 +158,7 @@ it drives an Android `Service` class, not a Compose screen, so it does not belon
   so `advanceUntilIdle()` runs the write to completion before a plain `first()` reads it — no predicate,
   no clock. The DataStore's scope must be its own `CoroutineScope(StandardTestDispatcher(testScheduler) + Job())`,
   cancelled at the end, not `runTest`'s `backgroundScope`: `advanceUntilIdle()` does not drain
-  `backgroundScope` work (see [Development verification § Test scheduling and harnesses](development-verification.md#test-scheduling-and-harnesses),
+  `backgroundScope` work (see [Development verification § Test scheduling and harnesses](development-verification-test-scheduling.md#test-scheduling-and-harnesses),
   #824), so a DataStore scoped there never runs its write actor and a post-write read sees the old
   value. The same lost-emission window is possible in production if a `pushToken` collector starts
   while a rotation write is in flight; that is out of scope here and filed as its own issue
