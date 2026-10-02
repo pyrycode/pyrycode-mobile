@@ -31,7 +31,7 @@ class SplashResourcesTest {
         assertEquals(0xFF7AB8E8.toInt(), context.getColor(R.color.splash_mark))
     }
 
-    @Test fun launcherIconBackgroundIsUnchanged() {
-        assertEquals(0xFF32628D.toInt(), context.getColor(R.color.ic_launcher_background))
+    @Test fun launcherIconBackgroundIsTheDarkSchemeBackground() {
+        assertEquals(backgroundDark.toArgb(), context.getColor(R.color.ic_launcher_background))
     }
 }
