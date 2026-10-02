@@ -131,6 +131,17 @@ chunks. The demo host is never in the paired-host store, so Edit host itself ref
 (`host_editor_open_rejected code=unknown_host`); Edit channel shares the same modal shell and
 substitutes for it in a shell-only comparison.
 
+A launch splash is system-drawn before any Compose or Activity-hosted test can attach, so it has
+no instrumented capture path at all — not even the `requireRealSystemBars=true` device-test pattern
+above, which still launches through an Activity. The managed `pixel2Api33Atd` device cannot
+composite a starting window either: `adb exec-out screencap` returns an all-black frame and the
+emulator console's own screenshot command returns a static grey frame, before and during launch.
+Boot the host's non-ATD `pixel8Api35` AVD instead (`-read-only -no-snapshot`, under the gate's
+device lock), install the gate-built APK, and run `am start` and `screencap -p` in a loop inside one
+`adb shell` command so there is no adb round-trip between frames; a cold debug start takes roughly
+9–12s, so several frames catch the splash. Compare the captured frame against the Figma render at
+the device's dp scale factor (#1545). See [Splash screen](splash-screen.md#edge-cases--limitations).
+
 For camera overlays, the dispatcher must verify the real preview layer on the
 managed emulator or device when the change concerns it. A unit test or a fake
 preview slot cannot prove CameraX binding or that the preview respects the Compose
