@@ -53,3 +53,8 @@ emulator and compare `compact-keyboard.png` and `thread.png` with `scripts/desig
   size (and any fixed-height parent) gives the footer; the old `Alignment.Bottom` kept the controls at the bottom.
   The outer row now also takes `wrapContentHeight(Alignment.Bottom)`, so the footer keeps its bottom placement in
   a taller slot. Found by `contextText_sitsAtBottomOfFooterTapRow`.
+- 2026-10-02: the first device capture put the wrapped label about 16dp under the Actions text, not Figma's 4dp,
+  because the thread passes `contentBottomPadding` (12dp of invisible touch overflow under the visible text).
+  `FooterTextRow` now takes `contentBottomPadding` and places the label `FooterLineGap` under the buttons'
+  visible content (row bottom minus that padding). The label is plain text, so it takes no taps from that
+  overflow. The wrap test asserts the gap from the Actions text with a 12dp padding.

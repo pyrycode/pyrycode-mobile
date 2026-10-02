@@ -24,6 +24,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -183,7 +184,7 @@ class ThreadComposerFooterWidthTest {
     // moves whole to a line of its own under Actions, and the paperclip and tune stay level with Actions.
     @Test
     fun compactWidthAndEnlargedText_highReadingWrapsUnderActions() {
-        renderCompactFooter(contextPercent = 84, fontScale = 1.5f)
+        renderCompactFooter(contextPercent = 84, fontScale = 1.5f, contentBottomPadding = 12.dp)
         val layout = contextLayout()
         assertEquals("Cxt high: 84%", layout.layoutInput.text.text)
         assertFalse("high reading ellipsizes at enlarged text", layout.isLineEllipsized(0))
@@ -193,11 +194,13 @@ class ThreadComposerFooterWidthTest {
             .assertContentDescriptionEquals("Context usage high, 84%")
 
         val actions = composeTestRule.onNode(hasText("Actions") and hasClickAction()).getUnclippedBoundsInRoot()
+        val actionsText = composeTestRule.onNodeWithText("Actions", useUnmergedTree = true).getUnclippedBoundsInRoot()
         val context = composeTestRule.onNodeWithTag(CONTEXT_USAGE_TEST_TAG, useUnmergedTree = true).getUnclippedBoundsInRoot()
         val attach = composeTestRule.onNodeWithContentDescription(string(R.string.cd_attach_files)).getUnclippedBoundsInRoot()
         val status = composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_status_expand)).getUnclippedBoundsInRoot()
         assertEquals("label starts under Actions", actions.left, context.left)
-        assertEquals("label sits 4dp under Actions", actions.bottom + 4.dp, context.top)
+        // Measured from Actions' visible text, not from the invisible touch padding under it.
+        assertEquals("label sits 4dp under Actions", actionsText.bottom + 4.dp, context.top)
         assertEquals("paperclip leaves Actions' row", actions.bottom, attach.bottom)
         assertEquals("tune leaves Actions' row", actions.bottom, status.bottom)
     }
@@ -219,6 +222,7 @@ class ThreadComposerFooterWidthTest {
         contextPercent: Int,
         fontScale: Float,
         size: DpSize = DpSize(320.dp, 640.dp),
+        contentBottomPadding: Dp = 0.dp,
     ) {
         composeTestRule.setContent {
             PyrycodeMobileTheme(darkTheme = true) {
@@ -230,6 +234,7 @@ class ThreadComposerFooterWidthTest {
                             onStatusClick = {},
                             onAnchorChanged = { _, _ -> },
                             onAttach = {},
+                            contentBottomPadding = contentBottomPadding,
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }

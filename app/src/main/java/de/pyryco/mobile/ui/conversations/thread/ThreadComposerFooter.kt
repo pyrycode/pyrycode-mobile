@@ -283,7 +283,7 @@ fun ThreadComposerFooter(
     ) {
         // The buttons in order, then the `Cxt:` segment, which [FooterTextRow] gives the leftover width or, when
         // that is too little, a line under the buttons (#1549). The two icons stay level with the buttons.
-        FooterTextRow(modifier = Modifier.weight(1f).alignBy(FooterFirstRowBottom)) {
+        FooterTextRow(contentBottomPadding = contentBottomPadding, modifier = Modifier.weight(1f).alignBy(FooterFirstRowBottom)) {
             FooterButton(
                 label = stringResource(R.string.thread_footer_actions),
                 clickLabel = stringResource(R.string.thread_footer_open_actions),
@@ -335,10 +335,12 @@ fun ThreadComposerFooter(
  * The footer's text controls in a row at [FooterButtonGap] (#1032). Every child but the last is a button,
  * held to its natural width until the buttons overflow, then to [footerShrinkCap]'s shared cap. The last
  * child, the `Cxt:` segment, follows the buttons when it fits whole beside them. Otherwise it moves to its own
- * line [FooterLineGap] under them (#1549, Figma 639:3308). [FooterFirstRowBottom] marks the button row's bottom.
+ * line [FooterLineGap] under the buttons' visible text (#1549, Figma 639:3308), measured above their invisible
+ * [contentBottomPadding]. [FooterFirstRowBottom] marks the button row's bottom.
  */
 @Composable
 private fun FooterTextRow(
+    contentBottomPadding: Dp,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
@@ -357,9 +359,9 @@ private fun FooterTextRow(
         val rowHeight = placed.maxOf { it.height }
         val labelWidth = if (oneRow) (available - placed.sumOf { it.width }).coerceAtLeast(0) else constraints.maxWidth
         val placedLabel = label.measure(Constraints(maxWidth = labelWidth, maxHeight = constraints.maxHeight))
-        val labelTop = if (oneRow) 0 else rowHeight + FooterLineGap.roundToPx()
+        val labelTop = if (oneRow) 0 else rowHeight - contentBottomPadding.roundToPx() + FooterLineGap.roundToPx()
         val firstRowBottom = if (oneRow) maxOf(rowHeight, placedLabel.height) else rowHeight
-        val height = if (oneRow) firstRowBottom else labelTop + placedLabel.height
+        val height = if (oneRow) firstRowBottom else maxOf(rowHeight, labelTop + placedLabel.height)
         layout(constraints.maxWidth, height, mapOf(FooterFirstRowBottom to firstRowBottom)) {
             var x = 0
             placed.forEach {
