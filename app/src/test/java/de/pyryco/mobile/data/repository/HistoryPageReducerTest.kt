@@ -867,6 +867,71 @@ class HistoryPageReducerTest {
         assertEquals(page + live, live.mergeHistoryRows(page))
     }
 
+    // ---- #1358: stored compacting edges draw the dividers the live lane draws ------------------------
+
+    // AC 2: a page with the live lane's frames folds to the live lane's dividers, ts for ts.
+    @Test
+    fun reduce_storedCompactingEdges_foldLikeTheLiveLane() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(7, "compaction_boundary", compactionPayload(), ts = "2026-09-05T10:03:21Z"),
+                    entry(6, "compacting", compactingPayload(false), ts = "2026-09-05T10:03:20Z"),
+                    entry(5, "compacting", compactingPayload(true), ts = "2026-09-05T10:03:00Z"),
+                    entry(4, "compacting", compactingPayload(false, ""","compact_error":"boom""""), ts = "2026-09-05T10:02:20Z"),
+                    entry(3, "compacting", compactingPayload(true), ts = "2026-09-05T10:02:00Z"),
+                    entry(2, "compacting", compactingPayload(false, ""","compact_result":"unknown_token""""), ts = "2026-09-05T10:01:20Z"),
+                    entry(1, "compacting", compactingPayload(true), ts = "2026-09-05T10:01:00Z"),
+                ),
+                interactive = true,
+            )
+
+        assertEquals(
+            listOf(
+                ThreadItem.CompactionBoundary(null, null, false, Instant.parse("2026-09-05T10:01:20Z")),
+                ThreadItem.CompactionBoundary(null, null, false, Instant.parse("2026-09-05T10:02:20Z"), failed = true),
+                ThreadItem.CompactionBoundary(24000L, 3000L, true, Instant.parse("2026-09-05T10:03:21Z")),
+            ),
+            rows,
+        )
+    }
+
+    // AC 2: the page's rows join the live lane's on every divider, so merging adds none.
+    @Test
+    fun merge_aPageOfCompactionsAlreadyLive_addsNone() {
+        val entries =
+            listOf(
+                entry(5, "compaction_boundary", compactionPayload(), ts = "2026-09-05T10:03:21Z"),
+                entry(4, "compacting", compactingPayload(false), ts = "2026-09-05T10:03:20Z"),
+                entry(3, "compacting", compactingPayload(true), ts = "2026-09-05T10:03:00Z"),
+                entry(2, "compacting", compactingPayload(false, ""","compact_result":"failed""""), ts = "2026-09-05T10:02:20Z"),
+                entry(1, "compacting", compactingPayload(true), ts = "2026-09-05T10:02:00Z"),
+            )
+        val live =
+            listOf(
+                ThreadItem.CompactionBoundary(null, null, false, Instant.parse("2026-09-05T10:02:20Z"), failed = true),
+                ThreadItem.CompactionBoundary(24000L, 3000L, true, Instant.parse("2026-09-05T10:03:21Z")),
+            )
+
+        assertEquals(live, live.mergeHistoryRows(reduceHistoryPage(entries, interactive = true)))
+    }
+
+    @Test
+    fun reduce_storedCompactingWithoutInteractive_orMalformed_yieldsNothing() {
+        val entries =
+            listOf(
+                entry(3, "compacting", compactingPayload(false), ts = "2026-09-05T10:01:20Z"),
+                entry(2, "compacting", """{"conversation_id":"c1","active":"neither"}""", ts = "2026-09-05T10:01:10Z"),
+                entry(1, "compacting", compactingPayload(true), ts = "2026-09-05T10:01:00Z"),
+            )
+
+        assertEquals(emptyList<ThreadItem>(), reduceHistoryPage(entries, interactive = false))
+        assertEquals(
+            listOf(ThreadItem.CompactionBoundary(null, null, false, Instant.parse("2026-09-05T10:01:20Z"))),
+            reduceHistoryPage(entries, interactive = true),
+        )
+    }
+
     // ---- #811: a refused call replays as denied, never as failed -----------------------------------
 
     @Test
@@ -1388,6 +1453,11 @@ class HistoryPageReducerTest {
         text: String = "Blocked by hook",
         truncated: Boolean = false,
     ): String = """{"conversation_id":"$CONVERSATION","level":"$level","text":"$text","truncated":$truncated,"stops_turn":true}"""
+
+    private fun compactingPayload(
+        active: Boolean,
+        outcome: String = "",
+    ): String = """{"conversation_id":"$CONVERSATION","active":$active$outcome}"""
 
     private fun compactionPayload(
         trigger: String = "manual",

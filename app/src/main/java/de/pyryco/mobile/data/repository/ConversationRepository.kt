@@ -949,12 +949,16 @@ sealed interface ThreadItem {
      *   `null`, or stated a value that is not a non-negative safe integer. Never a stand-in `0`.
      * @param postTokens The size after, on the same rule.
      * @param manual Whether claude's open `trigger` was exactly `manual`; every other token reads as unknown.
+     * @param failed Whether the `compacting` falling edge this divider was drawn from reported a failure
+     *   (#1358). A divider drawn from that edge carries no counts until a `compaction_boundary` replaces it,
+     *   taking the boundary's `ts`; a failed one is never replaced.
      */
     data class CompactionBoundary(
         val preTokens: Long?,
         val postTokens: Long?,
         val manual: Boolean,
         val occurredAt: Instant,
+        val failed: Boolean = false,
     ) : ThreadItem
 
     /**

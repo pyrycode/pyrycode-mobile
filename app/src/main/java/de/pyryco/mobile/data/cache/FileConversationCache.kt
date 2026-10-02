@@ -483,13 +483,17 @@ private data class CachedBanner(
     val occurredAt: String,
 )
 
-/** A [ThreadItem.CompactionBoundary] (#1353): a `null` token count is omitted on encode and read back as `null`. */
+/**
+ * A [ThreadItem.CompactionBoundary] (#1353): a `null` token count is omitted on encode and read back as `null`.
+ * [failed] (#1358) defaults to `false`, so a divider saved before failures were kept reads as not failed.
+ */
 @Serializable
 private data class CachedCompaction(
     val preTokens: Long? = null,
     val postTokens: Long? = null,
     val manual: Boolean,
     val occurredAt: String,
+    val failed: Boolean = false,
 )
 
 /** A [ThreadItem.ModelRefusal] (#1353). Model names and [banner] are claude-authored, stored as the row holds them. */
@@ -528,7 +532,7 @@ private fun ThreadItem.toRecord(): CachedThreadRow =
             )
         is ThreadItem.Banner -> CachedThreadRow(banner = CachedBanner(level, text, truncated, occurredAt.toString()))
         is ThreadItem.CompactionBoundary ->
-            CachedThreadRow(compaction = CachedCompaction(preTokens, postTokens, manual, occurredAt.toString()))
+            CachedThreadRow(compaction = CachedCompaction(preTokens, postTokens, manual, occurredAt.toString(), failed))
         is ThreadItem.ModelRefusal ->
             CachedThreadRow(
                 refusal = CachedRefusal(originalModel, fallbackModel, banner, bannerTruncated, occurredAt.toString()),
@@ -557,7 +561,15 @@ private fun CachedThreadRow.toDomain(): ThreadItem {
         return ThreadItem.SessionBoundary(it.previousSessionId, it.newSessionId, it.reason, Instant.parse(it.occurredAt), it.workspaceCwd)
     }
     banner?.let { return ThreadItem.Banner(it.level, it.text, it.truncated, Instant.parse(it.occurredAt)) }
-    compaction?.let { return ThreadItem.CompactionBoundary(it.preTokens, it.postTokens, it.manual, Instant.parse(it.occurredAt)) }
+    compaction?.let {
+        return ThreadItem.CompactionBoundary(
+            it.preTokens,
+            it.postTokens,
+            it.manual,
+            Instant.parse(it.occurredAt),
+            it.failed,
+        )
+    }
     val refusal = checkNotNull(refusal)
     return ThreadItem.ModelRefusal(
         refusal.originalModel,

@@ -677,9 +677,11 @@ class RemoteConversationRepository(
                 }
             }
             TYPE_COMPACTING -> {
-                // Context-compaction status (#596): see [CompactingProjection.apply].
+                // Context-compaction status (#596): see [CompactingProjection.apply]. The same frame folds
+                // the thread's compaction divider (#1358): see [ThreadProjection.applyCompacting].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     compactingProjection.apply(envelope)
+                    threadProjection.applyCompacting(envelope)
                 }
             }
             TYPE_RATE_LIMITED -> {
