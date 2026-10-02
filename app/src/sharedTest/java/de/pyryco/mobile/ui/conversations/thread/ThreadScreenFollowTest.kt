@@ -15,8 +15,10 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.swipeUp
@@ -25,6 +27,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
+import de.pyryco.mobile.data.model.ModalOption
+import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
@@ -228,6 +232,63 @@ class ThreadScreenFollowTest {
         composeRule.onNodeWithText(SECOND).assertIsDisplayed()
     }
 
+    /**
+     * #1449: the prompt pins in for a reader who is following, and the reader rests on its card with the
+     * Cancel row just out of view, as the live test's `performScrollToNode` to the card can leave the list.
+     * The prompt is resolved elsewhere, its rows leave, and the short reply that follows is at the newest end.
+     */
+    @Test
+    fun a_reader_on_a_prompt_resolved_elsewhere_follows_the_reply_that_follows() {
+        var state by mutableStateOf(threadState(rows(30) + toolRow(ToolCallStatus.Running)))
+        var modal by mutableStateOf<ModalUiState>(ModalUiState.Hidden)
+        setScreen(modal = { modal }) { state }
+        composeRule.runOnIdle { modal = permission() }
+        composeRule.onNodeWithTag(PERMISSION_CANCEL).assertIsDisplayed()
+        list().performScrollToIndex(1)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(PERMISSION_CANCEL).assertDoesNotExist()
+
+        composeRule.runOnIdle { modal = ModalUiState.Dismissed("m1", "allow_once", "peer") }
+        composeRule.runOnIdle { state = state.copy(items = rows(30) + toolRow(ToolCallStatus.Done)) }
+        composeRule.runOnIdle { state = state.copy(items = state.items + message("reply", REPLY, isStreaming = false)) }
+
+        composeRule.onNodeWithText(REPLY).assertIsDisplayed()
+    }
+
+    @Test
+    fun a_reader_in_history_while_a_prompt_is_open_stays_there_when_it_is_resolved() {
+        var state by mutableStateOf(threadState(rows(30) + toolRow(ToolCallStatus.Running)))
+        var modal by mutableStateOf<ModalUiState>(ModalUiState.Hidden)
+        setScreen(modal = { modal }) { state }
+        composeRule.runOnIdle { modal = permission() }
+        composeRule.waitForIdle()
+        scrollAway()
+
+        composeRule.runOnIdle { modal = ModalUiState.Dismissed("m1", "allow_once", "peer") }
+        composeRule.runOnIdle { state = state.copy(items = rows(30) + toolRow(ToolCallStatus.Done)) }
+        composeRule.runOnIdle { state = state.copy(items = state.items + message("reply", REPLY, isStreaming = false)) }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText(REPLY).assertDoesNotExist()
+        composeRule.onNodeWithText(TOOL, useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    private fun permission() =
+        ModalUiState.Open(
+            modalId = "m1",
+            modalClass = "permission",
+            title = "Permission required",
+            prompt = "claude wants to Read /tmp/witness.txt",
+            options =
+                listOf(
+                    ModalOption(id = "allow_once", label = "Allow once"),
+                    ModalOption(id = "allow_always", label = "Allow always"),
+                    ModalOption(id = "reject_once", label = "Reject once"),
+                    ModalOption(id = "reject_always", label = "Reject always"),
+                ),
+            defaultOptionId = "reject_once",
+        )
+
     private fun list() = composeRule.onNode(hasScrollToIndexAction())
 
     /** Drags away and back to the newest end without lifting, so the finger holds the list and refuses a pin. */
@@ -267,9 +328,10 @@ class ThreadScreenFollowTest {
     private fun setScreen(
         onSend: (String) -> Unit = {},
         sentMessages: Flow<Unit> = emptyFlow(),
+        modal: () -> ModalUiState = { ModalUiState.Hidden },
         state: () -> ThreadUiState,
     ) {
-        composeRule.setContent { Screen(state(), onSend, sentMessages) }
+        composeRule.setContent { Screen(state(), onSend, sentMessages, modal()) }
     }
 
     @Composable
@@ -277,6 +339,7 @@ class ThreadScreenFollowTest {
         state: ThreadUiState,
         onSend: (String) -> Unit = {},
         sentMessages: Flow<Unit> = emptyFlow(),
+        modalState: ModalUiState = ModalUiState.Hidden,
     ) {
         CompositionLocalProvider(LocalOverscrollFactory provides null) {
             PyrycodeMobileTheme {
@@ -288,6 +351,7 @@ class ThreadScreenFollowTest {
                     onRetry = {},
                     draft = "hello",
                     sentMessages = sentMessages,
+                    modalState = modalState,
                 )
             }
         }
@@ -384,6 +448,7 @@ class ThreadScreenFollowTest {
         const val QUEUED = "Queued follow-up."
         const val REPLY = "The file's witness token."
         const val SECOND = "A second reply."
+        const val PERMISSION_CANCEL = "permission-request-cancel"
         val LONG_REPLY = "Reply begins.\n\n" + (1..12).joinToString("\n\n") { "Reply line $it." } + "\n\nReply ends."
     }
 }
