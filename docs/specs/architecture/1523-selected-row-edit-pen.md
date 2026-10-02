@@ -29,3 +29,7 @@ Edit channel and Edit chat stay reachable by opening the row, pressing Back and 
 - `ConversationTreeRowsTest` (shared): a pixel test under `PyrycodeMobileTheme(darkTheme = true, dynamicColor = false)`. A selected row paints `primaryContainer` and not `onPrimary`. An unselected row held pressed (pointer down, not up) paints `onPrimary`.
 - `SidebarTreeCaptureTest` (device-only, existing): its fixture already selects `c3`, whose pen it taps, so it is unchanged and supplies the 412 × 892 capture for the PR.
 - `InteractiveStreamE2ETest` (rung 3): `openChannelEditor` and `setMuteInEditChannel` reach the pen by opening the row and pressing Back first. Listed under `## Live tests` for `interactiveTurn_createEditArchiveChannel_readsPromptBack` and `interactiveTurn_muteChannel_roundTripsThroughTheHost`. Opening a thread starts no turn, so the mute test stays at zero Claude turns.
+
+## Revisions
+
+**2026-10-02:** `SharedDarkColourCaptureTest` (device-only, #1225) asserted the old selected fill `Schemes/On Primary` (`#003355`) in its static-dark capture, whose fixture selects `pyrycode discord integration`. It now asserts `Schemes/Primary Container` (`#134a74`), because the swap in `TreeConversationRow` makes that the selected fill. The test asserts nothing else new. The shared `ChannelListScreenTest` harness `TreeContent` also mirrors the view model's `lastOpenedTarget` by selecting a row on `TreeRowTapped`, so the column test can select each row before measuring its pen.

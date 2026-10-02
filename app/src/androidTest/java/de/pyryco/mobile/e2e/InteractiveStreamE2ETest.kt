@@ -1861,11 +1861,10 @@ class InteractiveStreamE2ETest {
         from: Boolean,
         to: Boolean,
     ) {
-        val pen = hasContentDescription(string(R.string.cd_tree_channel_edit).format(name))
         val title = string(R.string.edit_channel_title)
         val mute = hasText(string(R.string.edit_channel_mute)) and isToggleable()
-        awaitChannelRow(name)
-        composeTestRule.onNode(pen).performClick()
+        selectChannelRow(name)
+        composeTestRule.onNode(channelPen(name)).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
         }
@@ -2568,11 +2567,27 @@ class InteractiveStreamE2ETest {
 
     /** Tap the pen of the Channels row named [name] and wait for Edit channel's title. */
     private fun openChannelEditor(name: String) {
-        awaitChannelRow(name)
-        composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_channel_edit).format(name))).performClick()
+        selectChannelRow(name)
+        composeTestRule.onNode(channelPen(name)).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(string(R.string.edit_channel_title)).fetchSemanticsNodes().isNotEmpty()
         }
+    }
+
+    /** The Edit channel pen of the Channels row named [name]. */
+    private fun channelPen(name: String) = hasContentDescription(string(R.string.cd_tree_channel_edit).format(name))
+
+    /**
+     * Select the Channels row named [name] the operator's way: open it, then press Back. Only the selected row
+     * draws its pen (#1523), so this waits until the pen is drawn and scrolled into view.
+     */
+    private fun selectChannelRow(name: String) {
+        openRow(name)
+        leaveThread()
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            runCatching { scrollListTo(channelPen(name)) }.isSuccess
+        }
+        composeTestRule.onNode(channelPen(name)).assertIsDisplayed()
     }
 
     /** Wait until Edit channel closes, which it does only once the host confirmed every write. */

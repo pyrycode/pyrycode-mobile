@@ -29,6 +29,7 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
@@ -221,6 +222,58 @@ class ConversationTreeRowsTest {
                     .assertCountEquals(if (other == state) 1 else 0)
             }
         }
+    }
+
+    /** How many of the composition's pixels are exactly [color]; drawn by hand, as `captureToImage` never redraws here. */
+    private fun countPixels(
+        view: View?,
+        color: Color,
+    ): Int =
+        composeTestRule.runOnIdle {
+            val root = checkNotNull(view)
+            val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
+            root.draw(Canvas(bitmap))
+            val pixels = IntArray(bitmap.width * bitmap.height)
+            bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+            pixels.count { it == color.toArgb() }
+        }
+
+    // #1523: under the static dark palette 15:8's Hover row (selected) is `primary-container`, its darker row
+    // (pressed) `on-primary`.
+    @Test
+    fun conversationRow_staticDark_selectedDrawsPrimaryContainer_andPressedDrawsOnPrimary() {
+        val selected = mutableStateOf(true)
+        var primaryContainer = Color.Unspecified
+        var onPrimary = Color.Unspecified
+        var view: View? = null
+        composeTestRule.setContent {
+            PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
+                primaryContainer = MaterialTheme.colorScheme.primaryContainer
+                onPrimary = MaterialTheme.colorScheme.onPrimary
+                view = LocalView.current
+                Box(modifier = Modifier.width(rowWidth)) {
+                    TreeConversationRow(
+                        conversationName = "kitchenclaw refactor",
+                        selected = selected.value,
+                        onClick = {},
+                        modifier = Modifier.testTag("fill-row"),
+                    )
+                }
+            }
+        }
+
+        assertTrue("selected draws primary-container", countPixels(view, primaryContainer) > 0)
+        assertEquals("selected draws no on-primary", 0, countPixels(view, onPrimary))
+
+        selected.value = false
+        assertEquals("unselected draws no primary-container", 0, countPixels(view, primaryContainer))
+        assertEquals("unselected draws no on-primary", 0, countPixels(view, onPrimary))
+
+        // Held down, not released: the row stays pressed while it is drawn.
+        composeTestRule.onNodeWithTag("fill-row").performTouchInput { down(center) }
+        assertTrue("pressed draws on-primary", countPixels(view, onPrimary) > 0)
+        assertEquals("pressed draws no primary-container", 0, countPixels(view, primaryContainer))
+        composeTestRule.onNodeWithTag("fill-row").performTouchInput { up() }
     }
 
     // #1451: desktop has no failed state, so no dot state may paint the `error` fill.
