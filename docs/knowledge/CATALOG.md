@@ -206,5 +206,6 @@ _(none yet — system overview will land when there's more than one screen to ma
 ## Shared topics added by the knowledge migration
 
 - [Development verification](features/development-verification.md) — Kotlin, Compose, Gradle, emulator and real-evidence checks.
+    - [Development verification — test scheduling and harnesses](features/development-verification-test-scheduling.md) — `Test scheduling and harnesses`, moved verbatim from the parent on 2026-10-02 (size cap); the parent keeps the heading as a pointer.
 - [Shared knowledge workflow](../shared-knowledge.md) — document ownership, reading order and capture rules.
 - [Project-memory compatibility pointer](../PROJECT-MEMORY.md) — legacy path retained without new status or lessons.
