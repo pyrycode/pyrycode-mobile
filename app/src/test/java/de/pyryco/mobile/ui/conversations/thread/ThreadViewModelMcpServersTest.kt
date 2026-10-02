@@ -185,6 +185,9 @@ class ThreadViewModelMcpServersTest {
             )
         backgroundScope.launch { vm.state.collect {} }
         runCurrent()
+        // #1345: opening the thread asks once on its own; these cases count only what Channel info sends.
+        repo.calls.clear()
+        logs.clear()
         return vm to repo
     }
 
