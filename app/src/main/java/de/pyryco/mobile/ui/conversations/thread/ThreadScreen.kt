@@ -68,7 +68,6 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalUiState
-import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.repository.ApiRetryStatus
@@ -90,6 +89,7 @@ import de.pyryco.mobile.ui.conversations.components.ConnectionStatusIndicator
 import de.pyryco.mobile.ui.conversations.components.EmptyThreadState
 import de.pyryco.mobile.ui.conversations.components.MEMORY_PLUGIN_DOCS_URL
 import de.pyryco.mobile.ui.conversations.components.MessageBubble
+import de.pyryco.mobile.ui.conversations.components.MessageContentGutter
 import de.pyryco.mobile.ui.conversations.components.ModelRefusalRow
 import de.pyryco.mobile.ui.conversations.components.NoticePill
 import de.pyryco.mobile.ui.conversations.components.OptionsOverlay
@@ -104,6 +104,7 @@ import de.pyryco.mobile.ui.conversations.components.SwitchBackOffer
 import de.pyryco.mobile.ui.conversations.components.SystemPromptEditorState
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
 import de.pyryco.mobile.ui.conversations.components.ThreadStatusGlyph
+import de.pyryco.mobile.ui.conversations.components.ToolRunRow
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeIndicator
 import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
 import de.pyryco.mobile.ui.conversations.components.UnrecognizedMessageRow
@@ -253,6 +254,9 @@ fun ThreadScreen(
     // acknowledges the report's failures and opens Channel info.
     mcpFailure: String? = null,
     onOpenMcpFailure: () -> Unit = {},
+    // #1635: the stored "Collapse assistant tool uses" setting (AppPreferences.collapseToolUses), bound by
+    // MainActivity. Defaulted off so screens and tests that never set it draw every tool row as before.
+    collapseToolUses: Boolean = false,
     // #933: this chat's pending attachments (ThreadViewModel.pendingAttachments) and whether a send carrying
     // them is under way (attachmentsSending); the picker's result, a tile's remove, and the one-shot refusal
     // notice. Bound by MainActivity; defaulted so screens that never attach render no strip.
@@ -546,9 +550,16 @@ fun ThreadScreen(
                 // of once as an optimistic echo and again in a foot-of-list section. Pure and cached on
                 // both inputs; the backlog stays replacement truth on ThreadUiState and never folds into
                 // the message reducer.
-                val rows =
+                val queuedRows =
                     remember(state.items, state.queuedMessages) {
                         foldQueuedRows(state.items, state.queuedMessages)
+                    }
+                // #1635: with the setting on, each run of adjacent tool rows draws as one header the reader
+                // can open. Which runs are open is UI-local, keyed by each run's first row.
+                var expandedRuns by remember { mutableStateOf(emptySet<String>()) }
+                val rows =
+                    remember(queuedRows, collapseToolUses, expandedRuns) {
+                        if (collapseToolUses) foldToolRuns(queuedRows, expandedRuns) else queuedRows
                     }
                 // A backlog item this device minted no echo for is a row of its own, so the empty state
                 // must yield to it (#782 AC #3). When an item *is* matched its echo is a MessageItem, so
@@ -748,6 +759,16 @@ fun ThreadScreen(
                                             QueuedMessageRow(
                                                 text = row.text,
                                                 onDrop = { onDropQueued(row.queuedMessageId) },
+                                            )
+                                        is ThreadRow.ToolRun ->
+                                            ToolRunRow(
+                                                toolCalls = row.tools.mapNotNull { it.toolCall },
+                                                expanded = row.expanded,
+                                                onToggle = {
+                                                    expandedRuns =
+                                                        if (row.expanded) expandedRuns - row.runId else expandedRuns + row.runId
+                                                },
+                                                modifier = Modifier.padding(horizontal = MessageContentGutter),
                                             )
                                     }
                                 }
@@ -1208,11 +1229,6 @@ private fun DeleteConfirmationDialog(
 }
 
 /** #1577: a delivered tool message that draws a tool row, the one neighbour a tool row sits flush against. */
-private fun ThreadRow?.isToolRow(): Boolean {
-    val message = ((this as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)?.message ?: return false
-    return message.role == Role.Tool && message.toolCall != null
-}
-
 private fun ThreadItem.timestamp(): Instant =
     when (this) {
         is ThreadItem.MessageItem -> message.timestamp

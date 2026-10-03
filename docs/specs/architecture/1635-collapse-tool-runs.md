@@ -61,3 +61,7 @@ None new. A `Role.Tool` row with no `toolCall` is not a tool row (it draws nothi
 
 - Running plus failed at once: decided "K failed" text with the spinner glyph — neither signal is hidden.
 - A history page that prepends tool rows to the oldest run changes its first id, so an expanded run there collapses. Accepted: rare, and nothing is lost.
+
+## Revisions
+
+- 2026-10-03: `ToolRunRow` takes `toolCalls: List<ToolCall>` rather than `tools: List<Message>`, since the header reads only statuses; `ThreadScreen` maps the run's messages to their tool calls. The shared pieces in `ToolCallRow.kt` are `ToolRunningSpinner`, `ToolDoneGlyph` and `ToolFailedGlyph` (each with its content description) rather than a generic `ToolStatusGlyph`. Adding the `ToolRun` arm made `ThreadRowsTest`'s exhaustive `when` over the queued fold's output need a branch, which fails the test if the queued fold ever emits one. The fold unit tests sit in their own `ToolRunFoldTest` beside `ThreadRowsTest`.
