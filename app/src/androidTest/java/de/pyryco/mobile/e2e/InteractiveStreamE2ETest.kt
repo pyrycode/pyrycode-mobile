@@ -2996,6 +2996,85 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /**
+     * A reply that ends while its chat is off screen survives a reconnect (#1581, rung 3; #1572's live proof). Chat
+     * A has a settled ping turn the phone drew and cached. A's second turn, [WAIT_PROMPT], is held on the #849
+     * permission lever while the phone leaves A for B, so A never draws its reply however fast claude is. The peer
+     * allows it and the turn ends with B on screen. Rows that reach a closed thread live only in the connection's
+     * projection, never the thread cache, and a reconnect discards them with the replay cursor already past them.
+     *  * **Off screen** — the phone itself folded A's `turn_end` while A was not viewed: its stored read position
+     *    names that turn as completed and unread. Waiting on the phone, not the peer's copy, keeps the cut after the
+     *    phone had the turn, or the reconnect's ring replay would deliver it and the test would prove nothing.
+     *  * **Not cached** — after the cut and restore, A's thread cache holds the ping's reply and not [WAIT_REPLY].
+     *  * **Recovered** — opening A, with no other gesture, draws the reply from the open's newest-page ask (#1572),
+     *    and the ping, its reply, [WAIT_PROMPT] and [WAIT_REPLY] each once, top to bottom.
+     *
+     * **Two real-claude turns**: A's ping and A's held command.
+     */
+    @Test
+    fun interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer = runningToolPeer()
+        val waitReply = hasText(WAIT_REPLY, ignoreCase = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+        try {
+            // 1. Two chats, neither messaged; the peer records frames from here on.
+            awaitChannelList()
+            awaitConnected()
+            val (chatA, nameA) = answerChat(serverId, OFFSCREEN_CHAT_NAME_PREFIX + "a-")
+            val (_, nameB) = answerChat(serverId, OFFSCREEN_CHAT_NAME_PREFIX + "b-")
+            peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
+
+            // 2. A's first turn renders, ends and is cached by the open thread.
+            openChatRow(nameA)
+            sendFromPhone(PING_PROMPT)
+            awaitPingReplyNamingLayer(peer, serverId, chatA, priorTurnEnds = 0)
+            awaitTurnEnd(peer, chatA, 1, "A's ping")
+            awaitCachedAssistantReply(serverId, chatA)
+
+            // 3. AC-2: A's second turn waits on its permission prompt; A leaves before any of its reply exists.
+            sendFromPhone(WAIT_PROMPT)
+            val modalId = peerStep(peer, "await A's permission prompt") { peer.awaitPermissionModal(chatA, REPLY_TIMEOUT_MS) }
+            composeTestRule.onAllNodes(waitReply, useUnmergedTree = true).assertCountEquals(0)
+            leaveThread()
+            openChatRow(nameB)
+            assertShowingThread(nameB, nameA)
+
+            // 4. AC-2: released with B open, A's turn ends; the phone folds that turn_end while B is still shown.
+            peerStep(peer, "allow A's prompt") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
+            val turnEnd =
+                peerStep(peer, "await A's held turn_end") { peer.awaitFrame(chatA, "turn_end", WAIT_TURN_TIMEOUT_MS, occurrence = 2) }
+            awaitUnreadCompletion(serverId, chatA, checkNotNull(peer.field(turnEnd, "turn_id")) { "A's turn_end has no turn_id" })
+            assertShowingThread(nameB, nameA)
+            composeTestRule.onAllNodes(waitReply, useUnmergedTree = true).assertCountEquals(0)
+
+            // 5. AC-2: still in B, cut and restore the link; A's cache never received the reply.
+            setHostLink(serverId, up = false)
+            setHostLink(serverId, up = true)
+            assertNoCachedReply(serverId, chatA, WAIT_REPLY)
+
+            // 6. AC-1: opening A is the only gesture; its newest-page ask brings the reply, every row once and in order.
+            leaveThread()
+            openChatRow(nameA)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(waitReply, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.waitForIdle()
+            val rows = listOf(inThreadList(PING_PROMPT), pingReplyMatcher(), inThreadList(WAIT_PROMPT), waitReply)
+            assertDrawnOnce(*rows.toTypedArray())
+            val tops =
+                rows.map {
+                    composeTestRule
+                        .onNode(it, useUnmergedTree = true)
+                        .fetchSemanticsNode()
+                        .boundsInRoot.top
+                }
+            assertTrue("expected ping, its reply, the held prompt and its reply top to bottom; tops $tops", tops == tops.sorted())
+            assertTrue("two of the messages share a row; tops $tops", tops.distinct().size == tops.size)
+        } finally {
+            peer.close()
+        }
+    }
+
     /** The foreground thread's real Offline pill retries its owning daemon after six failed dials (#1286). */
     @Test
     fun interactiveTurn_offlineRetry_reconnectsSameHostAndReplies() {
@@ -6689,6 +6768,66 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /**
+     * Wait until the phone's stored read position for [conversationId] names [turnId] as its completed turn, then
+     * assert it is unread (#1581). The attention fold records a `turn_end` as it handles it, after every frame
+     * before it on the one inbound stream, and marks it read only while the conversation is viewed.
+     */
+    private fun awaitUnreadCompletion(
+        serverId: String,
+        conversationId: String,
+        turnId: String,
+    ) {
+        val cache = GlobalContext.get().get<ConversationCache>()
+        val position =
+            runBlocking {
+                withTimeoutOrNull(THREAD_TIMEOUT_MS) {
+                    var stored = cache.readReadPositions(serverId)[conversationId]
+                    while (stored?.completedTurnId != turnId) {
+                        delay(CACHE_POLL_MS)
+                        stored = cache.readReadPositions(serverId)[conversationId]
+                    }
+                    stored
+                }
+            }
+        assertNotNull("the phone never recorded the off-screen turn's turn_end", position)
+        assertTrue("the phone recorded the off-screen turn as read", checkNotNull(position).unread)
+    }
+
+    /** Assert the phone's thread cache for [conversationId] holds an assistant row, and none whose text is [reply]. */
+    private fun assertNoCachedReply(
+        serverId: String,
+        conversationId: String,
+        reply: String,
+    ) {
+        val assistantRows =
+            runBlocking { GlobalContext.get().get<ConversationCache>().readThread(serverId, conversationId) }
+                .filterIsInstance<ThreadItem.MessageItem>()
+                .filter { it.message.role == Role.Assistant }
+        assertTrue("the thread cache holds no assistant row, so its read proves nothing", assistantRows.isNotEmpty())
+        assertTrue(
+            "the thread cache already holds the off-screen reply",
+            assistantRows.none {
+                it.message.content
+                    .trim()
+                    .equals(reply, ignoreCase = true)
+            },
+        )
+    }
+
+    /** The open thread is [name]'s: its name is shown and [other]'s is not. */
+    private fun assertShowingThread(
+        name: String,
+        other: String,
+    ) {
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(name).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(name).onFirst().assertIsDisplayed()
+        composeTestRule.onAllNodesWithText(other).assertCountEquals(0)
+        composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).assertCountEquals(0)
+    }
+
     /** Each of [matchers] matches exactly one node in the unmerged tree. */
     private fun assertDrawnOnce(vararg matchers: SemanticsMatcher) {
         matchers.forEach { composeTestRule.onAllNodes(it, useUnmergedTree = true).assertCountEquals(1) }
@@ -7566,6 +7705,9 @@ class InteractiveStreamE2ETest {
         const val OFFLINE_PROMPT = "Reply with exactly: pyryoffline"
         const val OFFLINE_REPLY = "pyryoffline"
         const val OFFLINE_CHAT_NAME_PREFIX = "e2e850-"
+
+        /** #1581: the two chats of the off-screen reply scenario, as "e2e1581-a-<ms>" and "e2e1581-b-<ms>". */
+        const val OFFSCREEN_CHAT_NAME_PREFIX = "e2e1581-"
 
         /** #1410: the chat the peer runs a turn in while the phone is offline. */
         const val CONTEXT_ASK_CHAT_NAME_PREFIX = "e2e1410-"

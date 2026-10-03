@@ -767,6 +767,39 @@ scripts/android-test-gate.py live`, 2026-09-23; branch `feature/861` at `24c9490
 the dedicated entry below. The live run that closed #1352 (dispatcher real-claude gate, 2026-10-02)
 re-proved this scenario, among fifty executed with none failed, with the reconnect re-ask gone.
 
+The **offscreen-reply-survives-reconnect** scenario (#1581 —
+`interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk`) is likewise **always-on**: it
+proves that a reply the daemon finishes while its own thread is off screen is not lost across a
+reconnect, the rung-3 counterpart of
+[#1572](https://github.com/pyrycode/pyrycode-mobile/issues/1572)'s unit-level proof that an open thread
+asks for the newest history page every time it gains its host (see [Thread screen — the oldest-end
+history demand §
+#1572](knowledge/features/thread-screen-oldest-end-history-demand.md#1572-an-open-thread-asks-for-the-newest-history-page-every-time-its-host-becomes-available--at-open-and-again-after-every-reconnect-while-it-stays-open--not-only-the-first-time)).
+Chat A gets one settled ping turn, which the phone draws and caches. A's second turn is held on the #849 permission lever
+(`WAIT_PROMPT`) until the peer answers it, and the phone leaves A for a second chat, B, before that
+happens — so the leave never depends on how fast claude answers. The peer allows the prompt once the
+phone is in B, and the turn ends there; A's thread never draws the reply, because it is not open. The
+test does not wait on the peer's own `turn_end` to know the phone has the reply, since the peer's copy
+can arrive first (the same race the offline-read-reconcile scenario above guards against): it instead
+polls the phone's persisted `ReadPosition` for A until `completedTurnId` names that turn, and asserts it
+is unread, which is the phone's own record that it folded the `turn_end` — and everything before it on
+the ordered inbound stream — while A was not viewed. Only then does it cut and restore the host link with
+`setHostLink`. Before reopening A, it also reads `ConversationCache` for A directly and asserts the cache
+holds the ping's cached reply but not the held turn's reply, so the live checks that follow cannot pass
+on an empty or wrongly keyed read. Reopening A, with no other gesture, must then draw all four rows —
+the ping prompt, its reply, the held prompt, and its reply — exactly once each, in `boundsInRoot.top`
+order. Without #1572, an open thread only ever asked for the newest page on a never-loaded thread, so A's
+cached-but-stale reopen would show just the first two rows and the final wait would time out.
+
+Two real claude turns: A's ping and A's permission-held command. Folded into the pre-ship `LIVE=1` gate
+on the curated list in `scripts/e2e-emulator.sh`, taking `LIVE_MINIMUM` from 51 to 52. The live run that
+closed #1581 (dispatcher real-claude gate, 2026-10-03; branch `feature/1581` at `70aee9838d` merged with
+`origin/main` at `985ff3ca64`) selected five methods — this one plus four always-run methods — and
+reported 5 executed, 4 passed, 1 failed, 0 skipped; this method itself executed and passed.
+The one failure, `interactiveTurn_twoHostsCollidingConversationId_stayPerHost`, failed once and then
+passed on a re-run of the same merged tree, so it was triaged as a pre-existing flake in the suite, not a
+regression from this ticket.
+
 The **model and effort settings round trip** (#545) is four **always-on** methods (none `@Ignore`d)
 proving the settings read (#590), the applied-effort footer (#889) and the remembered-effort recall
 (#686) reach a real daemon, since none of those tickets had live proof of its own. Each method prepares
@@ -2274,7 +2307,23 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-03 (#1571).** The dispatcher ran
+**Current live verification — 2026-10-03 (#1581).** The dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live --tests` with five names —
+the new `interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk` and
+`interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect` from the PR's `## Live tests`, plus three
+always-run methods (`interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
+`interactiveTurn_offlineRetry_reconnectsSameHostAndReplies`,
+`interactiveTurn_twoHostsCollidingConversationId_stayPerHost`) — against `feature/1581` at
+`70aee9838d`, merged with `origin/main` at `985ff3ca64` in a detached worktree (0 commits behind before
+the merge): **5 executed, 4 passed, 1 failed, 0 skipped**, exit 1, wall clock 1488.5s. This is a selected
+run, not full-suite evidence; the new method itself is the subject of this ticket's AC-3. The fresh XML
+has a passing testcase for the new method with no failure or error — this is its first live run. The one
+failure, `interactiveTurn_twoHostsCollidingConversationId_stayPerHost`, failed once and passed on a
+re-run of the same merged tree, so the dispatcher treated it as a suite flake rather than this branch's
+and moved the ticket on. `LIVE_MINIMUM` rose from 51 to 52, since it is counted from the curated LIVE
+list and the ticket added one entry.
+
+**Previous live verification — 2026-10-03 (#1571).** The dispatcher ran
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1571` at
 `f4248cacee`, merged with `origin/main` at `f4c6598ad6` in a detached worktree (43 commits behind before
 the merge): **52 executed, 52 passed, 0 failed, 0 skipped**, exit 0, wall clock 918.9s. This is full-suite
