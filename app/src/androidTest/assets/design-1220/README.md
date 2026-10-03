@@ -77,9 +77,12 @@ All under `app/src/androidTest/java/de/pyryco/mobile/design/`. No file under `ap
   `ThreadViewModel`, `ScannerViewModel` and `PairCodeViewModel`. Set these before or after launch; the open
   thread collects them:
   `connectionState`, `liveSessionEvents`, `hostModal` (a `HostModalState` of permission and trust
-  prompts), `questionBatch`, `backgroundTasks`, `backgroundTaskCount`, `pairingRejected`,
-  `attachmentOffers`, `sessionFacts`, `contextUsage`. The fake repository still supplies messages, session
-  settings, the model menu and the slash menu. The question batch, roster, count and repository flows
+  prompts), `questionBatch`, `failQuestionSends` (while true, the Continue tap's `answerQuestionBatch`
+  throws `IllegalStateException`, which `sendQuestion` reports as `QuestionSendPhase.Failed`; false by
+  default, so it leaves every other capture unchanged), `backgroundTasks`, `backgroundTaskCount`,
+  `pairingRejected`, `attachmentOffers`, `sessionFacts`, `contextUsage`. The fake repository still supplies
+  messages, session settings, the model menu and the slash menu. The question batch, roster, count and
+  repository flows
   apply to whichever thread opens. `hostModal` does not: the view model scopes it with
   `HostModalState.scopedTo`, so a prompt shows only when its `conversationId` is the open thread's. The thread marks
   its conversation viewed as production does. The override passes no app draft stores, so the view model
