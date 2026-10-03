@@ -196,7 +196,7 @@ internal fun MobileDismissModal(
         modifier = modifier,
         contentAlignment = Alignment.Top,
         footerAlignment = Alignment.End,
-        bottomPadding = 24.dp,
+        // The default 20 dp plus Done's 4 dp touch margin below its 40 dp surface gives the frames' 24 px (#1503).
         footer = { dismiss ->
             ModalSubmitButton(label = actionLabel, onClick = dismiss, enabled = true, loading = false, logSubmit = false)
         },
