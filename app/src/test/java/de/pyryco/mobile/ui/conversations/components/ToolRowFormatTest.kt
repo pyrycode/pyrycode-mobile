@@ -105,9 +105,11 @@ class ToolRowFormatTest {
 
     // ---- toolRowSubject: fallback ----------------------------------------------------------------
 
+    // #1575: the précis is the daemon's JSON cut at 200 characters, so a field-less row shows no subject.
     @Test
-    fun `no fields falls back to the precis`() {
-        assertEquals("git status", toolRowSubject("Bash", emptyMap(), "git status"))
+    fun `no fields gives no subject rather than the precis`() {
+        assertEquals("", toolRowSubject("Bash", emptyMap(), "{\"command\":\"git status\",\"descr…"))
+        assertEquals("", toolRowSubject("Read", emptyMap(), "{\"file_path\":\"/a/b.kt\"}"))
     }
 
     @Test
@@ -165,7 +167,13 @@ class ToolRowFormatTest {
     }
 
     @Test
-    fun `Bash with neither field keeps its name and the precis`() {
-        assertEquals(ToolHeadline.Simple(lead = "Bash", subject = "ls -la"), toolHeadline("Bash", emptyMap(), "ls -la"))
+    fun `a call with no fields is headed by its name alone`() {
+        assertEquals(ToolHeadline.Simple(lead = "Bash", subject = ""), toolHeadline("Bash", emptyMap(), "{\"command\":\"ls -la\"}"))
+        assertEquals(ToolHeadline.Simple(lead = "Read", subject = ""), toolHeadline("Read", emptyMap(), "{\"file_path\":\"/a/b.kt\"}"))
+    }
+
+    @Test
+    fun `Bash with fields but neither shell field keeps its name and the precis`() {
+        assertEquals(ToolHeadline.Simple(lead = "Bash", subject = "ls -la"), toolHeadline("Bash", mapOf("timeout" to "5"), "ls -la"))
     }
 }
