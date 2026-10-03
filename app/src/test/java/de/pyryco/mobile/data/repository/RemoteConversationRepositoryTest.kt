@@ -4040,6 +4040,32 @@ class RemoteConversationRepositoryTest {
         }
 
     @Test
+    fun peerSendQueuedNow_ownEchoRemovedThenInterveningTool_usesDeliveredPushPosition() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val thread = collectMessages(repo, "c-1")
+            val other = collectMessages(repo, "c-other")
+            runCurrent()
+            val own = sendAndAck(repo, pump, "c-1", "marker request")
+            pump.push(turnStateEnvelope("c-1", "thinking"))
+            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "marker request", TS, messageId = own))))
+            runCurrent()
+            pump.push(queueStateEnvelope("c-1", emptyList()))
+            runCurrent()
+            assertTrue(messageIds(thread.last()).isEmpty())
+            pump.push(toolUseEnvelope("c-1", "running", "intervening", "Bash", "held command"))
+            pump.push(toolResultEnvelope("c-1", "running", "intervening", isError = false, resultSummary = "done"))
+            pump.push(messageEnvelope("c-1", own, "user", "marker request", TS))
+            pump.push(messageEnvelope("c-1", own, "user", "marker request", TS))
+            pump.push(messageEnvelope("c-1", "peer", "user", "peer marker", TS))
+            pump.push(messageEnvelope("c-1", "peer", "user", "peer marker", TS))
+            runCurrent()
+            assertEquals(listOf("intervening", own, "peer"), messageIds(thread.last()))
+            assertEquals(emptyList<ThreadItem>(), other.last())
+        }
+
+    @Test
     fun sendQueuedNow_failedSendWithdrawsDeliveryIntent() =
         runTest {
             val pump = FakeSessionPump()
@@ -4047,6 +4073,7 @@ class RemoteConversationRepositoryTest {
             val thread = collectMessages(repo, "c-1")
             runCurrent()
             val own = sendAndAck(repo, pump, "c-1", "marker request")
+            pump.push(turnStateEnvelope("c-1", "thinking"))
             pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "marker request", TS, messageId = own))))
             runCurrent()
             val before = thread.last()
@@ -4054,6 +4081,7 @@ class RemoteConversationRepositoryTest {
             assertTrue(runCatching { repo.sendQueuedNow("c-1", 42L) }.isFailure)
             runCurrent()
             assertEquals(before, thread.last())
+            pump.push(turnStateEnvelope("c-1", "idle"))
             pump.push(queueStateEnvelope("c-1", emptyList()))
             runCurrent()
             assertEquals(listOf(own), messageIds(thread.last()))
