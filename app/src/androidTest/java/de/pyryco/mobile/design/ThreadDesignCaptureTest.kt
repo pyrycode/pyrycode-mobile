@@ -8,12 +8,14 @@ import android.graphics.Paint
 import android.net.Uri
 import android.provider.MediaStore
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasProgressBarRangeInfo
 import androidx.compose.ui.test.hasScrollToKeyAction
@@ -29,6 +31,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToKey
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.lifecycle.SavedStateHandle
@@ -230,7 +233,7 @@ class ThreadDesignCaptureTest {
         await("Could not change the model — try again.")
         await("Couldn't update the run configuration. Try again.")
         design.capture(FOLDER, "refusal-switch-back-failed-snackbar", "646:4700")
-        rule.waitUntil(15_000) { rule.onAllNodesWithText("Couldn't update", substring = true).fetchSemanticsNodes().isEmpty() }
+        dismissSnackbar("Couldn't update")
         await("Could not change the model — try again.")
         design.capture(FOLDER, "refusal-switch-back-failed", "646:4700")
         settingsGate = null
@@ -401,7 +404,7 @@ class ThreadDesignCaptureTest {
         rule.onNodeWithText("Archive").performClick()
         await("Couldn't archive this conversation. Try again.")
         design.capture(FOLDER, "failure-notice", "685:4337")
-        rule.waitUntil(15_000) { rule.onAllNodesWithText("Couldn't archive", substring = true).fetchSemanticsNodes().isEmpty() }
+        dismissSnackbar("Couldn't archive")
 
         // Last: the focused composer's cursor handle is its own popup root.
         fake().setSlashCommandMenu(
@@ -602,6 +605,18 @@ class ThreadDesignCaptureTest {
     ) {
         rule.waitUntil(5_000) { rule.onAllNodesWithText(text, substring = substring).fetchSemanticsNodes().isNotEmpty() }
         rule.waitForIdle()
+    }
+
+    /**
+     * #1664: dismisses the snackbar showing [text] through the dismiss action Material3 gives each snackbar, then
+     * waits for it to leave. Waiting out its timer flaked: the 4 s delay runs on the rule's virtual clock, which
+     * `waitUntil` advances one frame per poll, so on a busy emulator the ~255 polls outlast the budget.
+     */
+    private fun dismissSnackbar(text: String) {
+        rule
+            .onNode(SemanticsMatcher.keyIsDefined(SemanticsActions.Dismiss) and hasAnyDescendant(hasText(text, substring = true)))
+            .performSemanticsAction(SemanticsActions.Dismiss)
+        rule.waitUntil(5_000) { rule.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isEmpty() }
     }
 
     private fun fake() = GlobalContext.get().get<FakeConversationRepository>()
