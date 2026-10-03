@@ -1,12 +1,17 @@
 package de.pyryco.mobile.e2e
 
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.crypto.PairedServer
+import de.pyryco.mobile.data.repository.ConversationRepository
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.koin.core.context.GlobalContext
 import java.util.UUID
 
 /** Uses the installed test application's real Android lifecycle owners during a graph rebuild. */
@@ -16,6 +21,8 @@ class PeerIdentityLifecycleTest {
     fun sequentialPeersRetainIdentityAfterCloseAndAppGraphRebuild() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val application = instrumentation.targetContext.applicationContext as E2eTestApplication
+        val originalRepositoryType = GlobalContext.get().get<ConversationRepository>().javaClass
+        val preferences = GlobalContext.get().get<DataStore<Preferences>>()
         val pairing =
             PairedServer(
                 serverId = UUID.randomUUID().toString(),
@@ -30,22 +37,34 @@ class PeerIdentityLifecycleTest {
             } finally {
                 first.close()
             }
-        instrumentation.runOnMainSync { application.rebuildGraph() }
-
-        val second = SecondClientPeer(pairing.copy())
         try {
-            runBlocking {
-                val actual = second.keyStore.loadOrCreate(pairing.serverId)
-                assertTrue("peer public identity survives close and graph rebuild", expected.publicKey.contentEquals(actual.publicKey))
-                assertTrue("peer private identity survives close and graph rebuild", expected.privateKey.contentEquals(actual.privateKey))
-                actual.privateKey.fill(0)
-                val reloaded = second.keyStore.loadOrCreate(pairing.serverId)
-                assertTrue("peer reload returns an intact copy", expected.privateKey.contentEquals(reloaded.privateKey))
-                reloaded.privateKey.fill(0)
+            instrumentation.runOnMainSync { application.rebuildGraph() }
+            val second = SecondClientPeer(pairing.copy())
+            try {
+                runBlocking {
+                    val actual = second.keyStore.loadOrCreate(pairing.serverId)
+                    assertTrue("peer public identity survives close and graph rebuild", expected.publicKey.contentEquals(actual.publicKey))
+                    assertTrue(
+                        "peer private identity survives close and graph rebuild",
+                        expected.privateKey.contentEquals(actual.privateKey),
+                    )
+                    actual.privateKey.fill(0)
+                    val reloaded = second.keyStore.loadOrCreate(pairing.serverId)
+                    assertTrue("peer reload returns an intact copy", expected.privateKey.contentEquals(reloaded.privateKey))
+                    reloaded.privateKey.fill(0)
+                }
+            } finally {
+                second.close()
             }
         } finally {
             expected.privateKey.fill(0)
-            second.close()
+            instrumentation.runOnMainSync { application.rebuildGraph() }
         }
+        assertSame(
+            "graph cleanup preserves repository mode",
+            originalRepositoryType,
+            GlobalContext.get().get<ConversationRepository>().javaClass,
+        )
+        assertSame("graph rebuild carries the running DataStore", preferences, GlobalContext.get().get<DataStore<Preferences>>())
     }
 }

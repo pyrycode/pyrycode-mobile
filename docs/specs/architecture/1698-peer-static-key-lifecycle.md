@@ -10,6 +10,8 @@
 - `app/src/main/java/de/pyryco/mobile/data/crypto/PairedServerStore.kt`: `PairedServer` supplies exact server id and token.
 - `app/src/main/java/de/pyryco/mobile/data/network/NoiseSessionFactory.kt`: `create` wipes the returned private-key buffer, so retained keys must never escape by reference.
 - `scripts/e2e-emulator.sh`: peer token minting and curated live selection reuse one token across scenarios.
+- `scripts/android-test-gate.py` and `scripts/test_android_test_gate.py`: `E2E_ONLY_SOURCES`, UI skip classification and the source-dependency guard.
+- `app/src/androidTest/java/de/pyryco/mobile/di/RepositoryBindingInstrumentedTest.kt`: `ordinaryInstrumentation_explicitlyBindsFakeRepository` asserts no-relay graph isolation.
 - `docs/knowledge/features/device-static-keystore.md`: serialize first creation and never silently regenerate an identity.
 - `docs/knowledge/features/noise-ik-session.md`: reuse only the static identity; each reconnect creates fresh Noise session state and caller-owned key copies.
 - `docs/knowledge/features/development-verification-test-scheduling.md`: counted fresh XML is required; the ordinary device gate excludes the e2e package.
@@ -62,7 +64,22 @@ None. Retention is deliberately process-scoped, matching one instrumentation run
 - [Network and I/O] Existing transport bounds, timeouts and redial ownership remain unchanged. The daemon's key-binding rejection is preserved.
 - [Errors, logs and telemetry] Map contents, tokens, keys and plaintext must never be logged or included in assertions. Tests use boolean equality assertions for secret buffers. No generated identity-key representation or telemetry is added.
 - [Concurrency] A single mutex protects first creation and retrieval; no nested locks or lifecycle jobs are introduced. Failed generation publishes nothing.
+- [Graph lifecycle] Rebuilds must retain the instrumentation run's original fake/relay mode, carry the existing DataStore, unregister the previous lifecycle driver and dispose Koin owners. The lifecycle regression must rebuild in guaranteed cleanup so later no-relay tests keep fake bindings. No credentials are re-saved or read into evidence.
 - [Threat model] Against protocol-mobile's Security model: relay MITM/server-id impersonation remains prevented by pinned Noise authentication; drops/replay still use existing transport/Noise protections. Disk token theft gains no new target because nothing is persisted. Hostile frames, prompt injection and UI leakage have unchanged parsing/rendering surfaces. In-process test-key extraction remains a test-process compromise risk, bounded to disposable harness credentials and process lifetime; production Keystore behavior is unchanged.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-04
+
+## Revisions
+
+### 2026-10-04 — verifier rework
+
+The verifier found that the new lifecycle test referenced `SecondClientPeer` outside the gate's e2e-only classification, and that `rebuildGraph` changed an ordinary no-relay run to relay mode. Add `PeerIdentityLifecycleTest` to `E2E_ONLY_SOURCES` and cover its UI skip classification while retaining the source-dependency guard and the exclusions for the shared application/runner. Preserve the original fake/relay mode in `E2eTestApplication.rebuildGraph`, chosen from the same instrumentation relay argument as `onCreate`, with unchanged DataStore carry-over and lifecycle-owner disposal. Rebuild in the lifecycle test's guaranteed cleanup and assert repository mode and DataStore continuity afterward. Run it followed by `RepositoryBindingInstrumentedTest` in one no-relay instrumentation process and retain fresh counted XML before running the scripted reconnect scenario.
+
+The only in-flight overlap is #1642 adding a scripted scenario entry to `scripts/android-test-gate.py`; it changes a different block and is not a dependency. Revised scope remains one deliverable, three criteria, no new exported types or consumer changes, and under 500 written lines including the original implementation, tests, plan and rework.
+
+## Documentation handoff
+
+- Pending documentation stage: `docs/e2e-interactive-stream.md`, rung-3 peer-started-turn description: replace the obsolete per-scenario throwaway identity description with process-scoped exact host/token reuse; retain fresh per-dial Noise state and separation from app credentials.
+- Pending documentation stage: `docs/knowledge/features/development-verification-test-scheduling.md`, Test scheduling and harnesses: record the peer key helper's defensive-copy requirement (`NoiseSessionFactory` wipes caller buffers), graph-mode cleanup and the focused lifecycle-plus-binding device command/evidence route.
+- Pending dispatcher live gate before documentation and merge: record full `python3 scripts/android-test-gate.py live` executed/failed/skipped counts, the named attachment method's passing result and the repaired daemon diagnostic comparison against prior `static_key_mismatch` / `bound_to_other_key` rejections. No live pass is claimed here.
