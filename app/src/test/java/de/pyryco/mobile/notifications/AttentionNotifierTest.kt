@@ -5,6 +5,7 @@ import android.app.Application
 import android.app.Notification
 import android.app.NotificationManager
 import android.content.Intent
+import androidx.core.content.ContextCompat
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.MainActivity
@@ -35,7 +36,9 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.Shadows.shadowOf
+import org.xmlpull.v1.XmlPullParser
 import java.io.File
+import kotlin.math.roundToInt
 
 /**
  * The alert publisher (#685): dedupe first, then the foreground, preference and permission gates, then
@@ -77,6 +80,27 @@ class AttentionNotifierTest {
             val intent = shadowOf(tap).savedIntent
             assertEquals(MainActivity::class.java.name, intent.component?.className)
             assertEquals(HostConversationTarget("host-a", "conv"), NotificationTap.target(intent))
+        }
+
+    @Test
+    fun theSmallIconIsTheSquareSingleColourNotificationMark() =
+        withNotifier {
+            alerts.emit(TURN)
+
+            assertEquals(R.drawable.ic_notification, posted().single().smallIcon.resId)
+            val icon = checkNotNull(ContextCompat.getDrawable(app, R.drawable.ic_notification))
+            val px = (24 * app.resources.displayMetrics.density).roundToInt()
+            assertEquals(px to px, icon.intrinsicWidth to icon.intrinsicHeight)
+            val colours = mutableListOf<String>()
+            app.resources.getXml(R.drawable.ic_notification).use { xml ->
+                while (xml.next() != XmlPullParser.END_DOCUMENT) {
+                    if (xml.eventType != XmlPullParser.START_TAG) continue
+                    for (i in 0 until xml.attributeCount) {
+                        if (xml.getAttributeName(i).endsWith("Color")) colours += xml.getAttributeValue(i).lowercase()
+                    }
+                }
+            }
+            assertEquals(listOf("#ffffffff"), colours.distinct())
         }
 
     @Test
