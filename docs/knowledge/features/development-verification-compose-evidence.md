@@ -196,7 +196,14 @@ frame draws in primary, and the shared verdict hid that until the third review
 (#1532). Measure before writing "match": that review re-measured accepted
 verdicts and found a 50 px bubble width (#1513), a 14 px list indent (#1533)
 and a 3 to 9 px panel drift (#1534) that a visual scan of the side-by-sides had
-passed.
+passed. `scripts/design-compare.py` resizes the Figma export to match the app
+image's size, so comparing a component export against a full-screen capture
+stretches the export across the whole frame instead of lining it up with the
+row. The #1540 refusal-row states crop the capture to the component's own
+width and height first and compare that crop against the export; when the
+app's row is taller than the component (the switch-back failed line sits
+lower than Figma's), pad the export to the crop's height instead of letting
+the script resize it.
 
 `MarkdownReaderCaptureTest#compactLargeTextKeepsControlsAndBodyReachable`
 (unrelated to the #1352 history-paging change, caught in its PR's UI gate and
