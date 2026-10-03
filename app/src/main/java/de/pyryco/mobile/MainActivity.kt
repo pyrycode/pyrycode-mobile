@@ -483,6 +483,8 @@ internal fun PyryNavHost(
                 val usageLimitDismissals = koinInject<UsageLimitDismissals>()
                 val dismissedUsageLimits by usageLimitDismissals.dismissed.collectAsStateWithLifecycle()
                 val mcpFailure by vm.mcpFailure.collectAsStateWithLifecycle()
+                // #1635: read live, so turning the setting on or off redraws an open thread.
+                val collapseToolUses by appPreferences.collapseToolUses.collectAsStateWithLifecycle(initialValue = true)
                 // #1050: composed again means the operator is back on the thread, so a linked note's reader has
                 // closed. Its reader remembered the note, so dropping it here cannot empty that reader.
                 LaunchedEffect(vm) { vm.releaseLinkedMarkdown() }
@@ -501,6 +503,7 @@ internal fun PyryNavHost(
                 }
                 val questionModal by vm.questionModal.collectAsStateWithLifecycle()
                 ThreadScreen(
+                    collapseToolUses = collapseToolUses,
                     questionState = questionModal,
                     onQuestionEvent = { event, generation -> vm.onQuestionEvent(event, generation) },
                     state = state,

@@ -98,3 +98,54 @@ The message region's `LazyColumn` fills its weighted `Box`, with the top overlay
 Covered by `ThreadListFollowTest` (`app/src/test/.../thread/`) for the pure rule — the first frame, growth while following and while not, an anchor-offset change within and beyond the tolerance, an unchanged (overscroll) frame, a refused pin followed by a growth pin, a pin landing at the end, a new prompt pinning only while following, a history page moving nothing, both the delta retry and the finger-lift retry on a reply refused at arrival, and (#1449) a prompt leaving from under the reader following and pinning versus a prompt leaving while the anchor is a message row changing nothing — and by `ThreadScreenFollowTest` (`app/src/sharedTest/.../thread/`, 30-row lists) at the screen level: a swipe at the newest end that cannot move the list, then a new row and a streamed delta, both in view; a tool result and a queued row staying in view while following and not moving the reader while not; a scroll refused mid-stream costing one scroll with later growth still followed; a reply whose pin is refused at arrival followed once the finger lifts; an accepted text send and an accepted attachment send after scrolling up, through a real `ThreadViewModel`, both bringing the newest row and the reply into view; a refused send leaving the list where it was; a `StateRestorationTester` recreation restored away from the end staying put while one restored at the end keeps following; and (#1449) `a_reader_on_a_prompt_resolved_elsewhere_follows_the_reply_that_follows` — a reader resting on the permission card with its Cancel row scrolled out of view, the prompt resolved elsewhere, a short complete reply composed at the newest end with no scroll by the test — beside `a_reader_in_history_while_a_prompt_is_open_stays_there_when_it_is_resolved`, which proves the history-reader case the rule leaves untouched. The existing `ThreadScreenNewestRowTest`, `ThreadInlineQuestionTest`, `ThreadScreenModalTest` and `ThreadScreenHistoryTest` suites — the #185/#777/#981/#1305/#1306 regression coverage — pass unchanged against the new rule.
 
 A streamed delta in these screen tests is revealed by a clock-driven `produceState`, so an assertion taken right after `waitForIdle` can still see the previous text; the tests wait for the revealed text itself before checking list position.
+
+### Collapsing runs of consecutive tool rows (#1635)
+
+With `AppPreferences.collapseToolUses` (#1634, default on) true, `ThreadScreen` runs a third fold,
+`foldToolRuns`, after `foldQueuedRows`: a maximal run of two or more adjacent tool rows (sub-agent
+rows included — they are tool rows too) becomes one `ThreadRow.ToolRun(runId, tools, expanded)`
+header, "Using tools: N", with a down chevron. Tapping it expands to the header (now an up chevron)
+followed by the run's own tool rows, flush, keeping their sub-agent indent — the same flush join
+[#1577](#consecutive-tool-rows-sit-flush-1577) gives adjacent tool rows elsewhere. A lone tool row
+with no tool neighbour, and every non-tool row (assistant text, a user message, a queued row, a
+delimiter, a banner), passes through untouched and ends a run. `ThreadRow?.isToolRow()` moved from a
+private helper in `ThreadScreen.kt` to `internal` in `ThreadRow.kt` so this fold and the #1577
+neighbour check share one predicate. With the setting off, `foldToolRuns` is skipped and the thread
+draws exactly as before #1635.
+
+**The run's identity is its first tool row's message id**, so a run that gains new tool rows at its
+end keeps the same `runId` and, with it, its expanded state — a run never collapses just because
+another tool call joined it. `expandedRuns` is `rememberSaveable` (tightened from plain `remember` on
+PR #1653's verifier review, [MUST FIX]), so an open run survives rotation and a back-stack return, the
+same guarantee the individual tool rows inside it already have via their own `rememberSaveable`.
+
+**Trailing status** reads the run's own tool calls, not a stored aggregate: the running spinner while
+any tool in the run is `Running`, "K failed" in the error colour with the error icon when K tools are
+`Failed` or `Denied`, otherwise the done check — reusing the tool row's `cd_tool_running`,
+`cd_tool_failed` and `cd_tool_done` content descriptions, which is also why the existing scripted
+`tool`/`tool-failed` scenarios and the live `interactiveTurn_toolPrompt_rendersToolStepInThread` keep
+passing unchanged: a lone tool row is unaffected, and a collapsed run's status icons carry the same
+descriptions those scenarios already match on. Running and failed are not mutually exclusive — a run
+with both shows "K failed" beside the spinner rather than picking one signal to hide.
+
+**Adding `ThreadRow.ToolRun` broke the exhaustive `when` in `ThreadRowsTest`** the first time this
+fold was wired in: any test with an exhaustive `when` over the fold's output needs a branch for every
+new arm, which is a compile-time signal, not a runtime one, so it surfaces immediately rather than as
+a flaky failure. The fold's own unit coverage lives beside, but not inside, that file —
+`ToolRunFoldTest` (`app/src/test/.../thread/`) covers run boundaries at assistant text, a session
+boundary and a banner, a lone tool row, a tool message with a null `toolCall` (not a tool row), nested
+sub-agent rows joining the run, expanded order, identity holding as new rows join, and `listKey`
+uniqueness across a folded list (`"tool-run:<runId>"` is a fifth distinct namespace, and `runId` being
+a message id keeps it unique the same way `withMessage`'s upsert does for `msg:` keys).
+
+A screen-level `ToolRunCollapseTest` (`app/src/sharedTest/.../thread/`) covers the composable
+end to end: collapse/expand both directions with the flush join and sub-agent indent preserved; a run
+staying expanded as a new tool row joins it; the three status states plus a live count change; and
+the setting toggled off, on and off again on an already-open thread without remounting it — `MainActivity`
+collects `collapseToolUses` with `collectAsStateWithLifecycle`, so toggling the Settings switch updates
+an open thread live. No new rung-3 scenario: the technical notes' reasoning above (status-icon content
+descriptions kept, lone tool row unchanged) is why the existing live and scripted coverage stays valid
+as-is.
+
+See [`ToolCallRow`](tool-call-row.md#consecutive-tool-rows-sit-flush-1577) for the flush join the
+expanded run reuses, and the `AppPreferences.collapseToolUses` setting itself (#1634).
