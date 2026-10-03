@@ -48,7 +48,28 @@ No new failure mode. A `turn_state` that arrives after the snapshot leaves an ec
 ## Open Questions
 
 - Does a scripted run reproduce the split often enough to count before and after? Emulator time is contended; if not, the unit reproduction is the evidence.
+- Known remaining window, out of this ticket's criteria: a parked echo (queued behind turn-1) is delivered when turn-1 ends, and its confirmation still fires after `deliver` returns, on the queue's goroutine. If it lands between two deltas of turn-2, the move to the end splits turn-2 around the echo, the same race this ticket fixes for idle echoes. A follow-up could move a delivered parked echo to just after the turn it waited behind rather than to the end of the thread.
 
 ## Revisions
 
 - 2026-10-03, resolving the open question: no scripted run executed during the build. Every `python3 scripts/android-test-gate.py scripted stream` attempt gave up after 300 s with "device busy, not a test result" (exit 75), because verifier and live-gate runs held the device. The unit reproduction in `ThreadProjectionTest` is the before/after evidence. It is red on the unfixed projection with `[turn-1, mine, turn-1#2]` and green after the fix. The design is unchanged.
+- 2026-10-03, rework after the verifier's review of PR #1644. Its MUST FIX: the ticket carries `security-sensitive` and this plan had no `## Security review`; the section below is the self-review, done against the implemented diff. Its SHOULD FIX: the remaining window for parked echoes is recorded under Open Questions as a known gap for a follow-up, not fixed here. Its NITs: the KDocs of `ownEchoQueues`, `appendLiveMessage`, `observe` and `withAssistantDelta`'s `passOver` now describe the narrowed rule, and `observe`'s helper is renamed `withParkedEchoesLast` with the `applyAssistantDelta` local renamed `parkedEchoes`. Behaviour and contract are unchanged.
+
+## Security review
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] No findings. The only new input is a boolean, `TurnPhaseProjection.isOpen`, derived from already-decoded `turn_state` / `turn_end` frames; `settleQueuedEchoes` still takes ids from the decoded `queue_state` snapshot and intersects them with this device's own minted ids, so a hostile daemon can name only messages this phone sent. The worst it can do with crafted `queue_state` and `turn_state` ordering is choose whether this device's own echo sits above or below a reply, which it can already do by ordering its frames; no daemon-authored text crosses a new path.
+- [Tokens] No findings. The change touches no token, key or credential; it reads and writes only message ids and a phase flag.
+- [Files and storage] No findings. `behindTurn` lives in the in-memory, connection-scoped `ownEchoQueues` like `queued` and `delivered`; nothing new is persisted, and the thread cache write is unchanged.
+- [Android attack surface] No findings. No component, intent, deep link, push or WebView is touched, and `data/` gains no `android.*` import.
+- [Cryptography] No findings. The Noise session and `MobileWireCodec` are untouched.
+- [Network and I/O] No findings on resource bounds. `behindTurn` is kept a subset of `queued`, which is a subset of `mintedMessageIds`, so a flood of snapshots cannot grow it beyond this device's own pending sends. A relay that delays a `turn_state` past the snapshot leaves an echo unparked, which costs only its position (see Error handling).
+- [Errors, logs and telemetry] No findings. No log line is added; the `MessageTrail` `queued` / `delivered` lines still carry ids and states only, never message text.
+- [Concurrency] No findings. `ownEchoQueues` and `TurnPhaseProjection` are both written only by the repository's single inbound collector, so the `isOpen` read in the `queue_state` arm sees every frame before that snapshot and no read-modify-write crosses a suspension point. No coroutine or scope is added.
+- [Threat model] Malicious relay: can drop or delay frames, effect limited to echo position as above; no plaintext exposure. Hostile daemon frame: handled by the existing decoder; the change only consumes decoded fields. Token theft and UI-side leakage: not affected by this change.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-10-03
