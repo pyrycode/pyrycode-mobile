@@ -555,6 +555,11 @@ class DeterministicInteractiveStreamE2ETest {
      * reply **exactly once**, no duplicate row and no missing text. This is the final assembled text, not
      * a transient delta count, so it is stable; the ladder's "never on counts" rule targets delta/timing
      * counts, not this terminal invariant. Tolerant otherwise (substring, generous timeouts).
+     *
+     * Between the restore and the 2nd message the thinking indicator must be displayed again (#1617). The
+     * reconnected repository is fresh and reads idle, and the held-open turn's `thinking` was delivered
+     * before the drop, so no replayed frame restates it; the daemon's connect-time `turn_state`
+     * reconcile (pyrycode#2712) does. Sending the 2nd message first could mask a missing reconcile.
      */
     @Test
     fun interactiveTurn_seededChannel_replySurvivesMidTurnReconnect() {
@@ -571,6 +576,14 @@ class DeterministicInteractiveStreamE2ETest {
         // Sever the phone's relay link mid-turn and restore it. The daemon stays up (in-ring buffer
         // intact); on reconnect the phone re-advertises last_event_id (#416) and the turn resumes.
         severAndRestoreLink()
+
+        // #1617: the fresh connection's projection starts idle and the turn's `thinking` predates the
+        // replay cursor, so only the daemon's connect-time reconcile `turn_state` (no event_id,
+        // pyrycode#2712) can bring the indicator back. Asserted before message #2, whose drop could restate it.
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(thinkingDescription)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodes(hasContentDescription(thinkingDescription)).onFirst().assertIsDisplayed()
 
         // Message #2 → drop B → the complete reply + turn_end streams to the reconnected phone.
         typeAndSend(SECOND_PROMPT)

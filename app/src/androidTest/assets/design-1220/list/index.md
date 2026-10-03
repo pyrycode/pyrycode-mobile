@@ -21,7 +21,8 @@
   `archive-discussions*.png` and `thread-menu*.png` (no pixel above luminance 150 in the top 24 px). The
   appearance changes with the capture, not with the surface, so it is no Colour verdict here. The thread's dark
   icons are handed to the thread audit, #1432, with the Archive recurrence as a lead.
-- **Result:** `list-results.xml`, 2 executed, 0 failures, 0 errors, 0 skipped.
+- **Result:** the third run had 2 executed, 0 failures, 0 errors, 0 skipped. `list-results.xml` now holds #1504's
+  run (see List states), with the same counts.
 
 No audit declares app-wide parity; #1434 owns that verdict.
 
@@ -196,24 +197,217 @@ No audit declares app-wide parity; #1434 owns that verdict.
 
 - **Compact:** no clipping or overlap.
 
+## List states — `670:5299` (#1504)
+
+- **Run:** `main` at `3f3dd500` plus the test-only `ListDesignCaptureTest` on `feature/1504`, same device and
+  arguments as above, 2026-10-03: `list-results.xml`, 2 executed, 0 failures, 0 errors, 0 skipped. Only this
+  section's captures and the retagged `edit-channel*` are committed from that run; every section above keeps its
+  own run's evidence.
+- **Figma:** the section List states · 2026-10-02 `670:5299`, exported with `get_screenshot` on 2026-10-03 at
+  412x892 (`figma-<node>.png`).
+- **Measuring:** modal rows quote raw image y, as #1588 does: a modal's shell spans the window inside the bars,
+  so its header and footer sit 24 px from the frame's and the rule-to-footer midpoint (446) is shared. Full-screen
+  surfaces quote y with the 24 px bar removed. Data differs from the frames on purpose (the demo host is "Demo",
+  its channels "Joi Pilates", "Personal" and "Pyrycode Mobile", its chats unnamed); text content and text widths
+  are not judged. A dialog-window capture's sidecar `imePx` reads the activity window's insets, not the dialog's, so
+  it records `bottom=0` even where the keyboard is up (`save-as-channel.txt`); the image is the record.
+- **Inputs:** Archive's empty Discussions tab unarchives the demo's archived discussion around its capture. The
+  host rows swap the harness's demo host for three test hosts in the capture class (`hostStates`): "Pyry" on the
+  demo rows with `RelayLinkStatus.Offline`, and row-less "MB Second brain" (`PairingRejected`) and "MB Game dev"
+  (`UpdateRequired(null)`); the walk then collapses the five folders the frame draws collapsed. No file under
+  `app/src/main/` changed.
+
+### Create channel — `671:5558`
+
+- **Owning ticket:** #958
+- **Capture:** `create-channel.png`, `create-channel-compact.png` · **Side-by-side:** `create-channel-side-by-side.png` · **Overlay:** `create-channel-overlay.png`
+- Opened from the Channels section's plus ("New channel on Demo").
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | mismatch: the field block sits high, "Channel name:" glyph top 333 against 335 and the prompt field top 443 against 450; 3 px of it is the shell offset #1588 owns (name field top 355 against 358) |
+| Padding | match: 28 px gutters, field text inset 16 px |
+| Spacing | mismatch: name field bottom to prompt field top 36 px against 39; label to its field within 1 px; Cancel and OK 25 px above the shell's bottom edge in both |
+| Typography | match: title, field labels, buttons |
+| Colour | match: shell, field fills (0,38,66), outlined Cancel, disabled OK |
+| Borders | match: header rule, Cancel outline |
+| Radii | match: shell, fields, buttons |
+| Icon paths | match: close |
+| Component state | match: both fields empty, OK disabled until a name is typed. The name field holds focus with a caret and the keyboard closed; the frame draws no caret |
+
+- **Compact:** no clipping; both fields, Cancel and OK on screen.
+- **Routed:** #1588 (shell offset), #1651 (field gap)
+
+### Edit channel — `671:5415`
+
+- **Owning ticket:** #667; reached through the thread's More actions, Edit, since #1561 and #1563
+- **Capture:** `edit-channel.png`, `edit-channel-compact.png` · **Side-by-side:** `edit-channel-side-by-side.png` · **Overlay:** `edit-channel-overlay.png`
+- Opens with the name focused and the keyboard up, so the shell ends above the keyboard and its content slot is
+  shorter than the frame's. The frame draws the keyboard closed.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | unverified: with the keyboard up the field block starts at "Channel name:" glyph top 161 against 271 (raw) and the footer sits above the keyboard; the keyboard-closed state was not captured (#1651) |
+| Padding | match: 28 px gutters, field text inset 16 px, Mute checkbox and Archive channel at the frame's x |
+| Spacing | mismatch: "Channel name:" to "Channel system prompt:" glyph tops 88 px against 92, the Create channel field gap; prompt label to Mute 160 against 162; Mute to Archive channel 58 in both |
+| Typography | match: title, labels, value, Mute label, Archive channel, buttons |
+| Colour | match: shell, fields, error-toned Mute outline, outlined Archive channel, filled OK |
+| Borders | match: header rule, outlines |
+| Radii | match: shell, fields, buttons |
+| Icon paths | match: close |
+| Component state | mismatch: keyboard up with the name focused against the frame's closed keyboard; the prompt is empty in the demo where the frame shows one (data) |
+
+- **Compact:** at 320x700 the prompt field is cut by the action bar and Mute and Archive channel sit below it; the
+  walk scrolls to Archive channel with the keyboard up and asserts it is displayed, so both stay reachable.
+- **Routed:** #1651
+
+### Edit chat — `671:5499`
+
+- **Owning ticket:** #827
+- Not captured: unreachable from `MainActivity` since #1563. `ChannelListEvent.TreeChatEditTapped`, the only route to
+  `ChannelListViewModel.openChatEditor`, is constructed nowhere, and a chat is renamed from its thread's More actions,
+  Rename (`671:5664`, below). Listed under Gaps.
+
+### Rename — `671:5664`
+
+- **Owning ticket:** #957
+- **Capture:** `rename.png`, `rename-compact.png` · **Side-by-side:** `rename-side-by-side.png` · **Overlay:** `rename-overlay.png`
+- Opened from the first chat's thread, More actions, Rename (an unpromoted conversation's menu; a channel's opens
+  Edit). The demo chat is unnamed, so the field holds "Untitled discussion".
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | mismatch: "Name" glyph top 408 against 411 and the field 429–480 against 434–486; 3 px is #1588's shell offset |
+| Padding | match: 28 px gutters, value inset 16 px |
+| Spacing | mismatch: label glyph top to field top 21 px against 23; footer 25 px above the shell's bottom edge in both |
+| Typography | match: title, label, value, buttons |
+| Colour | match: shell, field fill, outlined Cancel, disabled Save |
+| Borders | match: header rule, Cancel outline |
+| Radii | match: shell, field, buttons |
+| Icon paths | match: close |
+| Component state | mismatch: the prefilled name is selected (highlighted), the frame draws it unselected; Save disabled until the name changes, as the frame's dimmed Save |
+
+- **Compact:** the keyboard opens at 320x700; the field, Cancel and Save stay above it.
+- **Routed:** #1588, #1651
+
+### Save as channel — `671:5718`
+
+- **Owning ticket:** #957
+- **Capture:** `save-as-channel.png`, `save-as-channel-compact.png` · **Side-by-side:** `save-as-channel-side-by-side.png` · **Overlay:** `save-as-channel-overlay.png`
+- Opened from the first chat's thread, More actions, "Save as channel…". The unnamed chat prefills "New channel".
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | unverified: opens with the keyboard up, so the shell ends above it and the block starts at "Channel name:" glyph top 225 against 335 (raw); the keyboard-closed state was not captured (#1651) |
+| Padding | match: 28 px gutters, value inset 16 px |
+| Spacing | mismatch: "Channel name:" to "Channel system prompt:" glyph tops 88 px against 92, as Create channel and Edit channel |
+| Typography | match: title, labels, value, buttons |
+| Colour | match: shell, fields, outlined Cancel, filled OK |
+| Borders | match: header rule, Cancel outline |
+| Radii | match: shell, fields, buttons |
+| Icon paths | match: close |
+| Component state | mismatch: keyboard up and the prefilled name selected, against the frame's closed keyboard and unselected name |
+
+- **Compact:** the footer covers the prompt field's lower part above the keyboard; the field scrolls and Cancel and
+  OK stay reachable.
+- **Routed:** #1651
+
+### Delete confirmation — `673:3665`
+
+- **Owning ticket:** #227
+- **Capture:** `delete-confirmation.png`, `delete-confirmation-compact.png` · **Side-by-side:** `delete-confirmation-side-by-side.png` · **Overlay:** `delete-confirmation-overlay.png`
+- Opened from Channel Info's Delete, below the sheet's fold, after the `channel-info` capture.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | mismatch: the dialog surface (39,42,47) measures 320x228 at x 46–365, y 308–535 with the bar removed, against 316x220 at x 48–363, y 312–531: 4 px wider and 8 px taller, centred on the same point, so it reaches 2 px past the frame on each side and 4 px above and below. Title 30 px below the dialog's top and title to first body line 47 px in both |
+| Padding | mismatch: text starts 24 px inside the dialog's left edge against 25 (body x 70 against 73, title x 72 against 74); button text bottom to the dialog's bottom edge 43 px against 39; button text right edge 38 px inside the right edge against 37 |
+| Spacing | mismatch: last body line top to the buttons' text top 58 px against 54; with the 43 px bottom inset this is the 8 px of extra height |
+| Typography | match: headline, body, buttons |
+| Colour | match: dialog surface (39,42,47), primary buttons |
+| Borders | match (none) |
+| Radii | match: dialog corners |
+| Icon paths | match (none) |
+| Component state | mismatch: the Channel Info sheet stays open under the scrim; the frame draws the dialog over the bare canvas |
+
+- **Compact:** the body wraps to four lines; the dialog and both buttons stay on screen.
+- **Routed:** #1651 (size 320x228 against 316x220, the 43 px bottom inset, the button gap, the 24 px text inset, and the sheet behind the scrim)
+
+### Host rows: disconnected, re-pair required, update required — `672:3493`
+
+- **Owning ticket:** #840, #1336 (disconnected), #842 (re-pair), #1009 (update)
+- **Capture:** `host-rows.png`, `host-rows-compact.png` · **Side-by-side:** `host-rows-side-by-side.png` · **Overlay:** `host-rows-overlay.png`
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | match: with the bar removed every host, folder and row text band starts at the frame's y within 1 px (hosts 105, 285, 385; folders 134, 242, 314, 342) |
+| Padding | mismatch: the status control and the pen sit 12 px further right (pen x 374–385 against 362–373) |
+| Spacing | mismatch: the update caption's top to the next folder's text top is 27 px against 28, so the Game dev folders sit 2 px high |
+| Typography | match: host, folder and row styles; caption body-small |
+| Colour | match: glyph and host name in `error` (255,180,171 in both), controls in `primary`, caption in `onSurfaceVariant`, canvas glow |
+| Borders | match: toolbar rule |
+| Radii | match (none) |
+| Icon paths | mismatch: disconnected and re-pair draw Material Power (6 px wide) where the frame draws the Pair plug (10 px); update draws Material Download (8 px) where the frame draws the Update glyph (12 px) |
+| Component state | match: no Channels or Chats plus on any host while it is not connected (#1336); the caption reads "Update Pyrycode to use this host."; folds as drawn |
+
+- The frame's channel rows carry status dots in colours the demo rows do not reach; that is data, verified by #1524.
+- **Compact:** the update caption wraps to two lines; every host, control and folder stays on screen.
+- **Routed:** #1650
+
+### Archive, empty Channels tab — `673:3577`
+
+- **Owning ticket:** #1265
+- **Capture:** `archive-empty-channels.png`, `archive-empty-channels-compact.png` · **Side-by-side:** `archive-empty-channels-side-by-side.png` · **Overlay:** `archive-empty-channels-overlay.png`
+- Archive before the walk archives a channel: Channels (0), Discussions (1).
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | match: with the bar removed title 24–39, tab labels 105–118 against 106–119, indicator at 134, "No archived channels" 483–494 in both |
+| Padding | match: 16 px gutters, empty text centred (x 126–284 against 126–285) |
+| Spacing | match |
+| Typography | match: title, host label, tabs, empty text |
+| Colour | match: canvas glow, selected tab without fill, indicator |
+| Borders | match: indicator and divider |
+| Radii | match (none) |
+| Icon paths | match: back arrow |
+| Component state | match: Channels selected and empty |
+
+- **Compact:** both tab labels on one line with counts; the empty text centred.
+- **Routed:** none
+
+### Archive, empty Discussions tab — `673:3621`
+
+- **Owning ticket:** #1265
+- **Capture:** `archive-empty-discussions.png`, `archive-empty-discussions-compact.png` · **Side-by-side:** `archive-empty-discussions-side-by-side.png` · **Overlay:** `archive-empty-discussions-overlay.png`
+- Channels (3) archived, the archived discussion restored, Discussions tab tapped through the device's input.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | match: as the empty Channels tab; indicator under Discussions (x 206–411), "No archived discussions" 483–494 in both |
+| Padding | match: empty text centred (x 115–295 against 115–296) |
+| Spacing | match |
+| Typography | match |
+| Colour | match: the tapped tab has no fill |
+| Borders | match |
+| Radii | match (none) |
+| Icon paths | match: back arrow |
+| Component state | match: Discussions selected and empty |
+
+- **Compact:** as the Channels tab.
+- **Routed:** none
+
 ## Gaps
 
-States reachable from `MainActivity` with no current Mobile frame. On 2026-10-02 the Mobile page holds no channel-list
-variant beyond `15:8`, which draws every host connected, and no empty Archive tab; the Components page (`347:5692`)
-holds only the bare `Icon=Pair` (`486:995`) and `Icon=Update` (`581:1606`) glyphs, with no host-row state.
+States reachable from `MainActivity` with no current Mobile frame, plus Edit chat, the one framed state that is not
+reachable and so has no capture. Every state #1431 listed here now has a frame in List states `670:5299` and a
+section above. The saving, failure, snackbar and Archive loading and error states raised
+on #1504 have no frame; #1592 asks for frames or an out-of-reference decision.
 
 | State | Capture | Owning ticket | Routed |
 |---|---|---|---|
-| Edit channel modal (thread More actions, Edit) | `edit-channel.png`, `edit-channel-compact.png` (it opens with its name field focused and the keyboard up; at 412x892 every field and action sits above the keyboard, at 320x700 the prompt field is cut by the action bar and Mute and Archive channel sit below it; the walk scrolls to Archive channel with the keyboard up and asserts it is displayed, so both stay reachable) | #667 | #1504 |
-| Edit chat modal (unreachable since #1563; chats are renamed from the thread's More actions, Rename) | none | #827 | #1504 |
-| Create channel modal (Channels plus) | none | #958 | #1504 |
-| Archive, Discussions tab | `archive-discussions.png`, `archive-discussions-compact.png` | #1265 | #1487 |
-| Rename dialog and Save as channel (thread overflow) | none | #957 | #1504 |
-| Disconnected host row | none; `TreeHostRow` draws the glyph and name in `error` and adds a plug control ("Reconnect <host>"), `treeHost` hides the Channels and Chats plus buttons, and `MainActivity` handles `TreeHostReconnectTapped`. The source notes "the reference has no disconnected-host variant" | #840, #1336 | #1504 |
-| Re-pair-required host row | none; the same treatment for `RelayLinkStatus.PairingRejected`, whose control emits `TreeHostRePairTapped`, which `MainActivity` routes to re-pair | #842 | #1504 |
-| Update-required host row | none; a download control and the update caption under the row for `RelayLinkStatus.UpdateRequired`, emitting `TreeHostUpdateTapped` | #1009 | #1504 |
-| Archive, empty tabs | none; `ArchivedDiscussionsScreen` shows `archived_empty_channels` ("No archived channels") or `archived_empty_discussions` ("No archived discussions"). The Channels tab is empty in the demo before the walk archives channels | #1265 | #1504 |
-| Delete confirmation (Channel Info, Delete) | none; `ThreadScreen`'s `DeleteConfirmationDialog`, drawn while `state.deleteConfirmVisible` is true, which `ThreadEvent.Delete` from the sheet's Delete action sets | #227 | #1504 |
+| Edit chat modal `671:5499` (unreachable since #1563; chats are renamed from the thread's More actions, Rename) | none | #827 | none: not reachable |
+| Archive, Discussions tab with rows | `archive-discussions.png`, `archive-discussions-compact.png` | #1265 | #1487 |
+| List-side saving, failure and snackbar states; Archive loading and error | none | #958, #957, #827, #667, #1277, #1265 | #1592 |
 
 Create folder and the pickers' new-folder dialog are reachable only from `AddWorkspaceModal` and `WorkspacePicker`
 (below), so they are not reachable. Paste code is the Pair Screen, audited in `onboarding/`.

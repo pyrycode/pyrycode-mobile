@@ -8,6 +8,8 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -42,6 +44,27 @@ class RemoteConversationRepositoryTurnPhaseTest {
             assertEquals(Phase.Idle, repo.observeTurnPhase("c1").first())
         }
 
+    /**
+     * #1617: the daemon's connect-time reconcile (pyrycode#2712) restates a running turn's phase on a new
+     * connection as a `turn_state` with no `event_id`. It sets the phase on the fresh repository, and the
+     * same phase re-sent emits nothing more.
+     */
+    @Test
+    fun reconcileTurnState_withoutEventId_setsThePhaseOnAFreshConnection() =
+        runTest {
+            val (pump, repo) = repo()
+            val phases = mutableListOf<Phase>()
+            backgroundScope.launch { repo.observeTurnPhase("c1").toList(phases) }
+            runCurrent()
+
+            pump.push(reconcileTurnState("c1", "thinking"))
+            runCurrent()
+            pump.push(reconcileTurnState("c1", "thinking"))
+            runCurrent()
+
+            assertEquals(listOf(Phase.Idle, Phase.Thinking), phases)
+        }
+
     @Test
     fun withoutInteractive_framesLeaveThePhaseIdle() =
         runTest {
@@ -63,6 +86,19 @@ class RemoteConversationRepositoryTurnPhaseTest {
         state: String,
         id: Long,
     ): Envelope = probe("turn_state", """{"conversation_id":"$conversationId","state":"$state"}""", id)
+
+    /** The reconcile shape: envelope id 1, which the client ignores, and no `event_id`. */
+    private fun reconcileTurnState(
+        conversationId: String,
+        state: String,
+    ): Envelope =
+        Envelope(
+            id = 1L,
+            type = "turn_state",
+            ts = TS,
+            payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId","state":"$state"}"""),
+            eventId = null,
+        )
 
     private fun turnEnd(
         conversationId: String,

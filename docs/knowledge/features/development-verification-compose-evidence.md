@@ -186,6 +186,25 @@ of the same surface in one run (`archive.png` against `archive-compact.png`),
 so re-read it from the committed capture immediately before writing that
 verdict rather than trusting an earlier run's reading.
 
+`ListDesignCaptureTest` (#1504) extended the same walk to the states `670:5299`
+added frames for — Edit channel retagged, Edit chat, Create channel, Rename,
+Save as channel, the Delete confirmation, three host-row link statuses and
+Archive's two empty tabs — and found three more traps. First,
+`waitUntil { hasSetTextAction() nodes exist }` after opening a modal from
+inside a thread passes at once, because the thread's own composer is already a
+set-text node; wait on the modal's own label instead. Second, a `null`
+repository on a `HostConversationConnection` gives a host row with no
+conversation rows underneath it, which is what let the `PairingRejected` and
+`UpdateRequired` host rows for this audit stand up without a second fake.
+Third, a dialog capture's `imePx` reading can disagree with the image: the IME
+can arrive between `DesignCapture.capture`'s inset read and its
+`takeScreenshot()` call, so a modal captured right as its text appears can
+record `bottom=0` while the screenshot already shows the keyboard, or the
+reverse. Settle the keyboard state explicitly before capturing a dialog-window
+modal — as the Edit host steps already do with `awaitModalFocus` /
+`awaitModalKeyboard` / `pressBack` — rather than reading the race as a
+structural limit of dialog-window sidecars.
+
 `ThreadDesignCaptureTest` (#1432) audited the thread, composer and thread
 status states through this harness. It runs in the UI gate on ATD, so a change
 to a thread panel, menu or status band can break it. Capture keyboard states
