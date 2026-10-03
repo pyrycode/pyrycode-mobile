@@ -13,6 +13,7 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
@@ -157,6 +158,10 @@ class PromptsDesignCaptureTest {
         secureCapture("switch-question-chat", "636:3279")
 
         back()
+        // #1507: the list reads the same prompts, so both waiting rows carry the mark and the third does not.
+        awaitMark(CLIENT, WAITING)
+        awaitMark(KITCHEN, WAITING)
+        awaitMark(OTHER, "Idle")
         secureCapture("switch-list", "640:2440", expectSecure = false)
 
         open(OTHER, ids, draft = null)
@@ -196,6 +201,16 @@ class PromptsDesignCaptureTest {
         awaitQuestion()
         assertNoPermission()
         assertEquals("the composer draft stays with its chat", "My message", thread().draft.value)
+    }
+
+    /** The row named [name] shows the attention dot described [mark]; the row merges the dot's description. */
+    private fun awaitMark(
+        name: String,
+        mark: String,
+    ) {
+        val row = hasText(name) and hasContentDescription(mark)
+        rule.waitUntil(5_000) { rule.onAllNodes(row).fetchSemanticsNodes().size == 1 }
+        rule.onNode(row).assertIsDisplayed()
     }
 
     /** The view model's own state, not a lazily composed node, decides that no batch reached this chat. */
@@ -477,5 +492,6 @@ class PromptsDesignCaptureTest {
         const val KITCHEN = "kitchenclaw refactor"
         const val OTHER = "Release notes"
         const val GRANT_LABEL = "Don't ask again this session for:"
+        const val WAITING = "Waiting for your answer"
     }
 }
