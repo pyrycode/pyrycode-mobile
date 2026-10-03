@@ -207,7 +207,7 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 | Status-band arms `Resetting`, `ApiRetry`, `Compacting`, `Working`, `RunningTool`, `Stalled` | `16:8` band, `134:5013` (decision on #1529) | no separate frame | › Gaps | #1312, #897, #803 | #1529 |
 | Send button's Stop variant | `114:3549` (decision on #1529) | no separate frame | › Gaps | #459, #643 | #1529 |
 | Top overlay Error pills: failed MCP server, non-warning usage limit | `347:6619` (decision on #1529) | no separate frame | › Gaps | #1345, #1002, #1115 | #1529 |
-| Prompt resolved elsewhere: dismissal notice | `696:5065` | audited, mismatch (changed design) | `thread/index.md` › Prompt resolved elsewhere | #446, #1337 | #1539, #1604, #1626 |
+| Prompt resolved elsewhere: dismissal notice | `696:5065` | audited, mismatch (changed design; #1604 non-error scope conflict recorded) | `thread/index.md` › Prompt resolved elsewhere | #446, #1337 | #1539, #1604, #1626 |
 | Empty thread | `696:4989` | audited, mismatch | `thread/index.md` › Empty thread | none named (see `empty-thread-state.md`) | #1539, #1625 |
 | Codex agent switch: Switching, Switch confirm | `578:3248`, `578:3442` | not shipped | › Codex agent switch | #1118 | #1118 (does not count toward parity while open) |
 
@@ -217,7 +217,7 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 |---|---|---|---|---|---|
 | Message meta row hidden until the bubble is tapped; at most one visible, hidden while streaming | `132:4446`, `132:4435` (decision on [#1621](https://github.com/pyrycode/pyrycode-mobile/issues/1621): the component keeps drawing the unchanged timestamp and copy row; the app hides it until tap) | no separate frame | not separately audited | #1621 | #1621 |
 | Tool row, finished | `674:5853` | audited, match | `thread/index.md` › Tool row | #1208, #1315, #1316 | #1500 |
-| Tool row running and failed, nested sub-agent rows | `696:4795` | audited, mismatch | `thread/index.md` › Sub-agent tool rows | #811, #895, #896, #1315, #1316, #1577 | #1539, #1623, #1626, #1630 |
+| Tool row running and failed, nested sub-agent rows | `696:4795` | audited, mismatch (#1623 closed as a Figma change; reference discrepancy remains) | `thread/index.md` › Sub-agent tool rows | #811, #895, #896, #1315, #1316, #1577 | #1539, #1623, #1626, #1630 |
 | Refusal row, collapsed | `620:1577` | audited, mismatch | › Notification text | #875 | #1494 |
 | Refusal switch back, armed | `646:4707` | audited, mismatch | › Refusal switch back | #1360 | #1494 |
 | Refusal expanded; switch back pending and failed | `620:1570`, `646:4694`, `646:4700` | component only | not audited | #875, #1360 | #1540 |
@@ -244,7 +244,7 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 |---|---|---|---|---|---|
 | Markdown Reader | `553:2574` | audited, mismatch | `thread/index.md` › Markdown Reader | #1291 | #1533 |
 | Linked Markdown reader (`Routes.MARKDOWN_LINK`, `LinkedMarkdownReaderDestination`, opened by `ThreadNavigation.OpenLinkedMarkdown`) | `553:2574` | audited, mismatch | as Markdown Reader: it draws the same `MarkdownReaderScreen` | #1291 | #1533 |
-| Reader notices (save failed, saved, open failed) | `696:5101` | audited, mismatch (changed design; open failed captured, the save arms share its host) | `thread/index.md` › Markdown Reader notice | #1291 | #1539, #1604 |
+| Reader notices (save failed, saved, open failed) | `696:5101` | audited, mismatch (changed design; open failed captured, save arms share its host; #1604 excludes Saved despite its extension comment) | `thread/index.md` › Markdown Reader notice | #1291 | #1539, #1604 |
 | Reader overflow menu | `675:5883` (decision on #1539) | no separate frame | not audited | #1291 | #1539 |
 
 ### Archive

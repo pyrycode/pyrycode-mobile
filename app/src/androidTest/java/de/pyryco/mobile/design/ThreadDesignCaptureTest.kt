@@ -52,6 +52,7 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.network.RelayErrorException
+import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.AttachmentContent
 import de.pyryco.mobile.data.repository.AttachmentFetchResult
 import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
@@ -86,6 +87,7 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.Instant
 import org.junit.After
@@ -138,8 +140,6 @@ class ThreadDesignCaptureTest {
     /** Attachment ids the override's `retrieveAttachment` answers from these gates instead of the photo file. */
     private val attachmentGates = mutableMapOf<String, CompletableDeferred<AttachmentRetrievalResult>>()
 
-    /** While true, the override's `readWorkspaceFile` fails, so the reader's refresh reports it. */
-    @Volatile private var noteReadFails = false
     private val images = mutableListOf<Uri>()
     private var photo: File? = null
 
@@ -259,33 +259,41 @@ class ThreadDesignCaptureTest {
 
     /** #1619: the queued rows `696:4677`, with a longer row as evidence, and the sub-agent tool rows `696:4795`. */
     @Test fun queuedAndToolRowFramesAt412By892() {
-        openThread()
-        inputs.contextUsage.value = CONTEXT
-        thinking()
-        // No messageId, so both fold as unmatched rows after the thread's items.
-        val frameRows =
-            listOf(
-                QueuedMessage(1, "Can you also update the migration tests once you're done?", at(20)),
-                QueuedMessage(2, "Then push a draft PR.", at(21)),
-            )
-        queue.value = frameRows
-        await("Then push a draft PR.")
-        design.capture(FOLDER, "queued-messages", "696:4677")
+        val preferences = GlobalContext.get().get<AppPreferences>()
+        val previousCollapse = runBlocking { preferences.collapseToolUses.first() }
+        try {
+            // The frame draws every tool row; isolate the phone-local default-on collapse preference.
+            runBlocking { preferences.setCollapseToolUses(false) }
+            openThread()
+            inputs.contextUsage.value = CONTEXT
+            thinking()
+            // No messageId, so both fold as unmatched rows after the thread's items.
+            val frameRows =
+                listOf(
+                    QueuedMessage(1, "Can you also update the migration tests once you're done?", at(20)),
+                    QueuedMessage(2, "Then push a draft PR.", at(21)),
+                )
+            queue.value = frameRows
+            await("Then push a draft PR.")
+            design.capture(FOLDER, "queued-messages", "696:4677")
 
-        queue.value = frameRows +
-            QueuedMessage(
-                3,
-                "Once the draft is up, also go through every remaining call site of the queue fold and check that each one " +
-                    "still compiles against the new signature before you ask anyone for a review.",
-                at(22),
-            )
-        await("Once the draft is up", substring = true)
-        design.capture(FOLDER, "queued-long", "696:4677")
+            queue.value = frameRows +
+                QueuedMessage(
+                    3,
+                    "Once the draft is up, also go through every remaining call site of the queue fold and check that each one " +
+                        "still compiles against the new signature before you ask anyone for a review.",
+                    at(22),
+                )
+            await("Once the draft is up", substring = true)
+            design.capture(FOLDER, "queued-long", "696:4677")
 
-        queue.value = emptyList()
-        extraItems.value = nestedTools()
-        await("Run the unit tests")
-        design.capture(FOLDER, "tool-rows-nested", "696:4795")
+            queue.value = emptyList()
+            extraItems.value = nestedTools()
+            await("Run the unit tests")
+            design.capture(FOLDER, "tool-rows-nested", "696:4795")
+        } finally {
+            runBlocking { preferences.setCollapseToolUses(previousCollapse) }
+        }
     }
 
     /** #1619: the message attachment states `696:4913`, then the empty thread `696:4989`. */
@@ -336,18 +344,17 @@ class ThreadDesignCaptureTest {
             HostModalState(resolved = listOf(ModalUiState.Dismissed("design-modal", "allow", "remote", CONVERSATION)))
         await("Resolved on another device")
         design.capture(FOLDER, "prompt-resolved-elsewhere", "696:5065")
-        rule.waitUntil(15_000) { rule.onAllNodesWithText("Resolved on another device").fetchSemanticsNodes().isEmpty() }
+        dismissSnackbar("Resolved on another device")
 
         checkNotNull(inputs.thread.value).onOpenMarkdownLink("docs/Builder Pipeline - Plan.md")
         await("Builder Pipeline Plan")
         // Save failed and Saved settle only after the system's create-document picker returns; the open-failed
         // notice shares their snackbar host.
-        noteReadFails = true
+        // Refresh uses the original demo repository, whose unsupported reread becomes an open failure.
         design.openMenu(rule.onNodeWithContentDescription("More actions"))
         rule.onNodeWithText("Refresh").performClick()
         await("Couldn't open file")
         design.capture(FOLDER, "reader-notice", "696:5101")
-        noteReadFails = false
     }
 
     @Test fun backgroundTaskPanelAt412By892() {
@@ -803,11 +810,7 @@ class ThreadDesignCaptureTest {
                                 conversationId: String,
                                 path: String,
                             ): AttachmentFetchResult =
-                                if (noteReadFails) {
-                                    AttachmentRetrievalResult.Unavailable
-                                } else {
-                                    AttachmentFetchResult.Fetched(AttachmentContent(listOf(NOTE.toByteArray())), "Plan.md", "text/markdown")
-                                }
+                                AttachmentFetchResult.Fetched(AttachmentContent(listOf(NOTE.toByteArray())), "Plan.md", "text/markdown")
                         }
                     val connection =
                         object : ConnectionStateSource {

@@ -1,0 +1,12 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="2" failures="0" errors="0" skipped="0" time="11.325" timestamp="2026-10-03T20:22:39" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.design.ThreadDesignCaptureTest" tests="2" failures="0" errors="0" skipped="0" time="10.271" timestamp="2026-10-03T20:22:39" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="queuedAndToolRowFramesAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="5.657" />
+    <testcase name="dismissalAndReaderNoticeFramesAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="4.614" />
+  </testsuite>
+</testsuites>

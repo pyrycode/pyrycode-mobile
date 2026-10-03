@@ -1,13 +1,13 @@
 <?xml version='1.0' encoding='UTF-8' ?>
-<testsuites tests="3" failures="0" errors="0" skipped="0" time="35.789" timestamp="2026-10-03T06:35:42" hostname="localhost">
-  <testsuite name="de.pyryco.mobile.design.ThreadDesignCaptureTest" tests="3" failures="0" errors="0" skipped="0" time="32.912" timestamp="2026-10-03T06:35:42" hostname="localhost">
+<testsuites tests="3" failures="0" errors="0" skipped="0" time="63.891" timestamp="2026-10-03T20:20:22" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.design.ThreadDesignCaptureTest" tests="3" failures="0" errors="0" skipped="0" time="60.724" timestamp="2026-10-03T20:20:22" hostname="localhost">
     <properties>
       <property name="device" value="pixel8Api35" />
       <property name="flavor" value="" />
       <property name="project" value=":app" />
     </properties>
-    <testcase name="attachmentAndEmptyFramesAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="12.461" />
-    <testcase name="queuedAndToolRowFramesAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="7.03" />
-    <testcase name="dismissalAndReaderNoticeFramesAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="13.421" />
+    <testcase name="attachmentAndEmptyFramesAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="23.539" />
+    <testcase name="queuedAndToolRowFramesAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="24.871" />
+    <testcase name="dismissalAndReaderNoticeFramesAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="12.314" />
   </testsuite>
 </testsuites>

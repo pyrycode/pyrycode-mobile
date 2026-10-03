@@ -101,3 +101,17 @@ so a state that never renders fails the run. `compileDebugAndroidTestKotlin`, `l
   leave a larger gap between the last row and the status band than their frames (8, 12 and 16 px beyond the 24 px
   status-bar shift). The three entries' Spacing rows now record it and route it to one new defect, #1630, joined to
   **Routed defects** and the README rows. No capture or test code changes.
+
+- 2026-10-03, second verifier rework: `queuedAndToolRowFramesAt412By892` now pins
+  `AppPreferences.collapseToolUses` false before launch and restores the previous value in `finally`,
+  including failed captures. The default true hid the adjacent tool rows on the gate installation.
+  `dismissalAndReaderNoticeFramesAt412By892` captures the dismissal, explicitly calls `dismissSnackbar`,
+  and requires absence before reader navigation; timer expiry is not tested. The ineffective `noteReadFails`
+  hook is removed: initial opening reads the ViewModel override, but Refresh reads the original demo
+  repository through `ThreadDestinationFactory.repository`; its unsupported `readWorkspaceFile` throws,
+  which `readLinkedMarkdown` converts to failure. Three new hooks remain, with initial note reads unchanged.
+  The audit records #1623's design-side closure while the reference still differs, and #1604's conflicting
+  non-error scope exclusion. Reconciliation comments on both owners make these dispositions explicit.
+  All three methods were rerun with real bars at `main` `acf0f659`: 3 executed, 0 failed, 0 skipped.
+  Only #1619's seven captures, their comparisons and `1619-results.xml` are refreshed; references are
+  unchanged. The six mismatch verdicts and measured row gaps remain unchanged.

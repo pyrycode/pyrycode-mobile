@@ -29,10 +29,16 @@
 - **#1540 pass:** `main` at `2ce6beec` plus the test-only `refusalStateFramesAt412By892` (`1540-results.xml`, 1
   executed, 0 failures), for the refusal row's Expanded, Switch back pending and Switch back failed components
   (`620:1570`, `646:4694`, `646:4700`), exported on 2026-10-03. See "Refusal row states (#1540)".
-- **#1619 pass:** `main` at `f4c6598a` plus the test-only `queuedAndToolRowFramesAt412By892`,
+- **#1619 rework pass:** `main` at `acf0f659` plus the test-only `queuedAndToolRowFramesAt412By892`,
   `attachmentAndEmptyFramesAt412By892` and `dismissalAndReaderNoticeFramesAt412By892` on `feature/1619`
-  (`1619-results.xml`, 3 executed, 0 failures), for the six frames of section **Reachable states · #1539 ·
-  2026-10-02** (`696:4676`), exported with `get_screenshot` on 2026-10-03. See "Reachable states (#1539)".
+  (`1619-results.xml`, 3 executed, 0 failures, 0 skipped, timestamp 2026-10-03T20:20:22Z), for the six frames of section **Reachable states · #1539 ·
+  2026-10-02** (`696:4676`), exported with `get_screenshot` on 2026-10-03. The rework refreshes only this
+  ticket's seven captures and their comparisons. All have real 24 px bars, density/font scale 1.0; the tool
+  fixture pins collapse off and restores it, and dismissal is explicit after its visible capture. Earlier
+  tickets' captures stay unchanged. Filler messages and spinner phases differ; audited row geometry and
+  verdicts stay unchanged. `1619-atd-rework-results.xml` additionally records both repaired methods on
+  `pixel2Api33Atd`: 2 executed, 0 failures, 0 skipped (geometry/transition evidence, not pixels).
+  See "Reachable states (#1539)".
 - **Strict waits:** every frame state waits for its marker text ("Connecting…", "Offline · Retry", "Thinking",
   "2 tasks running", "Pairing error", "Switch back to", "Sonnet", "Manual approval", "Builder Pipeline Plan",
   "No background tasks", "No background-task report yet" and so on) and fails the run if it does not appear within 5 s. The bubble photo's decode gets 10 s. No capture is taken of a state that did not render.
@@ -59,8 +65,8 @@ configuration (fixed; `600:1694` retaken) · #1498 workspace delimiter in the se
 pill · #1605 history tail gutter and spacing · #1606 stale Stop-variant comment · #1607 type-ahead row spacing ·
 #1608 unrecognized and stopped-turn row spacing · #1614 expanded refusal row spacing and attribution weight ·
 #1615 switch-back button height and gaps, and its failure snackbar · #1622 queued row drop button, width and
-spacing · #1623 nested tool row spacing · #1624 message attachment state colours and spacing · #1625 empty-thread
-text style · #1626 frame questions in `696:4676` · #1630 gap under the last tool, attachment or queued row · #1604 also takes the dismissal, confirmation and reader notices ·
+spacing · #1623 nested tool row spacing (closed as a Figma change; unchanged reference still differs, reconciliation requested) · #1624 message attachment state colours and spacing · #1625 empty-thread
+text style · #1626 frame questions in `696:4676` · #1630 gap under the last tool, attachment or queued row · #1604 owns reader failures and the unresolved scope conflict for dismissal and confirmation notices ·
 #1532 PDF tile not dimmed while disconnected · #1533 reader list indent · #1534 task panel spacing · #1118 agent switch
 (pending) · #1510 dark status-bar icons (fixed after these captures; see Status bar). #1493, #1495 and #1500 asked
 for these captures against the updated frames; their verdicts are below, and the states #1500 could not cover moved
@@ -657,7 +663,7 @@ captures show what the app draws today, so those verdicts are expected mismatche
 | Borders | match (none) |
 | Radii | mismatch: snackbar corners, not the pill's |
 | Icon paths | match (none, no X) |
-| Component state | match: hides itself after the snackbar's duration (waited for) |
+| Component state | match: the notice is visible before capture, then explicitly dismissed through its semantics action; absence is required before reader navigation (timer expiry not tested) |
 
 - **Routed:** #1604
 
@@ -726,17 +732,19 @@ Decided on #1529 (2026-10-02); each state's reference is the node named. None is
 ## Reachable states (#1539)
 
 Six frames in `696:4676`, drawn on 2026-10-02 for states the #1434 inventory found no audit covered. The class's
-repository override adds four hooks for them, each keeping the earlier answer unless a test sets it: a queued
-backlog served by `observeQueue`, a flag that hides the fake's seeded messages, per-attachment retrieval gates for
-`retrieveAttachment`, and a failing `readWorkspaceFile` for the reader's refresh. The resolved prompt is set on
+repository override adds three hooks for them, each keeping the earlier answer unless a test sets it: a queued
+backlog served by `observeQueue`, a flag that hides the fake's seeded messages, per-attachment retrieval gates
+for `retrieveAttachment`. The ViewModel override serves the initial linked note; reader Refresh uses the
+original demo repository, whose unsupported `readWorkspaceFile` causes the open-failed notice. The resolved prompt is set on
 `DesignInputs.hostModal`. Every state waits strictly for its marker (the last queued text, "Run the unit tests",
 "Loading…", "Retry" and "File not found", "Send a message to get started", "Resolved on another device",
 "Couldn't open file"). The seed's messages stand in for the frames' filler bubbles and are not compared, and the
 composer and footer verdicts are as in "Composer and footer". Each capture is compared at full frame.
 
 Two frames draw notices Juhana changed on 2026-10-02 (the dismissal notice and the reader's notices leave the
-bottom snackbar for a pill under the header). Those verdicts are expected mismatches and route to #1604, with the
-thread's confirmations such as "File saved". Three frame-side contradictions (Stop with text, two-segment path,
+bottom snackbar for a pill under the header). Those verdicts are expected mismatches. The extension comment routes them and the
+thread's confirmations such as "File saved" to #1604, but its current body excludes non-error notices; the
+conflicting scope records are explicitly assigned there for reconciliation, not treated as settled. Three frame-side contradictions (Stop with text, two-segment path,
 dimmed bubbles) are questions for the design owner on #1626, not app mismatches.
 
 ### Queued messages — `696:4677`
@@ -793,7 +801,7 @@ dimmed bubbles) are questions for the design owner on #1626, not app mismatches.
 | Icon paths | match: spinners, check, failed glyph, described-row chevron |
 | Component state | match: running, done and failed rows. The composer shows Send against the frame's Stop, as in the queued frame (#1626) |
 
-- **Routed:** #1623; the gap under the last row to #1630; the path and Stop to #1626
+- **Routed:** #1623 (closed as a Figma change). The verifier's fresh 2026-10-03 export still separates the rows and matches the committed reference, so the discrepancy remains. [Reconciliation requested on #1623](https://github.com/pyrycode/pyrycode-mobile/issues/1623#issuecomment-5972997510); the gap under the last row to #1630; the path and Stop to #1626
 
 ### Message attachment states — `696:4913`
 
@@ -852,7 +860,8 @@ dimmed bubbles) are questions for the design owner on #1626, not app mismatches.
 - **Overlay:** `prompt-resolved-elsewhere-overlay.png`
 - **Verdict:** mismatch (changed design)
 - `hostModal` holds one resolved prompt for this conversation with source `remote`. The frame dims its three oldest
-  bubbles with no delimiter above the newer ones; the capture dims only above its session delimiter (see #1626).
+  bubbles with no delimiter above the newer ones; the capture uses the current full-opacity row rule
+  (#1578), including above its session delimiter (see #1626).
 
 | Aspect | Verdict |
 |---|---|
@@ -864,9 +873,9 @@ dimmed bubbles) are questions for the design owner on #1626, not app mismatches.
 | Borders | match (none) |
 | Radii | mismatch: snackbar corners, not the pill's |
 | Icon paths | match (none) |
-| Component state | match: hides itself after the snackbar's duration (waited for) |
+| Component state | match: the notice is visible before capture, then explicitly dismissed through its semantics action; absence is required before reader navigation (timer expiry not tested) |
 
-- **Routed:** #1604 (comment extending its scope)
+- **Routed:** #1604 via the scope-extension comment. Its current body explicitly excludes dismissal and Saved notices; [scope reconciliation is assigned there](https://github.com/pyrycode/pyrycode-mobile/issues/1604#issuecomment-5972997264). This verdict records the frame mismatch, not acceptance of the non-error implementation scope.
 
 ### Markdown Reader notice — `696:5101`
 
@@ -875,7 +884,8 @@ dimmed bubbles) are questions for the design owner on #1626, not app mismatches.
 - **Side-by-side:** `reader-notice-side-by-side.png`
 - **Overlay:** `reader-notice-overlay.png`
 - **Verdict:** mismatch (changed design)
-- The reader opened on the linked note, then Refresh from its overflow menu with the note read failing, which
+- The reader opened on the linked note, then Refresh from its overflow menu through the original demo repository, whose
+  unsupported `readWorkspaceFile` throws and is converted to a failed reread, which
   shows "Couldn't open file". The frame draws "Couldn't save file": Save failed and File saved report only after
   the system's create-document picker returns, which the harness cannot drive, and they share this snackbar host
   and style. The note body is as in "Markdown Reader — `553:2574`".
@@ -892,7 +902,7 @@ dimmed bubbles) are questions for the design owner on #1626, not app mismatches.
 | Icon paths | match (none, no X) |
 | Component state | match: one notice (its timeout not waited for) |
 
-- **Routed:** #1604 (comment extending its scope: Error pill for failures, Default pill for File saved)
+- **Routed:** #1604 for Error pills under its current body. The extension comment also routes File saved as a Default pill there, but the body excludes Saved; [the unresolved scope conflict is assigned to #1604](https://github.com/pyrycode/pyrycode-mobile/issues/1604#issuecomment-5972997264).
 
 ## Status bar
 
