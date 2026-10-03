@@ -2,7 +2,6 @@ package de.pyryco.mobile.ui.conversations.components
 
 import android.graphics.Bitmap
 import android.os.Build
-import android.os.ParcelFileDescriptor
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.asAndroidBitmap
@@ -29,10 +28,10 @@ import de.pyryco.mobile.data.repository.MemorySearchProvider
 import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.SessionFacts
 import de.pyryco.mobile.data.repository.SessionPromptStatus
+import de.pyryco.mobile.design.Viewport
+import de.pyryco.mobile.design.ViewportRule
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
-import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -41,24 +40,11 @@ import java.io.File
 /** Device capture of the actual modal at the Figma viewport and a compact enlarged-text viewport. */
 @RunWith(AndroidJUnit4::class)
 class ChannelInfoCaptureTest {
-    @get:Rule val rule = createComposeRule()
-    private val instrumentation = InstrumentationRegistry.getInstrumentation()
-    private var oldSize = "reset"
-    private var oldDensity = "reset"
+    @get:Rule(order = 0)
+    val viewport = ViewportRule()
 
-    @Before fun setViewport() {
-        oldSize = overrideOf(shell("wm size"))
-        oldDensity = overrideOf(shell("wm density"))
-        shell("wm density 160")
-        shell("wm size 412x892")
-        instrumentation.waitForIdleSync()
-    }
-
-    @After fun restoreViewport() {
-        shell("wm size $oldSize")
-        shell("wm density $oldDensity")
-        instrumentation.waitForIdleSync()
-    }
+    @get:Rule(order = 1)
+    val rule = createComposeRule()
 
     @Test fun channelInfoAt412By892() {
         showSheet()
@@ -70,9 +56,9 @@ class ChannelInfoCaptureTest {
         capture("emulator-412x892.png", 412, 892)
     }
 
-    @Test fun channelInfoAtCompactWidthWithLargeText() {
-        shell("wm size 320x692")
-        instrumentation.waitForIdleSync()
+    @Viewport("320x692")
+    @Test
+    fun channelInfoAtCompactWidthWithLargeText() {
         showSheet(fontScale = 1.5f, longContent = true)
         rule.onNodeWithContentDescription("Close").assertIsDisplayed()
         rule.onNodeWithText("Folder").assertIsDisplayed()
@@ -83,9 +69,9 @@ class ChannelInfoCaptureTest {
         capture("emulator-320x692-large-text.png", 320, 692)
     }
 
-    @Test fun longProviderAtCompactWidthWithLargeText() {
-        shell("wm size 320x692")
-        instrumentation.waitForIdleSync()
+    @Viewport("320x692")
+    @Test
+    fun longProviderAtCompactWidthWithLargeText() {
         val provider = MemorySearchProvider("p", "Notebook Search ".repeat(10), true, true, MemorySearchAvailability.Available)
         showSheet(
             fontScale = 1.5f,
@@ -185,15 +171,6 @@ class ChannelInfoCaptureTest {
             "api=${Build.VERSION.SDK_INT} size=${width}x$height density=1 fontScale=${if (width == 412) 1 else 1.5} staticDark=true\n",
         )
     }
-
-    private fun shell(command: String): String =
-        ParcelFileDescriptor
-            .AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command))
-            .bufferedReader()
-            .use { it.readText() }
-
-    private fun overrideOf(output: String) =
-        output.lineSequence().firstOrNull { it.startsWith("Override") }?.substringAfter(": ") ?: "reset"
 
     private companion object {
         const val FRAMES_FOLDER = "channel-info-1488"
