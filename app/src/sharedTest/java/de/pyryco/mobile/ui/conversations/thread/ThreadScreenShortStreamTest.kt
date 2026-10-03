@@ -104,7 +104,7 @@ class ThreadScreenShortStreamTest {
 
         // The list's top inset (#1562): the stream starts below it, where it sat before the region grew up to
         // the header's rule.
-        val MESSAGE_AREA_TOP_INSET = 28.dp
+        val MESSAGE_AREA_TOP_INSET = 69.dp + 28.dp
 
         // The inset plus the row's own gutter and bubble padding; a bottom-anchored short stream sits hundreds
         // of dp lower.

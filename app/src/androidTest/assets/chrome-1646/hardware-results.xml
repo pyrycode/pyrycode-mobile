@@ -1,0 +1,23 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="6" failures="0" errors="0" skipped="0" time="111.372" timestamp="2026-10-03T21:59:09" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.MainActivityInsetsDeviceTest" tests="2" failures="0" errors="0" skipped="0" time="77.779" timestamp="2026-10-03T21:59:09" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="populatedThreadKeyboardAt360By640" classname="de.pyryco.mobile.MainActivityInsetsDeviceTest" time="42.03" />
+    <testcase name="populatedThreadKeyboardAt412By892" classname="de.pyryco.mobile.MainActivityInsetsDeviceTest" time="35.749" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.design.ThreadDesignCaptureTest" tests="4" failures="0" errors="0" skipped="0" time="25.454" timestamp="2026-10-03T21:59:09" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="menusAndKeyboardAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="7.041" />
+    <testcase name="threadStatusFramesAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="5.126" />
+    <testcase name="threadNoticeFramesAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="4.447" />
+    <testcase name="translucentChromeAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="8.84" />
+  </testsuite>
+</testsuites>

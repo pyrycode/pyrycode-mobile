@@ -54,3 +54,7 @@ Extend ThreadDesignCaptureTest with explicit scrolled states underneath both bar
 ## Open Questions
 
 None. Budget forecast: approximately 1100 written lines including plan, production, tests and expectation changes; no more than two new internal types, no signature migration, five acceptance criteria and no new reject branches. Recount before implementation commit.
+
+## Revisions
+
+- 2026-10-04: The header height comes directly from Scaffold's measured top padding; the composer is measured inside its IME padding. Expanded viewport tests must send drags between chrome bounds and distinguish underlapping nodes from the clear reading area. Broader inline-question coverage exposed a 4px history-anchor shift when the ordinary-row rest adjustment changes on prompt arrival. Preserve that keyed reader's physical position with requestScrollToItem and a matching offset adjustment while idle, without cancelling active drags. The question actions' reveal check excludes both chrome reservations. Transparent margins in the cached shadow layer prevent clipping the 24dp band's Default shadow.

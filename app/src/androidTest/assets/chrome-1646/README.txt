@@ -1,0 +1,23 @@
+Ticket #1646 hardware and geometry evidence, captured 2026-10-04.
+
+Final checks
+- JVM geometry, touch, footer, menus, history, follow and prompt coverage: 92 executed, 0 failed, 0 skipped. Per-class counts are in jvm-counts.txt.
+- Full pixel8Api35 image: 6 executed, 0 failed, 0 skipped. Fresh runner XML is hardware-results.xml.
+- Device methods: MainActivityInsetsDeviceTest.populatedThreadKeyboardAt360By640 and populatedThreadKeyboardAt412By892; ThreadDesignCaptureTest.menusAndKeyboardAt412By892, threadStatusFramesAt412By892, threadNoticeFramesAt412By892 and translucentChromeAt412By892.
+- Command: ./gradlew :app:pixel8Api35DebugAndroidTest --rerun -Pandroid.testInstrumentationRunnerArguments.class=<the six methods above, comma-separated with Class#method syntax> -Pandroid.testInstrumentationRunnerArguments.requireRealSystemBars=true --console=plain
+- Device execution held the shared android-test-gate device lock. No ATD, synthetic bars or JVM framebuffer substitutes were used.
+- Earlier development runs: first device run 6 executed / 2 failed / 0 skipped (ambiguous main/attachment scroll selector; transient 412dp initial inset). Repair run 2 / 1 / 0 (412dp passed; suggestions fixture needed to reopen input focus after Back). Final six-method run passed without weakening the inset assertions.
+
+Artifacts
+hardware/thread/ retains every affected existing thread capture, including thread (16:8), notification-text (620:1577) and keyboard (675:6160), plus menus/status/notice states.
+hardware/chrome-1646/ retains explicit scrolled rows intersecting both measured bar bounds, reference (16:8), rows-behind-composer (620:1577), rows-behind-top-bar (696:4677) and keyboard (675:6160). The shared state deliberately holds rows beneath both bars; keyboard-actions and keyboard-suggestions prove the corresponding control anchors.
+keyboard-geometry/api-35/ retains before/open/dismissed/reopened frames and coordinates at both viewport sizes, each at newest/history anchors in static dark, static light and wallpaper light.
+Each original framebuffer PNG has a TXT with viewport, density, font scale and real inset metadata. Design captures also assert hardware acceleration. Images were inspected as nonblank hardware-rendered frames.
+figma/ contains current screenshots of nodes 16:8, 620:1577, 696:4677 and 675:6160 in file g2HIq2UyPhslEoHRokQmHG.
+comparison-*.png puts current Figma next to its existing recapture and explicit underlap state (696:4677 has the new state only). Device comparison columns remove 24px system bars at each end; originals are retained unchanged. Nothing is stretched.
+
+Comparison findings
+The design's 412x892 frame describes the screen area; the 412x892 physical device has 24px real status and navigation bars, leaving an 844dp screen area. Header comparisons align at that area top. Composer placement is relative to its area bottom or real IME top, so its whole-screen y coordinate differs by the real reservations. The device IME reserves 240px and its system test keyboard intentionally differs from Figma's illustrative Keyboard block.
+The header remains 69dp tall with the title row starting at 24dp and 48dp controls. The progressive header blur visibly decreases toward its rule. Rows remain visible and progressively blur behind the composer while the status, attachments, input and footer stay sharp. Composer tint is transparent at its upper edge and reaches 60% at one-quarter height. Glyph/text silhouettes have the single Default shadow; no status-pill shadow is stacked.
+Geometry assertions establish 28dp oldest/short-row and pinned-pill clearance below the measured rule, and 12dp ordinary-message surface clearance above the status band through attachment/draft resize. Real IME tests retain newest/history positions, footer clearance, touch-target reachability and header position through open/dismiss/reopen.
+Fixture differences remain: channel title and row text, generated stone placeholders, message/attachment ordering, pending-send glyph and context readings. The generic long-text underlap fixture is intentional to make blur visible; it does not reproduce each reference's message transcript. Frame glow, gutters, bars and their local geometry are compared independently of those fixture differences. Row-specific trailing space remains owned by #1630.

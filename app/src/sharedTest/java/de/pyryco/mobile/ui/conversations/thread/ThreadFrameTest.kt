@@ -105,11 +105,11 @@ class ThreadFrameTest {
         val overflow = composeTestRule.onNodeWithContentDescription(string(R.string.cd_more_actions)).getUnclippedBoundsInRoot()
         assertEquals(56f, title.left.value, 1f)
         assertEquals(8f, back.left.value, 1f)
-        assertEquals(16f, back.top.value, 1f)
+        assertEquals(14f, back.top.value, 1f)
         assertEquals(404f, overflow.right.value, 1f)
         val messages = composeTestRule.onNodeWithTag("thread-message-region").getUnclippedBoundsInRoot()
-        // #1562: Figma 621:3571 starts the message area at the rule's bottom edge.
-        assertEquals(69f, messages.top.value, 2f)
+        // #1646: the viewport fills the screen area behind the bar; resting rows use content padding.
+        assertEquals(0f, messages.top.value, 2f)
     }
 
     @OptIn(ExperimentalTestApi::class)

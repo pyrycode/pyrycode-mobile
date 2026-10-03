@@ -44,6 +44,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -105,7 +106,7 @@ class ThreadScreenFollowTest {
         composeRule.waitForIdle()
 
         composeRule.onNodeWithText("Row 30.").assertDoesNotExist()
-        composeRule.onNodeWithText(TOOL, useUnmergedTree = true).assertDoesNotExist()
+        assertBehindChrome(composeRule.onNodeWithText(TOOL, useUnmergedTree = true))
         composeRule.onNodeWithText(QUEUED).assertDoesNotExist()
     }
 
@@ -122,7 +123,7 @@ class ThreadScreenFollowTest {
 
         composeRule.runOnIdle { state = state.copy(items = state.items + toolRow(ToolCallStatus.Running)) }
         composeRule.waitForIdle()
-        composeRule.onNodeWithText(TOOL, useUnmergedTree = true).assertDoesNotExist()
+        assertBehindChrome(composeRule.onNodeWithText(TOOL, useUnmergedTree = true))
         list.performTouchInput {
             advanceEventTime(1_000)
             up()
@@ -224,7 +225,17 @@ class ThreadScreenFollowTest {
         composeRule.onNodeWithText(REPLY).assertDoesNotExist()
 
         // Back to the newest end, recreate again: the restored position is at the end, so it follows.
-        list().performTouchInput { repeat(4) { swipeUp() } }
+        val top =
+            composeRule
+                .onNodeWithTag("thread-top-bar")
+                .fetchSemanticsNode()
+                .boundsInRoot.bottom + 24f
+        val bottom =
+            composeRule
+                .onNodeWithTag("thread-composer")
+                .fetchSemanticsNode()
+                .boundsInRoot.top - 24f
+        list().performTouchInput { repeat(4) { swipeUp(startY = bottom, endY = top) } }
         composeRule.waitForIdle()
         composeRule.onNodeWithText(REPLY).assertIsDisplayed()
         restoration.emulateSavedInstanceStateRestore()
@@ -246,7 +257,7 @@ class ThreadScreenFollowTest {
         composeRule.onNodeWithTag(PERMISSION_CANCEL).assertIsDisplayed()
         list().performScrollToIndex(1)
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag(PERMISSION_CANCEL).assertDoesNotExist()
+        assertBehindChrome(composeRule.onNodeWithTag(PERMISSION_CANCEL))
 
         composeRule.runOnIdle { modal = ModalUiState.Dismissed("m1", "allow_once", "peer") }
         composeRule.runOnIdle { state = state.copy(items = rows(30) + toolRow(ToolCallStatus.Done)) }
@@ -270,7 +281,23 @@ class ThreadScreenFollowTest {
         composeRule.waitForIdle()
 
         composeRule.onNodeWithText(REPLY).assertDoesNotExist()
-        composeRule.onNodeWithText(TOOL, useUnmergedTree = true).assertDoesNotExist()
+        assertBehindChrome(composeRule.onNodeWithText(TOOL, useUnmergedTree = true))
+    }
+
+    /** Underlapping nodes can remain composed, but must stay outside the clear reading area. */
+    private fun assertBehindChrome(node: SemanticsNodeInteraction) {
+        val bounds = runCatching { node.fetchSemanticsNode().boundsInRoot }.getOrNull() ?: return
+        val top =
+            composeRule
+                .onNodeWithTag("thread-top-bar")
+                .fetchSemanticsNode()
+                .boundsInRoot.bottom
+        val bottom =
+            composeRule
+                .onNodeWithTag("thread-composer")
+                .fetchSemanticsNode()
+                .boundsInRoot.top
+        assertTrue("unfollowed row $bounds must remain behind chrome ($top..$bottom)", bounds.bottom <= top || bounds.top >= bottom)
     }
 
     private fun permission() =
@@ -319,7 +346,17 @@ class ThreadScreenFollowTest {
 
     /** A real drag: under reverseLayout older rows sit above, so the finger moves down to reach them. */
     private fun scrollAway() {
-        list().performTouchInput { swipeDown() }
+        val top =
+            composeRule
+                .onNodeWithTag("thread-top-bar")
+                .fetchSemanticsNode()
+                .boundsInRoot.bottom + 24f
+        val bottom =
+            composeRule
+                .onNodeWithTag("thread-composer")
+                .fetchSemanticsNode()
+                .boundsInRoot.top - 24f
+        list().performTouchInput { swipeDown(startY = top, endY = bottom) }
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Row 30.").assertDoesNotExist()
     }

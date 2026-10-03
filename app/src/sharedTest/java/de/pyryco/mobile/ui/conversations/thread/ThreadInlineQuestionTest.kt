@@ -315,7 +315,11 @@ class ThreadInlineQuestionTest {
         rule.onNode(hasScrollToIndexAction()).performScrollToIndex(1)
         val stream = rule.onNodeWithTag("thread-message-region").getUnclippedBoundsInRoot()
         assertTrue("the field starts in view", stream.contains(rule.onNodeWithTag("question_other_1").getUnclippedBoundsInRoot()))
-        rule.onNodeWithText("Continue").assertDoesNotExist()
+        assertTrue(
+            "Continue is below the clear reading area",
+            rule.onNodeWithText("Continue").getUnclippedBoundsInRoot().top >=
+                rule.onNodeWithTag("thread-composer").getUnclippedBoundsInRoot().top,
+        )
 
         rule.onNodeWithTag("question_other_1").performClick()
         rule.waitForIdle()
@@ -324,6 +328,10 @@ class ThreadInlineQuestionTest {
             rule.onNodeWithText("Cancel").getUnclippedBoundsInRoot(),
             rule.onNodeWithText("Continue").getUnclippedBoundsInRoot(),
         )) {
+            assertTrue(
+                "$bounds lies above the composer",
+                bounds.bottom <= rule.onNodeWithTag("thread-status-band").getUnclippedBoundsInRoot().top,
+            )
             assertTrue("$bounds lies inside the stream $stream", stream.contains(bounds))
         }
     }

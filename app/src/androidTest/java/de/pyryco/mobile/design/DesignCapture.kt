@@ -202,11 +202,12 @@ class DesignCapture(
         val ime = insets().getInsets(WindowInsetsCompat.Type.ime())
         if (InstrumentationRegistry.getArguments().getString("requireRealSystemBars") == "true") {
             assertTrue("real system bars required for design evidence", !syntheticBars && bars.top > 0 && bars.bottom > 0)
+            assertTrue("hardware-rendered window required for visual evidence", view.isHardwareAccelerated)
         }
         File(output, "$name.txt").writeText(
             "activity=MainActivity figma=$figmaNode sizePx=${metrics.widthPixels}x${metrics.heightPixels} " +
                 "density=${metrics.density} fontScale=${view.resources.configuration.fontScale} staticDark=true " +
-                "syntheticBars=$syntheticBars systemBarsPx=$bars imePx=$ime " +
+                "hardwareAccelerated=${view.isHardwareAccelerated} syntheticBars=$syntheticBars systemBarsPx=$bars imePx=$ime " +
                 "api=${Build.VERSION.SDK_INT} device=${Build.MODEL}\n",
         )
         if (syntheticBars) return

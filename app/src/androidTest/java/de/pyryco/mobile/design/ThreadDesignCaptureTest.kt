@@ -14,10 +14,12 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasProgressBarRangeInfo
+import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasScrollToKeyAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
@@ -27,9 +29,11 @@ import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
@@ -83,6 +87,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.Instant
 import org.junit.After
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -138,6 +143,64 @@ class ThreadDesignCaptureTest {
         fake().setSessionSettingsReading(CONVERSATION, null)
         fake().setSlashCommandMenu(CONVERSATION, null)
     }
+
+    /** Hardware-only backdrop proof: explicit rows under both bars, then the same state with a real IME. */
+    @Test fun translucentChromeAt412By892() {
+        openThread()
+        stageAttachments()
+        extraItems.value = (1..12).map { n -> message("chrome-$n", Role.Assistant, chromeText(n), n + 10) }
+        thinking()
+        await(chromeText(12))
+        chromeList().performScrollToIndex(4)
+        chromeList().performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 48f) }
+        assertRowsUnderChrome()
+        design.capture("chrome-1646", "reference", "16:8")
+        design.capture("chrome-1646", "rows-behind-composer", "620:1577")
+        design.capture("chrome-1646", "rows-behind-top-bar", "696:4677")
+
+        stageNone()
+        keyboard()
+        chromeList().performScrollToIndex(4)
+        chromeList().performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 48f) }
+        assertRowsUnderChrome()
+        design.capture("chrome-1646", "keyboard", "675:6160")
+        val actionsTop = rule.onNodeWithText("Actions").getUnclippedBoundsInRoot().top
+        openActions()
+        assertTrue(
+            "footer menu remains above its keyboard-lifted anchor",
+            rule.onNodeWithText("Background tasks", substring = true).getUnclippedBoundsInRoot().bottom < actionsTop,
+        )
+        design.capture("chrome-1646", "keyboard-actions", "675:6160")
+        Espresso.pressBack()
+        fake().setSlashCommandMenu(
+            CONVERSATION,
+            SlashCommandMenu(listOf(SlashCommandMenuRow("clear", "", "Start a new session", emptyList(), null)), 0),
+        )
+        val composer = rule.onNode(hasSetTextAction())
+        design.openKeyboard(composer)
+        composer.performTextReplacement("/cl")
+        await("Start a new session")
+        assertTrue(
+            "suggestion remains above the keyboard-lifted input",
+            rule.onNodeWithText("Start a new session").getUnclippedBoundsInRoot().bottom < composer.getUnclippedBoundsInRoot().top,
+        )
+        design.capture("chrome-1646", "keyboard-suggestions", "675:6160")
+        design.closeKeyboard()
+    }
+
+    private fun chromeList() = rule.onNode(hasScrollToIndexAction() and hasAnyAncestor(hasTestTag("thread-message-region")))
+
+    private fun assertRowsUnderChrome() {
+        rule.waitForIdle()
+        val header = rule.onNodeWithTag("thread-top-bar").fetchSemanticsNode().boundsInRoot
+        val composer = rule.onNodeWithTag("thread-composer").fetchSemanticsNode().boundsInRoot
+        val rows = rule.onAllNodes(hasTestTag("message-bubble"), useUnmergedTree = true).fetchSemanticsNodes().map { it.boundsInRoot }
+        assertTrue("a message is drawn beneath the header", rows.any { it.top < header.bottom && it.bottom > header.top })
+        assertTrue("a message is drawn beneath the composer", rows.any { it.top < composer.bottom && it.bottom > composer.top })
+    }
+
+    private fun chromeText(n: Int) =
+        "Backdrop row $n. " + (1..5).joinToString(" ") { "Lorem ipsum dolor sit amet, consectetur adipiscing elit." }
 
     @Test fun threadStatusFramesAt412By892() {
         openThread()
