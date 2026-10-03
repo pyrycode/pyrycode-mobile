@@ -4114,6 +4114,8 @@ class RemoteConversationRepositoryTest {
             val first = sendAndAck(repo, pump, "c-1", "one")
             val queued = sendAndAck(repo, pump, "c-1", "two")
             val third = sendAndAck(repo, pump, "c-1", "three")
+            // "two" waits behind the running turn (#1636): only then does it park below later rows.
+            pump.push(turnStateEnvelope("c-1", "thinking"))
             pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = queued))))
             runCurrent()
 
@@ -4141,6 +4143,7 @@ class RemoteConversationRepositoryTest {
 
             val queued = sendAndAck(repo, pump, "c-1", "two")
             pump.push(messageEnvelope("c-1", "peer-1", "user", "from desktop", TS))
+            pump.push(turnStateEnvelope("c-1", "thinking"))
             pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = queued))))
             runCurrent()
             assertEquals(listOf("peer-1", queued), messageIds(thread.last()))
@@ -4150,6 +4153,26 @@ class RemoteConversationRepositoryTest {
             runCurrent()
 
             assertEquals(listOf("peer-1", queued), messageIds(thread.last()))
+        }
+
+    // #1636: with no turn_state open, the queued echo waits behind nothing, so it keeps its tap-time slot above
+    // the reply that streams before the delivery confirmation, and the reply stays one segment.
+    @Test
+    fun queueState_ownEchoQueuedWhileIdle_staysAboveItsReplyThroughALateDrain() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val thread = collectMessages(repo, "c-1")
+            runCurrent()
+
+            val queued = sendAndAck(repo, pump, "c-1", "hello")
+            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "hello", TS, messageId = queued))))
+            pump.push(assistantDeltaEnvelope("c-1", "turn-1", 0, "Hello, "))
+            pump.push(queueStateEnvelope("c-1", emptyList()))
+            pump.push(assistantDeltaEnvelope("c-1", "turn-1", 1, "world"))
+            runCurrent()
+
+            assertEquals(listOf(queued, "turn-1"), messageIds(thread.last()))
         }
 
     // #859 AC #1: a snapshot that still carries the dropped id (the backlog changed for another reason,

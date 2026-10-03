@@ -258,7 +258,8 @@ internal fun List<ThreadItem>.withToolProgress(progress: ToolProgressPayloadDto)
  * text is carried **verbatim** — never trimmed, parsed, or logged.
  *
  * [passOver] (#1558) names user rows the delta looks past when it picks the last row: the live lane's own
- * queued echoes, which read below the running turn, so a reply the echo was typed into stays one segment.
+ * echoes parked behind a turn (#1636), which read below the running turn, so a reply the echo was typed
+ * into stays one segment.
  * A page passes nothing.
  */
 internal fun List<ThreadItem>.withAssistantDelta(
