@@ -10,6 +10,7 @@ import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -19,6 +20,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.core.view.ViewCompat
@@ -29,9 +32,17 @@ import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.crypto.PairedServerEntry
+import de.pyryco.mobile.data.model.ConnectionStatus
+import de.pyryco.mobile.data.model.PyrycodeLinkStatus
+import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.repository.ConversationFilter
+import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.di.HostConversationConnection
+import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
+import de.pyryco.mobile.ui.conversations.list.TREE_CHAT_ROW_TEST_TAG
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
@@ -44,8 +55,9 @@ import org.koin.dsl.module
 
 /**
  * List-side surfaces of the assembled app (design-1220/list): the channel list, Settings, Archive, Edit host,
- * Edit channel, the thread overflow menu and Channel Info, at the frames' 412x892 viewport and again at
- * 320x700 with 150 % font scale.
+ * Edit channel, the thread overflow menu and Channel Info, and the List states `670:5299` (#1504): Create
+ * channel, Archive's empty tabs, Rename, Save as channel, the Delete confirmation and the disconnected,
+ * re-pair and update host rows. At the frames' 412x892 viewport and again at 320x700 with 150 % font scale.
  */
 @RunWith(AndroidJUnit4::class)
 class ListDesignCaptureTest {
@@ -70,11 +82,22 @@ class ListDesignCaptureTest {
         assertNoWorkspaceText()
         design.capture(FOLDER, "channel-list$suffix", "15:8")
 
+        rule.onNodeWithContentDescription("New channel on Demo").performClick()
+        awaitText("Create channel")
+        design.capture(FOLDER, "create-channel$suffix", "671:5558")
+        relaunch()
+
         rule.onNodeWithContentDescription("Open settings").performClick()
         awaitText("Notification sound")
         awaitModalFocus(rule.onNodeWithText("Notification sound"))
         assertNoWorkspaceText()
         design.capture(FOLDER, "settings$suffix", "17:2")
+
+        // Before the walk archives any channel, Archive's Channels tab is the empty frame.
+        relaunch()
+        rule.onNodeWithContentDescription("Open archive").performClick()
+        awaitText("No archived channels")
+        design.capture(FOLDER, "archive-empty-channels$suffix", "673:3577")
 
         archiveChannels {
             relaunch()
@@ -86,6 +109,10 @@ class ListDesignCaptureTest {
             tap(rule.onNodeWithText("Discussions (", substring = true))
             awaitText("Untitled discussion")
             design.capture(FOLDER, "archive-discussions$suffix", "none")
+            withoutArchivedDiscussions {
+                awaitText("No archived discussions")
+                design.capture(FOLDER, "archive-empty-discussions$suffix", "673:3621")
+            }
         }
 
         // The startup store answers list() alone; the host editor also reads loadById, so it needs the demo entry.
@@ -119,26 +146,59 @@ class ListDesignCaptureTest {
         relaunch()
 
         // No conversation row draws a pen (#1563): Edit channel opens from the thread's More actions, Edit (#1561).
-        openFirstChannel()
+        openFirst(TREE_CHANNEL_ROW_TEST_TAG)
         design.openMenu(rule.onNodeWithContentDescription("More actions"))
         design.capture(FOLDER, "thread-menu$suffix", "none")
         rule.onNodeWithText("Edit").performClick()
         rule.waitUntil(5_000) { rule.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
-        design.capture(FOLDER, "edit-channel$suffix", "none")
+        design.capture(FOLDER, "edit-channel$suffix", "671:5415")
         // At 320x700 the keyboard pushes Mute and Archive channel below the window; they must stay reachable.
         rule.onNodeWithText("Archive channel").performScrollTo().assertIsDisplayed()
         relaunch()
 
-        openFirstChannel()
+        // Rename and Save as channel are on an unpromoted conversation's menu only; a channel's opens Edit (#1561).
+        openFirst(TREE_CHAT_ROW_TEST_TAG)
+        design.openMenu(rule.onNodeWithContentDescription("More actions"))
+        rule.onNodeWithText("Rename").performClick()
+        awaitText("Name")
+        design.capture(FOLDER, "rename$suffix", "671:5664")
+        relaunch()
+
+        openFirst(TREE_CHAT_ROW_TEST_TAG)
+        design.openMenu(rule.onNodeWithContentDescription("More actions"))
+        rule.onNodeWithText("Save as channel…").performClick()
+        awaitText("Save as channel")
+        design.capture(FOLDER, "save-as-channel$suffix", "671:5718")
+        relaunch()
+
+        openFirst(TREE_CHANNEL_ROW_TEST_TAG)
         design.openMenu(rule.onNodeWithContentDescription("More actions"))
         rule.onNodeWithText("Channel info").performClick()
         awaitText("About")
         design.capture(FOLDER, "channel-info$suffix", "668:5355")
+        // Delete sits below the sheet's fold.
+        rule.onNodeWithText("Delete").performScrollTo().performClick()
+        awaitText("Delete conversation?")
+        design.capture(FOLDER, "delete-confirmation$suffix", "673:3665")
+
+        hostStates {
+            relaunch()
+            awaitText("Update Pyrycode to use this host.")
+            // 672:3493 draws every folder collapsed except Pyry's Channels.
+            val tree = rule.onNode(hasScrollToNodeAction())
+            HOST_FOLDS_COLLAPSED.forEach { fold ->
+                tree.performScrollToNode(hasContentDescription("Collapse $fold"))
+                rule.onNodeWithContentDescription("Collapse $fold").performClick()
+                rule.waitUntil(5_000) { rule.onAllNodes(hasContentDescription("Expand $fold")).fetchSemanticsNodes().isNotEmpty() }
+            }
+            tree.performScrollToIndex(0)
+            design.capture(FOLDER, "host-rows$suffix", "672:3493")
+        }
     }
 
-    private fun openFirstChannel() {
+    private fun openFirst(rowTag: String) {
         rule
-            .onAllNodesWithTag(TREE_CHANNEL_ROW_TEST_TAG)
+            .onAllNodesWithTag(rowTag)
             .onFirst()
             .performScrollTo()
             .performClick()
@@ -257,9 +317,78 @@ class ListDesignCaptureTest {
         }
     }
 
+    /** Unarchives the demo's archived discussions for [block] and archives them again after, so Discussions is empty. */
+    private fun withoutArchivedDiscussions(block: () -> Unit) {
+        val fake = GlobalContext.get().get<FakeConversationRepository>()
+        val ids =
+            runBlocking {
+                fake
+                    .observeConversations(ConversationFilter.Archived)
+                    .first()
+                    .filterNot { it.isPromoted }
+                    .map { it.id }
+            }
+        try {
+            runBlocking { ids.forEach { fake.unarchive(it) } }
+            block()
+        } finally {
+            runBlocking { ids.forEach { fake.archive(it) } }
+        }
+    }
+
+    /**
+     * Swaps the harness's one connected demo host for the three hosts `672:3493` draws for [block]: the demo
+     * rows on a disconnected host, and two row-less hosts whose relay refused the pairing or this app build.
+     * The harness's own source is restored afterwards, as the Edit host walk restores the store.
+     */
+    private fun hostStates(block: () -> Unit) {
+        val koin = GlobalContext.get()
+        val previous = koin.get<HostConversationSource>()
+        val fake = koin.get<FakeConversationRepository>()
+
+        fun host(
+            serverId: String,
+            name: String,
+            repository: ConversationRepository?,
+            relay: RelayLinkStatus,
+        ) = HostConversationConnection(
+            serverId,
+            name,
+            MutableStateFlow(repository),
+            MutableStateFlow(ConnectionStatus(relay, PyrycodeLinkStatus.Down)),
+        )
+        val source =
+            HostConversationSource(
+                MutableStateFlow(
+                    listOf(
+                        host(HostConversationSource.DEMO_SERVER_ID, "Pyry", fake, RelayLinkStatus.Offline),
+                        host("second-brain", "MB Second brain", null, RelayLinkStatus.PairingRejected),
+                        host("game-dev", "MB Game dev", null, RelayLinkStatus.UpdateRequired(minClientVersion = null)),
+                    ),
+                ),
+                { if (it == HostConversationSource.DEMO_SERVER_ID) fake else null },
+                viewing = koin.get(),
+            )
+        loadKoinModules(module { single { source } })
+        try {
+            block()
+        } finally {
+            loadKoinModules(module { single { previous } })
+            source.dispose()
+        }
+    }
+
     private companion object {
         const val FOLDER = "list"
         const val ARCHIVED_CHANNELS = 3
+        val HOST_FOLDS_COLLAPSED =
+            listOf(
+                "Chats on Pyry",
+                "Channels on MB Second brain",
+                "Chats on MB Second brain",
+                "Channels on MB Game dev",
+                "Chats on MB Game dev",
+            )
         val DEMO_HOST = PairedServerEntry(PairedServer("demo", "unused", "wss://demo.invalid", "unused"), "Demo")
     }
 }
