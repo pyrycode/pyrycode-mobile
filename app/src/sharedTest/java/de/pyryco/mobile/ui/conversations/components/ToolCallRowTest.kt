@@ -225,11 +225,11 @@ class ToolCallRowTest {
     }
 
     @Test
-    fun a_call_with_neither_field_uses_the_simple_name_and_precis() {
+    fun a_call_with_no_fields_is_headed_by_its_name_alone() {
         setContent(doneToolCall())
 
         composeTestRule.onNodeWithText("Bash").assertIsDisplayed()
-        composeTestRule.onNodeWithText("git status").assertIsDisplayed()
+        composeTestRule.onNodeWithText("git status").assertDoesNotExist()
         composeTestRule.onNodeWithTag("tool-description-chevron", useUnmergedTree = true).assertDoesNotExist()
     }
 
