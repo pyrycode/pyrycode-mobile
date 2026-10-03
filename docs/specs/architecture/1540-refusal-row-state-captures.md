@@ -63,3 +63,13 @@ Device-only: the captures need real pixels on the `pixel8Api35` image with real 
 Its results XML is committed as `design-1220/thread/1540-results.xml`. Each state waits strictly for its marker, so a
 state that never renders fails the run. `compileDebugAndroidTestKotlin`, `lint`, `assembleDebug` and
 `spotlessCheck` locally. No rung-3 scenario: an audit, not an operator-facing flow.
+
+## Revisions
+
+- 2026-10-03: the first device run showed the run-configuration snackbar, which a failed switch-back also sends,
+  covering the row and its failed line. The failed state now has two captures: `refusal-switch-back-failed-snackbar`
+  taken while the snackbar shows, as evidence for the verdict, and `refusal-switch-back-failed`, the compared one,
+  taken after the snackbar dismisses (waited for up to 15 s). The app's failed line sits lower than the component's,
+  so the failed crop is 128 px tall and the export is padded to that height as `figma-646-4700-padded.png`.
+- 2026-10-03: #875 and #1360 are closed, so the mismatches route to new scoped defects: #1614 for the expanded row
+  and #1615 for the switch-back button and the failure snackbar.
