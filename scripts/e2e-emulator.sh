@@ -1257,6 +1257,9 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn"
   # #1460: Compact session with a file pending still compacts and clears the strip. Two turns (ping, compaction).
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_compactWithAttachment_compactsAndClearsTheStrip"
+  # #1581: a reply that ends while its chat is off screen is drawn after a reconnect through the open's newest-page
+  # ask (#1572). Two turns (A's ping and A's permission-held command).
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi
