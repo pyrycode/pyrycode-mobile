@@ -202,8 +202,8 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 | Status-band arms `Resetting`, `ApiRetry`, `Compacting`, `Working`, `RunningTool`, `Stalled` | `16:8` band, `134:5013` (decision on #1529) | no separate frame | › Gaps | #1312, #897, #803 | #1529 |
 | Send button's Stop variant | `114:3549` (decision on #1529) | no separate frame | › Gaps | #459, #643 | #1529 |
 | Top overlay Error pills: failed MCP server, non-warning usage limit | `347:6619` (decision on #1529) | no separate frame | › Gaps | #1345, #1002, #1115 | #1529 |
-| Prompt resolved elsewhere: dismissal notice | `696:5065` | frame only | not audited | #446, #1337 | #1539 |
-| Empty thread | `696:4989` | frame only | not audited (`switch-other-chat.png` shows it, unjudged) | none named (see `empty-thread-state.md`) | #1539 |
+| Prompt resolved elsewhere: dismissal notice | `696:5065` | audited, mismatch (changed design) | `thread/index.md` › Prompt resolved elsewhere | #446, #1337 | #1539, #1604, #1626 |
+| Empty thread | `696:4989` | audited, mismatch | `thread/index.md` › Empty thread | none named (see `empty-thread-state.md`) | #1539, #1625 |
 | Codex agent switch: Switching, Switch confirm | `578:3248`, `578:3442` | not shipped | › Codex agent switch | #1118 | #1118 (does not count toward parity while open) |
 
 ### Messages and tools
@@ -211,14 +211,14 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 | Surface or state | Node | Status | Audit row | Owner | Linked issues |
 |---|---|---|---|---|---|
 | Tool row, finished | `674:5853` | audited, match | `thread/index.md` › Tool row | #1208, #1315, #1316 | #1500 |
-| Tool row running and failed, nested sub-agent rows | `696:4795` | frame only | not audited | #811, #895, #896, #1315, #1316 | #1539 |
+| Tool row running and failed, nested sub-agent rows | `696:4795` | audited, mismatch | `thread/index.md` › Sub-agent tool rows | #811, #895, #896, #1315, #1316 | #1539, #1623, #1626 |
 | Refusal row, collapsed | `620:1577` | audited, mismatch | › Notification text | #875 | #1494 |
 | Refusal switch back, armed | `646:4707` | audited, mismatch | › Refusal switch back | #1360 | #1494 |
 | Refusal expanded; switch back pending and failed | `620:1570`, `646:4694`, `646:4700` | component only | not audited | #875, #1360 | #1540 |
 | Session notice (warning) | `627:5466` | audited, match | › Session notice | #1113, #875 | none |
 | Unrecognized message, collapsed and expanded | `685:4112` | frame only | › Gaps | #608 | #1529 |
 | Compaction boundary row | `675:3682` rule (decision on #1529) | no separate frame | › Gaps | #874 | #1529 |
-| Queued message row, with its drop action | `696:4677` | frame only | not audited | #1161 | #1539 |
+| Queued message row, with its drop action | `696:4677` | audited, mismatch | `thread/index.md` › Queued messages | #1161 | #1539, #1622, #1626 |
 
 ### Attachments
 
@@ -228,7 +228,7 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 | Staged PDF tile while disconnected | `627:1740`, `627:4657`, `627:4910` | audited, mismatch | › Connecting, Reconnecting; › Offline | #1319 | #1532, #1495 |
 | Photo and PDF messages in bubbles | `16:8`, `620:1577`, File field `132:4605` | audited, mismatch | › Conversation Thread | #1290 | #1513, #1495 |
 | Strip while sending ("Uploading… N%") | `689:4475` | frame only | › Gaps | #1327 | #1529 |
-| Message attachment loading, failed with retry, not found | `696:4913` | frame only | not audited | #1290 | #1539 |
+| Message attachment loading, failed with retry, not found | `696:4913` | audited, mismatch | `thread/index.md` › Message attachment states | #1290 | #1539, #1624 |
 | Message attachment not yet requested | `16:8` File field (decision on #1539) | no separate frame | not audited | #1290 | #1539 |
 | System file picker | none | out of scope | — | #933 | none |
 
@@ -238,7 +238,7 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 |---|---|---|---|---|---|
 | Markdown Reader | `553:2574` | audited, mismatch | `thread/index.md` › Markdown Reader | #1291 | #1533 |
 | Linked Markdown reader (`Routes.MARKDOWN_LINK`, `LinkedMarkdownReaderDestination`, opened by `ThreadNavigation.OpenLinkedMarkdown`) | `553:2574` | audited, mismatch | as Markdown Reader: it draws the same `MarkdownReaderScreen` | #1291 | #1533 |
-| Reader notices (save failed, saved, open failed) | `696:5101` | frame only | not audited | #1291 | #1539 |
+| Reader notices (save failed, saved, open failed) | `696:5101` | audited, mismatch (changed design; open failed captured, the save arms share its host) | `thread/index.md` › Markdown Reader notice | #1291 | #1539, #1604 |
 | Reader overflow menu | `675:5883` (decision on #1539) | no separate frame | not audited | #1291 | #1539 |
 
 ### Archive
