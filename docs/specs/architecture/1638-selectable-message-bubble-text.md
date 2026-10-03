@@ -41,9 +41,16 @@ A new test goes in `MessageBubbleTest` (`app/src/sharedTest`, Robolectric). It p
 - **What drove it:** the verifier's MUST FIX on PR #1658. An attachment-only message's `body()` emits nothing, but the `SelectionContainer` around it is still a zero-height child of the bubble column, which spaced both sides of it and doubled the gap above the meta row to 24dp. The code-block test closes the verifier's NIT that no test pressed that button through the bubble.
 - **New contract:** the wrapper is added only when there is selectable text: a finished message that is not body-less. The language-label NIT (a select-all on a fenced block copies the label) is left as is; fixing it needs `DisableSelection` in `MarkdownText.kt`, outside this ticket's one-file change.
 
+### 2026-10-03: real-thread selection coverage follow-up (verifier rework)
+
+- **What changed:** operator-flow coverage is explicitly tracked in [#1674](https://github.com/pyrycode/pyrycode-mobile/issues/1674), following #481/#482. It requires one rung-3 `InteractiveStreamE2ETest` scenario that selects a word in a finished real-Claude reply through the actual Android Copy menu and reads the platform clipboard, plus a rung-4 deterministic twin.
+- **What drove it:** the latest verifier MUST FIX on PR #1658. A local gesture still requires operator-flow coverage; the recording context-menu provider in `MessageBubbleSelectionTest` proves the component contract but does not exercise the real thread/system-menu path.
+- **New contract:** the implementation and shared tests remain unchanged. #1674 owns the device scenarios and dispatcher-owned live evidence after #1638 merges; this PR does not claim that live selection has passed. #1621 is now merged, and `selectableBodies_keepTheMetaRowTap_andLongPressDoesNotToggleIt` verifies both roles with actual pointer gestures. The original documentation handoff was completed by the documentation stage in `2722ce33`.
+
 ## Documentation handoff
 
-- Pending for the documentation stage: in `app/src/androidTest/assets/design-1220/README.md`, add a `no separate frame` row for this decision on #1638, in the same shape as the #1578 row.
+- Completed by the documentation stage in `2722ce33`: `app/src/androidTest/assets/design-1220/README.md` has the `no separate frame` row for #1638, in the same shape as the #1578 row.
+- Pending for the documentation stage: carry the [#1674](https://github.com/pyrycode/pyrycode-mobile/issues/1674) real-thread/system-menu coverage follow-up into `docs/knowledge/features/message-bubble.md`, section "Body selection (since #1638)". Scenario implementation, harness documentation and live evidence belong to #1674.
 
 ## Security review
 
