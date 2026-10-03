@@ -38,7 +38,7 @@ broader document search. The frozen archive under `codebase/` is historical.
 
 ## Decisions
 
-- [Decision records](decisions/0001-kotlinx-datetime-for-data-layer.md): numbered architectural choices from data timestamps through transport and key storage.
+- [Decision records](decisions/0001-kotlinx-datetime-for-data-layer.md): numbered architectural choices from data timestamps through transport and key storage, and why a release-kept diagnostic trail is a separate facility from the debug-only relay log.
 
 ## Verification and history
 
