@@ -37,9 +37,14 @@ the top and 24 px above it at the bottom. That shift is not counted as a mismatc
 **Inputs.** States are reached through `DesignInputs` (connection state, live events, task roster and count, pairing
 rejection, context usage) and the class's own repository override, which adds the frames' photo and PDF messages,
 notice and refusal rows, the clear and idle-evict delimiters, the held turn phase, a usage-limit reading, the
-refusal offer, the photo file behind `retrieveAttachment` and one markdown note. Images are generated placeholder
-shapes, not the frames' photo. Message text is partly the demo seed's, and timestamps follow the emulator's `en-US`
-locale ("5/10/26 - 12:00 PM" for the frames' "13.01.2026 - 13:55"). Neither is compared.
+refusal offer, the photo file behind `retrieveAttachment` and one markdown note. The #1529 pass's methods add three
+more override hooks: `requestHistory`, held on a test-owned gate to drive the history tail through Loading, Retry
+and Dead end; a failing `archive`, for the failure notice; and a suspending `uploadAttachment` that reports partial
+chunk progress, for the uploading frame. A `repositoryAvailable` flow drives the history tail's Offline state.
+`requestHistory` and `repositoryAvailable` keep the fake's own behaviour unless a test sets them, so none of the six
+earlier methods is affected. Images are generated placeholder shapes, not the frames' photo. Message text is partly
+the demo seed's, and timestamps follow the emulator's `en-US` locale ("5/10/26 - 12:00 PM" for the frames'
+"13.01.2026 - 13:55"). Neither is compared.
 
 **Routed defects.** #1494 refusal model names (fixed; `620:1577` and `646:4707` retaken) · #1496 inset sheets and the task panel's Close · #1497 Run
 configuration (fixed; `600:1694` retaken) · #1498 workspace delimiter in the seed · #1499 Offline and usage-limit pills (usage copy fixed by #1519; `568:3139` retaken) · #1485 compact footer ·
@@ -574,7 +579,7 @@ captures show what the app draws today, so those verdicts are expected mismatche
 |---|---|
 | Geometry | mismatch: Retry, Dead end and Offline draw the error-container surface edge to edge (x 0–411); the frames keep it in the 20 px gutter (x 20–391), Juhana's change. Retry is 40 px tall against 44; Dead end and Offline 38 against 40. Loading's spinner and label sit at the frame's position |
 | Padding | match: text 20 px inside the surface (it starts at 21 against the frame's 41 because of the gutter) |
-| Spacing | mismatch: the row sits flush on the oldest bubble; the frames leave 16 px |
+| Spacing | mismatch, all four states: the row sits flush on the oldest bubble; the frames leave 16 px |
 | Typography | match: labels and "Try again" |
 | Colour | match: error-container surface, primary spinner, on-surface-variant loading label |
 | Borders | match (none) |

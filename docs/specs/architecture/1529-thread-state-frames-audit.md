@@ -57,7 +57,7 @@ Device-only (real `MainActivity`, real pixels, IME): run the new method on the f
 
 ```
 ./gradlew :app:pixel8Api35DebugAndroidTest --rerun \
-  '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.design.ThreadDesignCaptureTest#gapFramesAt412By892' \
+  '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.design.ThreadDesignCaptureTest#rowAndNoticeFramesAt412By892,de.pyryco.mobile.design.ThreadDesignCaptureTest#historyTailFramesAt412By892,de.pyryco.mobile.design.ThreadDesignCaptureTest#uploadingFrameAt412By892' \
   -Pandroid.testInstrumentationRunnerArguments.requireRealSystemBars=true --console=plain
 ```
 
