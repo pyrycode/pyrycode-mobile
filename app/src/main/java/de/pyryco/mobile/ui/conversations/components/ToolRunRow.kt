@@ -7,12 +7,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -61,7 +59,7 @@ fun ToolRunRow(
                 .fillMaxWidth()
                 .then(if (expanded) Modifier.overlapNextByBorder() else Modifier.padding(bottom = MessageRowVerticalSpacing))
                 .testTag(TOOL_RUN_TAG),
-        shape = RoundedCornerShape(ToolCallCornerRadius),
+        shape = ToolCallShape,
         color = MaterialTheme.colorScheme.background,
         border = BorderStroke(ToolCallBorderWidth, MaterialTheme.colorScheme.primaryContainer),
     ) {
@@ -78,30 +76,37 @@ fun ToolRunRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(ToolCallGap),
         ) {
-            Text(
-                text = stringResource(R.string.tool_run_label, toolCalls.size),
-                modifier = Modifier.weight(1f, fill = false),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Box(
-                modifier = Modifier.size(ToolCallChevronSlotWidth, ToolCallChevronSlotHeight),
-                contentAlignment = Alignment.Center,
+            // Label and chevron share the weighted slot so the status sits against the end edge (Figma
+            // `726:5573`), as `ToolCallRow`'s header does.
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(ToolCallGap),
             ) {
-                // Figma's up chevron is the down one turned over, so the tool row's glyph serves both.
-                Icon(
-                    painter = painterResource(R.drawable.tool_row_chevron_down),
-                    contentDescription = null,
-                    modifier =
-                        Modifier
-                            .size(ToolCallChevronDownWidth, ToolCallChevronDownHeight)
-                            .rotate(if (expanded) 180f else 0f),
-                    tint = MaterialTheme.colorScheme.onBackground,
+                Text(
+                    text = stringResource(R.string.tool_run_label, toolCalls.size),
+                    modifier = Modifier.weight(1f, fill = false),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
+                Box(
+                    modifier = Modifier.size(ToolCallChevronSlotWidth, ToolCallChevronSlotHeight),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    // Figma's up chevron is the down one turned over, so the tool row's glyph serves both.
+                    Icon(
+                        painter = painterResource(R.drawable.tool_row_chevron_down),
+                        contentDescription = null,
+                        modifier =
+                            Modifier
+                                .size(ToolCallChevronDownWidth, ToolCallChevronDownHeight)
+                                .rotate(if (expanded) 180f else 0f),
+                        tint = MaterialTheme.colorScheme.onBackground,
+                    )
+                }
             }
-            Spacer(Modifier.weight(1f))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(ToolCallTrailingGap),

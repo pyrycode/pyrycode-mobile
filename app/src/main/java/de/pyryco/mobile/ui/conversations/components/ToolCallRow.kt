@@ -53,6 +53,7 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 internal val MessageRowVerticalSpacing = 12.dp
 internal val ToolCallCornerRadius = 6.dp
+internal val ToolCallShape = RoundedCornerShape(ToolCallCornerRadius)
 internal val ToolCallBorderWidth = 1.dp
 internal val ToolCallHorizontalPadding = 12.dp
 internal val ToolCallTopPadding = 8.dp
@@ -149,7 +150,7 @@ private fun ToolCallRowContent(
                 .fillMaxWidth()
                 .then(if (joinsNextToolRow) Modifier.overlapNextByBorder() else Modifier.padding(bottom = MessageRowVerticalSpacing))
                 .testTag(TOOL_ROW_TAG),
-        shape = RoundedCornerShape(ToolCallCornerRadius),
+        shape = ToolCallShape,
         color = MaterialTheme.colorScheme.background,
         border = BorderStroke(ToolCallBorderWidth, MaterialTheme.colorScheme.primaryContainer),
     ) {

@@ -555,8 +555,9 @@ fun ThreadScreen(
                         foldQueuedRows(state.items, state.queuedMessages)
                     }
                 // #1635: with the setting on, each run of adjacent tool rows draws as one header the reader
-                // can open. Which runs are open is UI-local, keyed by each run's first row.
-                var expandedRuns by remember { mutableStateOf(emptySet<String>()) }
+                // can open. Which runs are open is UI-local, keyed by each run's first row, and saveable so a
+                // rotation or back-stack return keeps them open, as the tool rows inside keep theirs.
+                var expandedRuns by rememberSaveable { mutableStateOf(emptySet<String>()) }
                 val rows =
                     remember(queuedRows, collapseToolUses, expandedRuns) {
                         if (collapseToolUses) foldToolRuns(queuedRows, expandedRuns) else queuedRows
@@ -762,7 +763,7 @@ fun ThreadScreen(
                                             )
                                         is ThreadRow.ToolRun ->
                                             ToolRunRow(
-                                                toolCalls = row.tools.mapNotNull { it.toolCall },
+                                                toolCalls = remember(row.tools) { row.tools.mapNotNull { it.toolCall } },
                                                 expanded = row.expanded,
                                                 onToggle = {
                                                     expandedRuns =
@@ -1228,7 +1229,6 @@ private fun DeleteConfirmationDialog(
     )
 }
 
-/** #1577: a delivered tool message that draws a tool row, the one neighbour a tool row sits flush against. */
 private fun ThreadItem.timestamp(): Instant =
     when (this) {
         is ThreadItem.MessageItem -> message.timestamp

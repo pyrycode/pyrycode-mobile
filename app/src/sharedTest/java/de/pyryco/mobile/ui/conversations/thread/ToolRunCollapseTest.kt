@@ -208,6 +208,19 @@ class ToolRunCollapseTest {
     }
 
     @Test
+    fun trailingStatus_sitsAgainstTheHeadersEndEdge() {
+        // Figma `726:5573`: the status is pinned to the end padding, not left where a short label stops.
+        setThread(listOf(tool("t1", "Grep"), tool("t2", "Read", status = ToolCallStatus.Failed)))
+        val headerRight = composeTestRule.onNodeWithTag(TOOL_RUN_TAG, useUnmergedTree = true).getUnclippedBoundsInRoot().right
+        val glyphRight =
+            composeTestRule
+                .onNode(hasContentDescription(string(R.string.cd_tool_failed)), useUnmergedTree = true)
+                .getUnclippedBoundsInRoot()
+                .right
+        assertEquals("the status ends at the 12 dp end padding", (headerRight - 12.dp).value, glyphRight.value, 0.5f)
+    }
+
+    @Test
     fun settingOff_drawsEveryToolRow_andTurningItOnFoldsTheOpenThread() {
         collapse = false
         setThread(listOf(tool("t1", "Grep"), tool("t2", "Read"), assistant("a1", "Found it.")))
