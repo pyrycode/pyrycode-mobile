@@ -55,9 +55,13 @@ class SettingsDensityDeviceTest {
                     assertEquals(fontScale, activity.resources.configuration.fontScale, 0.01f)
                     activity.setContent {
                         PyrycodeMobileTheme(darkTheme = true) {
-                            SettingsScreen(pushNotifications = true, onTogglePushNotifications = {}, onDismissRequest = {
-                                dismissals.incrementAndGet()
-                            })
+                            SettingsScreen(
+                                pushNotifications = true,
+                                onTogglePushNotifications = {},
+                                collapseToolUses = true,
+                                onToggleCollapseToolUses = {},
+                                onDismissRequest = { dismissals.incrementAndGet() },
+                            )
                         }
                     }
                 }
@@ -67,6 +71,8 @@ class SettingsDensityDeviceTest {
                     "Push notifications when claude responds",
                     "Notification sound",
                     "Default",
+                    "Thread",
+                    "Collapse assistant tool uses",
                 )) {
                     val layouts = mutableListOf<TextLayoutResult>()
                     rule

@@ -216,8 +216,15 @@ class SettingsViewModel(
             initialValue = true,
         )
 
+    val collapseToolUses: StateFlow<Boolean> =
+        appPreferences.collapseToolUses.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = true,
+        )
+
     /**
-     * This destination's own host's default workspace (#714), not the app-wide one its eight
+     * This destination's own host's default workspace (#714), not the app-wide one its
      * siblings above and below read.
      *
      * Keyed by the owner captured into the route, so two hosts' Settings hold two values and a later
@@ -331,6 +338,10 @@ class SettingsViewModel(
 
     fun onTogglePushNotifications(enabled: Boolean) {
         viewModelScope.launch { appPreferences.setNotificationsEnabled(enabled) }
+    }
+
+    fun onToggleCollapseToolUses(enabled: Boolean) {
+        viewModelScope.launch { appPreferences.setCollapseToolUses(enabled) }
     }
 
     fun onDefaultWorkspaceTapped() {
