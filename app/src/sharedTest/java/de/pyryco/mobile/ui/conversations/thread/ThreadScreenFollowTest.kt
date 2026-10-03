@@ -67,7 +67,17 @@ class ThreadScreenFollowTest {
     fun a_swipe_at_the_newest_end_that_cannot_move_the_list_leaves_following_on_for_a_new_row_and_a_streamed_delta() {
         var state by mutableStateOf(threadState(rows(30)))
         setScreen { state }
-        list().performTouchInput { swipeUp() }
+        val top =
+            composeRule
+                .onNodeWithTag("thread-top-bar")
+                .fetchSemanticsNode()
+                .boundsInRoot.bottom + 24f
+        val bottom =
+            composeRule
+                .onNodeWithTag("thread-composer")
+                .fetchSemanticsNode()
+                .boundsInRoot.top - 24f
+        list().performTouchInput { swipeUp(startY = bottom, endY = top) }
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Row 30.").assertIsDisplayed()
 

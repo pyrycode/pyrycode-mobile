@@ -20,7 +20,6 @@ import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
@@ -67,8 +66,9 @@ private fun Modifier.blockTouchesBehindChrome(): Modifier =
     pointerInput(Unit) {
         awaitPointerEventScope {
             while (true) {
-                // Children see Main first, so their controls and horizontal attachment scrolling win.
-                awaitPointerEvent(PointerEventPass.Main).changes.forEach { it.consume() }
+                // A pointer-input node wins hit testing over the list sibling underneath. Observing
+                // without consuming keeps child drags alive while they wait to cross touch slop.
+                awaitPointerEvent()
             }
         }
     }

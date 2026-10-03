@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadChromeTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-03T22:34:55.103Z" hostname="Juhanas-Air" time="0.514">
+  <properties/>
+  <testcase name="pending_attachment_strip_accepts_a_gradual_pointer_swipe" classname="de.pyryco.mobile.ui.conversations.thread.ThreadChromeTest" time="0.093"/>
+  <testcase name="chrome_background_taps_do_not_open_message_details" classname="de.pyryco.mobile.ui.conversations.thread.ThreadChromeTest" time="0.05"/>
+  <testcase name="composer_accepts_long_press_text_selection_and_drag" classname="de.pyryco.mobile.ui.conversations.thread.ThreadChromeTest" time="0.271"/>
+  <testcase name="short_thread_starts_28dp_below_the_measured_rule" classname="de.pyryco.mobile.ui.conversations.thread.ThreadChromeTest" time="0.039"/>
+  <testcase name="newest_text_surface_rests_12dp_above_status_after_each_composer_resize" classname="de.pyryco.mobile.ui.conversations.thread.ThreadChromeTest" time="0.06"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

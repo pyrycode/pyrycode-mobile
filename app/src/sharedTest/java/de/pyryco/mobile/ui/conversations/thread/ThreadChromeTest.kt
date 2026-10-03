@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.ForcedSize
@@ -13,6 +14,7 @@ import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasScrollToIndexAction
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -28,6 +30,7 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.conversations.components.MessageBubbleSelectionTest
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -35,6 +38,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 @RunWith(AndroidJUnit4::class)
@@ -96,6 +100,49 @@ class ThreadChromeTest {
         val bubble = bubble(1).getUnclippedBoundsInRoot()
         assertEquals(69f, (bar.bottom - bar.top).value, 1.5f)
         assertEquals(28f, (bubble.top - bar.bottom).value, 1.5f)
+    }
+
+    @Test fun pending_attachment_strip_accepts_a_gradual_pointer_swipe() {
+        attachments = (1..20).map { PendingAttachment(it.toLong(), "content://test/file$it", "file$it.pdf", "application/pdf", 10) }
+        screen()
+        val strip = rule.onNodeWithTag(ATTACHMENT_STRIP_TEST_TAG)
+        val range = strip.fetchSemanticsNode().config[SemanticsProperties.HorizontalScrollAxisRange]
+        assertTrue("the attachment strip must overflow", range.maxValue() > 0f)
+        val before = range.value()
+        strip.performTouchInput {
+            val start = Offset(width * 0.75f, height * 0.7f)
+            down(start)
+            moveTo(start - Offset(2f, 0f), delayMillis = 16)
+            moveTo(start - Offset(4f, 0f), delayMillis = 16)
+            repeat(8) { step -> moveTo(start - Offset(4f + (step + 1) * 25f, 0f), delayMillis = 32) }
+            up()
+        }
+        rule.waitForIdle()
+        val after = strip.fetchSemanticsNode().config[SemanticsProperties.HorizontalScrollAxisRange].value()
+        assertTrue("a real pointer drag must reach later attachments", after > before + 40f)
+    }
+
+    // Reuse the selection suite's no-op magnifier: Robolectric's popup has no native Surface.
+    // This only replaces the visual loupe, leaving the real text selection recognizer active.
+    @Config(shadows = [MessageBubbleSelectionTest.NoOpMagnifier::class])
+    @Test
+    fun composer_accepts_long_press_text_selection_and_drag() {
+        draft = "alpha beta gamma delta"
+        screen()
+        val field = rule.onNode(hasSetTextAction())
+        field.performTouchInput {
+            val start = Offset(15f, centerY)
+            down(start)
+            advanceEventTime(600)
+            moveTo(start + Offset(2f, 0f), delayMillis = 16)
+            moveTo(start + Offset(4f, 0f), delayMillis = 16)
+            moveTo(Offset(width - 15f, centerY), delayMillis = 200)
+            up()
+        }
+        rule.waitForIdle()
+        val selection = field.fetchSemanticsNode().config[SemanticsProperties.TextSelectionRange]
+        assertTrue("long press and drag must select more than the first word", selection.length > "alpha".length)
+        assertEquals("selection leaves the draft intact", "alpha beta gamma delta", draft)
     }
 
     private fun assertRestGap() {
