@@ -313,6 +313,11 @@ class ThreadFrameCaptureTest {
         val back = rule.onNodeWithContentDescription(string(R.string.cd_back)).assertIsDisplayed().getUnclippedBoundsInRoot()
         val overflow = rule.onNodeWithContentDescription(string(R.string.cd_more_actions)).assertIsDisplayed().getUnclippedBoundsInRoot()
         capture("320x640-before-copy", prefix = "message-1207")
+        // #1621: the thread hides the meta row until the bubble is tapped.
+        rule
+            .onNodeWithText(message.message.content, substring = true)
+            .performScrollTo()
+            .performClick()
         val copy =
             rule
                 .onNodeWithContentDescription(string(R.string.cd_thread_copy_message))

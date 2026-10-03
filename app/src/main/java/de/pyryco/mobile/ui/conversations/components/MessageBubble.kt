@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,13 +14,23 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
@@ -75,6 +86,11 @@ private const val STREAMING_CARET_BLINK_PERIOD_MS: Long = 500L
  *
  * [onOpenMarkdownLink] (#1050) is read only by an assistant reply, streaming or finished: a tapped link to a
  * workspace markdown note hands over its path. `null` leaves such a link inert, as it was before.
+ *
+ * [metaRowVisible] and [onToggleMetaRow] (#1621) are read only by the two bubble roles. The thread hides
+ * the meta row until the bubble is tapped and owns which message shows it; the defaults keep the row
+ * drawn and the bubble inert, as every other host had it. A non-null [onToggleMetaRow] is the bubble's
+ * tap and its screen-reader click.
  */
 @Composable
 fun MessageBubble(
@@ -89,7 +105,10 @@ fun MessageBubble(
     onSaveAttachment: (AttachmentTarget) -> Unit = {},
     onRequestAttachment: (MessageAttachment, AttachmentAction) -> Unit = { _, _ -> },
     onOpenMarkdownLink: ((String) -> Unit)? = null,
+    metaRowVisible: Boolean = true,
+    onToggleMetaRow: (() -> Unit)? = null,
 ) {
+    val metaRow = MetaRowControl(metaRowVisible, onToggleMetaRow)
     val attachments: @Composable () -> Unit = {
         MessageAttachments(
             attachments = message.attachments,
@@ -102,8 +121,8 @@ fun MessageBubble(
         )
     }
     when (message.role) {
-        Role.User -> UserMessageBubble(message, attachments, modifier)
-        Role.Assistant -> AssistantMessage(message, attachments, onOpenMarkdownLink, modifier)
+        Role.User -> UserMessageBubble(message, attachments, metaRow, modifier)
+        Role.Assistant -> AssistantMessage(message, attachments, onOpenMarkdownLink, metaRow, modifier)
         // The gutter is applied here rather than inside ToolCallRow: moving it into the components left
         // the tool row as the one list kind still bleeding to the screen edge, which reads as a ragged
         // left edge next to the bubbles. The row's own layout belongs to #658, and this arm reaches it
@@ -134,6 +153,7 @@ fun MessageBubble(
 private fun UserMessageBubble(
     message: Message,
     attachments: @Composable () -> Unit,
+    metaRow: MetaRowControl,
     modifier: Modifier = Modifier,
 ) {
     MessageContainer(
@@ -142,6 +162,7 @@ private fun UserMessageBubble(
         bubbleColor = MaterialTheme.colorScheme.userBubbleContainer,
         bubbleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         attachments = attachments,
+        metaRow = metaRow,
         modifier = modifier,
     ) {
         if (message.hasNoBody()) return@MessageContainer
@@ -172,6 +193,7 @@ private fun AssistantMessage(
     message: Message,
     attachments: @Composable () -> Unit,
     onOpenMarkdownLink: ((String) -> Unit)?,
+    metaRow: MetaRowControl,
     modifier: Modifier = Modifier,
 ) {
     MessageContainer(
@@ -180,6 +202,7 @@ private fun AssistantMessage(
         bubbleColor = MaterialTheme.colorScheme.assistantBubbleContainer,
         bubbleContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
         attachments = attachments,
+        metaRow = metaRow,
         modifier = modifier,
     ) {
         if (message.isStreaming) {
@@ -217,6 +240,13 @@ private fun AssistantMessage(
  * [attachments] fills the design's `Slot` above the body (#984, moved above it by #1513 so the attachment
  * the text talks about is in view first), and only when the message has any: a text-only bubble lays out
  * exactly as before.
+ *
+ * [metaRow] (#1621) says whether the meta row is drawn and what a tap on the bubble does. The tap is a
+ * `pointerInput` detector rather than `clickable`: `clickable` merges every descendant into one semantics
+ * node, which would read a whole reply as one TalkBack stop. A nested target that handles its own tap — a
+ * link span, an attachment, the code block's copy — consumes the down event first, so it never toggles
+ * the row. While the row is hidden the bubble itself carries the timestamp and a copy action for a screen
+ * reader.
  */
 @Composable
 private fun MessageContainer(
@@ -226,9 +256,25 @@ private fun MessageContainer(
     bubbleContentColor: Color,
     modifier: Modifier = Modifier,
     attachments: @Composable () -> Unit = {},
+    metaRow: MetaRowControl = MetaRowControl(),
     body: @Composable () -> Unit,
 ) {
     val isUserSide = alignment == Alignment.End
+    val onToggle = metaRow.onToggle
+    val toggleLabel =
+        stringResource(if (metaRow.visible) R.string.thread_message_hide_details else R.string.thread_message_show_details)
+    val sentDescription = stringResource(R.string.cd_thread_message_sent, rememberFormattedTimestamp(message.timestamp))
+    val copyLabel = stringResource(R.string.cd_thread_copy_message)
+    val clipboard = LocalClipboardManager.current
+    // Keyed on Unit with the latest lambda read at tap time, so a host passing a fresh lambda each
+    // recomposition does not restart the gesture detector.
+    val currentOnToggle by rememberUpdatedState(onToggle)
+    val tap =
+        if (onToggle == null) {
+            Modifier
+        } else {
+            Modifier.pointerInput(Unit) { detectTapGestures(onTap = { currentOnToggle?.invoke() }) }
+        }
     Row(
         modifier =
             modifier
@@ -243,7 +289,29 @@ private fun MessageContainer(
         horizontalArrangement = Arrangement.spacedBy(0.dp, alignment),
     ) {
         Surface(
-            modifier = Modifier.shadow(4.dp, BubbleShape).testTag(MESSAGE_BUBBLE_TEST_TAG),
+            modifier =
+                Modifier
+                    .shadow(4.dp, BubbleShape)
+                    .testTag(MESSAGE_BUBBLE_TEST_TAG)
+                    .then(tap)
+                    .semantics {
+                        if (onToggle != null) {
+                            onClick(label = toggleLabel) {
+                                onToggle()
+                                true
+                            }
+                        }
+                        if (!metaRow.visible) {
+                            contentDescription = sentDescription
+                            customActions =
+                                listOf(
+                                    CustomAccessibilityAction(copyLabel) {
+                                        clipboard.setBoundedText(message.content)
+                                        true
+                                    },
+                                )
+                        }
+                    },
             shape = BubbleShape,
             color = bubbleColor,
             contentColor = bubbleContentColor,
@@ -262,15 +330,23 @@ private fun MessageContainer(
             ) {
                 if (message.attachments.isNotEmpty()) attachments()
                 body()
-                MessageMetaRow(
-                    timestamp = message.timestamp,
-                    copyText = message.content,
-                    modifier = Modifier.align(alignment),
-                )
+                if (metaRow.visible) {
+                    MessageMetaRow(
+                        timestamp = message.timestamp,
+                        copyText = message.content,
+                        modifier = Modifier.align(alignment),
+                    )
+                }
             }
         }
     }
 }
+
+/** Whether a bubble draws its meta row, and the bubble's tap that toggles it (#1621); `null` is no tap. */
+private data class MetaRowControl(
+    val visible: Boolean = true,
+    val onToggle: (() -> Unit)? = null,
+)
 
 /**
  * A message that carries attachments and no text has no body (#984): drawing an empty text block would

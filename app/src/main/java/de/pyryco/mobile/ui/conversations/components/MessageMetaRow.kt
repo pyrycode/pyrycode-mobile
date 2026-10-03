@@ -16,6 +16,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -78,6 +79,30 @@ internal fun formatShortDateTime(
 }
 
 /**
+ * [formatShortDateTime] in the device's zone and locale, held across recompositions. Two
+ * `DateTimeFormatter`s are built per call; keyed on the zone and locale as well as the instant because
+ * both are read here rather than passed in, so the cache stays honest without a configuration change.
+ * Shared by the meta row and the bubble's screen-reader description (#1621) so the two cannot drift.
+ */
+@Composable
+internal fun rememberFormattedTimestamp(timestamp: Instant): String {
+    val timeZone = TimeZone.currentSystemDefault()
+    val locale = Locale.getDefault()
+    return remember(timestamp, timeZone, locale) {
+        formatShortDateTime(instant = timestamp, timeZone = timeZone, locale = locale)
+    }
+}
+
+/**
+ * The one clipboard write behind every copy affordance: [text] bounded by [MAX_CLIPBOARD_CHARS]. Shared
+ * by [CopyTextControl] and the bubble's screen-reader copy action (#1621), so both put the same text on
+ * the clipboard.
+ */
+internal fun ClipboardManager.setBoundedText(text: String) {
+    setText(AnnotatedString(text.take(MAX_CLIPBOARD_CHARS)))
+}
+
+/**
  * The copy affordance from the design's `Meta row` (glyph node `132:4382`).
  *
  * Copies the caller-supplied [text] verbatim (bounded by [MAX_CLIPBOARD_CHARS]) — it reads nothing out
@@ -101,7 +126,7 @@ internal fun CopyTextControl(
         modifier =
             modifier
                 .clickable(role = Role.Button) {
-                    clipboard.setText(AnnotatedString(text.take(MAX_CLIPBOARD_CHARS)))
+                    clipboard.setBoundedText(text)
                 }.padding(horizontal = CopyTouchHorizontalPadding, vertical = CopyTouchVerticalPadding),
     ) {
         Icon(
@@ -133,15 +158,7 @@ internal fun MessageMetaRow(
 ) {
     // One colour for both children: the control inherits the label's tint through the ambient.
     val metaColor = LocalContentColor.current.copy(alpha = META_CONTENT_ALPHA)
-    // Two `DateTimeFormatter`s are built per call, so hold the result across recompositions. Keyed on
-    // the zone and locale as well as the instant: both are read here rather than passed in, and keying
-    // on them keeps the cache honest instead of relying on a configuration change to rebuild the tree.
-    val timeZone = TimeZone.currentSystemDefault()
-    val locale = Locale.getDefault()
-    val formattedTimestamp =
-        remember(timestamp, timeZone, locale) {
-            formatShortDateTime(instant = timestamp, timeZone = timeZone, locale = locale)
-        }
+    val formattedTimestamp = rememberFormattedTimestamp(timestamp)
     BoxWithConstraints(modifier = modifier) {
         val timestampMaxWidth = (maxWidth - CopyGlyphWidth - CopyTouchHorizontalPadding * 2 - MetaRowSpacing).coerceAtLeast(0.dp)
         Row(

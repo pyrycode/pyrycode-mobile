@@ -550,6 +550,9 @@ fun ThreadScreen(
                     remember(state.items, state.queuedMessages) {
                         foldQueuedRows(state.items, state.queuedMessages)
                     }
+                // #1621: the one message whose meta row (timestamp + copy) shows; every other bubble hides it
+                // until tapped. UI-local, keyed by message id so it follows the message as rows arrive.
+                var metaRowMessageId by rememberSaveable { mutableStateOf<String?>(null) }
                 // A backlog item this device minted no echo for is a row of its own, so the empty state
                 // must yield to it (#782 AC #3). When an item *is* matched its echo is a MessageItem, so
                 // hasMessages already covers that case.
@@ -717,6 +720,19 @@ fun ThreadScreen(
                                                         onSaveAttachment = attachmentActions.save,
                                                         onRequestAttachment = onRequestAttachment,
                                                         onOpenMarkdownLink = onOpenMarkdownLink,
+                                                        // A streaming reply keeps its row hidden and takes no tap, so
+                                                        // the first tap after it finishes is the one that shows it.
+                                                        metaRowVisible =
+                                                            !item.message.isStreaming && metaRowMessageId == item.message.id,
+                                                        onToggleMetaRow =
+                                                            if (item.message.isStreaming) {
+                                                                null
+                                                            } else {
+                                                                {
+                                                                    val id = item.message.id
+                                                                    metaRowMessageId = if (metaRowMessageId == id) null else id
+                                                                }
+                                                            },
                                                     )
                                                 is ThreadItem.SessionBoundary ->
                                                     SessionBoundaryDelimiter(boundary = item)

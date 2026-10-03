@@ -1,0 +1,217 @@
+package de.pyryco.mobile.ui.conversations.components
+
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.ClipboardManager
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performFirstLinkClick
+import androidx.compose.ui.text.AnnotatedString
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import de.pyryco.mobile.R
+import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
+import de.pyryco.mobile.ui.conversations.thread.ThreadUiState
+import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import kotlinx.datetime.Instant
+import kotlinx.datetime.TimeZone
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.util.Locale
+
+/**
+ * #1621: in the thread a message's meta row (timestamp + copy) is hidden until its bubble is tapped, at
+ * most one shows at a time, a streaming reply keeps it hidden, nested tap targets keep their own taps, and
+ * a screen reader still reaches the timestamp and a copy action while the row is hidden.
+ */
+@RunWith(AndroidJUnit4::class)
+class MessageMetaRowToggleTest {
+    @get:Rule
+    val composeRule = createComposeRule()
+
+    private class RecordingClipboard : ClipboardManager {
+        val writes = mutableListOf<String>()
+
+        override fun setText(annotatedString: AnnotatedString) {
+            writes += annotatedString.text
+        }
+
+        override fun getText(): AnnotatedString? = writes.lastOrNull()?.let { AnnotatedString(it) }
+
+        override fun hasText(): Boolean = writes.isNotEmpty()
+    }
+
+    private val clipboard = RecordingClipboard()
+    private val opened = mutableListOf<String>()
+    private val uriHandler =
+        object : UriHandler {
+            override fun openUri(uri: String) {
+                opened += uri
+            }
+        }
+
+    private fun string(id: Int): String =
+        InstrumentationRegistry
+            .getInstrumentation()
+            .targetContext
+            .getString(id)
+
+    private val copyDescription = string(R.string.cd_thread_copy_message)
+
+    private fun message(
+        id: String,
+        role: Role,
+        content: String,
+        isStreaming: Boolean = false,
+    ) = Message(id, "s1", role, content, TIMESTAMP, isStreaming)
+
+    private fun setThread(items: () -> List<Message>) {
+        composeRule.setContent {
+            PyrycodeMobileTheme {
+                CompositionLocalProvider(
+                    LocalClipboardManager provides clipboard,
+                    LocalUriHandler provides uriHandler,
+                ) {
+                    ThreadScreen(
+                        state =
+                            ThreadUiState(
+                                conversationId = "conversation",
+                                displayName = "Meta rows",
+                                isPromoted = true,
+                                hasMessages = true,
+                                items = items().map { ThreadItem.MessageItem(it) },
+                            ),
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                    )
+                }
+            }
+        }
+    }
+
+    private fun visibleCopyControls(): Int =
+        composeRule
+            .onAllNodesWithContentDescription(copyDescription)
+            .fetchSemanticsNodes()
+            .size
+
+    private fun visibleTimestamps(): Int =
+        composeRule
+            .onAllNodesWithText(" - ", substring = true, useUnmergedTree = true)
+            .fetchSemanticsNodes()
+            .size
+
+    private fun assertRowsShown(expected: Int) {
+        composeRule.waitForIdle()
+        assertEquals("copy controls shown", expected, visibleCopyControls())
+        assertEquals("timestamps shown", expected, visibleTimestamps())
+    }
+
+    @Test
+    fun aTapShowsThatMessagesRow_aSecondTapHidesIt_andAnotherMessageTakesItOver() {
+        setThread { listOf(message("u", Role.User, USER_BODY), message("a", Role.Assistant, ASSISTANT_BODY)) }
+        assertRowsShown(0)
+
+        composeRule.onNodeWithText(USER_BODY).performClick()
+        assertRowsShown(1)
+        composeRule.onNodeWithContentDescription(copyDescription).performClick()
+        assertEquals(listOf(USER_BODY), clipboard.writes)
+
+        composeRule.onNodeWithText(USER_BODY).performClick()
+        assertRowsShown(0)
+
+        composeRule.onNodeWithText(USER_BODY).performClick()
+        composeRule.onNodeWithText(ASSISTANT_BODY).performClick()
+        assertRowsShown(1)
+        composeRule.onNodeWithContentDescription(copyDescription).performClick()
+        assertEquals(listOf(USER_BODY, ASSISTANT_BODY), clipboard.writes)
+    }
+
+    @Test
+    fun aStreamingReply_ignoresTaps_andTheFirstTapAfterItFinishesShowsTheRow() {
+        var streaming by mutableStateOf(true)
+        setThread { listOf(message("a", Role.Assistant, ASSISTANT_BODY, isStreaming = streaming)) }
+        composeRule.waitUntil(TIMEOUT_MS) {
+            composeRule
+                .onAllNodesWithText(ASSISTANT_BODY, substring = true)
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
+
+        composeRule.onAllNodesWithTag(MESSAGE_BUBBLE_TEST_TAG)[0].performClick()
+        assertRowsShown(0)
+
+        composeRule.runOnIdle { streaming = false }
+        composeRule.onNodeWithText(ASSISTANT_BODY).performClick()
+        assertRowsShown(1)
+    }
+
+    @Test
+    fun aLinkTap_andACodeBlockCopy_doNotToggleTheRow_andTheCodeCopyStaysVisible() {
+        setThread { listOf(message("a", Role.Assistant, NESTED_BODY)) }
+        val codeCopy = string(R.string.cd_thread_copy_code)
+        composeRule.onNodeWithContentDescription(codeCopy).assertExists()
+
+        composeRule.onNodeWithText("Plan", substring = true).performFirstLinkClick()
+        assertRowsShown(0)
+        assertEquals(listOf("https://example.com/plan"), opened)
+
+        composeRule.onNodeWithContentDescription(codeCopy).performClick()
+        assertRowsShown(0)
+        assertEquals(listOf(CODE), clipboard.writes)
+    }
+
+    @Test
+    fun aHiddenRow_leavesTheTimestampAndACopyActionOnTheBubbleForAScreenReader() {
+        setThread { listOf(message("a", Role.Assistant, ASSISTANT_BODY)) }
+        assertRowsShown(0)
+
+        val bubble = composeRule.onAllNodesWithTag(MESSAGE_BUBBLE_TEST_TAG)[0].fetchSemanticsNode()
+        val description =
+            bubble.config
+                .getOrNull(SemanticsProperties.ContentDescription)
+                .orEmpty()
+                .joinToString()
+        val formatted = formatShortDateTime(TIMESTAMP, TimeZone.currentSystemDefault(), Locale.getDefault())
+        assertTrue("bubble must announce $formatted, was '$description'", description.contains(formatted))
+
+        val copy =
+            bubble.config
+                .getOrNull(SemanticsActions.CustomActions)
+                .orEmpty()
+                .single { it.label == copyDescription }
+        composeRule.runOnIdle { copy.action() }
+        assertEquals(listOf(ASSISTANT_BODY), clipboard.writes)
+    }
+
+    private companion object {
+        const val TIMEOUT_MS = 5_000L
+        val TIMESTAMP: Instant = Instant.parse("2026-01-13T12:55:00Z")
+        const val USER_BODY = "omega user line"
+        const val ASSISTANT_BODY = "alpha assistant line"
+        const val CODE = "./gradlew check"
+        const val NESTED_BODY = "See [Plan](https://example.com/plan) first.\n\n```bash\n$CODE\n```\n"
+    }
+}
