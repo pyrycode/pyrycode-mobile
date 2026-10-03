@@ -4,6 +4,7 @@
   under `app/src/main/` differs from the first run's `4c755aa6`.
 - **Figma:** Mobile page of `g2HIq2UyPhslEoHRokQmHG`, inspected and exported with `get_screenshot` on 2026-10-02.
   Channel Info `20:48` is a 412x596 sheet; its comparison pads the export onto a 412x892 canvas at the bottom.
+  #1488 retired `20:48`: the capture now names the full-height `668:5355`, below.
 - **Capture:** `ListDesignCaptureTest` (two methods) on the full `pixel8Api35` image (API 35) with
   `requireRealSystemBars=true`: 412x892 px at density 1.0 and font scale 1.0, and 320x700 at 150 % font scale
   (`-compact`), fixed dark theme, real 24 px bars. Each surface starts from a fresh `MainActivity` launch on the
@@ -89,6 +90,9 @@ No audit declares app-wide parity; #1434 owns that verdict.
 
 ### Channel Info Sheet — `20:48`
 
+- **Superseded by #1488:** the sheet now matches the full-height frames `668:5355` (Top) and `668:5460`
+  (Scrolled to Actions), and `ListDesignCaptureTest` names `668:5355`. The images and verdicts in this section
+  are the #1431 audit against `20:48`. Current evidence: `app/src/androidTest/assets/channel-info-1488/`.
 - **Owning ticket:** #1266
 - **Capture:** `channel-info.png`, `channel-info-compact.png` · **Side-by-side:** `channel-info-side-by-side.png` · **Overlay:** `channel-info-overlay.png`
 - Reached from the thread's overflow menu, Channel info.
