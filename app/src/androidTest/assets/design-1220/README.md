@@ -188,6 +188,7 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 |---|---|---|---|---|---|
 | Composer band, strip, input and footer (every thread frame) | `16:8` and the thread frames | audited, mismatch | `thread/index.md` › Composer and footer | per frame below; #933 (strip) | #1532, #1495 |
 | Conversation Thread | `16:8` | audited, mismatch | › Conversation Thread | #1206, #933, #1290, #875 | #1513, #1494, #1495 |
+| Finished user and assistant bubble text selection, including code blocks | `114:3558`, `114:3559` (decision on #1638: handles and Copy toolbar are system UI; bubbles look unchanged at rest) | no separate frame | not audited | #1638 | #1638 |
 | Connecting, Reconnecting | `627:1740`, `627:4657` | audited, mismatch | › Connecting, Reconnecting | #1283, #1312, #1319 | #1532, #1493 |
 | Offline | `627:4910` | audited, mismatch | › Offline | #1283 | #1499, #1532, #1493 |
 | Task count, usage-limit and pairing-error pills | `568:3139` | audited, mismatch | › Task count pill | #1043, #1002, #1115, #842 | #1499 (family root), #1519 |
