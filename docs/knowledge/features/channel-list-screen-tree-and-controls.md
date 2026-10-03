@@ -201,6 +201,11 @@ carries the decision. See [ChannelListViewModel](channel-list-viewmodel.md#wirin
 methods, the ordering that keeps a failed store write from clearing the host's cached workspace, and the
 `saving` guard that stops a decline or a second request from racing an in-flight write.
 
+The pen is a deliberate deviation from Figma `15:8` (https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=15-8),
+which draws no pen on host rows — decided in \#1525. `TreeHostRow`'s pencil is the only Edit host entry point for a
+non-owner host, since Settings opens the editor for the owner only, via `SettingsViewModel.openOwnerHostEditor`.
+Removing it needs another entry point with its own design first.
+
 ## Host row reconnect control (#840)
 
 `RelayLinkStatus.isDisconnected()` (`ConversationTreeRows.kt`, `internal`) classifies a host row's relay
