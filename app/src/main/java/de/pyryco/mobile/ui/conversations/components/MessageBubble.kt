@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -217,6 +218,11 @@ private fun AssistantMessage(
  * [attachments] fills the design's `Slot` above the body (#984, moved above it by #1513 so the attachment
  * the text talks about is in view first), and only when the message has any: a text-only bubble lays out
  * exactly as before.
+ *
+ * A finished body is selectable by long press (#1638), in its own [SelectionContainer] so a selection never
+ * crosses into another bubble; the attachments and the meta row stay outside it. A streaming body is not,
+ * so a selection never holds offsets into text still arriving. The system Copy action writes the selection
+ * without the [MAX_CLIPBOARD_CHARS] bound the meta row applies; that is accepted for text the user chose.
  */
 @Composable
 private fun MessageContainer(
@@ -261,7 +267,15 @@ private fun MessageContainer(
                 horizontalAlignment = Alignment.Start,
             ) {
                 if (message.attachments.isNotEmpty()) attachments()
-                body()
+                if (message.isStreaming) {
+                    body()
+                } else {
+                    // SelectionContainer stacks its children, so the column keeps a user body's
+                    // paragraphs apart. No width modifier: the finished bubble still hugs its content.
+                    SelectionContainer {
+                        Column(verticalArrangement = Arrangement.spacedBy(BubbleContentSpacing)) { body() }
+                    }
+                }
                 MessageMetaRow(
                     timestamp = message.timestamp,
                     copyText = message.content,
