@@ -82,6 +82,9 @@ private val ToolCallExpandedMaxHeight = 320.dp
 private const val CODE_ISH_LENGTH_THRESHOLD = 80
 private const val COMMAND_FIELD = "command"
 
+/** Tags the row's outlined `Surface` (#1577), so tests can measure where adjacent outlines meet. */
+internal const val TOOL_ROW_TAG = "tool-row"
+
 /** Tags the running row's elapsed reading, so tests can assert its absence without guessing a value. */
 internal const val TOOL_ELAPSED_TAG = "tool-row-elapsed"
 internal const val TOOL_DESCRIPTION_CHEVRON_TAG = "tool-description-chevron"
@@ -100,12 +103,16 @@ internal const val TOOL_RESULT_DETAIL_TAG = "tool-row-result-detail"
  *
  * `expanded` survives an in-place update (a status flip, a new elapsed reading) because the caller's
  * keyed `LazyColumn` item keeps this call site's identity.
+ *
+ * [joinsNextToolRow] (#1577) is true when the thread's next row is another tool row: this row drops its
+ * spacing below and the next row's outline overlaps this one's, as Figma `620:1792` draws a run of tools.
  */
 @Composable
 fun ToolCallRow(
     toolCall: ToolCall,
     modifier: Modifier = Modifier,
     subagentDepth: Int = 0,
+    joinsNextToolRow: Boolean = false,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     ToolCallRowContent(
@@ -114,6 +121,7 @@ fun ToolCallRow(
         onToggle = { expanded = !expanded },
         modifier = modifier,
         subagentDepth = subagentDepth,
+        joinsNextToolRow = joinsNextToolRow,
     )
 }
 
@@ -130,6 +138,7 @@ private fun ToolCallRowContent(
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
     subagentDepth: Int = 0,
+    joinsNextToolRow: Boolean = false,
 ) {
     val clickLabel = stringResource(if (expanded) R.string.tool_row_collapse else R.string.tool_row_expand)
     val subagentDescription =
@@ -138,7 +147,8 @@ private fun ToolCallRowContent(
         modifier =
             modifier
                 .fillMaxWidth()
-                .padding(bottom = MessageRowVerticalSpacing),
+                .then(if (joinsNextToolRow) Modifier.overlapNextByBorder() else Modifier.padding(bottom = MessageRowVerticalSpacing))
+                .testTag(TOOL_ROW_TAG),
         shape = RoundedCornerShape(ToolCallCornerRadius),
         color = MaterialTheme.colorScheme.background,
         border = BorderStroke(ToolCallBorderWidth, MaterialTheme.colorScheme.primaryContainer),
@@ -168,6 +178,17 @@ private fun ToolCallRowContent(
         }
     }
 }
+
+/**
+ * Reports the row one outline width short while drawing it whole, so the next item's top outline lands
+ * on this row's bottom outline and the two read as one line.
+ */
+private fun Modifier.overlapNextByBorder(): Modifier =
+    layout { measurable, constraints ->
+        val placeable = measurable.measure(constraints)
+        val overlap = ToolCallBorderWidth.roundToPx().coerceAtMost(placeable.height)
+        layout(placeable.width, placeable.height - overlap) { placeable.place(0, 0) }
+    }
 
 /**
  * The trailing status sits outside the weighted headline: a `Row` measures it first, leaving the headline

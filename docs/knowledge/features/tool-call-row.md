@@ -53,6 +53,7 @@ fun ToolCallRow(
     toolCall: ToolCall,
     modifier: Modifier = Modifier,
     subagentDepth: Int = 0,
+    joinsNextToolRow: Boolean = false,
 )
 ```
 
@@ -112,6 +113,33 @@ weighted group. The simple variant omits it. Consecutive cards retain 12dp botto
 `HeaderRow` itself no longer inspects `inputFields["description"]` (#1315) — it calls `toolHeadline`
 once and switches on the returned `ToolHeadline` sealed type (`Described` vs. `Simple`), mirroring
 desktop's `toolHeadlineRuns` in `toolHeadline.ts`.
+
+### Consecutive tool rows sit flush (#1577)
+
+"Consecutive cards retain 12dp bottom spacing" above holds only when the **next thread row is not
+also a tool row** — see [Thread screen § Consecutive tool rows sit
+flush](thread-screen-subagent-tool-rows.md#consecutive-tool-rows-sit-flush-1577) for how
+[`ThreadScreen`](../../../app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt)
+derives that from the next chronological row and passes it down as `joinsNextToolRow`, through
+[`MessageBubble`](./message-bubble.md), to this composable. When `true`, the outer `Surface`'s
+modifier chain swaps `Modifier.padding(bottom = MessageRowVerticalSpacing)` for a private
+`Modifier.overlapNextByBorder()` — a `layout` modifier that measures and draws the `Surface` at its
+full height but *reports* a height one `ToolCallBorderWidth` (1dp) short. The next row's `Surface`
+then stacks directly on top of that short-reported height, so its top outline lands exactly on this
+row's bottom outline and the two 1dp borders draw as one line, matching the "Consequent tool uses"
+group in Figma `620:1792`. Nothing about expansion changes: the shrink is on the outer `Surface`, not
+the `Column` that toggles, so a collapsed and an expanded joining row overlap the same way.
+
+The `Surface` also gains `Modifier.testTag(TOOL_ROW_TAG)` (`"tool-row"`), applied **after** the
+shrink/padding branch, so a test tag's bounds are always the full drawn outline — never the
+one-pixel-short reported height — whether or not the row joins its neighbour.
+
+**Known gap, left as-is (#1577 verifier review):** `overlapNextByBorder` only knows this row joins the
+*next* one; it does not know whether rows at different `subagentDepth` indents stack this way. Figma
+`620:1792` shows only same-depth joins, so a run of tool rows across a subagent boundary has no design
+reference, and `ThreadScreen`'s `isToolRow` check does not exclude it — their outlines overlap with
+offset left edges in that case. Likewise a per-row `alpha` wrapper above the thread's session delimiter
+can clip the 1dp overflow or double-draw it at partial alpha; cosmetic only, and one line still shows.
 
 ### Subagent step description (since #896)
 
@@ -381,6 +409,14 @@ rendering doesn't ripple into the data-layer fake.
   top-level or unmatched-parent row carries none. See [Thread screen § Subagent tool-row
   nesting](./thread-screen-subagent-tool-rows.md#subagent-tool-row-nesting-896) and the
   derivation's own unit coverage, `ToolNestingDepthsTest`.
+- **`joinsNextToolRow` (#1577) is covered end to end through the real `ThreadScreen` fold**, the same
+  pattern as `subagentDepth`: `ConsecutiveToolRowSpacingTest` (`app/src/sharedTest/.../thread/`, beside
+  `ToolRowNestingTest`) asserts the second of two adjacent tool rows' top equals the first row's bottom
+  minus 1dp, both collapsed and after expanding the first row (and checks the row actually grew on
+  expansion), and that the gap before a following assistant reply stays at least 12dp. See [Thread
+  screen § Consecutive tool rows sit
+  flush](thread-screen-subagent-tool-rows.md#consecutive-tool-rows-sit-flush-1577) for how
+  `ThreadScreen` derives the flag.
 
 ## Edge cases / limitations
 
@@ -411,7 +447,8 @@ rendering doesn't ripple into the data-layer fake.
   `docs/specs/architecture/388-tool-call-row-status-affordance.md`,
   `docs/specs/architecture/895-tool-row-restyle.md`,
   `docs/specs/architecture/896-nest-subagent-tool-rows.md`,
-  `docs/specs/architecture/1575-cached-tool-input-fields.md`
+  `docs/specs/architecture/1575-cached-tool-input-fields.md`,
+  `docs/specs/architecture/1577-flush-consecutive-tool-rows.md`
 - Upstream:
   - [Data model](./data-model.md) — `ToolCall(toolName, input, inputFields, output, status,
     denial, elapsedSeconds, parentToolUseId, resultDetail)` and the `Message.toolCall`
@@ -440,6 +477,11 @@ rendering doesn't ripple into the data-layer fake.
     and subject; changed the field-less fallback from the `input` précis to an empty subject. See
     [Subject and elapsed text](#subject-and-elapsed-text) above and [Conversation
     cache](./conversation-cache.md) for the cache side.
+  - **#1577** — added `joinsNextToolRow` and the `overlapNextByBorder()` shrink so consecutive tool
+    rows share one 1dp outline instead of a 12dp gap; `ThreadScreen` derives the flag from the next
+    chronological row. See [Consecutive tool rows sit flush](#consecutive-tool-rows-sit-flush-1577)
+    above and [Thread screen § Consecutive tool rows sit
+    flush](thread-screen-subagent-tool-rows.md#consecutive-tool-rows-sit-flush-1577).
 - Still open:
   - Language inference from path extension for `Read`/`Edit` code blocks
   - `AnimatedVisibility` around the expanded body
