@@ -470,7 +470,9 @@ class ThreadDesignCaptureTest {
         await("Sonnet")
         await("Manual approval")
         await("Auto approval")
-        rule.onAllNodesWithText("Default", substring = true, ignoreCase = true).assertCountEquals(0)
+        // The footer rows sit outside the message region, whose seeded reply says "default to the current cwd".
+        val outsideMessages = !hasAnyAncestor(hasTestTag("thread-message-region"))
+        rule.onAllNodes(hasText("Default", substring = true, ignoreCase = true) and outsideMessages).assertCountEquals(0)
     }
 
     private fun keyboard() {
