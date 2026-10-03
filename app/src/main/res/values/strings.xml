@@ -260,6 +260,10 @@
     <string name="cd_tool_failed">Tool call failed</string>
     <string name="cd_tool_done">Tool call done</string>
     <string name="cd_tool_denied">Tool call denied</string>
+    <string name="tool_run_label">Using tools: %1$d</string>
+    <string name="tool_run_failed">%1$d failed</string>
+    <string name="tool_run_expand">Show tool uses</string>
+    <string name="tool_run_collapse">Hide tool uses</string>
     <!-- #896: a tool call a subagent made, and how many agent calls deep it sits. -->
     <string name="cd_tool_subagent_step">Subagent step, level %1$d</string>
     <string name="tool_row_input">Input</string>
