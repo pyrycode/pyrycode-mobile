@@ -48,3 +48,7 @@ No new failure mode. A `turn_state` that arrives after the snapshot leaves an ec
 ## Open Questions
 
 - Does a scripted run reproduce the split often enough to count before and after? Emulator time is contended; if not, the unit reproduction is the evidence.
+
+## Revisions
+
+- 2026-10-03, resolving the open question: no scripted run executed during the build. Every `python3 scripts/android-test-gate.py scripted stream` attempt gave up after 300 s with "device busy, not a test result" (exit 75), because verifier and live-gate runs held the device. The unit reproduction in `ThreadProjectionTest` is the before/after evidence. It is red on the unfixed projection with `[turn-1, mine, turn-1#2]` and green after the fix. The design is unchanged.
