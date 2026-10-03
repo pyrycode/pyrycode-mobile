@@ -794,7 +794,6 @@ fun ThreadScreen(
                             Modifier
                                 .align(Alignment.TopEnd)
                                 .padding(start = ComposerGutter, top = TopOverlayTopGap, end = ComposerGutter),
-                        agent = state.agent,
                         mcpFailure = mcpFailure,
                         onOpenMcpFailure = onOpenMcpFailure,
                     )
