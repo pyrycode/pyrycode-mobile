@@ -62,3 +62,27 @@ The dispatcher owns a fresh `python3 scripts/android-test-gate.py live` run. Its
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-03
+
+## Revisions
+
+### 2026-10-03 — exact failure phase and controlled initialization regression
+
+The helper in the failing `70aee9838d` revision maps the retained stack to the code-field lookup after Paste was clicked. The issue's initial paste-link interpretation was incorrect. `CameraPreview` disposes during this scanner → form transition and currently calls the provider future's blocking `get()` on main. The fresh device regression passed five entries once CameraX was STREAMING, with MainActivity RESUMED and focused; this does not establish that pending initialization is safe.
+
+Extract the existing provider listener/disposal behavior into an internal `CameraPreviewBinding<T>` beside the camera composable, preserving behavior first. Its generic provider handle permits a small controlled future fake without a new mocking dependency or a real camera in the JVM regression. Tests will demonstrate whether disposal reads a pending future and whether a late listener binds after exit. The repair, if those fail, must make disposal nonblocking, retain only a successfully bound provider for unbinding, and ignore initialization completion after disposal. All listener/disposal access stays on the existing main executor. Keep the composable signature and its single production caller unchanged.
+
+The JVM lifecycle test belongs in `app/src/test`; it exercises the binding owner and controlled future, not screen geometry. The device regression continues to prove real camera list → scanner → paste → cancel → Back transitions. Production files are limited to `CameraPreview` and its binding owner. Forecast remains below 500 written lines, with one internal production type and no changed consumer signature.
+
+Security review addendum: disposing while initialization is pending must not wait for I/O on main, and late completion must not bind a camera or publish an error to a departed scanner. Tests cover both. No code, credential, frame or decoded text is included in diagnostics. The protocol's Security model was read in the sibling pyrycode checkout; no wire or endpoint trust contract changes.
+
+### 2026-10-03 — red lifecycle checks and real cold-start device control
+
+The behavior-preserving extraction ran five JVM tests: three failed. They show a pending `get()` during disposal, a late bind after disposal, and a late error after disposal. The two mounted-state checks passed. The device regression now also configures CameraX with a held camera executor before entering the real scanner, requires its provider future to remain pending, and requires the real code form to open while initialization is still held. A 30-second cleanup fuse releases the executor solely to avoid hanging a broken run; any use of that fuse fails the assertion. It is not a retry or a passing timeout. After explicit release, the same test retains its five STREAMING-camera transitions. CameraX is shut down before and after the fixture so suite order does not change this cold-start condition.
+
+### 2026-10-03 — reproduced scanner-exit stall and final repair contract
+
+The real-device cold-start test ran once and failed with “scanner exit waited for camera initialization”. Its pre-Paste record shows MainActivity RESUMED, focused, with initialization pending. The code-field lookup returned only after the 30-second cleanup fuse released CameraX's executor. The post-test focus record names EmptyHomeActivity with `anr=none`, matching the historical observation because ActivityScenario cleanup precedes the failure listener. This demonstrates a camera-initialization race at the actual retained failure phase: scanner disposal calls blocking `get()` on main. A rerun can pass when initialization finishes before disposal; the five STREAMING-camera baseline transitions passed.
+
+`CameraPreviewBinding` now records a resolved provider before binding, so a partial bind failure still receives the old unbind cleanup. Disposal marks this composition departed and unbinds only that recorded provider, without reading or cancelling the shared future. A queued completion after departure returns without binding or surfacing an error. Listener and disposal run on main as before. Added tests cover a completion queued before disposal and cleanup after bind failure. Both Open Questions are resolved; the fix belongs in the production camera lifecycle, and the existing live helper/assertions remain unchanged.
+
+Security review: PASS. The asynchronous completion guard prevents camera activation and error callbacks after scanner exit. Disposal performs no wait on initialization. Existing error text stays static, no payload logging is added, and the shared process provider is not cancelled or shut down by product disposal. Device fixture shutdown is test-only.
