@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.diagnostics.MessageTrail
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
@@ -14,6 +15,7 @@ import de.pyryco.mobile.data.network.RequestSnapshotPayloadDto
 import de.pyryco.mobile.data.network.ScreenSnapshotPayloadDto
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
 import de.pyryco.mobile.data.network.attachmentDisplayName
+import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.ERROR_CONVERSATION_NOT_FOUND
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_ATTACHMENT_CHUNK
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_DEQUEUE_MESSAGE
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_REQUEST_SNAPSHOT
@@ -43,6 +45,9 @@ import java.util.UUID
  * One instance per repository, and a fresh repository per connection (#351), so the transfer state is
  * connection-scoped exactly as it was when it lived in the repository. Every accessor of that state is
  * `@Synchronized` on this instance, which nothing else locks.
+ *
+ * A send records its sent, acknowledged or failed line in [trail] (#1564), the sent line with this
+ * connection's redacted token from [connToken].
  */
 internal class MessageCommands(
     private val requests: RelayRequests,
@@ -50,6 +55,8 @@ internal class MessageCommands(
     private val conversationList: ConversationListProjection,
     private val threadProjection: ThreadProjection,
     private val queueProjection: QueueProjection,
+    private val trail: MessageTrail,
+    private val connToken: () -> String?,
 ) {
     private var debugBundle: DebugBundleTransfer? = null
     private var bundleInboundEnded = false
@@ -195,8 +202,35 @@ internal class MessageCommands(
         threadProjection.recordMinted(conversationId, messageId)
         // Throws on a server `error` / not-Open session, leaving the echo drawn. The empty `{}` ack
         // payload carries nothing to map.
-        requests.sendAndAwaitReply(request)
+        // The trail (#1564) records the reply where it lands, in order with the queue frames around it.
+        var sent = false
+        try {
+            requests.sendAndAwaitReply(
+                request,
+                onSent = {
+                    sent = true
+                    trail.sent(messageId, connToken())
+                },
+                onReply = { error -> recordReply(messageId, error) },
+            )
+        } catch (e: Exception) {
+            if (!sent) trail.failed(messageId, MessageTrail.Failure.NOT_CONNECTED)
+            throw e
+        }
         return message
+    }
+
+    /** The trail's line for a send's reply (#1564): only an error's code, never its message. */
+    private fun recordReply(
+        messageId: String,
+        error: Throwable?,
+    ) = when (error) {
+        null -> trail.acknowledged(messageId)
+        is RelayErrorException -> trail.failed(messageId, MessageTrail.Failure.DAEMON_ERROR, error.code)
+        // The mapped `conversation.not_found` reply (RelayRequests.mapError).
+        is IllegalArgumentException -> trail.failed(messageId, MessageTrail.Failure.DAEMON_ERROR, ERROR_CONVERSATION_NOT_FOUND)
+        // RelayRequests.failAllPending: the connection tore down before the reply.
+        else -> trail.failed(messageId, MessageTrail.Failure.TORN_DOWN)
     }
 
     /**

@@ -122,3 +122,19 @@ Pending for the documentation stage: add a message-trail section to `docs/knowle
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-03
+
+## Revisions
+
+### 2026-10-03 — acknowledged and failed are recorded where the reply lands
+
+**What changed.** `RelayRequests.sendAndAwaitReply` takes `onReply: (Throwable?) -> Unit = {}` beside `onSent`, registered with `invokeOnCompletion` on the waiter after the send. `MessageCommands.sendMessage` records `acknowledged`, `daemon_error` and `torn_down` from `onReply`, and only `not_connected` in its own `catch`.
+
+**What drove it.** The repository test `aQueuedSend_logsQueuedOnce_andDeliveredOnceOnTheDrain` recorded `delivered` before `acknowledged`: the plan recorded the ack when the awaiting caller resumed, and the inbound collector had already applied the frames that arrived after the `ack`. A trail that misorders the ack against the queue frames would mislead the very diagnosis it exists for.
+
+**New contract.** The reply's line is written on the inbound collector as the `ack`, `error` or teardown sweep completes the waiter, in arrival order with the `queue_state` and `message` lines. `sent` is still written before it, by the caller, because `onSent` runs before the handler is registered. A caller cancelled before the reply still records nothing after `sent`.
+
+### 2026-10-03 — the release proof is a source check; writer guards catch `Exception`
+
+**Open Question resolved.** This project has no `testReleaseUnitTest` task: unit tests run in the debug variant only. `BuildConfig.DEBUG` is a compile-time constant that Kotlin inlines, so the compiled class carries no reference to it either. The release proof is therefore two tests in `MessageTrailTest`: `emits_whateverTheDebugGateSays` (emits with `RelayLog.enabled = false`, and `RelayLog.enabled` still equals `BuildConfig.DEBUG`) and `theTrailAndItsCallers_neverReadBuildConfig` (neither `MessageTrail.kt`, `MessageCommands.kt`, `ThreadProjection.kt`, `RelayRequests.kt` nor the trail's `AppModule` binding imports or names `de.pyryco.mobile.BuildConfig`).
+
+**Writer guards.** The writer catches `Exception`, not only `IOException` and `SecurityException`, in both the file resolution and each append. An uncaught throw in a coroutine on the trail's `SupervisorJob` scope goes to the default handler and would crash the process, which a diagnostic must never do.

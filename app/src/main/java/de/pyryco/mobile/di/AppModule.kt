@@ -1,6 +1,7 @@
 package de.pyryco.mobile.di
 
 import android.os.Build
+import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
@@ -17,6 +18,7 @@ import de.pyryco.mobile.data.crypto.KeystoreDeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.KeystorePairedServerStore
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.crypto.PairedServerStore
+import de.pyryco.mobile.data.diagnostics.MessageTrail
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.HostModalState
@@ -120,8 +122,19 @@ val appModule =
                 get(),
                 // #361: every host observes the stored token, so a rotation re-registers on open hosts.
                 pushTokens = get<AppPreferences>().pushToken,
+                messageTrail = get(),
             )
         }
+        // #1564: the message trail, kept in release builds. Unlike the stores above it sits in the app-specific
+        // external files dir, which a release install's operator can `adb pull`; it holds only message ids, a
+        // redacted connection token and fixed labels. The dir is resolved on the trail's writer, off main.
+        single {
+            val context = androidContext()
+            MessageTrail(
+                file = { context.getExternalFilesDir(null)?.let { File(it, MessageTrail.FILE_NAME) } },
+                logcat = { Log.i(MessageTrail.LOG_TAG, it) },
+            )
+        } onClose { it?.dispose() }
         single(createdAtStart = true) {
             RelayConnectionRegistry(get(), get())
         } onClose { it?.dispose() }
