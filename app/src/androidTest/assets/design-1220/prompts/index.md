@@ -68,9 +68,11 @@ arming tap go through the UI. The draft "My message" is set through the view mod
 the composer makes, and the Other text "Web" through `OtherTextChanged`, so no keyboard opens outside the
 keyboard frame. The keyboard frame focuses the Other field through the UI.
 
-**Footer, every frame.** The shipped footer reads "Cxt high: 84%" in the warning colour where every frame reads
-"Cxt: 84%", and it draws the Status opener (tune icon) beside the paperclip. Each item records this under
-Typography, Colour and Icon paths and routes it to #1485, which holds the design decision.
+**Footer, board `635:2036` frames.** The shipped footer reads "Cxt high: 84%" in the warning colour where
+these frames read "Cxt: 84%", and it draws the Status opener (tune icon) beside the paperclip. Each of their
+items records this under Typography, Colour and Icon paths and routes it to #1485, which holds the design
+decision. The three `668:3051` edge-state frames already draw "Cxt high: 84%" and the tune icon, so their
+items find a match there and route nothing to #1485 (see "#1502 edge states" above).
 
 **Bars.** The app keeps the thread inside the 24 px status bar and the frames have none, so the app's header
 sits 24 px lower than Figma's. As in the onboarding audit, that move is not a mismatch; everything else is
@@ -236,6 +238,8 @@ heights, gaps and box sizes. Text is compared by glyph height, and a run up to 4
 | Icon paths | mismatch: footer tune icon. The unchecked checkbox matches |
 | Component state | match: "Waiting for permission"; grant offered and unchecked |
 
+- **Not connected** (`668:3169`) measures the same 7 px drift at this card's bottom against this frame; #1601
+  names both.
 - **Routed:** #1509, #1485. Choice gap and context spacing fixed by #1501
 
 ### Permission · Session grant selected — `639:2666`
