@@ -85,6 +85,10 @@ All under `app/src/androidTest/java/de/pyryco/mobile/design/`. No file under `ap
   its conversation viewed as production does. The override passes no app draft stores, so the view model
   reads `questionBatch` itself. At `97ee8d75` no thread code reads `observeAttachmentOffers`, so
   `attachmentOffers` is wired but nothing subscribes to it yet.
+  `install()` also replaces the app's `HostConversationSource` with one demo host whose `modals` is
+  `hostModal` and whose `questionBatches` is `questionBatch` mapped to a list, so the channel list marks
+  each prompt's conversation Waiting the same way the thread does (#1507). `uninstall()` restores the
+  app's instance.
 - Pairing inputs, shared by the scanner and the pair-code screen: `pairingStatus` is what the post-confirm
   wait observes. `null` holds the connecting state until the 30 s `PAIRING_VERIFICATION_DEADLINE_MS`, then
   fails as unavailable with Retry. `RelayLinkStatus.DaemonAbsent` fails the same way at once, and

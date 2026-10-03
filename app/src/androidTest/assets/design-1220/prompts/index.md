@@ -10,7 +10,8 @@
   `requireRealSystemBars=true`, density 1.0, fixed dark theme, real 24 px status and navigation bars. Each `.txt`
   records the measured values.
 - **Result:** `prompts-results.xml` is #1501's whole-class run, below: 6 executed, 0 failed, 0 skipped. Every
-  capture in this folder now comes from that run.
+  capture in this folder came from that run, except `switch-list.png` and its comparisons, replaced by
+  #1507's re-capture below.
 - **#1484 re-capture:** `feature/1484` (merge base `ca50716f`) changed the question actions. The whole class ran
   again in one run on the same device and arguments: 6 executed, 0 failed, 0 skipped. The `question-unanswered`,
   `question-answered`, `question-keyboard` and `question-compact` captures and their comparisons come from that
@@ -351,9 +352,9 @@ heights, gaps and box sizes. Text is compared by glyph height, and a run up to 4
   and a 6x11 status-dot slot whose circle has centre (3, 8) and r 2.5.
   - **Shape:** match. Both rows draw a 6x6 px dot (x 40 to 45) in the app and in the frame.
   - **Position:** match. In both, the dot spans x 40 to 45 and rows 9 to 14 from its row's top: the app's "Client
-    planning" row 177 to 200 against dot 186 to 191, the frame's rows at 177 and 205 against dots 186 and 214.
-    The app orders the rows alphabetically, so "kitchenclaw refactor" is the third row (dot 242 to 247), where
-    the frame draws it first and second.
+    planning" row 177 to 200 against dot 186 to 191, the frame's "Client planning" row at 177 against dot 186
+    and its first "kitchenclaw refactor" row at 205 against dot 214. The app orders the rows alphabetically, so
+    "kitchenclaw refactor" is the third row (dot 242 to 247), where the frame draws it first and second.
   - **Colour:** mismatch on both rows, and the app is right. The app fills both dots with
     `colorScheme.warning` (sampled `#D8B85A`) inside the shared ring, as desktop's `ConversationStatusDot` does.
     The frame draws no waiting state. "Client planning" is filled `#32628D` (sampled 50,98,141), its own ring
