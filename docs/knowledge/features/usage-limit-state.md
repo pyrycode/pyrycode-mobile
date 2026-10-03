@@ -203,6 +203,18 @@ discarded). Render-boundary obligations — inert-text rendering, defensive date
 claims neither blocking nor lifting — are discharged by the render sibling,
 [Usage-limit indicator](usage-limit-indicator.md) (#804), not here; this slice has no UI sink.
 
+**[#1519](https://github.com/pyrycode/pyrycode-mobile/issues/1519) supersedes the no-branching rule above,
+for the usage pill's copy only.** The usage pill (not this decode layer) now looks up its text by comparing
+`status` against the exact literal `"rejected"` (the "Usage limit reached" lead; every other value, known or
+not, reads "Nearly at usage limit") and `limitType` against the exact literals `"five_hour"`/`"seven_day"`
+(which name a window; any other value, including `""`, names none) — each comparison is Kotlin `==`, never
+a trim, case fold, prefix or substring test, and neither field is ever appended to the rendered text, logged,
+or used as any other kind of key. This is the one place in the family where a field beyond the benign
+`status` comparison drives a branch, and it is scoped to [Usage-limit indicator](usage-limit-indicator.md)'s
+`usageLimitText`/`usageLimitIsWarning` — this decode layer and `UsageLimitProjection` still carry both
+fields verbatim with no branch of their own. The matching `UsageLimitReading` KDoc (`status`, `limitType`
+params and this SECURITY paragraph, in `ConversationRepository.kt`) states the same supersession.
+
 ## Related
 
 - [Usage-limit indicator](usage-limit-indicator.md) (#804) — the render sibling: the `ThreadStatusArea`
