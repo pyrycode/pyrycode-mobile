@@ -143,8 +143,7 @@ Each row mirrors the sent user bubble, de-emphasized:
 ### Styling (design-owed)
 
 Unchanged by #782 — the visual only moved position, not shape. Queued entries deliberately read as **not
-yet sent**: the `userBubbleContainer` fill and shared user-bubble shape at `QUEUED_ALPHA = 0.6f` (in the spirit of
-[`ThreadScreen`](thread-screen.md)'s `ABOVE_DELIMITER_ALPHA = 0.55f` de-emphasis), plus the leading
+yet sent**: the `userBubbleContainer` fill and shared user-bubble shape at `QUEUED_ALPHA = 0.6f`, plus the leading
 waiting glyph, distinguish a queued row from the full-opacity sent / streamed bubbles around it. The
 Figma `16-8` frame draws **no backlog treatment and no drop affordance** (unchanged since #461/#467); the
 visual follows the app's existing message-row idiom until the frame gains one — no contract change when

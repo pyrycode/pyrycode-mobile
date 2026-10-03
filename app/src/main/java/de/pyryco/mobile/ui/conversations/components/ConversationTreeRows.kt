@@ -423,10 +423,10 @@ fun TreeWorkspaceRow(
  * Under the static dark palette, [selected] draws 15:8's `Hover` fill (`primary-container`) and a pressed
  * row its darker `on-primary` fill (#1523).
  *
- * A non-null [onEditTapped] draws the design's hover pencil at the trailing edge. The phone has no hover,
- * so the caller hands it only to the selected row (#1523), and names what it edits through
+ * A non-null [onEditTapped] draws the design's hover pencil at the trailing edge, named through
  * [editDescription]: Edit chat on Chats rows, Edit channel on Channels rows (#667). It is a
- * [TreeRowControl], so a tap on it edits the row without opening it or moving the highlight.
+ * [TreeRowControl], so a tap on it edits the row without opening it or moving the highlight. No caller
+ * passes it since #1563, which matches 15:8's pen-free rows; #1582 removes it.
  */
 @Composable
 fun TreeConversationRow(

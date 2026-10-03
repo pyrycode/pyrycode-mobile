@@ -1,8 +1,8 @@
 # SessionBoundaryDelimiter
 
-Stateless composable (#135) that renders a single [`ThreadItem.SessionBoundary`](./conversation-repository.md) marker as a horizontal-rule delimiter inside the thread `LazyColumn`. It shows a reset label and time, always explains that the conversation's agent does not remember messages above the line, and offers the memory-plugin docs link only when the current session's report confirms absence. Of the three `boundary.reason` values (`Clear` / `WorkspaceChange` / `IdleEvict`), only `IdleEvict` gets its own label text — since #1498 the product has no workspaces, so `WorkspaceChange` renders the same "New session — <time>" copy as `Clear`. The boundary marker itself is produced by `ConversationRepository.observeMessages`; this component is the rendering half.
+Stateless composable (#135) that renders a single [`ThreadItem.SessionBoundary`](./conversation-repository.md) marker as a horizontal-rule delimiter inside the thread `LazyColumn`. **Since #1578, it draws only the rule / reason-label / rule row** — no explanation line, no memory-search copy, no Install button — for every `boundary.reason` and whatever the current session's memory-search report says. Of the three `boundary.reason` values (`Clear` / `WorkspaceChange` / `IdleEvict`), only `IdleEvict` gets its own label text — since #1498 the product has no workspaces, so `WorkspaceChange` renders the same "New session — <time>" copy as `Clear`. The boundary marker itself is produced by `ConversationRepository.observeMessages`; this component is the rendering half.
 
-Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/SessionBoundaryDelimiter.kt`). Sibling of [`MessageBubble`](./message-bubble.md), [`ToolCallRow`](./tool-call-row.md), [`ConnectionBanner`](./connection-banner.md). Figma reference: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8)'s `Session reset` row (`119:3843`), a rule / label / rule arrangement, restyled here since #644. The explanation sentence and the `Install` button below it have no Figma node of their own and stay implemented per the textual spec — see [Rule / label / rule, explanation retained below (#644)](#rule--label--rule-explanation-retained-below-644). The same file also hosts [`CompactionBoundaryDivider`](#compactionboundarydivider-874-1358) (#874, #1358), a finished-compaction row that reuses this component's rule/label/rule layout but is not a session boundary.
+Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/SessionBoundaryDelimiter.kt`). Sibling of [`MessageBubble`](./message-bubble.md), [`ToolCallRow`](./tool-call-row.md), [`ConnectionBanner`](./connection-banner.md). Figma reference: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8)'s `Session reset` row (`119:3843`), a rule / label / rule arrangement, restyled here since #644. Frames `675:3682` and `675:5883` still draw an `Explanation` text node under the rule row and fade the rows above it; by decision on #1578 (Juhana, 2026-10-03; #1580 closed as not needed) the app keeps only the rule row and drops both — recorded as a "no separate frame" row in `app/src/androidTest/assets/design-1220/README.md`. The same file also hosts [`CompactionBoundaryDivider`](#compactionboundarydivider-874-1358) (#874, #1358), a finished-compaction row that reuses this component's rule/label/rule layout but is not a session boundary.
 
 ## Shape
 
@@ -11,27 +11,22 @@ Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/p
 fun SessionBoundaryDelimiter(
     boundary: ThreadItem.SessionBoundary,
     modifier: Modifier = Modifier,
-    agent: ConversationAgent = ConversationAgent.Claude,
-    memorySearch: MemorySearchReport = MemorySearchReport.Unknown,
 )
 ```
 
-`boundary` is the only required parameter. Stateless — no `remember`, `LaunchedEffect`, or coroutine scope. The public composable resolves `TimeZone.currentSystemDefault()`, default `Locale`, and `LocalUriHandler.current`, then delegates to the file-internal `SessionBoundaryDelimiterContent` worker. `agent` defaults to `Claude`; `memorySearch` defaults to `Unknown`, so isolated callers cannot accidentally show Install. In production, [`ThreadScreen`](thread-screen.md) passes the current session's `state.runConfig.memorySearch`.
+`boundary` is the only parameter. Stateless — no `remember`, `LaunchedEffect`, or coroutine scope, and (since #1578) no `LocalUriHandler` read either: with the explanation and Install gone, nothing in this composable has a side effect to wire. It resolves `TimeZone.currentSystemDefault()` and the default `Locale`, computes the reason label, and renders it through the shared `RuleLabelRow` worker (also used by `CompactionBoundaryDivider`), tagged `SESSION_BOUNDARY_TEST_TAG`.
 
 ## What it does
 
-### Rule / label / rule, explanation retained below (#644, inset since #1512)
+### Rule / label / rule only (#644; inset since #1512; explanation and Install dropped #1578)
 
-A `Column(fillMaxWidth().padding(start = MessageContentGutter + SessionBoundaryInset, end = MessageContentGutter + SessionBoundaryInset, bottom = MessageAreaRowSpacing))` containing, in order:
+The column (`Modifier.padding(start = MessageContentGutter + SessionBoundaryInset, end = MessageContentGutter + SessionBoundaryInset, bottom = MessageAreaRowSpacing)`, carrying `Modifier.testTag(SESSION_BOUNDARY_TEST_TAG)`) holds a single centred `Row(horizontalArrangement = Arrangement.spacedBy(RuleLabelSpacing = 12.dp), verticalAlignment = CenterVertically)`: a `weight(1f)` hairline rule, the reason label (`bodySmall`, `colorScheme.primary`, centred), and a second `weight(1f)` rule. Each rule is a 1dp `Box` painted with `colorScheme.inversePrimary` at 60% in the fixed dark palette (`LocalStaticDarkPalette`); other palettes use `outlineVariant` at the same alpha. This matches reset node `119:3843`. [The 412 × 892 code and boundary comparison](https://github.com/pyrycode/pyrycode-mobile/blob/44ac0889/app/src/androidTest/assets/thread-message-1207/code-boundary-side-by-side.png) uses the node inspected on 2026-09-29; Figma's last-modified date was unavailable.
 
-1. **A centred `Row(horizontalArrangement = Arrangement.spacedBy(RuleLabelSpacing = 12.dp), verticalAlignment = CenterVertically)`** of a `weight(1f)` hairline rule, the reason label (`bodySmall`, `colorScheme.primary`, centred), and a second `weight(1f)` rule. Each rule is a 1dp `Box` painted with `colorScheme.inversePrimary` at 60% in the fixed dark palette (`LocalStaticDarkPalette`); other palettes use `outlineVariant` at the same alpha. This matches reset node `119:3843` without changing label behavior. [The 412 × 892 code and boundary comparison](https://github.com/pyrycode/pyrycode-mobile/blob/44ac0889/app/src/androidTest/assets/thread-message-1207/code-boundary-side-by-side.png) uses the node inspected on 2026-09-29; Figma's last-modified date was unavailable.
+The label is deliberately **unweighted**: `Row` measures a non-weighted child against the full available width before the weighted rules claim any, so a long label wraps (centred) and squeezes the rules toward zero instead of pushing anything past the viewport edge. Confirmed by the narrow preview. Since #1498 the longest label any reason actually produces is `"New session — <time>"`, so this degradation path has no live reason to exercise it, but it stays in place because nothing bounds a future reason's label length.
 
-   The label is deliberately **unweighted**: `Row` measures a non-weighted child against the full available width before the weighted rules claim any, so a long label wraps (centred) and squeezes the rules toward zero instead of pushing anything past the viewport edge. Confirmed by the narrow preview and by `SessionBoundaryDelimiterTest` staying green unchanged across the restyle — no `Modifier.weight(1f, fill = false)` fallback was needed. Since #1498 the longest label any reason actually produces is `"New session — <time>"`, so this degradation path has no live reason to exercise it, but it stays in place because nothing bounds a future reason's label length.
-2. **8.dp `Spacer(ExplanationTopSpacing)` + `FlowRow(horizontalArrangement = Arrangement.Center)`** — the always-present sentence `"${agentDisplayName(agent)} doesn't remember messages above this line."` uses `bodySmall` / `onSurfaceVariant` / centered. When `memorySearch.shouldOfferMemoryInstall()` is true, it is followed by `"Search stored knowledge with a memory plugin."` and an inline `Install` `TextButton` opening `MEMORY_PLUGIN_DOCS_URL`. The helper requires aggregate `Absent` with no installed provider. Installed, disabled, unavailable, unknown, and omitted reports show neither install copy nor button. `FlowRow` allows the optional text and button to wrap at narrow widths. Search retrieves stored knowledge; it does not save the conversation, preserve context, or make every earlier message available.
+**Since #1578, nothing else renders here.** The "<agent> doesn't remember messages above this line." sentence, the memory-search copy, and the inline `Install` `TextButton` are gone for every reason and every `MemorySearchReport` state — they were never a Figma node (frames `675:3682` / `675:5883` draw an `Explanation` text node of their own, which the app does not implement; see [Rule / label / rule](#rule--label--rule-only-644-inset-since-1512-explanation-and-install-dropped-1578) above). The memory-plugin install offer survives in [channel overflow](thread-overflow-menu.md) and [Channel info](channel-info-sheet.md), both still gated on `shouldOfferMemoryInstall()`; the boundary itself no longer reads a `MemorySearchReport` at all. `SessionBoundaryDelimiterScreenTest` asserts the explanation text is absent for every reason and report combination, rather than covering report states that no longer change anything here.
 
-The Figma row has a generic “Session reset” label and draws neither explanation nor Install. The product keeps its reason/time label and agent-specific explanation for every reset; only a confirmed absent report adds search copy and link. The reason/time label is independent of memory status. `SessionBoundaryDelimiterScreenTest` covers the report states.
-
-The above-delimiter opacity treatment (de-emphasizing messages above the line) is **not** in this component — it's the surface responsibility of [#136](../codebase/136.md). [`ThreadScreen`](thread-screen.md) wraps each `LazyColumn` row in `Box(Modifier.alpha(rowAlpha))` against the most-recent-`SessionBoundary` cutoff, so when this delimiter happens to be an older boundary (not the most recent) it inherits the wrapper's `0.55f` alpha end-to-end — both rules, the label `Text`, explanatory `Text`, and the `Install` `TextButton`'s ripple all dim uniformly. This component holds no opacity state of its own; the `Modifier.alpha(...)` is render-only and passes through every child.
+**Every thread row draws at full opacity, since #1578.** The above-delimiter fade this section used to describe — [`ThreadScreen`](thread-screen.md) wrapping each `LazyColumn` row in `Box(Modifier.alpha(rowAlpha))` against the most-recent-`SessionBoundary` cutoff — is removed along with `ABOVE_DELIMITER_ALPHA` and the cutoff lookup; nothing in `ThreadScreen` dims rows above a boundary any more. `ThreadRowOpacityTest` pixel-checks that an older bubble and a newer one draw the same colour.
 
 ### Reason → label mapping
 
@@ -69,7 +64,7 @@ return DateTimeFormatter
 internal const val MEMORY_PLUGIN_DOCS_URL: String = "https://pyryco.de/docs/memory-plugins"
 ```
 
-Shared `internal const val`, used by the boundary, [Channel info](channel-info-sheet.md) and [channel overflow](thread-overflow-menu.md). Their Install controls open the same destination through `UriHandler.openUri`. The URL remains the existing memory-plugin documentation destination.
+Shared `internal const val`, used by [Channel info](channel-info-sheet.md) and [channel overflow](thread-overflow-menu.md) — the boundary itself stopped reading it in #1578. Their Install controls open the same destination through `UriHandler.openUri`. The URL remains the existing memory-plugin documentation destination.
 
 ## Spacing constants
 
@@ -78,25 +73,25 @@ Since #644, the outer gutter and the bottom inter-row spacing are no longer file
 ```kotlin
 private val RuleLabelSpacing = 12.dp     // gap between each rule and the label
 private val RuleThickness = 1.dp
-private val ExplanationTopSpacing = 8.dp // was 4.dp pre-#644
 private val SessionBoundaryInset = 20.dp // since #1512, session delimiter only
 ```
 
+(`ExplanationTopSpacing` was removed with the explanation row in #1578.)
+
 plus the file-private `RULE_ALPHA = 0.60f`. The rule source is `inversePrimary` in fixed dark and `outlineVariant` otherwise. No raw `.dp` literal appears inside the worker. The former delimiter padding is superseded by shared `MessageAreaRowSpacing` (16.dp) and `MessageContentGutter` (20.dp).
 
-**Since #1512, the session delimiter's column pads by `MessageContentGutter + SessionBoundaryInset`, not the gutter alone.** The `675:3797` `Session boundary` frame adds its own 20 px padding inside the 20 px message gutter, so at 412 px width the rule row and the explanation span x 40–372 rather than x 20–392. `CompactionBoundaryDivider` pads `RuleLabelRow` directly with the gutter alone and is unaffected — it keeps the gutter-to-gutter width (x 20–392). The two composables share `RuleLabelRow` but no longer share identical width, so don't assume they still match pixel-for-pixel when touching either one's padding.
+**Since #1512, the session delimiter's column pads by `MessageContentGutter + SessionBoundaryInset`, not the gutter alone.** The `675:3797` `Session boundary` frame adds its own 20 px padding inside the 20 px message gutter, so at 412 px width the rule row spans x 40–372 rather than x 20–392. `CompactionBoundaryDivider` pads `RuleLabelRow` directly with the gutter alone and is unaffected — it keeps the gutter-to-gutter width (x 20–392). The two composables share `RuleLabelRow` but no longer share identical width, so don't assume they still match pixel-for-pixel when touching either one's padding.
 
 ## Recomposition / stability
 
 - `ThreadItem.SessionBoundary` is a `data class` with `kotlinx.datetime.Instant` + nullable `String` fields — all stable.
-- `UriHandler` is a Compose-platform interface; the public composable reads it from `LocalUriHandler.current` at composition time. No `remember` needed — the local is stable across recompositions.
-- No internal mutable state, no side-effecting handlers beyond the synchronous `uriHandler.openUri` call inside `TextButton.onClick`.
+- No internal mutable state, no side-effecting handlers, no `LocalUriHandler` read (dropped #1578 along with the `Install` button it drove).
 
 ## Configuration
 
 - **No new dependencies.** `kotlinx-datetime` was already on the classpath (its `.toJavaLocalTime()` interop extension is what reaches `java.time`); `java.time.format.DateTimeFormatter` / `FormatStyle` ship with the JDK on min SDK 33.
-- **No new string resources.** Literals only — same posture as the rest of `ui/conversations/components/` today, including `agentDisplayName`'s two-value mapping (#1112).
-- **Theme tokens.** The rules use `inversePrimary` in fixed dark and `outlineVariant` otherwise, both at 60% alpha; the reason label uses `bodySmall` / `colorScheme.primary`. The explanation and optional search copy use `bodySmall` / `onSurfaceVariant`.
+- **No new string resources.** Literals only — same posture as the rest of `ui/conversations/components/` today.
+- **Theme tokens.** The rules use `inversePrimary` in fixed dark and `outlineVariant` otherwise, both at 60% alpha; the reason label uses `bodySmall` / `colorScheme.primary`.
 
 ## Preview
 
@@ -104,20 +99,16 @@ Three `@Preview` entries, all delegating to a shared private `SessionBoundaryDel
 
 - `"SessionBoundaryDelimiter — Light"` — `widthDp = 412`, light theme.
 - `"SessionBoundaryDelimiter — Dark"` — `widthDp = 412`, `uiMode = UI_MODE_NIGHT_YES`.
-- `"SessionBoundaryDelimiter — Narrow"` — `widthDp = 320`, light theme. Exists specifically to verify `FlowRow` wraps cleanly at narrow widths without overflow.
+- `"SessionBoundaryDelimiter — Narrow"` — `widthDp = 320`, light theme. Exists specifically to verify the rule/label row degrades (wraps the label, squeezes the rules) rather than overflowing at narrow widths.
 
 Fixtures use a fixed `Instant.parse("2026-05-17T14:32:00Z")` so previews are deterministic. The `WorkspaceChange` fixture still sets `workspaceCwd = "~/Workspace/Projects/KitchenClaw"` to match the field's shape on the wire, but since #1498 the label ignores it and renders the same "New session — <time>" text as the `Clear` fixture.
 
 ## Edge cases / limitations
 
 - **Time format varies by device locale.** `FormatStyle.SHORT` is locale-aware; rely on `boundary.occurredAt` and the device's `TimeZone.currentSystemDefault()` / default `Locale`. Tests assert label prefix substrings (`"New session — "` etc.) rather than the exact rendered time, because the emulator and the dev's host JDK may format the same instant slightly differently. Since #644, [`MessageMetaRow`](./message-bubble.md#meta-row-and-copy-control-messagemetarowkt-since-644)'s `formatShortDateTime` reuses this same `formatShortTime` for its time half, and pins its own tests the same locale-robust way.
-- **A long reason label wraps and squeezes the rules toward zero rather than overflowing (since #644).** `Row` measures the unweighted label against the full available width before the two `weight(1f)` rules claim any, so a long label degrades by shrinking the rules first. Since #1498 no reason actually produces a label long enough to wrap at ordinary widths, but the degradation path stays in place for whatever reason the wire adds next. Verified at the 320dp narrow preview and unchanged by `SessionBoundaryDelimiterTest`.
-- **Install depends on the report, not the reset reason.** A report with no providers is still unknown unless aggregate availability explicitly says `Absent`; never turn omitted or malformed status into an installation prompt. The reason/time and context-reset explanation remain visible for every status.
+- **A long reason label wraps and squeezes the rules toward zero rather than overflowing (since #644).** `Row` measures the unweighted label against the full available width before the two `weight(1f)` rules claim any, so a long label degrades by shrinking the rules first. Since #1498 no reason actually produces a label long enough to wrap at ordinary widths, but the degradation path stays in place for whatever reason the wire adds next. Verified at the 320dp narrow preview.
+- **No Install affordance on the boundary itself, since #1578.** The memory-plugin install offer lives only in the thread overflow menu and the channel info sheet now; neither still reads a report at the boundary row. A report with no providers is unknown unless aggregate availability explicitly says `Absent` — that logic is unchanged, just relocated to the two surfaces that still read it.
 - **No animation.** The delimiter appears/disappears with the underlying list update; no `AnimatedVisibility`. Acceptable for Phase 0.
-- **No a11y review.** The `Install` button inherits `TextButton`'s default semantics (`role = Role.Button`); no `onClickLabel` is set on the `TextButton`. Same open thread as [`ConnectionBanner`](./connection-banner.md)'s retry affordance — tracked there.
-- **Names the conversation's own agent since #1112.** [`ThreadScreen`](thread-screen.md) passes
-  `state.agent` with the current memory report at the `SessionBoundary` row dispatch. The focused
-  Codex test pins the agent name and, with an explicit absent report, the Install button.
 - **The layout-cost DoS that #644's security review named against `workspaceCwd` is moot since #1498.** `boundaryLabel` no longer interpolates `boundary.workspaceCwd` into the rendered text for any reason, so an attacker-controlled `workspace_change` cwd on the wire cannot inflate this label. `workspaceCwd` itself is still unbounded on the decode path, since the field remains part of the wire contract for whatever else might read it; a content-length bound at decode, as #644's review recommended, is still the right home if another render surface ever interpolates it.
 
 ## CompactionBoundaryDivider (#874, #1358)
@@ -138,15 +129,14 @@ fun CompactionBoundaryDivider(item: ThreadItem.CompactionBoundary, modifier: Mod
 ```
 
 - **Shares the rule/label/rule layout via a private `RuleLabelRow(label, modifier)`**, extracted from
-  `SessionBoundaryDelimiterContent`'s own `Row` in the same change — `SessionBoundaryDelimiterContent` now
-  calls `RuleLabelRow(label)` too, and its rendering is otherwise unchanged; `SessionBoundaryDelimiterTest`
-  staying green unchanged is the proof the extraction didn't alter the session delimiter's shape. Unlike
-  `SessionBoundaryDelimiter`, this composable draws **no explanation line and no `Install` affordance** —
-  a compaction is not a session reset, so nothing here reads `LocalUriHandler` or offers a memory-plugin
-  install.
-- **Is not a session boundary.** It does not enter `ThreadScreen`'s `mostRecentSessionBoundaryIndex`
-  cutoff and changes no above-delimiter de-emphasis; the row inherits the same `Modifier.alpha(rowAlpha)`
-  wrapper as its neighbours purely because every `LazyColumn` item does.
+  the original `SessionBoundaryDelimiterContent`'s `Row` when this divider was added, and since #1578
+  `SessionBoundaryDelimiter` itself calls the same `RuleLabelRow(label, modifier)` directly —
+  `SessionBoundaryDelimiterContent` was removed rather than kept as a near-empty wrapper once the
+  explanation it wrapped was gone. This composable draws **no explanation line and no `Install`
+  affordance**, same as the session delimiter since #1578; a compaction was never a session reset, so
+  nothing here ever read `LocalUriHandler` or offered a memory-plugin install.
+- **Is not a session boundary.** It carries no `SESSION_BOUNDARY_TEST_TAG` and does not affect any
+  other row's rendering. Every `LazyColumn` row, this one included, draws at full opacity since #1578.
 - **`internal fun compactionBoundaryLabel(item: ThreadItem.CompactionBoundary): String`** — desktop's
   `compactionBoundaryTitle`, including its failed branch since #1358: `item.failed` short-circuits to
   `"Compaction failed"` with no counts and no "by you", regardless of whatever else the row carries.
@@ -231,6 +221,5 @@ fun CompactionBoundaryDivider(item: ThreadItem.CompactionBoundary, modifier: Mod
 - Sibling component patterns: [`MarkdownText`](./markdown-text.md) (injectable-`UriHandler` worker pattern for testable URL side effects), [`ConnectionBanner`](./connection-banner.md) (stateless row primitive in the same package, file shape `constants → public @Composable → private content → preview matrix → preview wrappers`), [`MessageBubble`](./message-bubble.md) / [`ToolCallRow`](./tool-call-row.md) (spacing constants — shared/`internal` with `MessageBubble.kt` since #644, still file-private in `ToolCallRow.kt`).
 - Downstream / follow-ups:
   - Wired into `ThreadScreen`'s `LazyColumn` (landed after this component originally shipped — see [Thread screen](thread-screen.md) and [#246](../codebase/246.md)).
-  - Above-delimiter opacity treatment landed in [#136](../codebase/136.md): [`ThreadScreen`](thread-screen.md)'s `LazyColumn` wraps each row in `Box(Modifier.alpha(rowAlpha))` against the most-recent-`SessionBoundary` cutoff, dimming rows above (including older `SessionBoundaryDelimiter` instances) to `0.55f`. The component contributed nothing — render-only `Modifier.alpha(...)` on the parent flows through every child without internal opacity state.
-  - Open: replace `MEMORY_PLUGIN_DOCS_URL` with the Phase 3+ deep link into the plugin install flow. One-line constant swap.
-  - Open: a11y review on the `Install` affordance (`role = Role.Button` is default; `onClickLabel = "Open memory plugin docs"` is the obvious hook).
+  - Above-delimiter opacity treatment landed in [#136](../codebase/136.md) and was **removed in #1578**: `ThreadScreen`'s `LazyColumn` no longer wraps rows in `Modifier.alpha(rowAlpha)` against a most-recent-boundary cutoff, so every row (including older `SessionBoundaryDelimiter` instances) draws at full opacity.
+  - Open: replace `MEMORY_PLUGIN_DOCS_URL` with the Phase 3+ deep link into the plugin install flow, at its two remaining call sites (channel overflow, Channel info). One-line constant swap.
