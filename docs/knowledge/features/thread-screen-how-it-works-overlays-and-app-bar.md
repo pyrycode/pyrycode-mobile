@@ -61,7 +61,7 @@ private fun ThreadStatusArea(
     ) {
         reading(Modifier.weight(1f))
         CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
-            NoticePill(text = pluralStringResource(R.plurals.thread_task_count, taskCount, taskCount), isError = false, onClick = onTasksClick, modifier = Modifier.sizeIn(minWidth = 104.dp, minHeight = 24.dp), shadowElevation = 0.dp)
+            NoticePill(text = pluralStringResource(R.plurals.thread_task_count, taskCount, taskCount), isError = false, onClick = onTasksClick, modifier = Modifier.sizeIn(minHeight = 24.dp), shadowElevation = 0.dp)
         }
     }
 }
@@ -141,12 +141,16 @@ column's 8dp gap), and again after it returns to zero, asserting the second zero
 the first.
 
 When a reading and task pill coexist, their content sets the band's height: both occupy 24dp at normal
-text scale, placing the pill at (288, 696)–(392, 720) in the 412 × 892 dark frame. Only this caller
-sets a 104 × 24dp minimum pill size; larger labels and text scales can grow. The former 28dp combined-band
-minimum raised the pill and composer by 4dp. A Robolectric label-width measurement was about 2dp wider
-than the managed device's, so a tolerant screen assertion missed the narrower device pill; the local
-minimum width closes that observed gap. The [labelled emulator comparison](../../../app/src/androidTest/assets/task-pill-1296/comparison-412x892.png)
-shows the result against Figma. With only the pill, the row keeps its intrinsic height. Physical pointer
+text scale. The pill hugs its label plus 16dp padding and keeps a 24dp minimum height; it no longer carries
+the 104dp minimum width #1296 gave it to paper over a ~2dp Robolectric-vs-device label-width gap.
+[#1628](https://github.com/pyrycode/pyrycode-mobile/issues/1628) dropped that `minWidth`, so a short label
+like "1 task running" hugs instead of leaving blank pill out to 104dp. "2 tasks running" still measures
+104 × 24dp, placing it at (288, 696)–(392, 720) in the 412 × 892 dark frame — the same frame Figma `568:3162`
+draws, because 104dp is that label's hug width, not an enforced minimum. The former 28dp combined-band
+minimum (#1296) that raised the pill and composer by 4dp is a separate, still-current fix for the band's
+height, not its width. The [labelled emulator comparison](../../../app/src/androidTest/assets/task-pill-1296/comparison-412x892.png)
+shows the two-task case against Figma; it predates #1628 and says nothing about the one-task width. With
+only the pill, the row keeps its intrinsic height. Physical pointer
 checks cover the pill, adjacent reading and composer targets; a device check covers the real keyboard and
 Actions menu with a visible pill. The fixed 16dp arc for retry, compaction and Reset came from device capture: a
 Material indeterminate arc could shrink to a barely visible stroke at one animation frame while a bounds
