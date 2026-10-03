@@ -611,7 +611,12 @@ fun ThreadScreen(
                             (shownQuestion?.let { it.batch.questions.size + 2 } ?: 0) +
                                 (if (openRequest != null) PERMISSION_ROW_COUNT else 0) +
                                 (if (answerRejected) 1 else 0)
-                        val restAdjustment = ordinaryMessageRestAdjustment(rows.lastOrNull(), promptRowCount)
+                        // Info banners retain their keys but render nothing; spacing follows the visible row.
+                        val newestRenderedRow =
+                            rows.lastOrNull { row ->
+                                ((row as? ThreadRow.Delivered)?.item as? ThreadItem.Banner)?.level != BannerLevel.Info
+                            }
+                        val restAdjustment = ordinaryMessageRestAdjustment(newestRenderedRow, promptRowCount)
                         var previousRestAdjustment by remember(listState) { mutableStateOf(restAdjustment) }
                         SideEffect {
                             val delta = with(density) { (previousRestAdjustment - restAdjustment).roundToPx() }

@@ -26,6 +26,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.ExperimentalTestApi
@@ -45,6 +46,7 @@ import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertWidthIsEqualTo
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -53,7 +55,9 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.Density
@@ -379,9 +383,29 @@ class QuestionBatchModalTest {
     @Test
     fun large_text_actions_stack_and_pointer_edges_submit_only_this_batch() {
         show(fontScale = 1.5f)
-        textNode("Kotlin").performClick()
-        textNode("Android").performClick()
-        val submit = textNode("Continue").assertIsDisplayed()
+        // Display-size changes can leave the ATD launcher focused while semantic actions still work.
+        rule.waitUntil(10_000) {
+            val focused =
+                rule.runOnIdle {
+                    rule.activity.window.decorView
+                        .hasWindowFocus()
+                }
+            if (!focused) {
+                ParcelFileDescriptor
+                    .AutoCloseInputStream(
+                        InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(
+                            "am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS",
+                        ),
+                    ).use { it.readBytes() }
+            }
+            focused
+        }
+        readableTextNode("Kotlin").performClick().assertIsSelected()
+        readableTextNode("Android").performClick().assertIsOn()
+        val submit = textNode("Continue").assertIsDisplayed().assertIsEnabled()
+        // ScrollTo only sees the full drawing viewport, including rows behind chrome. Put the
+        // actions at the newest resting end before testing their actual pointer hit regions.
+        rule.onNode(hasScrollToIndexAction()).performScrollToIndex(0)
         val cancel = rule.onNodeWithText("Cancel").assertIsDisplayed()
         val cancelBounds = cancel.fetchSemanticsNode().boundsInRoot
         val submitBounds = submit.fetchSemanticsNode().boundsInRoot
@@ -391,6 +415,25 @@ class QuestionBatchModalTest {
         assertTrue("Cancel retains a 48dp touch region", cancelTouch.height >= 48f)
         assertTrue("Continue retains a 48dp touch region", submitTouch.height >= 48f)
         assertTrue("neighboring touch regions cannot overlap", cancelTouch.bottom <= submitTouch.top)
+        val chromeTop =
+            rule
+                .onNodeWithTag("thread-composer")
+                .fetchSemanticsNode()
+                .boundsInRoot.top
+        val headerBottom =
+            rule
+                .onNodeWithTag("thread-top-bar")
+                .fetchSemanticsNode()
+                .boundsInRoot.bottom
+        assertTrue("the tested Continue edge must be readable above chrome", submitBounds.top - 1f in headerBottom..chromeTop)
+        rule.runOnIdle {
+            assertTrue(
+                "physical input needs the thread window focused",
+                rule.activity.window.decorView
+                    .hasWindowFocus(),
+            )
+        }
+        submit.assertIsEnabled()
         submit.performTouchInput { click(Offset(center.x, -1f)) }
         rule.runOnIdle {
             assertEquals(1, answers.size)
@@ -554,6 +597,26 @@ class QuestionBatchModalTest {
     private fun textNode(text: String): SemanticsNodeInteraction {
         rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(text))
         return rule.onNodeWithText(text)
+    }
+
+    /** The list draws under chrome; ScrollTo's viewport alone does not establish a usable pointer target. */
+    private fun readableTextNode(text: String): SemanticsNodeInteraction {
+        val node = textNode(text)
+        val bounds = node.fetchSemanticsNode().boundsInRoot
+        val header = rule.onNodeWithTag("thread-top-bar").fetchSemanticsNode().boundsInRoot
+        val composer = rule.onNodeWithTag("thread-composer").fetchSemanticsNode().boundsInRoot
+        val shift =
+            when {
+                bounds.top < header.bottom -> header.bottom - bounds.top + 4f
+                bounds.bottom > composer.top -> composer.top - bounds.bottom - 4f
+                else -> 0f
+            }
+        if (shift != 0f) {
+            rule.onNode(hasScrollToIndexAction()).performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, shift) }
+        }
+        val visible = node.fetchSemanticsNode().boundsInRoot
+        assertTrue("$text must be readable between chrome: $visible", visible.top >= header.bottom && visible.bottom <= composer.top)
+        return node
     }
 
     private fun tagNode(

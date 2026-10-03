@@ -29,6 +29,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.components.MessageBubbleSelectionTest
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -49,6 +50,18 @@ class ThreadChromeTest {
 
     private var draft by mutableStateOf("")
     private var attachments by mutableStateOf(emptyList<PendingAttachment>())
+    private var extraItems by mutableStateOf(emptyList<ThreadItem>())
+
+    @Test fun invisible_info_banners_preserve_the_newest_text_rest_gap() {
+        screen()
+        assertRestGap()
+        rule.runOnIdle {
+            extraItems = listOf(ThreadItem.Banner(BannerLevel.Info, "Invisible notice", false, Instant.parse("2026-10-04T10:01:00Z")))
+        }
+        assertRestGap()
+        rule.runOnIdle { extraItems = emptyList() }
+        assertRestGap()
+    }
 
     @Test fun newest_text_surface_rests_12dp_above_status_after_each_composer_resize() {
         screen()
@@ -177,7 +190,7 @@ class ThreadChromeTest {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, 892.dp))) {
                 PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(
-                        state,
+                        state.copy(items = state.items + extraItems),
                         {},
                         {},
                         ConnectionState.Connected,
