@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.diagnostics.MessageTrail
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.LiveSessionEvent
@@ -148,6 +149,18 @@ class RemoteConversationRepository(
      * constructions compile unchanged and keep connection-scoped readings.
      */
     hostReadings: HostReadings = HostReadings(now),
+    /**
+     * The process-wide message trail (#1564), kept in release builds: [sendMessage]'s sent, acknowledged and
+     * failed lines and the thread's queued, delivered and dropped ones. [RelayRepositoryCoordinator] threads
+     * the `AppModule` instance in. **Defaulted to a file-less instance** so existing constructions compile.
+     */
+    messageTrail: MessageTrail = MessageTrail(),
+    /**
+     * This connection's `conn_id` as [de.pyryco.mobile.data.network.RelayLog.redactConnId]'s 8-hex token, for
+     * the trail's sent line (#1564). A supplier for [negotiatedCapabilities]' reason: the repository is built
+     * before `Open`. Never the full `conn_id`.
+     */
+    connToken: () -> String? = { null },
 ) : ConversationRepository {
     /**
      * The conversation list and the last-message previews (#913): the list projection, the most-recent
@@ -205,7 +218,7 @@ class RemoteConversationRepository(
      * with every write that folds a thread row. [onInbound] hands it the thread frames behind the
      * `interactive` gate, and [sendMessage], [dropQueuedMessage] and [requestHistory] record into it.
      */
-    private val threadProjection = ThreadProjection()
+    private val threadProjection = ThreadProjection(messageTrail)
 
     /**
      * The files the daemon offered in each conversation on this connection (#898), each also appended to
@@ -270,6 +283,8 @@ class RemoteConversationRepository(
             conversationList = conversationListProjection,
             threadProjection = threadProjection,
             queueProjection = queueProjection,
+            trail = messageTrail,
+            connToken = connToken,
         )
 
     /**

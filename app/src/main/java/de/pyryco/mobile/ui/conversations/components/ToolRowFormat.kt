@@ -79,7 +79,8 @@ internal fun toolHeadline(
 /**
  * The collapsed row's subject: for [BASH_TOOL_NAME] its description, then its command; otherwise the first
  * of [TOOL_SUBJECT_FIELDS] with a non-empty value, shortened when it is a path; otherwise the server's
- * one-line [input] précis. A row restored from the disk cache has no [inputFields] and takes the précis.
+ * one-line [input] précis. A row with no [inputFields] at all (an older cache file, or a daemon that sent no
+ * `input`) has no subject (#1575): its précis is the whole input as JSON, cut mid-value at 200 characters.
  * "Non-empty" is `!= ""`, as on desktop — a whitespace-only value is left unguarded on purpose.
  */
 internal fun toolRowSubject(
@@ -87,6 +88,7 @@ internal fun toolRowSubject(
     inputFields: Map<String, String>,
     input: String,
 ): String {
+    if (inputFields.isEmpty()) return ""
     val picked =
         (if (toolName == BASH_TOOL_NAME) firstNonEmpty(inputFields, BASH_SUBJECT_FIELDS) else null)
             ?: firstNonEmpty(inputFields, TOOL_SUBJECT_FIELDS)

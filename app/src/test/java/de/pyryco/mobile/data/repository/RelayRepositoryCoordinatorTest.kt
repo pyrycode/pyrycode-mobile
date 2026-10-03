@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.diagnostics.MessageTrail
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.LiveSessionEvent
@@ -133,6 +134,38 @@ class RelayRepositoryCoordinatorTest {
             assertTrue("the per-connection pump is started", env.pumps.single().started)
 
             env.coordinator.close()
+        }
+
+    // ---- #1564: the message trail gets the redacted connection token, and a teardown ends the send --
+
+    @Test
+    fun aSend_logsTheRedactedConnId_andATeardownBeforeTheAck_logsTornDown() =
+        runTest {
+            val logcat = mutableListOf<String>()
+            val trail = MessageTrail(writerDispatcher = StandardTestDispatcher(testScheduler), logcat = { logcat += it })
+            val env = newEnv(messageTrail = trail)
+            val connId = "conn-0f6c2a9e-full-daemon-id"
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            env.pumps.single().open(connId = connId)
+            runCurrent()
+
+            backgroundScope.launch {
+                runCatching {
+                    env.coordinator.currentRepository.value!!
+                        .sendMessage("c1", "hi")
+                }
+            }
+            runCurrent()
+            env.connections.value = null
+            runCurrent()
+
+            assertEquals(2, logcat.size)
+            assertTrue(logcat[0].endsWith("state=sent conn=${RelayLog.redactConnId(connId)}"))
+            assertTrue(logcat[1].endsWith("state=failed reason=torn_down"))
+            assertFalse(logcat.any { connId in it })
+            env.coordinator.close()
+            trail.dispose()
         }
 
     // ---- AC #2/#3: between connections the published repository is null --------------------------
@@ -1776,6 +1809,7 @@ class RelayRepositoryCoordinatorTest {
         pushTokens: Flow<String?> = flowOf(null),
         relayStatus: MutableStateFlow<RelayLinkStatus> = MutableStateFlow(RelayLinkStatus.Connected),
         now: () -> Instant = Clock.System::now,
+        messageTrail: MessageTrail = MessageTrail(),
     ): Env {
         val connections = MutableStateFlow<RelayTransport?>(null)
         val pumps = mutableListOf<FakeManagedPump>()
@@ -1788,6 +1822,7 @@ class RelayRepositoryCoordinatorTest {
                 deviceName = deviceName,
                 pushTokens = pushTokens,
                 now = now,
+                messageTrail = messageTrail,
             )
         coordinator.start()
         return Env(connections, pumps, coordinator, relayStatus)
