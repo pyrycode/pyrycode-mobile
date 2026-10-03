@@ -43,12 +43,15 @@ class BackgroundTaskPanelTest {
     private fun setThread(
         roster: BackgroundTaskRoster?,
         count: Int,
+        isPromoted: Boolean = true,
+        mutationsSupported: Boolean = true,
     ) {
         val state =
             ThreadUiState(
                 conversationId = "c1",
                 displayName = "Test channel",
-                isPromoted = true,
+                isPromoted = isPromoted,
+                mutationsSupported = mutationsSupported,
                 hasMessages = false,
                 backgroundTasks = roster,
                 backgroundTaskCount = count,
@@ -81,6 +84,32 @@ class BackgroundTaskPanelTest {
     private fun openPanelFromMenu(count: Int) {
         button("Actions").performClick()
         button("Background tasks ($count)").performClick()
+    }
+
+    @Test
+    fun overflow_withNoReport_opensTheSamePanelAsActions_andDismissesTheMenu() {
+        setThread(roster = null, count = 0)
+        assertOverflowAndActionsReading(UNREPORTED)
+    }
+
+    @Test
+    fun overflow_inAChat_withoutMutationsOrRunningTasks_opensTheEmptyPanel() {
+        setThread(roster = BackgroundTaskRoster(emptyList(), 0), count = 0, isPromoted = false, mutationsSupported = false)
+        assertOverflowAndActionsReading(EMPTY)
+    }
+
+    private fun assertOverflowAndActionsReading(reading: String) {
+        composeTestRule.onNodeWithContentDescription("More actions").performClick()
+        button("Background tasks").performClick()
+        composeTestRule.onNodeWithText("Channel info").assertDoesNotExist()
+        composeTestRule.onNodeWithText(reading).assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription("Close").performClick()
+        composeTestRule.onNodeWithText("Background tasks").assertDoesNotExist()
+        openPanelFromMenu(count = 0)
+        composeTestRule.onNodeWithText(reading).assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription("Close").performClick()
+        assertTrue(overflowEvents.isEmpty())
+        assertTrue(composerCommands.isEmpty())
     }
 
     private fun task(
