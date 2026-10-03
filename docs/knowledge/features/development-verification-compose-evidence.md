@@ -221,6 +221,25 @@ itself, so a single red run proves nothing about whose change caused it.
 Filed as #1467 and fixed there: the class moved its resize into the same
 `order = 0` `TestRule` shape, reading `compactLargeTextKeepsControlsAndBodyReachable`'s
 320x700 size from `@Viewport("320x700")`, with the compose rule at `order = 1`.
+`ComposerFieldCaptureTest#compactLargeTextKeepsSendReachable` and
+`ChannelInfoCaptureTest#channelInfoScrolledMatches668_5460` hit the same race
+again (#1654's sharded UI gate: both failed with "No compose hierarchies
+found", both passed 1/1 on a focused re-run against the merge base and the PR
+head) — neither class has adopted the `order = 0` viewport-rule shape yet.
+Filed as #1661.
+
+A whole-tree text assertion in a capture test can match seeded thread
+content, not just the control it means to check. `ThreadDesignCaptureTest
+#openRunConfiguration()`'s `onAllNodesWithText("Default", …)` asserted no
+node anywhere contained "default", so it failed whenever the seeded reply
+"Workspace picker — default to the current cwd …" was on screen at 320×700
+above the expanded run-configuration rows — intermittent, because it depended
+on where the thread list happened to be scrolled (#1654, unmasked by #1644).
+Scope a tree-wide "absent" check to the surface under test instead:
+`hasText(..., substring = true, ignoreCase = true) and
+!hasAnyAncestor(hasTestTag("thread-message-region"))` excludes every thread
+message while still covering the run-configuration sheet and footer, which
+both sit outside that region.
 
 Reply assertions must not depend on total substring-count growth: removing queued
 prompt text can offset a newly displayed assistant reply. For fresh discussions
