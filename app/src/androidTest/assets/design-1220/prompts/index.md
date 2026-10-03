@@ -9,9 +9,9 @@
 - **Capture:** `PromptsDesignCaptureTest` on the full `pixel8Api35` image (API 35) with
   `requireRealSystemBars=true`, density 1.0, fixed dark theme, real 24 px status and navigation bars. Each `.txt`
   records the measured values.
-- **Result:** `prompts-results.xml` is #1501's whole-class run, below: 6 executed, 0 failed, 0 skipped. Every
-  capture in this folder came from that run, except `switch-list.png` and its comparisons, replaced by
-  #1507's re-capture below.
+- **Result:** `prompts-results.xml` is #1502's whole-class run, below: 9 executed, 0 failed, 0 skipped. The
+  three edge-state captures come from that run; every other capture is #1501's, except `switch-list.png` and
+  its comparisons, replaced by #1507's re-capture below.
 - **#1484 re-capture:** `feature/1484` (merge base `ca50716f`) changed the question actions. The whole class ran
   again in one run on the same device and arguments: 6 executed, 0 failed, 0 skipped. The `question-unanswered`,
   `question-answered`, `question-keyboard` and `question-compact` captures and their comparisons come from that
@@ -34,6 +34,14 @@
   alone on `feature/1507` (merge base `45179f64`), on the same device and arguments: 1 executed, 0 failed,
   0 skipped. Only that capture changed: the list now reads the prompts, so two rows show the waiting mark. Every
   other file here is still #1501's.
+- **#1502 edge states:** the group Prompt edge states `668:3051`, drawn on 2026-10-02 and exported with
+  `get_screenshot` on 2026-10-03, holds three frames in the same fixture. `PromptsDesignCaptureTest` ran as a
+  whole class on `feature/1502` (merge base `fb1a923b`), on the same device and arguments: 9 executed, 0
+  failed, 0 skipped. A run before it had the same counts, and one in between failed only
+  `questionKeyboardFrame` on the known 332 px keyboard. Only the three new captures and their comparisons were
+  copied here. The run's other captures differ from the files here because `main` has moved since #1501, and
+  re-judging them is not this ticket's work. These frames draw "Cxt high: 84%" in the warning colour and the
+  tune icon, so the footer matches on all three and nothing goes to #1485.
 - **#1543 redraw:** the two compact frames (`639:3308`, `636:4066`) were redrawn at Android's 150 % on 2026-10-02
   and exported again with `get_screenshot`. Type sizes and line boxes follow `spPx`; the 11 and 12 sp sizes, which
   `spPx` does not list, scale by 1.5 in the platform's table. The button labels' letter spacing is 1.5 times the
@@ -60,9 +68,11 @@ arming tap go through the UI. The draft "My message" is set through the view mod
 the composer makes, and the Other text "Web" through `OtherTextChanged`, so no keyboard opens outside the
 keyboard frame. The keyboard frame focuses the Other field through the UI.
 
-**Footer, every frame.** The shipped footer reads "Cxt high: 84%" in the warning colour where every frame reads
-"Cxt: 84%", and it draws the Status opener (tune icon) beside the paperclip. Each item records this under
-Typography, Colour and Icon paths and routes it to #1485, which holds the design decision.
+**Footer, board `635:2036` frames.** The shipped footer reads "Cxt high: 84%" in the warning colour where
+these frames read "Cxt: 84%", and it draws the Status opener (tune icon) beside the paperclip. Each of their
+items records this under Typography, Colour and Icon paths and routes it to #1485, which holds the design
+decision. The three `668:3051` edge-state frames already draw "Cxt high: 84%" and the tune icon, so their
+items find a match there and route nothing to #1485 (see "#1502 edge states" above).
 
 **Bars.** The app keeps the thread inside the 24 px status bar and the frames have none, so the app's header
 sits 24 px lower than Figma's. As in the onboarding audit, that move is not a mismatch; everything else is
@@ -228,6 +238,8 @@ heights, gaps and box sizes. Text is compared by glyph height, and a run up to 4
 | Icon paths | mismatch: footer tune icon. The unchecked checkbox matches |
 | Component state | match: "Waiting for permission"; grant offered and unchecked |
 
+- **Not connected** (`668:3169`) measures the same 7 px drift at this card's bottom against this frame; #1601
+  names both.
 - **Routed:** #1509, #1485. Choice gap and context spacing fixed by #1501
 
 ### Permission · Session grant selected — `639:2666`
@@ -380,14 +392,81 @@ heights, gaps and box sizes. Text is compared by glyph height, and a run up to 4
 
 - **Routed:** #1593 (the frame's waiting marks; Figma only)
 
+### Permission · Answer refused — `668:3054`
+
+- **Owning ticket:** #1340 (refused answer in its chat)
+- **Capture:** `permission-rejected.png` (412x892, 1.0, `secure=false`: no prompt shows)
+- **Side-by-side:** `permission-rejected-side-by-side.png`
+- **Overlay:** `permission-rejected-overlay.png`
+- `permissionRejectedFrame` sets `hostModal` to `rejectedConversations` holding "Client planning" and asserts
+  that `thread-permission-rejection` and "Your answer was rejected." are displayed before the capture.
+- **Verdict:**
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | mismatch: the pill is 22 px tall against the frame's 24; its width (x 20 to 201) matches |
+| Padding | match: 20 px gutter |
+| Spacing | mismatch: the pill's top sits 32 px under the stream's top against the frame's 28, from the item's 4 dp vertical gutter |
+| Typography | match: the label and the footer "Cxt high: 84%" |
+| Colour | match: primary-container fill (`#134A74`), the label and the X; footer warning colour |
+| Borders | match: none |
+| Radii | match |
+| Icon paths | match: the X, the tune icon and the paperclip |
+| Component state | match: the notice alone in the slot the card held, with its X; no prompt, "Actions" with its chevron and Send enabled |
+
+- **Routed:** #1599 (pill height and offset)
+
+### Questions · Send failed — `668:3094`
+
+- **Owning ticket:** #1305
+- **Capture:** `question-send-failed.png` (412x892, 1.0)
+- **Side-by-side:** `question-send-failed-side-by-side.png`
+- **Overlay:** `question-send-failed-overlay.png`
+- `DesignInputs.failQuestionSends` makes the thread's `answerQuestionBatch` throw. `questionSendFailedFrame`
+  answers the batch as `636:3540` (Kotlin; Kotlin and Other "Web"), taps Continue, waits for
+  `QuestionSendPhase.Failed` and asserts `question-send-failed` displayed and Cancel and Continue enabled.
+- **Verdict:**
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | match: cards and 40 px buttons, as Answers selected. As there, the bars push the stream so the LANGUAGE header scrolls under the top bar; the frame shows the batch unscrolled |
+| Padding | match |
+| Spacing | mismatch: the failure line's glyphs start 11 px under the Targets card's border against the frame's 17, so the line sits 6 px nearer the card; from its glyph top to the buttons is 30 px against 28. Cancel and Continue end 41 px under the card against 45 |
+| Typography | match: "Couldn't send. Try again." and every label; footer "Cxt high: 84%" |
+| Colour | match: the line in the error colour (`#FFB4AB`), the enabled Continue; footer warning colour |
+| Borders | match |
+| Radii | match |
+| Icon paths | match |
+| Component state | match: the answers kept, Cancel and Continue both enabled for a retry, "Waiting for answers" |
+
+- **Routed:** #1600 (failure line spacing)
+
+### Permission · Not connected — `668:3169`
+
+- **Owning ticket:** #1321 (answers disabled while not connected), #1306, #818
+- **Capture:** `permission-disconnected.png` (412x892, 1.0)
+- **Side-by-side:** `permission-disconnected-side-by-side.png`
+- **Overlay:** `permission-disconnected-overlay.png`
+- `permissionDisconnectedFrame` shows the session-grant permission, sets `connectionState` to
+  `ConnectionState.Reconnecting(12)`, waits for "Reconnecting in 12s" and asserts Allow once, Reject once and
+  Cancel not enabled and the grant row enabled.
+- **Verdict:**
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | mismatch: the card is 410 px tall against the frame's 421 and starts 4 px lower (the item's 4 dp gutter). Row by row from the frame: title glyphs +3 px, prompt +1, Reason −2, grant label −4, Allow once −6, card bottom −7. `permission-grant-offered.png` measures the same against `639:2451`. Cancel 12 px under the card matches |
+| Padding | match: 16 px card padding, 20 px gutters |
+| Spacing | mismatch: as Geometry; the choices' 8 px gap matches |
+| Typography | match: every label; footer "Cxt high: 84%" |
+| Colour | mismatch: the disabled Reject once fill reads `#25292E` where the frame draws `#292D31`. Allow once's primary border and dimmed label, Cancel's dimmed border and label, and the dimmed Send match |
+| Borders | match |
+| Radii | match |
+| Icon paths | match: "Actions" without its chevron, tune icon and paperclip |
+| Component state | match: "Reconnecting in 12s"; Allow once, Reject once and Cancel disabled; the session grant enabled |
+
+- **Routed:** #1601 (card height, disabled fill)
+
 ## Gaps
 
-Prompt states reachable from `MainActivity` that have no frame on board `635:2036` (re-read 2026-10-02).
-They are not captured here, and #1502 asks for their frames:
-
-- **Refused permission answer:** the `permission-rejection` item in `ThreadScreen.kt`, a `NoticePill` reading
-  `permission_answer_rejected` in the slot the card held. Owning ticket: #1340. Routed: #1502.
-- **Question send failure:** the `question-send-failed` line in `QuestionBatchActions` (`QuestionBatchModal.kt`).
-  Owning ticket: #1305. Routed: #1502.
-- **Prompts while disconnected:** answers are disabled while the host is not connected. Owning ticket:
-  #1321. Routed: #1502.
+None. The three states that had no frame on board `635:2036` (refused answer, send failure, prompts while
+disconnected) are judged above against `668:3051`.

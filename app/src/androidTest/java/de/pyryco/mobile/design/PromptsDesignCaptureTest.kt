@@ -12,13 +12,17 @@ import android.view.WindowManager
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -31,6 +35,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.ModalContext
 import de.pyryco.mobile.data.model.ModalOption
@@ -41,6 +46,7 @@ import de.pyryco.mobile.data.model.QuestionOption
 import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.ui.conversations.thread.QuestionModalEvent
+import de.pyryco.mobile.ui.conversations.thread.QuestionSendPhase
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -144,6 +150,45 @@ class PromptsDesignCaptureTest {
         reachable("Permission required", "Allow Claude to read this project?", GRANT_LABEL, "Allow once", "Reject once", "Cancel")
         scrollTo(hasText("Cancel"))
         secureCapture("permission-compact", "639:3308")
+    }
+
+    /** `668:3054` (#1340): the refused answer's notice in the slot the card held; no prompt shows, so no `FLAG_SECURE`. */
+    @Test fun permissionRejectedFrame() {
+        open(CLIENT)
+        val conversation = thread().state.value.conversationId
+        inputs.hostModal.value = HostModalState(rejectedConversations = setOf(conversation))
+        rule.waitUntil(5_000) { thread().answerRejected.value }
+        rule.waitForIdle()
+        rule.onNodeWithTag("thread-permission-rejection").assertIsDisplayed()
+        rule.onNodeWithText("Your answer was rejected.").assertIsDisplayed()
+        secureCapture("permission-rejected", "668:3054", expectSecure = false)
+    }
+
+    /** `668:3094` (#1305): Continue on the answered batch fails, and both actions stay usable for a retry. */
+    @Test fun questionSendFailedFrame() {
+        inputs.failQuestionSends = true
+        val chat = openWithQuestion()
+        answer(chat)
+        scrollTo(hasText("Continue"))
+        rule.onNodeWithText("Continue").performClick()
+        rule.waitUntil(5_000) { chat.questionModal.value?.phase == QuestionSendPhase.Failed }
+        scrollTo(hasTestTag("question-send-failed"))
+        rule.onNodeWithTag("question-send-failed").assertIsDisplayed()
+        rule.onNodeWithText("Cancel").assertIsEnabled()
+        rule.onNodeWithText("Continue").assertIsEnabled()
+        secureCapture("question-send-failed", "668:3094")
+    }
+
+    /** `668:3169` (#1321): while reconnecting the choices and Cancel are disabled and the session grant is not. */
+    @Test fun permissionDisconnectedFrame() {
+        open(CLIENT)
+        show(permission("disconnected", grant = true))
+        inputs.connectionState.value = ConnectionState.Reconnecting(12)
+        rule.waitUntil(5_000) { rule.onAllNodesWithText("Reconnecting in 12s").fetchSemanticsNodes().isNotEmpty() }
+        rule.waitForIdle()
+        for (label in listOf("Allow once", "Reject once", "Cancel")) rule.onNodeWithText(label).assertIsNotEnabled()
+        rule.onNode(hasText(GRANT_LABEL) and isToggleable()).assertIsEnabled()
+        secureCapture("permission-disconnected", "668:3169")
     }
 
     /** `640:2437`: each prompt waits in its own chat while the list and another chat stay usable. */
