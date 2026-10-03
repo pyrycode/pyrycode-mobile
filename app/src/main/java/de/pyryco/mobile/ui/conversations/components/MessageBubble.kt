@@ -303,6 +303,9 @@ private fun MessageContainer(
                         }
                         if (!metaRow.visible) {
                             contentDescription = sentDescription
+                        }
+                        // A streaming reply has no toggle, and no copy either: a copy always takes the finished text.
+                        if (!metaRow.visible && onToggle != null) {
                             customActions =
                                 listOf(
                                     CustomAccessibilityAction(copyLabel) {

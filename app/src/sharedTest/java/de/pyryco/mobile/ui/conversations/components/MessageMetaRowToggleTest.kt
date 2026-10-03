@@ -19,12 +19,14 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performFirstLinkClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.text.AnnotatedString
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
@@ -83,9 +85,13 @@ class MessageMetaRowToggleTest {
         role: Role,
         content: String,
         isStreaming: Boolean = false,
-    ) = Message(id, "s1", role, content, TIMESTAMP, isStreaming)
+        attachments: List<MessageAttachment> = emptyList(),
+    ) = Message(id, "s1", role, content, TIMESTAMP, isStreaming, attachments = attachments)
 
-    private fun setThread(items: () -> List<Message>) {
+    private fun setThread(
+        attachmentStates: Map<String, AttachmentViewState> = emptyMap(),
+        items: () -> List<Message>,
+    ) {
         composeRule.setContent {
             PyrycodeMobileTheme {
                 CompositionLocalProvider(
@@ -105,6 +111,7 @@ class MessageMetaRowToggleTest {
                         onSendMessage = {},
                         connectionState = ConnectionState.Connected,
                         onRetry = {},
+                        attachmentStates = attachmentStates,
                     )
                 }
             }
@@ -181,6 +188,61 @@ class MessageMetaRowToggleTest {
         composeRule.onNodeWithContentDescription(codeCopy).performClick()
         assertRowsShown(0)
         assertEquals(listOf(CODE), clipboard.writes)
+    }
+
+    @Test
+    fun aTapOnALoadingNotFoundOrFailedAttachment_doesNotToggleTheRow() {
+        setThread(
+            attachmentStates = mapOf("nf" to AttachmentViewState.NotFound, "f" to AttachmentViewState.Failed),
+        ) {
+            listOf(
+                message(
+                    "a",
+                    Role.Assistant,
+                    ASSISTANT_BODY,
+                    attachments =
+                        listOf(
+                            MessageAttachment("l", "loading.png", "image/png"),
+                            MessageAttachment("nf", "gone.zip", "application/zip"),
+                            MessageAttachment("f", "broken.txt", "text/plain"),
+                        ),
+                ),
+            )
+        }
+        val image = composeRule.onAllNodesWithTag(MESSAGE_ATTACHMENT_IMAGE_TEST_TAG, useUnmergedTree = true)
+        val files = composeRule.onAllNodesWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG, useUnmergedTree = true)
+        assertEquals(1, image.fetchSemanticsNodes().size)
+        assertEquals(2, files.fetchSemanticsNodes().size)
+
+        image[0].performClick()
+        assertRowsShown(0)
+        files[0].performClick()
+        assertRowsShown(0)
+        files[1].performClick()
+        assertRowsShown(0)
+
+        composeRule.onNodeWithText(ASSISTANT_BODY).performClick()
+        assertRowsShown(1)
+    }
+
+    @Test
+    fun theBubblesScreenReaderClick_showsAndHidesTheRow() {
+        setThread { listOf(message("a", Role.Assistant, ASSISTANT_BODY)) }
+        val bubble = composeRule.onAllNodesWithTag(MESSAGE_BUBBLE_TEST_TAG)[0]
+        assertEquals(
+            string(R.string.thread_message_show_details),
+            bubble.fetchSemanticsNode().config[SemanticsActions.OnClick].label,
+        )
+
+        bubble.performSemanticsAction(SemanticsActions.OnClick)
+        assertRowsShown(1)
+        assertEquals(
+            string(R.string.thread_message_hide_details),
+            bubble.fetchSemanticsNode().config[SemanticsActions.OnClick].label,
+        )
+
+        bubble.performSemanticsAction(SemanticsActions.OnClick)
+        assertRowsShown(0)
     }
 
     @Test

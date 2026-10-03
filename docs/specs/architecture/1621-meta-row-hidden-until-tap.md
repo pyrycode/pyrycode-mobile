@@ -75,3 +75,12 @@ Pending for the documentation stage: add a row to the `### Messages and tools` t
 ## Open Questions
 
 - Does `detectTapGestures` on the `Surface` see taps that land on non-link markdown text? Expected yes (a `LinkAnnotation` only consumes on its span); test 1 taps body text to prove it.
+
+## Revisions
+
+### 2026-10-03 — rework after review (MUST FIX on AC3)
+
+- **Non-actionable attachments swallow a tap.** The plan's claim that attachments are `combinedClickable` held only for `Ready` and deferred ones. In `MessageAttachmentItem`, the Loading, NotFound and Failed states had no pointer handler, so their tap reached the bubble's detector and toggled the row. The `else` branch of `actions` now gives them `pointerInput { detectTapGestures() }`: a tap is consumed and does nothing, and no click semantics are added, so TalkBack announces no dead button. The Failed row's Retry button still consumes its own tap first.
+- **Streaming bubbles carry no copy action.** The copy custom action is now set only when the row is hidden and the bubble has a toggle, so a streaming reply cannot copy partial text. The "Sent …" description still applies whenever the row is hidden.
+- **Test host.** `MessageMetaRowToggleTest` mounts only `ThreadScreen` (the real wiring) rather than also a local `remember` host. It adds a case that taps a loading image, a not-found file and a failed file and asserts no row appears, and a case that drives the bubble's `SemanticsActions.OnClick`, checking its show/hide label and that it toggles the row.
+- **Open question resolved.** A tap on non-link markdown text reaches the bubble's detector; the AC1 test taps body text.

@@ -7,6 +7,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,6 +40,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -285,7 +287,8 @@ private fun MessageAttachmentItem(
     val name = target.displayName
     val isImage = target.mimeType?.startsWith("image/", ignoreCase = true) == true
     // #985: only a file that is here acts, and #1329: one not fetched yet acts by fetching first. Loading,
-    // not found and failed offer neither open nor save.
+    // not found and failed offer neither open nor save. #1621: they still swallow a tap, without click
+    // semantics, so it does not reach the bubble and toggle its meta row.
     val actions =
         when {
             ready != null -> Modifier.attachmentActions(onOpen = { onOpen(target) }, onSave = { onSave(target) })
@@ -294,7 +297,7 @@ private fun MessageAttachmentItem(
                     onOpen = { onRequest(attachment, AttachmentAction.OPEN) },
                     onSave = { onRequest(attachment, AttachmentAction.SAVE) },
                 )
-            else -> Modifier
+            else -> Modifier.pointerInput(Unit) { detectTapGestures() }
         }
     val fileRow = @Composable { AttachmentFileRow(name = name, state = shownState, onRetry = { onRetry(id) }, modifier = actions) }
     if (isImage && (shownState is AttachmentViewState.Loading || ready != null)) {
