@@ -8,6 +8,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
@@ -38,9 +39,14 @@ import de.pyryco.mobile.data.model.BackgroundTask
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.conversations.components.AttachmentSource
+import de.pyryco.mobile.ui.conversations.components.AttachmentThumbnailDecoder
+import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
+import de.pyryco.mobile.ui.conversations.components.LocalAttachmentThumbnailDecoder
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -51,6 +57,7 @@ import org.junit.runner.RunWith
 import java.io.File
 import java.util.Locale
 import java.util.TimeZone
+import android.graphics.Color as AndroidColor
 
 /** Deterministic thread fixtures for real-emulator frame captures and compact-text reachability. */
 @RunWith(AndroidJUnit4::class)
@@ -73,7 +80,14 @@ class ThreadFrameCaptureTest {
     private var state by mutableStateOf(ThreadUiState("frame", "pyrycode discord integration", isPromoted = true))
     private var thinking by mutableStateOf(false)
     private var attachments by mutableStateOf(emptyList<PendingAttachment>())
+    private var attachmentStates by mutableStateOf(emptyMap<String, AttachmentViewState>())
     private var composeView: View? = null
+
+    // A flat stand-in for the frame's photo: the capture checks the slot's place, size and corners, not pixels.
+    private val frameThumbnails =
+        AttachmentThumbnailDecoder { _, _ ->
+            Bitmap.createBitmap(160, 160, Bitmap.Config.ARGB_8888).apply { eraseColor(AndroidColor.GRAY) }.asImageBitmap()
+        }
 
     @OptIn(ExperimentalTestApi::class)
     private fun show(
@@ -87,6 +101,7 @@ class ThreadFrameCaptureTest {
                 CompositionLocalProvider(
                     LocalDensity provides Density(density.density, fontScale),
                     LocalClipboardManager provides clipboard,
+                    LocalAttachmentThumbnailDecoder provides frameThumbnails,
                 ) {
                     PyrycodeMobileTheme(darkTheme = true) {
                         composeView = LocalView.current
@@ -98,6 +113,7 @@ class ThreadFrameCaptureTest {
                             onRetry = {},
                             isThinking = thinking,
                             attachments = attachments,
+                            attachmentStates = attachmentStates,
                         )
                     }
                 }
@@ -214,6 +230,46 @@ class ThreadFrameCaptureTest {
             Locale.setDefault(priorLocale)
             TimeZone.setDefault(priorZone)
         }
+    }
+
+    @Test
+    fun attachmentsAboveText_photoAndPdfMessagesAgainst16_8() {
+        val photo = "0f8fad5b-d9cb-469f-a165-70867728950e"
+        val pdf = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+        val pdfName = "Filename of the Best file attachment that the assistant generated.pdf"
+        val morbi = "Morbi efficitur scelerisque augue, in pretium erat tempor in."
+
+        fun withAttachment(
+            item: ThreadItem.MessageItem,
+            attachment: MessageAttachment,
+        ) = item.copy(message = item.message.copy(attachments = listOf(attachment)))
+        state =
+            state.copy(
+                hasMessages = true,
+                items =
+                    listOf(
+                        withAttachment(
+                            presentationMessage("u1", Role.User, "Lorem ipsum dolor sit amet.\n\n$morbi"),
+                            MessageAttachment(photo, "photo.jpg", "image/jpeg"),
+                        ),
+                        withAttachment(
+                            presentationMessage(
+                                "a1",
+                                Role.Assistant,
+                                "Lorem ipsum dolor sit amet, consectetur adipiscing elit.\n\n$morbi",
+                            ),
+                            MessageAttachment(pdf, pdfName, "application/pdf"),
+                        ),
+                    ),
+            )
+        attachmentStates =
+            mapOf(
+                photo to AttachmentViewState.Ready(AttachmentSource.Kept(File("/frame/$photo")), "photo.jpg", "image/jpeg"),
+                pdf to AttachmentViewState.Ready(AttachmentSource.Kept(File("/frame/$pdf")), pdfName, "application/pdf"),
+            )
+        show(412, 892)
+        rule.onNodeWithContentDescription("photo.jpg").assertIsDisplayed()
+        capture("412x892-attachments-above-text", prefix = "message-1513")
     }
 
     @Test
