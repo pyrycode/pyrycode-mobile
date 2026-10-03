@@ -84,12 +84,30 @@ class SettingsNavigationTest {
     @Test fun pushPreferenceSurvivesReopeningTheModal() {
         start()
         openSettings()
-        val toggle = compose.onNode(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Switch))
-        toggle.assertIsOn().performClick().assertIsOff()
+        compose
+            .onAllNodes(switch)[0]
+            .assertIsOn()
+            .performClick()
+            .assertIsOff()
         compose.waitUntil(5_000) { runBlocking { !preferences.notificationsEnabled.first() } }
         compose.onNodeWithText("Done").performClick()
         openSettings()
-        compose.onNode(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Switch)).assertIsOff()
+        compose.onAllNodes(switch)[0].assertIsOff()
+    }
+
+    @Test fun collapseToolUsesPreferenceSurvivesReopeningTheModal() {
+        start()
+        openSettings()
+        compose
+            .onAllNodes(switch)[1]
+            .assertIsOn()
+            .performClick()
+            .assertIsOff()
+        compose.waitUntil(5_000) { runBlocking { !preferences.collapseToolUses.first() } }
+        compose.onNodeWithText("Done").performClick()
+        openSettings()
+        compose.onAllNodes(switch)[1].assertIsOff()
+        compose.onAllNodes(switch)[0].assertIsOn()
     }
 
     @Test fun unpairedPhoneCanStillDismissSettings() {
@@ -199,4 +217,6 @@ class SettingsNavigationTest {
         }
         compose.waitForIdle()
     }
+
+    private val switch = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Switch)
 }

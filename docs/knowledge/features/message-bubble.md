@@ -1,6 +1,6 @@
 # MessageBubble
 
-Stateless row primitive (#128) rendering a single `Message` in the conversation thread surface. Three visual variants dispatched off `Message.role`: a right-aligned bubble for `Role.User` (plain text) and a left-aligned bubble for `Role.Assistant` (markdown-rendered via [`MarkdownText`](./markdown-text.md) since #129 — CommonMark element set, boxed since #644), both through one shared `Message` component; and a tap-to-expand `surfaceContainerHigh` card for `Role.Tool`, routed via [`ToolCallRow`](./tool-call-row.md) since #131. Every bubble ends with a **meta row** — that message's own locale-formatted date/time plus a copy control (#644). Assistant content reveals progressively with a blinking caret when `Message.isStreaming = true` (#184). Eventual call site is the `LazyColumn(reverseLayout = true)` body of [`ThreadScreen`](./thread-screen.md).
+Stateless row primitive (#128) rendering a single `Message` in the conversation thread surface. Three visual variants dispatched off `Message.role`: a right-aligned bubble for `Role.User` (plain text) and a left-aligned bubble for `Role.Assistant` (markdown-rendered via [`MarkdownText`](./markdown-text.md) since #129 — CommonMark element set, boxed since #644), both through one shared `Message` component; and a tap-to-expand `surfaceContainerHigh` card for `Role.Tool`, routed via [`ToolCallRow`](./tool-call-row.md) since #131. User and assistant bubbles can end with a **meta row** — that message's own locale-formatted date/time plus a copy control (#644). In the thread it stays hidden until tapped, with at most one row visible and none on a streaming reply (#1621). Assistant content reveals progressively with a blinking caret when `Message.isStreaming = true` (#184). Eventual call site is the `LazyColumn(reverseLayout = true)` body of [`ThreadScreen`](./thread-screen.md).
 
 Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`). Files: `MessageBubble.kt` (both role bubbles, the streaming pair) and `MessageMetaRow.kt` (the meta row + copy control, since #644 — `internal` rather than file-private so [#657](../codebase/657.md)'s per-code-block copy control can reuse it). Sibling of [`DiscussionPreviewRow`](./discussion-preview-row.md), [`ConversationRow`](./conversation-row.md), `ArchiveRow.kt`.
 
@@ -27,6 +27,10 @@ fun MessageBubble(
     onRetryAttachment: (String) -> Unit = {},
     onOpenAttachment: (AttachmentTarget) -> Unit = {},
     onSaveAttachment: (AttachmentTarget) -> Unit = {},
+    onRequestAttachment: (MessageAttachment, AttachmentAction) -> Unit = { _, _ -> },
+    onOpenMarkdownLink: ((String) -> Unit)? = null,
+    metaRowVisible: Boolean = true,
+    onToggleMetaRow: (() -> Unit)? = null,
 )
 ```
 
@@ -36,7 +40,7 @@ Single `Message` parameter (not pre-split `(text, isUser)`). `ThreadScreen`'s `L
 
 **`attachmentStates`, `onAttachmentShown`, `onRetryAttachment` (since #984), `onOpenAttachment`, `onSaveAttachment` (since #985)** are read only by the two bubble roles, never by `Role.Tool` — see [MessageBubble — attachment slot](message-bubble-attachment-slot.md) below. `onOpenAttachment`/`onSaveAttachment` fire only for a `Ready` attachment, carrying an `AttachmentTarget(attachmentId, displayName, mimeType)`; every one of the five defaults (`emptyMap()`, no-op lambdas), so a text-only call site draws every attachment as loading, starts nothing, and offers neither action; `ThreadScreen` is the only caller that supplies real ones, from `ThreadViewModel.attachmentStates` / `onAttachmentShown` / `onRetryAttachment` and its own `rememberAttachmentActions(attachmentStates) { ... }`.
 
-The composable is **pure rendering** — no `remember`, no `LaunchedEffect`, no coroutines, no state hoisting at the `MessageBubble` level. `Message` is a `data class` with all stable fields, so Compose's stability inference skips recompositions on identity-equal and `equals`-equal inputs without any `@Stable` / `@Immutable` annotation.
+The composable owns no selection state. The host supplies `metaRowVisible` and `onToggleMetaRow`; their defaults keep standalone components and previews showing the row with no bubble tap. Timestamp formatting and the latest gesture callback are remembered inside the container, but which message is selected belongs to `ThreadScreen`. `Message` is a `data class` with all stable fields, so Compose's stability inference skips recompositions on identity-equal and `equals`-equal inputs without any `@Stable` / `@Immutable` annotation.
 
 ## How it works
 
@@ -72,6 +76,8 @@ At `toolNestingDepth = 0` (every non-tool row, and a top-level or unmatched-pare
 
 ### Shared `Message` container (since #644)
 
+Geometry sketch (gesture semantics and the attachment slot omitted):
+
 ```kotlin
 @Composable
 private fun MessageContainer(
@@ -80,6 +86,7 @@ private fun MessageContainer(
     bubbleColor: Color,
     bubbleContentColor: Color,
     modifier: Modifier = Modifier,
+    metaRow: MetaRowControl = MetaRowControl(),
     body: @Composable () -> Unit,
 ) {
     val isUserSide = alignment == Alignment.End
@@ -103,7 +110,9 @@ private fun MessageContainer(
                 horizontalAlignment = Alignment.Start,
             ) {
                 body()
-                MessageMetaRow(timestamp = message.timestamp, copyText = message.content, modifier = Modifier.align(alignment))
+                if (metaRow.visible) {
+                    MessageMetaRow(timestamp = message.timestamp, copyText = message.content, modifier = Modifier.align(alignment))
+                }
             }
         }
     }
@@ -154,7 +163,13 @@ show the geometry and the deliberate metadata contrast difference.
 
 ### Meta row and copy control (`MessageMetaRow.kt`, since #644)
 
-Each bubble's last child is a `MessageMetaRow(timestamp, copyText, modifier)`: a `BoxWithConstraints` containing the formatted timestamp (`typography.bodySmall`) and `CopyTextControl` in a row 8dp apart, aligned to the bubble's own side. It reserves the glyph width, horizontal touch padding and gap before measuring the timestamp; at 320dp / 1.5× text, the date may wrap while the copy control stays inside the bubble. A one-line 412dp assertion alone missed this failure.
+`ThreadScreen` owns one saveable message id (#1621). Tapping a finished bubble selects it, tapping it again clears the selection, and tapping another moves the row. The selection survives rotation and a return through the back stack. A streaming reply has neither a visible row nor a toggle; the first tap after it finishes reveals the row. Omitting the row also removes its column gap and height. The unchanged Figma row is intentionally always drawn in the reference; [the design inventory](../../../app/src/androidTest/assets/design-1220/README.md#messages-and-tools) records the visibility decision.
+
+The surface uses `pointerInput { detectTapGestures }` with `rememberUpdatedState` for the callback and non-merging semantics. A parent `clickable` would merge descendant text, changing TalkBack stops and paragraph-bound assertions. Screen readers get a labelled show/hide `onClick`; while hidden, the bubble exposes “Sent …” using `rememberFormattedTimestamp` and, when a toggle exists, a “Copy this message” custom action. That action and the visible button share `setBoundedText(message.content)`, including the 100,000-character bound. Streaming bubbles retain the timestamp description but offer no copy action.
+
+Links, code-block copy controls and attachments consume their own taps. Check every child state when adding a parent detector: Loading, NotFound and Failed attachments previously had no pointer handler, so taps fell through and revealed the row. They now consume taps with a no-op detector and no click semantics; Retry still handles its own tap. See [attachment open/save](message-bubble-attachment-slot.md#open-and-save-since-985).
+
+When visible, the bubble's last child is a `MessageMetaRow(timestamp, copyText, modifier)`: a `BoxWithConstraints` containing the formatted timestamp (`typography.bodySmall`) and `CopyTextControl` in a row 8dp apart, aligned to the bubble's own side. It reserves the glyph width, horizontal touch padding and gap before measuring the timestamp; at 320dp / 1.5× text, the date may wrap while the copy control stays inside the bubble. A one-line 412dp assertion alone missed this failure.
 
 ```kotlin
 internal fun formatShortDateTime(instant: Instant, timeZone: TimeZone, locale: Locale): String
@@ -229,12 +244,12 @@ Each role container's `Row` carries `Modifier.padding(bottom = MessageAreaRowSpa
 
 - **`id`, `sessionId`** — passed through `Message` for `equals` / recomposition stability and downstream consumption (`ThreadScreen`'s `LazyColumn` keys items by `message.id`), but not visually surfaced here.
 
-`timestamp` is **no longer ignored** — since #644 it renders in every bubble's meta row via `formatShortDateTime`. `isStreaming` is consumed by the assistant arm since #184 — see the streaming-variant section above. `attachments` is **no longer ignored** either — since #984 a non-empty list renders through the [Attachment slot](#attachment-slot-since-984) above and also decides `hasNoBody()`.
+`timestamp` is **no longer ignored** — since #644 it renders in the visible meta row via `formatShortDateTime`, and since #1621 also in the hidden-row accessibility description. `isStreaming` is consumed by the assistant arm since #184 — see the streaming-variant section above. `attachments` is **no longer ignored** either — since #984 a non-empty list renders through the [Attachment slot](#attachment-slot-since-984) above and also decides `hasNoBody()`.
 
 ## Configuration
 
 - **Transitive dependencies:** the assistant variant routes through [`MarkdownText`](./markdown-text.md), wired against `org.jetbrains:markdown` (see [ADR 0002](../decisions/0002-markdown-renderer-library.md)). Since #644, `MessageMetaRow.kt` reads `LocalClipboardManager` / `AnnotatedString` (`androidx.compose.ui`) and `java.time.format.DateTimeFormatter` (already on the min-SDK-33 classpath, no desugaring needed — same posture as [`SessionBoundaryDelimiter`](session-boundary-delimiter.md)'s time formatter).
-- **One string resource** (since #644): `cd_thread_copy_message` ("Copy this message"), the copy control's accessible name, in the `cd_thread_*` family. User bodies still render plainly and assistant bodies through `MarkdownText` — no role prefix, no fallback copy on the body text itself.
+- **Accessibility strings:** `cd_thread_copy_message` ("Copy this message"), the copy control's accessible name, in the `cd_thread_*` family. User bodies still render plainly and assistant bodies through `MarkdownText` with no role prefix. Since #1621, `cd_thread_message_sent` describes the hidden timestamp, and `thread_message_show_details` / `thread_message_hide_details` label the bubble action; a hidden finished bubble also offers the copy custom action.
 - **One drawable** (since #644): `res/drawable/ic_copy.xml` — single-path, 11×12 viewport, tinted at the call site from `LocalContentColor`, the same idiom `ic_open_in_new.xml` already uses.
 - **Bubble theme roles:** wrap consumers in `PyrycodeMobileTheme`, which provides
   `LocalUserBubbleContainer` / `LocalAssistantBubbleContainer` through the
@@ -263,6 +278,8 @@ Four `@Preview`s in `MessageBubble.kt`, all `widthDp = 412` except the narrow on
 No preview for the `Role.Tool` arm at depth 0 — preview coverage for the tool-call surface itself lives in [`ToolCallRow.kt`](./tool-call-row.md#previews). **Since #896**, `MessageBubblePreviewSequence()` appends three `Role.Tool` messages at `toolNestingDepth = 0, 1, 2` (an `Agent` call, a `Task` call one level in, and a `Grep` call two levels in — `PreviewToolNesting`), so the pair-one previews also show the indent step at each level, light and dark.
 
 ## Testing
+
+`MessageMetaRowToggleTest` mounts the real `ThreadScreen` to cover show/hide and single selection, streaming-to-finished taps, links and independently visible code copy, inert attachment states, and the screen-reader toggle and hidden-row timestamp/copy semantics. Standalone `MessageBubbleTest` and palette fixtures retain the visible-row default, so their streaming copy test does not describe thread behavior. `ThreadFrameCaptureTest.compactWidthAndEnlargedText_keepFrameControlsReachable` reveals the row before testing its copy pointer target. Compose semantics assertions do not establish TalkBack's spoken order on a device.
 
 `app/src/sharedTest/.../components/MessageBubblePaletteTest.kt` uses native Canvas
 pixels at the 412dp reference width to check user, finalized assistant, streaming

@@ -73,9 +73,11 @@ import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.conversations.thread.UsageLimitDismissals
 import de.pyryco.mobile.ui.conversations.thread.readLinkedMarkdown
 import de.pyryco.mobile.ui.onboarding.CameraPreview
+import de.pyryco.mobile.ui.onboarding.PairCodeEvent
 import de.pyryco.mobile.ui.onboarding.PairCodePhase
 import de.pyryco.mobile.ui.onboarding.PairCodeScreen
 import de.pyryco.mobile.ui.onboarding.PairCodeViewModel
+import de.pyryco.mobile.ui.onboarding.PairingPrefill
 import de.pyryco.mobile.ui.onboarding.ScannerEvent
 import de.pyryco.mobile.ui.onboarding.ScannerScreen
 import de.pyryco.mobile.ui.onboarding.ScannerUiState
@@ -108,6 +110,8 @@ class MainActivity : ComponentActivity() {
         // #685: a notification tap's target, read once. A recreated activity keeps its intent, so reading
         // it again after a rotation would re-open the thread over wherever the operator went since.
         val openTarget = if (savedInstanceState == null) NotificationTap.target(intent) else null
+        // Test builds only: a hands-on check's pairing code, read once for the same reason.
+        val pairingPrefill = if (savedInstanceState == null) PairingPrefill.from(intent, BuildConfig.DEBUG) else null
         setContent {
             val appPreferences = koinInject<AppPreferences>()
             val pairedServerStore = koinInject<PairedServerCollectionStore>()
@@ -141,6 +145,7 @@ class MainActivity : ComponentActivity() {
                                 startDestination = if (v) Routes.CHANNEL_LIST else Routes.WELCOME,
                                 modifier = Modifier.padding(innerPadding).consumeWindowInsets(innerPadding),
                                 openTarget = openTarget.takeIf { v },
+                                pairingPrefill = pairingPrefill,
                             )
                     }
                 }
@@ -155,10 +160,13 @@ internal fun PyryNavHost(
     modifier: Modifier = Modifier,
     navController: NavHostController = rememberNavController(),
     openTarget: HostConversationTarget? = null,
+    pairingPrefill: PairingPrefill? = null,
 ) {
     val destinations = koinInject<ThreadDestinationFactory>()
     val appPreferences = koinInject<AppPreferences>()
     val conversations = koinInject<HostConversationSource>()
+    // Held in memory only, never saved state: it carries the pairing token. Cleared once the screen has it.
+    var pendingPrefill by remember { mutableStateOf(pairingPrefill) }
     NavHost(
         navController = navController,
         startDestination = startDestination,
@@ -289,6 +297,12 @@ internal fun PyryNavHost(
         composable(Routes.PAIR_CODE_ROUTE, arguments = Routes.pairCodeArguments()) {
             val vm = koinViewModel<PairCodeViewModel>()
             val state by vm.state.collectAsStateWithLifecycle()
+            LaunchedEffect(vm) {
+                val prefill = pendingPrefill ?: return@LaunchedEffect
+                pendingPrefill = null
+                vm.onEvent(PairCodeEvent.Name(prefill.name))
+                vm.onEvent(PairCodeEvent.Code(prefill.code))
+            }
             LaunchedEffect(state.phase) {
                 when (state.phase) {
                     PairCodePhase.Cancelled -> navController.popBackStack()
@@ -469,6 +483,8 @@ internal fun PyryNavHost(
                 val usageLimitDismissals = koinInject<UsageLimitDismissals>()
                 val dismissedUsageLimits by usageLimitDismissals.dismissed.collectAsStateWithLifecycle()
                 val mcpFailure by vm.mcpFailure.collectAsStateWithLifecycle()
+                // #1635: read live, so turning the setting on or off redraws an open thread.
+                val collapseToolUses by appPreferences.collapseToolUses.collectAsStateWithLifecycle(initialValue = true)
                 // #1050: composed again means the operator is back on the thread, so a linked note's reader has
                 // closed. Its reader remembered the note, so dropping it here cannot empty that reader.
                 LaunchedEffect(vm) { vm.releaseLinkedMarkdown() }
@@ -487,6 +503,7 @@ internal fun PyryNavHost(
                 }
                 val questionModal by vm.questionModal.collectAsStateWithLifecycle()
                 ThreadScreen(
+                    collapseToolUses = collapseToolUses,
                     questionState = questionModal,
                     onQuestionEvent = { event, generation -> vm.onQuestionEvent(event, generation) },
                     state = state,
@@ -617,6 +634,7 @@ internal fun PyryNavHost(
         ) {
             val vm = koinViewModel<SettingsViewModel>()
             val pushNotifications by vm.pushNotifications.collectAsStateWithLifecycle()
+            val collapseToolUses by vm.collapseToolUses.collectAsStateWithLifecycle()
             LaunchedEffect(vm) {
                 vm.lastHostUnpaired.collect { navController.returnToWelcome() }
             }
@@ -627,6 +645,8 @@ internal fun PyryNavHost(
                     vm.onTogglePushNotifications(enabled)
                     if (enabled) requestNotifications()
                 },
+                collapseToolUses = collapseToolUses,
+                onToggleCollapseToolUses = vm::onToggleCollapseToolUses,
                 onDismissRequest = { navController.popBackStack() },
             )
         }
@@ -645,6 +665,11 @@ internal fun PyryNavHost(
         composable(Routes.ABOUT) {
             AboutScreen(onBack = { navController.popBackStack() })
         }
+    }
+    // A test build launched with a pairing code opens the pair-code screen over the start screen, so Back
+    // returns where a normal launch would have landed.
+    LaunchedEffect(pairingPrefill) {
+        if (pairingPrefill != null) navController.navigate(Routes.PAIR_CODE)
     }
     // #685: the tap opens the thread above the channel list, so the list is always one Back away. Only a
     // saved host is accepted: the activity is exported, and anything can start it with these extras.

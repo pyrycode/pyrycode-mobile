@@ -742,7 +742,7 @@ private class SortedSections(
  *
  * A conversation row's tap target is built from the row's **own** `serverId`, so a tree drawing rows
  * from several hosts opens each on the host that owns it. While the host is not connected its section
- * plus and row pens are not drawn (#1336); the host row's own controls, folding and row taps stay.
+ * plus is not drawn (#1336); the host row's own controls, folding and row taps stay.
  */
 private fun LazyListScope.treeHost(
     index: Int,
@@ -805,7 +805,7 @@ private fun LazyListScope.treeHost(
         ) { rowIndex, conversation ->
             val target = HostConversationTarget(host.serverId, conversation.id)
             val selected = target == hostState.selected
-            // Inset on the start only: rows end on the host row's edge, so every pen lines up with the host's.
+            // Inset on the start only: rows end on the host row's edge.
             Box(
                 modifier =
                     Modifier.padding(
@@ -821,27 +821,8 @@ private fun LazyListScope.treeHost(
                     onClick = { onEvent(ChannelListEvent.TreeRowTapped(target)) },
                     modifier = Modifier.testTag(section.rowTestTag),
                     attention = entry.attentionFor(conversation.id),
-                    // 15:8 draws the pen on its Hover row only; on the phone that is the selected row (#1523).
-                    onEditTapped =
-                        if (!connected || !selected) {
-                            null
-                        } else {
-                            when (section) {
-                                ConversationTreeSection.Host -> error("Host is not a conversation section")
-                                ConversationTreeSection.Channels -> {
-                                    { onEvent(ChannelListEvent.TreeChannelEditTapped(target)) }
-                                }
-                                ConversationTreeSection.Chats -> {
-                                    { onEvent(ChannelListEvent.TreeChatEditTapped(target)) }
-                                }
-                            }
-                        },
-                    editDescription =
-                        when (section) {
-                            ConversationTreeSection.Host -> error("Host is not a conversation section")
-                            ConversationTreeSection.Channels -> R.string.cd_tree_channel_edit
-                            ConversationTreeSection.Chats -> R.string.cd_tree_chat_edit
-                        },
+                    // 15:8 draws no pen on a conversation row (#1563): a channel is edited from its thread's
+                    // Edit (#1561), a chat renamed from its thread's Rename.
                 )
             }
         }

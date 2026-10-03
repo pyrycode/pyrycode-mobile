@@ -1310,6 +1310,9 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_compactWithAttachment_compactsAndClearsTheStrip"
   # #1571: a seeded dormant channel shows its stored reply on open, with no pull and no send. No Claude turn.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_dormantChannel_opensWithStoredHistoryWithoutSend"
+  # #1581: a reply that ends while its chat is off screen is drawn after a reconnect through the open's newest-page
+  # ask (#1572). Two turns (A's ping and A's permission-held command).
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi

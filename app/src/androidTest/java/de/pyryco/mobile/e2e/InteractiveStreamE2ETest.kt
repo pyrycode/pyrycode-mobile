@@ -47,6 +47,7 @@ import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -118,6 +119,7 @@ import de.pyryco.mobile.ui.conversations.components.CHANNEL_INFO_SESSION_COST_TA
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_ATTACHMENT_FILE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.RUNNING_MODEL_TEST_TAG
+import de.pyryco.mobile.ui.conversations.components.SESSION_BOUNDARY_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.treeHostChannelAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostChatAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostEditTestTag
@@ -131,7 +133,6 @@ import de.pyryco.mobile.ui.conversations.thread.EFFORT_PLACEHOLDER_LABEL
 import de.pyryco.mobile.ui.conversations.thread.PERMISSION_SETTLE_WINDOW_MS
 import de.pyryco.mobile.ui.conversations.thread.PING_PROMPT
 import de.pyryco.mobile.ui.conversations.thread.PermissionModeOption
-import de.pyryco.mobile.ui.conversations.thread.SESSION_BOUNDARY_EXPLANATION
 import de.pyryco.mobile.ui.conversations.thread.STATUS_READING_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.UNAVAILABLE_MODEL_LABEL
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedPingReply
@@ -954,11 +955,12 @@ class InteractiveStreamE2ETest {
      *
      * **Fire-and-forget — assert the durable delimiter, never an ack.** `new_session` is fire-and-forget
      * (pyrycode#831, #540 wire), so the only observable is the post-broadcast delimiter. The load-bearing
-     * matcher is [DELIMITER_EXPLANATION], the delimiter's hardcoded explanation line
-     * ([de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter]), which can **only** come from
-     * the rendered delimiter — it is reason-independent, so the match is robust even if the daemon's
+     * matcher is [SESSION_BOUNDARY_TEST_TAG], the test tag on
+     * [de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter] (#1578), which can **only** come
+     * from the rendered delimiter — it is reason-independent, so the match is robust even if the daemon's
      * `session_transition` reason differs from `clear`. [NEW_SESSION_ITEM] only selects the reset action;
-     * the delimiter explanation proves the resulting session boundary. Its absence is asserted before
+     * the tagged delimiter proves the resulting session boundary, drawn without the retired "doesn't
+     * remember" explanation. Its absence is asserted before
      * the reset tap, so its later appearance is attributable to the action — no extra
      * claude turn.
      *
@@ -989,20 +991,20 @@ class InteractiveStreamE2ETest {
         }
 
         // 4. Prove the session is live (AC-3): send the constrained ping and wait for the streamed reply, so the
-        //    session is genuinely exercised and there is de-emphasized above-delimiter content once it clears.
+        //    session is genuinely exercised and there is above-delimiter content once it clears.
         //    The daemon may run a separate wrap-up turn after the New-session tap.
         composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
         composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
         composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
 
-        // 5. Absence guard (AC-2, deterministic — no extra turn): the delimiter explanation must not be on
-        //    screen yet, so its later appearance is attributable to the New-session tap.
+        // 5. Absence guard (AC-2, deterministic — no extra turn): no delimiter may be on screen yet, so its
+        //    later appearance is attributable to the New-session tap.
         composeTestRule
-            .onAllNodesWithText(DELIMITER_EXPLANATION, substring = true)
+            .onAllNodesWithTag(SESSION_BOUNDARY_TEST_TAG)
             .assertCountEquals(0)
 
         // 6. Open the real overflow menu and tap Reset session. The durable assertion uses
-        //    DELIMITER_EXPLANATION, independently of the action label.
+        //    SESSION_BOUNDARY_TEST_TAG, independently of the action label.
         composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).fetchSemanticsNodes().isNotEmpty()
@@ -1018,7 +1020,7 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasContentDescription(wrappingUp)).fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule
-            .onAllNodesWithText(DELIMITER_EXPLANATION, substring = true)
+            .onAllNodesWithTag(SESSION_BOUNDARY_TEST_TAG)
             .assertCountEquals(0)
 
         // 8. The phase clears: no resetting label of either phase is left in the status area.
@@ -1034,7 +1036,8 @@ class InteractiveStreamE2ETest {
         }
 
         // 9. Reveal the newest row while waiting: the daemon's wrap-up reply can fill the viewport
-        //    before session_transition appends the delimiter. The explanation must still be displayed.
+        //    before session_transition appends the delimiter. The delimiter must still be displayed, with no
+        //    explanation line under it (#1578).
         composeTestRule.awaitDisplayedSessionBoundary(REPLY_TIMEOUT_MS)
     }
 
@@ -1830,8 +1833,8 @@ class InteractiveStreamE2ETest {
      * prove the write against a fake that patches its own rows; this proves the real daemon keeps it.
      *
      * The channel is set up on the host directly (a discussion promoted in its own cwd, so no folder is
-     * created) and deleted in `finally`, which also leaves no muted channel behind. The drive is the list's own:
-     * the row's pen opens Edit channel, OK closes it only once every write is confirmed, and the reopened
+     * created) and deleted in `finally`, which also leaves no muted channel behind. The drive is the operator's:
+     * the thread menu's Edit opens Edit channel, OK closes it only once every write is confirmed, and the reopened
      * modal reads the flag from the host's row. It is checked on the host's own record too, and unchecking
      * proves the clear goes the same way.
      *
@@ -1862,8 +1865,9 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * Open Edit channel from [name]'s pen, check the Mute notifications row opens at [from], set it to [to]
-     * and press OK, then wait for the modal to close — it closes only once the host confirmed the write.
+     * Open Edit channel from [name]'s thread menu, check the Mute notifications row opens at [from], set it to
+     * [to] and press OK, then wait for the modal to close — it closes only once the host confirmed the write —
+     * and return to the list.
      */
     private fun setMuteInEditChannel(
         name: String,
@@ -1872,11 +1876,7 @@ class InteractiveStreamE2ETest {
     ) {
         val title = string(R.string.edit_channel_title)
         val mute = hasText(string(R.string.edit_channel_mute)) and isToggleable()
-        selectChannelRow(name)
-        composeTestRule.onNode(channelPen(name)).performClick()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
-        }
+        openChannelEditor(name)
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
             composeTestRule.onAllNodes(mute and if (from) isOn() else isOff()).fetchSemanticsNodes().isNotEmpty()
         }
@@ -1886,6 +1886,7 @@ class InteractiveStreamE2ETest {
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(title).fetchSemanticsNodes().isEmpty()
         }
+        leaveThread()
     }
 
     /** [conversationId]'s own row on the host reports [muted]. */
@@ -2378,10 +2379,10 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * A channel created, edited and archived from the list, with its prompt read back (#1088, rung 3). A
-     * host's initially empty Channels-section plus opens Create channel, whose OK creates the channel with a
-     * name and a prompt and opens it. One ping starts its session with that prompt. The row's pen opens #667's
-     * Edit channel, which renames it and changes the prompt; reopened, it reads both back from the host and
+     * A channel created from the list, edited and archived from its thread, with its prompt read back (#1088,
+     * rung 3). A host's initially empty Channels-section plus opens Create channel, whose OK creates the channel
+     * with a name and a prompt and opens it. One ping starts its session with that prompt. The thread menu's Edit
+     * (#1561, #1563) opens #667's Edit channel, which renames it and changes the prompt; reopened, it reads both back from the host and
      * says the prompt applies from the next session, since the running one was spawned with the old prompt.
      * After Reset session and a distinct second reply, a session spawned after the edit runs, and the reopened modal
      * drops that line. Emptying the box there clears the stored prompt (#1342), which Channel info's System prompt
@@ -2456,15 +2457,18 @@ class InteractiveStreamE2ETest {
             composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextReplacement(CHANNEL_PROMPT_SECOND)
             composeTestRule.onNodeWithText(EDIT_CHANNEL_OK).performClick()
             awaitChannelEditorClosed()
+            leaveThread()
 
             // 4. AC-1: reopened, it reads back the new name and prompt, and the running session still has the old one.
-            openChannelEditor(newName)
+            awaitChannelRow(newName)
             composeTestRule.onAllNodes(channelRow(firstName)).assertCountEquals(0)
+            openChannelEditor(newName)
             awaitPromptField(CHANNEL_PROMPT_SECOND)
             composeTestRule.onNode(hasTestTag(CHANNEL_NAME_FIELD_TAG) and hasText(newName)).assertExists()
             composeTestRule.onAllNodesWithText(nextSessionLine).onFirst().assertIsDisplayed()
             composeTestRule.onNodeWithText(modalCancel).performClick()
             awaitChannelEditorClosed()
+            leaveThread()
 
             // 5. AC-2: Reset session, then a distinct reply. Whether the respawn was eager or the send spawned the
             //    session, the host reports it runs with the stored prompt once one started after the edit.
@@ -2502,6 +2506,7 @@ class InteractiveStreamE2ETest {
             composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextReplacement("")
             composeTestRule.onNodeWithText(EDIT_CHANNEL_OK).performClick()
             awaitChannelEditorClosed()
+            leaveThread()
             runBlocking {
                 withTimeout(THREAD_TIMEOUT_MS) {
                     while (hostRepository(serverId).requestSystemPrompt(id).systemPrompt != null) delay(PROMPT_STATUS_POLL_MS)
@@ -2531,9 +2536,11 @@ class InteractiveStreamE2ETest {
             openChannelEditor(newName)
             awaitPromptField("")
 
-            // 7. AC-3: archive it from the same modal. It leaves Channels for host A's Archive.
+            // 7. AC-3: archive it from the same modal. The thread returns to the list (#1561), and the channel
+            //    leaves Channels for host A's Archive.
             composeTestRule.onNode(hasText(string(R.string.edit_channel_archive)) and hasClickAction()).performClick()
             awaitChannelEditorClosed()
+            awaitChannelList()
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 runCatching { scrollListTo(channelRow(newName)) }.isFailure
             }
@@ -2571,29 +2578,22 @@ class InteractiveStreamE2ETest {
         }
     }
 
-    /** Select the Channels row named [name] by opening it and pressing Back, tap its pen and wait for Edit channel's title. */
+    /**
+     * Open the Channels row named [name] and choose Edit from its thread's menu (#1561), the only way into Edit
+     * channel once the list's rows draw no pen (#1563), then wait for Edit channel's title. The thread stays open
+     * behind the modal.
+     */
     private fun openChannelEditor(name: String) {
-        selectChannelRow(name)
-        composeTestRule.onNode(channelPen(name)).performClick()
+        val edit = string(R.string.thread_overflow_edit)
+        openRow(name)
+        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(edit).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(edit).onFirst().performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(string(R.string.edit_channel_title)).fetchSemanticsNodes().isNotEmpty()
         }
-    }
-
-    /** The Edit channel pen of the Channels row named [name]. */
-    private fun channelPen(name: String) = hasContentDescription(string(R.string.cd_tree_channel_edit).format(name))
-
-    /**
-     * Select the Channels row named [name] the operator's way: open it, then press Back. Only the selected row
-     * draws its pen (#1523), so this waits until the pen is drawn and scrolled into view.
-     */
-    private fun selectChannelRow(name: String) {
-        openRow(name)
-        leaveThread()
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            runCatching { scrollListTo(channelPen(name)) }.isSuccess
-        }
-        composeTestRule.onNode(channelPen(name)).assertIsDisplayed()
     }
 
     /** Wait until Edit channel closes, which it does only once the host confirmed every write. */
@@ -2990,6 +2990,85 @@ class InteractiveStreamE2ETest {
                         .boundsInRoot.top
                 }
             assertTrue("expected ping reply, offline prompt, offline reply top to bottom; tops $tops", tops == tops.sorted())
+            assertTrue("two of the messages share a row; tops $tops", tops.distinct().size == tops.size)
+        } finally {
+            peer.close()
+        }
+    }
+
+    /**
+     * A reply that ends while its chat is off screen survives a reconnect (#1581, rung 3; #1572's live proof). Chat
+     * A has a settled ping turn the phone drew and cached. A's second turn, [WAIT_PROMPT], is held on the #849
+     * permission lever while the phone leaves A for B, so A never draws its reply however fast claude is. The peer
+     * allows it and the turn ends with B on screen. Rows that reach a closed thread live only in the connection's
+     * projection, never the thread cache, and a reconnect discards them with the replay cursor already past them.
+     *  * **Off screen** — the phone itself folded A's `turn_end` while A was not viewed: its stored read position
+     *    names that turn as completed and unread. Waiting on the phone, not the peer's copy, keeps the cut after the
+     *    phone had the turn, or the reconnect's ring replay would deliver it and the test would prove nothing.
+     *  * **Not cached** — after the cut and restore, A's thread cache holds the ping's reply and not [WAIT_REPLY].
+     *  * **Recovered** — opening A, with no other gesture, draws the reply from the open's newest-page ask (#1572),
+     *    and the ping, its reply, [WAIT_PROMPT] and [WAIT_REPLY] each once, top to bottom.
+     *
+     * **Two real-claude turns**: A's ping and A's held command.
+     */
+    @Test
+    fun interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer = runningToolPeer()
+        val waitReply = hasText(WAIT_REPLY, ignoreCase = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+        try {
+            // 1. Two chats, neither messaged; the peer records frames from here on.
+            awaitChannelList()
+            awaitConnected()
+            val (chatA, nameA) = answerChat(serverId, OFFSCREEN_CHAT_NAME_PREFIX + "a-")
+            val (_, nameB) = answerChat(serverId, OFFSCREEN_CHAT_NAME_PREFIX + "b-")
+            peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
+
+            // 2. A's first turn renders, ends and is cached by the open thread.
+            openChatRow(nameA)
+            sendFromPhone(PING_PROMPT)
+            awaitPingReplyNamingLayer(peer, serverId, chatA, priorTurnEnds = 0)
+            awaitTurnEnd(peer, chatA, 1, "A's ping")
+            awaitCachedAssistantReply(serverId, chatA)
+
+            // 3. AC-2: A's second turn waits on its permission prompt; A leaves before any of its reply exists.
+            sendFromPhone(WAIT_PROMPT)
+            val modalId = peerStep(peer, "await A's permission prompt") { peer.awaitPermissionModal(chatA, REPLY_TIMEOUT_MS) }
+            composeTestRule.onAllNodes(waitReply, useUnmergedTree = true).assertCountEquals(0)
+            leaveThread()
+            openChatRow(nameB)
+            assertShowingThread(nameB, nameA)
+
+            // 4. AC-2: released with B open, A's turn ends; the phone folds that turn_end while B is still shown.
+            peerStep(peer, "allow A's prompt") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
+            val turnEnd =
+                peerStep(peer, "await A's held turn_end") { peer.awaitFrame(chatA, "turn_end", WAIT_TURN_TIMEOUT_MS, occurrence = 2) }
+            awaitUnreadCompletion(serverId, chatA, checkNotNull(peer.field(turnEnd, "turn_id")) { "A's turn_end has no turn_id" })
+            assertShowingThread(nameB, nameA)
+            composeTestRule.onAllNodes(waitReply, useUnmergedTree = true).assertCountEquals(0)
+
+            // 5. AC-2: still in B, cut and restore the link; A's cache never received the reply.
+            setHostLink(serverId, up = false)
+            setHostLink(serverId, up = true)
+            assertNoCachedReply(serverId, chatA, WAIT_REPLY)
+
+            // 6. AC-1: opening A is the only gesture; its newest-page ask brings the reply, every row once and in order.
+            leaveThread()
+            openChatRow(nameA)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(waitReply, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.waitForIdle()
+            val rows = listOf(inThreadList(PING_PROMPT), pingReplyMatcher(), inThreadList(WAIT_PROMPT), waitReply)
+            assertDrawnOnce(*rows.toTypedArray())
+            val tops =
+                rows.map {
+                    composeTestRule
+                        .onNode(it, useUnmergedTree = true)
+                        .fetchSemanticsNode()
+                        .boundsInRoot.top
+                }
+            assertTrue("expected ping, its reply, the held prompt and its reply top to bottom; tops $tops", tops == tops.sorted())
             assertTrue("two of the messages share a row; tops $tops", tops.distinct().size == tops.size)
         } finally {
             peer.close()
@@ -6689,6 +6768,66 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /**
+     * Wait until the phone's stored read position for [conversationId] names [turnId] as its completed turn, then
+     * assert it is unread (#1581). The attention fold records a `turn_end` as it handles it, after every frame
+     * before it on the one inbound stream, and marks it read only while the conversation is viewed.
+     */
+    private fun awaitUnreadCompletion(
+        serverId: String,
+        conversationId: String,
+        turnId: String,
+    ) {
+        val cache = GlobalContext.get().get<ConversationCache>()
+        val position =
+            runBlocking {
+                withTimeoutOrNull(THREAD_TIMEOUT_MS) {
+                    var stored = cache.readReadPositions(serverId)[conversationId]
+                    while (stored?.completedTurnId != turnId) {
+                        delay(CACHE_POLL_MS)
+                        stored = cache.readReadPositions(serverId)[conversationId]
+                    }
+                    stored
+                }
+            }
+        assertNotNull("the phone never recorded the off-screen turn's turn_end", position)
+        assertTrue("the phone recorded the off-screen turn as read", checkNotNull(position).unread)
+    }
+
+    /** Assert the phone's thread cache for [conversationId] holds an assistant row, and none whose text is [reply]. */
+    private fun assertNoCachedReply(
+        serverId: String,
+        conversationId: String,
+        reply: String,
+    ) {
+        val assistantRows =
+            runBlocking { GlobalContext.get().get<ConversationCache>().readThread(serverId, conversationId) }
+                .filterIsInstance<ThreadItem.MessageItem>()
+                .filter { it.message.role == Role.Assistant }
+        assertTrue("the thread cache holds no assistant row, so its read proves nothing", assistantRows.isNotEmpty())
+        assertTrue(
+            "the thread cache already holds the off-screen reply",
+            assistantRows.none {
+                it.message.content
+                    .trim()
+                    .equals(reply, ignoreCase = true)
+            },
+        )
+    }
+
+    /** The open thread is [name]'s: its name is shown and [other]'s is not. */
+    private fun assertShowingThread(
+        name: String,
+        other: String,
+    ) {
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(name).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(name).onFirst().assertIsDisplayed()
+        composeTestRule.onAllNodesWithText(other).assertCountEquals(0)
+        composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).assertCountEquals(0)
+    }
+
     /** Each of [matchers] matches exactly one node in the unmerged tree. */
     private fun assertDrawnOnce(vararg matchers: SemanticsMatcher) {
         matchers.forEach { composeTestRule.onAllNodes(it, useUnmergedTree = true).assertCountEquals(1) }
@@ -7367,13 +7506,12 @@ class InteractiveStreamE2ETest {
         const val CD_BACK = "Back"
 
         // #541 new-session scenario. Overflow-menu production strings (no test tags): CD_MORE_ACTIONS opens
-        // the menu; NEW_SESSION_ITEM is the tap target. The durable matcher is DELIMITER_EXPLANATION,
-        // the delimiter's reason-independent hardcoded explanation line, which can
-        // only come from the rendered SessionBoundaryDelimiter. Keep in sync with res/values/strings.xml:
+        // the menu; NEW_SESSION_ITEM is the tap target. The durable matcher is SESSION_BOUNDARY_TEST_TAG,
+        // the reason-independent test tag that only the rendered SessionBoundaryDelimiter carries (#1578).
+        // Keep in sync with res/values/strings.xml:
         //   cd_more_actions = "More actions", thread_overflow_new_session = "Reset session".
         const val CD_MORE_ACTIONS = "More actions"
         const val NEW_SESSION_ITEM = "Reset session"
-        const val DELIMITER_EXPLANATION = SESSION_BOUNDARY_EXPLANATION
 
         // #566 create-workspace-folder scenario. Picker/dialog production strings (no test tags):
         //   the WorkspacePickerSheet create row (matched as a substring so the trailing ellipsis need
@@ -7566,6 +7704,9 @@ class InteractiveStreamE2ETest {
         const val OFFLINE_PROMPT = "Reply with exactly: pyryoffline"
         const val OFFLINE_REPLY = "pyryoffline"
         const val OFFLINE_CHAT_NAME_PREFIX = "e2e850-"
+
+        /** #1581: the two chats of the off-screen reply scenario, as "e2e1581-a-<ms>" and "e2e1581-b-<ms>". */
+        const val OFFSCREEN_CHAT_NAME_PREFIX = "e2e1581-"
 
         /** #1410: the chat the peer runs a turn in while the phone is offline. */
         const val CONTEXT_ASK_CHAT_NAME_PREFIX = "e2e1410-"

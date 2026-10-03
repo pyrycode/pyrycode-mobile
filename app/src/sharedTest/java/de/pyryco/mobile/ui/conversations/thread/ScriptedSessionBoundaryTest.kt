@@ -3,9 +3,12 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import de.pyryco.mobile.ui.conversations.components.SESSION_BOUNDARY_TEST_TAG
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -68,10 +71,11 @@ class ScriptedSessionBoundaryTest {
         }
         composeRule.waitForIdle()
 
-        // AC #2 — the explanatory label renders: the reason-independent explanation AND the per-reason
-        // label. Assert the hardcoded "New session" prefix, not the locale/timezone-formatted <time> tail,
-        // to stay locale-robust.
-        composeRule.onNodeWithText(EXPLANATION, substring = true).assertIsDisplayed()
+        // AC #2 — the boundary renders: the reason-independent test tag AND the per-reason label, with no
+        // explanation line (#1578). Assert the hardcoded "New session" prefix, not the locale/timezone-formatted
+        // <time> tail, to stay locale-robust.
+        composeRule.onNodeWithTag(SESSION_BOUNDARY_TEST_TAG).assertIsDisplayed()
+        composeRule.assertNoSessionBoundaryExplanation()
         composeRule.onNodeWithText(CLEAR_LABEL_PREFIX, substring = true).assertIsDisplayed()
 
         // AC #1 (exactly one) — one `session_transition` → one folded boundary → one rendered delimiter.
@@ -80,7 +84,7 @@ class ScriptedSessionBoundaryTest {
         assertEquals(
             1,
             composeRule
-                .onAllNodesWithText(EXPLANATION, substring = true)
+                .onAllNodesWithTag(SESSION_BOUNDARY_TEST_TAG)
                 .fetchSemanticsNodes()
                 .size,
         )
@@ -96,7 +100,7 @@ class ScriptedSessionBoundaryTest {
                 .top
         val delimiterTop =
             composeRule
-                .onNodeWithText(EXPLANATION, substring = true, useUnmergedTree = true)
+                .onNodeWithTag(SESSION_BOUNDARY_TEST_TAG)
                 .getUnclippedBoundsInRoot()
                 .top
         val m2Top =
@@ -116,9 +120,6 @@ class ScriptedSessionBoundaryTest {
         // Plain-alphanumeric message bodies — distinct from each other and from every delimiter string.
         const val M1 = "alpha line"
         const val M2 = "omega line"
-
-        // SessionBoundaryDelimiter's reason-independent explanation Text.
-        const val EXPLANATION = "Claude doesn't remember messages above this line"
 
         // boundaryLabel(BoundaryReason.Clear) hardcoded prefix; the <time> tail is locale/timezone-formatted.
         const val CLEAR_LABEL_PREFIX = "New session"

@@ -192,6 +192,21 @@ class AppPreferencesTest {
         }
 
     @Test
+    fun collapseToolUses_defaultsToTrue() =
+        runBlocking {
+            assertEquals(true, prefs.collapseToolUses.first())
+        }
+
+    @Test
+    fun setCollapseToolUses_roundTripsBothValues() =
+        runBlocking {
+            prefs.setCollapseToolUses(false)
+            assertEquals(false, prefs.collapseToolUses.first())
+            prefs.setCollapseToolUses(true)
+            assertEquals(true, prefs.collapseToolUses.first())
+        }
+
+    @Test
     fun notificationsEnabled_survivesDataStoreRecreation() =
         runBlocking {
             prefs.setNotificationsEnabled(false)

@@ -241,12 +241,12 @@ Split into [ConversationRepository — data-layer contract — Conventions](conv
 
 ## `ThreadItem` — why a sealed wrapper
 
-The thread screen renders messages chronologically and inserts a horizontal-rule delimiter at each session boundary (`/clear`, idle-evict, workspace change — see CLAUDE.md → "Conversations model"). Above-delimiter messages are visually de-emphasized; the line below offers the memory-plugin install affordance.
+The thread screen renders messages chronologically and inserts a horizontal-rule delimiter at each session boundary (`/clear`, idle-evict, workspace change — see CLAUDE.md → "Conversations model"). Since #1578 the delimiter draws only its rule / label / rule row, at full opacity like every other row; the memory-plugin install affordance stays in the thread overflow menu and the channel info sheet, not on the boundary itself.
 
 The stream interleaves both kinds of row in order, so the consumer never paginates manually across `sessionHistory`. Design notes:
 
 - `MessageItem` **wraps** `Message` rather than having `Message` implement `ThreadItem` directly — keeping a `data/repository/` type out of `data/model/`'s parent chain preserves the layer direction.
-- `SessionBoundary` carries both `previousSessionId` and `newSessionId`. Previous anchors the delimiter to the messages above it; new gives the "claude doesn't remember above the line" prompt a stable handle.
+- `SessionBoundary` carries both `previousSessionId` and `newSessionId`. Previous anchors the delimiter to the messages above it; new identifies the session the thread continues into.
 - `SessionBoundary`'s identity is `(previousSessionId, newSessionId, occurredAt)`, not the session pair
   alone — invariant, unique within a thread ([#775](../codebase/775.md)). `ThreadScreen`'s `LazyColumn`
   keys a boundary row on exactly these three fields, so a duplicate triple crashes it; the pair alone is

@@ -11,6 +11,9 @@ import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -20,6 +23,7 @@ import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -30,7 +34,7 @@ import org.robolectric.annotation.Config
 class SettingsScreenTest {
     @get:Rule val rule = createComposeRule()
 
-    @Test fun settingsShowsOnlyNotificationsInSharedModal() {
+    @Test fun settingsShowsOnlyNotificationsAndThreadInSharedModal() {
         show()
 
         listOf("Settings", "Notifications", "Push notifications when claude responds", "Notification sound", "Default", "Done")
@@ -46,17 +50,68 @@ class SettingsScreenTest {
         var toggles = 0
         rule.setContent {
             PyrycodeMobileTheme(darkTheme = true) {
-                SettingsScreen(enabled, {
-                    enabled = it
-                    toggles++
-                }, {})
+                SettingsScreen(
+                    pushNotifications = enabled,
+                    onTogglePushNotifications = {
+                        enabled = it
+                        toggles++
+                    },
+                    collapseToolUses = true,
+                    onToggleCollapseToolUses = {},
+                    onDismissRequest = {},
+                )
             }
         }
 
-        val toggle = rule.onNode(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Switch))
+        val toggle = rule.onAllNodes(switch)[0]
         toggle.assertIsOff().performClick().assertIsOn()
         rule.onNodeWithText("Notification sound").assertHasNoClickAction()
         rule.runOnIdle { assertEquals(1, toggles) }
+    }
+
+    @Test fun threadSectionShowsCollapseSwitchBelowNotificationSound() {
+        show()
+
+        rule.onNodeWithText("Thread").assertIsDisplayed()
+        rule.onNodeWithText("Collapse assistant tool uses").assertIsDisplayed()
+        rule.onAllNodes(switch).assertCountEquals(2)
+        rule.onAllNodes(switch)[1].assertIsDisplayed().assertIsOn()
+        rule.onNode(hasContentDescription("Collapse assistant tool uses") and isToggleable()).assertIsOn()
+        val sound = rule.onNodeWithText("Notification sound").getUnclippedBoundsInRoot()
+        val heading = rule.onNodeWithText("Thread").getUnclippedBoundsInRoot()
+        val label = rule.onNodeWithText("Collapse assistant tool uses").getUnclippedBoundsInRoot()
+        assertTrue(heading.top > sound.bottom)
+        assertTrue(label.top > heading.bottom)
+    }
+
+    @Test fun collapseSwitchTogglesOnlyItsOwnCallback() {
+        var collapse by mutableStateOf(true)
+        val collapseToggles = mutableListOf<Boolean>()
+        var pushToggles = 0
+        rule.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                SettingsScreen(
+                    pushNotifications = true,
+                    onTogglePushNotifications = { pushToggles++ },
+                    collapseToolUses = collapse,
+                    onToggleCollapseToolUses = {
+                        collapse = it
+                        collapseToggles += it
+                    },
+                    onDismissRequest = {},
+                )
+            }
+        }
+
+        rule
+            .onAllNodes(switch)[1]
+            .assertIsOn()
+            .performClick()
+            .assertIsOff()
+        rule.runOnIdle {
+            assertEquals(listOf(false), collapseToggles)
+            assertEquals(0, pushToggles)
+        }
     }
 
     @Test fun closeDoneAndBackRequestDismissal() {
@@ -72,8 +127,16 @@ class SettingsScreenTest {
     private fun show(onDismiss: () -> Unit = {}) {
         rule.setContent {
             PyrycodeMobileTheme(darkTheme = true) {
-                SettingsScreen(true, {}, onDismiss)
+                SettingsScreen(
+                    pushNotifications = true,
+                    onTogglePushNotifications = {},
+                    collapseToolUses = true,
+                    onToggleCollapseToolUses = {},
+                    onDismissRequest = onDismiss,
+                )
             }
         }
     }
+
+    private val switch = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Switch)
 }

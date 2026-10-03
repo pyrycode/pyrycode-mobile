@@ -3,6 +3,7 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.espresso.Espresso
@@ -18,6 +19,7 @@ import de.pyryco.mobile.data.repository.MemorySearchProvider
 import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.SessionPromptStatus
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.conversations.components.SESSION_BOUNDARY_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.ChannelEditorState
 import de.pyryco.mobile.ui.conversations.list.ChannelPromptReading
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -75,7 +77,8 @@ class ThreadScreenOverflowTest {
             }
         }
 
-        composeTestRule.onNodeWithText("Claude doesn't remember messages above this line.").assertIsDisplayed()
+        composeTestRule.onNodeWithTag(SESSION_BOUNDARY_TEST_TAG).assertIsDisplayed()
+        composeTestRule.assertNoSessionBoundaryExplanation()
         composeTestRule.onNodeWithText("Install").assertDoesNotExist()
         composeTestRule.onNodeWithContentDescription(string(R.string.cd_more_actions)).performClick()
         val installItem = string(R.string.thread_overflow_install_memory_plugin)
@@ -88,7 +91,8 @@ class ThreadScreenOverflowTest {
                 )
         }
         composeTestRule.onNodeWithText(installItem).assertIsDisplayed()
-        composeTestRule.onNodeWithText("Install").assertIsDisplayed()
+        // #1578: the overflow item is the offer; the boundary draws no Install of its own.
+        composeTestRule.onNodeWithText("Install").assertDoesNotExist()
 
         composeTestRule.runOnIdle {
             state.value = state.value.copy(conversationId = "c2", runConfig = ThreadRunConfig())

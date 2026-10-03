@@ -214,6 +214,9 @@
     <string name="thread_interrupt_label">Stop</string>
     <string name="cd_thread_interrupt">Stop the running turn</string>
     <string name="cd_thread_copy_message">Copy this message</string>
+    <string name="cd_thread_message_sent">Sent %1$s</string>
+    <string name="thread_message_show_details">Show time and copy</string>
+    <string name="thread_message_hide_details">Hide time and copy</string>
     <string name="cd_thread_copy_code">Copy this code block</string>
     <string name="thread_queued_state_desc">Waiting to send</string>
     <string name="cd_thread_queued_drop">Drop this queued message</string>
@@ -260,6 +263,10 @@
     <string name="cd_tool_failed">Tool call failed</string>
     <string name="cd_tool_done">Tool call done</string>
     <string name="cd_tool_denied">Tool call denied</string>
+    <string name="tool_run_label">Using tools: %1$d</string>
+    <string name="tool_run_failed">%1$d failed</string>
+    <string name="tool_run_expand">Show tool uses</string>
+    <string name="tool_run_collapse">Hide tool uses</string>
     <!-- #896: a tool call a subagent made, and how many agent calls deep it sits. -->
     <string name="cd_tool_subagent_step">Subagent step, level %1$d</string>
     <string name="tool_row_input">Input</string>

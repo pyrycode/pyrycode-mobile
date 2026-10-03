@@ -192,6 +192,7 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 | Offline | `627:4910` | audited, mismatch | › Offline | #1283 | #1499, #1532, #1493 |
 | Task count, usage-limit and pairing-error pills | `568:3139` | audited, mismatch | › Task count pill | #1043, #1002, #1115, #842 | #1499 (family root), #1519 |
 | Session delimiter (clear and idle-evict) | `675:3682` | audited, mismatch | › Session delimiter | #1207, #1358 | #1512, #1498, #1500 |
+| Session boundary without the explanation line, and full-opacity rows above it | `675:3682`, `675:5883` (decision on #1578: the frames keep their `Explanation` node and faded rows; the app draws the `Rule row` alone) | no separate frame | › Session delimiter | #1578 | #1580 (closed, not needed) |
 | Overflow menu | `675:5883` | audited, match | › Overflow menu | #1199 | #1500 |
 | Actions menu | `675:5938` | audited, match | › Actions menu | #884 | #1500 |
 | Keyboard open | `675:6160` | audited, match | › Keyboard open | #1149 | #1500 |
@@ -213,6 +214,7 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 
 | Surface or state | Node | Status | Audit row | Owner | Linked issues |
 |---|---|---|---|---|---|
+| Message meta row hidden until the bubble is tapped; at most one visible, hidden while streaming | `132:4446`, `132:4435` (decision on [#1621](https://github.com/pyrycode/pyrycode-mobile/issues/1621): the component keeps drawing the unchanged timestamp and copy row; the app hides it until tap) | no separate frame | not separately audited | #1621 | #1621 |
 | Tool row, finished | `674:5853` | audited, match | `thread/index.md` › Tool row | #1208, #1315, #1316 | #1500 |
 | Tool row running and failed, nested sub-agent rows | `696:4795` | audited, mismatch | `thread/index.md` › Sub-agent tool rows | #811, #895, #896, #1315, #1316, #1577 | #1539, #1623, #1626, #1630 |
 | Refusal row, collapsed | `620:1577` | audited, mismatch | › Notification text | #875 | #1494 |

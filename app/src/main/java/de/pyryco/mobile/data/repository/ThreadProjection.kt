@@ -129,9 +129,9 @@ internal class ThreadProjection(
     /**
      * `conversationId -> where this device's queued echoes stand` (#1558). A message sent while a turn runs
      * is drawn at tap time (#1355), but the daemon delivers it only after that turn ends, so [observe] reads
-     * each [OwnEchoQueue.queued] echo below every other row, and its delivery moves it to the end of the
+     * each [OwnEchoQueue.parked] echo below every other row, and its delivery moves it to the end of the
      * store once ([moveOwnEchoToEnd]) — on the drain's `queue_state` or the pushed `message`, whichever
-     * arrives first.
+     * arrives first. An echo queued while idle is not parked and keeps its tap-time slot (#1636).
      *
      * Written only by the inbound collector, through [settleQueuedEchoes] and [appendLiveMessage].
      * Connection-scoped and in-memory like [mintedMessageIds], and observed only through [observe].
@@ -234,18 +234,24 @@ internal class ThreadProjection(
      * nothing re-emits.
      *
      * The one exception is position (#1558): the push of an echo still [OwnEchoQueue.queued] is its delivery,
-     * so the held echo, unchanged, first moves to the end of the thread, after the turn it waited behind.
+     * so a [OwnEchoQueue.parked] one, unchanged, first moves to the end of the thread, after the turn it
+     * waited behind. One queued while idle stays where it was drawn (#1636).
      */
     fun appendLiveMessage(
         conversationId: String,
         message: Message,
     ) {
         if (message.id in mintedMessageIds.value[conversationId].orEmpty()) trail.delivered(message.id)
-        if (message.id in ownEchoQueues.value[conversationId]?.queued.orEmpty()) {
-            moveOwnEchoToEnd(conversationId, message.id)
+        val echoes = ownEchoQueues.value[conversationId]
+        if (echoes != null && message.id in echoes.queued) {
+            if (message.id in echoes.parked) moveOwnEchoToEnd(conversationId, message.id)
             ownEchoQueues.update { all ->
-                val echoes = all[conversationId] ?: return@update all
-                all + (conversationId to OwnEchoQueue(echoes.queued - message.id, echoes.delivered + message.id))
+                val current = all[conversationId] ?: return@update all
+                all +
+                    (
+                        conversationId to
+                            OwnEchoQueue(current.queued - message.id, current.delivered + message.id, current.behindTurn - message.id)
+                    )
             }
         }
         threadByConversation.update { current ->
@@ -466,9 +472,9 @@ internal class ThreadProjection(
      * echo to de-dup against.
      */
     fun applyAssistantDelta(event: LiveSessionEvent.AssistantDelta) {
-        val queuedEchoes = ownEchoQueues.value[event.conversationId]?.queued.orEmpty()
+        val parkedEchoes = ownEchoQueues.value[event.conversationId]?.parked.orEmpty()
         threadByConversation.update { current ->
-            val rows = current[event.conversationId].orEmpty().withAssistantDelta(event, Clock.System.now(), passOver = queuedEchoes)
+            val rows = current[event.conversationId].orEmpty().withAssistantDelta(event, Clock.System.now(), passOver = parkedEchoes)
             val ended = event.turnId in endedTurns.value[event.conversationId].orEmpty()
             current + (event.conversationId to if (ended) rows.withSettledTurns(setOf(event.turnId)) else rows)
         }
@@ -556,22 +562,31 @@ internal class ThreadProjection(
      * snapshot holds is [OwnEchoQueue.queued], and one that has left the snapshot is delivered: it moves to
      * the end of the thread before it stops reading as queued, so no read shows it at its tap-time slot. A
      * dropped echo has already been removed and its id spent, so the move finds nothing.
+     *
+     * Only an echo first reported while [turnOpen] held for its conversation waits behind a turn (#1636): it
+     * alone reads last and moves when it drains. One first reported while idle keeps its tap-time slot.
      */
-    fun settleQueuedEchoes(queue: QueueProjection) {
-        (mintedMessageIds.value.keys + ownEchoQueues.value.keys).forEach { settleQueuedEchoes(it, queue) }
+    fun settleQueuedEchoes(
+        queue: QueueProjection,
+        turnOpen: (conversationId: String) -> Boolean,
+    ) {
+        (mintedMessageIds.value.keys + ownEchoQueues.value.keys).forEach { settleQueuedEchoes(it, queue, turnOpen(it)) }
     }
 
     private fun settleQueuedEchoes(
         conversationId: String,
         queue: QueueProjection,
+        turnOpen: Boolean,
     ) {
         val inSnapshot = queue.current(conversationId).mapTo(HashSet()) { it.messageId }
         val echoes = ownEchoQueues.value[conversationId] ?: OwnEchoQueue()
         val drained = echoes.queued - inSnapshot
-        drained.forEach { moveOwnEchoToEnd(conversationId, it) }
+        drained.filter { it in echoes.behindTurn }.forEach { moveOwnEchoToEnd(conversationId, it) }
         val delivered = echoes.delivered + drained
         val minted = mintedMessageIds.value[conversationId].orEmpty()
-        val next = OwnEchoQueue(inSnapshot.intersect(minted) - delivered, delivered)
+        val queued = inSnapshot.intersect(minted) - delivered
+        val behindTurn = (echoes.behindTurn intersect queued) + if (turnOpen) queued - echoes.queued else emptySet()
+        val next = OwnEchoQueue(queued, delivered, behindTurn)
         // A dropped echo has already left the ledger, so only a drained one still in it was delivered.
         drained.filter { it in minted }.forEach(trail::delivered)
         next.queued.forEach(trail::queued)
@@ -711,18 +726,19 @@ internal class ThreadProjection(
      * stops streaming once any row follows it, whichever write appended that row. This is the one read of
      * the store, so no reader sees an earlier segment still streaming.
      *
-     * This device's queued echoes read last (#1558), in thread order, below every row of the turn they wait
-     * behind, and the last-row rule runs over the rows without them, so the running reply keeps streaming.
+     * This device's parked echoes, those queued behind a turn, read last (#1558, #1636), in thread order,
+     * below every row of the turn they wait behind, and the last-row rule runs over the rows without them,
+     * so the running reply keeps streaming.
      */
     fun observe(conversationId: String): Flow<List<ThreadItem>> =
         combine(threadByConversation, ownEchoQueues) { threads, echoes ->
-            threads[conversationId].orEmpty().withQueuedEchoesLast(echoes[conversationId]?.queued.orEmpty())
+            threads[conversationId].orEmpty().withParkedEchoesLast(echoes[conversationId]?.parked.orEmpty())
         }.distinctUntilChanged()
 
-    /** This thread as [observe] reads it: [queued] user rows last, the rest through [withOnlyLastRowStreaming]. */
-    private fun List<ThreadItem>.withQueuedEchoesLast(queued: Set<String>): List<ThreadItem> {
-        if (queued.isEmpty()) return withOnlyLastRowStreaming()
-        val (parked, rest) = partition { it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.id in queued }
+    /** This thread as [observe] reads it: [parkedIds] user rows last, the rest through [withOnlyLastRowStreaming]. */
+    private fun List<ThreadItem>.withParkedEchoesLast(parkedIds: Set<String>): List<ThreadItem> {
+        if (parkedIds.isEmpty()) return withOnlyLastRowStreaming()
+        val (parked, rest) = partition { it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.id in parkedIds }
         return if (parked.isEmpty()) withOnlyLastRowStreaming() else rest.withOnlyLastRowStreaming() + parked
     }
 
@@ -802,11 +818,19 @@ internal class ThreadProjection(
      * One conversation's own queued echoes (#1558). [queued] is the minted ids its latest snapshot holds;
      * [delivered] is the ids already moved to the end, which a later snapshot repeating one (a legal
      * duplicate `message_id`) never queues again.
+     *
+     * [behindTurn] is the [queued] ids first reported while a turn was open (#1636), and only those, the
+     * [parked] ones, read last and move on delivery. One queued while idle waits behind nothing: the daemon
+     * delivers it at once, and its confirmation can arrive after its own reply began, so moving it then would
+     * put it below the reply's start and split the reply around it.
      */
     private data class OwnEchoQueue(
         val queued: Set<String> = emptySet(),
         val delivered: Set<String> = emptySet(),
-    )
+        val behindTurn: Set<String> = emptySet(),
+    ) {
+        val parked: Set<String> get() = queued intersect behindTurn
+    }
 
     /** One `compacting` edge as the thread fold reads it (#1358): the outcome strings reduced to [failed]. */
     private class CompactingEdge(

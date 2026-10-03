@@ -5,23 +5,17 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -50,88 +44,45 @@ internal fun MemorySearchReport.shouldOfferMemoryInstall(): Boolean =
 // thread share one rhythm.
 private val RuleLabelSpacing = 12.dp
 private val RuleThickness = 1.dp
-private val ExplanationTopSpacing = 8.dp
 
-// Figma 675:3797 `Session boundary` pads its own column 20px inside the message gutter, so the rules and the
-// explanation sit inset from the bubbles. `CompactionBoundaryDivider` keeps the gutter-to-gutter width.
+// Figma 675:3797 `Session boundary` pads its own column 20px inside the message gutter, so the rules sit
+// inset from the bubbles. `CompactionBoundaryDivider` keeps the gutter-to-gutter width.
 private val SessionBoundaryInset = 20.dp
 
 // Fixed dark takes `Schemes/inverse-primary` at 60% directly. Other palettes keep the earlier
 // `outlineVariant` adaptation for a legible rule.
 private const val RULE_ALPHA = 0.60f
 
+/** The reason-independent test matcher for a drawn session boundary (#1578). */
+internal const val SESSION_BOUNDARY_TEST_TAG: String = "session-boundary"
+
+/**
+ * A session boundary drawn as the rule / label / rule row alone (#1578): no explanation line and no Install
+ * affordance, whatever the reason or the memory-search report. Figma `675:3682` still draws an `Explanation`
+ * node under it; dropping it is a decision on #1578, not drift.
+ */
 @Composable
 fun SessionBoundaryDelimiter(
     boundary: ThreadItem.SessionBoundary,
     modifier: Modifier = Modifier,
-    agent: ConversationAgent = ConversationAgent.Claude,
-    memorySearch: MemorySearchReport = MemorySearchReport.Unknown,
-) {
-    SessionBoundaryDelimiterContent(
-        boundary = boundary,
-        uriHandler = LocalUriHandler.current,
-        modifier = modifier,
-        agent = agent,
-        memorySearch = memorySearch,
-    )
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-internal fun SessionBoundaryDelimiterContent(
-    boundary: ThreadItem.SessionBoundary,
-    uriHandler: UriHandler,
-    modifier: Modifier = Modifier,
-    agent: ConversationAgent = ConversationAgent.Claude,
-    memorySearch: MemorySearchReport = MemorySearchReport.Unknown,
 ) {
     val label = boundaryLabel(boundary, TimeZone.currentSystemDefault(), Locale.getDefault())
-    Column(
+    RuleLabelRow(
+        label = label,
         modifier =
             modifier
-                .fillMaxWidth()
+                .testTag(SESSION_BOUNDARY_TEST_TAG)
                 .padding(
                     start = MessageContentGutter + SessionBoundaryInset,
                     end = MessageContentGutter + SessionBoundaryInset,
                     bottom = MessageAreaRowSpacing,
                 ),
-    ) {
-        RuleLabelRow(label = label)
-        Spacer(modifier = Modifier.height(ExplanationTopSpacing))
-        FlowRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Center,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text(
-                text = "${agentDisplayName(agent)} doesn't remember messages above this line.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-            )
-            if (memorySearch.shouldOfferMemoryInstall()) {
-                Text(
-                    text = " Search stored knowledge with a memory plugin. ",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                )
-                TextButton(
-                    onClick = { uriHandler.openUri(MEMORY_PLUGIN_DOCS_URL) },
-                    contentPadding = PaddingValues(0.dp),
-                ) {
-                    Text("Install")
-                }
-            }
-        }
-    }
+    )
 }
 
 /**
  * A finished compaction (#874), drawn as the design's `Session reset` rule / label / rule row with the
- * compaction label in its place. Unlike [SessionBoundaryDelimiter] it carries no explanation line and no
- * Install affordance: a compaction is not a session reset, and the row changes no above-the-line
- * de-emphasis. Stateless and inert.
+ * compaction label in its place, spanning the full message gutter. Stateless and inert.
  *
  * The label is client-owned copy (desktop's `compactionBoundaryTitle`): only validated counts and the
  * recognised `manual` trigger reach it, both narrowed at decode, so no claude-authored string is drawn.

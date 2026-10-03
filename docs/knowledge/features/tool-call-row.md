@@ -482,6 +482,10 @@ rendering doesn't ripple into the data-layer fake.
     chronological row. See [Consecutive tool rows sit flush](#consecutive-tool-rows-sit-flush-1577)
     above and [Thread screen § Consecutive tool rows sit
     flush](thread-screen-subagent-tool-rows.md#consecutive-tool-rows-sit-flush-1577).
+  - **#1635** — folds a run of two or more adjacent tool rows (with `collapseToolUses` on) into one
+    "Using tools: N" header; expanded, the run's own tool rows follow it using this same #1577 flush
+    join. Shares `ToolRunningSpinner`, `ToolDoneGlyph` and `ToolFailedGlyph` from this file's trailing
+    status. See [Thread screen § Collapsing runs of consecutive tool rows](thread-screen-subagent-tool-rows.md#collapsing-runs-of-consecutive-tool-rows-1635).
 - Still open:
   - Language inference from path extension for `Read`/`Edit` code blocks
   - `AnimatedVisibility` around the expanded body

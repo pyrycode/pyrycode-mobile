@@ -186,6 +186,25 @@ of the same surface in one run (`archive.png` against `archive-compact.png`),
 so re-read it from the committed capture immediately before writing that
 verdict rather than trusting an earlier run's reading.
 
+`ListDesignCaptureTest` (#1504) extended the same walk to the states `670:5299`
+added frames for — Edit channel retagged, Edit chat, Create channel, Rename,
+Save as channel, the Delete confirmation, three host-row link statuses and
+Archive's two empty tabs — and found three more traps. First,
+`waitUntil { hasSetTextAction() nodes exist }` after opening a modal from
+inside a thread passes at once, because the thread's own composer is already a
+set-text node; wait on the modal's own label instead. Second, a `null`
+repository on a `HostConversationConnection` gives a host row with no
+conversation rows underneath it, which is what let the `PairingRejected` and
+`UpdateRequired` host rows for this audit stand up without a second fake.
+Third, a dialog capture's `imePx` reading can disagree with the image: the IME
+can arrive between `DesignCapture.capture`'s inset read and its
+`takeScreenshot()` call, so a modal captured right as its text appears can
+record `bottom=0` while the screenshot already shows the keyboard, or the
+reverse. Settle the keyboard state explicitly before capturing a dialog-window
+modal — as the Edit host steps already do with `awaitModalFocus` /
+`awaitModalKeyboard` / `pressBack` — rather than reading the race as a
+structural limit of dialog-window sidecars.
+
 `ThreadDesignCaptureTest` (#1432) audited the thread, composer and thread
 status states through this harness. It runs in the UI gate on ATD, so a change
 to a thread panel, menu or status band can break it. Capture keyboard states
@@ -213,6 +232,30 @@ app's row is taller than the component (the switch-back failed line sits
 lower than Figma's), pad the export to the crop's height instead of letting
 the script resize it.
 
+After capturing a visible snackbar, end its state explicitly before capturing
+the next state. Under the Compose test rule, Material3's short snackbar's 4 s
+coroutine delay uses virtual time, while `waitUntil` enforces a wall-clock timeout
+and advances virtual time only one 16 ms frame per poll. Each poll also sleeps
+and synchronizes with Espresso, so roughly 255 polls can exceed a 15 s budget
+under sharded emulator load even when focused runs pass. This is a test-clock
+dependency, not a production snackbar fault (#1664).
+`ThreadDesignCaptureTest.dismissSnackbar(text)` selects the node defining
+`SemanticsActions.Dismiss` with a descendant containing the snackbar text,
+invokes that accessibility action after the visible-state capture, then requires
+text absence within 5 s before the following capture. This preserves the
+snackbar frame without waiting for timer expiry or loosening comparisons.
+
+The [#1664 verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1670#issuecomment-5972292335)
+and its fresh two-shard XML report 171 executed, 0 failed and 1 skipped;
+`ThreadDesignCaptureTest#rowAndNoticeFramesAt412By892` and
+`ThreadDesignCaptureTest#refusalStateFramesAt412By892` both executed and passed.
+That run establishes the text transitions, not fresh pixel comparisons:
+`DesignCapture.capture` writes metadata and returns before taking a screenshot
+when `syntheticBars=true`. Capture names, Figma node IDs, comparison assets and
+tolerances stayed unchanged, but no fresh PNGs were produced. Check the metadata
+before treating a passing ATD capture method as visual evidence; real pixel
+evidence requires real system bars and `requireRealSystemBars=true`.
+
 `MarkdownReaderCaptureTest#compactLargeTextKeepsControlsAndBodyReachable`
 (unrelated to the #1352 history-paging change, caught in its PR's UI gate and
 triaged there) hit the same `wm size` race, confirmed by two focused re-runs
@@ -221,6 +264,32 @@ itself, so a single red run proves nothing about whose change caused it.
 Filed as #1467 and fixed there: the class moved its resize into the same
 `order = 0` `TestRule` shape, reading `compactLargeTextKeepsControlsAndBodyReachable`'s
 320x700 size from `@Viewport("320x700")`, with the compose rule at `order = 1`.
+`ComposerFieldCaptureTest#compactLargeTextKeepsSendReachable` and
+`ChannelInfoCaptureTest#channelInfoScrolledMatches668_5460` hit the same race
+again (#1654's sharded UI gate: both failed with "No compose hierarchies
+found", both passed 1/1 on a focused re-run against the merge base and the PR
+head). Fixed in #1661: both classes dropped their own `@Before`/`@After`
+`wm size`/`wm density` pair and private `shell`/`overrideOf` helpers for the
+shared `ViewportRule()` at `order = 0` ahead of `createComposeRule()` at
+`order = 1`, with `@Viewport("320x692")` on `ChannelInfoCaptureTest`'s two
+compact methods and `@Viewport("280x400")` on
+`compactLargeTextKeepsSendReachable`. Other androidTest classes still resize
+under a running activity, for example `ScannerLivePreviewDeviceTest` — if
+"No compose hierarchies found" shows up there or elsewhere, this same
+conversion is the first thing to try.
+
+A whole-tree text assertion in a capture test can match seeded thread
+content, not just the control it means to check. `ThreadDesignCaptureTest
+#openRunConfiguration()`'s `onAllNodesWithText("Default", …)` asserted no
+node anywhere contained "default", so it failed whenever the seeded reply
+"Workspace picker — default to the current cwd …" was on screen at 320×700
+above the expanded run-configuration rows — intermittent, because it depended
+on where the thread list happened to be scrolled (#1654, unmasked by #1644).
+Scope a tree-wide "absent" check to the surface under test instead:
+`hasText(..., substring = true, ignoreCase = true) and
+!hasAnyAncestor(hasTestTag("thread-message-region"))` excludes every thread
+message while still covering the run-configuration sheet and footer, which
+both sit outside that region.
 
 Reply assertions must not depend on total substring-count growth: removing queued
 prompt text can offset a newly displayed assistant reply. For fresh discussions
