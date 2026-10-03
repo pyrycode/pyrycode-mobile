@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import android.widget.Magnifier
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.text.contextmenu.data.TextContextMenuItem
 import androidx.compose.foundation.text.contextmenu.data.TextContextMenuKeys
 import androidx.compose.foundation.text.contextmenu.data.TextContextMenuSession
@@ -9,6 +10,10 @@ import androidx.compose.foundation.text.contextmenu.provider.TextContextMenuData
 import androidx.compose.foundation.text.contextmenu.provider.TextContextMenuProvider
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -187,6 +192,49 @@ class MessageBubbleSelectionTest {
         setBubble(message(Role.User, USER_BODY))
 
         assertEquals(USER_WORD, longPressAndCopy(USER_WORD))
+    }
+
+    // #1621 + #1638: exercise pointer gestures, rather than the bubble's accessibility click.
+    @Test
+    fun selectableBodies_keepTheMetaRowTap_andLongPressDoesNotToggleIt() {
+        val messages = listOf(message(Role.Assistant, PROSE_WORD), message(Role.User, USER_WORD))
+        val copyMessage =
+            InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_thread_copy_message)
+        composeTestRule.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                CompositionLocalProvider(LocalTextContextMenuToolbarProvider provides toolbar) {
+                    var visibleMessageId by remember { mutableStateOf<String?>(null) }
+                    Surface {
+                        Column {
+                            messages.forEach { message ->
+                                MessageBubble(
+                                    message = message,
+                                    metaRowVisible = visibleMessageId == message.id,
+                                    onToggleMetaRow = {
+                                        visibleMessageId = if (visibleMessageId == message.id) null else message.id
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        messages.forEach { message ->
+            composeTestRule.onNodeWithContentDescription(copyMessage).assertDoesNotExist()
+            composeTestRule.mainClock.advanceTimeBy(500)
+            composeTestRule.onNodeWithText(message.content).performTouchInput { click() }
+            composeTestRule.onNodeWithContentDescription(copyMessage).assertExists()
+            // Separate single taps from Compose's double-tap word-selection gesture.
+            composeTestRule.mainClock.advanceTimeBy(500)
+            composeTestRule.onNodeWithText(message.content).performTouchInput { click() }
+            composeTestRule.onNodeWithContentDescription(copyMessage).assertDoesNotExist()
+
+            assertEquals(message.content, longPressAndCopy(message.content))
+            composeTestRule.onNodeWithContentDescription(copyMessage).assertDoesNotExist()
+            composeTestRule.onRoot().performTouchInput { click(Offset(1f, 1f)) }
+        }
     }
 
     // A streaming reply stays unselectable, so a selection never holds offsets into text still arriving.

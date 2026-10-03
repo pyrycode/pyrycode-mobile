@@ -215,6 +215,7 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 
 | Surface or state | Node | Status | Audit row | Owner | Linked issues |
 |---|---|---|---|---|---|
+| Message meta row hidden until the bubble is tapped; at most one visible, hidden while streaming | `132:4446`, `132:4435` (decision on [#1621](https://github.com/pyrycode/pyrycode-mobile/issues/1621): the component keeps drawing the unchanged timestamp and copy row; the app hides it until tap) | no separate frame | not separately audited | #1621 | #1621 |
 | Tool row, finished | `674:5853` | audited, match | `thread/index.md` › Tool row | #1208, #1315, #1316 | #1500 |
 | Tool row running and failed, nested sub-agent rows | `696:4795` | frame only | not audited | #811, #895, #896, #1315, #1316 | #1539 |
 | Refusal row, collapsed | `620:1577` | audited, mismatch | › Notification text | #875 | #1494 |
