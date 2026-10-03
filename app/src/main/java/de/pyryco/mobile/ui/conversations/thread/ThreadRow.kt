@@ -1,5 +1,6 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -36,6 +37,21 @@ sealed interface ThreadRow {
         val queuedMessageId: Long,
         val text: String,
         val echoId: String?,
+    ) : ThreadRow
+
+    /**
+     * A run of two or more adjacent tool rows, drawn as one "Using tools: N" header (#1635), produced by
+     * [foldToolRuns]. Render-time only, like the queued fold.
+     *
+     * @param runId The run's first tool row's [Message.id] — its `tool_use_id`. New tool rows join a run
+     *   at its end, so the id holds while the run grows and an expanded run stays expanded.
+     * @param tools The run's tool messages, in thread order; the header counts them and reads their status.
+     * @param expanded Whether the run's own rows follow the header.
+     */
+    data class ToolRun(
+        val runId: String,
+        val tools: List<Message>,
+        val expanded: Boolean,
     ) : ThreadRow
 }
 
@@ -119,6 +135,47 @@ internal fun foldQueuedRows(
 }
 
 /**
+ * Fold each maximal run of two or more adjacent tool rows in [rows] into one [ThreadRow.ToolRun] (#1635),
+ * the "Collapse assistant tool uses" setting's whole effect on the thread. Any other row ends a run, a lone
+ * tool row passes through as itself, and a subagent's tool rows are tool rows, so they join the run they sit
+ * in. A run whose id is in [expandedRuns] is followed by its own rows, unchanged, so they keep their keys,
+ * their nesting depth and their #1577 flush join.
+ *
+ * Runs after [foldQueuedRows]: a queued row is never a tool row, so it ends a run like any other. O(rows).
+ */
+internal fun foldToolRuns(
+    rows: List<ThreadRow>,
+    expandedRuns: Set<String>,
+): List<ThreadRow> {
+    val folded = ArrayList<ThreadRow>(rows.size)
+    var start = 0
+    while (start < rows.size) {
+        var end = start
+        while (end < rows.size && rows[end].isToolRow()) end++
+        if (end - start >= 2) {
+            val run = rows.subList(start, end)
+            val tools = run.map { ((it as ThreadRow.Delivered).item as ThreadItem.MessageItem).message }
+            val runId = tools.first().id
+            val expanded = runId in expandedRuns
+            folded += ThreadRow.ToolRun(runId = runId, tools = tools, expanded = expanded)
+            if (expanded) folded += run
+            start = end
+        } else {
+            // Zero or one tool row: it, or the non-tool row that stopped the scan, draws as itself.
+            folded += rows[start]
+            start++
+        }
+    }
+    return folded
+}
+
+/** A row that draws a tool call: a [Role.Tool] message carrying one. #1577's flush join and [foldToolRuns] share it. */
+internal fun ThreadRow?.isToolRow(): Boolean {
+    val message = ((this as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)?.message ?: return false
+    return message.role == Role.Tool && message.toolCall != null
+}
+
+/**
  * The row's `LazyColumn` key, at its [chronologicalIndex] in the folded list. Lives beside the fold
  * rather than inside the screen so it is unit-testable, and so the two halves of the uniqueness
  * argument below sit next to each other.
@@ -127,7 +184,7 @@ internal fun foldQueuedRows(
  * what leaves the row in place across delivery instead of recreating it at a new identity.
  *
  * Key uniqueness, which the list depends on — a duplicate key throws and takes the thread down:
- * - The four namespaces are distinct string literals, so no arm can collide with another.
+ * - The namespaces are distinct string literals, so no arm can collide with another.
  * - `msg:` keys are unique because `withMessage` upserts by id, and because [foldQueuedRows] lets at
  *   most one row claim a given echo (rule 2) and never emits the claimed item a second time.
  * - `boundary:` keys encode exactly the `(previousSessionId, newSessionId, occurredAt)` identity both
@@ -137,11 +194,15 @@ internal fun foldQueuedRows(
  * - An **unmatched** row keys on its position, deliberately **not** on `queued_msg_id`: that value is
  *   daemon-supplied and nothing on this client checks it for uniqueness, so a snapshot repeating one
  *   would mint two identical keys. Position is unique by construction.
+ * - A [ThreadRow.ToolRun] (#1635) keys on `tool-run:` and its first row's id. That id is a `msg:` id, unique
+ *   as above, and two runs never share a first row. A collapsed run's rows are not emitted and an expanded
+ *   run's rows are emitted once, under their own `msg:` keys, so folding adds no duplicate.
  */
 internal fun ThreadRow.listKey(chronologicalIndex: Int): String =
     when (this) {
         is ThreadRow.Delivered -> item.listKey()
         is ThreadRow.Queued -> echoId?.let { "msg:$it" } ?: "queued-row:$chronologicalIndex"
+        is ThreadRow.ToolRun -> "tool-run:$runId"
     }
 
 private fun ThreadItem.listKey(): String =
