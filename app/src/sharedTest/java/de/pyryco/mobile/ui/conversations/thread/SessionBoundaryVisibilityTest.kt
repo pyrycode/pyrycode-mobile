@@ -7,6 +7,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -15,6 +16,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.conversations.components.SESSION_BOUNDARY_TEST_TAG
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Rule
@@ -64,8 +66,8 @@ class SessionBoundaryVisibilityTest {
         }
         composeRule.onNodeWithText("Wrap-up detail 80.").assertIsDisplayed()
         composeRule.onNodeWithText("Wrap-up detail 1.").assertIsNotDisplayed()
-        val explanation = composeRule.onNodeWithText(SESSION_BOUNDARY_EXPLANATION, substring = true)
-        explanation.assertDoesNotExist()
+        val boundary = composeRule.onNodeWithTag(SESSION_BOUNDARY_TEST_TAG)
+        boundary.assertDoesNotExist()
         composeRule.runOnIdle {
             state =
                 state.copy(
@@ -85,8 +87,8 @@ class SessionBoundaryVisibilityTest {
         // Off-screen lazy content may still exist in semantics; the precondition is non-display.
         composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(1)
         composeRule.onNodeWithText("Wrap-up detail 80.").assertIsDisplayed()
-        explanation.assertIsNotDisplayed()
+        boundary.assertIsNotDisplayed()
         composeRule.awaitDisplayedSessionBoundary(timeoutMillis = 5_000)
-        explanation.assertIsDisplayed()
+        boundary.assertIsDisplayed()
     }
 }
