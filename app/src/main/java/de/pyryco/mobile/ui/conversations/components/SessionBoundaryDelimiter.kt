@@ -52,6 +52,10 @@ private val RuleLabelSpacing = 12.dp
 private val RuleThickness = 1.dp
 private val ExplanationTopSpacing = 8.dp
 
+// Figma 675:3797 `Session boundary` pads its own column 20px inside the message gutter, so the rules and the
+// explanation sit inset from the bubbles. `CompactionBoundaryDivider` keeps the gutter-to-gutter width.
+private val SessionBoundaryInset = 20.dp
+
 // Fixed dark takes `Schemes/inverse-primary` at 60% directly. Other palettes keep the earlier
 // `outlineVariant` adaptation for a legible rule.
 private const val RULE_ALPHA = 0.60f
@@ -87,8 +91,8 @@ internal fun SessionBoundaryDelimiterContent(
             modifier
                 .fillMaxWidth()
                 .padding(
-                    start = MessageContentGutter,
-                    end = MessageContentGutter,
+                    start = MessageContentGutter + SessionBoundaryInset,
+                    end = MessageContentGutter + SessionBoundaryInset,
                     bottom = MessageAreaRowSpacing,
                 ),
     ) {

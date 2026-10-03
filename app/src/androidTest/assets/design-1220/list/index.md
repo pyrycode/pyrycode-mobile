@@ -153,22 +153,44 @@ No audit declares app-wide parity; #1434 owns that verdict.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: the centred field block sits 7–10 px higher than the frame (Server identity y 342 against 349, field top 427 against 437), more than the 2 px the shell's 844 px height inside the bars accounts for. Cancel and OK keep the frame's 25 px from the shell's bottom edge |
+| Geometry | mismatch, routed to #1588: the centred field block still sits 3 px high (Server identity glyph top y 346 against 349), down from 7–10 px. The cause is no longer the header (resolved; see Spacing) but `MobileModal`'s content slot, which starts 21 px below the header rule against the frame's 25; the rule-to-footer midpoint is 446 in both. The block's own internal geometry is within 1 px (identity glyph to field top 87.5 against 88, field top to Unpair outline 71.5 against 72). Cancel and OK keep the frame's 25 px from the shell's bottom edge |
 | Padding | match: 28 px gutters, field text inset 16 px, Unpair host at x 28–155 |
-| Spacing | mismatch: the title starts 30 px below the shell's top against 34 (header rule 64 against 68), the same 30 px `17:2` uses, so the two frames disagree; "Host name:" to the field is 12 px against 15. Identity rows keep the 32 px pitch |
-| Typography | mismatch: "Server identity:" runs 4 px wider (x 29–126 against 29–122) and "Relay address:" 2 px wider, pushing values 3–4 px right; glyph heights match |
+| Spacing | match: the header (title 30 px below the shell's top, rule at 64) now matches both `17:2` and the frame, so the #1431 header mismatch is resolved and out of scope. "Host name:" to the field is 14.5 px against 15 px, within 1 px (#1489: `TextMotion.Animated` plus the frame's untrimmed 20 px line box, where the theme's styles carry no `lineHeightStyle` and Compose had trimmed the label to ≈16 px). Identity rows keep the 32 px pitch |
+| Typography | match: "Server identity:" ink x 29–122 against 29–122 and "Relay address:" 29–119 against 29–119, both exact; value start x 137/134 against 136/133, within 1 px (#1489: density-1.0 hinting rounds every glyph advance to a whole pixel, adding 4 px over 16 glyphs — not device Roboto metrics as the code comment previously said; `TextMotion.Animated` disables the hinting) |
 | Colour | match: shell surface, field fill, outlined Unpair host and Cancel, filled OK, close |
 | Borders | match: header rule, outlines |
 | Radii | match: shell, field, buttons |
 | Icon paths | match: close |
 | Component state | match: name filled, OK enabled |
 
-- **Compact:** no clipping or overlap; the identity labels wrap to two lines and the relay value ellipsizes;
-  every control stays on screen.
+- **Compact:** no clipping or overlap; the identity labels wrap to two lines (weighted 2:5 against the value's
+  3:5, widened from 1/3 after #1489's unhinted label no longer fit a third of the row) and the relay value
+  ellipsizes; every control stays on screen. `ListDesignCaptureTest.assertIdentityLabelsWrapOnlyBetweenWords`
+  checks on the device that the break falls only between words — Robolectric's font metrics pass this
+  unhinted-width case even when the device breaks mid-word, so the check cannot move to a shared test.
 - **Keyboard-open:** at 412x892 the field, Unpair host, Cancel and OK sit above the keyboard. At 320x700 and
   150 % the field, Cancel and OK stay above it and Unpair host scrolls under the action bar; the walk scrolls to
   it and asserts it is displayed, so it stays reachable. No overlap.
-- **Routed:** #1489 (rescoped from the harness gap the first run named, which this run closed)
+- **Routed:** #1489 closed the label width, label-to-field gap and Unpair action height mismatches and the
+  header disagreement (resolved upstream in Figma). The residual 3 px block offset is routed to #1588.
+
+### Modal › Edit host unpair confirmation — `671:5620`
+
+- **Owning ticket:** #1489 (frame assigned; capture was previously untagged, see Gaps history below)
+- **Capture:** `edit-host-unpair.png`, `edit-host-unpair-compact.png` · **Side-by-side:**
+  `edit-host-unpair-side-by-side.png` · **Overlay:** `edit-host-unpair-overlay.png`
+- Opened from Edit host's outlined "Unpair host" button. Titled "Unpair host?".
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | mismatch, routed to #1588: the message sits 4 px high (glyph top y 427 against 431), the confirmation's share of the same `MobileModal` slot offset as Edit host above |
+| Copy | match: `edit_host_unpair_confirm_body` now reads "%1$s will be removed from this phone: its pairing and its connection. Pairing it again needs its QR code.", matching `671:5620` word for word with the host name substituted for "Pyrybox" and no "workspace" anywhere in the string |
+| Typography | match: body-medium message on `onPrimaryContainer`, unhinted via the same `TextMotion.Animated` line box as the identity values |
+| Colour | match: shell surface, outlined Cancel, filled OK |
+| Borders, Radii, Icon paths | match: same shell as Edit host |
+| Component state | match: OK enabled |
+
+- **Compact:** no clipping or overlap.
 
 ## Gaps
 
@@ -181,7 +203,6 @@ holds only the bare `Icon=Pair` (`486:995`) and `Icon=Update` (`581:1606`) glyph
 | Edit channel modal (row pen) | `edit-channel.png`, `edit-channel-compact.png` (it opens with its name field focused and the keyboard up; at 412x892 every field and action sits above the keyboard, at 320x700 the prompt field is cut by the action bar and Mute and Archive channel sit below it; the walk scrolls to Archive channel with the keyboard up and asserts it is displayed, so both stay reachable) | #667 | #1504 |
 | Edit chat modal (row pen) | none | #827 | #1504 |
 | Create channel modal (Channels plus) | none | #958 | #1504 |
-| Unpair host confirmation (Edit host) | `edit-host-unpair.png`, `edit-host-unpair-compact.png`; its copy names a "saved workspace" | #745 | #1504, copy in #1489 |
 | Archive, Discussions tab | `archive-discussions.png`, `archive-discussions-compact.png` | #1265 | #1487 |
 | Rename dialog and Save as channel (thread overflow) | none | #957 | #1504 |
 | Disconnected host row | none; `TreeHostRow` draws the glyph and name in `error` and adds a plug control ("Reconnect <host>"), `treeHost` hides the Channels and Chats plus buttons, and `MainActivity` handles `TreeHostReconnectTapped`. The source notes "the reference has no disconnected-host variant" | #840, #1336 | #1504 |

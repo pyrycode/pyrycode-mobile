@@ -3,6 +3,7 @@ package de.pyryco.mobile.di
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerStore
+import de.pyryco.mobile.data.diagnostics.MessageTrail
 import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.NoiseSessionFactory
 import de.pyryco.mobile.data.network.NoiseSessionPump
@@ -24,6 +25,8 @@ class RelayConnectionFactory(
     private val pushTokens: Flow<String?> = flowOf(null),
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    /** The process-wide message trail (#1564), shared by every host's connections. */
+    private val messageTrail: MessageTrail = MessageTrail(),
 ) {
     /** The supplied immutable record remains the dial, handshake and re-key identity until disposal. */
     fun create(record: PairedServer): RelayConnectionBundle =
@@ -39,7 +42,7 @@ class RelayConnectionFactory(
     fun createCompatibility(store: PairedServerStore): RelayConnectionBundle = build(store)
 
     private fun build(store: PairedServerStore): RelayConnectionBundle =
-        RelayConnectionBundle(deviceStaticKeyStore, transportFactory, clientInfo, store, pushTokens, dispatcher, ioDispatcher)
+        RelayConnectionBundle(deviceStaticKeyStore, transportFactory, clientInfo, store, pushTokens, dispatcher, ioDispatcher, messageTrail)
 }
 
 /**
@@ -54,6 +57,7 @@ class RelayConnectionBundle internal constructor(
     pushTokens: Flow<String?>,
     dispatcher: CoroutineDispatcher,
     ioDispatcher: CoroutineDispatcher,
+    messageTrail: MessageTrail,
 ) {
     val supervisor = RelayConnectionSupervisor(transportFactory, pairedServerStore, dispatcher)
     val sessionFactory: NoiseSessionFactory =
@@ -81,6 +85,7 @@ class RelayConnectionBundle internal constructor(
             dispatcher = dispatcher,
             deviceName = clientInfo.deviceName,
             pushTokens = pushTokens,
+            messageTrail = messageTrail,
         )
     private val disposed = AtomicBoolean(false)
 

@@ -37,15 +37,15 @@ internal fun ThreadTopOverlay(
     modifier: Modifier = Modifier,
     connectionState: ConnectionState = ConnectionState.Connected,
     onRetryConnection: () -> Unit = {},
-    agent: ConversationAgent = ConversationAgent.Claude,
     mcpFailure: String? = null,
     onOpenMcpFailure: () -> Unit = {},
 )
 ```
 
-`agent` ([#1115](https://github.com/pyrycode/pyrycode-mobile/issues/1115)) is `ThreadScreen`'s own
-`state.agent`, forwarded unchanged to `usageLimitLabel` below. Defaulting to `Claude` — `Conversation.agent`'s
-own default — keeps every prior call site and preview compiling unchanged.
+[#1519](https://github.com/pyrycode/pyrycode-mobile/issues/1519) dropped the `agent` parameter this
+composable used to forward into `usageLimitLabel` — the lead no longer names the conversation's agent (see
+[Usage-limit indicator](usage-limit-indicator.md)), so `ThreadTopOverlay` has nothing left to do with it.
+`ThreadScreen`'s call site dropped its `agent = state.agent` argument to match.
 
 Emits nothing when there is no pill to show (`usageLimit == null || usageLimitDismissed`, `mcpFailure == null`,
 `!showRePair`, and `connectionState != Offline`) — the overlay is an overlap (`Box` alignment, not a layout slot), so an empty overlay costs
@@ -54,11 +54,10 @@ End, verticalArrangement = spacedBy(12.dp))` — Figma `541:2446`'s 12dp pill ga
 
 ### The usage pill
 
-When `usageLimit != null && !usageLimitDismissed`: `NoticePill(text = usageLimitLabel(usage, agent), isError =
+When `usageLimit != null && !usageLimitDismissed`: `NoticePill(text = usageLimitLabel(usage), isError =
 !usageLimitIsWarning(usage), onDismiss = if (warning) onDismissUsageLimit else null)`. See [Usage-limit
-indicator](usage-limit-indicator.md) for `usageLimitLabel` / `usageLimitIsWarning` and the wording
-guarantees behind them, including how `agent` ([#1115](https://github.com/pyrycode/pyrycode-mobile/issues/1115))
-names the conversation's own agent in the lead string instead of a fixed "Claude".
+indicator](usage-limit-indicator.md) for `usageLimitLabel` / `usageLimitIsWarning` and the client-owned
+copy rule behind them.
 
 ### The failed-MCP-server pill ([#1345](https://github.com/pyrycode/pyrycode-mobile/issues/1345))
 
@@ -248,14 +247,16 @@ for why that ask shares a daemon worker with sending a message and can stall beh
 
 Builder self-review **PASS**, full text in the [architecture
 doc](../../specs/architecture/1002-thread-top-overlay-pills.md#security-review). No new trust boundary: the
-daemon-authored fields reach Compose only through `usageLimitLabel` (the same three render-or-decline
-helpers as before #1002), and the one new branch on `status` (`usageLimitIsWarning`, exact equality) only
-ever adds or withholds a dismiss X — every other status, recognised or not, is an Error pill that cannot be
-hidden, so a hostile daemon gains nothing by sending `"allowed_warning"` that it could not already do with
-the benign `"allowed"`. `UsageLimitDismissals` is heap-only (see [Dismissal](#dismissal--usagelimitdismissals)
-above) — no disk, no backup-eligible state, no log. No intent, deep link, provider or WebView is added; the
-overlay's only actions are hiding a notice locally or opening the existing re-pair screen the user already
-had one tap away. Dismissal tells the daemon nothing.
+daemon-authored fields reach Compose only through `usageLimitLabel` (since
+[#1519](https://github.com/pyrycode/pyrycode-mobile/issues/1519), `usageLimitText`'s exact-equality lookup —
+see [Usage-limit indicator § Security](usage-limit-indicator.md#security)), and the one new branch on
+`status` (`usageLimitIsWarning`, exact equality) only ever adds or withholds a dismiss X — every other
+status, recognised or not, is an Error pill that cannot be hidden, so a hostile daemon gains nothing by
+sending `"allowed_warning"` that it could not already do with the benign `"allowed"`. `UsageLimitDismissals`
+is heap-only (see [Dismissal](#dismissal--usagelimitdismissals) above) — no disk, no backup-eligible state,
+no log. No intent, deep link, provider or WebView is added; the overlay's only actions are hiding a notice
+locally or opening the existing re-pair screen the user already had one tap away. Dismissal tells the
+daemon nothing.
 
 **#1345's MCP pill** adds no new trust boundary either: the server name already reaches this screen through
 Channel info's MCP servers section (#1344), rendered the same bounded way through `boundMcpText`. The only

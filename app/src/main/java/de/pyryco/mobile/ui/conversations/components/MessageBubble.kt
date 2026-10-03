@@ -66,6 +66,7 @@ private const val STREAMING_CARET_BLINK_PERIOD_MS: Long = 500L
 /**
  * [toolNestingDepth] (#896) is read only by a tool row: how many `Agent`/`Task` calls deep a subagent's
  * call sits. Each level indents the row's leading edge one [ToolNestingIndent] past the gutter.
+ * [joinsNextToolRow] (#1577) is also read only by a tool row: the thread's next row is a tool row too.
  *
  * [attachmentStates], [onAttachmentShown] and [onRetryAttachment] (#984) are read only by the two bubble
  * roles, for the message's attachments: each attachment's state by id, the report that one is on screen,
@@ -80,6 +81,7 @@ fun MessageBubble(
     message: Message,
     modifier: Modifier = Modifier,
     toolNestingDepth: Int = 0,
+    joinsNextToolRow: Boolean = false,
     attachmentStates: Map<String, AttachmentViewState> = emptyMap(),
     onAttachmentShown: (MessageAttachment) -> Unit = {},
     onRetryAttachment: (String) -> Unit = {},
@@ -116,6 +118,7 @@ fun MessageBubble(
                             end = MessageContentGutter,
                         ),
                     subagentDepth = toolNestingDepth,
+                    joinsNextToolRow = joinsNextToolRow,
                 )
             }
     }
@@ -211,8 +214,9 @@ private fun AssistantMessage(
  * The meta row is handed [Message.content] directly, never anything read back out of [body], so an
  * assistant bubble copies its markdown source rather than the parsed render.
  *
- * [attachments] fills the design's `Slot` between the body and the meta row (#984), and only when the
- * message has any: a text-only bubble lays out exactly as before.
+ * [attachments] fills the design's `Slot` above the body (#984, moved above it by #1513 so the attachment
+ * the text talks about is in view first), and only when the message has any: a text-only bubble lays out
+ * exactly as before.
  */
 @Composable
 private fun MessageContainer(
@@ -256,8 +260,8 @@ private fun MessageContainer(
                 // row alone. So the column aligns Start and the meta row overrides for its own side.
                 horizontalAlignment = Alignment.Start,
             ) {
-                body()
                 if (message.attachments.isNotEmpty()) attachments()
+                body()
                 MessageMetaRow(
                     timestamp = message.timestamp,
                     copyText = message.content,
@@ -270,7 +274,7 @@ private fun MessageContainer(
 
 /**
  * A message that carries attachments and no text has no body (#984): drawing an empty text block would
- * leave a blank line above the attachments. A text-only message always keeps its body.
+ * leave a blank line below the attachments. A text-only message always keeps its body.
  */
 private fun Message.hasNoBody(): Boolean = attachments.isNotEmpty() && content.isBlank()
 

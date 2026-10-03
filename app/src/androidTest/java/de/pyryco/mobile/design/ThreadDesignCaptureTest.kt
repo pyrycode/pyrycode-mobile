@@ -8,13 +8,19 @@ import android.graphics.Paint
 import android.net.Uri
 import android.provider.MediaStore
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasProgressBarRangeInfo
+import androidx.compose.ui.test.hasScrollToKeyAction
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isNotEnabled
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
@@ -22,6 +28,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.lifecycle.SavedStateHandle
@@ -37,9 +44,11 @@ import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.repository.AttachmentContent
 import de.pyryco.mobile.data.repository.AttachmentFetchResult
 import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
+import de.pyryco.mobile.data.repository.AttachmentUploadResult
 import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.ConnectionStateSource
@@ -47,17 +56,24 @@ import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.LiveRefusalEvent
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.SessionSettings
+import de.pyryco.mobile.data.repository.SlashCommandMenu
+import de.pyryco.mobile.data.repository.SlashCommandMenuRow
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.UnrecognizedSite
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.di.ConversationViewing
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.PickedAttachment
+import de.pyryco.mobile.ui.conversations.thread.ThreadHistoryTail
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
@@ -96,6 +112,13 @@ class ThreadDesignCaptureTest {
     private val refusals = MutableSharedFlow<LiveRefusalEvent>(replay = 1)
     private val turnPhase = MutableStateFlow(LiveSessionEvent.TurnState.Phase.Idle)
     private val usageLimit = MutableStateFlow<UsageLimitReading?>(null)
+    private val hostAvailable = MutableStateFlow(true)
+
+    /** While set, the override's `requestHistory` answers with this gate instead of the fake's page. */
+    @Volatile private var historyGate: CompletableDeferred<HistoryPage>? = null
+
+    /** While set, the override's `setSessionSettings` awaits this gate instead of the fake's write. */
+    @Volatile private var settingsGate: CompletableDeferred<Unit>? = null
     private val images = mutableListOf<Uri>()
     private var photo: File? = null
 
@@ -110,6 +133,7 @@ class ThreadDesignCaptureTest {
         photo?.delete()
         fake().setModelMenu(CONVERSATION, null)
         fake().setSessionSettingsReading(CONVERSATION, null)
+        fake().setSlashCommandMenu(CONVERSATION, null)
     }
 
     @Test fun threadStatusFramesAt412By892() {
@@ -170,6 +194,46 @@ class ThreadDesignCaptureTest {
         runBlocking { refusals.emit(LiveRefusalEvent.Refused(refusal, "session")) }
         await("Switch back to Opus")
         design.capture(FOLDER, "refusal-switch-back", "646:4707")
+    }
+
+    /** #1540: the Thread notification states `620:1570`, `646:4694` and `646:4700`, in the notice frames' fixture. */
+    @Test fun refusalStateFramesAt412By892() {
+        openThread()
+        stageAttachments()
+        inputs.contextUsage.value = CONTEXT
+        fake().setModelMenu(CONVERSATION, ModelMenu(MODELS.map { (name, id) -> menuRow(name, id) }, 0))
+        // The component's explanation; the row adds the "Claude: " attribution itself.
+        val refusal =
+            refusal().copy(
+                banner = "This request was declined on Opus, so it was retried on Sonnet for the rest of this session.",
+            )
+        extraItems.value = listOf(pdfMessage(), refusal)
+        await("Refused on Opus, continued on Sonnet")
+        rule.onNodeWithText("Show details").performClick()
+        await("Hide details")
+        design.capture(FOLDER, "notification-expanded", "620:1570")
+        rule.onNodeWithText("Hide details").performClick()
+        await("Show details")
+
+        fake().setSessionSettingsReading(CONVERSATION, settings("claude-sonnet-5"))
+        runBlocking { refusals.emit(LiveRefusalEvent.Refused(refusal, "session")) }
+        await("Switch back to Opus")
+        val write = CompletableDeferred<Unit>()
+        settingsGate = write
+        rule.onNodeWithText("Switch back to Opus").performClick()
+        rule.waitUntil(5_000) { rule.onAllNodes(hasText("Switch back to Opus") and isNotEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        rule.waitForIdle()
+        design.capture(FOLDER, "refusal-switch-back-pending", "646:4694")
+
+        // A failed write also shows the run-configuration snackbar over the row; the compared capture waits it out.
+        write.completeExceptionally(IllegalStateException("design: model write fails"))
+        await("Could not change the model — try again.")
+        await("Couldn't update the run configuration. Try again.")
+        design.capture(FOLDER, "refusal-switch-back-failed-snackbar", "646:4700")
+        rule.waitUntil(15_000) { rule.onAllNodesWithText("Couldn't update", substring = true).fetchSemanticsNodes().isEmpty() }
+        await("Could not change the model — try again.")
+        design.capture(FOLDER, "refusal-switch-back-failed", "646:4700")
+        settingsGate = null
     }
 
     @Test fun backgroundTaskPanelAt412By892() {
@@ -304,6 +368,100 @@ class ThreadDesignCaptureTest {
         design.closeKeyboard()
     }
 
+    /** #1529: the unrecognized-row, turn-outcome, failure-notice and slash type-ahead frames of `685:3991`. */
+    @Test fun rowAndNoticeFramesAt412By892() {
+        openThread()
+        inputs.contextUsage.value = CONTEXT
+        extraItems.value = unrecognized()
+        await("Unrecognized message", substring = true)
+        rule.onNodeWithText("server_tool_use", substring = true).performClick()
+        await("Payload truncated by the daemon.")
+        design.capture(FOLDER, "unrecognized-message", "685:4112")
+
+        // Today the outcome is the band's arm; the frame moves it to a top-overlay pill.
+        extraItems.value = listOf(ThreadItem.StoppedTurn("design-turn", "prompt_too_long", "", at(10)))
+        runBlocking {
+            inputs.liveSessionEvents.emit(
+                LiveSessionEvent.TurnEnd(CONVERSATION, "design-turn", "end_turn", isError = true, terminalReason = "prompt_too_long"),
+            )
+        }
+        await("Stopped: context too long, compact or reset")
+        await("Context too long", substring = true)
+        design.capture(FOLDER, "turn-outcome", "685:3992")
+
+        // A turn starting clears the outcome; Idle again leaves the band at the snowflake alone.
+        runBlocking {
+            inputs.liveSessionEvents.emit(LiveSessionEvent.TurnState(CONVERSATION, LiveSessionEvent.TurnState.Phase.Thinking))
+            inputs.liveSessionEvents.emit(LiveSessionEvent.TurnState(CONVERSATION, LiveSessionEvent.TurnState.Phase.Idle))
+        }
+        extraItems.value = emptyList()
+        rule.waitUntil(5_000) { rule.onAllNodesWithText("Context too long", substring = true).fetchSemanticsNodes().isEmpty() }
+        // Today a failure is the bottom snackbar; the frame moves it to a top-overlay pill.
+        design.openMenu(rule.onNodeWithContentDescription("More actions"))
+        rule.onNodeWithText("Archive").performClick()
+        await("Couldn't archive this conversation. Try again.")
+        design.capture(FOLDER, "failure-notice", "685:4337")
+        rule.waitUntil(15_000) { rule.onAllNodesWithText("Couldn't archive", substring = true).fetchSemanticsNodes().isEmpty() }
+
+        // Last: the focused composer's cursor handle is its own popup root.
+        fake().setSlashCommandMenu(
+            CONVERSATION,
+            SlashCommandMenu(
+                SLASH_COMMANDS.map { (name, hint, text) ->
+                    SlashCommandMenuRow(name, hint, text, emptyList(), null)
+                },
+                0,
+            ),
+        )
+        val composer = rule.onNode(hasSetTextAction())
+        design.openKeyboard(composer)
+        composer.performTextReplacement("/co")
+        await("Open the config panel")
+        await("Show the total cost and duration of the current session")
+        design.capture(FOLDER, "slash-type-ahead", "685:4232")
+        design.closeKeyboard()
+    }
+
+    /** #1529: the oldest-end row's four states, `689:4281`, `689:4330`, `689:4379` and `689:4427`. */
+    @Test fun historyTailFramesAt412By892() {
+        // Held before the open, whose newest-page ask is the walk's first page.
+        val loading = CompletableDeferred<HistoryPage>()
+        historyGate = loading
+        openThread()
+        inputs.contextUsage.value = CONTEXT
+        awaitHistoryTail(ThreadHistoryTail.Loading, "Loading earlier messages")
+        design.capture(FOLDER, "history-loading", "689:4281")
+
+        loading.completeExceptionally(RelayErrorException("history.unavailable", true, ""))
+        awaitHistoryTail(ThreadHistoryTail.Retry, "Try again")
+        design.capture(FOLDER, "history-retry", "689:4330")
+
+        val retry = CompletableDeferred<HistoryPage>()
+        historyGate = retry
+        checkNotNull(inputs.thread.value).onRetryOlderHistory()
+        awaitHistoryTail(ThreadHistoryTail.Loading, "Loading earlier messages")
+        retry.completeExceptionally(RelayErrorException("history.not_found", false, ""))
+        awaitHistoryTail(ThreadHistoryTail.DeadEnd, "Earlier messages are unavailable")
+        design.capture(FOLDER, "history-dead-end", "689:4379")
+
+        hostAvailable.value = false
+        awaitHistoryTail(ThreadHistoryTail.Offline, "Older messages require a connection.")
+        design.capture(FOLDER, "history-offline", "689:4427")
+    }
+
+    /** #1529: the composer strip while its send uploads, `689:4475`; the first upload stops at 4 of 10 chunks. */
+    @Test fun uploadingFrameAt412By892() {
+        openThread()
+        inputs.contextUsage.value = CONTEXT
+        stageAttachments()
+        thinking()
+        checkNotNull(inputs.thread.value).sendMessage("My message")
+        val uploading = SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Uploading… 40%")
+        rule.waitUntil(5_000) { rule.onAllNodes(uploading).fetchSemanticsNodes().isNotEmpty() }
+        rule.waitForIdle()
+        design.capture(FOLDER, "uploading-attachments", "689:4475")
+    }
+
     /** Run configuration with a four-model menu and Sonnet selected; no "Default" option in any spelling. */
     private fun openRunConfiguration() {
         fake().setModelMenu(CONVERSATION, ModelMenu(MODELS.map { (name, id) -> menuRow(name, id) }, 0))
@@ -403,6 +561,16 @@ class ThreadDesignCaptureTest {
         await("Thinking", substring = true)
     }
 
+    /** Waits for the oldest-end row to read [tail], scrolls the reverse list to it and waits for its [text]. */
+    private fun awaitHistoryTail(
+        tail: ThreadHistoryTail,
+        text: String,
+    ) {
+        rule.waitUntil(5_000) { checkNotNull(inputs.thread.value).state.value.historyTail == tail }
+        rule.onNode(hasScrollToKeyAction() and hasAnyAncestor(hasTestTag("thread-message-region"))).performScrollToKey("history-tail")
+        await(text)
+    }
+
     /** The bubble's photo is fetched by the view model, then decoded off the main clock, so wait for both. */
     private fun awaitImageLoaded() {
         rule.waitUntil(10_000) { checkNotNull(inputs.thread.value).attachmentStates.value["design-photo"] is AttachmentViewState.Ready }
@@ -468,6 +636,36 @@ class ThreadDesignCaptureTest {
                                 attachmentId: String,
                             ) = AttachmentRetrievalResult.Retrieved(photo ?: photoFile().also { photo = it }, "stone.png", "image/png")
 
+                            override suspend fun requestHistory(
+                                conversationId: String,
+                                cursor: String,
+                                limit: Int,
+                            ) = historyGate?.await() ?: fake.requestHistory(conversationId, cursor, limit)
+
+                            override suspend fun setSessionSettings(
+                                sessionId: String,
+                                model: String?,
+                                effort: String?,
+                                yolo: Boolean?,
+                                permissionMode: String?,
+                            ) = settingsGate?.await() ?: fake.setSessionSettings(sessionId, model, effort, yolo, permissionMode)
+
+                            // No test archives except to show the failure notice.
+                            override suspend fun archive(conversationId: String): Unit =
+                                throw IllegalStateException("design: archive fails")
+
+                            // No test uploads except to hold the strip at 40 %.
+                            override suspend fun uploadAttachment(
+                                conversationId: String,
+                                bytes: ByteArray,
+                                filename: String,
+                                mimeType: String,
+                                onProgress: (sentChunks: Int, totalChunks: Int) -> Unit,
+                            ): AttachmentUploadResult {
+                                onProgress(4, 10)
+                                awaitCancellation()
+                            }
+
                             override suspend fun readWorkspaceFile(
                                 conversationId: String,
                                 path: String,
@@ -489,6 +687,7 @@ class ThreadDesignCaptureTest {
                         questionBatch = { inputs.questionBatch },
                         backgroundTasks = { inputs.backgroundTasks },
                         backgroundTaskCount = { inputs.backgroundTaskCount },
+                        repositoryAvailable = hostAvailable,
                         pairingRejected = inputs.pairingRejected,
                         attachmentReader = get<AttachmentReader>(),
                     ).also {
@@ -552,6 +751,27 @@ class ThreadDesignCaptureTest {
             ThreadItem.SessionBoundary("design-session-2", "design-session-3", BoundaryReason.IdleEvict, at(8)),
             message("design-d3", Role.User, "Morbi efficitur scelerisque augue, in pretium erat tempor in.", 9),
             message("design-d4", Role.Assistant, "Vivamus sagittis lacus vel augue.", 9),
+        )
+
+    /** `685:4112`: a collapsed assistant-block row, then a truncated whole-message row the test expands. */
+    private fun unrecognized() =
+        listOf(
+            ThreadItem.UnrecognizedMessage(
+                "design-u1",
+                UnrecognizedSite.AssistantBlock,
+                "thinking_delta",
+                "{\"type\":\"thinking_delta\"}",
+                false,
+                at(10),
+            ),
+            ThreadItem.UnrecognizedMessage(
+                "design-u2",
+                UnrecognizedSite.LineType,
+                "server_tool_use",
+                "{\"type\":\"server_tool_use\",\"id\":\"srvtoolu_01\",\"name\":\"web_search\",\"input\":{\"query\":\"how",
+                true,
+                at(11),
+            ),
         )
 
     private fun refusal() =
@@ -658,6 +878,17 @@ class ThreadDesignCaptureTest {
                 "Opus" to "claude-opus-5-5",
                 "Sonnet" to "claude-sonnet-5",
                 "Haiku" to "claude-haiku-4-5",
+            )
+
+        /** `685:4232`'s four `/co` matches, plus two rows the prefix filters out. */
+        val SLASH_COMMANDS =
+            listOf(
+                Triple("clear", "", "Clear conversation history and free up context"),
+                Triple("compact", "[instructions]", "Clear conversation history but keep a summary in context"),
+                Triple("config", "", "Open the config panel"),
+                Triple("context", "", "Visualize current context usage as a colored grid"),
+                Triple("cost", "", "Show the total cost and duration of the current session"),
+                Triple("help", "", "Show help and available commands"),
             )
         val NOTE =
             """

@@ -256,7 +256,13 @@ reserves 48 dp invisibly around each action. The shell's 20 dp bottom padding
 and footer's 4 dp top padding place the visible action bottom 24 dp above the
 safe-area edge. Keep that spacing on the parent: an action-local visual offset
 made compact-landscape scrolling stall when `performScrollTo` targeted the
-footer. The controlled hover fills follow Figma `489:1876`; suppress the
+footer. `MobileDismissModal` once passed its own `bottomPadding = 24.dp` on
+top of that default, which stacked with `minimumInteractiveComponentSize`'s
+invisible 4 dp margin below Done's 40 dp surface and left Done 28 dp above the
+[Settings](settings-screen.md) sheet's edge instead of 24 — #1503 dropped the
+override so this entry point takes the shell's default like the others. A
+caller on this shell should rely on the shell's own bottom padding rather than
+re-adding it, since the two compose rather than override. The controlled hover fills follow Figma `489:1876`; suppress the
 extra Material hover ripple while retaining native press feedback. Figma has
 no disabled, loading or pressed reference; the existing loading indicator,
 native disabled content colour and press feedback remain.
@@ -264,8 +270,11 @@ Light and dark previews remain at 412 × 892 dp.
 
 The shared [type ramp](shared-typography.md) supplies the modal text metrics;
 Edit host uses natural-width identity labels at the reference viewport and a
-one-to-two weighted label/value split below 320 dp of content width, with a 10 dp
-gap. At compact width and 1.5× Android text, both labels wrap within their bounds
+two-to-three weighted label/value split below 320 dp of content width (#1489,
+widened from 1:2 once the labels' hinting fix — see
+[shared typography § Density-1.0 hinting](shared-typography.md#density-10-hinting-and-the-trimmed-line-box-1489)
+— stopped fitting in the narrower column), with a 10 dp gap. At compact width
+and 1.5× Android text, both labels wrap between words, within their bounds and
 without overlapping the values. See [the caller geometry](mobile-modal-callers.md#callers).
 Long identity and relay display text remains clamped before layout and
 ellipsized to one line in the value slot. The shell's scrolling keeps the name

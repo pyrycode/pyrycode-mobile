@@ -84,12 +84,24 @@ internal class RelayRequests(
      * pump is not `Open` ([SessionPump.send] returns `false`, AC #4), and removes the entry in a
      * `finally` covering success, error, and caller cancellation. Returns the reply payload (the
      * empty `{}` for an `ack`); rethrows the collector's exceptional completion on an `error`.
+     *
+     * [onSent] runs once the open connection has taken the request (#1564), so a caller can tell a request
+     * that went out from one that never did. [onReply] then runs where the reply lands, on the inbound
+     * collector, with `null` for a success or the failure the await rethrows: an `error` or the teardown
+     * sweep. It runs in arrival order with every other frame, which the caller's resumption does not. A caller
+     * cancelled before the reply gets no [onReply].
      */
-    suspend fun sendAndAwaitReply(request: Envelope): JsonElement {
+    suspend fun sendAndAwaitReply(
+        request: Envelope,
+        onSent: () -> Unit = {},
+        onReply: (Throwable?) -> Unit = {},
+    ): JsonElement {
         val deferred = CompletableDeferred<JsonElement>()
         pendingRequests[request.id] = deferred
         return try {
             check(send(request)) { "${request.type} not sent: session not connected" }
+            onSent()
+            deferred.invokeOnCompletion(onReply)
             deferred.await()
         } finally {
             pendingRequests.remove(request.id)

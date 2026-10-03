@@ -444,4 +444,38 @@ class EditHostModalTest {
         rule.onNodeWithText(unpair).performClick()
         rule.runOnIdle { assertEquals(1, clicks) }
     }
+
+    @Test
+    fun hostNameLabelKeepsTheFramesLineBoxAboveTheField() {
+        show(figma = true)
+        val label = rule.onNodeWithText(string(R.string.edit_host_name_label), useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val well = rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).getUnclippedBoundsInRoot()
+        // 533:2369's "Input large": a 20 px label line, then the well 8 px below it.
+        assertEquals(20f, label.height.value, 0.5f)
+        assertEquals(28f, (well.top - label.top).value, 0.5f)
+    }
+
+    @Test
+    fun unpairActionIsTheFramesFortyEightDpWithTheOutlineEightBelowItsTop() {
+        rule.setContent { PyrycodeMobileTheme { UnpairAction(onClick = {}) } }
+        val action = rule.onNodeWithText(string(R.string.edit_host_unpair)).getUnclippedBoundsInRoot()
+        val outline = rule.onNodeWithTag(EDIT_HOST_UNPAIR_OUTLINE_TAG, useUnmergedTree = true).getUnclippedBoundsInRoot()
+        // 533:2369's Actions frame: 8 px top padding over the 40 px button, 48 px in all, and the touch target
+        // stays at the shell's 48 dp floor.
+        assertEquals(48f, action.height.value, 0.5f)
+        assertEquals(8f, (outline.top - action.top).value, 0.5f)
+        assertEquals(40f, outline.height.value, 0.5f)
+        assertEquals(action.bottom.value, outline.bottom.value, 0.5f)
+    }
+
+    @Test
+    fun unpairConfirmationNamesTheHostAndNoWorkspace() {
+        confirming.value = true
+        show(figma = true)
+        rule
+            .onNodeWithText(
+                "Pyrybox will be removed from this phone: its pairing and its connection. Pairing it again needs its QR code.",
+            ).assertIsDisplayed()
+        rule.onAllNodes(hasText("workspace", substring = true, ignoreCase = true)).assertCountEquals(0)
+    }
 }
