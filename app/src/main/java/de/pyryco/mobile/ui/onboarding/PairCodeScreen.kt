@@ -36,17 +36,21 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.error
+import androidx.compose.ui.semantics.hideFromAccessibility
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
@@ -194,6 +198,7 @@ private fun PairCodeField(
     val colors = MaterialTheme.colorScheme
     val interactionSource = remember { MutableInteractionSource() }
     val focused by interactionSource.collectIsFocusedAsState()
+    val textStyle = MaterialTheme.typography.bodyMedium.copy(color = colors.onSurface)
     Column(Modifier.fillMaxWidth()) {
         Row(
             Modifier
@@ -225,7 +230,7 @@ private fun PairCodeField(
                         contentDescription = label
                         if (error != null) error(error)
                     },
-                textStyle = MaterialTheme.typography.bodyMedium.copy(color = colors.onSurface),
+                textStyle = textStyle,
                 cursorBrush = SolidColor(colors.primary),
                 interactionSource = interactionSource,
                 decorationBox = { innerTextField ->
@@ -238,7 +243,21 @@ private fun PairCodeField(
                             style = MaterialTheme.typography.labelSmall,
                             color = if (error != null) colors.error else colors.onSurfaceVariant,
                         )
-                        Box(Modifier.fillMaxWidth().heightIn(min = 20.dp)) { innerTextField() }
+                        // Unfocused, a long value ends with an ellipsis inside the end inset (663:2887, 663:3331);
+                        // the field stays composed underneath so focus and editing keep the full, scrolling value.
+                        val ellipsize = !focused && value.isNotEmpty()
+                        Box(Modifier.fillMaxWidth().heightIn(min = 20.dp)) {
+                            Box(if (ellipsize) Modifier.alpha(0f) else Modifier) { innerTextField() }
+                            if (ellipsize) {
+                                Text(
+                                    value,
+                                    modifier = Modifier.fillMaxWidth().testTag("$label value").semantics { hideFromAccessibility() },
+                                    style = textStyle,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
                     }
                 },
             )
@@ -252,7 +271,8 @@ private fun PairCodeField(
         if (error != null) {
             Text(
                 error,
-                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                // Supporting text inset 16 dp and 4 dp below the underline (663:3191, 663:3331).
+                modifier = Modifier.padding(start = 16.dp, top = 4.dp).semantics { liveRegion = LiveRegionMode.Polite },
                 color = colors.error,
                 style = MaterialTheme.typography.bodySmall,
             )
