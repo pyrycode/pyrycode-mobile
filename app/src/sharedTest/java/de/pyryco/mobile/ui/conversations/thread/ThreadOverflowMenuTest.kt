@@ -69,6 +69,26 @@ class ThreadOverflowMenuTest {
         }
     }
 
+    @Test
+    fun tapping_backgroundTasks_dismisses_then_opensPanel_withoutDispatchingAnEvent() {
+        val log = mutableListOf<String>()
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ThreadOverflowMenu(
+                    expanded = true,
+                    isPromoted = true,
+                    onDismiss = { log.add("dismiss") },
+                    onEvent = { log.add("event:$it") },
+                    onBackgroundTasks = { log.add("panel") },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText(string(R.string.background_tasks_title)).performClick()
+
+        assertEquals(listOf("dismiss", "panel"), log)
+    }
+
     private class RecordingUriHandler : UriHandler {
         val openedUris = mutableListOf<String>()
 

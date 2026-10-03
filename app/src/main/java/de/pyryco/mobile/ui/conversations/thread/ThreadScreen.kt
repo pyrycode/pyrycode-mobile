@@ -436,6 +436,7 @@ fun ThreadScreen(
                     isPromoted = state.isPromoted,
                     mutationsSupported = state.mutationsSupported,
                     memorySearch = state.runConfig.memorySearch,
+                    onBackgroundTasks = { backgroundTasksOpen = true },
                 )
             },
             // Figma 16:8's `Input area` (533:1957): a gap-8 column of the status area, the input field and
