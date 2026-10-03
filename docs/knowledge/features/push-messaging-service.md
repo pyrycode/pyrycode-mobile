@@ -249,6 +249,24 @@ and the app name otherwise. Tag = `SHA-256(serverId, conversationId)`, id `0`: o
 conversation per host, so the same conversation id on two hosts posts two notifications, and a later alert
 for the same conversation replaces the earlier one instead of stacking.
 
+### The status bar icon (#1669)
+
+`AttentionNotifier.post` uses `R.drawable.ic_notification`: a dedicated 24 × 24 dp vector with a
+24 × 24 viewport, one opaque-white path on transparent, and a horizontally centred mark 20 dp tall
+with 2 dp top and bottom padding. Android tints the small icon from its alpha channel; reusing the
+welcome screen's 92 × 104 dp `ic_pyry_logo` does not provide the status bar asset's square size and
+padding. The notification path is the same snowflake, scaled and flipped vertically to follow
+[Figma's splash reference](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=701-5005),
+the [splash](splash-screen.md) and the launcher. The [welcome logo](welcome-screen.md) retains its
+existing opposite orientation; its drawable, the splash and the launcher were unchanged by this fix.
+
+On OnePlus 10T CPH2415 / OxygenOS 15, SystemUI's `OplusNotificationIconAreaController` had reported
+`shouldShow:false` even for a single ungrouped notification, while stock Android 16 displayed the
+old icon. The oversized, non-square resource was the suspected cause, not a confirmed diagnosis.
+Status-bar visibility with `ic_notification` still needs checking on CPH2415 with the next Play
+build; Robolectric and the emulator cannot prove that OxygenOS's icon-area filter accepts it.
+See the [icon plan](../../specs/architecture/1669-notification-small-icon.md).
+
 ### The name lookup and title (#1330)
 
 `nameOf: (serverId, conversationId) -> String?` is wired exactly like `agentOf` above — a constructor
@@ -371,6 +389,11 @@ No id, digest or notification text appears in any of these lines.
   `notificationTitle` drops controls, caps at 80 code points without splitting a surrogate pair, and trims
   whitespace and U+FEFF (`theTitleDropsControlsCapsAt80CodePointsAndNeverSplitsASurrogatePair`); and
   `nameOf` reads only the alert's own host (`theNameLookupReadsOnlyTheAlertsOwnHostAndIsNullWhenMissing`).
+  (#1669) `theSmallIconIsTheSquareSingleColourNotificationMark` posts a turn and checks the actual
+  notification's `smallIcon.resId` is `R.drawable.ic_notification`, the drawable's intrinsic dimensions
+  are 24 × 24 dp after density conversion, and its XML colour attributes are exclusively opaque white.
+  Checking the posted resource as well as the asset catches a correct drawable left unwired in the
+  notification builder; these assertions do not establish OEM status-bar visibility.
 - `NotificationTapNavigationTest` (`app/src/sharedTest`) drives `PyryNavHost` on the production Koin
   graph, per the `SettingsNavigationTest` pattern: a saved host's target opens the thread above
   `CHANNEL_LIST`; an unsaved host's target stays on `CHANNEL_LIST`. Since #1400 it also rebinds
