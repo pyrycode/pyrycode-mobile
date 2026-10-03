@@ -114,6 +114,14 @@ class AppPreferences(
         dataStore.edit { prefs -> prefs[NOTIFICATIONS_ENABLED] = enabled }
     }
 
+    /** Whether the thread folds runs of assistant tool uses (#1634); phone-local, never sent to the daemon. */
+    val collapseToolUses: Flow<Boolean> =
+        dataStore.data.map { prefs -> prefs[COLLAPSE_TOOL_USES] ?: true }
+
+    suspend fun setCollapseToolUses(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[COLLAPSE_TOOL_USES] = enabled }
+    }
+
     /** Whether the app has ever shown Android's notification-permission prompt (#685); only ever set. */
     val notificationPermissionAsked: Flow<Boolean> =
         dataStore.data.map { prefs -> prefs[NOTIFICATION_PERMISSION_ASKED] ?: false }
@@ -200,6 +208,7 @@ class AppPreferences(
         val REMEMBERED_EFFORT = stringPreferencesKey("remembered_effort")
         val DEFAULT_YOLO = booleanPreferencesKey("default_yolo")
         val NOTIFICATIONS_ENABLED = booleanPreferencesKey("notifications_enabled")
+        val COLLAPSE_TOOL_USES = booleanPreferencesKey("collapse_tool_uses")
         val NOTIFICATION_PERMISSION_ASKED = booleanPreferencesKey("notification_permission_asked")
         val DEFAULT_WORKSPACE = stringPreferencesKey("default_workspace")
         val WORKSPACE_MIGRATED = booleanPreferencesKey("default_workspace_migrated")

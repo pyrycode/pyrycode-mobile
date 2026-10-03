@@ -25,3 +25,7 @@ The shared Settings modal gains a second section below Notification sound in the
 - `SettingsScreenTest` (sharedTest, Robolectric): the "Thread" heading, the label and a second `Role.Switch` are displayed and the new switch is on; toggling it calls `onToggleCollapseToolUses` and leaves the push callback untouched. The existing push-switch test now selects the push switch specifically, since two switches exist.
 - `SettingsScreenGeometryTest`: adds frame offsets for "Thread" (279) and "Collapse assistant tool uses" (323), derived from the Notification sound row (201 + 66) plus the 12 dp content gap; existing offsets and Done's bottom gap stay.
 - `SettingsDensityDeviceTest`: call site updated and the two new labels added to its clipping list; run focused on the managed device.
+
+## Revisions
+
+- 2026-10-03: The collapse row uses 4 dp vertical padding, not the push row's 12 dp. Its one-line label leaves the switch's 48 dp touch target as the tallest child, so 12 dp gave a 72 px row and put the label 8 px below the frame. 4 dp plus the target's own 8 dp above and below the 32 px track reproduces the frame's 56 px row and 12 px inset. Geometry expectations corrected accordingly: label top 327 (centred on the track, not 323), switch track top 323. `SettingsNavigationTest` now picks switches by index and gains a reopen test for the collapse switch, covering the "shows the stored value when Settings is opened again" criterion end to end.

@@ -617,6 +617,7 @@ internal fun PyryNavHost(
         ) {
             val vm = koinViewModel<SettingsViewModel>()
             val pushNotifications by vm.pushNotifications.collectAsStateWithLifecycle()
+            val collapseToolUses by vm.collapseToolUses.collectAsStateWithLifecycle()
             LaunchedEffect(vm) {
                 vm.lastHostUnpaired.collect { navController.returnToWelcome() }
             }
@@ -627,6 +628,8 @@ internal fun PyryNavHost(
                     vm.onTogglePushNotifications(enabled)
                     if (enabled) requestNotifications()
                 },
+                collapseToolUses = collapseToolUses,
+                onToggleCollapseToolUses = vm::onToggleCollapseToolUses,
                 onDismissRequest = { navController.popBackStack() },
             )
         }
