@@ -161,7 +161,8 @@ class RemoteConversationRepository(
      * before `Open`. Never the full `conn_id`.
      */
     connToken: () -> String? = { null },
-) : ConversationRepository {
+) : ConversationRepository,
+    ThreadSnapshotSource {
     /**
      * The conversation list and the last-message previews (#913): the list projection, the most-recent
      * message per conversation, and every write that folds into either. [onInbound] hands it the
@@ -1170,9 +1171,12 @@ class RemoteConversationRepository(
      * dropped — the live stream still fills the thread and the next subscription re-backfills.
      */
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
+        observeThreadSnapshot(conversationId).map { it.rows }.distinctUntilChanged()
+
+    override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> =
         flow {
             pump.send(backfillSinceRequest(conversationId))
-            emitAll(threadProjection.observe(conversationId))
+            emitAll(threadProjection.observeSnapshot(conversationId))
         }
 
     override fun observeThreadRowCounts(): Flow<Map<String, Int>> = threadProjection.observeRowCounts()

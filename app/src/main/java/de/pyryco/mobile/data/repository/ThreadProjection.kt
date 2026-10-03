@@ -789,14 +789,20 @@ internal class ThreadProjection(
      * below every row of the turn they wait behind, and the last-row rule runs over the rows without them,
      * so the running reply keeps streaming.
      */
-    fun observe(conversationId: String): Flow<List<ThreadItem>> =
+    fun observe(conversationId: String): Flow<List<ThreadItem>> = observeSnapshot(conversationId).map { it.rows }.distinctUntilChanged()
+
+    /** Carry awaiting-push suppression with the rows through the production cache merge. */
+    fun observeSnapshot(conversationId: String): Flow<ThreadSnapshot> =
         combine(threadByConversation, ownEchoQueues) { threads, echoes ->
             val state = echoes[conversationId]
-            threads[conversationId]
-                .orEmpty()
-                .filterNot {
-                    it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.id in state?.awaitingPush.orEmpty()
-                }.withParkedEchoesLast(state?.parked.orEmpty())
+            val suppressed = state?.awaitingPush.orEmpty()
+            val rows =
+                threads[conversationId]
+                    .orEmpty()
+                    .filterNot {
+                        it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.id in suppressed
+                    }.withParkedEchoesLast(state?.parked.orEmpty())
+            ThreadSnapshot(rows, suppressed)
         }.distinctUntilChanged()
 
     /** This thread as [observe] reads it: [parkedIds] user rows last, the rest through [withOnlyLastRowStreaming]. */

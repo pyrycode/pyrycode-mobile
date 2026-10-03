@@ -56,7 +56,8 @@ import kotlinx.coroutines.flow.flowOf
 class StableConversationRepository(
     private val currentRepository: StateFlow<ConversationRepository?>,
     private val heldReadings: HostReadings? = null,
-) : ConversationRepository {
+) : ConversationRepository,
+    ThreadSnapshotSource {
     /**
      * Switch a cold read over [currentRepository]: delegate to the live repository's [select] flow, or
      * emit [whenAbsent] once while no connection is live. [flatMapLatest] cancels the prior inner flow
@@ -88,6 +89,9 @@ class StableConversationRepository(
 
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
         switchToLive(emptyList()) { it.observeMessages(conversationId) }
+
+    override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> =
+        switchToLive(ThreadSnapshot(emptyList())) { it.threadSnapshots(conversationId) }
 
     override fun observeLastMessage(conversationId: String): Flow<Message?> =
         switchToLive<Message?>(null) { it.observeLastMessage(conversationId) }
