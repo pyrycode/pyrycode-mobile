@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -61,7 +62,9 @@ fun ArchiveRow(
                         R.string.archived_relative_subtitle,
                         formatArchiveRelativeTime(conversation.archiveKey),
                     ),
-                style = MaterialTheme.typography.bodySmall,
+                // AppTypography.bodySmall sets no lineHeightStyle, so the default trim would shrink this line to
+                // its glyphs; 18:2 keeps the full 16 px line box, which makes the row 66 px (#1487).
+                style = MaterialTheme.typography.bodySmall.copy(lineHeightStyle = SubtitleLineBox),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.alpha(0.75f),
                 maxLines = 1,
@@ -81,6 +84,8 @@ fun ArchiveRow(
         }
     }
 }
+
+private val SubtitleLineBox = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
 
 /**
  * The Archive reference uses elapsed weeks and months where the thread uses calendar dates. [instant] is the

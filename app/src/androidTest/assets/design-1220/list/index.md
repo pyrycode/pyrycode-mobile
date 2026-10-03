@@ -60,27 +60,32 @@ No audit declares app-wide parity; #1434 owns that verdict.
 
 ### Archive — `18:2`
 
-- **Owning ticket:** #1265
+- **Owning ticket:** #1265; re-audited by #1487
 - **Capture:** `archive.png`, `archive-compact.png` (Channels tab, three archived demo channels); Discussions tab `archive-discussions.png`, `archive-discussions-compact.png` · **Side-by-side:** `archive-side-by-side.png` · **Overlay:** `archive-overlay.png`
-- The screen opens on Discussions whatever the counts (`ArchivedDiscussionsViewModel` starts on
-  `ArchiveTab.Discussions`); the capture taps Channels to reach the frame's state.
+- These five captures and the comparison come from #1487's run on `feature/1487` (the #1487 changes on `main` at
+  `b2a27867`): `ListDesignCaptureTest` on `pixel8Api35` with `requireRealSystemBars=true`, 2 executed, 0 failed. They
+  replace the third run's Archive captures; every other surface in this file keeps the third run's evidence.
+  `figma-18-2.png` is a fresh export of the updated frame, which draws the host label (2026-10-02 design decision).
+- Archive opens on Channels (`ArchivedDiscussionsViewModel` seeds `ArchiveTab.Channels`), so the `archive` capture
+  needs no tap. The Discussions capture follows a device `input tap`; the walk's `tap` waits for the tab to report
+  selected and then for Compose idle before capturing.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: the host label "Demo" (#715) adds 23–24 px above the tabs, so after the bar the tab labels sit 23 px below the frame (105 against 82), the indicator and row titles 24 px (134 against 110, 157 against 133); the second run's 26 px was a misreading. `docs/knowledge/features/archived-discussions-screen.md` records the label as a deliberate addition to `18:2`; the frame does not carry it |
+| Geometry | match: with the 24 px bar removed, host label rows 71–79 against 72–81, tab labels 105–118 against 106–119, indicator at 134 in both, first row title 157–171 in both. The host label ("Demo" here, "Pyry" in the frame) is in the frame since the 2026-10-02 design decision |
 | Padding | match: 16 px gutters, restore icons at x 365–384 |
-| Spacing | mismatch: rows repeat every 64 px against 66 (row titles at raw image y 181, 245, 309 against the frame's 133, 199, 265; the pitch holds in either system, and after the bar the app's first title sits at 157 as in Geometry); tab label to indicator 16 px against 15, title to subtitle 23 against 24 |
-| Typography | match: title, tab labels (14 px glyph rows in both), row title and subtitle |
-| Colour | mismatch: the tapped tab keeps a lighter fill (RGB 29,56,75 at 100,140 against the frame's 11,39,59). Its strength differs between runs (the second run's 412x892 capture read 12,41,61 there), so it may be a press indication still fading at capture time; #1487 asks for that to be settled before a fix |
+| Spacing | match: rows repeat every 66 px (titles at 157, 223, 289 after the bar, as in the frame); the second row's subtitle starts at 247 in both |
+| Typography | match: title, host label, tab labels, row title and subtitle |
+| Colour | match: the selected tab has no fill. In `archive-discussions.png`, taken after the device tap, the tapped tab reads 13,45,68 and 11,30,43 at x 215 and 400 (y 140), the same as the untapped tab in `archive.png`. The earlier fill was the default press ripple caught mid-fade: a probe on the same image sampled it at 27,45,59 200 ms after the tap, 15,34,48 at 400 ms and the base colour from 800 ms on, with touch mode on and no node focused |
 | Borders | match: tab indicator under the selected tab and the divider |
 | Radii | match (none) |
-| Icon paths | match: back arrow, restore icon (18 px) |
-| Component state | mismatch: opens on Discussions where the frame opens on Channels; the tapped tab's fill is a state the frame does not show |
+| Icon paths | match: back arrow, restore icon |
+| Component state | match: opens with Channels selected, as the frame does |
 
-- **Compact:** mismatch: "Discussions (1)" wraps to two lines and overruns the tab indicator; rows and restore
-  icons stay reachable.
-- **Routed:** #1487
-- The first run's verdicts compared a Discussions row with the frame's Channels rows; this section replaces them.
+- **Compact:** match: at 320x700 and 150 % font scale "Channels (3)" and "Discussions (1)" each stay on one line
+  inside their tabs, above the indicator, with their counts visible. The labels step their size down only when a tab
+  is too narrow. Rows and restore icons stay reachable.
+- **Routed:** none; #1487 closed the four differences.
 
 ### Channel Info Sheet — `20:48`
 
@@ -148,22 +153,44 @@ No audit declares app-wide parity; #1434 owns that verdict.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: the centred field block sits 7–10 px higher than the frame (Server identity y 342 against 349, field top 427 against 437), more than the 2 px the shell's 844 px height inside the bars accounts for. Cancel and OK keep the frame's 25 px from the shell's bottom edge |
+| Geometry | mismatch, routed to #1588: the centred field block still sits 3 px high (Server identity glyph top y 346 against 349), down from 7–10 px. The cause is no longer the header (resolved; see Spacing) but `MobileModal`'s content slot, which starts 21 px below the header rule against the frame's 25; the rule-to-footer midpoint is 446 in both. The block's own internal geometry is within 1 px (identity glyph to field top 87.5 against 88, field top to Unpair outline 71.5 against 72). Cancel and OK keep the frame's 25 px from the shell's bottom edge |
 | Padding | match: 28 px gutters, field text inset 16 px, Unpair host at x 28–155 |
-| Spacing | mismatch: the title starts 30 px below the shell's top against 34 (header rule 64 against 68), the same 30 px `17:2` uses, so the two frames disagree; "Host name:" to the field is 12 px against 15. Identity rows keep the 32 px pitch |
-| Typography | mismatch: "Server identity:" runs 4 px wider (x 29–126 against 29–122) and "Relay address:" 2 px wider, pushing values 3–4 px right; glyph heights match |
+| Spacing | match: the header (title 30 px below the shell's top, rule at 64) now matches both `17:2` and the frame, so the #1431 header mismatch is resolved and out of scope. "Host name:" to the field is 14.5 px against 15 px, within 1 px (#1489: `TextMotion.Animated` plus the frame's untrimmed 20 px line box, where the theme's styles carry no `lineHeightStyle` and Compose had trimmed the label to ≈16 px). Identity rows keep the 32 px pitch |
+| Typography | match: "Server identity:" ink x 29–122 against 29–122 and "Relay address:" 29–119 against 29–119, both exact; value start x 137/134 against 136/133, within 1 px (#1489: density-1.0 hinting rounds every glyph advance to a whole pixel, adding 4 px over 16 glyphs — not device Roboto metrics as the code comment previously said; `TextMotion.Animated` disables the hinting) |
 | Colour | match: shell surface, field fill, outlined Unpair host and Cancel, filled OK, close |
 | Borders | match: header rule, outlines |
 | Radii | match: shell, field, buttons |
 | Icon paths | match: close |
 | Component state | match: name filled, OK enabled |
 
-- **Compact:** no clipping or overlap; the identity labels wrap to two lines and the relay value ellipsizes;
-  every control stays on screen.
+- **Compact:** no clipping or overlap; the identity labels wrap to two lines (weighted 2:5 against the value's
+  3:5, widened from 1/3 after #1489's unhinted label no longer fit a third of the row) and the relay value
+  ellipsizes; every control stays on screen. `ListDesignCaptureTest.assertIdentityLabelsWrapOnlyBetweenWords`
+  checks on the device that the break falls only between words — Robolectric's font metrics pass this
+  unhinted-width case even when the device breaks mid-word, so the check cannot move to a shared test.
 - **Keyboard-open:** at 412x892 the field, Unpair host, Cancel and OK sit above the keyboard. At 320x700 and
   150 % the field, Cancel and OK stay above it and Unpair host scrolls under the action bar; the walk scrolls to
   it and asserts it is displayed, so it stays reachable. No overlap.
-- **Routed:** #1489 (rescoped from the harness gap the first run named, which this run closed)
+- **Routed:** #1489 closed the label width, label-to-field gap and Unpair action height mismatches and the
+  header disagreement (resolved upstream in Figma). The residual 3 px block offset is routed to #1588.
+
+### Modal › Edit host unpair confirmation — `671:5620`
+
+- **Owning ticket:** #1489 (frame assigned; capture was previously untagged, see Gaps history below)
+- **Capture:** `edit-host-unpair.png`, `edit-host-unpair-compact.png` · **Side-by-side:**
+  `edit-host-unpair-side-by-side.png` · **Overlay:** `edit-host-unpair-overlay.png`
+- Opened from Edit host's outlined "Unpair host" button. Titled "Unpair host?".
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | mismatch, routed to #1588: the message sits 4 px high (glyph top y 427 against 431), the confirmation's share of the same `MobileModal` slot offset as Edit host above |
+| Copy | match: `edit_host_unpair_confirm_body` now reads "%1$s will be removed from this phone: its pairing and its connection. Pairing it again needs its QR code.", matching `671:5620` word for word with the host name substituted for "Pyrybox" and no "workspace" anywhere in the string |
+| Typography | match: body-medium message on `onPrimaryContainer`, unhinted via the same `TextMotion.Animated` line box as the identity values |
+| Colour | match: shell surface, outlined Cancel, filled OK |
+| Borders, Radii, Icon paths | match: same shell as Edit host |
+| Component state | match: OK enabled |
+
+- **Compact:** no clipping or overlap.
 
 ## Gaps
 
@@ -176,7 +203,6 @@ holds only the bare `Icon=Pair` (`486:995`) and `Icon=Update` (`581:1606`) glyph
 | Edit channel modal (thread More actions, Edit) | `edit-channel.png`, `edit-channel-compact.png` (it opens with its name field focused and the keyboard up; at 412x892 every field and action sits above the keyboard, at 320x700 the prompt field is cut by the action bar and Mute and Archive channel sit below it; the walk scrolls to Archive channel with the keyboard up and asserts it is displayed, so both stay reachable) | #667 | #1504 |
 | Edit chat modal (unreachable since #1563; chats are renamed from the thread's More actions, Rename) | none | #827 | #1504 |
 | Create channel modal (Channels plus) | none | #958 | #1504 |
-| Unpair host confirmation (Edit host) | `edit-host-unpair.png`, `edit-host-unpair-compact.png`; its copy names a "saved workspace" | #745 | #1504, copy in #1489 |
 | Archive, Discussions tab | `archive-discussions.png`, `archive-discussions-compact.png` | #1265 | #1487 |
 | Rename dialog and Save as channel (thread overflow) | none | #957 | #1504 |
 | Disconnected host row | none; `TreeHostRow` draws the glyph and name in `error` and adds a plug control ("Reconnect <host>"), `treeHost` hides the Channels and Chats plus buttons, and `MainActivity` handles `TreeHostReconnectTapped`. The source notes "the reference has no disconnected-host variant" | #840, #1336 | #1504 |

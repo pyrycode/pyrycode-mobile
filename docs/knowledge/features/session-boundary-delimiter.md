@@ -20,9 +20,9 @@ fun SessionBoundaryDelimiter(
 
 ## What it does
 
-### Rule / label / rule, explanation retained below (#644)
+### Rule / label / rule, explanation retained below (#644, inset since #1512)
 
-A `Column(fillMaxWidth().padding(start = MessageContentGutter, end = MessageContentGutter, bottom = MessageAreaRowSpacing))` — the same two [`MessageBubble.kt`](./message-bubble.md) constants a message bubble uses for its own gutter and inter-row rhythm, `internal` in that file since #644 specifically so this component (and [`UnrecognizedMessageRow`](./unrecognized-message-row.md)) can share them — containing, in order:
+A `Column(fillMaxWidth().padding(start = MessageContentGutter + SessionBoundaryInset, end = MessageContentGutter + SessionBoundaryInset, bottom = MessageAreaRowSpacing))` containing, in order:
 
 1. **A centred `Row(horizontalArrangement = Arrangement.spacedBy(RuleLabelSpacing = 12.dp), verticalAlignment = CenterVertically)`** of a `weight(1f)` hairline rule, the reason label (`bodySmall`, `colorScheme.primary`, centred), and a second `weight(1f)` rule. Each rule is a 1dp `Box` painted with `colorScheme.inversePrimary` at 60% in the fixed dark palette (`LocalStaticDarkPalette`); other palettes use `outlineVariant` at the same alpha. This matches reset node `119:3843` without changing label behavior. [The 412 × 892 code and boundary comparison](https://github.com/pyrycode/pyrycode-mobile/blob/44ac0889/app/src/androidTest/assets/thread-message-1207/code-boundary-side-by-side.png) uses the node inspected on 2026-09-29; Figma's last-modified date was unavailable.
 
@@ -73,15 +73,18 @@ Shared `internal const val`, used by the boundary, [Channel info](channel-info-s
 
 ## Spacing constants
 
-Since #644, the outer gutter and the bottom inter-row spacing are no longer file-private — they are `MessageContentGutter` and `MessageAreaRowSpacing`, `internal` in [`MessageBubble.kt`](./message-bubble.md), shared so this component, the message bubbles, and [`UnrecognizedMessageRow`](./unrecognized-message-row.md) all sit on one rhythm. Three file-private `val`s remain, local to this file's own rule/label layout:
+Since #644, the outer gutter and the bottom inter-row spacing are no longer file-private — they are `MessageContentGutter` and `MessageAreaRowSpacing`, `internal` in [`MessageBubble.kt`](./message-bubble.md), shared so this component, the message bubbles, and [`UnrecognizedMessageRow`](./unrecognized-message-row.md) all sit on one rhythm. Four file-private `val`s remain, local to this file's own rule/label layout:
 
 ```kotlin
 private val RuleLabelSpacing = 12.dp     // gap between each rule and the label
 private val RuleThickness = 1.dp
 private val ExplanationTopSpacing = 8.dp // was 4.dp pre-#644
+private val SessionBoundaryInset = 20.dp // since #1512, session delimiter only
 ```
 
 plus the file-private `RULE_ALPHA = 0.60f`. The rule source is `inversePrimary` in fixed dark and `outlineVariant` otherwise. No raw `.dp` literal appears inside the worker. The former delimiter padding is superseded by shared `MessageAreaRowSpacing` (16.dp) and `MessageContentGutter` (20.dp).
+
+**Since #1512, the session delimiter's column pads by `MessageContentGutter + SessionBoundaryInset`, not the gutter alone.** The `675:3797` `Session boundary` frame adds its own 20 px padding inside the 20 px message gutter, so at 412 px width the rule row and the explanation span x 40–372 rather than x 20–392. `CompactionBoundaryDivider` pads `RuleLabelRow` directly with the gutter alone and is unaffected — it keeps the gutter-to-gutter width (x 20–392). The two composables share `RuleLabelRow` but no longer share identical width, so don't assume they still match pixel-for-pixel when touching either one's padding.
 
 ## Recomposition / stability
 
@@ -217,7 +220,8 @@ fun CompactionBoundaryDivider(item: ThreadItem.CompactionBoundary, modifier: Mod
 - Spec: `docs/specs/architecture/135-session-boundary-delimiter.md`, `docs/specs/architecture/644-message-bubbles-and-copy-actions.md`,
   `docs/specs/architecture/874-compaction-boundary-divider.md`,
   `docs/specs/architecture/1112-agent-name-reset-and-boundary.md`,
-  `docs/specs/architecture/1358-failed-and-unreported-compaction-dividers.md`
+  `docs/specs/architecture/1358-failed-and-unreported-compaction-dividers.md`,
+  `docs/specs/architecture/1512-session-delimiter-inset.md`
 - Upstream:
   - [`#3`](../codebase/3.md) — `ThreadItem` / `SessionBoundary` / `BoundaryReason` definitions; the input contract this component consumes.
   - [`#9`](../codebase/9.md) — `buildThreadItems` projection that emits `SessionBoundary` markers between session-id deltas (the **Fake** producer, derived from full in-memory history).

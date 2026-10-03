@@ -203,6 +203,31 @@ class TaskCountPillTest {
         assertEquals(idleBottom, messageBottom())
     }
 
+    // #1628: the pill hugs its label, 8dp each side, with no minimum width leaving blank pill to its right.
+    private fun assertOneTaskPillHugsItsLabel() {
+        val label = composeTestRule.onNodeWithText("1 task running", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val bounds = composeTestRule.onNodeWithContentDescription("1 task running").getUnclippedBoundsInRoot()
+        assertEquals((label.right - label.left + 16.dp).value, (bounds.right - bounds.left).value, 0.5f)
+        assertEquals(24f, bounds.height.value, 0.5f)
+        val rootRight = composeTestRule.onRoot().getUnclippedBoundsInRoot().right
+        assertEquals((rootRight - ComposerGutter).value, bounds.right.value, 1f)
+    }
+
+    @Test
+    fun oneTaskPill_alone_hugsItsLabel_atTheBandsRightEnd() {
+        setThread(initialCount = 1)
+
+        assertOneTaskPillHugsItsLabel()
+    }
+
+    @Test
+    fun oneTaskPill_besideAReading_hugsItsLabel_atTheBandsRightEnd() {
+        setThread(initialCount = 1, isThinking = true)
+
+        composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_thinking)).assertIsDisplayed()
+        assertOneTaskPillHugsItsLabel()
+    }
+
     @Test
     fun tappingThePill_opensTheBackgroundTaskPanel() {
         setThread(initialCount = 1)

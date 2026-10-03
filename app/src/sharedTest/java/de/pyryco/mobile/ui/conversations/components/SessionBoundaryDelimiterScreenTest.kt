@@ -34,6 +34,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -117,13 +118,57 @@ class SessionBoundaryDelimiterScreenTest {
                 val root = checkNotNull(view)
                 val image = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
                 root.draw(Canvas(image))
-                Color(image.getPixel((24 * density).toInt(), ((label.top.value + label.height.value / 2) * density).toInt())).also {
+                Color(image.getPixel((44 * density).toInt(), ((label.top.value + label.height.value / 2) * density).toInt())).also {
                     image.recycle()
                 }
             }
         assertTrue("rule red differs: $actual vs $expected", kotlin.math.abs(actual.red - expected.red) < 2f / 255f)
         assertTrue("rule green differs: $actual vs $expected", kotlin.math.abs(actual.green - expected.green) < 2f / 255f)
         assertTrue("rule blue differs: $actual vs $expected", kotlin.math.abs(actual.blue - expected.blue) < 2f / 255f)
+    }
+
+    // Figma 675:3797 insets the frame 20 px inside the 20 px message gutter: at 412 px the rules span x 40–372.
+    @Test
+    @Config(qualifiers = "w412dp-h892dp-mdpi")
+    fun reset_rules_span_the_design_inset_at_412_wide() {
+        var rule = Color.Unspecified
+        var surface = Color.Unspecified
+        var view: View? = null
+        composeTestRule.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                rule =
+                    MaterialTheme.colorScheme.inversePrimary
+                        .copy(alpha = 0.6f)
+                        .compositeOver(MaterialTheme.colorScheme.surface)
+                surface = MaterialTheme.colorScheme.surface
+                view = LocalView.current
+                Surface {
+                    SessionBoundaryDelimiter(boundary = clearBoundary())
+                }
+            }
+        }
+
+        val label = composeTestRule.onNodeWithText("New session — ", substring = true).getUnclippedBoundsInRoot()
+        val y = (label.top.value + label.height.value / 2).toInt()
+        val samples =
+            composeTestRule.runOnIdle {
+                val root = checkNotNull(view)
+                assertEquals(412, root.width)
+                val image = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
+                root.draw(Canvas(image))
+                listOf(36, 44, 368, 376).associateWith { Color(image.getPixel(it, y)) }.also { image.recycle() }
+            }
+
+        fun close(
+            a: Color,
+            b: Color,
+        ) = kotlin.math.abs(a.red - b.red) < 2f / 255f &&
+            kotlin.math.abs(a.green - b.green) < 2f / 255f &&
+            kotlin.math.abs(a.blue - b.blue) < 2f / 255f
+        assertTrue("x 36 should be surface: ${samples[36]}", close(samples.getValue(36), surface))
+        assertTrue("x 44 should be rule: ${samples[44]}", close(samples.getValue(44), rule))
+        assertTrue("x 368 should be rule: ${samples[368]}", close(samples.getValue(368), rule))
+        assertTrue("x 376 should be surface: ${samples[376]}", close(samples.getValue(376), surface))
     }
 
     @Test

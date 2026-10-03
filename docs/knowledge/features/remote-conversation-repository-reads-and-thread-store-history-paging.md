@@ -157,187 +157,11 @@ admitted as its own row on every path instead of crashing the live lane.
 
 ## Assistant reply segments: the key, the seam join, and the turn-seq dedupe (#1350)
 
-[#1350](https://github.com/pyrycode/pyrycode-mobile/issues/1350) makes `withAssistantDelta` match desktop's
-`appendDelta`: it extends the thread's **last** row only when that row is already an assistant segment of
-the same `turn_id`; a tool row, a user message, a session boundary, or no row at all makes the delta open a
-new segment at the end instead. A turn that goes text, tool, text now draws as two assistant rows around the
-tool, live and on replay — see [Streaming assistant turns](streaming-assistant-turns.md#finished-rows-are-now-per-segment-not-one-bubble-per-turn-1350)
-and [Live tool-call](live-tool-call.md) for the consumer-side read of this. The segment is `Message.segment:
-AssistantSegment?` (`data/model/Message.kt`), non-null exactly on an assistant row folded from deltas:
-`AssistantSegment(turnId, deltas: List<SegmentDelta>)`, one `SegmentDelta(seq, length)` per folded delta in
-fold order, so the lengths sum to `content.length`. It carries no text, so its `toString` is safe to log.
-
-**The segment key.** `segmentKey(turnId, openingSeq)` is the bare `turnId` when the opening delta's `seq` is
-`0` — every turn's text starts there, so this is always the turn's first segment — and `"<turnId>#<openingSeq>"`
-otherwise. Both live and a replayed page derive the same key from the same opening delta, with no shared
-state between them. A row cached before segments existed carries no record and is keyed by the bare id, so it
-reads as a turn's first segment under the new scheme too, and the pre-existing [#425](../codebase/425.md)
-key-uniqueness guard keeps matching it unchanged.
-
-**Two guards keep the key unique**, since it is also the thread's `LazyColumn` key and a daemon chooses
-`turn_id` freely (it could pick one that spells another turn's `"<turnId>#<seq>"`, a `tool_use_id`, or a
-`message_id`):
-
-- `withAssistantDelta` drops a delta whose `seq` is not above the highest `seq` any segment of its turn
-  already holds (`highestSeqOf`) before it ever looks at opening a new segment — this is also what makes a
-  repeated first delta after a tool row a no-op instead of re-minting the first segment's key.
-- A delta that would open a segment under a key any `MessageItem` already carries is dropped outright.
-- The mirror case — `withToolUse` dropping a `tool_use` whose id any message already carries, not only an
-  existing tool row — is in [Live tool-call](live-tool-call.md#tool_uses-own-repeat-check-is-id-only-not-role-namespaced-1350).
-
-Each guard only ever suppresses a row; none of them ever completes, moves or resets one, so the worst a
-hostile `turn_id` achieves is missing text, never a crashed list.
-
-**Only the newest segment streams.** `List<ThreadItem>.withOnlyLastRowStreaming()` settles every streaming
-assistant row but the last, returning the same list when nothing changed; `ThreadProjection.observe` applies
-it before `distinctUntilChanged`, so every reader of the projection sees a segment stop the moment any row
-follows it — a tool call, a user message, whatever put that row there. See
-[Streaming assistant turns § the known gap](streaming-assistant-turns.md#finished-rows-are-now-per-segment-not-one-bubble-per-turn-1350)
-for the one composition point downstream of `observe` this does not cover.
-`turn_end` (`withFinalizedTurn`) still settles **every** streaming segment of the turn, plus a bare-id row
-with no segment record — not only the last one — since a daemon bug or a race can otherwise leave an earlier
-segment stuck streaming.
-
-**`withAssistantDelta`'s `passOver: Set<String> = emptySet()` ([#1558](https://github.com/pyrycode/pyrycode-mobile/issues/1558)).**
-The "last row" a delta extends is picked by `indexOfLast`, skipping any user row whose id is in `passOver` —
-so a delta lands on the running reply even when a user row this device minted sits after it in store order
-but reads below it (a [queued own echo](queued-backlog.md#own-echo-position-a-queued-message-draws-below-the-turn-it-waits-behind-1558)).
-`ThreadProjection.applyAssistantDelta` passes its conversation's queued-echo ids; this history reducer's own
-caller passes nothing, since a page is reduced after the fact and carries no notion of "still queued." Without
-this, the echo — appended to the store at tap time, ahead of the reply's first delta — would look like the
-delta's "last row" and the reply would open a second segment below it instead of extending the one above.
-
-### The seam join
-
-A history page is cut by entry count and byte size, never by turn, so a page can start or end inside a
-segment; the same is true where a newest page meets the live rows, or where the cache meets either. Within
-one fold a delta always extends the last row when it is the same turn's segment, so two assistant rows of one
-turn ever sitting adjacent in a merged list are always **one segment a seam cut in two**, never two
-independent segments that happen to be neighbours.
-
-`joinSegments(older, newer): Message?` joins such a pair: both must record a segment of the same `turnId`,
-and `newer` must have opened after `older` did (`newer.firstSeq > older.firstSeq`); anything else returns
-`null` and nothing joins — a `message` frame or a row cached before segments existed has no record and never
-joins. The joined row keeps `older`'s id, timestamp and session (it saw the segment's true opener), holds
-`older`'s deltas plus `newer`'s deltas whose `seq` is past `older`'s last (a delta the ask-versus-answer race
-delivered to both lanes is counted once, located from `newer`'s own record and clamped to its content so a
-mismatched record cuts short instead of throwing), and takes `newer`'s streaming flag, since the newer lane
-knows whether the turn has ended. `withJoinedSegments()` walks a merged list once and applies this to every
-adjacent pair, returning the same list when nothing joined. Joining only ever removes the later row and keeps
-the earlier row's already-unique id, so it can never mint a duplicate key.
-
-### The `(turnId, seq)` dedupe — the receiver owns a turn from its lowest `seq`
-
-An id-and-adjacency join alone assumed both lanes place one turn's rows in the same relative order, which
-held for every scripted scenario built on tool calls — a tool row's position is agreed by both lanes — but
-broke on a mid-turn user message: `MessageCommands.sendMessage` appends the local echo as soon as the `ack`
-arrives, mid-turn, while the daemon logs a message sent while claude is busy only once it is delivered from
-the queued-message backlog (pyrycode `docs/protocol-mobile.md` § `queue_state` / § `message`, #2699). The two
-lanes can therefore place that message in different positions relative to the turn's deltas, which splits the
-turn into differently-keyed segments on each side — the verifier reproduced both a reconnect-through-cache and
-an in-session case where this drew the turn's reply text twice (PR #1420 review, 2026-10-01).
-
-The fix: before merging a page or cached rows, `mergeHistoryRows` and `mergeCachedRows` first compute
-`segmentHeads()` — for every turn the receiving thread already holds segments of, the lowest `seq` it holds
-and the index of its first segment row. An incoming row runs through `olderThan(heads)`: an assistant segment
-of a turn the thread holds keeps only the deltas below that turn's lowest `seq` (`takeWhile { it.seq < below
-}`, content cut to match and clamped to length), and is dropped entirely when none are below it; every other
-row passes through unchanged. Because deltas are recorded in increasing `seq`, what survives is always a
-prefix of the record and the content, so the trimmed row's id — that of its own opening delta — stays
-correct. The same `seq` can therefore never be drawn twice: the receiver owns everything from its lowest `seq`
-up, and the incoming side only ever contributes what is strictly older. `withJoinedSegments()` then joins a
-trimmed head to the segment it continues, exactly as for a page-boundary seam.
-
-`mergeCachedRows` additionally floors where a trimmed cached head can land: no lower than right above the
-receiving thread's first segment row for that turn (`heads[turnId].index`), never lower just because the
-cached row's own position in `cached` was lower. Without that ceiling, a cached head that sat *below* the
-echo in live arrival order could land below newer text the page holds, reproducing the same duplication from
-the cache side.
-
-**Pre-change cached rows.** A row cached before segments existed carries `segment == null` but is keyed by
-its turn's bare id and holds that turn's whole text (as every row did before #1350).
-`withoutSegmentsOfWholeTurns()` removes any segment of a turn such a row's id names from the merged result —
-it only ever removes rows, never the whole-turn row itself — so the legacy row keeps drawing exactly as it
-did before this ticket, with its text appearing once rather than once more per segment underneath it.
-
-**Lesson for later tickets touching this merge:** a join keyed on id-plus-adjacency is only as safe as the
-assumption that every lane orders a turn's interleaved rows the same way. A client-placed local echo breaks
-that assumption structurally (the client decides when its own echo appears; the daemon decides independently
-when it logs the same turn), so any future per-turn join here needs a receiver-owns-the-prefix rule like
-`olderThan`/`segmentHeads`, not a positional one.
-
-### The cache's segment record
-
-`FileConversationCache`'s `CachedMessage` gains `segment: CachedSegment? = null` (`turnId`, `seqs: List<Int>`,
-`lengths: List<Int>`), defaulted so a document written before this change still reads with `segment = null`.
-On read, the record is kept only when it is internally consistent — the lists are non-empty, equal length,
-strictly increasing `seqs`, non-negative `lengths` summing to the row's `content.length` — and dropped to
-`null` otherwise, which costs that row its join (it falls back to counting as a pre-change whole-turn row) but
-never rejects the document.
-
-### A `turn_end` that settles rows which have not arrived yet (#1419)
-
-`withFinalizedTurn` (above, in the per-segment settle) only ever flips rows already sitting in the thread. Two
-orderings bring a turn's rows in *after* its `turn_end` has already been seen: the newest history page can
-hold only the `turn_end` while an older page still holds the turn's deltas, or a live `turn_end` can land
-before the newest page carrying those deltas is merged. Either way, the late rows used to enter the thread
-`isStreaming = true` and stay that way — the newest one forever, since nothing followed it to trip
-`withOnlyLastRowStreaming`, and `CachingConversationRepository.cacheableThreadRows` drops streaming rows, so
-they never reached the cache either.
-
-`ThreadProjection` now keeps a second map beside `threadByConversation`: `endedTurns`,
-`conversationId -> the turn ids whose turn_end this conversation has seen`, on either lane. It is
-connection-scoped and in-memory like `mintedMessageIds`, grow-only (an ended turn never streams again), and
-`remove(conversationId)` drops it with the thread. `finalizeAssistantTurn` and `mergeHistoryPage` both record
-into it *before* touching the thread, and `withFinalizedTurn` is now `withSettledTurns(setOf(turnId))`, a
-small generalization (`internal fun List<ThreadItem>.withSettledTurns(turnIds: Set<String>)`) that settles
-every row of several turns at once — a merge settles every turn `endedTurns` names, not just the one the
-current page mentions. `endedTurnIds(entries, interactive)` reads a page's `turn_end` entries for this
-independently of `reduceHistoryPage`: **a page holding only a `turn_end` reduces to zero rows**, so the
-memory of having seen it has to come from the page's own entries, gated by the same `interactive` check
-`withHistoryEntry` applies, not from the reduction's output.
-
-**The cross-lane race, and why one settle pass inside the merge isn't enough.** `mergeHistoryPage` runs on
-the caller's coroutine (`ThreadViewModel`'s scope, Main); a live `turn_end` runs on the inbound collector
-(`Dispatchers.Default`). The two can interleave inside a single `MutableStateFlow.update {}`'s read step.
-`MutableStateFlow.update` compares old and new by `equals` and writes nothing when they're equal — so a
-`finalizeAssistantTurn` whose thread flip finds none of the turn's rows yet (because the merge hasn't landed
-them) writes nothing, and critically **does not make the racing merge's compare-and-set fail**. A first
-version of this fix settled the merge's own incoming rows against `endedTurns` inside the merge's `update`
-lambda and reasoned that the finalize's own flip would "catch" any row the merge missed — but that argument
-assumed the finalize's update always changes something, which a no-op update doesn't. The verifier's rework
-(PR #1442) found the resulting window: the merge reads `endedTurns` before the live `turn_end` records,
-the live `turn_end`'s own flip then finds nothing to settle and writes nothing, and the merge's
-compare-and-set against the stale snapshot still succeeds and commits the turn's newest row streaming.
-
-The fix is a second, independent settle pass: after `mergeHistoryPage`'s own thread `update` commits, a
-private `settleEndedTurns(conversationId)` runs one more `update` that re-reads `endedTurns.value` fresh and
-settles against it, writing nothing when nothing changes. Either the live `turn_end` recorded before that
-re-read (the pass settles the rows), or its own thread update starts only after the merge committed (it finds
-the rows and settles them itself). A live `assistant_delta` needs no equivalent pass: unlike `turn_end`'s
-flip, a delta's update always changes the thread, so a racing merge's compare-and-set either fails and
-re-reads `endedTurns`, or the merge is the one that lands first and the delta's own update then sees the
-settled state. One known-incomplete edge of that argument: a live delta that reads `endedTurns` just before a
-concurrent merge records the same turn from a page that changes nothing in the thread (for example, a page
-holding only that `turn_end`) can still commit a streaming row, because both the merge's update and its
-settle pass write nothing in that case. This is harmless here only because the live lane is strictly ordered
-on one collector — that same turn's own `turn_end` is still to come on the same lane and settles the row when
-it arrives — and because `endedTurns` is connection-scoped, so nothing carries a stray streaming row across a
-reconnect.
-
-**Durable lesson for any future `StateFlow`-pair coordinated by write order:** "the other writer's update
-will follow and catch what I missed" only holds when that writer's update is guaranteed to change its state.
-An update that compares equal under `equals` is a no-op and cannot make a concurrent compare-and-set retry.
-Closing a window like this needs a pass that re-reads the *other* flow's value after the first flow's own
-update has committed, not an in-line read racing the other writer.
-
-Covered by `AssistantSegmentTest`: `turnEndOnANewerPageThanItsRows_settlesThem` (history walk, newest page
-holding only the `turn_end`), `liveTurnEndBeforeTheNewestPage_settlesItsRows` (live `turn_end` ahead of the
-page), `turnWithNoTurnEnd_stillStreamsAfterAMerge_andALaterTurnEndSettlesIt` (a turn with no `turn_end` yet is
-unaffected), plus guards for another turn, another conversation, a non-interactive page, a live delta after
-its own `turn_end`, and `remove_forgetsTheConversationsEndedTurns`. No deterministic interleaving harness
-exists for the two-coroutine race above; the argument for it lives in `endedTurns`' KDoc and here, not in a
-test.
+Split into [Remote conversation repository — assistant reply
+segments](remote-conversation-repository-assistant-reply-segments.md) on 2026-10-03 when this document
+passed the size cap; every subsection's heading and anchor moved unchanged. Covers the segment key and its
+two uniqueness guards, the seam join across a page or cache boundary, the `(turnId, seq)` dedupe for a
+mid-turn local echo, the cache's segment record, and the #1419 `turn_end`-before-its-rows race.
 
 ## The walk that finally calls `requestHistory` (#777)
 
@@ -489,35 +313,65 @@ this section covers only `ThreadHistoryDemand`/`ThreadViewModel`, which is where
   `pagesLoaded` is carried forward unchanged, so restoring a position never buys a fresh
   `MAX_HISTORY_PAGES` budget — the cap stays per screen-open (see § The walk that finally calls
   `requestHistory` above).
-- **`ThreadViewModel.historySeed`**, a `Deferred<Boolean>` launched in `viewModelScope` right after
-  `historyDemand` is constructed, reads `repository.readHistoryPosition(conversationId)` once and, if it
-  finds one, folds it with `restored` and completes `false`. Reading asks nothing — `onDemandOlderHistory`
-  is still the only path that calls `requestHistory` on a thread with a saved position. For every
-  in-memory repository (every unit test, and the demo `FakeConversationRepository`) the default
-  `readHistoryPosition` returns without suspending, so the seed completes during construction and a test
-  never has to await it explicitly.
-- **[#1569](https://github.com/pyrycode/pyrycode-mobile/issues/1569): no saved position completes
-  `historySeed` `true`, and that is the one case where opening a thread asks by itself.** A reported
-  channel (`questions`, conversation `7dc049bc`, 65 events on disk, session dormant) opened with no
-  earlier messages and stayed empty after leaving and reopening, filling in only after a send woke the
-  session — the daemon serves a dormant conversation's history from disk only on a `request_history` it
-  never received, and #1352 had made every open ask nothing. A `ThreadViewModel.init` coroutine awaits
-  `historySeed`, then the thread's `hostAvailable` becoming true for the first time, then claims the
-  history slot only if the walk is still exactly `ThreadHistoryDemand()` (a reader's pull that got there
-  first leaves nothing to claim) before asking with the same empty cursor and `launchHistoryAsk` a pull
-  uses — so the saved page lands through `writeHistoryPosition` exactly as any other ask's does, and a
-  failure lands in the same Retry/DeadEnd/Offline tail. A thread with a saved position (`historySeed`
-  `false`) never reaches this collector and keeps #1352's pull-only rule unchanged; see [Thread screen §
-  the oldest-end history
+- **`ThreadViewModel.historySeed`**, a `Job` launched in `viewModelScope` right after `historyDemand` is
+  constructed, reads `repository.readHistoryPosition(conversationId)` once and, if it finds one, folds it
+  with `restored`. Reading asks nothing — `onDemandOlderHistory` is still the only path that calls
+  `requestHistory` for an *older* page. For every in-memory repository (every unit test, and the demo
+  `FakeConversationRepository`) the default `readHistoryPosition` returns without suspending, so the seed
+  completes during construction and a test never has to await it explicitly. Before #1572 this was a
+  `Deferred<Boolean>` reporting whether a position was found; it carries no result now because every
+  thread, saved position or not, reaches the collector below once the seed completes.
+- **[#1572](https://github.com/pyrycode/pyrycode-mobile/issues/1572): an open thread asks for the newest
+  history page every time its host becomes available, at open and after every reconnect while it stays
+  open — not only once, and not only for a never-loaded thread.** This replaces
+  [#1569](https://github.com/pyrycode/pyrycode-mobile/issues/1569)'s narrower rule below. A reply the
+  daemon had stored while a thread was off-screen was never cached — `CachingConversationRepository.observeMessages`
+  only writes to the cache while that thread is being collected, see [Caching conversation repository §
+  Why it exists](caching-conversation-repository.md#why-it-exists) — and a reconnect discarded the
+  connection-scoped projection that held it; replay does not resend it, so the thread drew the stale
+  cache forever. A `ThreadViewModel.init` coroutine awaits `historySeed`, then collects
+  `repositoryAvailable.distinctUntilChanged().filter { it }`, calling `askForNewestPage(reconnect = opened)`
+  on every arrival (the same shape as the #1410 context-usage collector), instead of #1569's `first { it }`
+  that took only the opening edge.
+
+  `askForNewestPage` claims the walk's single outstanding-request slot through `claimHistorySlot`, so it
+  is dropped (with a static log) while a pull or a retry is out, exactly as a second pull would be. What
+  happens next depends on `ThreadHistoryDemand.newestPageAdvancesWalk` (`canAsk && cursor.isEmpty()`):
+
+  - **The newest page is the walk's own next page** for a never-loaded thread (#1569's original trigger,
+    still the common case for a channel opened for the first time), a walk whose cursor the daemon
+    refused, or a walk whose previous newest-page ask failed. The ask then runs through the unchanged
+    `asking()`/`launchHistoryAsk` path: the page settles into the walk and `writeHistoryPosition` saves
+    its position, exactly as a pull from the newest would.
+  - **Otherwise it is a side ask.** `ThreadHistoryDemand.askingNewest()` claims the slot by setting only
+    `inFlight`; `newestSettled()` releases it the same way. The reply's `cursor` and `atStart` are never
+    read and no position is written, so a saved cursor keeps driving the next *older* pull and a saved
+    `AtStart` keeps reading as fully loaded. The rows still land, because `requestHistory` has already
+    merged the page into `observeMessages` through `mergeHistoryRows` and `mergeCachedRows` before the
+    ViewModel does anything with the reply — the side ask exists only to make the request, not to read
+    the answer. A failed side ask (`RelayErrorException`, `IllegalStateException`,
+    `IllegalArgumentException`; `CancellationException` rethrown first) logs a static
+    `event=history_newest_ask_failed` and releases the slot, leaving the walk's stop reason untouched; the
+    next host arrival asks again.
+
+  A thread opened offline still asks nothing until the host arrives, then asks exactly once, same as
+  #1569; the difference is every later drop and return asks again, where #1569's collector took only the
+  first edge and never asked twice. See [Thread screen § the oldest-end history
   demand](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777) for the
-  screen-side detail.
+  screen-side detail, including a known, unfixed quirk where a side ask shows the oldest-end `Loading`
+  row even on an already fully loaded thread.
 - **A pull during the seed waits for it, rather than racing it.** `onDemandOlderHistory` checks
   `historySeed.isCompleted` first; if the read is still in flight, it launches a coroutine that joins
   the seed and re-enters, instead of either dropping the pull or letting it carry the opening empty
   cursor. Without this, a pull that landed before the disk read finished would re-fetch the newest
   page — the exact bug the ticket exists to fix — only intermittently, on whichever gesture happened
   to race the read. Extra pulls that land in the same window collapse through the ordinary `canAsk`
-  check once the first of them claims the outstanding-request slot.
+  check once the first of them claims the outstanding-request slot. **Since #1572, that first claimant is
+  usually the opening newest-page ask, not the pull**: both the pull's re-entry and the opening collector
+  wait on the same `historySeed`, and the opening collector registered first, so it wins the slot and the
+  joined pull is simply dropped and has to pull again — confirmed by
+  `ThreadViewModelTest.history_aPullWhileTheSavedPositionIsBeingRead_asksWithTheSavedCursor`, which pins
+  that the next pull still carries the saved cursor.
 - **A received page's position is saved before the slot is released, inside `launchHistoryAsk`'s
   single in-flight ask.** `repository.writeHistoryPosition(conversationId, HistoryPosition(page.cursor,
   page.atStart))` runs right after `requestHistory` returns and before `historyDemand.update {

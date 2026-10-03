@@ -1703,19 +1703,23 @@ data class AttachmentOffer(
  * boundary; the daemon bounds them at construction and does **not** sanitize them, so they stay
  * untrusted, model-influenced text here. They are held **verbatim** — never normalised, lowercased,
  * trimmed, allow-listed or shape-checked — and are usable only as lookup keys for **client-owned
- * copy**: never rendered verbatim, never an authorization signal, never a filename, a cache key or a
- * lookup path. Nothing on this path is ever logged. **No behaviour may branch on any field of this
- * type**: the frame is a report, never a control input.
+ * copy**: never rendered, never an authorization signal, never a filename, a cache key or a lookup
+ * path. Nothing on this path is ever logged. The frame is a report, never a control input: the only
+ * branches on these strings pick the usage pill's client-owned copy and variant (#1519, desktop's
+ * `usageLimitNotice` rule), each by **exact equality** — no trim, case fold, prefix or substring test —
+ * and every unrecognised value takes the softer arm. Nothing else may branch on any field of this type.
  *
  * @param status Claude's own status for the usage-limit window, verbatim. An **open string with a
- *   mostly unmeasured value set**. Exactly one comparison against it is legitimate — the benign value,
- *   which distinguishes a clearing edge from a warning, and which the decode boundary has already made
- *   before a reading reaches here. Every other value is an **opaque label** to render, never a case to
- *   branch on; treating it as a closed set is a bug waiting for claude's next release.
- * @param limitType Which limit the report concerns, verbatim. Also an open string — two observed values
- *   do not earn an enum. **Never pair a clear to it**: the clearing frame names a *different*
- *   `limit_type` than the warning it clears, so a consumer matching on it never matches. The clear is
- *   paired to the conversation, which the repository does by construction.
+ *   mostly unmeasured value set**, never drawn. The decode boundary has already made the benign
+ *   comparison, which distinguishes a clearing edge from a warning. The usage pill then compares it
+ *   exactly against `rejected` (the "Usage limit reached" lead) and `allowed_warning` (the dismissible
+ *   variant); every other value reads "Nearly at usage limit" on the Error pill. Treating it as a closed
+ *   set is a bug waiting for claude's next release.
+ * @param limitType Which limit the report concerns, verbatim, never drawn. Also an open string — two
+ *   observed values do not earn an enum. The usage pill names a window only for exact `five_hour` and
+ *   `seven_day` and adds nothing for any other value. **Never pair a clear to it**: the clearing frame
+ *   names a *different* `limit_type` than the warning it clears, so a consumer matching on it never
+ *   matches. The clear is paired to the conversation, which the repository does by construction.
  * @param resetsAt When claude says the limit lifts, in **unix seconds** — claude's number, not the
  *   device's clock, unvalidated in both directions. **`0` means claude reported none, emphatically not
  *   the epoch.** Negative and absurd values are representable and none is rejected. It is **never a

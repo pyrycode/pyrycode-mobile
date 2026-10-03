@@ -767,6 +767,39 @@ scripts/android-test-gate.py live`, 2026-09-23; branch `feature/861` at `24c9490
 the dedicated entry below. The live run that closed #1352 (dispatcher real-claude gate, 2026-10-02)
 re-proved this scenario, among fifty executed with none failed, with the reconnect re-ask gone.
 
+The **offscreen-reply-survives-reconnect** scenario (#1581 —
+`interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk`) is likewise **always-on**: it
+proves that a reply the daemon finishes while its own thread is off screen is not lost across a
+reconnect, the rung-3 counterpart of
+[#1572](https://github.com/pyrycode/pyrycode-mobile/issues/1572)'s unit-level proof that an open thread
+asks for the newest history page every time it gains its host (see [Thread screen — the oldest-end
+history demand §
+#1572](knowledge/features/thread-screen-oldest-end-history-demand.md#1572-an-open-thread-asks-for-the-newest-history-page-every-time-its-host-becomes-available--at-open-and-again-after-every-reconnect-while-it-stays-open--not-only-the-first-time)).
+Chat A gets one settled ping turn, which the phone draws and caches. A's second turn is held on the #849 permission lever
+(`WAIT_PROMPT`) until the peer answers it, and the phone leaves A for a second chat, B, before that
+happens — so the leave never depends on how fast claude answers. The peer allows the prompt once the
+phone is in B, and the turn ends there; A's thread never draws the reply, because it is not open. The
+test does not wait on the peer's own `turn_end` to know the phone has the reply, since the peer's copy
+can arrive first (the same race the offline-read-reconcile scenario above guards against): it instead
+polls the phone's persisted `ReadPosition` for A until `completedTurnId` names that turn, and asserts it
+is unread, which is the phone's own record that it folded the `turn_end` — and everything before it on
+the ordered inbound stream — while A was not viewed. Only then does it cut and restore the host link with
+`setHostLink`. Before reopening A, it also reads `ConversationCache` for A directly and asserts the cache
+holds the ping's cached reply but not the held turn's reply, so the live checks that follow cannot pass
+on an empty or wrongly keyed read. Reopening A, with no other gesture, must then draw all four rows —
+the ping prompt, its reply, the held prompt, and its reply — exactly once each, in `boundsInRoot.top`
+order. Without #1572, an open thread only ever asked for the newest page on a never-loaded thread, so A's
+cached-but-stale reopen would show just the first two rows and the final wait would time out.
+
+Two real claude turns: A's ping and A's permission-held command. Folded into the pre-ship `LIVE=1` gate
+on the curated list in `scripts/e2e-emulator.sh`, taking `LIVE_MINIMUM` from 51 to 52. The live run that
+closed #1581 (dispatcher real-claude gate, 2026-10-03; branch `feature/1581` at `70aee9838d` merged with
+`origin/main` at `985ff3ca64`) selected five methods — this one plus four always-run methods — and
+reported 5 executed, 4 passed, 1 failed, 0 skipped; this method itself executed and passed.
+The one failure, `interactiveTurn_twoHostsCollidingConversationId_stayPerHost`, failed once and then
+passed on a re-run of the same merged tree, so it was triaged as a pre-existing flake in the suite, not a
+regression from this ticket.
+
 The **model and effort settings round trip** (#545) is four **always-on** methods (none `@Ignore`d)
 proving the settings read (#590), the applied-effort footer (#889) and the remembered-effort recall
 (#686) reach a real daemon, since none of those tickets had live proof of its own. Each method prepares
@@ -1403,6 +1436,38 @@ The method joins `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` after
 counts it (see [Pre-ship gate](#pre-ship-gate)). Its first live pass is recorded in [Verification
 status](#verification-status).
 
+The **dormant-channel-history** scenario (#1571 —
+`interactiveTurn_dormantChannel_opensWithStoredHistoryWithoutSend`) is likewise **always-on** (not
+`@Ignore`d): that opening a channel whose session the daemon does not hold still shows its earlier
+messages, with no send, is a durable post-condition of #1569/#1572's thread-opens-and-asks-for-its-own-
+history-page fix — before them a dormant channel opened empty until the first send woke its session. The
+live suite cannot restart its daemon mid-run, and the main test daemon's idle eviction is off, so the
+after-restart dormant state cannot be produced by cutting and restarting the daemon the way #847's
+scenario does; `scripts/e2e-emulator.sh` seeds it instead, before the daemon starts. A new
+`seed_dormant_history` writes one finished turn — `send_message`, `assistant_delta`, `turn_end` — into the
+daemon's own on-disk history format (pyrycode `internal/history`'s `{"format":"pyrycode.history",
+"version":1}` header line, then one `{"id","type","payload","ts"}` line per entry, under
+`conversations/<id>/history/segment-<20 digits>.jsonl`) beside a row from `seed_collision_conversation`
+that is promoted and bound to a session id the daemon never spawns — the same unbound-after-restart shape
+#847's scenario seeds, reused here for dormancy rather than id collision. Payloads mirror pyrycode's
+`internal/protocol/testdata/send_message.json`/`assistant_delta.json`/`turn_end.json` fixtures rather than
+its `history_page*.json` ones: the latter's `assistant_delta` carries no `turn_id` or `seq`, and the
+phone's `AssistantDeltaPayloadDto` requires both, so a reply seeded from a `history_page*.json` shape would
+decode and then silently drop, rendering nothing. The run-unique id, name and stored reply text reach the
+test as instrumentation arguments (`dormantConversationId`/`dormantName`/`dormantReply`), read by a small
+`dormantArg` helper that fails naming the script rather than throwing a bare NPE. The test asserts the
+reply is absent before opening the row, then opens it and waits for the reply anchored in a message
+bubble — no `pullForOlderHistory`, no send, so it spends no real-claude turn: `requestHistory` has no
+caller but the open thread itself, so the stored reply can only reach the phone through that ask. No
+rung-4 twin: the scripted path seeds no history log and the twin would prove only the reducer, which
+`ThreadViewModelTest` already covers. The seeded channel and its history directory persist in the LIVE
+instance across runs, the same way #847's collision rows do; `awaitChannelRow` scrolls to find it, so
+nothing breaks, but a future cleanup of accumulated seeded live rows should fold this one in too. The
+method joins `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` after
+`interactiveTurn_compactWithAttachment_compactsAndClearsTheStrip`, and `android-test-gate.py`'s
+`LIVE_MINIMUM` counts it (see [Pre-ship gate](#pre-ship-gate)). Its first live pass is recorded in
+[Verification status](#verification-status).
+
 The **thinking-spinner** scenario (#482) is the **flakiest** rung-3 scenario and ships **`@Ignore`-gated /
 manual**: the spinner has **no durable equivalent** of the tool name — once real claude emits its first
 token, `turn_state` flips to `responding` and `isThinking` goes false. Before [#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311)
@@ -1765,6 +1830,14 @@ It checks that only A's archive contains a marker written to A's daemon log. It 
 Settings export or document picker, spends no Claude turn, and cleans up the marker and B pairing.
 The builder's focused attempt stopped at Claude authentication preflight: 0 executed, 0 failed,
 0 skipped, with no XML. The passing evidence below comes from the full 42-method live suite.
+
+`InteractiveStreamE2ETest#interactiveTurn_dormantChannel_opensWithStoredHistoryWithoutSend` (#1571,
+described in full under [What rung 3 is made of](#what-rung-3-is-made-of)) opens a channel seeded dormant
+— bound to a session this run's daemon never spawns — and waits for a reply stored in its on-disk history
+log before the daemon started, with no pull and no send. Because the live suite cannot restart its daemon
+mid-run and the main test daemon's idle eviction is off, this is the only form of the dormant-after-restart
+state a live run can exercise; idle eviction is untested here. It spends no Claude turn. The seed and the
+method run on every `LIVE=1` invocation, not behind a focused selection.
 
 #1189 revised Create channel to open from an initially empty host Channels
 section and use the daemon default; the folder-settings method keeps the repository
@@ -2234,7 +2307,35 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-02 (#1460).** The dispatcher ran
+**Current live verification — 2026-10-03 (#1581).** The dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live --tests` with five names —
+the new `interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk` and
+`interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect` from the PR's `## Live tests`, plus three
+always-run methods (`interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
+`interactiveTurn_offlineRetry_reconnectsSameHostAndReplies`,
+`interactiveTurn_twoHostsCollidingConversationId_stayPerHost`) — against `feature/1581` at
+`70aee9838d`, merged with `origin/main` at `985ff3ca64` in a detached worktree (0 commits behind before
+the merge): **5 executed, 4 passed, 1 failed, 0 skipped**, exit 1, wall clock 1488.5s. This is a selected
+run, not full-suite evidence; the new method itself is the subject of this ticket's AC-3. The fresh XML
+has a passing testcase for the new method with no failure or error — this is its first live run. The one
+failure, `interactiveTurn_twoHostsCollidingConversationId_stayPerHost`, failed once and passed on a
+re-run of the same merged tree, so the dispatcher treated it as a suite flake rather than this branch's
+and moved the ticket on. `LIVE_MINIMUM` rose from 51 to 52, since it is counted from the curated LIVE
+list and the ticket added one entry.
+
+**Previous live verification — 2026-10-03 (#1571).** The dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1571` at
+`f4248cacee`, merged with `origin/main` at `f4c6598ad6` in a detached worktree (43 commits behind before
+the merge): **52 executed, 52 passed, 0 failed, 0 skipped**, exit 0, wall clock 918.9s. This is full-suite
+evidence (full suite: 50 merges had landed since the last passing full run); no separate focused live run
+is claimed. The fresh XML has a passing testcase for the new method,
+`interactiveTurn_dormantChannel_opensWithStoredHistoryWithoutSend` (AC 2 and 3), with no failure or error
+— this is the method's first live run. An earlier attempt on this branch produced no readable test events
+(0/0/0/0, exit 1, wall clock 3.6s) and was treated as an unreliable gate result rather than a pass or
+fail; this run superseded it. `LIVE_MINIMUM` rose from 51 to 52, since it is counted from the curated LIVE
+list and the ticket added one entry.
+
+**Previous live verification — 2026-10-02 (#1460).** The dispatcher ran
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1460` at
 `5d3187e015`, merged with `origin/main` at `a4d536d9ad` in a detached worktree (0 commits behind before
 the merge): **51 executed, 50 passed, 1 failed, 0 skipped**, exit 1, wall clock 1409.7s. This is
@@ -3027,6 +3128,16 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — added:** [#1571](https://github.com/pyrycode/pyrycode-mobile/issues/1571) adds
+  `InteractiveStreamE2ETest.interactiveTurn_dormantChannel_opensWithStoredHistoryWithoutSend` to the
+  curated LIVE `TEST_TARGET` selector in `scripts/e2e-emulator.sh`; `LIVE_MINIMUM` is counted from that
+  list, so it rose from 51 to 52 with no edit to `android-test-gate.py`. See [What rung 3 is made
+  of](#what-rung-3-is-made-of) for the scenario and its dormant-history seed. The dispatcher's
+  post-verifier full `python3 scripts/android-test-gate.py live` run (branch `feature/1571` at
+  `f4248cacee`, merged with `origin/main` at `f4c6598ad6`, 43 commits behind before the merge) executed
+  52, passed 52, failed 0, skipped 0; the new method has a passing testcase in the fresh XML with no
+  failure — see [Verification status](#verification-status).
 
 - **Coverage — updated:** [#1561](https://github.com/pyrycode/pyrycode-mobile/issues/1561) changed the
   shared `renameOpenThread(newName)` helper: a promoted conversation now renames through the thread's menu's

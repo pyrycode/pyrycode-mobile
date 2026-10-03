@@ -3,6 +3,9 @@ package de.pyryco.mobile.design
 import android.view.View
 import android.view.WindowInsets
 import androidx.compose.ui.platform.ViewRootForTest
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -16,6 +19,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.espresso.Espresso
@@ -29,6 +34,7 @@ import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -74,8 +80,7 @@ class ListDesignCaptureTest {
             relaunch()
             rule.onNodeWithContentDescription("Open archive").performClick()
             awaitText("Archived")
-            // The view model opens on Discussions whatever the counts; the frame shows Channels selected.
-            tap(rule.onNodeWithText("Channels (", substring = true))
+            // Archive opens on Channels, as 18:2 does (#1487), so the frame's state needs no tap.
             awaitText("Archived", substring = true, count = it + 1)
             design.capture(FOLDER, "archive$suffix", "18:2")
             tap(rule.onNodeWithText("Discussions (", substring = true))
@@ -97,6 +102,7 @@ class ListDesignCaptureTest {
         relaunch()
         rule.onNodeWithContentDescription("Edit host", substring = true).performClick()
         awaitText("Host name:")
+        assertIdentityLabelsWrapOnlyBetweenWords()
         design.capture(FOLDER, "edit-host$suffix", "533:2369")
         val modal = awaitModalFocus(rule.onNode(hasSetTextAction()))
         rule.onNode(hasSetTextAction()).performClick()
@@ -109,7 +115,7 @@ class ListDesignCaptureTest {
         awaitModalKeyboard(modal, visible = false)
         rule.onNodeWithText("Unpair host").performScrollTo().performClick()
         awaitText("Unpair host?")
-        design.capture(FOLDER, "edit-host-unpair$suffix", "none")
+        design.capture(FOLDER, "edit-host-unpair$suffix", "671:5620")
         relaunch()
 
         // No conversation row draws a pen (#1563): Edit channel opens from the thread's More actions, Edit (#1561).
@@ -127,7 +133,7 @@ class ListDesignCaptureTest {
         design.openMenu(rule.onNodeWithContentDescription("More actions"))
         rule.onNodeWithText("Channel info").performClick()
         awaitText("About")
-        design.capture(FOLDER, "channel-info$suffix", "20:48")
+        design.capture(FOLDER, "channel-info$suffix", "668:5355")
     }
 
     private fun openFirstChannel() {
@@ -185,11 +191,39 @@ class ListDesignCaptureTest {
         rule.waitForIdle()
     }
 
-    /** Taps [node] through the device's input, as a finger would, so the capture shows the state a real tap leaves. */
+    /**
+     * Taps [node] through the device's input, as a finger would, so the capture shows the state a real tap leaves.
+     * `input tap` returns before the app sees the event, so wait for the tab to report selected, then for Compose
+     * idle, which outlasts the press ripple's frames (#1487 measured it fading out by about 800 ms).
+     */
     private fun tap(node: SemanticsNodeInteraction) {
-        val center = node.fetchSemanticsNode().boundsInWindow.center
+        val target = node.fetchSemanticsNode()
+        val center = target.boundsInWindow.center
         shell("input tap ${center.x.toInt()} ${center.y.toInt()}")
+        rule.waitUntil(5_000) {
+            rule
+                .onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.Selected, true))
+                .fetchSemanticsNodes()
+                .any { it.id == target.id }
+        }
         rule.waitForIdle()
+    }
+
+    /**
+     * At 320x700 and 150 % the labels wrap in their compact column; a word too wide for it breaks inside, as
+     * "address" over a lone ":" (#1489). Device fonts only: Robolectric's metrics do not reproduce the break.
+     */
+    private fun assertIdentityLabelsWrapOnlyBetweenWords() {
+        listOf("Server identity:", "Relay address:").forEach { label ->
+            val layouts = mutableListOf<TextLayoutResult>()
+            rule.onNodeWithText(label, useUnmergedTree = true).performSemanticsAction(SemanticsActions.GetTextLayoutResult) {
+                it(layouts)
+            }
+            val layout = layouts.single()
+            (0 until layout.lineCount - 1).forEach { line ->
+                assertTrue("$label breaks inside a word after line $line", label[layout.getLineEnd(line) - 1].isWhitespace())
+            }
+        }
     }
 
     /**

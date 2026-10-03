@@ -3,11 +3,17 @@ package de.pyryco.mobile.ui.settings
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.view.View
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.FontScale
+import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertLeftPositionInRootIsEqualTo
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
@@ -19,6 +25,9 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.Conversation
@@ -26,6 +35,7 @@ import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Clock
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -154,6 +164,63 @@ class ArchivedDiscussionsLayoutTest {
 
         compose.onNodeWithContentDescription("Restore row-10").assertIsDisplayed()
         compose.onNodeWithContentDescription("Restore row-19").assertDoesNotExist()
+    }
+
+    // #1487: 18:2 repeats rows every 66 px: 12 padding, 24 title, 2 gap, 16 subtitle, 12 padding.
+    @Test fun rowsRepeatEvery66Dp() {
+        val rows = (0 until 3).map { archived("row-$it", promoted = true) }
+        compose.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                ArchivedDiscussionsScreen(
+                    state = ArchivedDiscussionsUiState.Loaded(rows, emptyList(), ArchiveTab.Channels),
+                    onEvent = {},
+                )
+            }
+        }
+        val tops = rows.map { compose.onNodeWithContentDescription("Restore ${it.name}").getUnclippedBoundsInRoot().top }
+        assertEquals(66.dp, tops[1] - tops[0])
+        assertEquals(66.dp, tops[2] - tops[1])
+    }
+
+    // #1487: at 320x700 and 150 % font scale each label stays on one line inside its tab, above the indicator.
+    @Test fun tabLabelsStayOnOneLineAt320By700LargeText() {
+        val size = DpSize(320.dp, 700.dp)
+        compose.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(size)) {
+                    DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.5f)) {
+                        ArchivedDiscussionsScreen(
+                            state =
+                                ArchivedDiscussionsUiState.Loaded(
+                                    listOf(archived("old-project", promoted = true)),
+                                    listOf(archived("old-discussion", promoted = false)),
+                                    ArchiveTab.Channels,
+                                ),
+                            onEvent = {},
+                            hostName = "studio-mini",
+                            modifier = Modifier.size(size),
+                        )
+                    }
+                }
+            }
+        }
+        val indicator = compose.onNodeWithTag("archive_selected_indicator").getUnclippedBoundsInRoot()
+        val tabs = compose.onNodeWithTag("archive_tabs").getUnclippedBoundsInRoot()
+        val half = (tabs.right - tabs.left) / 2
+        for ((index, label) in listOf("Channels (1)", "Discussions (1)").withIndex()) {
+            val layouts = mutableListOf<TextLayoutResult>()
+            compose
+                .onNodeWithText(
+                    label,
+                    useUnmergedTree = true,
+                ).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            val layout = layouts.single()
+            assertEquals("$label lines", 1, layout.lineCount)
+            assertFalse("$label is cut off", layout.hasVisualOverflow)
+            val bounds = compose.onNodeWithText(label, useUnmergedTree = true).getUnclippedBoundsInRoot()
+            assertTrue("$label leaves its tab", bounds.left >= tabs.left + half * index && bounds.right <= tabs.left + half * (index + 1))
+            assertTrue("$label overruns the indicator", bounds.bottom <= indicator.top)
+        }
     }
 
     private fun assertPopulatedTabs(darkTheme: Boolean) {

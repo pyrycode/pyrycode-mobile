@@ -19,6 +19,17 @@ phone lost reception or was relaunched offline. Everything else about a live con
 permission modals, the thinking indicator, stall, queue, API retry, compaction — is genuinely
 live state with no offline meaning, so only `observeMessages` needed a restore.
 
+**The restore only ever sees rows that reached this wrapper's own `observeMessages` collection.** A row
+the daemon delivers to a thread nobody is observing — the operator is looking at another channel, or
+another host's thread — is never written to the cache, because the write only happens inside this
+block's own `collect`. A reconnect then rebuilds the connection-scoped projection that briefly held that
+row, and it is gone: the replay cursor has already advanced past it, so Mode A replay does not resend it
+either. [#1572](https://github.com/pyrycode/pyrycode-mobile/issues/1572) does not change this wrapper —
+it recovers the row a different way, by having `ThreadViewModel` ask for the newest history page every
+time an *open* thread's host becomes available, so the daemon re-delivers what this cache missed. See
+[Thread screen § the oldest-end history
+demand](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777) for that ask.
+
 ## Contract
 
 ```kotlin

@@ -1207,8 +1207,8 @@ class InteractiveStreamE2ETest {
      * thread overflow and fires `ThreadEvent.Archive → sendArchive → repository.archive → success-only
      * PopBack`; there is **none** of #554's "Delete"-collision / sheet-behind-dialog disambiguation — the
      * archive tap is a single [onNodeWithText] in the open overflow. (2) **Restore needs a second screen:**
-     * channel list → Archived screen (default **Discussions** tab, so the renamed discussion is on it with no
-     * tab tap), restore, then Back to confirm re-appearance.
+     * channel list → Archived screen, a tap on its **Discussions** tab (Archive opens on Channels since #1487),
+     * restore, then Back to confirm re-appearance.
      *
      * **The one gotcha — the restore-coroutine cancellation race.** `RestoreRequested` handling is
      * `viewModelScope.launch { repository.unarchive(id); … }` scoped to the **Archived screen's**
@@ -1296,11 +1296,12 @@ class InteractiveStreamE2ETest {
             awaitChannelList()
             composeTestRule.onAllNodesWithText(uniqueName, substring = true).assertCountEquals(0)
 
-            // 9. The list toolbar opens Archive for the selected host. The default Discussions tab shows the chat.
+            // 9. The list toolbar opens Archive for the selected host. Its Discussions tab shows the chat.
             composeTestRule.onNode(hasContentDescription(CD_OPEN_ARCHIVE)).performClick()
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
             }
+            openArchiveTab(R.string.archived_tab_discussions)
 
             // 10. Restore. Wait for the restore affordance keyed on the unique name — the "Restore <uniqueName>"
             //     IconButton (the row name is a Text node, so only the restore button matches a content-description
@@ -1398,11 +1399,12 @@ class InteractiveStreamE2ETest {
             archiveOpenThread()
             archivedIds(serverId) { idA in it }
 
-            // 3. Open Archive on its default Discussions tab: A, archived last, is the first row.
+            // 3. Open Archive on its Discussions tab: A, archived last, is the first row.
             composeTestRule.onNode(hasContentDescription(CD_OPEN_ARCHIVE)).performClick()
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
             }
+            openArchiveTab(R.string.archived_tab_discussions)
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             val restoreA = hasContentDescription(context.getString(R.string.cd_restore_archive, nameA))
             val restoreB = hasContentDescription(context.getString(R.string.cd_restore_archive, nameB))
@@ -2332,6 +2334,7 @@ class InteractiveStreamE2ETest {
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
             }
+            openArchiveTab(R.string.archived_tab_discussions)
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasContentDescription(chatName, substring = true)).fetchSemanticsNodes().isNotEmpty()
             }
@@ -2548,11 +2551,7 @@ class InteractiveStreamE2ETest {
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
             }
-            val channelsTab = string(R.string.archived_tab_channels).substringBefore(" (")
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText(channelsTab, substring = true).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onAllNodesWithText(channelsTab, substring = true).onFirst().performClick()
+            openArchiveTab(R.string.archived_tab_channels)
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasContentDescription(newName, substring = true)).fetchSemanticsNodes().isNotEmpty()
             }
@@ -2988,6 +2987,85 @@ class InteractiveStreamE2ETest {
                         .boundsInRoot.top
                 }
             assertTrue("expected ping reply, offline prompt, offline reply top to bottom; tops $tops", tops == tops.sorted())
+            assertTrue("two of the messages share a row; tops $tops", tops.distinct().size == tops.size)
+        } finally {
+            peer.close()
+        }
+    }
+
+    /**
+     * A reply that ends while its chat is off screen survives a reconnect (#1581, rung 3; #1572's live proof). Chat
+     * A has a settled ping turn the phone drew and cached. A's second turn, [WAIT_PROMPT], is held on the #849
+     * permission lever while the phone leaves A for B, so A never draws its reply however fast claude is. The peer
+     * allows it and the turn ends with B on screen. Rows that reach a closed thread live only in the connection's
+     * projection, never the thread cache, and a reconnect discards them with the replay cursor already past them.
+     *  * **Off screen** — the phone itself folded A's `turn_end` while A was not viewed: its stored read position
+     *    names that turn as completed and unread. Waiting on the phone, not the peer's copy, keeps the cut after the
+     *    phone had the turn, or the reconnect's ring replay would deliver it and the test would prove nothing.
+     *  * **Not cached** — after the cut and restore, A's thread cache holds the ping's reply and not [WAIT_REPLY].
+     *  * **Recovered** — opening A, with no other gesture, draws the reply from the open's newest-page ask (#1572),
+     *    and the ping, its reply, [WAIT_PROMPT] and [WAIT_REPLY] each once, top to bottom.
+     *
+     * **Two real-claude turns**: A's ping and A's held command.
+     */
+    @Test
+    fun interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer = runningToolPeer()
+        val waitReply = hasText(WAIT_REPLY, ignoreCase = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+        try {
+            // 1. Two chats, neither messaged; the peer records frames from here on.
+            awaitChannelList()
+            awaitConnected()
+            val (chatA, nameA) = answerChat(serverId, OFFSCREEN_CHAT_NAME_PREFIX + "a-")
+            val (_, nameB) = answerChat(serverId, OFFSCREEN_CHAT_NAME_PREFIX + "b-")
+            peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
+
+            // 2. A's first turn renders, ends and is cached by the open thread.
+            openChatRow(nameA)
+            sendFromPhone(PING_PROMPT)
+            awaitPingReplyNamingLayer(peer, serverId, chatA, priorTurnEnds = 0)
+            awaitTurnEnd(peer, chatA, 1, "A's ping")
+            awaitCachedAssistantReply(serverId, chatA)
+
+            // 3. AC-2: A's second turn waits on its permission prompt; A leaves before any of its reply exists.
+            sendFromPhone(WAIT_PROMPT)
+            val modalId = peerStep(peer, "await A's permission prompt") { peer.awaitPermissionModal(chatA, REPLY_TIMEOUT_MS) }
+            composeTestRule.onAllNodes(waitReply, useUnmergedTree = true).assertCountEquals(0)
+            leaveThread()
+            openChatRow(nameB)
+            assertShowingThread(nameB, nameA)
+
+            // 4. AC-2: released with B open, A's turn ends; the phone folds that turn_end while B is still shown.
+            peerStep(peer, "allow A's prompt") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
+            val turnEnd =
+                peerStep(peer, "await A's held turn_end") { peer.awaitFrame(chatA, "turn_end", WAIT_TURN_TIMEOUT_MS, occurrence = 2) }
+            awaitUnreadCompletion(serverId, chatA, checkNotNull(peer.field(turnEnd, "turn_id")) { "A's turn_end has no turn_id" })
+            assertShowingThread(nameB, nameA)
+            composeTestRule.onAllNodes(waitReply, useUnmergedTree = true).assertCountEquals(0)
+
+            // 5. AC-2: still in B, cut and restore the link; A's cache never received the reply.
+            setHostLink(serverId, up = false)
+            setHostLink(serverId, up = true)
+            assertNoCachedReply(serverId, chatA, WAIT_REPLY)
+
+            // 6. AC-1: opening A is the only gesture; its newest-page ask brings the reply, every row once and in order.
+            leaveThread()
+            openChatRow(nameA)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(waitReply, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.waitForIdle()
+            val rows = listOf(inThreadList(PING_PROMPT), pingReplyMatcher(), inThreadList(WAIT_PROMPT), waitReply)
+            assertDrawnOnce(*rows.toTypedArray())
+            val tops =
+                rows.map {
+                    composeTestRule
+                        .onNode(it, useUnmergedTree = true)
+                        .fetchSemanticsNode()
+                        .boundsInRoot.top
+                }
+            assertTrue("expected ping, its reply, the held prompt and its reply top to bottom; tops $tops", tops == tops.sorted())
             assertTrue("two of the messages share a row; tops $tops", tops.distinct().size == tops.size)
         } finally {
             peer.close()
@@ -4698,6 +4776,44 @@ class InteractiveStreamE2ETest {
             peer.close()
         }
     }
+
+    /**
+     * A dormant channel shows its stored history when opened, with no pull and no send (#1571, rung 3). The
+     * live daemon cannot be restarted mid-run, so `scripts/e2e-emulator.sh` seeds the after-restart state before
+     * it starts: a promoted row named [dormantName][ARG_DORMANT_NAME], bound to a session the daemon does not
+     * hold, and one finished turn in that conversation's on-disk history log ending in
+     * [dormantReply][ARG_DORMANT_REPLY]. The phone has never loaded the run-unique conversation, so the reply
+     * can only come from the history page the open thread asks for by itself (#1569, #1572). Before those, the
+     * thread opened empty until a send woke the session.
+     *
+     * **Zero real-claude turns**: opening the thread spawns nothing, and the test never sends or pulls.
+     */
+    @Test
+    fun interactiveTurn_dormantChannel_opensWithStoredHistoryWithoutSend() {
+        val conversationId = dormantArg(ARG_DORMANT_CONVERSATION_ID)
+        val name = dormantArg(ARG_DORMANT_NAME)
+        val reply = hasText(dormantArg(ARG_DORMANT_REPLY)) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+
+        // 1. The seeded row is on the list, and host A really holds it under the seeded id.
+        awaitChannelList()
+        awaitConnected()
+        awaitChannelRow(name)
+        assertHostHoldsConversation(twoHostArg(ARG_SERVER_ID), conversationId, name)
+        composeTestRule.onAllNodes(reply).assertCountEquals(0)
+
+        // 2. Open it and wait for the stored reply, with no pull toward older messages and no send.
+        openRow(name)
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(reply).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodes(reply).onFirst().assertIsDisplayed()
+    }
+
+    /** A dormant-channel instrumentation argument (#1571), failing with the script that passes it. */
+    private fun dormantArg(key: String): String =
+        requireNotNull(InstrumentationRegistry.getArguments().getString(key)) {
+            "missing instrumentation arg '$key' — scripts/e2e-emulator.sh seeds it on rung 3 and LIVE"
+        }
 
     /**
      * Another client's file opens and saves on the phone after a history reload (#1016, rung 3). The
@@ -6501,6 +6617,18 @@ class InteractiveStreamE2ETest {
 
     private fun string(id: Int): String = InstrumentationRegistry.getInstrumentation().targetContext.getString(id)
 
+    /**
+     * Selects an Archive tab by its label resource. Archive opens on Channels (#1487), so archived
+     * chats need [R.string.archived_tab_discussions].
+     */
+    private fun openArchiveTab(labelId: Int) {
+        val tab = string(labelId).substringBefore(" (")
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(tab, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(tab, substring = true).onFirst().performClick()
+    }
+
     /** An effort note as a Claude conversation words it (#1115); the harness runs Claude conversations only. */
     private fun claudeNote(id: Int): String =
         InstrumentationRegistry.getInstrumentation().targetContext.getString(id, string(R.string.agent_name_claude))
@@ -6635,6 +6763,66 @@ class InteractiveStreamE2ETest {
                 }
             }
         }
+    }
+
+    /**
+     * Wait until the phone's stored read position for [conversationId] names [turnId] as its completed turn, then
+     * assert it is unread (#1581). The attention fold records a `turn_end` as it handles it, after every frame
+     * before it on the one inbound stream, and marks it read only while the conversation is viewed.
+     */
+    private fun awaitUnreadCompletion(
+        serverId: String,
+        conversationId: String,
+        turnId: String,
+    ) {
+        val cache = GlobalContext.get().get<ConversationCache>()
+        val position =
+            runBlocking {
+                withTimeoutOrNull(THREAD_TIMEOUT_MS) {
+                    var stored = cache.readReadPositions(serverId)[conversationId]
+                    while (stored?.completedTurnId != turnId) {
+                        delay(CACHE_POLL_MS)
+                        stored = cache.readReadPositions(serverId)[conversationId]
+                    }
+                    stored
+                }
+            }
+        assertNotNull("the phone never recorded the off-screen turn's turn_end", position)
+        assertTrue("the phone recorded the off-screen turn as read", checkNotNull(position).unread)
+    }
+
+    /** Assert the phone's thread cache for [conversationId] holds an assistant row, and none whose text is [reply]. */
+    private fun assertNoCachedReply(
+        serverId: String,
+        conversationId: String,
+        reply: String,
+    ) {
+        val assistantRows =
+            runBlocking { GlobalContext.get().get<ConversationCache>().readThread(serverId, conversationId) }
+                .filterIsInstance<ThreadItem.MessageItem>()
+                .filter { it.message.role == Role.Assistant }
+        assertTrue("the thread cache holds no assistant row, so its read proves nothing", assistantRows.isNotEmpty())
+        assertTrue(
+            "the thread cache already holds the off-screen reply",
+            assistantRows.none {
+                it.message.content
+                    .trim()
+                    .equals(reply, ignoreCase = true)
+            },
+        )
+    }
+
+    /** The open thread is [name]'s: its name is shown and [other]'s is not. */
+    private fun assertShowingThread(
+        name: String,
+        other: String,
+    ) {
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(name).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(name).onFirst().assertIsDisplayed()
+        composeTestRule.onAllNodesWithText(other).assertCountEquals(0)
+        composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).assertCountEquals(0)
     }
 
     /** Each of [matchers] matches exactly one node in the unmerged tree. */
@@ -7462,6 +7650,11 @@ class InteractiveStreamE2ETest {
         const val ARG_COLLISION_NAME_A = "collisionNameA"
         const val ARG_COLLISION_NAME_B = "collisionNameB"
 
+        // #1571 dormant-channel scenario: the seeded conversation's id, run-unique name and stored reply text.
+        const val ARG_DORMANT_CONVERSATION_ID = "dormantConversationId"
+        const val ARG_DORMANT_NAME = "dormantName"
+        const val ARG_DORMANT_REPLY = "dormantReply"
+
         // #848 peer scenario. PEER_TOKEN is the second device's pairing token that scripts/e2e-emulator.sh
         // mints on host A for the SecondClientPeer (rung 3 and LIVE): never log it. The chat's run-unique
         // name shares no substring with PING_PROMPT, "ping" or the other scenarios' prefixes.
@@ -7509,6 +7702,9 @@ class InteractiveStreamE2ETest {
         const val OFFLINE_PROMPT = "Reply with exactly: pyryoffline"
         const val OFFLINE_REPLY = "pyryoffline"
         const val OFFLINE_CHAT_NAME_PREFIX = "e2e850-"
+
+        /** #1581: the two chats of the off-screen reply scenario, as "e2e1581-a-<ms>" and "e2e1581-b-<ms>". */
+        const val OFFSCREEN_CHAT_NAME_PREFIX = "e2e1581-"
 
         /** #1410: the chat the peer runs a turn in while the phone is offline. */
         const val CONTEXT_ASK_CHAT_NAME_PREFIX = "e2e1410-"

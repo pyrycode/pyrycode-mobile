@@ -93,7 +93,7 @@ the **last** row only when it is already a segment of the same turn; anything el
 message, a session boundary, or no row) opens a new segment at the end. A turn that goes text, tool, text
 now draws as two assistant rows with the tool row between them, live and on replay alike. The segment key,
 the per-delta record, and how a page boundary or a merge rejoins a segment a seam cut in two are in
-[Remote conversation repository § Assistant reply segments](remote-conversation-repository-reads-and-thread-store-history-paging.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350).
+[Remote conversation repository § Assistant reply segments](remote-conversation-repository-assistant-reply-segments.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350).
 
 This changes what the `ThreadFold` accumulator above folds against, in two ways:
 
@@ -213,12 +213,12 @@ Architect self-review **PASS**; code review **PASS** with zero findings.
   assumptions.
 - [#1350](https://github.com/pyrycode/pyrycode-mobile/issues/1350) — per-segment assistant rows: a turn's
   text, tool, text now draws as two bubbles around the tool row, live and on replay. See
-  [Remote conversation repository § Assistant reply segments](remote-conversation-repository-reads-and-thread-store-history-paging.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350)
+  [Remote conversation repository § Assistant reply segments](remote-conversation-repository-assistant-reply-segments.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350)
   and [ADR 0007](../decisions/0007-assistant-reply-segment-key-and-seam-join.md).
 - [#1419](https://github.com/pyrycode/pyrycode-mobile/issues/1419) — a `turn_end` can reach the client before
   the rows it ends (a history page holding only the `turn_end`, or a live `turn_end` ahead of the page with
   the deltas); those rows used to enter streaming and never settle. See
-  [Remote conversation repository § A turn_end that settles rows which have not arrived yet](remote-conversation-repository-reads-and-thread-store-history-paging.md#a-turn_end-that-settles-rows-which-have-not-arrived-yet-1419).
+  [Remote conversation repository § A turn_end that settles rows which have not arrived yet](remote-conversation-repository-assistant-reply-segments.md#a-turn_end-that-settles-rows-which-have-not-arrived-yet-1419).
 - [Live-session events](live-session-events.md) ([#385](../codebase/385.md)) — the decode seam that
   produces `LiveSessionEvent.AssistantDelta`/`TurnEnd`; this slice realizes its "assistant_delta
   accumulation belongs to a consumer slice" deferral.

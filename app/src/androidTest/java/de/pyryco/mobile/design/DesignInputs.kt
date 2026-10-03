@@ -9,7 +9,9 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
+import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.QuestionBatch
+import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.RelayConnectionController
 import de.pyryco.mobile.data.repository.AttachmentOffer
 import de.pyryco.mobile.data.repository.ConnectionStateSource
@@ -18,15 +20,25 @@ import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.SessionFacts
 import de.pyryco.mobile.di.ConversationViewing
+import de.pyryco.mobile.di.HostConversationConnection
+import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.di.ThreadDestinationFactory
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.onboarding.PairCodeViewModel
 import de.pyryco.mobile.ui.onboarding.ScannerViewModel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import org.koin.core.context.GlobalContext
 import org.koin.core.context.loadKoinModules
 import org.koin.core.module.Module
 import org.koin.core.module.dsl.viewModel
@@ -41,6 +53,10 @@ import org.koin.dsl.module
  * Every thread input applies to whichever thread opens. The question batch, roster, count and repository
  * flows ignore the conversation id here. [hostModal] does not: the view model scopes it with
  * `HostModalState.scopedTo`, so a prompt shows only when its `conversationId` is the open thread's.
+ *
+ * [install] also replaces the app's `HostConversationSource` with one demo host whose prompts are
+ * [hostModal] and [questionBatch] (#1507), so the channel list marks each prompt's conversation Waiting, as
+ * production's one host source does for both screens. With both empty the list draws as it did before.
  */
 class DesignInputs {
     val connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Connected)
@@ -72,6 +88,9 @@ class DesignInputs {
     /** While `true`, a pairing save suspends, holding the pair-code screen in its saving state. */
     val holdSaves = MutableStateFlow(false)
 
+    /** While `true`, the thread's question answer throws, as a failed send does, so Continue ends `Failed` (#1502). */
+    @Volatile var failQuestionSends = false
+
     /** The view models the override built last, for states only an event reaches. */
     val thread = MutableStateFlow<ThreadViewModel?>(null)
     val scanner = MutableStateFlow<ScannerViewModel?>(null)
@@ -95,9 +114,39 @@ class DesignInputs {
                 "contextUsage" to contextUsage,
             )
 
-    fun install() = loadKoinModules(module())
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var appSource: HostConversationSource? = null
+    private var listSource: HostConversationSource? = null
 
-    fun uninstall() = loadKoinModules(appDefinitions())
+    fun install() {
+        val koin = GlobalContext.get()
+        appSource = koin.get<HostConversationSource>()
+        val fake = koin.get<FakeConversationRepository>()
+        val demo =
+            HostConversationConnection(
+                HostConversationSource.DEMO_SERVER_ID,
+                "Demo",
+                MutableStateFlow(fake),
+                MutableStateFlow(ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)),
+                modals = hostModal,
+                questionBatches = questionBatch.map { listOfNotNull(it) }.stateIn(scope, SharingStarted.Eagerly, emptyList()),
+            )
+        val source =
+            HostConversationSource(
+                MutableStateFlow(listOf(demo)),
+                { if (it == HostConversationSource.DEMO_SERVER_ID) fake else null },
+                viewing = koin.get(),
+            )
+        listSource = source
+        loadKoinModules(listOf(module(), module { single { source } }))
+    }
+
+    fun uninstall() {
+        val original = appSource
+        loadKoinModules(if (original == null) listOf(appDefinitions()) else listOf(appDefinitions(), module { single { original } }))
+        listSource?.dispose()
+        scope.cancel()
+    }
 
     private fun module(): Module =
         module {
@@ -127,6 +176,7 @@ class DesignInputs {
                     // No app draft stores: production binds them to a host coordinator, and only without one
                     // does the view model read questionBatch itself, as on the demo host.
                     questionBatch = { questionBatch },
+                    answerQuestionBatch = { _, _ -> check(!failQuestionSends) { "design: the question send fails" } },
                     backgroundTasks = { backgroundTasks },
                     backgroundTaskCount = { backgroundTaskCount },
                     pairingRejected = pairingRejected,

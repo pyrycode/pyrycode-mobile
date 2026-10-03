@@ -4227,7 +4227,7 @@ class ThreadViewModelTest {
 
     // --- #777 / #1352: the history walk asks only when the reader does --------------------------------
 
-    // --- #1569: a thread whose history this phone never loaded asks for the newest page once ----------
+    // --- #1569 / #1572: an open thread asks for the newest page whenever its host arrives ------------
 
     @Test
     fun history_openingANeverLoadedThread_asksTheNewestPageOnceAndItsRowsRender() =
@@ -4256,7 +4256,7 @@ class ThreadViewModelTest {
         }
 
     @Test
-    fun history_aNeverLoadedThreadOpenedOffline_asksOnceWhenTheHostArrivesAndNeverAgain() =
+    fun history_aNeverLoadedThreadOpenedOffline_asksWhenTheHostArrivesAndOnEachReturn() =
         runTest {
             val available = MutableStateFlow(false)
             val repo = HistoryRepo { page(cursor = "c1") }
@@ -4268,12 +4268,16 @@ class ThreadViewModelTest {
             advanceUntilIdle()
             assertEquals(listOf(""), repo.asks)
 
-            // A drop and a return, and the page that arrived, ask nothing more.
-            available.value = false
-            advanceUntilIdle()
-            available.value = true
-            advanceUntilIdle()
-            assertEquals(listOf(""), repo.asks)
+            // #1572: each drop and return asks the newest page again; the page that arrived asks nothing.
+            repeat(2) {
+                available.value = false
+                advanceUntilIdle()
+                available.value = true
+                advanceUntilIdle()
+            }
+            assertEquals(listOf("", "", ""), repo.asks)
+            // Only the first page was the walk's own; the returns' asks leave its position alone.
+            assertEquals(listOf<HistoryPosition?>(HistoryPosition("c1", atStart = false)), repo.positionWrites)
         }
 
     @Test
@@ -4524,7 +4528,7 @@ class ThreadViewModelTest {
     // --- #1352: reconnects and the offline host ---------------------------------------------------
 
     @Test
-    fun history_aReconnect_asksNothingAndTheNextDemandKeepsTheWalksCursor() =
+    fun history_aReconnect_asksTheNewestPageAndTheNextDemandKeepsTheWalksCursor() =
         runTest {
             val gate = CompletableDeferred<HistoryPage>()
             val available = MutableStateFlow(true)
@@ -4545,24 +4549,25 @@ class ThreadViewModelTest {
             advanceUntilIdle()
             available.value = true
             advanceUntilIdle()
-            // Losing and regaining the repository asks nothing...
-            assertEquals(listOf(""), repo.asks)
+            // #1572: regaining the repository asks the newest page...
+            assertEquals(listOf("", ""), repo.asks)
 
-            // ...and the next gesture continues from the cursor the walk held.
+            // ...and the next gesture still continues from the cursor the walk held.
             vm.onDemandOlderHistory()
             advanceUntilIdle()
-            assertEquals(listOf("", "c1"), repo.asks)
+            assertEquals(listOf("", "", "c1"), repo.asks)
 
-            // A page in flight across a reconnect still settles into the walk: its cursor stays valid.
+            // A page in flight across a reconnect still settles into the walk: its cursor stays valid. The
+            // return's newest-page ask finds the slot taken and is dropped.
             available.value = false
             available.value = true
             advanceUntilIdle()
             gate.complete(page(cursor = "c2"))
             advanceUntilIdle()
-            assertEquals(listOf("", "c1"), repo.asks)
+            assertEquals(listOf("", "", "c1"), repo.asks)
             vm.onDemandOlderHistory()
             advanceUntilIdle()
-            assertEquals(listOf("", "c1", "c2"), repo.asks)
+            assertEquals(listOf("", "", "c1", "c2"), repo.asks)
         }
 
     @Test
@@ -4645,18 +4650,139 @@ class ThreadViewModelTest {
     // --- #1354: the walk resumes from the position saved beside the cached rows ------------------------
 
     @Test
-    fun history_withASavedPosition_theFirstPullAsksWithTheSavedCursorAndOpeningAsksNothing() =
+    fun history_withASavedPosition_openingAsksTheNewestPageAndTheFirstPullStillAsksWithTheSavedCursor() =
         runTest {
-            val repo = HistoryRepo(saved = HistoryPosition("saved-cursor", atStart = false)) { page(cursor = "older") }
+            // #1572: the cached rows are drawn; the daemon stored a reply after them while the thread was
+            // off-screen. The repository merges the newest page under the cached rows; the double stands in.
+            lateinit var repo: HistoryRepo
+            repo =
+                HistoryRepo(saved = HistoryPosition("saved-cursor", atStart = false)) { asked ->
+                    if (asked.isEmpty()) {
+                        repo.messages.value = listOf(messageItem("m1"), messageItem("m2"), messageItem("m3"))
+                        page(cursor = "newest")
+                    } else {
+                        page(cursor = "older")
+                    }
+                }
+            repo.messages.value = listOf(messageItem("m1"), messageItem("m2"))
             val vm = makeVm(historyHandle(), repo)
+            val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
             advanceUntilIdle()
-            assertEquals(emptyList<String>(), repo.asks)
+
+            // One newest-page ask with no gesture; the reply renders after the cached rows, none twice...
+            assertEquals(listOf(""), repo.asks)
+            assertEquals(listOf("m1", "m2", "m3"), messageIds(vm))
+            assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
+            // ...and the walk's saved position is untouched.
+            assertEquals(emptyList<HistoryPosition?>(), repo.positionWrites)
 
             vm.onDemandOlderHistory()
             advanceUntilIdle()
 
-            assertEquals(listOf("saved-cursor"), repo.asks)
+            assertEquals(listOf("", "saved-cursor"), repo.asks)
             assertEquals(listOf<HistoryPosition?>(HistoryPosition("older", atStart = false)), repo.positionWrites)
+            collector.cancel()
+        }
+
+    @Test
+    fun history_withASavedPosition_eachReturnOfTheHostAsksTheNewestPageOnce() =
+        runTest {
+            val available = MutableStateFlow(false)
+            val repo = HistoryRepo(saved = HistoryPosition("saved-cursor", atStart = false)) { page(cursor = "c9") }
+            val vm = makeVm(historyHandle(), repo, repositoryAvailable = available)
+            advanceUntilIdle()
+            // Opened before the host is connected: nothing yet, then one ask when it connects.
+            assertEquals(emptyList<String>(), repo.asks)
+            available.value = true
+            advanceUntilIdle()
+            assertEquals(listOf(""), repo.asks)
+
+            repeat(2) {
+                available.value = false
+                advanceUntilIdle()
+                available.value = true
+                advanceUntilIdle()
+            }
+            assertEquals(listOf("", "", ""), repo.asks)
+            assertTrue("$logs", logs.count { it == "event=history_newest_ask reason=reconnect" } == 2)
+
+            // None of them moved the walk: the pull still asks with the saved cursor.
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+            assertEquals(listOf("", "", "", "saved-cursor"), repo.asks)
+            assertEquals(listOf<HistoryPosition?>(HistoryPosition("c9", atStart = false)), repo.positionWrites)
+        }
+
+    @Test
+    fun history_theNewestPageAsk_sharesTheWalksSingleOutstandingRequest() =
+        runTest {
+            var newest = CompletableDeferred<HistoryPage>()
+            val available = MutableStateFlow(true)
+            val repo =
+                HistoryRepo(saved = HistoryPosition("saved-cursor", atStart = false)) { asked ->
+                    if (asked.isEmpty()) newest.await() else throw RelayErrorException("history.unavailable", true, "busy")
+                }
+            val vm = makeVm(historyHandle(), repo, repositoryAvailable = available)
+            val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+            advanceUntilIdle()
+
+            // While the opening newest-page ask is out, a pull is dropped, not queued.
+            assertEquals(listOf(""), repo.asks)
+            assertEquals(ThreadHistoryTail.Loading, vm.state.value.historyTail)
+            repeat(3) { vm.onDemandOlderHistory() }
+            advanceUntilIdle()
+            newest.complete(page(cursor = "newest"))
+            advanceUntilIdle()
+            assertEquals(listOf(""), repo.asks)
+
+            // A pull that fails retryably, then a return of the host while the Retry row shows: while the
+            // return's ask is out the retry sends nothing, and once it settles the walk's Retry is back.
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+            assertEquals(ThreadHistoryTail.Retry, vm.state.value.historyTail)
+            newest = CompletableDeferred()
+            available.value = false
+            advanceUntilIdle()
+            available.value = true
+            advanceUntilIdle()
+            assertEquals(listOf("", "saved-cursor", ""), repo.asks)
+            vm.onRetryOlderHistory()
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+            assertEquals(listOf("", "saved-cursor", ""), repo.asks)
+
+            newest.complete(page(cursor = "newest"))
+            advanceUntilIdle()
+            assertEquals(ThreadHistoryTail.Retry, vm.state.value.historyTail)
+            vm.onRetryOlderHistory()
+            advanceUntilIdle()
+            assertEquals(listOf("", "saved-cursor", "", "saved-cursor"), repo.asks)
+            collector.cancel()
+        }
+
+    @Test
+    fun history_aFailedNewestPageAsk_leavesTheWalkAndItsSavedPositionAlone() =
+        runTest {
+            val repo =
+                HistoryRepo(saved = HistoryPosition("saved-cursor", atStart = false)) { asked ->
+                    if (asked.isEmpty()) throw RelayErrorException("history.unavailable", true, "SERVER-PROSE")
+                    page(cursor = "older")
+                }
+            val vm = makeVm(historyHandle(), repo)
+            val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+            advanceUntilIdle()
+
+            assertEquals(listOf(""), repo.asks)
+            // No Retry or dead end for a page the reader did not ask for, and no position written.
+            assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
+            assertEquals(emptyList<HistoryPosition?>(), repo.positionWrites)
+            assertTrue("$logs", logs.any { it == "event=history_newest_ask_failed" })
+            assertFalse("$logs", logs.any { "SERVER-PROSE" in it || "history.unavailable" in it })
+
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+            assertEquals(listOf("", "saved-cursor"), repo.asks)
+            collector.cancel()
         }
 
     @Test
@@ -4687,21 +4813,31 @@ class ThreadViewModelTest {
             gate.complete(Unit)
             advanceUntilIdle()
 
-            assertEquals(listOf("saved-cursor"), repo.asks)
+            // #1572: the opening newest-page ask, waiting on the same read, claims the slot first and the
+            // waiting pulls are dropped under the single-request rule. No ask carried the empty cursor as
+            // the walk's: the next pull asks with the saved one.
+            assertEquals(listOf(""), repo.asks)
+            assertEquals(emptyList<HistoryPosition?>(), repo.positionWrites)
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+            assertEquals(listOf("", "saved-cursor"), repo.asks)
         }
 
     @Test
-    fun history_aSavedAtStart_asksNothingAndHidesTheOfflineNotice() =
+    fun history_aSavedAtStart_pullsAskNothingAndTheOfflineNoticeStaysHidden() =
         runTest {
             val available = MutableStateFlow(true)
             val repo = HistoryRepo(saved = HistoryPosition("", atStart = true)) { page(cursor = "c1") }
             val vm = makeVm(historyHandle(), repo, repositoryAvailable = available)
             val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
             advanceUntilIdle()
+            // #1572: the opening newest-page ask, whose page does not reopen the finished walk.
+            assertEquals(listOf(""), repo.asks)
 
             repeat(3) { vm.onDemandOlderHistory() }
             advanceUntilIdle()
-            assertEquals(emptyList<String>(), repo.asks)
+            assertEquals(listOf(""), repo.asks)
+            assertEquals(emptyList<HistoryPosition?>(), repo.positionWrites)
 
             available.value = false
             advanceUntilIdle()
@@ -4715,7 +4851,9 @@ class ThreadViewModelTest {
             val saved = HistoryPosition("saved-cursor", atStart = false)
             var asks = 0
             val repo =
-                HistoryRepo(saved = saved) {
+                HistoryRepo(saved = saved) { asked ->
+                    // #1572: the opening newest-page ask.
+                    if (asked.isEmpty()) return@HistoryRepo page(cursor = "newest")
                     if (asks++ == 0) {
                         throw RelayErrorException("history.unavailable", true, "busy")
                     } else {
@@ -4729,7 +4867,7 @@ class ThreadViewModelTest {
                 advanceUntilIdle()
             }
 
-            assertEquals(listOf("saved-cursor", "saved-cursor"), repo.asks)
+            assertEquals(listOf("", "saved-cursor", "saved-cursor"), repo.asks)
             assertEquals(emptyList<HistoryPosition?>(), repo.positionWrites)
             assertEquals(saved, repo.saved)
         }
@@ -4746,6 +4884,7 @@ class ThreadViewModelTest {
             advanceUntilIdle()
             vm.onDemandOlderHistory()
             advanceUntilIdle()
+            // #1572: the opening newest-page ask wrote nothing; the refusal clears the position.
             assertEquals(listOf<HistoryPosition?>(null), repo.positionWrites)
             assertEquals(null, repo.saved)
 
@@ -4758,7 +4897,7 @@ class ThreadViewModelTest {
             // ...and so does the next pull.
             vm.onDemandOlderHistory()
             advanceUntilIdle()
-            assertEquals(listOf("stale-cursor", ""), repo.asks)
+            assertEquals(listOf("", "stale-cursor", ""), repo.asks)
         }
 
     private fun historyHandle() = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))

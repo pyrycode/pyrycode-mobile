@@ -401,6 +401,24 @@ class MessageAttachmentsTest {
         assertEquals(emptyList<AttachmentTarget>(), acted)
     }
 
+    @Test
+    fun userMessage_drawsItsAttachmentsAboveItsText_andItsMetaRowLast() = assertAttachmentsTextMetaOrder(Role.User)
+
+    @Test
+    fun assistantMessage_drawsItsAttachmentsAboveItsText_andItsMetaRowLast() = assertAttachmentsTextMetaOrder(Role.Assistant)
+
+    private fun assertAttachmentsTextMetaOrder(role: Role) {
+        render(message(MessageAttachment(A1, "photo.png", "image/png"), role = role)) {
+            mapOf(A1 to ready("photo.png", "image/png"))
+        }
+
+        val image = composeTestRule.onNodeWithTag(MESSAGE_ATTACHMENT_IMAGE_TEST_TAG).getUnclippedBoundsInRoot()
+        val text = composeTestRule.onNodeWithText("Here you go", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val meta = composeTestRule.onNodeWithContentDescription("Copy this message").getUnclippedBoundsInRoot()
+        assertTrue("image ${image.bottom} not above text ${text.top}", image.bottom <= text.top)
+        assertTrue("text ${text.bottom} not above meta row ${meta.top}", text.bottom <= meta.top)
+    }
+
     private companion object {
         const val A1 = "0f8fad5b-d9cb-469f-a165-70867728950e"
         const val A2 = "7c9e6679-7425-40de-944b-e07fc1f90ae7"

@@ -155,7 +155,15 @@ judging whether two capture PNGs across a rerun are the same evidence or stale
 leftovers, a byte-identical pair from a deterministic decor-view draw is
 expected, not proof of staleness — check provenance in the paired `.txt`
 metadata (for example a field like `syntheticBars` that only a rewritten run
-carries), not the PNG history.
+carries), not the PNG history. A whole-class run also stops reproducing
+*other* tickets' captures byte for byte once `main` has moved since they were
+taken — font, spacing or copy changes elsewhere in the fixture ride along with
+every method in the class. #1502 added three edge-state methods on a `main`
+that had moved since #1501's run; copying the whole new run's output back in
+would have overwritten #1501's committed captures with drift that was not
+this ticket's to judge. Copy in only the methods the ticket owns and say so
+in the index, leaving the rest of the committed evidence as an earlier
+ticket's.
 
 `ListDesignCaptureTest` (#1431) audited the list-side surfaces (Channel List,
 Archive, Channel Info, Settings, Edit host) through this harness and found
@@ -196,7 +204,14 @@ frame draws in primary, and the shared verdict hid that until the third review
 (#1532). Measure before writing "match": that review re-measured accepted
 verdicts and found a 50 px bubble width (#1513), a 14 px list indent (#1533)
 and a 3 to 9 px panel drift (#1534) that a visual scan of the side-by-sides had
-passed.
+passed. `scripts/design-compare.py` resizes the Figma export to match the app
+image's size, so comparing a component export against a full-screen capture
+stretches the export across the whole frame instead of lining it up with the
+row. The #1540 refusal-row states crop the capture to the component's own
+width and height first and compare that crop against the export; when the
+app's row is taller than the component (the switch-back failed line sits
+lower than Figma's), pad the export to the crop's height instead of letting
+the script resize it.
 
 `MarkdownReaderCaptureTest#compactLargeTextKeepsControlsAndBodyReachable`
 (unrelated to the #1352 history-paging change, caught in its PR's UI gate and

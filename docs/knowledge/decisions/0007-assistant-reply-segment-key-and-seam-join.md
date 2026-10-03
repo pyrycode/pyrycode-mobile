@@ -44,7 +44,7 @@ receiving thread owning a turn from its lowest held `seq` up (`segmentHeads`/`ol
 client-placed local echo of a mid-turn user message can land in a different position relative to the
 turn's deltas than the daemon's own log entry for the same message — breaking the assumption that an
 id-and-adjacency join alone is enough. See
-[Remote conversation repository § Assistant reply segments](../features/remote-conversation-repository-reads-and-thread-store-history-paging.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350)
+[Remote conversation repository § Assistant reply segments](../features/remote-conversation-repository-assistant-reply-segments.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350)
 for the full mechanism.
 
 ## Rationale
@@ -100,7 +100,7 @@ for the full mechanism.
   `(turnId, seq)` rework)
 - Feature docs: [Streaming assistant turns](../features/streaming-assistant-turns.md),
   [Live tool-call](../features/live-tool-call.md),
-  [Remote conversation repository § Assistant reply segments](../features/remote-conversation-repository-reads-and-thread-store-history-paging.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350)
+  [Remote conversation repository § Assistant reply segments](../features/remote-conversation-repository-assistant-reply-segments.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350)
 - Precedent this follows: [#775](../codebase/775.md)'s session-boundary identity fix — "when a list row has
   a client-visible identity, dedup upstream on *that* identity, or the two can silently disagree," recorded
   in the history-paging doc.
