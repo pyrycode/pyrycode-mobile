@@ -35,6 +35,12 @@ A new test goes in `MessageBubbleTest` (`app/src/sharedTest`, Robolectric). It p
 - **What drove it:** under Robolectric's legacy graphics, the selection handles' vector cache cannot allocate a bitmap. On the native canvas, dismissing the platform magnifier hits a null surface. Moving the existing class to native graphics would have changed the mode its geometry guards run under. Compose foundation 1.10.4 enables `ComposeFoundationFlags.isNewContextMenuEnabled` by default, so `SelectionContainer` no longer calls `LocalTextToolbar`.
 - **New contract:** the production change is the same. The assertions are those in the Testing strategy: a long press on a finished bubble opens a toolbar whose Copy puts only the pressed word on the platform clipboard, for prose, a fenced code block and a user paragraph. A long press on a streaming bubble opens no toolbar. A device run ignores the shadow and the graphics mode.
 
+### 2026-10-03: a message with no body skips the wrapper (verifier rework)
+
+- **What changed:** `MessageContainer` takes the plain `body()` path when `message.hasNoBody()` is true, as well as when the message is streaming. `MessageAttachmentsTest` gains a geometry guard that the attachments of an attachment-only bubble sit one `BubbleContentSpacing` above the meta row. `MessageBubbleSelectionTest` gains a test that the code block's copy button inside a finished bubble still copies the whole block.
+- **What drove it:** the verifier's MUST FIX on PR #1658. An attachment-only message's `body()` emits nothing, but the `SelectionContainer` around it is still a zero-height child of the bubble column, which spaced both sides of it and doubled the gap above the meta row to 24dp. The code-block test closes the verifier's NIT that no test pressed that button through the bubble.
+- **New contract:** the wrapper is added only when there is selectable text: a finished message that is not body-less. The language-label NIT (a select-all on a fenced block copies the label) is left as is; fixing it needs `DisableSelection` in `MarkdownText.kt`, outside this ticket's one-file change.
+
 ## Documentation handoff
 
 - Pending for the documentation stage: in `app/src/androidTest/assets/design-1220/README.md`, add a `no separate frame` row for this decision on #1638, in the same shape as the #1578 row.

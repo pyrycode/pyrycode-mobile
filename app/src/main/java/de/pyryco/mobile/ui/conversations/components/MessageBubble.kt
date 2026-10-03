@@ -221,7 +221,7 @@ private fun AssistantMessage(
  *
  * A finished body is selectable by long press (#1638), in its own [SelectionContainer] so a selection never
  * crosses into another bubble; the attachments and the meta row stay outside it. A streaming body is not,
- * so a selection never holds offsets into text still arriving. The system Copy action writes the selection
+ * so a selection never holds offsets into text still arriving, and neither is a message with no body. The system Copy action writes the selection
  * without the [MAX_CLIPBOARD_CHARS] bound the meta row applies; that is accepted for text the user chose.
  */
 @Composable
@@ -267,7 +267,9 @@ private fun MessageContainer(
                 horizontalAlignment = Alignment.Start,
             ) {
                 if (message.attachments.isNotEmpty()) attachments()
-                if (message.isStreaming) {
+                // A body-less message keeps the plain path: an empty wrapper would still take a gap on
+                // both sides in this column.
+                if (message.isStreaming || message.hasNoBody()) {
                     body()
                 } else {
                     // SelectionContainer stacks its children, so the column keeps a user body's

@@ -27,6 +27,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.width
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
@@ -322,6 +324,19 @@ class MessageAttachmentsTest {
             .onAllNodes(hasText("", substring = false))
             .assertCountEquals(0)
         composeTestRule.onNodeWithTag(MESSAGE_ATTACHMENT_IMAGE_TEST_TAG).assertExists()
+    }
+
+    // #1638: the selectable body wrapper must not emit an empty child, or the bubble column spaces both
+    // sides of it and the attachments sit two gaps above the meta row.
+    @Test
+    fun attachmentOnlyMessage_keepsOneContentGapAboveTheMetaRow() {
+        render(message(MessageAttachment(A1, "photo.png", "image/png"), role = Role.User, content = "")) { emptyMap() }
+
+        val image = composeTestRule.onNodeWithTag(MESSAGE_ATTACHMENT_IMAGE_TEST_TAG).getUnclippedBoundsInRoot()
+        val copyDescription =
+            InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_thread_copy_message)
+        val metaCopy = composeTestRule.onNodeWithContentDescription(copyDescription).getUnclippedBoundsInRoot()
+        assertEquals(BubbleContentSpacing.value, (metaCopy.top - image.bottom).value, 1.5f)
     }
 
     @Test

@@ -14,11 +14,14 @@ import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -164,6 +167,19 @@ class MessageBubbleSelectionTest {
         composeTestRule.onRoot().performTouchInput { click(Offset(1f, 1f)) }
         composeTestRule.waitForIdle()
         assertEquals(CODE_WORD, longPressAndCopy(CODE_WORD))
+    }
+
+    // AC2: the code block's own copy button still takes the whole block from inside the selection area.
+    @Test
+    fun codeBlockCopyButton_insideAFinishedBubble_stillCopiesTheWholeBlock() {
+        setBubble(message(Role.Assistant, ASSISTANT_BODY))
+        val copyCode =
+            InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_thread_copy_code)
+
+        composeTestRule.onNodeWithContentDescription(copyCode).performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals(CODE_WORD, platformClipboardText())
     }
 
     @Test
