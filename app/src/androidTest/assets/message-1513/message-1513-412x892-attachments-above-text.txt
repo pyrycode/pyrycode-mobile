@@ -1,0 +1,1 @@
+capture=886x1918 fixture=412x892-attachments-above-text
