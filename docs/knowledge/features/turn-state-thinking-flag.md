@@ -127,7 +127,18 @@ defaulted hoisted `isThinking: Boolean` on `ThreadScreen`, collected at `MainAct
   starts over empty; every conversation reads idle until the daemon reports a phase again
   (#1313 AC3). This replaces the "stale `true` on resume" gap the per-ViewModel fold used to have:
   that gap no longer exists, because the flags no longer depend on having been subscribed when the
-  defining frame arrived.
+  defining frame arrived. As of [#1617](../../specs/architecture/1617-turn-phase-reconcile-after-reconnect.md),
+  the idle gap after a reconnect is brief rather than lasting until the turn ends: the daemon's
+  connect-time reconcile (`reconcileTurnPhases`, pyrycode#2712) unicasts a `turn_state` for every turn
+  still running, with no `event_id`, right after replay, and sends nothing for idle conversations. The
+  `turn_state` arm in `RemoteConversationRepository` never reads `eventId`, so this reconcile frame
+  reaches `TurnPhaseProjection.apply` the same as any live frame and sets the phase before the user
+  notices the indicator is gone. No change was needed in the projection or in `switchToLive` to pick it
+  up — the per-connection reset this section describes is what makes a stale phase impossible, and the
+  reconcile is what keeps a *real* one from going missing. `closeLocalSendWindow`, `nextTurnOutcome`,
+  `turnEndEdges` ([Turn outcome indicator](turn-outcome-indicator.md)) and
+  `ConversationAttention.resolveAttention` each already treat a running phase read on a fresh
+  connection as correct, so none needed a guard for the reconcile frame either.
 
 ## Related
 
@@ -175,4 +186,7 @@ defaulted hoisted `isThinking: Boolean` on `ThreadScreen`, collected at `MainAct
   #1313 made them read held state instead of a `replay = 0` fold; it still applies to `turnOutcome` and
   the thread's own live-event fold, which stay on `liveSessionEvents` unchanged.
 - Server SSOT: pyrycode#607 (`turn_state` wire), #616 (capability-gated fan-out), ADR 025 § Phase 2
-  structured streaming, EPIC pyrycode#596.
+  structured streaming, EPIC pyrycode#596. Connect-time reconcile: pyrycode#2712
+  (`reconcileTurnPhases`), proved on the phone by
+  [#1617](../../specs/architecture/1617-turn-phase-reconcile-after-reconnect.md) — see "Reset on
+  reconnect" above.
