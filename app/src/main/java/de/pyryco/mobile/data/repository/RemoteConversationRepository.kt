@@ -670,8 +670,9 @@ class RemoteConversationRepository(
                     // conversation whose backlog did not change is a no-op, so settle every one pending.
                     threadProjection.settleDrops(queueProjection)
                     // After the drops, so a dropped echo is already gone: this device's queued echoes read
-                    // below the running turn, and a drained one settles at the end of the thread (#1558).
-                    threadProjection.settleQueuedEchoes(queueProjection)
+                    // below the running turn, and a drained one settles at the end of the thread (#1558). Only
+                    // one first queued while a turn was open waits behind it (#1636).
+                    threadProjection.settleQueuedEchoes(queueProjection, turnPhaseProjection::isOpen)
                 }
             }
             TYPE_MODEL_LIST -> {

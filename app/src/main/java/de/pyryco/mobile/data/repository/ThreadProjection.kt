@@ -241,11 +241,16 @@ internal class ThreadProjection(
         message: Message,
     ) {
         if (message.id in mintedMessageIds.value[conversationId].orEmpty()) trail.delivered(message.id)
-        if (message.id in ownEchoQueues.value[conversationId]?.queued.orEmpty()) {
-            moveOwnEchoToEnd(conversationId, message.id)
+        val echoes = ownEchoQueues.value[conversationId]
+        if (echoes != null && message.id in echoes.queued) {
+            if (message.id in echoes.parked) moveOwnEchoToEnd(conversationId, message.id)
             ownEchoQueues.update { all ->
-                val echoes = all[conversationId] ?: return@update all
-                all + (conversationId to OwnEchoQueue(echoes.queued - message.id, echoes.delivered + message.id))
+                val current = all[conversationId] ?: return@update all
+                all +
+                    (
+                        conversationId to
+                            OwnEchoQueue(current.queued - message.id, current.delivered + message.id, current.behindTurn - message.id)
+                    )
             }
         }
         threadByConversation.update { current ->
@@ -466,7 +471,7 @@ internal class ThreadProjection(
      * echo to de-dup against.
      */
     fun applyAssistantDelta(event: LiveSessionEvent.AssistantDelta) {
-        val queuedEchoes = ownEchoQueues.value[event.conversationId]?.queued.orEmpty()
+        val queuedEchoes = ownEchoQueues.value[event.conversationId]?.parked.orEmpty()
         threadByConversation.update { current ->
             val rows = current[event.conversationId].orEmpty().withAssistantDelta(event, Clock.System.now(), passOver = queuedEchoes)
             val ended = event.turnId in endedTurns.value[event.conversationId].orEmpty()
@@ -556,22 +561,31 @@ internal class ThreadProjection(
      * snapshot holds is [OwnEchoQueue.queued], and one that has left the snapshot is delivered: it moves to
      * the end of the thread before it stops reading as queued, so no read shows it at its tap-time slot. A
      * dropped echo has already been removed and its id spent, so the move finds nothing.
+     *
+     * Only an echo first reported while [turnOpen] held for its conversation waits behind a turn (#1636): it
+     * alone reads last and moves when it drains. One first reported while idle keeps its tap-time slot.
      */
-    fun settleQueuedEchoes(queue: QueueProjection) {
-        (mintedMessageIds.value.keys + ownEchoQueues.value.keys).forEach { settleQueuedEchoes(it, queue) }
+    fun settleQueuedEchoes(
+        queue: QueueProjection,
+        turnOpen: (conversationId: String) -> Boolean,
+    ) {
+        (mintedMessageIds.value.keys + ownEchoQueues.value.keys).forEach { settleQueuedEchoes(it, queue, turnOpen(it)) }
     }
 
     private fun settleQueuedEchoes(
         conversationId: String,
         queue: QueueProjection,
+        turnOpen: Boolean,
     ) {
         val inSnapshot = queue.current(conversationId).mapTo(HashSet()) { it.messageId }
         val echoes = ownEchoQueues.value[conversationId] ?: OwnEchoQueue()
         val drained = echoes.queued - inSnapshot
-        drained.forEach { moveOwnEchoToEnd(conversationId, it) }
+        drained.filter { it in echoes.behindTurn }.forEach { moveOwnEchoToEnd(conversationId, it) }
         val delivered = echoes.delivered + drained
         val minted = mintedMessageIds.value[conversationId].orEmpty()
-        val next = OwnEchoQueue(inSnapshot.intersect(minted) - delivered, delivered)
+        val queued = inSnapshot.intersect(minted) - delivered
+        val behindTurn = (echoes.behindTurn intersect queued) + if (turnOpen) queued - echoes.queued else emptySet()
+        val next = OwnEchoQueue(queued, delivered, behindTurn)
         // A dropped echo has already left the ledger, so only a drained one still in it was delivered.
         drained.filter { it in minted }.forEach(trail::delivered)
         next.queued.forEach(trail::queued)
@@ -716,7 +730,7 @@ internal class ThreadProjection(
      */
     fun observe(conversationId: String): Flow<List<ThreadItem>> =
         combine(threadByConversation, ownEchoQueues) { threads, echoes ->
-            threads[conversationId].orEmpty().withQueuedEchoesLast(echoes[conversationId]?.queued.orEmpty())
+            threads[conversationId].orEmpty().withQueuedEchoesLast(echoes[conversationId]?.parked.orEmpty())
         }.distinctUntilChanged()
 
     /** This thread as [observe] reads it: [queued] user rows last, the rest through [withOnlyLastRowStreaming]. */
@@ -802,11 +816,19 @@ internal class ThreadProjection(
      * One conversation's own queued echoes (#1558). [queued] is the minted ids its latest snapshot holds;
      * [delivered] is the ids already moved to the end, which a later snapshot repeating one (a legal
      * duplicate `message_id`) never queues again.
+     *
+     * [behindTurn] is the [queued] ids first reported while a turn was open (#1636), and only those, the
+     * [parked] ones, read last and move on delivery. One queued while idle waits behind nothing: the daemon
+     * delivers it at once, and its confirmation can arrive after its own reply began, so moving it then would
+     * put it below the reply's start and split the reply around it.
      */
     private data class OwnEchoQueue(
         val queued: Set<String> = emptySet(),
         val delivered: Set<String> = emptySet(),
-    )
+        val behindTurn: Set<String> = emptySet(),
+    ) {
+        val parked: Set<String> get() = queued intersect behindTurn
+    }
 
     /** One `compacting` edge as the thread fold reads it (#1358): the outcome strings reduced to [failed]. */
     private class CompactingEdge(
