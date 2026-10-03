@@ -51,25 +51,26 @@ import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.model.ToolDenial
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
-private val MessageRowVerticalSpacing = 12.dp
-private val ToolCallCornerRadius = 6.dp
-private val ToolCallBorderWidth = 1.dp
-private val ToolCallHorizontalPadding = 12.dp
-private val ToolCallTopPadding = 8.dp
-private val ToolCallHeaderMinHeight = 20.dp
-private val ToolCallCollapsedBottomPadding = 8.dp
+internal val MessageRowVerticalSpacing = 12.dp
+internal val ToolCallCornerRadius = 6.dp
+internal val ToolCallShape = RoundedCornerShape(ToolCallCornerRadius)
+internal val ToolCallBorderWidth = 1.dp
+internal val ToolCallHorizontalPadding = 12.dp
+internal val ToolCallTopPadding = 8.dp
+internal val ToolCallHeaderMinHeight = 20.dp
+internal val ToolCallCollapsedBottomPadding = 8.dp
 private val ToolCallExpandedBottomPadding = 12.dp
-private val ToolCallGap = 12.dp
-private val ToolCallTrailingGap = 6.dp
+internal val ToolCallGap = 12.dp
+internal val ToolCallTrailingGap = 6.dp
 private val ToolCallStatusIconSize = 16.dp
 private val ToolCallSpinnerSize = 14.dp
 private val ToolCallSpinnerStrokeWidth = 2.dp
-private val ToolCallChevronSlotWidth = 8.dp
-private val ToolCallChevronSlotHeight = 10.dp
+internal val ToolCallChevronSlotWidth = 8.dp
+internal val ToolCallChevronSlotHeight = 10.dp
 private val ToolCallChevronRightWidth = 4.dp
 private val ToolCallChevronRightHeight = 8.dp
-private val ToolCallChevronDownWidth = 8.dp
-private val ToolCallChevronDownHeight = 4.dp
+internal val ToolCallChevronDownWidth = 8.dp
+internal val ToolCallChevronDownHeight = 4.dp
 private val ToolCallDescriptionGap = 8.dp
 private val ToolCallSectionCaptionGap = 4.dp
 
@@ -149,7 +150,7 @@ private fun ToolCallRowContent(
                 .fillMaxWidth()
                 .then(if (joinsNextToolRow) Modifier.overlapNextByBorder() else Modifier.padding(bottom = MessageRowVerticalSpacing))
                 .testTag(TOOL_ROW_TAG),
-        shape = RoundedCornerShape(ToolCallCornerRadius),
+        shape = ToolCallShape,
         color = MaterialTheme.colorScheme.background,
         border = BorderStroke(ToolCallBorderWidth, MaterialTheme.colorScheme.primaryContainer),
     ) {
@@ -180,10 +181,12 @@ private fun ToolCallRowContent(
 }
 
 /**
+ * Shared with the #1635 run header, which joins its first row the same way.
+ *
  * Reports the row one outline width short while drawing it whole, so the next item's top outline lands
  * on this row's bottom outline and the two read as one line.
  */
-private fun Modifier.overlapNextByBorder(): Modifier =
+internal fun Modifier.overlapNextByBorder(): Modifier =
     layout { measurable, constraints ->
         val placeable = measurable.measure(constraints)
         val overlap = ToolCallBorderWidth.roundToPx().coerceAtMost(placeable.height)
@@ -312,27 +315,10 @@ private fun TrailingStatus(toolCall: ToolCall) {
                         maxLines = 1,
                     )
                 }
-                val description = stringResource(R.string.cd_tool_running)
-                CircularProgressIndicator(
-                    modifier =
-                        Modifier
-                            .size(ToolCallSpinnerSize)
-                            .semantics { contentDescription = description },
-                    strokeWidth = ToolCallSpinnerStrokeWidth,
-                )
+                ToolRunningSpinner()
             }
-            ToolCallStatus.Done ->
-                StatusGlyph(
-                    imageVector = Icons.Outlined.Check,
-                    description = stringResource(R.string.cd_tool_done),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            ToolCallStatus.Failed ->
-                StatusGlyph(
-                    imageVector = Icons.Outlined.ErrorOutline,
-                    description = stringResource(R.string.cd_tool_failed),
-                    tint = MaterialTheme.colorScheme.error,
-                )
+            ToolCallStatus.Done -> ToolDoneGlyph()
+            ToolCallStatus.Failed -> ToolFailedGlyph()
             ToolCallStatus.Denied ->
                 StatusGlyph(
                     imageVector = Icons.Outlined.Block,
@@ -350,6 +336,39 @@ private fun Modifier.maxHalfWidth(): Modifier =
         val placeable = measurable.measure(constraints.copy(minWidth = minOf(constraints.minWidth, maxWidth), maxWidth = maxWidth))
         layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
     }
+
+/** The running spinner, also the #1635 run header's while any of its tools runs. */
+@Composable
+internal fun ToolRunningSpinner() {
+    val description = stringResource(R.string.cd_tool_running)
+    CircularProgressIndicator(
+        modifier =
+            Modifier
+                .size(ToolCallSpinnerSize)
+                .semantics { contentDescription = description },
+        strokeWidth = ToolCallSpinnerStrokeWidth,
+    )
+}
+
+/** The done check, also the #1635 run header's when every tool in its run is done. */
+@Composable
+internal fun ToolDoneGlyph() {
+    StatusGlyph(
+        imageVector = Icons.Outlined.Check,
+        description = stringResource(R.string.cd_tool_done),
+        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/** The error icon, also the #1635 run header's when any tool in its run failed or was denied. */
+@Composable
+internal fun ToolFailedGlyph() {
+    StatusGlyph(
+        imageVector = Icons.Outlined.ErrorOutline,
+        description = stringResource(R.string.cd_tool_failed),
+        tint = MaterialTheme.colorScheme.error,
+    )
+}
 
 @Composable
 private fun StatusGlyph(

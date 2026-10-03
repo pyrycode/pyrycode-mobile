@@ -225,8 +225,15 @@ Filed as #1467 and fixed there: the class moved its resize into the same
 `ChannelInfoCaptureTest#channelInfoScrolledMatches668_5460` hit the same race
 again (#1654's sharded UI gate: both failed with "No compose hierarchies
 found", both passed 1/1 on a focused re-run against the merge base and the PR
-head) — neither class has adopted the `order = 0` viewport-rule shape yet.
-Filed as #1661.
+head). Fixed in #1661: both classes dropped their own `@Before`/`@After`
+`wm size`/`wm density` pair and private `shell`/`overrideOf` helpers for the
+shared `ViewportRule()` at `order = 0` ahead of `createComposeRule()` at
+`order = 1`, with `@Viewport("320x692")` on `ChannelInfoCaptureTest`'s two
+compact methods and `@Viewport("280x400")` on
+`compactLargeTextKeepsSendReachable`. Other androidTest classes still resize
+under a running activity, for example `ScannerLivePreviewDeviceTest` — if
+"No compose hierarchies found" shows up there or elsewhere, this same
+conversion is the first thing to try.
 
 A whole-tree text assertion in a capture test can match seeded thread
 content, not just the control it means to check. `ThreadDesignCaptureTest
