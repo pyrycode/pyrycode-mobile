@@ -560,12 +560,14 @@ private data class CachedAttachment(
     override fun toString(): String = "CachedAttachment(attachmentId=$attachmentId)"
 }
 
+/** [inputFields] (#1575) defaults to empty, so a tool record written before fields were kept reads back with none. */
 @Serializable
 private data class CachedToolCall(
     val toolName: String,
     val input: String,
     val output: String,
     val status: ToolCallStatus,
+    val inputFields: Map<String, String> = emptyMap(),
 )
 
 @Serializable
@@ -633,7 +635,7 @@ private fun ThreadItem.toRecord(): CachedThreadRow =
                         role = message.role,
                         content = message.content,
                         timestamp = message.timestamp.toString(),
-                        tool = message.toolCall?.let { CachedToolCall(it.toolName, it.input, it.output, it.status) },
+                        tool = message.toolCall?.let { CachedToolCall(it.toolName, it.input, it.output, it.status, it.inputFields) },
                         attachments = message.attachments.map { CachedAttachment(it.attachmentId, it.displayName, it.mimeType) },
                         segment =
                             message.segment?.let { segment ->
@@ -667,7 +669,7 @@ private fun CachedThreadRow.toDomain(): ThreadItem {
                 content = message.content,
                 timestamp = Instant.parse(message.timestamp),
                 isStreaming = false,
-                toolCall = message.tool?.let { ToolCall(it.toolName, it.input, it.output, it.status) },
+                toolCall = message.tool?.let { ToolCall(it.toolName, it.input, it.output, it.status, it.inputFields) },
                 attachments = message.attachments.map { MessageAttachment(it.attachmentId, it.displayName, it.mimeType) },
                 segment = message.segment?.toDomain(message.content),
             ),

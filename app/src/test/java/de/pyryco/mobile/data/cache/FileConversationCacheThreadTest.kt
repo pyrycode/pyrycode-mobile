@@ -165,6 +165,58 @@ class FileConversationCacheThreadTest {
             assertEquals(listOf(expected), restored)
         }
 
+    // #1575: a restored Bash row keeps the fields its described header is drawn from.
+    @Test
+    fun `tool input fields round-trip through a fresh instance`() =
+        runTest {
+            val fields = mapOf("command" to "git status", "description" to "Show working tree status")
+            val rows =
+                listOf(
+                    message(
+                        "toolu_1",
+                        role = Role.Tool,
+                        toolCall = ToolCall("Bash", "{\"command\":\"git sta…", "clean", inputFields = fields),
+                    ),
+                    message(
+                        "toolu_2",
+                        role = Role.Tool,
+                        toolCall =
+                            ToolCall(
+                                "Read",
+                                "{}",
+                                "text",
+                                inputFields =
+                                    mapOf(
+                                        "file_path" to "/a/b.kt",
+                                    ),
+                            ),
+                    ),
+                )
+            assertTrue(cache().writeThread("server-a", "conv-1", rows).isSuccess)
+
+            assertEquals(rows, cache().readThread("server-a", "conv-1"))
+        }
+
+    @Test
+    fun `a tool record written before input fields were kept reads back with none`() =
+        runTest {
+            cache().writeThread("server-a", "conv-1", listOf(message("m1"))).getOrThrow()
+            val document = threadFiles().single()
+            // The pre-#1575 tool record shape, verbatim: no inputFields key at all.
+            document.writeText(
+                """{"version":1,"rows":[{"message":{"id":"toolu_1","sessionId":"session-1","role":"Tool","content":"",""" +
+                    """"timestamp":"2026-09-22T10:11:12.123456789Z","tool":{"toolName":"Bash","input":"ls -la",""" +
+                    """"output":"total 0","status":"Done"}}}]}""",
+            )
+
+            val restored = cache().readThread("server-a", "conv-1")
+
+            val expected =
+                message("toolu_1", role = Role.Tool, toolCall = ToolCall("Bash", "ls -la", "total 0", ToolCallStatus.Done))
+                    .let { it.copy(message = it.message.copy(content = "")) }
+            assertEquals(listOf(expected), restored)
+        }
+
     @Test
     fun `an assistant segment seq record round-trips`() =
         runTest {
