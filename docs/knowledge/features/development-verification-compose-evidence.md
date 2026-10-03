@@ -232,6 +232,30 @@ app's row is taller than the component (the switch-back failed line sits
 lower than Figma's), pad the export to the crop's height instead of letting
 the script resize it.
 
+After capturing a visible snackbar, end its state explicitly before capturing
+the next state. Under the Compose test rule, Material3's short snackbar's 4 s
+coroutine delay uses virtual time, while `waitUntil` enforces a wall-clock timeout
+and advances virtual time only one 16 ms frame per poll. Each poll also sleeps
+and synchronizes with Espresso, so roughly 255 polls can exceed a 15 s budget
+under sharded emulator load even when focused runs pass. This is a test-clock
+dependency, not a production snackbar fault (#1664).
+`ThreadDesignCaptureTest.dismissSnackbar(text)` selects the node defining
+`SemanticsActions.Dismiss` with a descendant containing the snackbar text,
+invokes that accessibility action after the visible-state capture, then requires
+text absence within 5 s before the following capture. This preserves the
+snackbar frame without waiting for timer expiry or loosening comparisons.
+
+The [#1664 verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1670#issuecomment-5972292335)
+and its fresh two-shard XML report 171 executed, 0 failed and 1 skipped;
+`ThreadDesignCaptureTest#rowAndNoticeFramesAt412By892` and
+`ThreadDesignCaptureTest#refusalStateFramesAt412By892` both executed and passed.
+That run establishes the text transitions, not fresh pixel comparisons:
+`DesignCapture.capture` writes metadata and returns before taking a screenshot
+when `syntheticBars=true`. Capture names, Figma node IDs, comparison assets and
+tolerances stayed unchanged, but no fresh PNGs were produced. Check the metadata
+before treating a passing ATD capture method as visual evidence; real pixel
+evidence requires real system bars and `requireRealSystemBars=true`.
+
 `MarkdownReaderCaptureTest#compactLargeTextKeepsControlsAndBodyReachable`
 (unrelated to the #1352 history-paging change, caught in its PR's UI gate and
 triaged there) hit the same `wm size` race, confirmed by two focused re-runs

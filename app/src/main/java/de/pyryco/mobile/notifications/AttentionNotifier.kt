@@ -104,7 +104,7 @@ class AttentionNotifier(
         val notification =
             NotificationCompat
                 .Builder(context, ATTENTION_CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_pyry_logo)
+                .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setAutoCancel(true)
