@@ -346,6 +346,11 @@ class StableConversationRepository(
 
     override suspend fun requestScreenSnapshot(conversationId: String): String = live.requestScreenSnapshot(conversationId)
 
+    override suspend fun sendQueuedNow(
+        conversationId: String,
+        queuedMessageId: Long,
+    ): Unit = live.sendQueuedNow(conversationId, queuedMessageId)
+
     override suspend fun dropQueuedMessage(
         conversationId: String,
         queuedMessageId: Long,

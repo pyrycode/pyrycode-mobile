@@ -133,7 +133,9 @@ internal class ThreadProjection(
      * store once ([moveOwnEchoToEnd]) — on the drain's `queue_state` or the pushed `message`, whichever
      * arrives first. An echo queued while idle is not parked and keeps its tap-time slot (#1636).
      *
-     * Written only by the inbound collector, through [settleQueuedEchoes] and [appendLiveMessage].
+     * Send-now intent is recorded by the outbound caller before enqueue. On backlog removal its
+     * echo stays hidden in [OwnEchoQueue.awaitingPush] until the delivered push establishes placement.
+     * Written atomically by the inbound collector and [recordSendNow] / [withdrawSendNow].
      * Connection-scoped and in-memory like [mintedMessageIds], and observed only through [observe].
      */
     private val ownEchoQueues = MutableStateFlow<Map<String, OwnEchoQueue>>(emptyMap())
@@ -243,14 +245,27 @@ internal class ThreadProjection(
     ) {
         if (message.id in mintedMessageIds.value[conversationId].orEmpty()) trail.delivered(message.id)
         val echoes = ownEchoQueues.value[conversationId]
-        if (echoes != null && message.id in echoes.queued) {
-            if (message.id in echoes.parked) moveOwnEchoToEnd(conversationId, message.id)
+        if (echoes != null && (message.id in echoes.queued || message.id in echoes.awaitingPush || message.id in echoes.sendNow)) {
+            if (message.id in echoes.parked ||
+                message.id in echoes.awaitingPush ||
+                message.id in echoes.sendNow
+            ) {
+                moveOwnEchoToEnd(conversationId, message.id)
+            }
             ownEchoQueues.update { all ->
                 val current = all[conversationId] ?: return@update all
                 all +
                     (
                         conversationId to
-                            OwnEchoQueue(current.queued - message.id, current.delivered + message.id, current.behindTurn - message.id)
+                            current.copy(
+                                queued = current.queued - message.id,
+                                delivered = current.delivered + message.id,
+                                behindTurn =
+                                    current.behindTurn - message.id,
+                                sendNow = current.sendNow - message.id,
+                                awaitingPush =
+                                    current.awaitingPush - message.id,
+                            )
                     )
             }
         }
@@ -472,7 +487,8 @@ internal class ThreadProjection(
      * echo to de-dup against.
      */
     fun applyAssistantDelta(event: LiveSessionEvent.AssistantDelta) {
-        val parkedEchoes = ownEchoQueues.value[event.conversationId]?.parked.orEmpty()
+        val echoes = ownEchoQueues.value[event.conversationId]
+        val parkedEchoes = echoes?.let { it.parked + it.awaitingPush }.orEmpty()
         threadByConversation.update { current ->
             val rows = current[event.conversationId].orEmpty().withAssistantDelta(event, Clock.System.now(), passOver = parkedEchoes)
             val ended = event.turnId in endedTurns.value[event.conversationId].orEmpty()
@@ -507,6 +523,31 @@ internal class ThreadProjection(
         messageId: String,
     ) {
         mintedMessageIds.update { it + (conversationId to (it[conversationId].orEmpty() + messageId)) }
+    }
+
+    /** Track a Send now separately from drops, only for an echo this connection minted. */
+    fun recordSendNow(
+        conversationId: String,
+        messageId: String,
+    ): Boolean {
+        if (messageId.isEmpty() || messageId !in mintedMessageIds.value[conversationId].orEmpty()) return false
+        var recorded = false
+        ownEchoQueues.update { all ->
+            val current = all[conversationId] ?: OwnEchoQueue()
+            recorded = messageId !in current.sendNow && messageId !in current.delivered
+            if (recorded) all + (conversationId to current.copy(sendNow = current.sendNow + messageId)) else all
+        }
+        return recorded
+    }
+
+    fun withdrawSendNow(
+        conversationId: String,
+        messageId: String,
+    ) {
+        ownEchoQueues.update { all ->
+            val current = all[conversationId] ?: return@update all
+            all + (conversationId to current.copy(sendNow = current.sendNow - messageId))
+        }
     }
 
     /** Record a drop of [queuedMessageId] whose echo is [echoId] before it is sent (#859); see [pendingDrops]. */
@@ -579,18 +620,28 @@ internal class ThreadProjection(
         turnOpen: Boolean,
     ) {
         val inSnapshot = queue.current(conversationId).mapTo(HashSet()) { it.messageId }
-        val echoes = ownEchoQueues.value[conversationId] ?: OwnEchoQueue()
-        val drained = echoes.queued - inSnapshot
-        drained.filter { it in echoes.behindTurn }.forEach { moveOwnEchoToEnd(conversationId, it) }
-        val delivered = echoes.delivered + drained
-        val minted = mintedMessageIds.value[conversationId].orEmpty()
-        val queued = inSnapshot.intersect(minted) - delivered
-        val behindTurn = (echoes.behindTurn intersect queued) + if (turnOpen) queued - echoes.queued else emptySet()
-        val next = OwnEchoQueue(queued, delivered, behindTurn)
-        // A dropped echo has already left the ledger, so only a drained one still in it was delivered.
-        drained.filter { it in minted }.forEach(trail::delivered)
-        next.queued.forEach(trail::queued)
-        if (next != echoes) ownEchoQueues.update { it + (conversationId to next) }
+        // Send-now intent is also written by the outbound caller. Derive from the current metadata
+        // inside the CAS so a snapshot cannot overwrite an intent recorded while it was settling.
+        ownEchoQueues.update { all ->
+            val echoes = all[conversationId] ?: OwnEchoQueue()
+            val drained = echoes.queued - inSnapshot
+            val deferred = drained intersect echoes.sendNow
+            drained.filter { it in echoes.behindTurn && it !in deferred }.forEach { moveOwnEchoToEnd(conversationId, it) }
+            val delivered = echoes.delivered + (drained - deferred)
+            val minted = mintedMessageIds.value[conversationId].orEmpty()
+            val queued = inSnapshot.intersect(minted) - delivered
+            val behindTurn = (echoes.behindTurn intersect queued) + if (turnOpen) queued - echoes.queued else emptySet()
+            val next =
+                echoes.copy(
+                    queued = queued,
+                    delivered = delivered,
+                    behindTurn = behindTurn,
+                    awaitingPush = echoes.awaitingPush + deferred,
+                )
+            drained.filter { it in minted && it !in deferred }.forEach(trail::delivered)
+            next.queued.forEach(trail::queued)
+            if (next != echoes) all + (conversationId to next) else all
+        }
     }
 
     /**
@@ -732,7 +783,12 @@ internal class ThreadProjection(
      */
     fun observe(conversationId: String): Flow<List<ThreadItem>> =
         combine(threadByConversation, ownEchoQueues) { threads, echoes ->
-            threads[conversationId].orEmpty().withParkedEchoesLast(echoes[conversationId]?.parked.orEmpty())
+            val state = echoes[conversationId]
+            threads[conversationId]
+                .orEmpty()
+                .filterNot {
+                    it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.id in state?.awaitingPush.orEmpty()
+                }.withParkedEchoesLast(state?.parked.orEmpty())
         }.distinctUntilChanged()
 
     /** This thread as [observe] reads it: [parkedIds] user rows last, the rest through [withOnlyLastRowStreaming]. */
@@ -819,6 +875,10 @@ internal class ThreadProjection(
      * [delivered] is the ids already moved to the end, which a later snapshot repeating one (a legal
      * duplicate `message_id`) never queues again.
      *
+     * [sendNow] holds locally requested delivery intents, independently of drops. [awaitingPush]
+     * holds those removed from the backlog but not yet reported delivered; they remain in the store
+     * for identity and attachment metadata, hidden from the read and skipped by assistant deltas.
+     *
      * [behindTurn] is the [queued] ids first reported while a turn was open (#1636), and only those, the
      * [parked] ones, read last and move on delivery. One queued while idle waits behind nothing: the daemon
      * delivers it at once, and its confirmation can arrive after its own reply began, so moving it then would
@@ -828,6 +888,8 @@ internal class ThreadProjection(
         val queued: Set<String> = emptySet(),
         val delivered: Set<String> = emptySet(),
         val behindTurn: Set<String> = emptySet(),
+        val sendNow: Set<String> = emptySet(),
+        val awaitingPush: Set<String> = emptySet(),
     ) {
         val parked: Set<String> get() = queued intersect behindTurn
     }

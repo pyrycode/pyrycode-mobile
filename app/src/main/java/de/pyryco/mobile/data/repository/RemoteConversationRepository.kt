@@ -1294,6 +1294,12 @@ class RemoteConversationRepository(
     /** Request the rendered claude screen (#375); see [MessageCommands.requestScreenSnapshot]. */
     override suspend fun requestScreenSnapshot(conversationId: String): String = messageCommands.requestScreenSnapshot(conversationId)
 
+    /** Deliver a queued message now through this host connection. */
+    override suspend fun sendQueuedNow(
+        conversationId: String,
+        queuedMessageId: Long,
+    ): Unit = messageCommands.sendQueuedNow(conversationId, queuedMessageId)
+
     /** Drop a queued message over fire-and-forget `dequeue_message` (#466); see [MessageCommands.dropQueuedMessage]. */
     override suspend fun dropQueuedMessage(
         conversationId: String,

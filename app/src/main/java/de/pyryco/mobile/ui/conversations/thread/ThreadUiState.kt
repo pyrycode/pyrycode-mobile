@@ -316,6 +316,9 @@ data class ThreadRunConfig(
     val selectedModel: String get() = pendingModel ?: savedModel
 
     /** Whether this session answers MCP status (#1344): only an explicit `mcp_servers: false` hides Channel info's section. */
+    val midTurnInputSupported: Boolean
+        get() = settingsAvailable && !settingsHeld && sessionId.isNotEmpty() && capabilities?.midTurnInput == true
+
     val mcpServersSupported: Boolean get() = capabilities?.mcpServers ?: true
 
     /** No pick and no explicit saved model: the conversation runs whatever the daemon's default resolves to. */

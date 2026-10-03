@@ -4009,6 +4009,85 @@ class RemoteConversationRepositoryTest {
             assertEquals(before, messages)
         }
 
+    @Test
+    fun sendQueuedNow_removedQueueThenInterveningMessages_usesDeliveredPushPosition() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val thread = collectMessages(repo, "c-1")
+            val other = collectMessages(repo, "c-other")
+            runCurrent()
+            val own = sendAndAck(repo, pump, "c-1", "marker request")
+            pump.push(turnStateEnvelope("c-1", "thinking"))
+            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "marker request", TS, messageId = own))))
+            runCurrent()
+            val before = thread.last()
+            repo.sendQueuedNow("c-1", 42L)
+            runCurrent()
+            assertEquals(before, thread.last())
+            pump.push(queueStateEnvelope("c-1", emptyList()))
+            runCurrent()
+            assertTrue(messageIds(thread.last()).isEmpty())
+            pump.push(toolUseEnvelope("c-1", "running", "intervening", "Bash", "held command"))
+            pump.push(toolResultEnvelope("c-1", "running", "intervening", isError = false, resultSummary = "done"))
+            pump.push(messageEnvelope("c-1", own, "user", "marker request", TS))
+            pump.push(messageEnvelope("c-1", own, "user", "marker request", TS))
+            pump.push(messageEnvelope("c-1", "peer", "user", "peer marker", TS))
+            pump.push(messageEnvelope("c-1", "peer", "user", "peer marker", TS))
+            runCurrent()
+            assertEquals(listOf("intervening", own, "peer"), messageIds(thread.last()))
+            assertEquals(emptyList<ThreadItem>(), other.last())
+        }
+
+    @Test
+    fun sendQueuedNow_failedSendWithdrawsDeliveryIntent() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val thread = collectMessages(repo, "c-1")
+            runCurrent()
+            val own = sendAndAck(repo, pump, "c-1", "marker request")
+            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "marker request", TS, messageId = own))))
+            runCurrent()
+            val before = thread.last()
+            pump.sendResult = false
+            assertTrue(runCatching { repo.sendQueuedNow("c-1", 42L) }.isFailure)
+            runCurrent()
+            assertEquals(before, thread.last())
+            pump.push(queueStateEnvelope("c-1", emptyList()))
+            runCurrent()
+            assertEquals(listOf(own), messageIds(thread.last()))
+        }
+
+    @Test
+    fun sendQueuedNow_targetsConversationAndReturnsWithoutReplyOrMutation() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val messages = collectMessages(repo, "c-1")
+            val queue = collectQueue(repo, "c-1")
+            runCurrent()
+            val beforeMessages = messages.toList()
+            val beforeQueue = queue.toList()
+            repo.sendQueuedNow("c-1", Long.MAX_VALUE)
+            runCurrent()
+            assertEquals(
+                MobileJson.parseToJsonElement("""{"conversation_id":"c-1","queued_msg_id":9223372036854775807}"""),
+                pump.sent
+                    .single {
+                        it.type ==
+                            "send_queued_now"
+                    }.payload,
+            )
+            assertEquals(beforeMessages, messages)
+            assertEquals(beforeQueue, queue)
+            pump.sendResult = false
+            assertTrue(runCatching { repo.sendQueuedNow("c-1", 42L) }.exceptionOrNull() is IllegalStateException)
+            runCurrent()
+            assertEquals(beforeMessages, messages)
+            assertEquals(beforeQueue, queue)
+        }
+
     // ---- dropQueuedMessage (#466, #859): a fire-and-forget dequeue_message, settled by queue_state ----
     // The daemon never replies to dequeue_message (protocol-mobile.md § Queue (v2)), so no test here
     // pushes an ack or error for it: the only confirmation is a later queue_state lacking the item.

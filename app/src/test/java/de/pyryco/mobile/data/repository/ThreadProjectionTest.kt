@@ -18,6 +18,78 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ThreadProjectionTest {
+    @Test
+    fun sendNow_pendingPushDoesNotSplitRunningAssistantDeltas() =
+        runTest {
+            val projection = ThreadProjection()
+            val queue = QueueProjection()
+            val thread = collect(projection, "c1")
+            projection.applyAssistantDelta(delta("turn-1", 0, "Waiting"))
+            sendOwn(projection, "mine", "hello")
+            projection.onQueueState(queue, 42L to "mine")
+            projection.recordSendNow("c1", "mine")
+            projection.onQueueState(queue)
+            projection.applyAssistantDelta(delta("turn-1", 1, " for"))
+            projection.applyAssistantDelta(delta("turn-1", 2, " input"))
+            runCurrent()
+            assertEquals(listOf("turn-1"), ids(thread.last()))
+            assertEquals("Waiting for input", (thread.last().single() as ThreadItem.MessageItem).message.content)
+            projection.appendLiveMessage("c1", userMessage("mine", "hello", PUSHED_AT))
+            runCurrent()
+            assertEquals(listOf("turn-1", "mine"), ids(thread.last()))
+        }
+
+    @Test
+    fun sendNow_queueRemovalWaitsForPushAfterInterveningTool() =
+        runTest {
+            val projection = ThreadProjection()
+            val queue = QueueProjection()
+            val thread = collect(projection, "c1")
+            val sent = startQueuedTurn(projection, queue)
+            projection.recordSendNow("c1", "mine")
+            projection.onQueueState(queue)
+            runCurrent()
+            assertEquals(listOf("turn-1", "tool-1"), ids(thread.last()))
+            projection.applyToolUse(toolUse("turn-1", "tool-2"))
+            projection.appendLiveMessage("c1", userMessage("mine", "hello", PUSHED_AT))
+            projection.appendLiveMessage("c1", userMessage("mine", "hello", PUSHED_AT))
+            projection.applyAssistantDelta(delta("turn-1", 2, "Marker"))
+            runCurrent()
+            assertEquals(listOf("turn-1", "tool-1", "tool-2", "mine", "turn-1#2"), ids(thread.last()))
+            assertEquals(ThreadItem.MessageItem(sent), thread.last()[3])
+        }
+
+    @Test
+    fun sendNow_pushBeforeRemoval_settlesOnce() =
+        runTest {
+            val projection = ThreadProjection()
+            val queue = QueueProjection()
+            val thread = collect(projection, "c1")
+            startQueuedTurn(projection, queue)
+            projection.recordSendNow("c1", "mine")
+            projection.appendLiveMessage("c1", userMessage("mine", "hello", PUSHED_AT))
+            projection.onQueueState(queue)
+            projection.appendLiveMessage("c1", userMessage("mine", "hello", PUSHED_AT))
+            runCurrent()
+            assertEquals(listOf("turn-1", "tool-1", "mine"), ids(thread.last()))
+        }
+
+    @Test
+    fun sendNow_foreignId_cannotHideOrMoveHeldRows() =
+        runTest {
+            val projection = ThreadProjection()
+            val queue = QueueProjection()
+            val thread = collect(projection, "c1")
+            projection.appendLiveMessage("c1", userMessage("foreign", "peer", SENT_AT))
+            projection.recordSendNow("c1", "foreign")
+            projection.onQueueState(queue, 42L to "foreign")
+            projection.onQueueState(queue)
+            projection.applyToolUse(toolUse("turn-1", "tool-1"))
+            projection.appendLiveMessage("c1", userMessage("foreign", "peer", PUSHED_AT))
+            runCurrent()
+            assertEquals(listOf("foreign", "tool-1"), ids(thread.last()))
+        }
+
     // #1351 AC #2: the pushed copy of the phone's own send leaves the confirmed row, names and send time included.
     @Test
     fun appendLiveMessage_heldId_leavesRowUnchanged() =

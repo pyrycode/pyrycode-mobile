@@ -2271,6 +2271,23 @@ class ThreadViewModel(
         }
     }
 
+    /** One-way control, bound to this destination's owner; failures use the queue-drop treatment. */
+    fun onSendQueuedNow(queuedMessageId: Long) {
+        if (!state.value.runConfig.midTurnInputSupported) return
+        viewModelScope.launch {
+            try {
+                repository.sendQueuedNow(conversationId, queuedMessageId)
+                RelayLog.d { "event=send_queued_now_sent" }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: RelayErrorException) {
+                RelayLog.d { "event=send_queued_now_failed code=relay_error" }
+            } catch (e: IllegalStateException) {
+                RelayLog.d { "event=send_queued_now_failed code=not_connected" }
+            }
+        }
+    }
+
     /**
      * Drop queued message [queuedMessageId] from this conversation's backlog (#467) — fire the #466
      * `dequeue_message` send through the facade. Reachable as a [ConversationRepository] interface method
@@ -2963,7 +2980,12 @@ private fun ModelMenu.forAgent(agent: ConversationAgent): ModelMenu =
  */
 private fun ThreadRunConfig.forLiveSession(liveSessionId: String): ThreadRunConfig =
     if (liveSessionId.isNotEmpty() && liveSessionId != sessionId) {
-        copy(permissionMode = "", appliedEffort = EffectiveEffort.Unavailable, memorySearch = MemorySearchReport.Unknown)
+        copy(
+            permissionMode = "",
+            appliedEffort = EffectiveEffort.Unavailable,
+            memorySearch = MemorySearchReport.Unknown,
+            capabilities = capabilities?.copy(midTurnInput = false),
+        )
     } else {
         this
     }

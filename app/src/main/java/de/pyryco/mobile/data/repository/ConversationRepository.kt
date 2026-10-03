@@ -548,6 +548,12 @@ interface ConversationRepository {
     suspend fun requestScreenSnapshot(conversationId: String): String =
         error("requestScreenSnapshot is not implemented for this ConversationRepository")
 
+    /** Fire-and-forget Send now. Queue state confirms removal; the live message owns placement. */
+    suspend fun sendQueuedNow(
+        conversationId: String,
+        queuedMessageId: Long,
+    ): Unit = error("sendQueuedNow is not implemented for this ConversationRepository")
+
     /**
      * Drops a not-yet-drained message from [conversationId]'s queued backlog by sending a
      * `dequeue_message` frame carrying the conversation id and the message's [queuedMessageId] (#466,
@@ -1255,6 +1261,8 @@ data class SessionCapabilities(
     val permissionModes: List<String>,
     val slashCommands: Boolean = true,
     val mcpServers: Boolean = true,
+    /** Only an explicit current-session report enables Send now; older reports fail closed. */
+    val midTurnInput: Boolean = false,
 )
 
 /**

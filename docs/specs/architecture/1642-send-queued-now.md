@@ -76,3 +76,11 @@ Pending documentation stage: record the no-separate-frame Send now decision in `
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-03
+
+## Revisions
+
+2026-10-03: `queue_state` has no delivery-kind discriminator, so inferring Send now from an open turn would change ordinary-drain settlement and break its existing contract. Defer only locally requested, minted echoes; foreign messages have no local echo to relocate and append once at their daemon-reported position. Preserve the previous ordinary-drain/idle tests unchanged. `forLiveSession` disables mid-turn support while a new current session is waiting for its settings reply.
+
+2026-10-03: outbound send-now intent makes queue metadata a two-writer flow. Queue settlement now derives its candidate inside the atomic update rather than writing a stale metadata snapshot, preserving intents recorded concurrently with inbound settlement. This resolves the concurrency finding in the security review; no new job or lock is introduced.
+
+2026-10-03: the malformed-capability test demonstrated that the Boolean serializer accepts a quoted `"true"`. The DTO now retains the optional raw token and `toSessionSettings` enables support only when it equals literal JSON true; malformed additions preserve the rest of the reading while failing closed. Security review [Trust boundaries]: MUST FIX resolved by this strict token check and regression test.
