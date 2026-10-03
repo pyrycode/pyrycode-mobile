@@ -26,6 +26,9 @@
   `requireRealSystemBars=true` (`1529-results.xml`, 3 executed, 0 failures). The nine frames of section **Thread
   states · #1529 · 2026-10-02** (`685:3991`) were exported with `get_screenshot` on 2026-10-03. See "Thread states
   (#1529)".
+- **#1540 pass:** `main` at `2ce6beec` plus the test-only `refusalStateFramesAt412By892` (`1540-results.xml`, 1
+  executed, 0 failures), for the refusal row's Expanded, Switch back pending and Switch back failed components
+  (`620:1570`, `646:4694`, `646:4700`), exported on 2026-10-03. See "Refusal row states (#1540)".
 - **Strict waits:** every frame state waits for its marker text ("Connecting…", "Offline · Retry", "Thinking",
   "2 tasks running", "Pairing error", "Switch back to", "Sonnet", "Manual approval", "Builder Pipeline Plan",
   "No background tasks", "No background-task report yet" and so on) and fails the run if it does not appear within 5 s. The bubble photo's decode gets 10 s. No capture is taken of a state that did not render.
@@ -50,7 +53,8 @@ the demo seed's, and timestamps follow the emulator's `en-US` locale ("5/10/26 -
 configuration (fixed; `600:1694` retaken) · #1498 workspace delimiter in the seed · #1499 Offline and usage-limit pills (usage copy fixed by #1519; `568:3139` retaken) · #1485 compact footer ·
 #1512 delimiter rule inset · #1513 photo above text and photo bubble width · #1603 turn outcome pill · #1604 failure
 pill · #1605 history tail gutter and spacing · #1606 stale Stop-variant comment · #1607 type-ahead row spacing ·
-#1608 unrecognized and stopped-turn row spacing ·
+#1608 unrecognized and stopped-turn row spacing · #1614 expanded refusal row spacing and attribution weight ·
+#1615 switch-back button height and gaps, and its failure snackbar ·
 #1532 PDF tile not dimmed while disconnected · #1533 reader list indent · #1534 task panel spacing · #1118 agent switch
 (pending) · #1510 dark status-bar icons (fixed after these captures; see Status bar). #1493, #1495 and #1500 asked
 for these captures against the updated frames; their verdicts are below, and the states #1500 could not cover moved
@@ -169,7 +173,94 @@ verdicts apply to each of those frames, which list only what differs.
 | Icon paths | match (none) |
 | Component state | match: offer armed, not pending |
 
-- **Routed:** none
+- **Routed:** none. The #1540 pass measured the button about 21 px below Show details and 28 px tall here too,
+  against the frame's 12 and 32; #1615 owns that and updates this verdict.
+
+### Refusal row states (#1540)
+
+Three Thread notification states from the Components page's component set `620:1576`, captured by
+`refusalStateFramesAt412By892` in the notice frames' fixture (attachment strip, context usage, the four-model menu
+seeded) on `main` at `2ce6beec` plus the test-only method on `feature/1540`, on `pixel8Api35` with
+`requireRealSystemBars=true` (`1540-results.xml`, 1 executed, 0 failures). The pending and failed states hold the
+override's `setSessionSettings` on a test-owned gate, then fail it with an `IllegalStateException`. Each component is
+372 px wide with no frame around it, so each capture's row is cropped at x 20 to 392 from 12 px above the title's
+first glyph row (the component's 8 px top padding plus the title's line box), to the component's height, and that
+crop (`<name>-row.png`) goes into `scripts/design-compare.py` with the 1x export `figma-<node>.png`. The failed crop
+is 128 px tall to hold the app's lower failed line, and its export is padded to that height with the component's
+background (`figma-646-4700-padded.png`). Positions below are from the crop's top. Text colours were sampled per
+line and equal the export's.
+
+### Notification expanded — `620:1570`
+
+- **Owning ticket:** #875 (refusal row, closed)
+- **Capture:** `notification-expanded.png` (412x892, 1.0), row `notification-expanded-row.png` (y 546 to 654)
+- **Side-by-side:** `notification-expanded-side-by-side.png`
+- **Overlay:** `notification-expanded-overlay.png`
+- **Verdict:** mismatch
+- The refusal's explanation is the component's prose; the row adds the "Claude: " attribution itself.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | match: title on one line, explanation on two, the same line breaks as the component |
+| Padding | match: 20 px gutter |
+| Spacing | mismatch: the explanation starts at 36 px against 40 (4 px gap under the title against 8), and Hide details at 81 against 87 |
+| Typography | mismatch: "Claude:" is a medium-weight span; the component draws the attribution in the explanation's regular body-medium. Title, explanation and Hide details styles match |
+| Colour | match: title on-surface-variant, explanation on-surface, Hide details primary |
+| Borders | match (none) |
+| Radii | match (none) |
+| Icon paths | match (none) |
+| Component state | match: expanded, toggle reads Hide details |
+
+- **Routed:** #1614
+
+### Refusal switch back pending — `646:4694`
+
+- **Owning ticket:** #1360 (switch back, closed)
+- **Capture:** `refusal-switch-back-pending.png` (412x892, 1.0), row `refusal-switch-back-pending-row.png` (y 538 to 634)
+- **Side-by-side:** `refusal-switch-back-pending-side-by-side.png`
+- **Overlay:** `refusal-switch-back-pending-overlay.png`
+- **Verdict:** mismatch
+- Taken after the tap, while the held write is outstanding; the test waits for the button to be disabled.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | mismatch: the button's outline runs 64 to 91 px (28 px tall) against 56 to 87 (32 px); its 150 px width matches |
+| Padding | match: 16 px button side padding |
+| Spacing | mismatch: about 21 px from Show details to the button's outline against 11. Show details sits 2 px higher, within tolerance |
+| Typography | match: "Switch back to Opus" in the button's style |
+| Colour | match: outline and label at the component's 38 % opacity |
+| Borders | match: 1 px outline |
+| Radii | match |
+| Icon paths | match (none) |
+| Component state | match: disabled while pending, no failed line |
+
+- **Routed:** #1615
+
+### Refusal switch back failed — `646:4700`
+
+- **Owning ticket:** #1360 (switch back, closed)
+- **Capture:** `refusal-switch-back-failed.png` (412x892, 1.0), row `refusal-switch-back-failed-row.png` (y 520 to 648),
+  taken after the snackbar below dismissed
+- **Side-by-side:** `refusal-switch-back-failed-side-by-side.png`
+- **Overlay:** `refusal-switch-back-failed-overlay.png`
+- **Verdict:** mismatch
+- The failed write also sends the run-configuration error. `refusal-switch-back-failed-snackbar.png` shows "Couldn't
+  update the run configuration. Try again." as a snackbar over the row for about four seconds, covering the button
+  and the failed line. The component draws only the inline line.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | mismatch: the button as in the pending state, 28 px tall at 64 px against 32 at 56 |
+| Padding | match: 16 px button side padding |
+| Spacing | mismatch: the failed line starts at 108 px against 95, 17 px under the button's outline against 8; the button's gap under Show details as in the pending state |
+| Typography | match: the failed line in body-small, the button label in its style |
+| Colour | match: armed primary button, failed line in the error colour |
+| Borders | match: 1 px outline |
+| Radii | match |
+| Icon paths | match (none) |
+| Component state | mismatch: the run-configuration snackbar covers the row after the failure (see above); with it gone the state matches, button armed and failed line shown |
+
+- **Routed:** #1615
 
 ### Session notice — `627:5466`
 
