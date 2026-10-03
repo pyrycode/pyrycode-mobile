@@ -37,7 +37,7 @@ Both public send overloads clear their conversation before invoking `MessageComm
 
 ## State and concurrency model
 
-Reuse the repository's sole inbound collector on the injected connection scope and dispatcher. No new job, scope, timer, or sharing operator. Inbound frames, caller sends and teardown may write concurrently; every state mutation uses an atomic, pure `update` with no suspension. Caller clearing happens before sending and before awaiting, so a later inbound error remains visible even while the send is pending. Connection scope cancellation and pump completion run existing cleanup plus the new reset. The stable facade's cold read switches with `flatMapLatest`, cancelling the prior observation and reporting null while disconnected.
+Reuse the repository's sole inbound collector on the injected connection scope and dispatcher. No new job, scope, timer, or sharing operator. Inbound frames, caller sends and teardown may write concurrently; every state mutation uses an atomic, pure `update` or `getAndUpdate` with no suspension. Caller clearing happens before sending and before awaiting, so a later inbound error remains visible even while the send is pending. Connection scope cancellation and pump completion run existing cleanup plus the new reset. The stable facade's cold read switches with `flatMapLatest`, cancelling the prior observation and reporting null while disconnected.
 
 ## Error handling
 
@@ -73,3 +73,7 @@ None. #1678 owns user-facing interpretation and rendering; this contract exposes
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-03
+
+## Revisions
+
+- 2026-10-03: Clear/reset use `getAndUpdate` to inspect the atomically replaced map and emit lifecycle diagnostics only when held errors actually changed. This keeps unrelated sends and teardown with no session errors silent, matching the existing JVM logging seams. No clearing or observation contract changed.
