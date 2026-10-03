@@ -360,6 +360,44 @@ except BaseException:
 PY
 }
 
+# seed_dormant_history <instance-dir> <conversation-id> <user-text> <assistant-text> (#1571)
+#   Writes ONE finished turn into the conversation's daemon-owned history log before the daemon starts, so a
+#   row seeded bound to a session the daemon does not hold (seed_collision_conversation) is a dormant channel
+#   with stored history and no real claude turn. The format is pyrycode internal/history's: under
+#   <instance>/conversations/<id>/history/, segment-<20 digits>.jsonl holding the literal header line, then
+#   one compact {"id","type","payload","ts"} line per entry. The entries are what an interactive turn logs:
+#   send_message, assistant_delta, turn_end. An existing log for the id is refused, never merged into; other
+#   conversations' logs and the registry are not touched. Directories 0700, the segment 0600.
+seed_dormant_history() {
+  python3 - "$@" <<'PY'
+import datetime, json, os, sys, uuid
+
+instance, conv_id, user_text, assistant_text = sys.argv[1:5]
+history = os.path.join(instance, "conversations", conv_id, "history")
+if os.path.lexists(history):
+    sys.exit("a history log already exists for the seeded conversation; left untouched")
+old = os.umask(0o077)
+try:
+    os.makedirs(history, mode=0o700)
+finally:
+    os.umask(old)
+turn_id = str(uuid.uuid4())
+now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+payloads = [
+    ("send_message", {"conversation_id": conv_id, "message_id": str(uuid.uuid4()), "text": user_text}),
+    ("assistant_delta", {"conversation_id": conv_id, "turn_id": turn_id, "seq": 0, "text": assistant_text}),
+    ("turn_end", {"conversation_id": conv_id, "turn_id": turn_id, "stop_reason": "end_turn", "outcome": "success"}),
+]
+lines = ['{"format":"pyrycode.history","version":1}\n']
+for i, (typ, payload) in enumerate(payloads):
+    ts = (now - datetime.timedelta(seconds=len(payloads) - i)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    lines.append(json.dumps({"id": i + 1, "type": typ, "payload": payload, "ts": ts}, separators=(",", ":")) + "\n")
+fd = os.open(os.path.join(history, "segment-%020d.jsonl" % 1), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "w") as f:
+    f.write("".join(lines))
+PY
+}
+
 # phone_pair_code <pair-out> <phone-relay-url> [<suffix>] (#847; <suffix> #687, default B)
 #   The second host is paired through the app's own paste-a-code flow, so the phone needs the WHOLE
 #   pairing code, not four fields. Finds the payload line the first host's parse accepts, replaces only
@@ -777,6 +815,19 @@ if [ -z "${DETERMINISTIC}" ]; then
       || die "failed to seed ${HOME}/.pyry/${seed_instance}/conversations.json"
   done
   log "seeded conversation ${COLLISION_ID} as '${COLLISION_NAME_A}' on ${PYRY_NAME} and '${COLLISION_NAME_B}' on ${PYRY_NAME_B}"
+
+  # #1571: a dormant channel with stored history on host A. The live suite cannot restart its daemon and
+  # idle eviction is off, so the after-restart dormant state is seeded: a row bound to a session the daemon
+  # does not hold, plus one finished turn in its history log. Opening it spawns nothing and spends no turn.
+  DORMANT_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+  DORMANT_SESSION="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+  DORMANT_NAME="e2e1571-${COLLISION_STAMP}"
+  DORMANT_REPLY="e2e1571-reply-${COLLISION_STAMP}"
+  seed_collision_conversation "${HOME}/.pyry/${PYRY_NAME}" "${DORMANT_ID}" "${DORMANT_NAME}" "${HOME}" "${DORMANT_SESSION}" \
+    || die "failed to seed ${HOME}/.pyry/${PYRY_NAME}/conversations.json"
+  seed_dormant_history "${HOME}/.pyry/${PYRY_NAME}" "${DORMANT_ID}" "e2e1571-ask-${COLLISION_STAMP}" "${DORMANT_REPLY}" \
+    || die "failed to seed the history log of ${DORMANT_ID} on ${PYRY_NAME}"
+  log "seeded dormant channel ${DORMANT_ID} as '${DORMANT_NAME}' with stored history on ${PYRY_NAME}"
 fi
 
 # ---- 3. daemon (Mobile Protocol v2, pointed at the relay) -------------------------------------
@@ -1257,6 +1308,8 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_channelInfo_listsBuiltInMcpServerAfterShowBuiltIn"
   # #1460: Compact session with a file pending still compacts and clears the strip. Two turns (ping, compaction).
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_compactWithAttachment_compactsAndClearsTheStrip"
+  # #1571: a seeded dormant channel shows its stored reply on open, with no pull and no send. No Claude turn.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_dormantChannel_opensWithStoredHistoryWithoutSend"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi
@@ -1275,6 +1328,14 @@ if [ -n "${SERVER_ID_B:-}" ]; then
     -Pandroid.testInstrumentationRunnerArguments.collisionConversationId="${COLLISION_ID}"
     -Pandroid.testInstrumentationRunnerArguments.collisionNameA="${COLLISION_NAME_A}"
     -Pandroid.testInstrumentationRunnerArguments.collisionNameB="${COLLISION_NAME_B}"
+  )
+fi
+# The dormant channel with stored history (#1571), on the paths that seeded it.
+if [ -n "${DORMANT_ID:-}" ]; then
+  GRADLE_TEST_ARGS+=(
+    -Pandroid.testInstrumentationRunnerArguments.dormantConversationId="${DORMANT_ID}"
+    -Pandroid.testInstrumentationRunnerArguments.dormantName="${DORMANT_NAME}"
+    -Pandroid.testInstrumentationRunnerArguments.dormantReply="${DORMANT_REPLY}"
   )
 fi
 # The second-client peer's token (#848), only on the paths that minted one.

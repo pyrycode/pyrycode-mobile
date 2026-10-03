@@ -91,6 +91,52 @@ class EmulatorTwoHostTest(unittest.TestCase):
             self.assertNotIn("secret-ish", result.stdout + result.stderr)
             self.assertEqual("secret-ish not json", (instance / "conversations.json").read_text())
 
+    def test_dormant_history_writes_one_daemon_format_segment(self):
+        # #1571: the layout and lines pyrycode internal/history reads (segmentHeaderLine, segmentName, Entry).
+        with tempfile.TemporaryDirectory() as tmp:
+            instance = Path(tmp) / "e2e-live"
+            result = self.run_function("seed_dormant_history", str(instance), "conv-1", "e2e1571-ask-1", "e2e1571-reply-1")
+            self.assertEqual(0, result.returncode, result.stderr)
+            history = instance / "conversations" / "conv-1" / "history"
+            segment = history / "segment-00000000000000000001.jsonl"
+            self.assertEqual([segment.name], [p.name for p in history.iterdir()])
+            lines = segment.read_bytes().split(b"\n")
+            self.assertEqual(b'{"format":"pyrycode.history","version":1}', lines[0])
+            self.assertEqual(b"", lines[-1])
+            entries = [json.loads(line) for line in lines[1:-1]]
+            self.assertEqual([1, 2, 3], [e["id"] for e in entries])
+            self.assertEqual(["send_message", "assistant_delta", "turn_end"], [e["type"] for e in entries])
+            self.assertEqual({"id", "type", "payload", "ts"}, {k for e in entries for k in e})
+            self.assertEqual(sorted(e["ts"] for e in entries), [e["ts"] for e in entries])
+            self.assertTrue(all(e["ts"].endswith("Z") for e in entries))
+            ask, delta, end = (e["payload"] for e in entries)
+            self.assertEqual({"conv-1"}, {p["conversation_id"] for p in (ask, delta, end)})
+            self.assertEqual("e2e1571-ask-1", ask["text"])
+            self.assertTrue(ask["message_id"])
+            self.assertEqual(("e2e1571-reply-1", 0), (delta["text"], delta["seq"]))
+            self.assertEqual(delta["turn_id"], end["turn_id"])
+            self.assertEqual("end_turn", end["stop_reason"])
+            for directory in (instance, instance / "conversations", instance / "conversations" / "conv-1", history):
+                self.assertEqual(0o700, stat.S_IMODE(directory.stat().st_mode), directory)
+            self.assertEqual(0o600, stat.S_IMODE(segment.stat().st_mode))
+
+    def test_dormant_history_leaves_other_conversations_and_refuses_an_existing_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            instance = Path(tmp) / "e2e-live"
+            other = instance / "conversations" / "other" / "history"
+            other.mkdir(parents=True)
+            (other / "segment-00000000000000000001.jsonl").write_text("kept\n")
+            (instance / "conversations.json").write_text('{"conversations":[]}')
+            result = self.run_function("seed_dormant_history", str(instance), "conv-1", "a", "b")
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual("kept\n", (other / "segment-00000000000000000001.jsonl").read_text())
+            self.assertEqual('{"conversations":[]}', (instance / "conversations.json").read_text())
+            segment = instance / "conversations" / "conv-1" / "history" / "segment-00000000000000000001.jsonl"
+            before = segment.read_bytes()
+            again = self.run_function("seed_dormant_history", str(instance), "conv-1", "a2", "b2")
+            self.assertNotEqual(0, again.returncode)
+            self.assertEqual(before, segment.read_bytes())
+
     def test_phone_pair_code_swaps_only_the_relay(self):
         payload = {"server": "srv-b", "relay": "wss://relay.example/v1/server", "token": "tok-b",
                    "server_static_pubkey": "A" * 43 + "="}
