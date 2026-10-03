@@ -43,7 +43,7 @@ private val WaitingGlyphSize = 16.dp
 private val WaitingGlyphGap = 8.dp
 
 // De-emphasis that reads the row as not-yet-sent, distinct from the full-opacity sent bubbles it now
-// sits among (in the spirit of ThreadScreen.ABOVE_DELIMITER_ALPHA).
+// sits among.
 private const val QUEUED_ALPHA = 0.6f
 
 /**

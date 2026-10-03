@@ -25,7 +25,7 @@ The frame (and overflow frame `675:5883`) draws each `Session boundary` as the `
 
 - `SessionBoundaryAssertions.kt`: replace `SESSION_BOUNDARY_EXPLANATION` with `SESSION_BOUNDARY_EXPLANATION_FRAGMENT = "doesn't remember"` (absence probe only); `awaitDisplayedSessionBoundary` waits on `onNodeWithTag(SESSION_BOUNDARY_TEST_TAG)` and then asserts the fragment absent.
 - `SessionBoundaryDelimiterScreenTest`: for Clear, WorkspaceChange and IdleEvict with an Absent report and a Codex agent, the tag is displayed and no "doesn't remember", "Search stored knowledge" or "Install" node exists; the Install-click and report-toggle tests go. Rule-colour and inset pixel tests stay.
-- `ThreadScreenAlphaTest` (new, shared): a thread of message / boundary / message renders both bubbles and the boundary with no ancestor `graphicsLayer` alpha — asserted by pixel: the older bubble text draws the same colour as the newer one.
+- `ThreadRowOpacityTest` (new, shared): a thread of message / boundary / message renders both bubbles and the boundary with no ancestor `graphicsLayer` alpha — asserted by pixel: the older bubble text draws the same colour as the newer one.
 - `ThreadAgentNameTest`, `ThreadScreenOverflowTest`, `SessionBoundaryVisibilityTest`, `ScriptedSessionBoundaryTest`: switch to the tag and assert the explanation absent; the overflow test asserts the boundary never shows Install while the overflow item still follows the report.
 - `InteractiveStreamE2ETest`: `DELIMITER_EXPLANATION` becomes `onAllNodesWithTag(SESSION_BOUNDARY_TEST_TAG)` for the absence guards; the final reveal stays `awaitDisplayedSessionBoundary`. Live acceptance is the dispatcher's live gate (`## Live tests` lists both methods that call the helper).
 - Focused: `testDebugUnitTest` on the touched classes, `compileDebugAndroidTestKotlin`, `lint`, `assembleDebug`, `spotlessCheck`.
@@ -38,3 +38,7 @@ Pending for the documentation stage:
 - `CLAUDE.md` and `AGENTS.md`, § Conversations model: drop the sentence beginning "Above-delimiter messages are visually de-emphasized", including its explanatory-line and boundary install-affordance claims.
 - `docs/e2e-interactive-stream.md`: the #541 new-session scenario's matcher description (now the `session-boundary` test tag).
 - Every other `docs/knowledge/features/` overview that describes the fade or the explanation line (search "de-emphasi" and "doesn't remember").
+
+## Revisions
+
+- 2026-10-03: `SessionBoundaryDelimiterContent` and its `uriHandler` seam are removed rather than kept as an inset column: with the explanation gone it would have wrapped a single child, so `SessionBoundaryDelimiter` now passes the inset padding and `SESSION_BOUNDARY_TEST_TAG` straight to `RuleLabelRow`. Same geometry (the inset pixel test is unchanged); the tag's node is the rule row with its padding. Drove it: the implementation, no finding. The opacity test is named `ThreadRowOpacityTest` and compares the dominant bubble pixel under each message text, drawn through `View.draw` (Robolectric's `captureToImage` timed out on the thread screen).

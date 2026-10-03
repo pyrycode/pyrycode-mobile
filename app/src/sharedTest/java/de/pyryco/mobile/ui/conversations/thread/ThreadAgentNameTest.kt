@@ -4,6 +4,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
@@ -12,13 +13,14 @@ import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.conversations.components.SESSION_BOUNDARY_TEST_TAG
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** #1112: the thread's wrap-up line and boundary explanation name the conversation's agent. */
+/** #1112: the thread's wrap-up line names the conversation's agent; #1578: the boundary names no agent. */
 @RunWith(AndroidJUnit4::class)
 class ThreadAgentNameTest {
     @get:Rule
@@ -59,15 +61,15 @@ class ThreadAgentNameTest {
     }
 
     @Test
-    fun aCodexConversation_namesCodex_inTheWrapUpAndTheBoundary() {
+    fun aCodexConversation_namesCodex_inTheWrapUp_andTheBoundaryNamesNoAgent() {
         setScreen(ConversationAgent.Codex)
 
         composeRule.onNodeWithContentDescription("Codex is writing a handoff note for the next session").assertIsDisplayed()
         composeRule
             .onNodeWithContentDescription(context.getString(R.string.thread_resetting_wrapping_up))
             .assertDoesNotExist()
-        composeRule.onNode(hasText("Codex doesn't remember messages above this line", substring = true)).assertIsDisplayed()
-        composeRule.onNode(hasText("Claude doesn't remember", substring = true)).assertDoesNotExist()
+        composeRule.onNodeWithTag(SESSION_BOUNDARY_TEST_TAG).assertIsDisplayed()
+        composeRule.assertNoSessionBoundaryExplanation()
     }
 
     @Test
@@ -75,7 +77,8 @@ class ThreadAgentNameTest {
         setScreen(ConversationAgent.Claude)
 
         composeRule.onNodeWithContentDescription("Claude is writing a handoff note for the next session").assertIsDisplayed()
-        composeRule.onNode(hasText("Claude doesn't remember messages above this line", substring = true)).assertIsDisplayed()
+        composeRule.onNodeWithTag(SESSION_BOUNDARY_TEST_TAG).assertIsDisplayed()
+        composeRule.assertNoSessionBoundaryExplanation()
         composeRule.onNode(hasText("Codex", substring = true)).assertDoesNotExist()
     }
 }

@@ -47,6 +47,7 @@ import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -118,6 +119,7 @@ import de.pyryco.mobile.ui.conversations.components.CHANNEL_INFO_SESSION_COST_TA
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_ATTACHMENT_FILE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.RUNNING_MODEL_TEST_TAG
+import de.pyryco.mobile.ui.conversations.components.SESSION_BOUNDARY_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.treeHostChannelAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostChatAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostEditTestTag
@@ -131,7 +133,6 @@ import de.pyryco.mobile.ui.conversations.thread.EFFORT_PLACEHOLDER_LABEL
 import de.pyryco.mobile.ui.conversations.thread.PERMISSION_SETTLE_WINDOW_MS
 import de.pyryco.mobile.ui.conversations.thread.PING_PROMPT
 import de.pyryco.mobile.ui.conversations.thread.PermissionModeOption
-import de.pyryco.mobile.ui.conversations.thread.SESSION_BOUNDARY_EXPLANATION
 import de.pyryco.mobile.ui.conversations.thread.STATUS_READING_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.UNAVAILABLE_MODEL_LABEL
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedPingReply
@@ -954,11 +955,12 @@ class InteractiveStreamE2ETest {
      *
      * **Fire-and-forget — assert the durable delimiter, never an ack.** `new_session` is fire-and-forget
      * (pyrycode#831, #540 wire), so the only observable is the post-broadcast delimiter. The load-bearing
-     * matcher is [DELIMITER_EXPLANATION], the delimiter's hardcoded explanation line
-     * ([de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter]), which can **only** come from
-     * the rendered delimiter — it is reason-independent, so the match is robust even if the daemon's
+     * matcher is [SESSION_BOUNDARY_TEST_TAG], the test tag on
+     * [de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter] (#1578), which can **only** come
+     * from the rendered delimiter — it is reason-independent, so the match is robust even if the daemon's
      * `session_transition` reason differs from `clear`. [NEW_SESSION_ITEM] only selects the reset action;
-     * the delimiter explanation proves the resulting session boundary. Its absence is asserted before
+     * the tagged delimiter proves the resulting session boundary, drawn without the retired "doesn't
+     * remember" explanation. Its absence is asserted before
      * the reset tap, so its later appearance is attributable to the action — no extra
      * claude turn.
      *
@@ -989,20 +991,20 @@ class InteractiveStreamE2ETest {
         }
 
         // 4. Prove the session is live (AC-3): send the constrained ping and wait for the streamed reply, so the
-        //    session is genuinely exercised and there is de-emphasized above-delimiter content once it clears.
+        //    session is genuinely exercised and there is above-delimiter content once it clears.
         //    The daemon may run a separate wrap-up turn after the New-session tap.
         composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
         composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
         composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
 
-        // 5. Absence guard (AC-2, deterministic — no extra turn): the delimiter explanation must not be on
-        //    screen yet, so its later appearance is attributable to the New-session tap.
+        // 5. Absence guard (AC-2, deterministic — no extra turn): no delimiter may be on screen yet, so its
+        //    later appearance is attributable to the New-session tap.
         composeTestRule
-            .onAllNodesWithText(DELIMITER_EXPLANATION, substring = true)
+            .onAllNodesWithTag(SESSION_BOUNDARY_TEST_TAG)
             .assertCountEquals(0)
 
         // 6. Open the real overflow menu and tap Reset session. The durable assertion uses
-        //    DELIMITER_EXPLANATION, independently of the action label.
+        //    SESSION_BOUNDARY_TEST_TAG, independently of the action label.
         composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).fetchSemanticsNodes().isNotEmpty()
@@ -1018,7 +1020,7 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasContentDescription(wrappingUp)).fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule
-            .onAllNodesWithText(DELIMITER_EXPLANATION, substring = true)
+            .onAllNodesWithTag(SESSION_BOUNDARY_TEST_TAG)
             .assertCountEquals(0)
 
         // 8. The phase clears: no resetting label of either phase is left in the status area.
@@ -1034,7 +1036,8 @@ class InteractiveStreamE2ETest {
         }
 
         // 9. Reveal the newest row while waiting: the daemon's wrap-up reply can fill the viewport
-        //    before session_transition appends the delimiter. The explanation must still be displayed.
+        //    before session_transition appends the delimiter. The delimiter must still be displayed, with no
+        //    explanation line under it (#1578).
         composeTestRule.awaitDisplayedSessionBoundary(REPLY_TIMEOUT_MS)
     }
 
@@ -7503,13 +7506,12 @@ class InteractiveStreamE2ETest {
         const val CD_BACK = "Back"
 
         // #541 new-session scenario. Overflow-menu production strings (no test tags): CD_MORE_ACTIONS opens
-        // the menu; NEW_SESSION_ITEM is the tap target. The durable matcher is DELIMITER_EXPLANATION,
-        // the delimiter's reason-independent hardcoded explanation line, which can
-        // only come from the rendered SessionBoundaryDelimiter. Keep in sync with res/values/strings.xml:
+        // the menu; NEW_SESSION_ITEM is the tap target. The durable matcher is SESSION_BOUNDARY_TEST_TAG,
+        // the reason-independent test tag that only the rendered SessionBoundaryDelimiter carries (#1578).
+        // Keep in sync with res/values/strings.xml:
         //   cd_more_actions = "More actions", thread_overflow_new_session = "Reset session".
         const val CD_MORE_ACTIONS = "More actions"
         const val NEW_SESSION_ITEM = "Reset session"
-        const val DELIMITER_EXPLANATION = SESSION_BOUNDARY_EXPLANATION
 
         // #566 create-workspace-folder scenario. Picker/dialog production strings (no test tags):
         //   the WorkspacePickerSheet create row (matched as a substring so the trailing ellipsis need
