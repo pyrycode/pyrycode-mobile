@@ -51,9 +51,24 @@ field keeps its label at the top even when empty, with the draft below it and a
 separate trailing clear control. A controlled `BasicTextField` puts label and text
 inside one full-height editable surface; placing only the text line there made
 most of the 56 dp well inert to taps. The field uses the theme's extra-small
-shape, and invalid or wrong-host code feedback appears directly below the code
-field with error semantics and a polite live region. Other failures stay near
-Pair/Retry. Light and dark previews use the same layout and tokens.
+shape, and invalid or wrong-host code feedback (`INVALID_CODE_ERROR`,
+`WRONG_HOST_ERROR`) appears directly below the code field with error semantics
+and a polite live region, its supporting text inset `padding(start = 16.dp, top
+= 4.dp)` to sit under the field's start edge and 4 dp below its underline
+(#1506, `663:3191`/`663:3331`). Other failures stay near Pair/Retry. Light and
+dark previews use the same layout and tokens.
+
+When the field is not focused and its value overflows the text area,
+`PairCodeField`'s `decorationBox` keeps `innerTextField` composed but drawn at
+`alpha(0f)` and overlays a single-line `Text(value, overflow =
+TextOverflow.Ellipsis)` in the same style, tagged `"<label> value"` and hidden
+from accessibility, so the visible code ends in "…" inside the end inset
+instead of the `BasicTextField`'s own edge-clipping scroll (#1506,
+`663:2887`/`663:3331`). Focusing the field shows only `innerTextField` again,
+unchanged. `CoreTextField` merges descendant semantics, so
+`hideFromAccessibility()` on the overlay is not proven to keep its text off the
+field's merged semantics node — unverified by a TalkBack check; every existing
+semantic lookup still resolves to one node.
 
 The [412×892 Figma/emulator comparison](../../../app/src/androidTest/assets/pair-code-1269/comparison-412x892.png)
 and [compact, enlarged-text and visible-IME captures](../../../app/src/androidTest/assets/pair-code-1269/)
