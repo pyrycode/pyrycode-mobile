@@ -56,6 +56,25 @@ description](tool-call-row.md#subagent-step-description-since-896) for what each
 No rung-3 scenario: this is a layout change over rows that already stream, and the live data path is
 unchanged.
 
+### Consecutive tool rows sit flush (#1577)
+
+Beside `toolDepths`, the same `ThreadItem.MessageItem` dispatch arm passes `joinsNextToolRow =
+rows.getOrNull(chronologicalIndex + 1).isToolRow()` into `MessageBubble`, which forwards it to
+[`ToolCallRow`](tool-call-row.md#consecutive-tool-rows-sit-flush-1577) as `joinsNextToolRow`. The
+private `ThreadRow?.isToolRow()` helper only returns `true` for a `ThreadRow.Delivered` row wrapping a
+`ThreadItem.MessageItem` whose `message.role == Role.Tool` and `message.toolCall != null` — a queued
+row, a delimiter, a notice banner, and a delivered `Role.Tool` message with a null `toolCall` (which
+cannot render a row at all, per [`ToolCallRow` § Routing from `MessageBubble`](tool-call-row.md#routing-from-messagebubble))
+all read as `false`, so a tool row next to any of those keeps today's 12dp gap. The check looks only at
+the immediate next chronological row; a row that draws nothing between two tool rows (an empty banner,
+for instance) still counts as a break and the gap returns even though nothing visible separates the
+two — rare, flagged as a known inconsistency in the #1577 verifier review, not fixed.
+
+No rung-3 scenario: this is a spacing-only layout change over rows that already stream, not a new
+operator flow. See [`ToolCallRow` § Consecutive tool rows sit flush](tool-call-row.md#consecutive-tool-rows-sit-flush-1577)
+for the row's own half of the join (the layout shrink and the shared outline), covered by
+`ConsecutiveToolRowSpacingTest` (`app/src/sharedTest/.../thread/`).
+
 The message region's `LazyColumn` fills its weighted `Box`, with the top overlay drawn after it. The list keeps `reverseLayout = true`, scrolling upward from the bottom; connection readings in the composer and an Offline Retry overlay do not reserve list height. See [connection status placement](thread-screen-how-it-works-overlays-and-app-bar.md#connection-status-placement).
 
 **Streaming auto-scroll (since [#185](../codebase/185.md)) and the newest-row pin ([#981](../codebase/981.md)) — retired by [#1314](https://github.com/pyrycode/pyrycode-mobile/issues/1314).** #185 kept only a *streaming* bubble's growing bottom edge anchored, by re-measuring item 0's size while `hasStreamingMessage` held; #981 added a second, identity-keyed effect beside it because a reply that arrived already finalized, a tool row, or any other new newest row never tripped the size-driven pin — under `reverseLayout = true` a new row at index 0 pushes the previous first row to index 1, which stays anchored, so the new row lands below the viewport, uncomposed, until something scrolls back to index 0. Both effects gated on one `var userScrolledAway by remember { mutableStateOf(false) }`, set by a `NestedScrollConnection` on any user drag delta and cleared only when a snapshot of the at-bottom position *changed* to true — so a reader already at the bottom on arrival never got it back — and neither effect ran after a send. #1314 replaced both, plus the #1305/#1306 prompt reveal below, with one following rule; see the next section for the current mechanism, and § *Inline question rows and the newest-end reveal* and § *Inline permission rows and the shared reveal* in [Thread screen — list and status row](thread-screen-how-it-works-list-and-status-row.md) for how the reveal now rides the same rule.
