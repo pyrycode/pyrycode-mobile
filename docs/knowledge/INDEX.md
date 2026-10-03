@@ -43,6 +43,7 @@ broader document search. The frozen archive under `codebase/` is historical.
 ## Verification and history
 
 - [Development verification](features/development-verification.md): Kotlin, Compose, Gradle, emulator and real-evidence checks.
+- [Hands-on device checks](features/hands-on-device-checks.md): picking a USB phone or emulator by hand, and pairing it without typing the code.
 - [Interactive stream e2e](../e2e-interactive-stream.md): manual and scripted emulator coverage, with its current evidence limits.
 - [Document catalog](CATALOG.md): the pre-migration knowledge index preserved byte-for-byte, plus current shared-topic pointers.
 - [Frozen ticket archive](codebase/): per-ticket implementation notes, closed to new writes.
