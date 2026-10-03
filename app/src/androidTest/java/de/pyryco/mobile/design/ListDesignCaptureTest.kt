@@ -382,7 +382,13 @@ class ListDesignCaptureTest {
         const val FOLDER = "list"
         const val ARCHIVED_CHANNELS = 3
         val HOST_FOLDS_COLLAPSED =
-            listOf("Chats on Pyry", "Channels on MB Second brain", "Chats on MB Second brain", "Channels on MB Game dev", "Chats on MB Game dev")
+            listOf(
+                "Chats on Pyry",
+                "Channels on MB Second brain",
+                "Chats on MB Second brain",
+                "Channels on MB Game dev",
+                "Chats on MB Game dev",
+            )
         val DEMO_HOST = PairedServerEntry(PairedServer("demo", "unused", "wss://demo.invalid", "unused"), "Demo")
     }
 }

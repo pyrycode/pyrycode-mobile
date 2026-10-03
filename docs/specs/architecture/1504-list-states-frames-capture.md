@@ -66,3 +66,16 @@ Device-only, as #1431: real pixels from the real `MainActivity` at a `wm` viewpo
 ## Documentation handoff
 
 None from the ticket. Lessons, if any, go in the PR.
+
+## Revisions
+
+- **2026-10-03, device run and comparison:** (1) Open Questions resolved: Create channel opens with its name focused
+  and the keyboard closed; Rename opens with its name selected and the keyboard closed at 412x892 (up at 320x700);
+  Save as channel opens, like Edit channel, with the keyboard up. The walk captures each state as it opens, so the
+  Edit channel and Save as channel footers could not be compared with the frames' keyboard-closed footers; the
+  index marks their Geometry unverified and routes the keyboard-closed captures with the other modal mismatches to
+  #1651 instead of spending another device run inside this ticket. (2) Mismatches go to two new scoped defects,
+  because every owning ticket is closed: #1650 for the host rows' controls and glyphs, #1651 for the modals' field
+  gaps, the Delete confirmation's spacing and backdrop, and the keyboard-closed captures. The shell offset stays
+  with #1588. (3) The index's run header records that only this ticket's captures and the retagged `edit-channel*`
+  come from this run.
