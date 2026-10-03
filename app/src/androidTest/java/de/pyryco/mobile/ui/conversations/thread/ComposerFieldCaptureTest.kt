@@ -3,7 +3,6 @@ package de.pyryco.mobile.ui.conversations.thread
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.os.Build
-import android.os.ParcelFileDescriptor
 import android.view.View
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -21,11 +20,11 @@ import androidx.compose.ui.unit.Density
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.design.Viewport
+import de.pyryco.mobile.design.ViewportRule
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -34,26 +33,14 @@ import java.io.File
 /** Actual dark-theme device pixels for Figma Input area 533:1957 and Send 113:3543. */
 @RunWith(AndroidJUnit4::class)
 class ComposerFieldCaptureTest {
-    @get:Rule val rule = createComposeRule()
-    private val instrumentation = InstrumentationRegistry.getInstrumentation()
-    private var oldSize = "reset"
-    private var oldDensity = "reset"
     private var draft by mutableStateOf("")
     private var contentView: View? = null
 
-    @Before fun setViewport() {
-        oldSize = overrideOf(shell("wm size"))
-        oldDensity = overrideOf(shell("wm density"))
-        shell("wm density 160")
-        shell("wm size 412x892")
-        instrumentation.waitForIdleSync()
-    }
+    @get:Rule(order = 0)
+    val viewport = ViewportRule()
 
-    @After fun restoreViewport() {
-        shell("wm size $oldSize")
-        shell("wm density $oldDensity")
-        instrumentation.waitForIdleSync()
-    }
+    @get:Rule(order = 1)
+    val rule = createComposeRule()
 
     @Test fun typedAndStopAt412By892() {
         setComposer()
@@ -67,9 +54,9 @@ class ComposerFieldCaptureTest {
         capture("emulator-stop-412x892.png", 412, 892)
     }
 
-    @Test fun compactLargeTextKeepsSendReachable() {
-        shell("wm size 280x400")
-        instrumentation.waitForIdleSync()
+    @Viewport("280x400")
+    @Test
+    fun compactLargeTextKeepsSendReachable() {
         setComposer(fontScale = 1.6f)
         val field = rule.onNode(hasSetTextAction())
         field.performTextReplacement("One\ntwo\nthree")
@@ -126,14 +113,4 @@ class ComposerFieldCaptureTest {
         )
         bitmap.recycle()
     }
-
-    private fun shell(command: String): String =
-        ParcelFileDescriptor
-            .AutoCloseInputStream(
-                instrumentation.uiAutomation.executeShellCommand(command),
-            ).bufferedReader()
-            .use { it.readText() }
-
-    private fun overrideOf(output: String) =
-        output.lineSequence().firstOrNull { it.startsWith("Override") }?.substringAfter(": ") ?: "reset"
 }
