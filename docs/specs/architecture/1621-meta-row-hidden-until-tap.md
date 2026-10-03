@@ -49,7 +49,7 @@ New strings: `cd_thread_message_sent` ("Sent %1$s"), `thread_message_show_detail
 
 ## State and concurrency model
 
-One `rememberSaveable` `String?` in `ThreadScreen`, UI-local; no ViewModel, flow or coroutine changes. Survives rotation; reset on leaving the screen.
+One `rememberSaveable` `String?` in `ThreadScreen`, UI-local; no ViewModel, flow or coroutine changes. Survives rotation and a return through the back stack.
 
 ## Error handling
 
