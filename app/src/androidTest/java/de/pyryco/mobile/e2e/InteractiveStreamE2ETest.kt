@@ -1830,8 +1830,8 @@ class InteractiveStreamE2ETest {
      * prove the write against a fake that patches its own rows; this proves the real daemon keeps it.
      *
      * The channel is set up on the host directly (a discussion promoted in its own cwd, so no folder is
-     * created) and deleted in `finally`, which also leaves no muted channel behind. The drive is the list's own:
-     * the row's pen opens Edit channel, OK closes it only once every write is confirmed, and the reopened
+     * created) and deleted in `finally`, which also leaves no muted channel behind. The drive is the operator's:
+     * the thread menu's Edit opens Edit channel, OK closes it only once every write is confirmed, and the reopened
      * modal reads the flag from the host's row. It is checked on the host's own record too, and unchecking
      * proves the clear goes the same way.
      *
@@ -1862,8 +1862,9 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * Open Edit channel from [name]'s pen, check the Mute notifications row opens at [from], set it to [to]
-     * and press OK, then wait for the modal to close — it closes only once the host confirmed the write.
+     * Open Edit channel from [name]'s thread menu, check the Mute notifications row opens at [from], set it to
+     * [to] and press OK, then wait for the modal to close — it closes only once the host confirmed the write —
+     * and return to the list.
      */
     private fun setMuteInEditChannel(
         name: String,
@@ -1872,11 +1873,7 @@ class InteractiveStreamE2ETest {
     ) {
         val title = string(R.string.edit_channel_title)
         val mute = hasText(string(R.string.edit_channel_mute)) and isToggleable()
-        selectChannelRow(name)
-        composeTestRule.onNode(channelPen(name)).performClick()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
-        }
+        openChannelEditor(name)
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
             composeTestRule.onAllNodes(mute and if (from) isOn() else isOff()).fetchSemanticsNodes().isNotEmpty()
         }
@@ -1886,6 +1883,7 @@ class InteractiveStreamE2ETest {
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(title).fetchSemanticsNodes().isEmpty()
         }
+        leaveThread()
     }
 
     /** [conversationId]'s own row on the host reports [muted]. */
@@ -2378,10 +2376,10 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * A channel created, edited and archived from the list, with its prompt read back (#1088, rung 3). A
-     * host's initially empty Channels-section plus opens Create channel, whose OK creates the channel with a
-     * name and a prompt and opens it. One ping starts its session with that prompt. The row's pen opens #667's
-     * Edit channel, which renames it and changes the prompt; reopened, it reads both back from the host and
+     * A channel created from the list, edited and archived from its thread, with its prompt read back (#1088,
+     * rung 3). A host's initially empty Channels-section plus opens Create channel, whose OK creates the channel
+     * with a name and a prompt and opens it. One ping starts its session with that prompt. The thread menu's Edit
+     * (#1561, #1563) opens #667's Edit channel, which renames it and changes the prompt; reopened, it reads both back from the host and
      * says the prompt applies from the next session, since the running one was spawned with the old prompt.
      * After Reset session and a distinct second reply, a session spawned after the edit runs, and the reopened modal
      * drops that line. Emptying the box there clears the stored prompt (#1342), which Channel info's System prompt
@@ -2456,15 +2454,18 @@ class InteractiveStreamE2ETest {
             composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextReplacement(CHANNEL_PROMPT_SECOND)
             composeTestRule.onNodeWithText(EDIT_CHANNEL_OK).performClick()
             awaitChannelEditorClosed()
+            leaveThread()
 
             // 4. AC-1: reopened, it reads back the new name and prompt, and the running session still has the old one.
-            openChannelEditor(newName)
+            awaitChannelRow(newName)
             composeTestRule.onAllNodes(channelRow(firstName)).assertCountEquals(0)
+            openChannelEditor(newName)
             awaitPromptField(CHANNEL_PROMPT_SECOND)
             composeTestRule.onNode(hasTestTag(CHANNEL_NAME_FIELD_TAG) and hasText(newName)).assertExists()
             composeTestRule.onAllNodesWithText(nextSessionLine).onFirst().assertIsDisplayed()
             composeTestRule.onNodeWithText(modalCancel).performClick()
             awaitChannelEditorClosed()
+            leaveThread()
 
             // 5. AC-2: Reset session, then a distinct reply. Whether the respawn was eager or the send spawned the
             //    session, the host reports it runs with the stored prompt once one started after the edit.
@@ -2502,6 +2503,7 @@ class InteractiveStreamE2ETest {
             composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextReplacement("")
             composeTestRule.onNodeWithText(EDIT_CHANNEL_OK).performClick()
             awaitChannelEditorClosed()
+            leaveThread()
             runBlocking {
                 withTimeout(THREAD_TIMEOUT_MS) {
                     while (hostRepository(serverId).requestSystemPrompt(id).systemPrompt != null) delay(PROMPT_STATUS_POLL_MS)
@@ -2531,9 +2533,11 @@ class InteractiveStreamE2ETest {
             openChannelEditor(newName)
             awaitPromptField("")
 
-            // 7. AC-3: archive it from the same modal. It leaves Channels for host A's Archive.
+            // 7. AC-3: archive it from the same modal. The thread returns to the list (#1561), and the channel
+            //    leaves Channels for host A's Archive.
             composeTestRule.onNode(hasText(string(R.string.edit_channel_archive)) and hasClickAction()).performClick()
             awaitChannelEditorClosed()
+            awaitChannelList()
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 runCatching { scrollListTo(channelRow(newName)) }.isFailure
             }
@@ -2571,29 +2575,22 @@ class InteractiveStreamE2ETest {
         }
     }
 
-    /** Select the Channels row named [name] by opening it and pressing Back, tap its pen and wait for Edit channel's title. */
+    /**
+     * Open the Channels row named [name] and choose Edit from its thread's menu (#1561), the only way into Edit
+     * channel once the list's rows draw no pen (#1563), then wait for Edit channel's title. The thread stays open
+     * behind the modal.
+     */
     private fun openChannelEditor(name: String) {
-        selectChannelRow(name)
-        composeTestRule.onNode(channelPen(name)).performClick()
+        val edit = string(R.string.thread_overflow_edit)
+        openRow(name)
+        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(edit).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(edit).onFirst().performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(string(R.string.edit_channel_title)).fetchSemanticsNodes().isNotEmpty()
         }
-    }
-
-    /** The Edit channel pen of the Channels row named [name]. */
-    private fun channelPen(name: String) = hasContentDescription(string(R.string.cd_tree_channel_edit).format(name))
-
-    /**
-     * Select the Channels row named [name] the operator's way: open it, then press Back. Only the selected row
-     * draws its pen (#1523), so this waits until the pen is drawn and scrolled into view.
-     */
-    private fun selectChannelRow(name: String) {
-        openRow(name)
-        leaveThread()
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            runCatching { scrollListTo(channelPen(name)) }.isSuccess
-        }
-        composeTestRule.onNode(channelPen(name)).assertIsDisplayed()
     }
 
     /** Wait until Edit channel closes, which it does only once the host confirmed every write. */

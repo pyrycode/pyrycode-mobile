@@ -92,7 +92,7 @@ data class HostChannelListState(
      * Whether [serverId]'s own session is up, read from the same snapshot its rows are drawn from (#827).
      *
      * Derived rather than stored on a modal's state. Since #1336 it also decides whether the tree draws the
-     * host's section plus and row pens, and the view model closes the host's create and edit modals by the
+     * host's section plus buttons, and the view model closes the host's create and edit modals by the
      * same rule. Both legs are compared with `==` rather than an exhaustive `when`, so a relay state added
      * later reads as not connected instead of needing a classification here.
      */

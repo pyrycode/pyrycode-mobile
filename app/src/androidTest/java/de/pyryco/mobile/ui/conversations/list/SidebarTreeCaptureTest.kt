@@ -186,19 +186,13 @@ class SidebarTreeCaptureTest {
                 .getUnclippedBoundsInRoot()
         val name = if (longNames) longName else "pyrycode discord integration"
         val conversation = rule.onNodeWithText(name).getUnclippedBoundsInRoot()
-        val conversationEdit =
-            rule
-                .onNode(hasContentDescription(instrumentation.targetContext.getString(R.string.cd_tree_channel_edit, name)))
-                .getUnclippedBoundsInRoot()
         val nextConversation = rule.onNodeWithText("rocd-thinking").getUnclippedBoundsInRoot()
-        assertTrue("conversation text must end before its edit control", conversation.right <= conversationEdit.left)
-        assertTrue("conversation edit must stay within the viewport", conversationEdit.right <= expectedWidth.dp)
+        assertTrue("conversation text must stay within the viewport", conversation.right <= expectedWidth.dp)
         assertTrue("long conversation name must stay on one line", conversation.height <= 24.dp)
         val hostFoldEvent = ChannelListEvent.TreeFoldToggled(TreeFoldKey(ConversationTreeSection.Host, "pyry"))
         val sectionFoldEvent = ChannelListEvent.TreeFoldToggled(TreeFoldKey(ConversationTreeSection.Channels, "pyry"))
         val addEvent = ChannelListEvent.TreeHostChannelAddTapped("pyry")
         val openC3 = ChannelListEvent.TreeRowTapped(HostConversationTarget("pyry", "c3"))
-        val editC3 = ChannelListEvent.TreeChannelEditTapped(HostConversationTarget("pyry", "c3"))
         val openC4 = ChannelListEvent.TreeRowTapped(HostConversationTarget("pyry", "c4"))
         val hostEditEvent = ChannelListEvent.TreeHostEditTapped("pyry")
         val taps =
@@ -210,8 +204,8 @@ class SidebarTreeCaptureTest {
                 Triple(addBounds.right.value - 1f, addBounds.midY(), addEvent),
                 Triple(conversation.left.value + 1f, conversation.midY(), openC3),
                 Triple(conversation.right.value - 1f, conversation.midY(), openC3),
-                Triple(conversationEdit.left.value + 1f, conversationEdit.midY(), editC3),
-                Triple(conversationEdit.right.value - 1f, conversationEdit.midY(), editC3),
+                // The selected row draws no pen (#1563): its trailing edge, in the host pen's column, opens it.
+                Triple(editBounds.midX(), conversation.midY(), openC3),
                 Triple(nextConversation.left.value + 1f, nextConversation.midY(), openC4),
                 Triple(editBounds.left.value + 1f, editBounds.midY(), hostEditEvent),
                 Triple(editBounds.midX(), editBounds.midY(), hostEditEvent),
