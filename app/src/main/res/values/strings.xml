@@ -179,12 +179,14 @@
     <string name="thread_resetting_restarting_written">Restarting · handoff note saved</string>
     <string name="thread_resetting_restarting_skipped">Restarting without a handoff note</string>
     <string name="thread_resetting_restarting">Restarting</string>
-    <!-- #804: claude's usage-limit report. Attributed reportage only: a rate_limited frame does not prove a
-         turn was blocked, so none of these may say "limited", "reached" or "lifted". -->
-    <string name="thread_usage_limit_label">%1$s reports usage-limit status: %2$s</string>
-    <string name="thread_usage_limit_label_no_status">%1$s reported a usage-limit update</string>
-    <string name="thread_usage_limit_spent">" · %1$d%% spent"</string>
-    <string name="thread_usage_limit_resets">" · resets %1$s"</string>
+    <!-- #1519: the usage pill's client-owned copy, desktop's rule. "reached" is only for claude's exact `rejected`
+         status; every other status reads "Nearly". claude's status and limit type pick these and are never drawn. -->
+    <string name="thread_usage_limit_reached">Usage limit reached</string>
+    <string name="thread_usage_limit_nearly">Nearly at usage limit</string>
+    <string name="thread_usage_limit_five_hour">" - 5-hour window"</string>
+    <string name="thread_usage_limit_seven_day">" - 7-day window"</string>
+    <string name="thread_usage_limit_resets">", resets %1$s"</string>
+    <string name="thread_usage_limit_resets_on">", resets %1$s at %2$s"</string>
     <!-- #1357: recovery advice after a stopped turn, desktop's copy. %1$s is the conversation's agent name, so an
          account state reads as the agent's report, never the app's own finding. -->
     <string name="thread_recovery_context">Context too long. Compact or reset the session.</string>
