@@ -129,9 +129,9 @@ internal class ThreadProjection(
     /**
      * `conversationId -> where this device's queued echoes stand` (#1558). A message sent while a turn runs
      * is drawn at tap time (#1355), but the daemon delivers it only after that turn ends, so [observe] reads
-     * each [OwnEchoQueue.queued] echo below every other row, and its delivery moves it to the end of the
+     * each [OwnEchoQueue.parked] echo below every other row, and its delivery moves it to the end of the
      * store once ([moveOwnEchoToEnd]) — on the drain's `queue_state` or the pushed `message`, whichever
-     * arrives first.
+     * arrives first. An echo queued while idle is not parked and keeps its tap-time slot (#1636).
      *
      * Written only by the inbound collector, through [settleQueuedEchoes] and [appendLiveMessage].
      * Connection-scoped and in-memory like [mintedMessageIds], and observed only through [observe].
@@ -234,7 +234,8 @@ internal class ThreadProjection(
      * nothing re-emits.
      *
      * The one exception is position (#1558): the push of an echo still [OwnEchoQueue.queued] is its delivery,
-     * so the held echo, unchanged, first moves to the end of the thread, after the turn it waited behind.
+     * so a [OwnEchoQueue.parked] one, unchanged, first moves to the end of the thread, after the turn it
+     * waited behind. One queued while idle stays where it was drawn (#1636).
      */
     fun appendLiveMessage(
         conversationId: String,
@@ -471,9 +472,9 @@ internal class ThreadProjection(
      * echo to de-dup against.
      */
     fun applyAssistantDelta(event: LiveSessionEvent.AssistantDelta) {
-        val queuedEchoes = ownEchoQueues.value[event.conversationId]?.parked.orEmpty()
+        val parkedEchoes = ownEchoQueues.value[event.conversationId]?.parked.orEmpty()
         threadByConversation.update { current ->
-            val rows = current[event.conversationId].orEmpty().withAssistantDelta(event, Clock.System.now(), passOver = queuedEchoes)
+            val rows = current[event.conversationId].orEmpty().withAssistantDelta(event, Clock.System.now(), passOver = parkedEchoes)
             val ended = event.turnId in endedTurns.value[event.conversationId].orEmpty()
             current + (event.conversationId to if (ended) rows.withSettledTurns(setOf(event.turnId)) else rows)
         }
@@ -725,18 +726,19 @@ internal class ThreadProjection(
      * stops streaming once any row follows it, whichever write appended that row. This is the one read of
      * the store, so no reader sees an earlier segment still streaming.
      *
-     * This device's queued echoes read last (#1558), in thread order, below every row of the turn they wait
-     * behind, and the last-row rule runs over the rows without them, so the running reply keeps streaming.
+     * This device's parked echoes, those queued behind a turn, read last (#1558, #1636), in thread order,
+     * below every row of the turn they wait behind, and the last-row rule runs over the rows without them,
+     * so the running reply keeps streaming.
      */
     fun observe(conversationId: String): Flow<List<ThreadItem>> =
         combine(threadByConversation, ownEchoQueues) { threads, echoes ->
-            threads[conversationId].orEmpty().withQueuedEchoesLast(echoes[conversationId]?.parked.orEmpty())
+            threads[conversationId].orEmpty().withParkedEchoesLast(echoes[conversationId]?.parked.orEmpty())
         }.distinctUntilChanged()
 
-    /** This thread as [observe] reads it: [queued] user rows last, the rest through [withOnlyLastRowStreaming]. */
-    private fun List<ThreadItem>.withQueuedEchoesLast(queued: Set<String>): List<ThreadItem> {
-        if (queued.isEmpty()) return withOnlyLastRowStreaming()
-        val (parked, rest) = partition { it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.id in queued }
+    /** This thread as [observe] reads it: [parkedIds] user rows last, the rest through [withOnlyLastRowStreaming]. */
+    private fun List<ThreadItem>.withParkedEchoesLast(parkedIds: Set<String>): List<ThreadItem> {
+        if (parkedIds.isEmpty()) return withOnlyLastRowStreaming()
+        val (parked, rest) = partition { it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.id in parkedIds }
         return if (parked.isEmpty()) withOnlyLastRowStreaming() else rest.withOnlyLastRowStreaming() + parked
     }
 
