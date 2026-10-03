@@ -20,6 +20,7 @@ import androidx.compose.ui.test.hasScrollToKeyAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isNotEnabled
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
@@ -115,6 +116,9 @@ class ThreadDesignCaptureTest {
 
     /** While set, the override's `requestHistory` answers with this gate instead of the fake's page. */
     @Volatile private var historyGate: CompletableDeferred<HistoryPage>? = null
+
+    /** While set, the override's `setSessionSettings` awaits this gate instead of the fake's write. */
+    @Volatile private var settingsGate: CompletableDeferred<Unit>? = null
     private val images = mutableListOf<Uri>()
     private var photo: File? = null
 
@@ -190,6 +194,46 @@ class ThreadDesignCaptureTest {
         runBlocking { refusals.emit(LiveRefusalEvent.Refused(refusal, "session")) }
         await("Switch back to Opus")
         design.capture(FOLDER, "refusal-switch-back", "646:4707")
+    }
+
+    /** #1540: the Thread notification states `620:1570`, `646:4694` and `646:4700`, in the notice frames' fixture. */
+    @Test fun refusalStateFramesAt412By892() {
+        openThread()
+        stageAttachments()
+        inputs.contextUsage.value = CONTEXT
+        fake().setModelMenu(CONVERSATION, ModelMenu(MODELS.map { (name, id) -> menuRow(name, id) }, 0))
+        // The component's explanation; the row adds the "Claude: " attribution itself.
+        val refusal =
+            refusal().copy(
+                banner = "This request was declined on Opus, so it was retried on Sonnet for the rest of this session.",
+            )
+        extraItems.value = listOf(pdfMessage(), refusal)
+        await("Refused on Opus, continued on Sonnet")
+        rule.onNodeWithText("Show details").performClick()
+        await("Hide details")
+        design.capture(FOLDER, "notification-expanded", "620:1570")
+        rule.onNodeWithText("Hide details").performClick()
+        await("Show details")
+
+        fake().setSessionSettingsReading(CONVERSATION, settings("claude-sonnet-5"))
+        runBlocking { refusals.emit(LiveRefusalEvent.Refused(refusal, "session")) }
+        await("Switch back to Opus")
+        val write = CompletableDeferred<Unit>()
+        settingsGate = write
+        rule.onNodeWithText("Switch back to Opus").performClick()
+        rule.waitUntil(5_000) { rule.onAllNodes(hasText("Switch back to Opus") and isNotEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        rule.waitForIdle()
+        design.capture(FOLDER, "refusal-switch-back-pending", "646:4694")
+
+        // A failed write also shows the run-configuration snackbar over the row; the compared capture waits it out.
+        write.completeExceptionally(IllegalStateException("design: model write fails"))
+        await("Could not change the model — try again.")
+        await("Couldn't update the run configuration. Try again.")
+        design.capture(FOLDER, "refusal-switch-back-failed-snackbar", "646:4700")
+        rule.waitUntil(15_000) { rule.onAllNodesWithText("Couldn't update", substring = true).fetchSemanticsNodes().isEmpty() }
+        await("Could not change the model — try again.")
+        design.capture(FOLDER, "refusal-switch-back-failed", "646:4700")
+        settingsGate = null
     }
 
     @Test fun backgroundTaskPanelAt412By892() {
@@ -597,6 +641,14 @@ class ThreadDesignCaptureTest {
                                 cursor: String,
                                 limit: Int,
                             ) = historyGate?.await() ?: fake.requestHistory(conversationId, cursor, limit)
+
+                            override suspend fun setSessionSettings(
+                                sessionId: String,
+                                model: String?,
+                                effort: String?,
+                                yolo: Boolean?,
+                                permissionMode: String?,
+                            ) = settingsGate?.await() ?: fake.setSessionSettings(sessionId, model, effort, yolo, permissionMode)
 
                             // No test archives except to show the failure notice.
                             override suspend fun archive(conversationId: String): Unit =
