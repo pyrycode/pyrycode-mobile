@@ -27,6 +27,14 @@ Attachments and the meta row stay outside the wrapper. An attachment's long pres
 
 A new test goes in `MessageBubbleTest` (`app/src/sharedTest`, Robolectric). It provides a fake `TextToolbar` through `LocalTextToolbar`, which records the `onCopyRequested` callback. The test long-presses one word of a finished assistant body that contains a fenced code block, and it does the same for a user body. It invokes the recorded Copy action and reads the platform clipboard. The clipboard must hold the selected text: non-empty, part of the message, and shorter than `message.content`. A second test long-presses a streaming bubble. It asserts that no toolbar is shown and nothing reaches the clipboard. The existing `MessageBubbleTest`, `MarkdownLinkTapTest`, `MarkdownTextTest`, `MessageAttachmentsTest` and `MessageBubblePaletteTest` are rerun unchanged. Together they cover links, the code block copy, attachments, the meta row copy, the paragraph gap and the hug.
 
+## Revisions
+
+### 2026-10-03: the selection test moved to its own class and fakes the new context-menu toolbar
+
+- **What changed:** the new tests live in `MessageBubbleSelectionTest`, beside `MessageBubbleTest`, under `@GraphicsMode(NATIVE)`. A Robolectric `@Config` shadow turns the platform `Magnifier` into a no-op. The fake toolbar is a `TextContextMenuProvider` supplied through `LocalTextContextMenuToolbarProvider`, not a `TextToolbar` supplied through `LocalTextToolbar`. Copy is pressed through the open menu's `TextContextMenuKeys.CopyKey` item.
+- **What drove it:** under Robolectric's legacy graphics, the selection handles' vector cache cannot allocate a bitmap. On the native canvas, dismissing the platform magnifier hits a null surface. Moving the existing class to native graphics would have changed the mode its geometry guards run under. Compose foundation 1.10.4 enables `ComposeFoundationFlags.isNewContextMenuEnabled` by default, so `SelectionContainer` no longer calls `LocalTextToolbar`.
+- **New contract:** the production change is the same. The assertions are those in the Testing strategy: a long press on a finished bubble opens a toolbar whose Copy puts only the pressed word on the platform clipboard, for prose, a fenced code block and a user paragraph. A long press on a streaming bubble opens no toolbar. A device run ignores the shadow and the graphics mode.
+
 ## Documentation handoff
 
 - Pending for the documentation stage: in `app/src/androidTest/assets/design-1220/README.md`, add a `no separate frame` row for this decision on #1638, in the same shape as the #1578 row.
