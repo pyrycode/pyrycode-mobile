@@ -209,7 +209,8 @@ No audit declares app-wide parity; #1434 owns that verdict.
   so its header and footer sit 24 px from the frame's and the rule-to-footer midpoint (446) is shared. Full-screen
   surfaces quote y with the 24 px bar removed. Data differs from the frames on purpose (the demo host is "Demo",
   its channels "Joi Pilates", "Personal" and "Pyrycode Mobile", its chats unnamed); text content and text widths
-  are not judged.
+  are not judged. A dialog-window capture's sidecar `imePx` reads the activity window's insets, not the dialog's, so
+  it records `bottom=0` even where the keyboard is up (`save-as-channel.txt`); the image is the record.
 - **Inputs:** Archive's empty Discussions tab unarchives the demo's archived discussion around its capture. The
   host rows swap the harness's demo host for three test hosts in the capture class (`hostStates`): "Pyry" on the
   demo rows with `RelayLinkStatus.Offline`, and row-less "MB Second brain" (`PairingRejected`) and "MB Game dev"
@@ -319,9 +320,9 @@ No audit declares app-wide parity; #1434 owns that verdict.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | match: the dialog is centred in the window by the platform; title to first body line 47 px in both, title 30 px below the dialog's top in both |
-| Padding | match: 24 px insets, title and body at x 72–73 against 72–74 |
-| Spacing | mismatch: last body line top to the buttons' text top 58 px against 54 |
+| Geometry | mismatch: the dialog surface (39,42,47) measures 320x228 at x 46–365, y 308–535 with the bar removed, against 316x220 at x 48–363, y 312–531: 4 px wider and 8 px taller, centred on the same point, so it reaches 2 px past the frame on each side and 4 px above and below. Title 30 px below the dialog's top and title to first body line 47 px in both |
+| Padding | mismatch: text starts 24 px inside the dialog's left edge against 25 (body x 70 against 73, title x 72 against 74); button text bottom to the dialog's bottom edge 43 px against 39; button text right edge 38 px inside the right edge against 37 |
+| Spacing | mismatch: last body line top to the buttons' text top 58 px against 54; with the 43 px bottom inset this is the 8 px of extra height |
 | Typography | match: headline, body, buttons |
 | Colour | match: dialog surface (39,42,47), primary buttons |
 | Borders | match (none) |
@@ -330,7 +331,7 @@ No audit declares app-wide parity; #1434 owns that verdict.
 | Component state | mismatch: the Channel Info sheet stays open under the scrim; the frame draws the dialog over the bare canvas |
 
 - **Compact:** the body wraps to four lines; the dialog and both buttons stay on screen.
-- **Routed:** #1651
+- **Routed:** #1651 (size 320x228 against 316x220, the 43 px bottom inset, the button gap, the 24 px text inset, and the sheet behind the scrim)
 
 ### Host rows: disconnected, re-pair required, update required — `672:3493`
 
@@ -397,8 +398,9 @@ No audit declares app-wide parity; #1434 owns that verdict.
 
 ## Gaps
 
-States reachable from `MainActivity` with no current Mobile frame. Every state #1431 listed here now has a frame in
-List states `670:5299` and a section above. The saving, failure, snackbar and Archive loading and error states raised
+States reachable from `MainActivity` with no current Mobile frame, plus Edit chat, the one framed state that is not
+reachable and so has no capture. Every state #1431 listed here now has a frame in List states `670:5299` and a
+section above. The saving, failure, snackbar and Archive loading and error states raised
 on #1504 have no frame; #1592 asks for frames or an out-of-reference decision.
 
 | State | Capture | Owning ticket | Routed |
