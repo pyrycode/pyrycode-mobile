@@ -257,14 +257,14 @@ class ChannelListScreenTest {
     }
 
     @Test
-    fun rowPensShareTheHostPenColumnAtPixel2Width() = assertTrailingControlsFormOneColumn(412.dp)
+    fun trailingControlsFormOneColumnAtPixel2Width() = assertTrailingControlsFormOneColumn(412.dp)
 
     @Test
-    fun rowPensShareTheHostPenColumnAtNarrowWidth() = assertTrailingControlsFormOneColumn(320.dp)
+    fun trailingControlsFormOneColumnAtNarrowWidth() = assertTrailingControlsFormOneColumn(320.dp)
 
-    // #1523: 15:8 draws the pen on one row only, its Hover instance — on the phone, the selected row.
+    // #1563: 15:8 draws no pen on any conversation row; channels and chats are edited from their thread.
     @Test
-    fun onlyTheSelectedConversationRowDrawsAPen_andItEditsThatRow() {
+    fun noConversationRowDrawsAPen_andRowsStillOpen() {
         val state =
             mutableStateOf(
                 HostChannelListState(
@@ -290,24 +290,26 @@ class ChannelListScreenTest {
         val bravoPen = hasContentDescription(string(R.string.cd_tree_channel_edit, "bravo channel"))
         val charliePen = hasContentDescription(string(R.string.cd_tree_chat_edit, "charlie chat"))
 
-        fun assertPens(vararg drawn: SemanticsMatcher) =
-            listOf(alphaPen, bravoPen, charliePen).forEach { pen ->
-                composeTestRule.onAllNodes(pen).assertCountEquals(if (pen in drawn) 1 else 0)
-            }
+        fun assertNoRowPens() {
+            listOf(alphaPen, bravoPen, charliePen).forEach { pen -> composeTestRule.onAllNodes(pen).assertCountEquals(0) }
+            composeTestRule.onNodeWithTag(treeHostEditTestTag("pyrybox")).assertExists()
+        }
 
-        assertPens(alphaPen)
-        composeTestRule.onNode(alphaPen).performClick()
+        assertNoRowPens()
+        composeTestRule.onNode(hasText("alpha channel")).performClick()
 
         state.value = state.value.copy(selected = HostConversationTarget("pyrybox", "d1"))
-        assertPens(charliePen)
-        composeTestRule.onNode(charliePen).performClick()
+        assertNoRowPens()
+        composeTestRule.onNode(hasText("charlie chat")).performClick()
 
         state.value = state.value.copy(selected = null)
-        assertPens()
+        assertNoRowPens()
+        composeTestRule.onNode(hasText("bravo channel")).performClick()
         assertEquals(
             listOf(
-                ChannelListEvent.TreeChannelEditTapped(HostConversationTarget("pyrybox", "c1")),
-                ChannelListEvent.TreeChatEditTapped(HostConversationTarget("pyrybox", "d1")),
+                ChannelListEvent.TreeRowTapped(HostConversationTarget("pyrybox", "c1")),
+                ChannelListEvent.TreeRowTapped(HostConversationTarget("pyrybox", "d1")),
+                ChannelListEvent.TreeRowTapped(HostConversationTarget("pyrybox", "c2")),
             ),
             events,
         )
@@ -332,19 +334,6 @@ class ChannelListScreenTest {
         fun bounds(matcher: SemanticsMatcher) = composeTestRule.onNode(matcher).getUnclippedBoundsInRoot()
         val hostPen = bounds(hasTestTag(treeHostEditTestTag("pyry")))
         val hostFold = bounds(hasContentDescription(string(R.string.cd_tree_row_collapse, "Pyry")))
-        // Only the selected row draws a pen (#1523), so each row is opened before its pen is measured.
-        val rowPens =
-            listOf(
-                "alpha channel" to hasContentDescription(string(R.string.cd_tree_channel_edit, "alpha channel")),
-                "bravo chat" to hasContentDescription(string(R.string.cd_tree_chat_edit, "bravo chat")),
-            ).map { (name, pen) ->
-                composeTestRule.onNode(hasText(name)).performClick()
-                bounds(pen)
-            }
-        rowPens.forEach { pen ->
-            val offset = (pen.left + pen.right) / 2 - (hostPen.left + hostPen.right) / 2
-            assertEquals("row pen centre offset from the host pen at $width", 0f, offset.value, 0.5f)
-        }
         listOf(TREE_CHANNEL_ROW_TEST_TAG, TREE_CHAT_ROW_TEST_TAG).forEach { tag ->
             assertEquals("$tag left inset at $width", 12f, (bounds(hasTestTag(tag)).left - hostFold.left).value, 0.5f)
         }
@@ -371,7 +360,7 @@ class ChannelListScreenTest {
     }
 
     @Test
-    fun aDisconnectedHostDrawsNoSectionPlusOrRowPenAndTheyReturnOnReconnect() {
+    fun aDisconnectedHostDrawsNoSectionPlusAndTheyReturnOnReconnect() {
         val first =
             entry(
                 "first",
@@ -389,8 +378,7 @@ class ChannelListScreenTest {
 
         fun HostChannelListEntry.withRelay(relay: RelayLinkStatus) =
             copy(host = host.copy(connectionStatus = ConnectionStatus(relay, PyrycodeLinkStatus.Connected)))
-        // The selected row is the only one with a pen (#1523), so it is the pen the disconnect must hide.
-        var state by mutableStateOf(HostChannelListState(listOf(first, second), selected = HostConversationTarget("first", "c1")))
+        var state by mutableStateOf(HostChannelListState(listOf(first, second)))
         composeTestRule.setContent {
             PyrycodeMobileTheme { ChannelListScreen(hostState = state, onEvent = { events += it }) }
         }
@@ -398,7 +386,6 @@ class ChannelListScreenTest {
             listOf(
                 hasTestTag(treeHostChannelAddTestTag("first")),
                 hasTestTag(treeHostChatAddTestTag("first")),
-                hasContentDescription(string(R.string.cd_tree_channel_edit, "first channel")),
             )
         val secondControls =
             listOf(
@@ -421,13 +408,6 @@ class ChannelListScreenTest {
         composeTestRule.waitForIdle()
         assertDrawn(firstControls, 0)
         assertDrawn(secondControls, 1)
-        // The connected host's selected row keeps its pen while the other host is offline.
-        val secondPen = listOf(hasContentDescription(string(R.string.cd_tree_channel_edit, "second channel")))
-        state = state.copy(selected = HostConversationTarget("second", "c2"))
-        composeTestRule.waitForIdle()
-        assertDrawn(secondPen, 1)
-        state = state.copy(selected = HostConversationTarget("first", "c1"))
-        composeTestRule.waitForIdle()
         // The host row keeps Edit host and its reconnect control; folding and opening rows still work.
         list.performScrollToNode(hasTestTag(treeHostEditTestTag("first")))
         composeTestRule.onNodeWithTag(treeHostEditTestTag("first")).performClick()
@@ -558,9 +538,6 @@ class ChannelListScreenTest {
         val secondChannel = hasText("Second channel")
         list.performScrollToNode(secondChannel)
         composeTestRule.onNode(secondChannel).assertIsNotSelected()
-        // An unselected row draws no pen (#1523); #1336's offline suppression is covered by
-        // aDisconnectedHostDrawsNoSectionPlusOrRowPenAndTheyReturnOnReconnect.
-        composeTestRule.onAllNodes(hasContentDescription(string(R.string.cd_tree_channel_edit, "Second channel"))).assertCountEquals(0)
 
         val finalChat = hasText("Final chat")
         list.performScrollToNode(finalChat)
@@ -1186,50 +1163,6 @@ class ChannelListScreenTest {
         assertEquals(listOf(ChannelListEvent.HostUnpairConfirmed), events)
     }
 
-    @Test
-    fun chatRowPencil_namesItsChat_opensItsOwnTarget_andChannelRowsNameThemselvesAsChannels() {
-        val pyrybox =
-            entry(
-                serverId = "pyrybox",
-                displayName = "Pyrybox",
-                channels = listOf(conversation("same", "alpha channel", "/w/one", true)),
-                chats = listOf(conversation("same", "bravo chat", "/w/two", false)),
-            )
-        val macbook =
-            entry(
-                serverId = "macbook",
-                displayName = "Macbook",
-                chats = listOf(conversation("same", "charlie chat", "/w/three", false), conversation("d2", null, "/w/three", false)),
-            )
-        // The id `same` is in both of Pyrybox's sections, so selecting it draws a pen on each of them.
-        val state = mutableStateOf(HostChannelListState(listOf(pyrybox, macbook), selected = HostConversationTarget("pyrybox", "same")))
-        composeTestRule.setContent {
-            PyrycodeMobileTheme { ChannelListScreen(state.value, onEvent = { events += it }) }
-        }
-
-        // The chat's pen names its chat; the channel's pen is an Edit channel pen (#667).
-        composeTestRule.onAllNodes(hasContentDescription(string(R.string.cd_tree_chat_edit, "bravo chat"))).assertCountEquals(1)
-        composeTestRule.onAllNodes(hasContentDescription(string(R.string.cd_tree_chat_edit, "alpha channel"))).assertCountEquals(0)
-        composeTestRule.onAllNodes(hasContentDescription(string(R.string.cd_tree_channel_edit, "alpha channel"))).assertCountEquals(1)
-        composeTestRule.onAllNodes(hasContentDescription(string(R.string.cd_tree_chat_edit, "charlie chat"))).assertCountEquals(0)
-
-        // Lower rows compose lazily, so the nameless chat's pencil is reached by scrolling to it.
-        state.value = state.value.copy(selected = HostConversationTarget("macbook", "d2"))
-        val untitled = hasContentDescription(string(R.string.cd_tree_chat_edit, string(R.string.untitled_discussion)))
-        composeTestRule.onNode(hasScrollAction()).performScrollToNode(untitled)
-        composeTestRule.onAllNodes(untitled).assertCountEquals(1)
-
-        state.value = state.value.copy(selected = HostConversationTarget("macbook", "same"))
-        composeTestRule
-            .onNode(hasScrollAction())
-            .performScrollToNode(hasContentDescription(string(R.string.cd_tree_chat_edit, "charlie chat")))
-        composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_chat_edit, "charlie chat"))).performClick()
-
-        // The pencil's own node took the tap: it opens neither the thread nor moves the highlight.
-        assertEquals(listOf(ChannelListEvent.TreeChatEditTapped(HostConversationTarget("macbook", "same"))), events)
-        composeTestRule.onAllNodes(hasTestTag(TREE_CHAT_ROW_TEST_TAG)).onFirst().assertIsNotSelected()
-    }
-
     /** Every composed row under [tag], top to bottom, read by the text it draws. */
     private fun drawnRows(tag: String): List<String> =
         composeTestRule
@@ -1300,9 +1233,9 @@ class ChannelListScreenTest {
         assertEquals(listOf("Bug triage", "echo", "alpha", "Charlie", untitled), drawnRows(TREE_CHAT_ROW_TEST_TAG))
     }
 
-    /** #1331: a re-sort moves rows, never identities — the highlight and both pens follow the moved row. */
+    /** #1331: a re-sort moves rows, never identities — the highlight and the tap target follow the moved row. */
     @Test
-    fun resortedRows_keepTheirSelectionAndEditorTargets() {
+    fun resortedRows_keepTheirSelectionAndTapTargets() {
         fun host(
             channelName: String,
             chatName: String,
@@ -1328,14 +1261,12 @@ class ChannelListScreenTest {
         composeTestRule.onNode(hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText("zulu chat")).assertIsSelected()
         composeTestRule.onNode(hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText("middle chat")).assertIsNotSelected()
 
-        composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_chat_edit, "zulu chat"))).performClick()
-        // Only the selected row draws a pen (#1523), so the channel is selected before its pen is tapped.
-        composeTestRule.runOnIdle { state.value = state.value.copy(selected = HostConversationTarget("pyrybox", "c1")) }
-        composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_channel_edit, "zulu channel"))).performClick()
+        composeTestRule.onNode(hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText("zulu chat")).performClick()
+        composeTestRule.onNode(hasTestTag(TREE_CHANNEL_ROW_TEST_TAG) and hasText("zulu channel")).performClick()
         assertEquals(
             listOf(
-                ChannelListEvent.TreeChatEditTapped(HostConversationTarget("pyrybox", "d1")),
-                ChannelListEvent.TreeChannelEditTapped(HostConversationTarget("pyrybox", "c1")),
+                ChannelListEvent.TreeRowTapped(HostConversationTarget("pyrybox", "d1")),
+                ChannelListEvent.TreeRowTapped(HostConversationTarget("pyrybox", "c1")),
             ),
             events,
         )
@@ -1497,13 +1428,6 @@ class ChannelListScreenTest {
         val second = hasTestTag(treeHostChannelAddTestTag("macbook"))
         val fold = composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_row_collapse, "Channels on Pyrybox")))
         assertTrue(fold.getUnclippedBoundsInRoot().right <= composeTestRule.onNode(first).getUnclippedBoundsInRoot().left)
-        assertTrue(
-            composeTestRule.onNode(hasText("alpha channel")).getUnclippedBoundsInRoot().right <=
-                composeTestRule
-                    .onNode(hasContentDescription(string(R.string.cd_tree_channel_edit, "alpha channel")))
-                    .getUnclippedBoundsInRoot()
-                    .left,
-        )
         composeTestRule
             .onNode(first)
             .assertHeightIsAtLeast(28.dp)
@@ -1563,25 +1487,6 @@ class ChannelListScreenTest {
             events,
         )
         assertFalse(events.first().toString().contains("Be brief."))
-    }
-
-    @Test
-    fun channelRowPen_namesItsChannel_andOpensItsOwnTargetWithoutOpeningTheRow() {
-        setTree(
-            entry(serverId = "pyrybox", displayName = "Pyrybox", channels = listOf(conversation("same", "alpha channel", "/w/one", true))),
-            entry(serverId = "macbook", displayName = "Macbook", channels = listOf(conversation("same", "bravo channel", "/w/one", true))),
-            selected = HostConversationTarget("macbook", "same"),
-        )
-
-        val bravo = hasContentDescription(string(R.string.cd_tree_channel_edit, "bravo channel"))
-        composeTestRule.onNode(hasScrollAction()).performScrollToNode(bravo)
-        composeTestRule
-            .onNode(bravo)
-            .assertHeightIsAtLeast(24.dp)
-            .performClick()
-
-        // The pen's own node took the tap: no TreeRowTapped follows, so the thread does not open.
-        assertEquals(listOf(ChannelListEvent.TreeChannelEditTapped(HostConversationTarget("macbook", "same"))), events)
     }
 
     private fun openChannel(

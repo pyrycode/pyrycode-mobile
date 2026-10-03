@@ -1103,7 +1103,8 @@ The **mute-channel** scenario (#1021 — `interactiveTurn_muteChannel_roundTrips
 that Edit channel's Mute notifications checkbox round-trips through the host: nothing is patched
 locally, so the modal can only reopen checked because the daemon stored `set_conversation_muted` and
 echoed it back in `conversation_updated`. A channel set up on the host directly (a discussion promoted
-in its own `cwd`, so no folder is created) is muted through the row's own pen, with OK closing only
+in its own `cwd`, so no folder is created) is muted through the thread's menu Edit (since #1563; the
+list's own Channels row pen reached the same modal through #1561), with OK closing only
 once the write is confirmed and the reopened modal reading the flag from the host's own row; the same
 round trip proves the clear by unmuting it, and the channel is deleted in `finally`. Zero real-claude
 turns — promote, mute, unmute and delete are all daemon round-trips. No rung-4 twin: the checkbox's
@@ -3129,6 +3130,19 @@ The remaining checks here are specific to a real relay or real Claude execution:
 
 ## Follow-ups to ticket
 
+- **Coverage — updated:** [#1563](https://github.com/pyrycode/pyrycode-mobile/issues/1563) is that
+  sibling ticket: `treeHost` in `ChannelListScreen` stops passing the Channels/Chats row pen at all,
+  matching Figma `15:8`. `openChannelEditor` and `setMuteInEditChannel` now reach Edit channel the way
+  #1561 predicted — open the row, then More actions → Edit — and leave the thread once the editor
+  closes; `openChannelEditor`'s archive step now waits on `awaitChannelList()` before checking the row is
+  gone, since the thread's own archive-then-pop leaves a window where that check would otherwise succeed
+  immediately on the still-showing thread. No new test method and no change to the curated selector or
+  `LIVE_MINIMUM`. The dispatcher's live gate (branch `feature/1563` at `6f7b08cb5c`, merged with
+  `origin/main` at `220e07e412`, 1 commit behind before the merge) ran the selected
+  `interactiveTurn_createEditArchiveChannel_readsPromptBack` and
+  `interactiveTurn_muteChannel_roundTripsThroughTheHost` plus three always-run methods: 5 executed, 5
+  passed, 0 failed, 0 skipped, exit 0. Both named methods have a passing testcase in the fresh output.
+
 - **Coverage — added:** [#1571](https://github.com/pyrycode/pyrycode-mobile/issues/1571) adds
   `InteractiveStreamE2ETest.interactiveTurn_dormantChannel_opensWithStoredHistoryWithoutSend` to the
   curated LIVE `TEST_TARGET` selector in `scripts/e2e-emulator.sh`; `LIVE_MINIMUM` is counted from that
@@ -3153,6 +3167,7 @@ The remaining checks here are specific to a real relay or real Claude execution:
   `interactiveTurn_muteChannel_roundTripsThroughTheHost` and the create/edit-channel scenario
   (`interactiveTurn_createEditArchiveChannel_readsPromptBack`), both of which open Edit channel from a
   Channels row's pen today; they can switch to the thread's menu Edit, which now reaches the same modal.
+  Resolved by #1563 — see the top of this list.
 
 - **Coverage — added:** [#1460](https://github.com/pyrycode/pyrycode-mobile/issues/1460) adds
   `InteractiveStreamE2ETest.interactiveTurn_compactWithAttachment_compactsAndClearsTheStrip` to the

@@ -13,7 +13,6 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
-import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -119,40 +118,31 @@ class ListDesignCaptureTest {
         design.capture(FOLDER, "edit-host-unpair$suffix", "671:5620")
         relaunch()
 
-        // Only the selected row draws its pen (#1523), so select the first channel the operator's way: open it, go Back.
-        rule
-            .onAllNodesWithTag(TREE_CHANNEL_ROW_TEST_TAG)
-            .onFirst()
-            .performScrollTo()
-            .performClick()
-        rule.waitUntil(5_000) { design.inputs.thread.value != null }
-        Espresso.pressBack()
-        awaitText("Channels")
-        rule.waitUntil(5_000) {
-            rule.onAllNodesWithContentDescription("Edit channel", substring = true).fetchSemanticsNodes().isNotEmpty()
-        }
-        rule
-            .onAllNodesWithContentDescription("Edit channel", substring = true)
-            .onFirst()
-            .performScrollTo()
-            .performClick()
+        // No conversation row draws a pen (#1563): Edit channel opens from the thread's More actions, Edit (#1561).
+        openFirstChannel()
+        design.openMenu(rule.onNodeWithContentDescription("More actions"))
+        design.capture(FOLDER, "thread-menu$suffix", "none")
+        rule.onNodeWithText("Edit").performClick()
         rule.waitUntil(5_000) { rule.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
         design.capture(FOLDER, "edit-channel$suffix", "none")
         // At 320x700 the keyboard pushes Mute and Archive channel below the window; they must stay reachable.
         rule.onNodeWithText("Archive channel").performScrollTo().assertIsDisplayed()
         relaunch()
 
+        openFirstChannel()
+        design.openMenu(rule.onNodeWithContentDescription("More actions"))
+        rule.onNodeWithText("Channel info").performClick()
+        awaitText("About")
+        design.capture(FOLDER, "channel-info$suffix", "668:5355")
+    }
+
+    private fun openFirstChannel() {
         rule
             .onAllNodesWithTag(TREE_CHANNEL_ROW_TEST_TAG)
             .onFirst()
             .performScrollTo()
             .performClick()
         rule.waitUntil(5_000) { design.inputs.thread.value != null }
-        design.openMenu(rule.onNodeWithContentDescription("More actions"))
-        design.capture(FOLDER, "thread-menu$suffix", "none")
-        rule.onNodeWithText("Channel info").performClick()
-        awaitText("About")
-        design.capture(FOLDER, "channel-info$suffix", "668:5355")
     }
 
     /** Each surface starts from a fresh channel list, so one surface's dismissal path cannot steer the next. */
