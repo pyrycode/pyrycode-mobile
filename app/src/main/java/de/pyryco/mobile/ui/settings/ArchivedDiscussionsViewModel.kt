@@ -69,7 +69,8 @@ class ArchivedDiscussionsViewModel(
     private val repository: ConversationRepository,
     hostLabel: Flow<String> = flowOf(""),
 ) : ViewModel() {
-    private val selectedTab = MutableStateFlow(ArchiveTab.Discussions)
+    // Figma 18:2 opens on Channels whatever the counts (#1487).
+    private val selectedTab = MutableStateFlow(ArchiveTab.Channels)
 
     /**
      * The owning host, for the header.

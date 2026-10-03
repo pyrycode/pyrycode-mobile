@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
@@ -50,6 +51,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
@@ -139,7 +141,7 @@ fun ArchivedDiscussionsScreen(
             snackbarHost = { SnackbarHost(snackbarHostState) },
         ) { inner ->
             Column(modifier = Modifier.padding(inner)) {
-                // The selected host is an intentional adaptation: Figma 18:2 has no owner label.
+                // The owning host (#715); Figma 18:2 draws it as the 24 px label above the tabs.
                 // Keep it outside the fixed-height header so enlarged text can grow vertically.
                 if (hostName.isNotBlank()) {
                     Text(
@@ -309,17 +311,21 @@ private fun ArchiveTabLabel(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val style = MaterialTheme.typography.labelLarge
     Box(
         modifier = modifier.heightIn(min = 46.dp).semantics { this.selected = selected }.clickable(role = Role.Tab, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
+        // One line at the design size where it fits; in a narrow tab at large font scale the label steps down
+        // rather than wrapping over the indicator or cutting off its count (#1487).
         Text(
             text = text,
             modifier = Modifier.padding(horizontal = 4.dp),
-            style = MaterialTheme.typography.labelLarge,
+            style = style,
             color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 2,
+            maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            autoSize = TextAutoSize.StepBased(minFontSize = 10.sp, maxFontSize = style.fontSize),
         )
     }
 }

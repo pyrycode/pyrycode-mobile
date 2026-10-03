@@ -60,27 +60,32 @@ No audit declares app-wide parity; #1434 owns that verdict.
 
 ### Archive — `18:2`
 
-- **Owning ticket:** #1265
+- **Owning ticket:** #1265; re-audited by #1487
 - **Capture:** `archive.png`, `archive-compact.png` (Channels tab, three archived demo channels); Discussions tab `archive-discussions.png`, `archive-discussions-compact.png` · **Side-by-side:** `archive-side-by-side.png` · **Overlay:** `archive-overlay.png`
-- The screen opens on Discussions whatever the counts (`ArchivedDiscussionsViewModel` starts on
-  `ArchiveTab.Discussions`); the capture taps Channels to reach the frame's state.
+- These five captures and the comparison come from #1487's run on `feature/1487` (the #1487 changes on `main` at
+  `b2a27867`): `ListDesignCaptureTest` on `pixel8Api35` with `requireRealSystemBars=true`, 2 executed, 0 failed. They
+  replace the third run's Archive captures; every other surface in this file keeps the third run's evidence.
+  `figma-18-2.png` is a fresh export of the updated frame, which draws the host label (2026-10-02 design decision).
+- Archive opens on Channels (`ArchivedDiscussionsViewModel` seeds `ArchiveTab.Channels`), so the `archive` capture
+  needs no tap. The Discussions capture follows a device `input tap`; the walk's `tap` waits for the tab to report
+  selected and then for Compose idle before capturing.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: the host label "Demo" (#715) adds 23–24 px above the tabs, so after the bar the tab labels sit 23 px below the frame (105 against 82), the indicator and row titles 24 px (134 against 110, 157 against 133); the second run's 26 px was a misreading. `docs/knowledge/features/archived-discussions-screen.md` records the label as a deliberate addition to `18:2`; the frame does not carry it |
+| Geometry | match: with the 24 px bar removed, host label rows 71–79 against 72–81, tab labels 105–118 against 106–119, indicator at 134 in both, first row title 157–171 in both. The host label ("Demo" here, "Pyry" in the frame) is in the frame since the 2026-10-02 design decision |
 | Padding | match: 16 px gutters, restore icons at x 365–384 |
-| Spacing | mismatch: rows repeat every 64 px against 66 (row titles at raw image y 181, 245, 309 against the frame's 133, 199, 265; the pitch holds in either system, and after the bar the app's first title sits at 157 as in Geometry); tab label to indicator 16 px against 15, title to subtitle 23 against 24 |
-| Typography | match: title, tab labels (14 px glyph rows in both), row title and subtitle |
-| Colour | mismatch: the tapped tab keeps a lighter fill (RGB 29,56,75 at 100,140 against the frame's 11,39,59). Its strength differs between runs (the second run's 412x892 capture read 12,41,61 there), so it may be a press indication still fading at capture time; #1487 asks for that to be settled before a fix |
+| Spacing | match: rows repeat every 66 px (titles at 157, 223, 289 after the bar, as in the frame); the second row's subtitle starts at 247 in both |
+| Typography | match: title, host label, tab labels, row title and subtitle |
+| Colour | match: the selected tab has no fill. In `archive-discussions.png`, taken after the device tap, the tapped tab reads 13,45,68 and 11,30,43 at x 215 and 400 (y 140), the same as the untapped tab in `archive.png`. The earlier fill was the default press ripple caught mid-fade: a probe on the same image sampled it at 27,45,59 200 ms after the tap, 15,34,48 at 400 ms and the base colour from 800 ms on, with touch mode on and no node focused |
 | Borders | match: tab indicator under the selected tab and the divider |
 | Radii | match (none) |
-| Icon paths | match: back arrow, restore icon (18 px) |
-| Component state | mismatch: opens on Discussions where the frame opens on Channels; the tapped tab's fill is a state the frame does not show |
+| Icon paths | match: back arrow, restore icon |
+| Component state | match: opens with Channels selected, as the frame does |
 
-- **Compact:** mismatch: "Discussions (1)" wraps to two lines and overruns the tab indicator; rows and restore
-  icons stay reachable.
-- **Routed:** #1487
-- The first run's verdicts compared a Discussions row with the frame's Channels rows; this section replaces them.
+- **Compact:** match: at 320x700 and 150 % font scale "Channels (3)" and "Discussions (1)" each stay on one line
+  inside their tabs, above the indicator, with their counts visible. The labels step their size down only when a tab
+  is too narrow. Rows and restore icons stay reachable.
+- **Routed:** none; #1487 closed the four differences.
 
 ### Channel Info Sheet — `20:48`
 
