@@ -217,3 +217,4 @@ _(none yet — system overview will land when there's more than one screen to ma
     - [Development verification — JVM logging, emulator and real evidence](features/development-verification-emulator-evidence.md) — `JVM logging and formatting`, `Emulator and real evidence`, `Documentation evidence`, `Archive refresh regression`, moved verbatim from the parent on 2026-10-02.
 - [Shared knowledge workflow](../shared-knowledge.md) — document ownership, reading order and capture rules.
 - [Project-memory compatibility pointer](../PROJECT-MEMORY.md) — legacy path retained without new status or lessons.
+- [MessageBubble — testing](features/message-bubble-testing.md) — selection-menu fixtures, metadata gestures, palette and geometry guards, and attachment coverage; split from `message-bubble.md` on 2026-10-03.
