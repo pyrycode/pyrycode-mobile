@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.diagnostics.MessageTrail
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.HostModalState
@@ -14,6 +15,7 @@ import de.pyryco.mobile.data.model.batchFor
 import de.pyryco.mobile.data.model.reconnected
 import de.pyryco.mobile.data.model.reduce
 import de.pyryco.mobile.data.network.PumpState
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.RelayTransport
 import de.pyryco.mobile.data.network.ReplayCursor
 import kotlinx.coroutines.CancellationException
@@ -90,6 +92,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * @property pushTokens the persisted FCM token and its later rotations (`null` ⇒ no registration is sent).
  * @property relayStatus the relay-leg status (#391), fetched off the concrete supervisor like
  *   [connections]; zipped with the derived pyrycode leg into [connectionStatus].
+ * @property messageTrail the process-wide message trail (#1564), threaded into every repository with the
+ *   connection's `conn_id` redacted by [RelayLog.redactConnId]; the full id never leaves this class.
  */
 class RelayRepositoryCoordinator(
     private val connections: StateFlow<RelayTransport?>,
@@ -99,6 +103,7 @@ class RelayRepositoryCoordinator(
     private val deviceName: String = "",
     private val pushTokens: Flow<String?> = flowOf(null),
     now: () -> Instant = Clock.System::now,
+    private val messageTrail: MessageTrail = MessageTrail(),
 ) {
     private val job = SupervisorJob()
     private val scope = CoroutineScope(job + dispatcher)
@@ -350,6 +355,8 @@ class RelayRepositoryCoordinator(
                 replayCursor = replayCursor,
                 finishedBackgroundTasks = finishedBackgroundTasks,
                 hostReadings = hostReadings,
+                messageTrail = messageTrail,
+                connToken = { (pump.state.value as? PumpState.Open)?.connId?.let(RelayLog::redactConnId) },
             )
         // Publish the whole connection as ONE object: currentRepository now derives repo and pump-state
         // from this single switched value, closing the #493 cross-StateFlow race (see [currentRepository]).

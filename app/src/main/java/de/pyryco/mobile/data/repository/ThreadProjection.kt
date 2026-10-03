@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.diagnostics.MessageTrail
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
@@ -39,9 +40,13 @@ import java.util.concurrent.atomic.AtomicLong
  * anything else is decoded by the repository and handed over already typed.
  *
  * One instance per repository, and a fresh repository per connection (#351), so the state is
- * connection-scoped exactly as it was when it lived in the repository. Nothing here logs.
+ * connection-scoped exactly as it was when it lived in the repository. Nothing here logs, except the
+ * queued, delivered and dropped states of this device's own sends to [trail] (#1564), keyed on the minted
+ * ledger so a daemon frame naming another device's id records nothing.
  */
-internal class ThreadProjection {
+internal class ThreadProjection(
+    private val trail: MessageTrail = MessageTrail(),
+) {
     /**
      * `conversationId -> ordered thread rows` ([ThreadItem.MessageItem] + [ThreadItem.SessionBoundary])
      * for the conversation — backfilled history (`message_chunk`) plus live user `message`s and structured
@@ -235,6 +240,7 @@ internal class ThreadProjection {
         conversationId: String,
         message: Message,
     ) {
+        if (message.id in mintedMessageIds.value[conversationId].orEmpty()) trail.delivered(message.id)
         if (message.id in ownEchoQueues.value[conversationId]?.queued.orEmpty()) {
             moveOwnEchoToEnd(conversationId, message.id)
             ownEchoQueues.update { all ->
@@ -564,7 +570,11 @@ internal class ThreadProjection {
         val drained = echoes.queued - inSnapshot
         drained.forEach { moveOwnEchoToEnd(conversationId, it) }
         val delivered = echoes.delivered + drained
-        val next = OwnEchoQueue(inSnapshot.intersect(mintedMessageIds.value[conversationId].orEmpty()) - delivered, delivered)
+        val minted = mintedMessageIds.value[conversationId].orEmpty()
+        val next = OwnEchoQueue(inSnapshot.intersect(minted) - delivered, delivered)
+        // A dropped echo has already left the ledger, so only a drained one still in it was delivered.
+        drained.filter { it in minted }.forEach(trail::delivered)
+        next.queued.forEach(trail::queued)
         if (next != echoes) ownEchoQueues.update { it + (conversationId to next) }
     }
 
@@ -604,6 +614,7 @@ internal class ThreadProjection {
     ) {
         if (messageId.isEmpty()) return
         if (messageId !in mintedMessageIds.value[conversationId].orEmpty()) return
+        trail.dropped(messageId)
         mintedMessageIds.update { it + (conversationId to (it[conversationId].orEmpty() - messageId)) }
         threadByConversation.update { current ->
             val rows = current[conversationId] ?: return@update current
