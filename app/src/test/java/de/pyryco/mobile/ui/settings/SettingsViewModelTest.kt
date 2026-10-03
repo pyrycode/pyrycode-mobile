@@ -469,6 +469,48 @@ class SettingsViewModelTest {
         }
 
     @Test
+    fun collapseToolUses_initialState_emitsTrue_whenNoStoredValue() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = makeVm(prefs)
+            val collector = launch { vm.collapseToolUses.collect { } }
+            advanceUntilIdle()
+            assertEquals(true, vm.collapseToolUses.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun collapseToolUses_initialState_mirrorsPersistedFalse() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            prefs.setCollapseToolUses(false)
+            advanceUntilIdle()
+            val vm = makeVm(prefs)
+            val collector = launch { vm.collapseToolUses.collect { } }
+            advanceUntilIdle()
+            assertEquals(false, vm.collapseToolUses.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun onToggleCollapseToolUses_persistsAndFlowReEmits() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = makeVm(prefs)
+            val collector = launch { vm.collapseToolUses.collect { } }
+            advanceUntilIdle()
+            vm.onToggleCollapseToolUses(false)
+            advanceUntilIdle()
+            assertEquals(false, prefs.collapseToolUses.first())
+            assertEquals(false, vm.collapseToolUses.value)
+            vm.onToggleCollapseToolUses(true)
+            advanceUntilIdle()
+            assertEquals(true, prefs.collapseToolUses.first())
+            assertEquals(true, vm.collapseToolUses.value)
+            collector.cancel()
+        }
+
+    @Test
     fun archivedDiscussionCount_initialValue_isZero() =
         runTest(dispatcher) {
             val prefs = AppPreferences(newDataStore())
