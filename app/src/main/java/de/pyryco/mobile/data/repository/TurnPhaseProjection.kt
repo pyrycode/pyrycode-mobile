@@ -49,4 +49,7 @@ internal class TurnPhaseProjection {
      * value; [distinctUntilChanged] keeps another conversation's change from re-emitting this one.
      */
     fun observe(conversationId: String): Flow<Phase> = phases.map { it[conversationId] ?: Phase.Idle }.distinctUntilChanged()
+
+    /** Whether [conversationId]'s held phase is not idle: a turn is open (#1636). */
+    fun isOpen(conversationId: String): Boolean = conversationId in phases.value
 }

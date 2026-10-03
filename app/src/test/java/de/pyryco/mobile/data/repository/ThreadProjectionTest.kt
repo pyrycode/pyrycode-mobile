@@ -146,6 +146,34 @@ class ThreadProjectionTest {
             assertEquals(listOf("turn-1", "tool-1", "mine", "turn-2"), ids(thread.last()))
         }
 
+    // #1636: an echo queued while no turn runs waits behind nothing. Its delivery confirmation can reach the
+    // phone after its own reply began (the daemon confirms only once its write returns), and between two
+    // deltas it must not move the echo below the reply's start and split "Hello, streamed world" in two.
+    @Test
+    fun ownEchoQueuedWhileIdle_deliveredMidReply_staysAboveOneReplySegment() =
+        runTest {
+            val deliveries =
+                listOf<ThreadProjection.(QueueProjection) -> Unit>(
+                    { queue -> onQueueState(queue, turnOpen = true) },
+                    { appendLiveMessage("c1", userMessage("mine", "hello", PUSHED_AT)) },
+                )
+            for (deliver in deliveries) {
+                val projection = ThreadProjection()
+                val queue = QueueProjection()
+                val thread = collect(projection, "c1")
+                sendOwn(projection, "mine", "hello")
+                projection.onQueueState(queue, 42L to "mine", turnOpen = false)
+                projection.applyAssistantDelta(delta("turn-1", 0, "Hello, "))
+                projection.applyAssistantDelta(delta("turn-1", 1, "streamed "))
+                projection.deliver(queue)
+                projection.applyAssistantDelta(delta("turn-1", 2, "world"))
+                runCurrent()
+
+                assertEquals(listOf("mine", "turn-1"), ids(thread.last()))
+                assertEquals("Hello, streamed world", (thread.last()[1] as ThreadItem.MessageItem).message.content)
+            }
+        }
+
     // AC 4: a queued id this device did not mint never moves the row carrying it, queued or delivered.
     @Test
     fun queuedForeignId_neverMovesTheRow() =
@@ -425,10 +453,14 @@ class ThreadProjectionTest {
         return sent
     }
 
-    /** What the repository's `queue_state` arm does: apply the snapshot of `c1`, then settle against it. */
+    /**
+     * What the repository's `queue_state` arm does: apply the snapshot of `c1`, then settle against it, with
+     * [turnOpen] as the turn phase. Open by default, the #1558 scenario of an echo waiting behind a turn.
+     */
     private fun ThreadProjection.onQueueState(
         queue: QueueProjection,
         vararg items: Pair<Long, String>,
+        turnOpen: Boolean = true,
     ) {
         val queued =
             items.joinToString(",") { (queuedMsgId, messageId) ->
@@ -443,7 +475,7 @@ class ThreadProjectionTest {
             ),
         )
         settleDrops(queue)
-        settleQueuedEchoes(queue)
+        settleQueuedEchoes(queue) { turnOpen }
     }
 
     /** No emission holding both draws the echo "mine" above turn-1's tool row, its tap-time slot. */
