@@ -162,9 +162,11 @@ file_path, path, notebook_path, command, pattern, url, query, description`; othe
 précis verbatim. **"Non-empty" is `value != ""`, not `isNotBlank()`** — a whitespace-only field wins
 over a lower-priority field, matching desktop's decision, not a Kotlin-idiomatic default. A field
 picked from `TOOL_PATH_FIELDS = file_path, path, notebook_path` is shortened through
-`shortenToolPath`; nothing else is. A row restored from the disk cache has an empty `inputFields` map
-(that field is not persisted) and always falls back to the `input` précis — this is the fallback path's
-production trigger, not just a defensive default. Desktop's third rule (fall back to any single-line
+`shortenToolPath`; nothing else is. **Since #1575, `inputFields` is persisted in the disk cache**
+(`CachedToolCall.inputFields`, defaulted `emptyMap()` so a pre-#1575 cache file still reads back), so a
+restored row keeps the same headline and subject it had live. The précis fallback's production trigger
+is now a row with no fields at all — a pre-#1575 cache file, or a daemon that sent no `input` — not
+cache restoration itself. Desktop's third rule (fall back to any single-line
 field before the précis) is **not** ported; this ticket's contract stops at the four listed above.
 **Since #1315, `toolHeadline` only reaches this function's `Bash` branch when both `description` and
 `command` are empty** — `toolHeadline` itself already handles the two `Bash`-with-a-field cases, so
@@ -236,8 +238,9 @@ English-only inline literals) over its content.
 
 **Input.** Nonempty `inputFields` render in map order, each key as a monospace `labelSmall` caption
 over its value. Empty field values are omitted. If no nonempty fields remain, the nonempty `input`
-précis is used instead. A cache-restored row normally follows that fallback because fields are not
-persisted. If neither source has content, there is no Input section.
+précis is used instead. Since #1575 a cache-restored row has its `inputFields` back and follows this
+same rule as a live row; only a row with no fields at all (a pre-#1575 cache file, or a daemon that
+sent no `input`) falls back to the précis. If neither source has content, there is no Input section.
 
 **Output.** Gated on `status == Done || status == Failed` and nonempty `output`. A `Running` row
 has no output yet (the data layer fills it on the correlated `tool_result`) and a `Denied` row's
@@ -317,12 +320,16 @@ rendering doesn't ripple into the data-layer fake.
 - **`ToolRowFormatTest`** (`app/src/test/.../components/`, plain JUnit, no Compose) — pins
   `formatToolElapsed` at `0, 12, 59, 60, 65, -65` (plus `-5`, `3600`); `toolRowSubject`'s preferred
   order, the `Bash` override and its own fallback to `command`, empty-value skipping, path shortening
-  scoped to path fields only, and précis fallback for an empty/unknown-keys map; `shortenToolPath` at
-  the 4-segment boundary and with a leading slash. `toolHeadline` (#1315) is pinned separately: `Bash`
-  with a description (`Described`), `Bash` with a command and no description (`Simple`, empty
-  subject), a non-`Bash` call with a description (`Simple`, name + subject), `BashOutput` with both
-  fields (not treated as `Bash`), and `Bash` with neither field (falls back to `toolRowSubject`'s
-  précis).
+  scoped to path fields only, and the précis fallback **only** for a nonempty map whose keys none of
+  `TOOL_SUBJECT_FIELDS` match — an empty map (since #1575, a field-less row) yields an empty subject
+  instead; `shortenToolPath` at the 4-segment boundary and with a leading slash. `toolHeadline` (#1315)
+  is pinned separately: `Bash` with a description (`Described`), `Bash` with a command and no
+  description (`Simple`, empty subject), a non-`Bash` call with a description (`Simple`, name +
+  subject), `BashOutput` with both fields (not treated as `Bash`), and `Bash` with neither field
+  (`Simple`, name + empty subject, since #1575). **#1575 lesson:** the fallback cases must use a
+  JSON-shaped précis value (e.g. `"{\"foo\":1}"`), not a plain string like `"ls -la"` — a plain-string
+  précis reads the same whether or not the real bug (an unparsed `input_summary` JSON fragment leaking
+  into the header) is present, so it can pass while the row still shows raw JSON.
 - **`ToolCallRowTest`** lives in `app/src/sharedTest`, not `app/src/androidTest` — see
   [development-verification § where a screen test goes](./development-verification-gates.md#where-a-screen-test-goes).
   Covers each status's own content description (and that `Denied` does *not* also show
@@ -332,8 +339,10 @@ rendering doesn't ripple into the data-layer fake.
   expanded-stays-expanded-through-an-in-place-update case. Since #1315 the simple/described coverage
   is: a `Bash` command alone leads with the command and shows no `Bash` text and no chevron; a
   non-`Bash` call (`Agent`) with a description keeps its name and subject with no chevron;
-  `BashOutput` with both `command` and `description` is not treated as `Bash`; and a call with
-  neither field keeps the name and précis. **Since #1316,** the same test file covers the result
+  `BashOutput` with both `command` and `description` is not treated as `Bash`; and, **since #1575,**
+  a call with no fields at all — including a row restored from a pre-#1575 cache file — is headed by
+  its name alone, with no précis in the collapsed header. **Since #1316,** the same test file covers
+  the result
   count on `Done`/`Failed`/`Denied`; its absence on `Running` even with a `resultDetail` value set
   (a case that cannot occur via the reducer but is still asserted at the row); `null` and empty both
   drawing nothing with no gap; and a 3000-character `resultDetail` value keeping the status glyph and
@@ -401,7 +410,8 @@ rendering doesn't ripple into the data-layer fake.
 - Specs: `docs/specs/architecture/131-tool-call-collapsed-expanded-component.md`,
   `docs/specs/architecture/388-tool-call-row-status-affordance.md`,
   `docs/specs/architecture/895-tool-row-restyle.md`,
-  `docs/specs/architecture/896-nest-subagent-tool-rows.md`
+  `docs/specs/architecture/896-nest-subagent-tool-rows.md`,
+  `docs/specs/architecture/1575-cached-tool-input-fields.md`
 - Upstream:
   - [Data model](./data-model.md) — `ToolCall(toolName, input, inputFields, output, status,
     denial, elapsedSeconds, parentToolUseId, resultDetail)` and the `Message.toolCall`
@@ -426,6 +436,10 @@ rendering doesn't ripple into the data-layer fake.
     nothing in this file changed for it.
   - **#1316** — added the result count (`ToolCall.resultDetail`) to `TrailingStatus` and the
     `maxHalfWidth()` cap on the trailing group. See [Result count](#trailing-status) above.
+  - **#1575** — persisted `inputFields` in the disk cache so a restored row keeps its live headline
+    and subject; changed the field-less fallback from the `input` précis to an empty subject. See
+    [Subject and elapsed text](#subject-and-elapsed-text) above and [Conversation
+    cache](./conversation-cache.md) for the cache side.
 - Still open:
   - Language inference from path extension for `Read`/`Edit` code blocks
   - `AnimatedVisibility` around the expanded body
