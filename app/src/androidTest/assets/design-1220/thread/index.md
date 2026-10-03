@@ -29,6 +29,10 @@
 - **#1540 pass:** `main` at `2ce6beec` plus the test-only `refusalStateFramesAt412By892` (`1540-results.xml`, 1
   executed, 0 failures), for the refusal row's Expanded, Switch back pending and Switch back failed components
   (`620:1570`, `646:4694`, `646:4700`), exported on 2026-10-03. See "Refusal row states (#1540)".
+- **#1619 pass:** `main` at `f4c6598a` plus the test-only `queuedAndToolRowFramesAt412By892`,
+  `attachmentAndEmptyFramesAt412By892` and `dismissalAndReaderNoticeFramesAt412By892` on `feature/1619`
+  (`1619-results.xml`, 3 executed, 0 failures), for the six frames of section **Reachable states · #1539 ·
+  2026-10-02** (`696:4676`), exported with `get_screenshot` on 2026-10-03. See "Reachable states (#1539)".
 - **Strict waits:** every frame state waits for its marker text ("Connecting…", "Offline · Retry", "Thinking",
   "2 tasks running", "Pairing error", "Switch back to", "Sonnet", "Manual approval", "Builder Pipeline Plan",
   "No background tasks", "No background-task report yet" and so on) and fails the run if it does not appear within 5 s. The bubble photo's decode gets 10 s. No capture is taken of a state that did not render.
@@ -54,7 +58,9 @@ configuration (fixed; `600:1694` retaken) · #1498 workspace delimiter in the se
 #1512 delimiter rule inset · #1513 photo above text and photo bubble width · #1603 turn outcome pill · #1604 failure
 pill · #1605 history tail gutter and spacing · #1606 stale Stop-variant comment · #1607 type-ahead row spacing ·
 #1608 unrecognized and stopped-turn row spacing · #1614 expanded refusal row spacing and attribution weight ·
-#1615 switch-back button height and gaps, and its failure snackbar ·
+#1615 switch-back button height and gaps, and its failure snackbar · #1622 queued row drop button, width and
+spacing · #1623 nested tool row spacing · #1624 message attachment state colours and spacing · #1625 empty-thread
+text style · #1626 frame questions in `696:4676` · #1630 gap under the last tool, attachment or queued row · #1604 also takes the dismissal, confirmation and reader notices ·
 #1532 PDF tile not dimmed while disconnected · #1533 reader list indent · #1534 task panel spacing · #1118 agent switch
 (pending) · #1510 dark status-bar icons (fixed after these captures; see Status bar). #1493, #1495 and #1500 asked
 for these captures against the updated frames; their verdicts are below, and the states #1500 could not cover moved
@@ -716,6 +722,177 @@ Decided on #1529 (2026-10-02); each state's reference is the node named. None is
 | `CompactionBoundary` row | The rule row of the session delimiter frame `675:3682`, with the compaction label and no explanation line |
 | Send button's Stop variant | Message input button component `Action=Stop`, `114:3549`, on the Desktop page. `ThreadInputBar`'s comment that the component has no Stop variant is out of date (#1606) |
 | Top overlay Error pills: failed MCP server, and a usage-limit reading that is not a warning | Pill `347:6619`, Error state, X off, in the right-aligned top stack `568:3139` draws for the pairing error. Each pill's text is the app's string and the whole pill is the tap target. #1519 owns the usage-limit wording |
+
+## Reachable states (#1539)
+
+Six frames in `696:4676`, drawn on 2026-10-02 for states the #1434 inventory found no audit covered. The class's
+repository override adds four hooks for them, each keeping the earlier answer unless a test sets it: a queued
+backlog served by `observeQueue`, a flag that hides the fake's seeded messages, per-attachment retrieval gates for
+`retrieveAttachment`, and a failing `readWorkspaceFile` for the reader's refresh. The resolved prompt is set on
+`DesignInputs.hostModal`. Every state waits strictly for its marker (the last queued text, "Run the unit tests",
+"Loading…", "Retry" and "File not found", "Send a message to get started", "Resolved on another device",
+"Couldn't open file"). The seed's messages stand in for the frames' filler bubbles and are not compared, and the
+composer and footer verdicts are as in "Composer and footer". Each capture is compared at full frame.
+
+Two frames draw notices Juhana changed on 2026-10-02 (the dismissal notice and the reader's notices leave the
+bottom snackbar for a pill under the header). Those verdicts are expected mismatches and route to #1604, with the
+thread's confirmations such as "File saved". Three frame-side contradictions (Stop with text, two-segment path,
+dimmed bubbles) are questions for the design owner on #1626, not app mismatches.
+
+### Queued messages — `696:4677`
+
+- **Owning ticket:** #1161 (queued row, closed)
+- **Capture:** `queued-messages.png` (412x892, 1.0); evidence `queued-long.png`, the same rows plus a long third one
+- **Side-by-side:** `queued-messages-side-by-side.png`, `queued-long-side-by-side.png`
+- **Overlay:** `queued-messages-overlay.png`, `queued-long-overlay.png`
+- **Verdict:** mismatch
+- The frame's two backlog items, with no `messageId`, so both fold as unmatched rows after the thread's items. The
+  band reads Thinking.
+- **Drop button and the gutter:** the drop button does not stay inside the 20 px gutter on a wrapping row, because
+  it is not drawn at all. `QueuedMessageRow` measures the bubble first and the bubble has no width cap, so a
+  wrapping text takes the width up to the gutter (x 144 to 391) and the `IconButton` gets none. The app's rendering of
+  the frame's first row and the long row in `queued-long.png` both show no X; the frame draws it. The one-line row keeps its X inside the gutter, centred
+  at x 368 as in the frame.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | mismatch: the wrapping row's bubble spans x 144 to 391 against the frame's 144 to 343 (200 px), and its drop button is gone. The one-line row's bubble (x 163 to 343) and X match |
+| Padding | mismatch: one-line bubble 48 px tall against 52, three-line 88 against 92 |
+| Spacing | mismatch: rows 8 px apart against 16. The last row ends 24 px above the band's glyphs against 16 (app 719 to 744, frame 751 to 768), 8 px more than the 24 px status-bar shift explains |
+| Typography | match: body-medium, the wrapping row breaks at the frame's words |
+| Colour | match: dimmed user bubble, on-surface-variant clock and X |
+| Borders | match (none) |
+| Radii | match: bubble corners |
+| Icon paths | mismatch: no X on the wrapping row; clocks match within 2 px |
+| Component state | mismatch: the wrapping row cannot be dropped. The composer shows Send, not the frame's Stop, because it holds text (#643, as `16:8`); see #1626 |
+
+- **Routed:** #1622; the gap under the last row to #1630; the Stop variant to #1626
+
+### Sub-agent tool rows — `696:4795`
+
+- **Owning ticket:** #896 (nesting), #895 (headline), #811 and #1315 (statuses and the described header), #1316
+  (result count), #1577 (joined rows)
+- **Capture:** `tool-rows-nested.png` (412x892, 1.0)
+- **Side-by-side:** `tool-rows-nested-side-by-side.png`
+- **Overlay:** `tool-rows-nested-overlay.png`
+- **Verdict:** mismatch
+- Five tool rows chained by `parentToolUseId`: Agent running at depth 0; Grep done with "12 files", Read failed and
+  Agent running at depth 1; a described Bash row running at 14s at depth 2. The band reads the running tool
+  ("Running Bash… 14s"), the `RunningTool` arm whose reference is the Thinking line (see "No separate frame").
+  Spinners are indeterminate, so the arc each shows depends on the animation's phase at capture.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | match: rows 35 px tall, indented 16 px per level (x 20, 36, 52), right edges at the 20 px gutter |
+| Padding | match: 12 px insets |
+| Spacing | mismatch: the app joins the run (outlines overlap, 35 px pitch, `620:1792`'s rule); the frame separates every row by 12 px (48 px pitch). The last row ends 28 px above the band's glyphs against 16 (app 715 to 744, frame 751 to 768), 12 px more than the status-bar shift explains |
+| Typography | mismatch: the Read subject reads `.../ui/conversations/thread/QueueFol…` (four segments, then ellipsized) where the frame reads `.../thread/QueueFold.kt`; the app's rule is shared with desktop (see #1626). Tool names, subjects, "12 files" and "14s" otherwise match |
+| Colour | match: tertiary tool names, primary-container outlines, error glyph |
+| Borders | match: 1 px outlines |
+| Radii | match |
+| Icon paths | match: spinners, check, failed glyph, described-row chevron |
+| Component state | match: running, done and failed rows. The composer shows Send against the frame's Stop, as in the queued frame (#1626) |
+
+- **Routed:** #1623; the gap under the last row to #1630; the path and Stop to #1626
+
+### Message attachment states — `696:4913`
+
+- **Owning ticket:** #1290 (attachment states, closed)
+- **Capture:** `attachment-states.png` (412x892, 1.0)
+- **Side-by-side:** `attachment-states-side-by-side.png`
+- **Overlay:** `attachment-states-overlay.png`
+- **Verdict:** mismatch
+- A user message with one image whose retrieval never completes, and an assistant message with three files,
+  requested through `onAttachmentRequested`: the log never completes (Loading…), the PDF answers `Unavailable`
+  (Couldn't load file, Retry), the YAML `NotFound`. "Here's the crash on the Pixel." fits one line in the app and
+  wraps in the frame, from font rendering only.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | match: image placeholder 160 px square, the files bubble 272 px wide with its height equal. The image sits at x 187 against 190 and the image bubble is about 225 px wide against 222 because the caption fits one line, from font rendering only |
+| Padding | match: 20 px bubble insets |
+| Spacing | mismatch: file rows 2 px taller each (tiles at 0, 79 and 159 px from the first tile against 0, 77 and 155), state line 14 px under the name against 16. The files bubble ends 32 px above the band's glyphs against 16 (app 711 to 744, frame 751 to 768), 16 px more than the status-bar shift explains |
+| Typography | mismatch: the tile's type label is medium weight against regular; names and state lines in body-small as the frame |
+| Colour | mismatch: tile outline, glyph and label in the content colour at reduced alpha (about rgb 171,188,208) against a dim primary (50,98,141); the name dimmed with them against the frame's full on-surface. Retry in primary matches |
+| Borders | match: tile outlines |
+| Radii | match |
+| Icon paths | match: file tile shape, spinner |
+| Component state | match: loading, failed with Retry, not found |
+
+- **Routed:** #1624; the gap under the last row to #1630
+
+### Empty thread — `696:4989`
+
+- **Owning ticket:** none named (see `empty-thread-state.md`)
+- **Capture:** `empty-thread.png` (412x892, 1.0)
+- **Side-by-side:** `empty-thread-side-by-side.png`
+- **Overlay:** `empty-thread-overlay.png`
+- **Verdict:** mismatch
+- The override hides the fake's seeded messages, leaving no items and no queue.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | mismatch: the text is 192 px wide (x 111 to 302) against 171 (x 122 to 292); centred at y 425 in both |
+| Padding | match |
+| Spacing | match |
+| Typography | mismatch: body-medium against the frame's body-small |
+| Colour | match: on-surface-variant |
+| Borders | match (none) |
+| Radii | match (none) |
+| Icon paths | match: snowflake in the band |
+| Component state | match: empty thread, Send with text |
+
+- **Routed:** #1625
+
+### Prompt resolved elsewhere — `696:5065`
+
+- **Owning ticket:** #446, #1337
+- **Capture:** `prompt-resolved-elsewhere.png` (412x892, 1.0)
+- **Side-by-side:** `prompt-resolved-elsewhere-side-by-side.png`
+- **Overlay:** `prompt-resolved-elsewhere-overlay.png`
+- **Verdict:** mismatch (changed design)
+- `hostModal` holds one resolved prompt for this conversation with source `remote`. The frame dims its three oldest
+  bubbles with no delimiter above the newer ones; the capture dims only above its session delimiter (see #1626).
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | mismatch: a 388 px bottom snackbar above the band; the frame draws a Default pill hugging its text at the right of the top overlay, under the header (x 219 to 391) |
+| Padding | mismatch: snackbar insets, not the pill's |
+| Spacing | mismatch: see geometry |
+| Typography | mismatch (style follows the pill, #1604): the string "Resolved on another device" matches; the snackbar's body style is larger than the pill's |
+| Colour | mismatch: inverse-surface snackbar; the frame's pill is the Default pill's container |
+| Borders | match (none) |
+| Radii | mismatch: snackbar corners, not the pill's |
+| Icon paths | match (none) |
+| Component state | match: hides itself after the snackbar's duration (waited for) |
+
+- **Routed:** #1604 (comment extending its scope)
+
+### Markdown Reader notice — `696:5101`
+
+- **Owning ticket:** #1291 (reader notices)
+- **Capture:** `reader-notice.png` (412x892, 1.0)
+- **Side-by-side:** `reader-notice-side-by-side.png`
+- **Overlay:** `reader-notice-overlay.png`
+- **Verdict:** mismatch (changed design)
+- The reader opened on the linked note, then Refresh from its overflow menu with the note read failing, which
+  shows "Couldn't open file". The frame draws "Couldn't save file": Save failed and File saved report only after
+  the system's create-document picker returns, which the harness cannot drive, and they share this snackbar host
+  and style. The note body is as in "Markdown Reader — `553:2574`".
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | mismatch: a 388 px bottom snackbar; the frame draws an Error pill at the right of the top overlay, under the header (x 279 to 391) |
+| Padding | mismatch: snackbar insets, not the pill's |
+| Spacing | mismatch: see geometry |
+| Typography | mismatch (style follows the pill, #1604): the notice's string matches; the snackbar's body style is larger than the pill's |
+| Colour | mismatch: inverse-surface snackbar; the frame's pill is error-container |
+| Borders | match (none) |
+| Radii | mismatch: snackbar corners, not the pill's |
+| Icon paths | match (none, no X) |
+| Component state | match: one notice (its timeout not waited for) |
+
+- **Routed:** #1604 (comment extending its scope: Error pill for failures, Default pill for File saved)
 
 ## Status bar
 
