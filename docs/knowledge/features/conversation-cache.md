@@ -209,7 +209,12 @@ holding only `message`/`boundary` rows — still decodes, and the stored `versio
 `CachedMessage(id, sessionId, role, content, timestamp, tool: CachedToolCall? = null, attachments:
 List<CachedAttachment> = emptyList())` carries no `isStreaming` field — a restored row is always
 settled, so the field would have nothing to encode. `CachedToolCall(toolName, input, output,
-status)` and `CachedBoundary(previousSessionId, newSessionId, reason, occurredAt, workspaceCwd:
+status, inputFields: Map<String, String> = emptyMap())` — `inputFields` added by #1575 so a restored
+`Bash` row keeps its described/simple [header](tool-call-row.md#subject-and-elapsed-text) instead of
+falling back to the `input_summary` précis; the default keeps a document written before #1575 (no
+`inputFields` key) readable with empty fields, the same additive pattern as `CachedMessage.attachments`
+(#983). `parentToolUseId`, `denial` and `resultDetail` stay uncached. `CachedBoundary(previousSessionId,
+newSessionId, reason, occurredAt, workspaceCwd:
 String? = null)` round out the two original row kinds. `CachedBanner(level, text, truncated,
 occurredAt)`, `CachedCompaction(preTokens: Long? = null, postTokens: Long? = null, manual,
 occurredAt)` and `CachedRefusal(originalModel, fallbackModel: String? = null, banner,
