@@ -98,11 +98,8 @@ class ThreadTopOverlayTest {
         }
     }
 
-    private fun label(
-        status: String,
-        agent: String = "Claude",
-    ): String =
-        context.getString(R.string.thread_usage_limit_label, agent, status) + context.getString(R.string.thread_usage_limit_spent, 80)
+    // #1519: client-owned copy; the status picks the lead and is never drawn.
+    private fun label(status: String): String = if (status == "rejected") REACHED_LABEL else NEARLY_LABEL
 
     @Test
     fun noNotices_drawNoPill() {
@@ -128,18 +125,20 @@ class ThreadTopOverlayTest {
         composeRule.onNodeWithContentDescription(dismissDescription).assertIsDisplayed()
     }
 
-    // #1115: a Claude conversation reads exactly as before; a Codex one names Codex.
+    // #1519: the copy names no agent and no percent, so a Codex conversation reads the same as a Claude one.
     @Test
-    fun theUsagePill_namesTheConversationsAgent() {
+    fun theUsagePill_readsTheSameForEveryAgent() {
         usageLimit = warning.copy(status = "rejected")
         setScreen()
-        composeRule.onNodeWithContentDescription("Claude reports usage-limit status: rejected · 80% spent").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription(REACHED_LABEL).assertIsDisplayed()
 
         state = state.copy(agent = ConversationAgent.Codex)
-        composeRule.onNodeWithContentDescription("Codex reports usage-limit status: rejected · 80% spent").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription(REACHED_LABEL).assertIsDisplayed()
 
         usageLimit = warning.copy(status = "")
-        composeRule.onNodeWithContentDescription("Codex reported a usage-limit update · 80% spent").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription(NEARLY_LABEL).assertIsDisplayed()
+        composeRule.onNodeWithText("Codex", substring = true).assertDoesNotExist()
+        composeRule.onNodeWithText("%", substring = true).assertDoesNotExist()
     }
 
     @Test
@@ -317,5 +316,7 @@ class ThreadTopOverlayTest {
         const val RE_PAIR_LABEL = "Pairing error - Re-pair"
         const val OFFLINE_RETRY_LABEL = "Offline · Retry"
         const val MCP_FAILED_LABEL = "MCP server github failed"
+        const val NEARLY_LABEL = "Nearly at usage limit - 7-day window"
+        const val REACHED_LABEL = "Usage limit reached - 7-day window"
     }
 }

@@ -23,7 +23,6 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
-import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.conversations.components.NoticePill
 import de.pyryco.mobile.ui.conversations.components.boundMcpText
@@ -42,7 +41,7 @@ private val OverlayPillGap = 12.dp
  * report is a Default pill with an X only when [usageLimitIsWarning] says so, and it is left out once
  * [usageLimitDismissed]; any other reading is an Error pill that cannot be hidden. Pairing failure takes
  * precedence over the offline pill because a network retry cannot repair a rejected pairing. With none of
- * them, nothing is emitted. The report names [agent] (#1115).
+ * them, nothing is emitted.
  *
  * [mcpFailure] (#1345) is the Claude-authored name of a failed MCP server: an Error pill with no X whose tap
  * runs [onOpenMcpFailure]. It is never drawn beside the pairing or offline pill.
@@ -57,7 +56,6 @@ internal fun ThreadTopOverlay(
     modifier: Modifier = Modifier,
     connectionState: ConnectionState = ConnectionState.Connected,
     onRetryConnection: () -> Unit = {},
-    agent: ConversationAgent = ConversationAgent.Claude,
     mcpFailure: String? = null,
     onOpenMcpFailure: () -> Unit = {},
 ) {
@@ -88,7 +86,7 @@ internal fun ThreadTopOverlay(
             if (usage != null) {
                 val warning = usageLimitIsWarning(usage)
                 NoticePill(
-                    text = usageLimitLabel(usage, agent),
+                    text = usageLimitLabel(usage),
                     isError = !warning,
                     onDismiss = if (warning) onDismissUsageLimit else null,
                 )

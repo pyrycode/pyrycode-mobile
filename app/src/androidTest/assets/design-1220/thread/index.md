@@ -37,7 +37,7 @@ shapes, not the frames' photo. Message text is partly the demo seed's, and times
 locale ("5/10/26 - 12:00 PM" for the frames' "13.01.2026 - 13:55"). Neither is compared.
 
 **Routed defects.** #1494 refusal model names (fixed; `620:1577` and `646:4707` retaken) · #1496 inset sheets and the task panel's Close · #1497 Run
-configuration (fixed; `600:1694` retaken) · #1498 workspace delimiter in the seed · #1499 Offline and usage-limit pills · #1485 compact footer ·
+configuration (fixed; `600:1694` retaken) · #1498 workspace delimiter in the seed · #1499 Offline and usage-limit pills (usage copy fixed by #1519; `568:3139` retaken) · #1485 compact footer ·
 #1512 delimiter rule inset · #1513 photo above text and photo bubble width · #1529 states with no frame (Gaps) ·
 #1532 PDF tile not dimmed while disconnected · #1533 reader list indent · #1534 task panel spacing · #1118 agent switch
 (pending) · #1510 dark status-bar icons (fixed after these captures; see Status bar). #1493, #1495 and #1500 asked
@@ -227,25 +227,29 @@ verdicts apply to each of those frames, which list only what differs.
 
 ### Task count pill — `568:3139`, with the usage-limit and pairing-error pills
 
-- **Owning ticket:** #1043 (count pill), #1002 and #1115 (usage-limit pill), #842 (pairing error)
+- **Owning ticket:** #1043 (count pill), #1002 and #1519 (usage-limit pill), #842 (pairing error)
 - **Capture:** `task-count-pill.png` (412x892, 1.0)
 - **Side-by-side:** `task-count-pill-side-by-side.png`
 - **Overlay:** `task-count-pill-overlay.png`
-- **Verdict:** mismatch
+- **Verdict:** match
+- **Recaptured for #1519** with `threadStatusFramesAt412By892` on `pixel8Api35`, `requireRealSystemBars=true`
+  (`1519-results.xml`, 2 executed with `compactAt320By700`, 0 failures). `figma-568-3139.png` was re-exported on
+  2026-10-03; only the message area's filler changed. Only `task-count-pill*.png` and `compact-notices.png` were
+  replaced from that run.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: the usage-limit pill spans the message area on two lines; the frame's hugs its text on one line at the right. The count pill and pairing-error pill match |
+| Geometry | match: the usage-limit pill hugs its text on one line at the right, x 149–391 against the frame's 154–391 (device glyphs 5 px wider), 24 px lower for the status bar. The count pill and pairing-error pill match |
 | Padding | match |
 | Spacing | match: 12 px between the overlay pills |
-| Typography | mismatch: usage-limit copy is "Claude reports usage-limit status: allowed_warning · 94% spent"; the frame reads "Nearly at usage limit - 7-day window" |
+| Typography | match: "Nearly at usage limit - 7-day window", the frame's copy |
 | Colour | match: primary-container count and usage pills, error-container pairing pill |
 | Borders | match |
 | Radii | match |
 | Icon paths | match: dismiss X on the usage pill |
 | Component state | match: warning dismissible, two tasks running |
 
-- **Routed:** #1499
+- **Routed:** #1499, then #1519 (usage-limit copy; fixed, `568:3139` retaken)
 
 ### Background tasks — Populated `568:877`, Capped `568:932`, Empty `568:981`, Never reported `568:997`
 
@@ -472,7 +476,7 @@ not apply to the seeded thread's full list) and #1510 (status-bar icons).
 | Keyboard open, compact | `compact-keyboard.png` | Compared with `676:3981` above. Input, footer and band stay above the keyboard; no control is hidden |
 | Offline pill, compact | `compact-offline.png` | "Offline · Retry" fits on one line at the right; no overlap with the header |
 | Offline with pairing error, compact | `compact-offline-overlays.png` | "Pairing error - Re-pair" (waited for) replaces the Offline pill in `ThreadTopOverlay`; it overlays the top bubble as designed. No clipping |
-| Usage pill, refusal offer and strip, compact | `compact-notices.png` | The usage-limit pill wraps to three lines across the message area (#1499) but keeps its dismiss X reachable. The refusal row and "Switch back to" button wrap and stay inside the gutter; the four tiles and their remove badges fit above the input. The second image tile shows its PNG glyph because its thumbnail had not loaded at capture; the tile's size and badge are unchanged |
+| Usage pill, refusal offer and strip, compact | `compact-notices.png` | The usage-limit pill wraps to two lines without truncating, "Nearly at usage limit - 7-day" over "window", and keeps its dismiss X reachable (#1519). The refusal row and "Switch back to" button wrap and stay inside the gutter; the four tiles and their remove badges fit above the input. In the #1519 retake all three image tiles show their thumbnails |
 | Overflow menu, compact | `compact-overflow-menu.png` | All four rows visible and reachable; no workspace action |
 | Actions menu, compact | `compact-actions-menu.png` | All four rows visible above the footer; it covers the count pill while open, which is the menu's overlay, not a layout overlap |
 | Task panel, compact | `compact-tasks.png` | Title wraps to two lines beside the close X; cards scroll and the Close button stays reachable (#1496 removes it; the test closes through the header X) |

@@ -8,6 +8,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
+import de.pyryco.mobile.ui.conversations.components.UsageLimitReset
 import de.pyryco.mobile.ui.conversations.components.formatUsageLimitReset
 import kotlinx.datetime.Clock
 import kotlinx.datetime.TimeZone
@@ -16,7 +17,6 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.util.Locale
 
 /**
  * Rung 2 (#804): claude's usage-limit report driven through the real [RemoteConversationRepository]
@@ -50,15 +50,16 @@ class ScriptedUsageLimitTest {
         harness.close()
     }
 
-    // AC #1: claude's status shows verbatim, inside the attributed lead; #1002 keeps thinking beside it.
+    // #1519: the reading shows as client-owned copy; #1002 keeps thinking beside it.
     @Test
-    fun reading_showsClaudesStatus_besideTheThinkingLabel() {
+    fun reading_showsTheClientCopy_besideTheThinkingLabel() {
         harness.pushTurnState("thinking")
         awaitDisplayed(thinkingDescription)
 
         harness.pushRateLimited(status = "allowed_warning", utilization = 0.94)
 
-        awaitDisplayed(label("allowed_warning", spent = 94))
+        awaitDisplayed(label("allowed_warning"))
+        assertNoTextContaining("allowed_warning")
         composeRule.onNodeWithContentDescription(thinkingDescription).assertIsDisplayed()
     }
 
@@ -77,8 +78,8 @@ class ScriptedUsageLimitTest {
         val resetsAt = Clock.System.now().epochSeconds + 2 * 60 * 60
         harness.pushRateLimited(status = "allowed_warning", resetsAt = resetsAt)
 
-        val resets = formatUsageLimitReset(resetsAt, Clock.System.now(), TimeZone.currentSystemDefault(), Locale.getDefault())
-        awaitDisplayed(label("allowed_warning", resets = resets))
+        val reset = formatUsageLimitReset(resetsAt, Clock.System.now(), TimeZone.currentSystemDefault())
+        awaitDisplayed(label("allowed_warning", reset = reset))
     }
 
     // AC #2: `0` and an absurd far-future value render without a fabricated date.
@@ -153,15 +154,19 @@ class ScriptedUsageLimitTest {
         composeRule.onNodeWithContentDescription(compactingDescription).assertIsDisplayed()
     }
 
+    /** The pill's copy for a `seven_day` reading (#1519): the harness's default limit type. */
     private fun label(
         status: String,
-        spent: Int? = null,
-        resets: String? = null,
+        reset: UsageLimitReset? = null,
     ): String =
         buildString {
-            append(string(R.string.thread_usage_limit_label, string(R.string.agent_name_claude), status))
-            if (spent != null) append(string(R.string.thread_usage_limit_spent, spent))
-            if (resets != null) append(string(R.string.thread_usage_limit_resets, resets))
+            append(string(if (status == "rejected") R.string.thread_usage_limit_reached else R.string.thread_usage_limit_nearly))
+            append(string(R.string.thread_usage_limit_seven_day))
+            when {
+                reset == null -> Unit
+                reset.date == null -> append(string(R.string.thread_usage_limit_resets, reset.time))
+                else -> append(string(R.string.thread_usage_limit_resets_on, reset.date, reset.time))
+            }
         }
 
     private fun string(

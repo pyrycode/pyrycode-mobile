@@ -133,7 +133,7 @@ private fun NoticePillPreviewContent() {
         horizontalAlignment = Alignment.End,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        NoticePill(text = "Claude reports usage-limit status: allowed_warning · 94% spent", isError = false, onDismiss = {})
+        NoticePill(text = "Nearly at usage limit - 7-day window", isError = false, onDismiss = {})
         NoticePill(text = "Pairing error - Re-pair", isError = true, onClick = {})
     }
 }
