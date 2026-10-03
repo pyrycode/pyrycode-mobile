@@ -86,6 +86,7 @@ private fun MessageContainer(
     bubbleColor: Color,
     bubbleContentColor: Color,
     modifier: Modifier = Modifier,
+    attachments: @Composable () -> Unit = {},
     metaRow: MetaRowControl = MetaRowControl(),
     body: @Composable () -> Unit,
 ) {
@@ -109,7 +110,10 @@ private fun MessageContainer(
                 verticalArrangement = Arrangement.spacedBy(BubbleContentSpacing),
                 horizontalAlignment = Alignment.Start,
             ) {
-                body()
+                if (message.attachments.isNotEmpty()) attachments()
+                if (message.isStreaming || message.hasNoBody()) body() else SelectionContainer {
+                    Column(verticalArrangement = Arrangement.spacedBy(BubbleContentSpacing)) { body() }
+                }
                 if (metaRow.visible) {
                     MessageMetaRow(timestamp = message.timestamp, copyText = message.content, modifier = Modifier.align(alignment))
                 }
@@ -126,6 +130,43 @@ The frame's 412dp reference width carries a 20dp gutter on each edge (`MessageCo
 The `Column`'s `horizontalAlignment = Alignment.Start` applies to **both** roles — the design puts `items-start` on the `Message` column even for the right-aligned user bubble (a short user body left-aligns inside its own bubble), while `justify-end` is on the *meta row* alone. That is why the meta row alone takes `Modifier.align(alignment)` rather than the whole column taking the role's alignment.
 
 The meta row is handed `message.content` directly — never text read back out of `body` — so an assistant bubble's copy control copies the markdown *source*, not the parsed render.
+
+### Body selection (since #1638)
+
+Long-pressing a finished user or assistant body starts system text selection,
+including fenced code. Each bubble owns its selection region; it cannot extend
+into another bubble. Streaming bodies stay unselectable so arriving text cannot
+invalidate selection offsets. Attachments and the meta row are outside the region:
+attachment long press still saves, and the meta row still copies the whole source.
+Links and code-block copy buttons keep their existing actions. The five inert
+rows (`UnrecognizedMessageRow`, `ThreadPermissionModal`, `BannerNoticeRow`,
+`StoppedTurnRow`, `ModelRefusalRow`) remain without selection containers.
+
+`SelectionContainer` stacks direct children, so the body needs an inner `Column`
+with `BubbleContentSpacing` to keep user paragraphs 12dp apart. Neither wrapper
+has a width modifier, preserving [the finished bubble's hug](#fill-vs-hug-the-streaming-arm-keeps-fillmaxwidth-since-644).
+Keep the wrapper behind `hasNoBody()` as well as the streaming guard: an
+attachment-only body's lambda emits nothing, but wrapping it produces a zero-height
+child that still receives spacing on both sides. This doubles the attachments-to-meta
+gap from 12dp to 24dp. Counting empty text nodes cannot detect that regression;
+measure the gap. `hasNoBody()` means attachments exist and content is blank;
+a text-only message retains its body even when empty.
+
+The selection handles and Copy toolbar are system UI; the bubble has no new
+at-rest appearance. The [design inventory](../../../app/src/androidTest/assets/design-1220/README.md#thread-composer-and-footer)
+records the no-separate-frame decision. When combining selection with a surface
+tap that toggles metadata (#1621), check a pointer tap inside the selection area
+still toggles the row.
+
+`MessageBubbleSelectionTest` uses a recording context-menu provider: it checks
+selection and clipboard behavior inside the component, but does not exercise
+Android's actual selection handles and Copy menu in `ThreadScreen`. That device
+path remains unverified. [#1674](https://github.com/pyrycode/pyrycode-mobile/issues/1674)
+owns a rung-3 `InteractiveStreamE2ETest` scenario selecting a word from a finished
+real-Claude reply through the actual Android Copy menu and reading the platform
+clipboard, plus a rung-4 `DeterministicInteractiveStreamE2ETest` twin. Scenario
+implementation, [ladder coverage documentation](../../e2e-interactive-stream.md)
+and dispatcher-owned live evidence remain pending in that follow-up.
 
 ### Attachment slot (since #984)
 
@@ -279,35 +320,8 @@ No preview for the `Role.Tool` arm at depth 0 — preview coverage for the tool-
 
 ## Testing
 
-`MessageMetaRowToggleTest` mounts the real `ThreadScreen` to cover show/hide and single selection, streaming-to-finished taps, links and independently visible code copy, inert attachment states, and the screen-reader toggle and hidden-row timestamp/copy semantics. Standalone `MessageBubbleTest` and palette fixtures retain the visible-row default, so their streaming copy test does not describe thread behavior. `ThreadFrameCaptureTest.compactWidthAndEnlargedText_keepFrameControlsReachable` reveals the row before testing its copy pointer target. Compose semantics assertions do not establish TalkBack's spoken order on a device.
-
-`app/src/sharedTest/.../components/MessageBubblePaletteTest.kt` uses native Canvas
-pixels at the 412dp reference width to check user, finalized assistant, streaming
-assistant and queued fills in static dark/light and wallpaper dark/light modes.
-The queued expectation composites the user base fill at 0.6 over the background.
-Every fixture deliberately sets system mode opposite to app mode, so an accidental
-system-mode lookup cannot hide behind matching defaults. The suite also checks
-streaming finalization and theme changes without remounting, text-layout colours
-for bodies and timestamps, and unchanged global Material containers in static
-modes. Sample padding inside the surface, clear of text and rounded corners, to
-assert the actual fill rather than only the theme token.
-
-`app/src/sharedTest/.../components/MessageBubbleTest.kt` (new, #644), the rung-2 component-render layer, with a file-local fake `ClipboardManager` provided through `LocalClipboardManager`:
-
-- `bothRoles_renderBodyAndOwnMetaRow` — both roles render their body text and their own meta row.
-- `roleAlignment_userSitsRightOfAssistant_andEachClearsTheOppositeInset` — reads both bodies' rects; the user body sits right of the assistant body and each clears the opposite root edge by at least `MessageRoleInset`.
-- `shortAssistantBody_hugsItsContent_whileALongOneStillGrowsToTheLane` — the regression guard for [Fill vs. hug](#fill-vs-hug-the-streaming-arm-keeps-fillmaxwidth-since-644) above, added in the rework cycle.
-- `copy_putsOnlyThatMessagesTextOnTheClipboard` / `copy_fromTheUserBubble_putsOnlyTheUserText_onTheClipboard` — tapping one bubble's copy control captures exactly that message's `content`, never the other's.
-- `copyControl_carriesItsAccessibleNameAndButtonRole` — addressable by `cd_thread_copy_message`, `Role.Button`.
-- `copy_onStreamingMessage_yieldsWhatHasArrived_andTheCaretStillRenders` — a streaming message's caret still renders inside the new container, and its copy control yields the full `content`, not the revealed prefix.
-
-`app/src/test/.../components/MessageMetaRowFormatTest.kt` (new, #644) pins `formatShortDateTime` locale-robustly, the way [`SessionBoundaryDelimiter`](session-boundary-delimiter.md)'s tests already do for `formatShortTime`: composition and order (`joinsLocalizedShortDateAndShortTimeInThatOrder`), the design's separator (`joinsTheTwoHalvesWithTheDesignsSeparator`), locale- and zone-sensitivity computed through the same `DateTimeFormatter.ofLocalized*` API rather than a literal (`followsTheSuppliedLocaleRatherThanAFixedPattern`, `followsTheSuppliedTimeZone`), and that the result never equals the Figma sample literal under an unrelated locale (`neverEmitsTheFigmaSampleLiteralForAnUnrelatedLocale`).
-
-**`app/src/sharedTest/.../components/MessageAttachmentsTest.kt` (new, #984, Robolectric `@GraphicsMode(NATIVE)`)** mounts the real `MessageBubble` with a fake `LocalAttachmentThumbnailDecoder` and covers: a decoded image and its content description; the image slot's size held equal from loading to loaded; a decode failure falling back to the file row; a file row labelled with its name and type; a long name shortened to one line inside the bubble's lane (asserted on drawn bounds via `useUnmergedTree = true`, not semantics — see [MessageBubble — attachment slot](message-bubble-attachment-slot.md#attachment-slot-since-984)); an unnamed reference showing the generic label until retrieval supplies one; loading; failed-with-retry, where the tap calls `onRetry(id)` for the right attachment among several; not-found with no retry control; attachments rendering in reference order; an attachment-only message drawing no empty text node; every composed attachment reporting itself shown by id; and, since #985, a `Ready` file row's tap and long-press calling `onOpen`/`onSave` with that attachment's `AttachmentTarget`, a `Ready` image's tap doing the same, and `Loading`/`Failed`/`NotFound` items offering neither (see [MessageBubble — attachment slot § Open and save](message-bubble-attachment-slot.md#open-and-save-since-985)). Native graphics mode is what lets the long-name case measure single-line truncation and the fake decoder hand back a real `ImageBitmap`.
-
-**No dedicated `MessageBubbleTest` case for `toolNestingDepth` (#896).** The parameter is exercised through the real `ThreadScreen` fold instead — `ToolRowNestingTest` (`app/src/sharedTest/.../thread/`) mounts the screen with a matched child, a grandchild and an unmatched-parent tool row and asserts the rendered indent steps by level; see [Thread screen § Subagent tool-row nesting](./thread-screen-subagent-tool-rows.md#subagent-tool-row-nesting-896). A unit-level `ToolNestingDepthsTest` covers the depth derivation itself, independent of any composable.
-
-Two pre-existing suites were re-run rather than relaxed across #644's restyle, because both read this surface closely: `ScriptedThreadRenderTest` (the streaming caret glyph through the real fold) and `ScriptedSessionBoundaryTest` (tight text-node rects through the unmerged tree, which a container wrapped around assistant text changes the ownership of — a `Surface` + `Column` adds no semantics node, so the leaf text nodes it addresses survive). Both stayed green unchanged.
+See [MessageBubble — testing](message-bubble-testing.md#testing) for selection-menu
+fixtures, metadata gestures, palette and geometry guards, and attachment coverage.
 
 ## Edge cases / limitations
 
@@ -318,12 +332,14 @@ Two pre-existing suites were re-run rather than relaxed across #644's restyle, b
 - **`Role.Tool` routes to [`ToolCallRow`](./tool-call-row.md) since #131.** The null-safe `?.let` renders nothing if a `Role.Tool` message arrives with `toolCall = null`.
 - **RTL.** `Arrangement.spacedBy(0.dp, alignment)` and `Modifier.fillMaxWidth()` respect `LayoutDirection` automatically — in RTL locales the user bubble pins to the left and the assistant bubble to the right. `BubbleShape`'s uniform 6dp corners mean there is no longer an asymmetric "tail" to worry about flipping (the pre-#644 shape's `bottomEnd = 6.dp` notch is gone).
 - **The finalized assistant body hugs its content up to the 272dp lane maximum; the streaming body still fills it.** See [Fill vs. hug](#fill-vs-hug-the-streaming-arm-keeps-fillmaxwidth-since-644) above — deliberate, not an oversight, and the one place the two render paths' width behaviour diverges.
-- **Clipboard write is bounded, not caught.** `CopyTextControl` truncates to `MAX_CLIPBOARD_CHARS = 100_000` rather than catching a `TransactionTooLargeException` after the fact — see [Meta row and copy control](#meta-row-and-copy-control-messagemetarowkt-since-644).
+- **Explicit copy controls are bounded; system selection Copy is not.** `CopyTextControl` truncates to `MAX_CLIPBOARD_CHARS = 100_000` rather than catching a `TransactionTooLargeException` after the fact. System selection Copy bypasses this cap; selecting all of a very long assembled reply can overflow the Binder clipboard transaction. This is accepted for user-chosen selections (#1638) — see [Meta row and copy control](#meta-row-and-copy-control-messagemetarowkt-since-644).
 - **Copy control accessible name is a static string, not message text.** A screen reader announces "Copy this message," not the message content — the control's `contentDescription` never reads from `Message.content`.
 - **Unbounded daemon-authored text can still drive a layout-cost DoS on this screen — pre-existing, not addressed by #644.** Neither `Message.content` nor (in the boundary label) `workspaceCwd` is bounded anywhere on the inbound path; both have rendered into unbounded-height `Text` since #128/#135. #644's security review flagged this as out of scope for this ticket (the fix belongs in `RemoteConversationRepository`'s fold or `MobileWireCodec`'s decode, where one bound would cover every render surface) and bounded only its own new sink, the clipboard.
+- **Code-block language labels are selectable.** Select all can include the language label with the code. The block's own copy button still copies only its code source. Excluding the label would require `DisableSelection` in `MarkdownText`.
 
 ## Related
 
+- [Selectable message bubble spec](../../specs/architecture/1638-selectable-message-bubble-text.md): selection scope, security review and test setup revisions.
 - Ticket notes: [`../codebase/128.md`](../codebase/128.md), [`../codebase/129.md`](../codebase/129.md), [`../codebase/130.md`](../codebase/130.md), [`../codebase/131.md`](../codebase/131.md), [`../codebase/184.md`](../codebase/184.md), [`../codebase/644.md`](../codebase/644.md)
 - Specs: `docs/specs/architecture/128-message-bubble-user-assistant-variants.md`, `docs/specs/architecture/129-markdown-rendering-assistant-messages.md`, `docs/specs/architecture/130-code-block-rendering-syntax-highlighting.md`, `docs/specs/architecture/131-tool-call-collapsed-expanded-component.md`, `docs/specs/architecture/184-streaming-token-reveal-blinking-caret.md`, `docs/specs/architecture/644-message-bubbles-and-copy-actions.md`, `docs/specs/architecture/896-nest-subagent-tool-rows.md`, `docs/specs/architecture/984-message-attachments-in-bubbles.md`, `docs/specs/architecture/985-open-and-save-message-attachment.md`
 - Decisions: [ADR 0002 — markdown renderer library](../decisions/0002-markdown-renderer-library.md) (assistant-variant rendering pipeline), [ADR 0003 — syntax highlighter library](../decisions/0003-syntax-highlighter-library.md) (fenced-code styling)

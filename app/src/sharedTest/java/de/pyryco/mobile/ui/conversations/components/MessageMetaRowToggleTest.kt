@@ -134,6 +134,8 @@ class MessageMetaRowToggleTest {
         composeRule.waitForIdle()
         assertEquals("copy controls shown", expected, visibleCopyControls())
         assertEquals("timestamps shown", expected, visibleTimestamps())
+        // Single bubble taps must be spaced beyond text selection's double-tap timeout (#1638).
+        composeRule.mainClock.advanceTimeBy(500)
     }
 
     @Test
