@@ -110,8 +110,6 @@ class SettingsNavigationTest {
         compose.onAllNodes(switch)[0].assertIsOn()
     }
 
-    private val switch = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Switch)
-
     @Test fun unpairedPhoneCanStillDismissSettings() {
         start(withHost = false)
         openSettings()
@@ -219,4 +217,6 @@ class SettingsNavigationTest {
         }
         compose.waitForIdle()
     }
+
+    private val switch = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Switch)
 }

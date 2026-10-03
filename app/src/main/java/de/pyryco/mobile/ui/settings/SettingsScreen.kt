@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.tooling.preview.Preview
@@ -112,7 +113,11 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodyLarge.copy(lineHeightStyle = FrameLineBox),
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            Switch(checked = collapseToolUses, onCheckedChange = onToggleCollapseToolUses)
+            Switch(
+                checked = collapseToolUses,
+                onCheckedChange = onToggleCollapseToolUses,
+                modifier = Modifier.semantics { contentDescription = "Collapse assistant tool uses" },
+            )
         }
     }
 }

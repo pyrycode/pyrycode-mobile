@@ -224,7 +224,7 @@ class SettingsViewModel(
         )
 
     /**
-     * This destination's own host's default workspace (#714), not the app-wide one its eight
+     * This destination's own host's default workspace (#714), not the app-wide one its
      * siblings above and below read.
      *
      * Keyed by the owner captured into the route, so two hosts' Settings hold two values and a later

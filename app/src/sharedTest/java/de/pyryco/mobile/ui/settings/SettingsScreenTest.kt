@@ -12,6 +12,8 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -32,7 +34,7 @@ import org.robolectric.annotation.Config
 class SettingsScreenTest {
     @get:Rule val rule = createComposeRule()
 
-    @Test fun settingsShowsOnlyNotificationsInSharedModal() {
+    @Test fun settingsShowsOnlyNotificationsAndThreadInSharedModal() {
         show()
 
         listOf("Settings", "Notifications", "Push notifications when claude responds", "Notification sound", "Default", "Done")
@@ -74,6 +76,7 @@ class SettingsScreenTest {
         rule.onNodeWithText("Collapse assistant tool uses").assertIsDisplayed()
         rule.onAllNodes(switch).assertCountEquals(2)
         rule.onAllNodes(switch)[1].assertIsDisplayed().assertIsOn()
+        rule.onNode(hasContentDescription("Collapse assistant tool uses") and isToggleable()).assertIsOn()
         val sound = rule.onNodeWithText("Notification sound").getUnclippedBoundsInRoot()
         val heading = rule.onNodeWithText("Thread").getUnclippedBoundsInRoot()
         val label = rule.onNodeWithText("Collapse assistant tool uses").getUnclippedBoundsInRoot()
