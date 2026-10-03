@@ -3,7 +3,7 @@
 ## Files read
 
 - `app/src/androidTest/java/de/pyryco/mobile/design/ThreadDesignCaptureTest.kt`: `install()` (the repository
-  override, which gains three test-owned hooks), `openThread`, `await`, `message`, `refusalStateFramesAt412By892`
+  override, which gains four test-owned hooks), `openThread`, `await`, `message`, `refusalStateFramesAt412By892`
   (the #1540 analogue) and `runConfigurationAndReaderAt412By892` (reaches the reader through `onOpenMarkdownLink`).
 - `app/src/androidTest/java/de/pyryco/mobile/design/DesignInputs.kt`: `hostModal`, the flow a resolved prompt is
   set on.
@@ -94,3 +94,10 @@ Device-only: the captures need real pixels on the `pixel8Api35` image with real 
 Its results XML is committed as `design-1220/thread/1619-results.xml`. Every state waits strictly for its marker,
 so a state that never renders fails the run. `compileDebugAndroidTestKotlin`, `lint`, `assembleDebug` and
 `spotlessCheck` locally. No rung-3 scenario: an audit, not an operator-facing flow.
+
+## Revisions
+
+- 2026-10-03, rework after the verifier's review of PR #1627: the queued, nested tool-row and attachment captures
+  leave a larger gap between the last row and the status band than their frames (8, 12 and 16 px beyond the 24 px
+  status-bar shift). The three entries' Spacing rows now record it and route it to one new defect, #1630, joined to
+  **Routed defects** and the README rows. No capture or test code changes.

@@ -60,7 +60,7 @@ pill · #1605 history tail gutter and spacing · #1606 stale Stop-variant commen
 #1608 unrecognized and stopped-turn row spacing · #1614 expanded refusal row spacing and attribution weight ·
 #1615 switch-back button height and gaps, and its failure snackbar · #1622 queued row drop button, width and
 spacing · #1623 nested tool row spacing · #1624 message attachment state colours and spacing · #1625 empty-thread
-text style · #1626 frame questions in `696:4676` · #1604 also takes the dismissal, confirmation and reader notices ·
+text style · #1626 frame questions in `696:4676` · #1630 gap under the last tool, attachment or queued row · #1604 also takes the dismissal, confirmation and reader notices ·
 #1532 PDF tile not dimmed while disconnected · #1533 reader list indent · #1534 task panel spacing · #1118 agent switch
 (pending) · #1510 dark status-bar icons (fixed after these captures; see Status bar). #1493, #1495 and #1500 asked
 for these captures against the updated frames; their verdicts are below, and the states #1500 could not cover moved
@@ -750,15 +750,15 @@ dimmed bubbles) are questions for the design owner on #1626, not app mismatches.
   band reads Thinking.
 - **Drop button and the gutter:** the drop button does not stay inside the 20 px gutter on a wrapping row, because
   it is not drawn at all. `QueuedMessageRow` measures the bubble first and the bubble has no width cap, so a
-  wrapping text takes the width up to the gutter (x 144 to 391) and the `IconButton` gets none. The frame's own first
-  row and the long row in `queued-long.png` both show no X. The one-line row keeps its X inside the gutter, centred
+  wrapping text takes the width up to the gutter (x 144 to 391) and the `IconButton` gets none. The app's rendering of
+  the frame's first row and the long row in `queued-long.png` both show no X; the frame draws it. The one-line row keeps its X inside the gutter, centred
   at x 368 as in the frame.
 
 | Aspect | Verdict |
 |---|---|
 | Geometry | mismatch: the wrapping row's bubble spans x 144 to 391 against the frame's 144 to 343 (200 px), and its drop button is gone. The one-line row's bubble (x 163 to 343) and X match |
 | Padding | mismatch: one-line bubble 48 px tall against 52, three-line 88 against 92 |
-| Spacing | mismatch: rows 8 px apart against 16 |
+| Spacing | mismatch: rows 8 px apart against 16. The last row ends 24 px above the band's glyphs against 16 (app 719 to 744, frame 751 to 768), 8 px more than the 24 px status-bar shift explains |
 | Typography | match: body-medium, the wrapping row breaks at the frame's words |
 | Colour | match: dimmed user bubble, on-surface-variant clock and X |
 | Borders | match (none) |
@@ -766,11 +766,12 @@ dimmed bubbles) are questions for the design owner on #1626, not app mismatches.
 | Icon paths | mismatch: no X on the wrapping row; clocks match within 2 px |
 | Component state | mismatch: the wrapping row cannot be dropped. The composer shows Send, not the frame's Stop, because it holds text (#643, as `16:8`); see #1626 |
 
-- **Routed:** #1622; the Stop variant to #1626
+- **Routed:** #1622; the gap under the last row to #1630; the Stop variant to #1626
 
 ### Sub-agent tool rows — `696:4795`
 
-- **Owning ticket:** #896 (nesting), #895 (headline), #1316 (result count), #1577 (joined rows)
+- **Owning ticket:** #896 (nesting), #895 (headline), #811 and #1315 (statuses and the described header), #1316
+  (result count), #1577 (joined rows)
 - **Capture:** `tool-rows-nested.png` (412x892, 1.0)
 - **Side-by-side:** `tool-rows-nested-side-by-side.png`
 - **Overlay:** `tool-rows-nested-overlay.png`
@@ -784,7 +785,7 @@ dimmed bubbles) are questions for the design owner on #1626, not app mismatches.
 |---|---|
 | Geometry | match: rows 35 px tall, indented 16 px per level (x 20, 36, 52), right edges at the 20 px gutter |
 | Padding | match: 12 px insets |
-| Spacing | mismatch: the app joins the run (outlines overlap, 35 px pitch, `620:1792`'s rule); the frame separates every row by 12 px (48 px pitch) |
+| Spacing | mismatch: the app joins the run (outlines overlap, 35 px pitch, `620:1792`'s rule); the frame separates every row by 12 px (48 px pitch). The last row ends 28 px above the band's glyphs against 16 (app 715 to 744, frame 751 to 768), 12 px more than the status-bar shift explains |
 | Typography | mismatch: the Read subject reads `.../ui/conversations/thread/QueueFol…` (four segments, then ellipsized) where the frame reads `.../thread/QueueFold.kt`; the app's rule is shared with desktop (see #1626). Tool names, subjects, "12 files" and "14s" otherwise match |
 | Colour | match: tertiary tool names, primary-container outlines, error glyph |
 | Borders | match: 1 px outlines |
@@ -792,7 +793,7 @@ dimmed bubbles) are questions for the design owner on #1626, not app mismatches.
 | Icon paths | match: spinners, check, failed glyph, described-row chevron |
 | Component state | match: running, done and failed rows. The composer shows Send against the frame's Stop, as in the queued frame (#1626) |
 
-- **Routed:** #1623; the path and Stop to #1626
+- **Routed:** #1623; the gap under the last row to #1630; the path and Stop to #1626
 
 ### Message attachment states — `696:4913`
 
@@ -808,9 +809,9 @@ dimmed bubbles) are questions for the design owner on #1626, not app mismatches.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | match: image placeholder 160 px square at x 187 (frame 190), bubbles 272 and 225 px wide, the files bubble's height equal |
+| Geometry | match: image placeholder 160 px square, the files bubble 272 px wide with its height equal. The image sits at x 187 against 190 and the image bubble is about 225 px wide against 222 because the caption fits one line, from font rendering only |
 | Padding | match: 20 px bubble insets |
-| Spacing | mismatch: file rows 2 px taller each (tiles at 0, 79 and 159 px from the first tile against 0, 77 and 155), state line 14 px under the name against 16 |
+| Spacing | mismatch: file rows 2 px taller each (tiles at 0, 79 and 159 px from the first tile against 0, 77 and 155), state line 14 px under the name against 16. The files bubble ends 32 px above the band's glyphs against 16 (app 711 to 744, frame 751 to 768), 16 px more than the status-bar shift explains |
 | Typography | mismatch: the tile's type label is medium weight against regular; names and state lines in body-small as the frame |
 | Colour | mismatch: tile outline, glyph and label in the content colour at reduced alpha (about rgb 171,188,208) against a dim primary (50,98,141); the name dimmed with them against the frame's full on-surface. Retry in primary matches |
 | Borders | match: tile outlines |
@@ -818,7 +819,7 @@ dimmed bubbles) are questions for the design owner on #1626, not app mismatches.
 | Icon paths | match: file tile shape, spinner |
 | Component state | match: loading, failed with Retry, not found |
 
-- **Routed:** #1624
+- **Routed:** #1624; the gap under the last row to #1630
 
 ### Empty thread — `696:4989`
 
@@ -858,7 +859,7 @@ dimmed bubbles) are questions for the design owner on #1626, not app mismatches.
 | Geometry | mismatch: a 388 px bottom snackbar above the band; the frame draws a Default pill hugging its text at the right of the top overlay, under the header (x 219 to 391) |
 | Padding | mismatch: snackbar insets, not the pill's |
 | Spacing | mismatch: see geometry |
-| Typography | match: "Resolved on another device". The snackbar's body style is larger than the pill's |
+| Typography | mismatch (style follows the pill, #1604): the string "Resolved on another device" matches; the snackbar's body style is larger than the pill's |
 | Colour | mismatch: inverse-surface snackbar; the frame's pill is the Default pill's container |
 | Borders | match (none) |
 | Radii | mismatch: snackbar corners, not the pill's |
@@ -884,12 +885,12 @@ dimmed bubbles) are questions for the design owner on #1626, not app mismatches.
 | Geometry | mismatch: a 388 px bottom snackbar; the frame draws an Error pill at the right of the top overlay, under the header (x 279 to 391) |
 | Padding | mismatch: snackbar insets, not the pill's |
 | Spacing | mismatch: see geometry |
-| Typography | match: the notice's string. The snackbar's body style is larger than the pill's |
+| Typography | mismatch (style follows the pill, #1604): the notice's string matches; the snackbar's body style is larger than the pill's |
 | Colour | mismatch: inverse-surface snackbar; the frame's pill is error-container |
 | Borders | match (none) |
 | Radii | mismatch: snackbar corners, not the pill's |
 | Icon paths | match (none, no X) |
-| Component state | match: one notice, hides itself after the snackbar's duration |
+| Component state | match: one notice (its timeout not waited for) |
 
 - **Routed:** #1604 (comment extending its scope: Error pill for failures, Default pill for File saved)
 

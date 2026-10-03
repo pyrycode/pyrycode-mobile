@@ -214,14 +214,14 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 | Surface or state | Node | Status | Audit row | Owner | Linked issues |
 |---|---|---|---|---|---|
 | Tool row, finished | `674:5853` | audited, match | `thread/index.md` › Tool row | #1208, #1315, #1316 | #1500 |
-| Tool row running and failed, nested sub-agent rows | `696:4795` | audited, mismatch | `thread/index.md` › Sub-agent tool rows | #811, #895, #896, #1315, #1316 | #1539, #1623, #1626 |
+| Tool row running and failed, nested sub-agent rows | `696:4795` | audited, mismatch | `thread/index.md` › Sub-agent tool rows | #811, #895, #896, #1315, #1316, #1577 | #1539, #1623, #1626, #1630 |
 | Refusal row, collapsed | `620:1577` | audited, mismatch | › Notification text | #875 | #1494 |
 | Refusal switch back, armed | `646:4707` | audited, mismatch | › Refusal switch back | #1360 | #1494 |
 | Refusal expanded; switch back pending and failed | `620:1570`, `646:4694`, `646:4700` | component only | not audited | #875, #1360 | #1540 |
 | Session notice (warning) | `627:5466` | audited, match | › Session notice | #1113, #875 | none |
 | Unrecognized message, collapsed and expanded | `685:4112` | frame only | › Gaps | #608 | #1529 |
 | Compaction boundary row | `675:3682` rule (decision on #1529) | no separate frame | › Gaps | #874 | #1529 |
-| Queued message row, with its drop action | `696:4677` | audited, mismatch | `thread/index.md` › Queued messages | #1161 | #1539, #1622, #1626 |
+| Queued message row, with its drop action | `696:4677` | audited, mismatch | `thread/index.md` › Queued messages | #1161 | #1539, #1622, #1626, #1630 |
 
 ### Attachments
 
@@ -231,7 +231,7 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 | Staged PDF tile while disconnected | `627:1740`, `627:4657`, `627:4910` | audited, mismatch | › Connecting, Reconnecting; › Offline | #1319 | #1532, #1495 |
 | Photo and PDF messages in bubbles | `16:8`, `620:1577`, File field `132:4605` | audited, mismatch | › Conversation Thread | #1290 | #1513, #1495 |
 | Strip while sending ("Uploading… N%") | `689:4475` | frame only | › Gaps | #1327 | #1529 |
-| Message attachment loading, failed with retry, not found | `696:4913` | audited, mismatch | `thread/index.md` › Message attachment states | #1290 | #1539, #1624 |
+| Message attachment loading, failed with retry, not found | `696:4913` | audited, mismatch | `thread/index.md` › Message attachment states | #1290 | #1539, #1624, #1630 |
 | Message attachment not yet requested | `16:8` File field (decision on #1539) | no separate frame | not audited | #1290 | #1539 |
 | System file picker | none | out of scope | — | #933 | none |
 
