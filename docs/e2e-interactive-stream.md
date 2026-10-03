@@ -397,16 +397,16 @@ spinner over a real relay turn is the "never on timing" failure the [Constraints
 
 The **new-session** scenario (#541) is **always-on** (not `@Ignore`d): the delimiter is a **durable**
 artifact that survives the turn — unlike #482's transient spinner — so it belongs in the always-on gate,
-like #481's tool-name row. Its load-bearing matcher is the delimiter's reason-independent explanation
-line (`"Claude doesn't remember messages above this line"`), which can **only** come from the rendered
-`SessionBoundaryDelimiter`. “Reset session” selects the action; the explanation proves the
+like #481's tool-name row. Its load-bearing matcher is the delimiter's reason-independent
+`SESSION_BOUNDARY_TEST_TAG` (`"session-boundary"`, since #1578), which can **only** come from the rendered
+`SessionBoundaryDelimiter`. “Reset session” selects the action; the tagged node proves the
 resulting boundary independently of the menu label. The delimiter's **absence is asserted before** the
 reset tap (a deterministic guard, no extra claude turn), so its later appearance is attributable to
 the action. `new_session` is **fire-and-forget** (pyrycode#831, #540), so nothing waits on or asserts an
 ack — the observable is the displayed post-broadcast delimiter. The test scrolls to the newest
 row while waiting, since a tall wrap-up can keep it off-screen (#694). **Since #965**, the method also
 waits for the status area to show the wrapping-up phase (`thread_resetting_wrapping_up`) before the
-delimiter appears, with the delimiter's explanation still absent at that point, then waits for every
+delimiter appears, with the tagged node still absent at that point, then waits for every
 resetting label to clear before the existing delimiter wait runs. This is **causally held, not raced on
 timing**: the daemon's `resetThenRotate` raises `wrappingUp` before it runs a real claude wrap-up turn
 (`conversationReset.wrapUp`, up to 400 words) and lowers it only after that turn ends — a full claude
