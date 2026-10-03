@@ -4702,6 +4702,44 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * A dormant channel shows its stored history when opened, with no pull and no send (#1571, rung 3). The
+     * live daemon cannot be restarted mid-run, so `scripts/e2e-emulator.sh` seeds the after-restart state before
+     * it starts: a promoted row named [dormantName][ARG_DORMANT_NAME], bound to a session the daemon does not
+     * hold, and one finished turn in that conversation's on-disk history log ending in
+     * [dormantReply][ARG_DORMANT_REPLY]. The phone has never loaded the run-unique conversation, so the reply
+     * can only come from the history page the open thread asks for by itself (#1569, #1572). Before those, the
+     * thread opened empty until a send woke the session.
+     *
+     * **Zero real-claude turns**: opening the thread spawns nothing, and the test never sends or pulls.
+     */
+    @Test
+    fun interactiveTurn_dormantChannel_opensWithStoredHistoryWithoutSend() {
+        val conversationId = dormantArg(ARG_DORMANT_CONVERSATION_ID)
+        val name = dormantArg(ARG_DORMANT_NAME)
+        val reply = hasText(dormantArg(ARG_DORMANT_REPLY)) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+
+        // 1. The seeded row is on the list, and host A really holds it under the seeded id.
+        awaitChannelList()
+        awaitConnected()
+        awaitChannelRow(name)
+        assertHostHoldsConversation(twoHostArg(ARG_SERVER_ID), conversationId, name)
+        composeTestRule.onAllNodes(reply).assertCountEquals(0)
+
+        // 2. Open it and wait for the stored reply, with no pull toward older messages and no send.
+        openRow(name)
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(reply).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodes(reply).onFirst().assertIsDisplayed()
+    }
+
+    /** A dormant-channel instrumentation argument (#1571), failing with the script that passes it. */
+    private fun dormantArg(key: String): String =
+        requireNotNull(InstrumentationRegistry.getArguments().getString(key)) {
+            "missing instrumentation arg '$key' — scripts/e2e-emulator.sh seeds it on rung 3 and LIVE"
+        }
+
+    /**
      * Another client's file opens and saves on the phone after a history reload (#1016, rung 3). The
      * [SecondClientPeer] uploads a ~100 KB document into chat X — three chunks, so the phone's reassembly
      * runs — and names it on a message, as the desktop does. The phone never opens X before a restart
@@ -7475,6 +7513,11 @@ class InteractiveStreamE2ETest {
         const val ARG_COLLISION_CONVERSATION_ID = "collisionConversationId"
         const val ARG_COLLISION_NAME_A = "collisionNameA"
         const val ARG_COLLISION_NAME_B = "collisionNameB"
+
+        // #1571 dormant-channel scenario: the seeded conversation's id, run-unique name and stored reply text.
+        const val ARG_DORMANT_CONVERSATION_ID = "dormantConversationId"
+        const val ARG_DORMANT_NAME = "dormantName"
+        const val ARG_DORMANT_REPLY = "dormantReply"
 
         // #848 peer scenario. PEER_TOKEN is the second device's pairing token that scripts/e2e-emulator.sh
         // mints on host A for the SecondClientPeer (rung 3 and LIVE): never log it. The chat's run-unique
