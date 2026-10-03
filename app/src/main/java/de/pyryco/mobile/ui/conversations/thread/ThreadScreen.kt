@@ -44,7 +44,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -116,8 +115,6 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
-
-private const val ABOVE_DELIMITER_ALPHA = 0.55f
 
 /** The status band's reading box (#1312), so a test can tell a band reading from the same words in a message. */
 internal const val STATUS_READING_TEST_TAG = "thread-status-reading"
@@ -583,11 +580,6 @@ fun ThreadScreen(
                         )
                     } else {
                         val reversedRows = rows.asReversed()
-                        // Still read off state.items, and still comparing against an index into `rows`: the two
-                        // spaces agree wherever a boundary can land, because `rows` shares its prefix with
-                        // `items` index-for-index and only ever appends unmatched queued rows after them.
-                        val cutoffChronologicalIndex =
-                            remember(state.items) { mostRecentSessionBoundaryIndex(state.items) }
                         // #896: a subagent's tool rows indent under the Agent/Task call that spawned them.
                         val toolDepths = remember(state.items) { toolNestingDepths(state.items) }
                         val listState = rememberLazyListState()
@@ -709,13 +701,7 @@ fun ThreadScreen(
                                 key = { reversedIndex, row -> row.listKey(rows.size - 1 - reversedIndex) },
                             ) { reversedIndex, row ->
                                 val chronologicalIndex = rows.size - 1 - reversedIndex
-                                val rowAlpha =
-                                    if (chronologicalIndex < cutoffChronologicalIndex) {
-                                        ABOVE_DELIMITER_ALPHA
-                                    } else {
-                                        1f
-                                    }
-                                Box(modifier = Modifier.alpha(rowAlpha)) {
+                                Box {
                                     when (row) {
                                         is ThreadRow.Delivered ->
                                             when (val item = row.item) {
@@ -733,11 +719,7 @@ fun ThreadScreen(
                                                         onOpenMarkdownLink = onOpenMarkdownLink,
                                                     )
                                                 is ThreadItem.SessionBoundary ->
-                                                    SessionBoundaryDelimiter(
-                                                        boundary = item,
-                                                        agent = state.agent,
-                                                        memorySearch = state.runConfig.memorySearch,
-                                                    )
+                                                    SessionBoundaryDelimiter(boundary = item)
                                                 is ThreadItem.UnrecognizedMessage ->
                                                     UnrecognizedMessageRow(item = item)
                                                 // #1359: an info banner keeps its row and key but draws
@@ -1230,8 +1212,6 @@ private fun ThreadRow?.isToolRow(): Boolean {
     val message = ((this as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)?.message ?: return false
     return message.role == Role.Tool && message.toolCall != null
 }
-
-internal fun mostRecentSessionBoundaryIndex(items: List<ThreadItem>): Int = items.indexOfLast { it is ThreadItem.SessionBoundary }
 
 private fun ThreadItem.timestamp(): Instant =
     when (this) {

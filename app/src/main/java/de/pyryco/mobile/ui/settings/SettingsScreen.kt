@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.tooling.preview.Preview
@@ -37,6 +38,8 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 fun SettingsScreen(
     pushNotifications: Boolean,
     onTogglePushNotifications: (Boolean) -> Unit,
+    collapseToolUses: Boolean,
+    onToggleCollapseToolUses: (Boolean) -> Unit,
     onDismissRequest: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -89,6 +92,31 @@ fun SettingsScreen(
                 contentDescription = null,
                 modifier = Modifier.size(20.dp),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Text(
+            text = "Thread",
+            modifier = Modifier.fillMaxWidth(),
+            style = MaterialTheme.typography.labelLarge.copy(lineHeightStyle = FrameLineBox),
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+        )
+        // The frame's 12 px inset around a 32 px switch is a 56 px row. The switch's 48 dp touch target
+        // already adds 8 dp above and below its track, so 4 dp here keeps that height and that inset.
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Collapse assistant tool uses",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyLarge.copy(lineHeightStyle = FrameLineBox),
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Switch(
+                checked = collapseToolUses,
+                onCheckedChange = onToggleCollapseToolUses,
+                modifier = Modifier.semantics { contentDescription = "Collapse assistant tool uses" },
             )
         }
     }
@@ -147,6 +175,12 @@ internal fun ThemeMode.label(): String =
 @Composable
 private fun SettingsScreenDarkPreview() {
     PyrycodeMobileTheme(darkTheme = true) {
-        SettingsScreen(pushNotifications = true, onTogglePushNotifications = {}, onDismissRequest = {})
+        SettingsScreen(
+            pushNotifications = true,
+            onTogglePushNotifications = {},
+            collapseToolUses = true,
+            onToggleCollapseToolUses = {},
+            onDismissRequest = {},
+        )
     }
 }

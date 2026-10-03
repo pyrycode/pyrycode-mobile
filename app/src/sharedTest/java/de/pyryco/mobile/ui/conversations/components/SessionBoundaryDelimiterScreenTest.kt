@@ -5,27 +5,22 @@ import android.graphics.Canvas
 import android.view.View
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.height
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.BoundaryReason
-import de.pyryco.mobile.data.repository.MemorySearchAvailability
-import de.pyryco.mobile.data.repository.MemorySearchProvider
-import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
@@ -72,26 +67,13 @@ class SessionBoundaryDelimiterScreenTest {
             workspaceCwd = null,
         )
 
-    private fun setContentWithCapturingUriHandler(
-        boundary: ThreadItem.SessionBoundary,
-        opened: MutableList<String>,
-    ) {
-        val capturing =
-            object : UriHandler {
-                override fun openUri(uri: String) {
-                    opened += uri
-                }
-            }
+    private fun setContent(boundary: ThreadItem.SessionBoundary) {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
-                CompositionLocalProvider(LocalUriHandler provides capturing) {
-                    SessionBoundaryDelimiter(boundary = boundary, memorySearch = absent)
-                }
+                SessionBoundaryDelimiter(boundary = boundary)
             }
         }
     }
-
-    private val absent = MemorySearchReport(MemorySearchAvailability.Absent, emptyList())
 
     @Test
     fun dark_reset_rule_uses_the_reference_inverse_primary_at_sixty_percent() {
@@ -171,66 +153,29 @@ class SessionBoundaryDelimiterScreenTest {
         assertTrue("x 376 should be surface: ${samples[376]}", close(samples.getValue(376), surface))
     }
 
+    // #1578: every reason draws the rule row alone — no explanation, no memory-search copy, no Install.
     @Test
-    fun installed_or_unknown_report_keeps_reset_explanation_without_install() {
-        val installed =
-            MemorySearchReport(
-                MemorySearchAvailability.Unavailable,
-                listOf(MemorySearchProvider("p", "Knowledge search", true, false, MemorySearchAvailability.Unavailable)),
-            )
-        val report = androidx.compose.runtime.mutableStateOf(installed)
+    fun every_reason_draws_only_the_rule_row() {
+        val reason = mutableStateOf(clearBoundary())
         composeTestRule.setContent {
             PyrycodeMobileTheme {
-                SessionBoundaryDelimiter(boundary = clearBoundary(), memorySearch = report.value)
+                SessionBoundaryDelimiter(boundary = reason.value)
             }
         }
 
-        composeTestRule.onNodeWithText("New session — ", substring = true).assertIsDisplayed()
-        composeTestRule.onNodeWithText("Claude doesn't remember messages above this line.", substring = true).assertIsDisplayed()
-        composeTestRule.onNodeWithText("Install").assertDoesNotExist()
-        composeTestRule.runOnIdle { report.value = MemorySearchReport.Unknown }
-        composeTestRule.onNodeWithText("Install").assertDoesNotExist()
-        composeTestRule.runOnIdle { report.value = absent }
-        composeTestRule.onNodeWithText("Install").assertIsDisplayed()
-    }
-
-    @Test
-    fun renders_explanatory_sentence_and_install_button_for_Clear() {
-        setContentWithCapturingUriHandler(clearBoundary(), mutableListOf())
-
-        composeTestRule
-            .onNode(
-                hasText(
-                    "Claude doesn't remember messages above this line.",
-                    substring = true,
-                ),
-            ).assertIsDisplayed()
-        composeTestRule.onNodeWithText("Search stored knowledge with a memory plugin.", substring = true).assertIsDisplayed()
-        composeTestRule.onNodeWithText("Install").assertIsDisplayed()
-    }
-
-    @Test
-    fun a_Codex_conversation_names_Codex_and_keeps_the_install_button() {
-        composeTestRule.setContent {
-            PyrycodeMobileTheme {
-                SessionBoundaryDelimiter(boundary = clearBoundary(), agent = ConversationAgent.Codex, memorySearch = absent)
-            }
+        for (boundary in listOf(clearBoundary(), workspaceChangeBoundary(), idleEvictBoundary())) {
+            composeTestRule.runOnIdle { reason.value = boundary }
+            composeTestRule.onNodeWithTag(SESSION_BOUNDARY_TEST_TAG).assertIsDisplayed()
+            composeTestRule.onAllNodes(hasText("doesn't remember", substring = true)).assertCountEquals(0)
+            composeTestRule.onAllNodes(hasText("memory plugin", substring = true)).assertCountEquals(0)
+            composeTestRule.onAllNodes(hasText("Install")).assertCountEquals(0)
+            composeTestRule.onAllNodes(hasClickAction()).assertCountEquals(0)
         }
-
-        composeTestRule
-            .onNode(
-                hasText(
-                    "Codex doesn't remember messages above this line.",
-                    substring = true,
-                ),
-            ).assertIsDisplayed()
-        composeTestRule.onNode(hasText("Claude doesn't remember", substring = true)).assertDoesNotExist()
-        composeTestRule.onNodeWithText("Install").assertIsDisplayed()
     }
 
     @Test
     fun renders_Clear_label_prefix() {
-        setContentWithCapturingUriHandler(clearBoundary(), mutableListOf())
+        setContent(clearBoundary())
 
         composeTestRule
             .onNode(hasText("New session — ", substring = true))
@@ -239,7 +184,7 @@ class SessionBoundaryDelimiterScreenTest {
 
     @Test
     fun renders_WorkspaceChange_as_new_session_without_workspace_text() {
-        setContentWithCapturingUriHandler(workspaceChangeBoundary(), mutableListOf())
+        setContent(workspaceChangeBoundary())
 
         composeTestRule
             .onNode(hasText("New session — ", substring = true))
@@ -251,21 +196,10 @@ class SessionBoundaryDelimiterScreenTest {
 
     @Test
     fun renders_IdleEvict_label_prefix() {
-        setContentWithCapturingUriHandler(idleEvictBoundary(), mutableListOf())
+        setContent(idleEvictBoundary())
 
         composeTestRule
             .onNode(hasText("Idle session ended — ", substring = true))
             .assertIsDisplayed()
-    }
-
-    @Test
-    fun tapping_Install_opens_memory_plugin_docs_url_exactly_once() {
-        val opened = mutableListOf<String>()
-        setContentWithCapturingUriHandler(clearBoundary(), opened)
-
-        composeTestRule.onNodeWithText("Install").performClick()
-        composeTestRule.waitForIdle()
-
-        assertEquals(listOf(MEMORY_PLUGIN_DOCS_URL), opened)
     }
 }
