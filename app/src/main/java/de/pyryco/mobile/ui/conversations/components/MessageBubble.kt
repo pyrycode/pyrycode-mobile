@@ -66,6 +66,7 @@ private const val STREAMING_CARET_BLINK_PERIOD_MS: Long = 500L
 /**
  * [toolNestingDepth] (#896) is read only by a tool row: how many `Agent`/`Task` calls deep a subagent's
  * call sits. Each level indents the row's leading edge one [ToolNestingIndent] past the gutter.
+ * [joinsNextToolRow] (#1577) is also read only by a tool row: the thread's next row is a tool row too.
  *
  * [attachmentStates], [onAttachmentShown] and [onRetryAttachment] (#984) are read only by the two bubble
  * roles, for the message's attachments: each attachment's state by id, the report that one is on screen,
@@ -80,6 +81,7 @@ fun MessageBubble(
     message: Message,
     modifier: Modifier = Modifier,
     toolNestingDepth: Int = 0,
+    joinsNextToolRow: Boolean = false,
     attachmentStates: Map<String, AttachmentViewState> = emptyMap(),
     onAttachmentShown: (MessageAttachment) -> Unit = {},
     onRetryAttachment: (String) -> Unit = {},
@@ -116,6 +118,7 @@ fun MessageBubble(
                             end = MessageContentGutter,
                         ),
                     subagentDepth = toolNestingDepth,
+                    joinsNextToolRow = joinsNextToolRow,
                 )
             }
     }

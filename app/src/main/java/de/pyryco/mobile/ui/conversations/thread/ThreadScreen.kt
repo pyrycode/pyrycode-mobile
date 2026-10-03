@@ -69,6 +69,7 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalUiState
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.repository.ApiRetryStatus
@@ -722,6 +723,7 @@ fun ThreadScreen(
                                                     MessageBubble(
                                                         message = item.message,
                                                         toolNestingDepth = toolDepths[item.message.id] ?: 0,
+                                                        joinsNextToolRow = rows.getOrNull(chronologicalIndex + 1).isToolRow(),
                                                         attachmentStates = attachmentStates,
                                                         onAttachmentShown = onAttachmentShown,
                                                         onRetryAttachment = onRetryAttachment,
@@ -1220,6 +1222,12 @@ private fun DeleteConfirmationDialog(
             }
         },
     )
+}
+
+/** #1577: a delivered tool message that draws a tool row, the one neighbour a tool row sits flush against. */
+private fun ThreadRow?.isToolRow(): Boolean {
+    val message = ((this as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)?.message ?: return false
+    return message.role == Role.Tool && message.toolCall != null
 }
 
 internal fun mostRecentSessionBoundaryIndex(items: List<ThreadItem>): Int = items.indexOfLast { it is ThreadItem.SessionBoundary }
