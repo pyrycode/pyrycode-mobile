@@ -155,7 +155,15 @@ judging whether two capture PNGs across a rerun are the same evidence or stale
 leftovers, a byte-identical pair from a deterministic decor-view draw is
 expected, not proof of staleness — check provenance in the paired `.txt`
 metadata (for example a field like `syntheticBars` that only a rewritten run
-carries), not the PNG history.
+carries), not the PNG history. A whole-class run also stops reproducing
+*other* tickets' captures byte for byte once `main` has moved since they were
+taken — font, spacing or copy changes elsewhere in the fixture ride along with
+every method in the class. #1502 added three edge-state methods on a `main`
+that had moved since #1501's run; copying the whole new run's output back in
+would have overwritten #1501's committed captures with drift that was not
+this ticket's to judge. Copy in only the methods the ticket owns and say so
+in the index, leaving the rest of the committed evidence as an earlier
+ticket's.
 
 `ListDesignCaptureTest` (#1431) audited the list-side surfaces (Channel List,
 Archive, Channel Info, Settings, Edit host) through this harness and found

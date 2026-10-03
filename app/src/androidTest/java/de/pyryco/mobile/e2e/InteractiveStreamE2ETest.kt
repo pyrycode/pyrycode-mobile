@@ -1207,8 +1207,8 @@ class InteractiveStreamE2ETest {
      * thread overflow and fires `ThreadEvent.Archive → sendArchive → repository.archive → success-only
      * PopBack`; there is **none** of #554's "Delete"-collision / sheet-behind-dialog disambiguation — the
      * archive tap is a single [onNodeWithText] in the open overflow. (2) **Restore needs a second screen:**
-     * channel list → Archived screen (default **Discussions** tab, so the renamed discussion is on it with no
-     * tab tap), restore, then Back to confirm re-appearance.
+     * channel list → Archived screen, a tap on its **Discussions** tab (Archive opens on Channels since #1487),
+     * restore, then Back to confirm re-appearance.
      *
      * **The one gotcha — the restore-coroutine cancellation race.** `RestoreRequested` handling is
      * `viewModelScope.launch { repository.unarchive(id); … }` scoped to the **Archived screen's**
@@ -1296,11 +1296,12 @@ class InteractiveStreamE2ETest {
             awaitChannelList()
             composeTestRule.onAllNodesWithText(uniqueName, substring = true).assertCountEquals(0)
 
-            // 9. The list toolbar opens Archive for the selected host. The default Discussions tab shows the chat.
+            // 9. The list toolbar opens Archive for the selected host. Its Discussions tab shows the chat.
             composeTestRule.onNode(hasContentDescription(CD_OPEN_ARCHIVE)).performClick()
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
             }
+            openArchiveTab(R.string.archived_tab_discussions)
 
             // 10. Restore. Wait for the restore affordance keyed on the unique name — the "Restore <uniqueName>"
             //     IconButton (the row name is a Text node, so only the restore button matches a content-description
@@ -1398,11 +1399,12 @@ class InteractiveStreamE2ETest {
             archiveOpenThread()
             archivedIds(serverId) { idA in it }
 
-            // 3. Open Archive on its default Discussions tab: A, archived last, is the first row.
+            // 3. Open Archive on its Discussions tab: A, archived last, is the first row.
             composeTestRule.onNode(hasContentDescription(CD_OPEN_ARCHIVE)).performClick()
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
             }
+            openArchiveTab(R.string.archived_tab_discussions)
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             val restoreA = hasContentDescription(context.getString(R.string.cd_restore_archive, nameA))
             val restoreB = hasContentDescription(context.getString(R.string.cd_restore_archive, nameB))
@@ -2334,6 +2336,7 @@ class InteractiveStreamE2ETest {
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
             }
+            openArchiveTab(R.string.archived_tab_discussions)
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasContentDescription(chatName, substring = true)).fetchSemanticsNodes().isNotEmpty()
             }
@@ -2544,11 +2547,7 @@ class InteractiveStreamE2ETest {
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
             }
-            val channelsTab = string(R.string.archived_tab_channels).substringBefore(" (")
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText(channelsTab, substring = true).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onAllNodesWithText(channelsTab, substring = true).onFirst().performClick()
+            openArchiveTab(R.string.archived_tab_channels)
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasContentDescription(newName, substring = true)).fetchSemanticsNodes().isNotEmpty()
             }
@@ -4782,6 +4781,44 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * A dormant channel shows its stored history when opened, with no pull and no send (#1571, rung 3). The
+     * live daemon cannot be restarted mid-run, so `scripts/e2e-emulator.sh` seeds the after-restart state before
+     * it starts: a promoted row named [dormantName][ARG_DORMANT_NAME], bound to a session the daemon does not
+     * hold, and one finished turn in that conversation's on-disk history log ending in
+     * [dormantReply][ARG_DORMANT_REPLY]. The phone has never loaded the run-unique conversation, so the reply
+     * can only come from the history page the open thread asks for by itself (#1569, #1572). Before those, the
+     * thread opened empty until a send woke the session.
+     *
+     * **Zero real-claude turns**: opening the thread spawns nothing, and the test never sends or pulls.
+     */
+    @Test
+    fun interactiveTurn_dormantChannel_opensWithStoredHistoryWithoutSend() {
+        val conversationId = dormantArg(ARG_DORMANT_CONVERSATION_ID)
+        val name = dormantArg(ARG_DORMANT_NAME)
+        val reply = hasText(dormantArg(ARG_DORMANT_REPLY)) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+
+        // 1. The seeded row is on the list, and host A really holds it under the seeded id.
+        awaitChannelList()
+        awaitConnected()
+        awaitChannelRow(name)
+        assertHostHoldsConversation(twoHostArg(ARG_SERVER_ID), conversationId, name)
+        composeTestRule.onAllNodes(reply).assertCountEquals(0)
+
+        // 2. Open it and wait for the stored reply, with no pull toward older messages and no send.
+        openRow(name)
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(reply).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodes(reply).onFirst().assertIsDisplayed()
+    }
+
+    /** A dormant-channel instrumentation argument (#1571), failing with the script that passes it. */
+    private fun dormantArg(key: String): String =
+        requireNotNull(InstrumentationRegistry.getArguments().getString(key)) {
+            "missing instrumentation arg '$key' — scripts/e2e-emulator.sh seeds it on rung 3 and LIVE"
+        }
+
+    /**
      * Another client's file opens and saves on the phone after a history reload (#1016, rung 3). The
      * [SecondClientPeer] uploads a ~100 KB document into chat X — three chunks, so the phone's reassembly
      * runs — and names it on a message, as the desktop does. The phone never opens X before a restart
@@ -6583,6 +6620,18 @@ class InteractiveStreamE2ETest {
 
     private fun string(id: Int): String = InstrumentationRegistry.getInstrumentation().targetContext.getString(id)
 
+    /**
+     * Selects an Archive tab by its label resource. Archive opens on Channels (#1487), so archived
+     * chats need [R.string.archived_tab_discussions].
+     */
+    private fun openArchiveTab(labelId: Int) {
+        val tab = string(labelId).substringBefore(" (")
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(tab, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(tab, substring = true).onFirst().performClick()
+    }
+
     /** An effort note as a Claude conversation words it (#1115); the harness runs Claude conversations only. */
     private fun claudeNote(id: Int): String =
         InstrumentationRegistry.getInstrumentation().targetContext.getString(id, string(R.string.agent_name_claude))
@@ -7603,6 +7652,11 @@ class InteractiveStreamE2ETest {
         const val ARG_COLLISION_CONVERSATION_ID = "collisionConversationId"
         const val ARG_COLLISION_NAME_A = "collisionNameA"
         const val ARG_COLLISION_NAME_B = "collisionNameB"
+
+        // #1571 dormant-channel scenario: the seeded conversation's id, run-unique name and stored reply text.
+        const val ARG_DORMANT_CONVERSATION_ID = "dormantConversationId"
+        const val ARG_DORMANT_NAME = "dormantName"
+        const val ARG_DORMANT_REPLY = "dormantReply"
 
         // #848 peer scenario. PEER_TOKEN is the second device's pairing token that scripts/e2e-emulator.sh
         // mints on host A for the SecondClientPeer (rung 3 and LIVE): never log it. The chat's run-unique

@@ -88,6 +88,9 @@ class DesignInputs {
     /** While `true`, a pairing save suspends, holding the pair-code screen in its saving state. */
     val holdSaves = MutableStateFlow(false)
 
+    /** While `true`, the thread's question answer throws, as a failed send does, so Continue ends `Failed` (#1502). */
+    @Volatile var failQuestionSends = false
+
     /** The view models the override built last, for states only an event reaches. */
     val thread = MutableStateFlow<ThreadViewModel?>(null)
     val scanner = MutableStateFlow<ScannerViewModel?>(null)
@@ -173,6 +176,7 @@ class DesignInputs {
                     // No app draft stores: production binds them to a host coordinator, and only without one
                     // does the view model read questionBatch itself, as on the demo host.
                     questionBatch = { questionBatch },
+                    answerQuestionBatch = { _, _ -> check(!failQuestionSends) { "design: the question send fails" } },
                     backgroundTasks = { backgroundTasks },
                     backgroundTaskCount = { backgroundTaskCount },
                     pairingRejected = pairingRejected,

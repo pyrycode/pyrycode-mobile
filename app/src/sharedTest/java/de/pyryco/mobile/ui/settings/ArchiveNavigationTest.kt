@@ -188,6 +188,9 @@ class ArchiveNavigationTest {
         compose.onNodeWithContentDescription("Open archive").performClick()
         compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.ARCHIVED_DISCUSSIONS }
         compose.waitForIdle()
+        // Archive opens on Channels (#1487); these archived rows are discussions.
+        compose.onNodeWithText("Discussions (", substring = true).performClick()
+        compose.waitForIdle()
     }
 
     private fun assertOwner(serverId: String) {
