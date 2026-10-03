@@ -4066,6 +4066,35 @@ class RemoteConversationRepositoryTest {
         }
 
     @Test
+    fun peerSendQueuedNow_turnEndsBeforeRemoval_delayedPushFollowsInterveningEventsOnce() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val thread = collectMessages(repo, "c-1")
+            val other = collectMessages(repo, "c-other")
+            runCurrent()
+            val own = sendAndAck(repo, pump, "c-1", "marker request")
+            pump.push(turnStateEnvelope("c-1", "thinking"))
+            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "marker request", TS, messageId = own))))
+            runCurrent()
+            pump.push(turnEndEnvelope("c-1", "running", "end_turn"))
+            pump.push(queueStateEnvelope("c-1", emptyList()))
+            runCurrent()
+            assertEquals(listOf(own), messageIds(thread.last()))
+            pump.push(toolUseEnvelope("c-1", "next", "intervening", "Bash", "held command"))
+            pump.push(toolResultEnvelope("c-1", "next", "intervening", isError = false, resultSummary = "done"))
+            pump.push(messageEnvelope("c-1", own, "user", "marker request", TS))
+            pump.push(messageEnvelope("c-1", "peer", "user", "peer marker", TS))
+            runCurrent()
+            assertEquals(listOf("intervening", own, "peer"), messageIds(thread.last()))
+            pump.push(messageEnvelope("c-1", own, "user", "marker request", TS))
+            pump.push(messageEnvelope("c-1", "peer", "user", "peer marker", TS))
+            runCurrent()
+            assertEquals(listOf("intervening", own, "peer"), messageIds(thread.last()))
+            assertEquals(emptyList<ThreadItem>(), other.last())
+        }
+
+    @Test
     fun sendQueuedNow_failedSendWithdrawsDeliveryIntent() =
         runTest {
             val pump = FakeSessionPump()

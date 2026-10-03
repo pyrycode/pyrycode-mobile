@@ -45,12 +45,20 @@ class ThreadViewModelSendNowTest {
         runTest {
             val fake = FakeConversationRepository()
             val selected = MutableStateFlow("s1")
+            val sends = mutableListOf<Pair<String, Long>>()
             val repo =
                 object : ConversationRepository by fake {
                     override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> =
                         combine(fake.observeConversations(filter), selected) { rows, session ->
                             rows.map { if (it.id == "seed-channel-personal") it.copy(currentSessionId = session) else it }
                         }
+
+                    override suspend fun sendQueuedNow(
+                        conversationId: String,
+                        queuedMessageId: Long,
+                    ) {
+                        sends += conversationId to queuedMessageId
+                    }
                 }
             val settings =
                 SessionSettings(
@@ -87,9 +95,18 @@ class ThreadViewModelSendNowTest {
             selected.value = "s2"
             runCurrent()
             assertFalse(first.state.value.runConfig.midTurnInputSupported)
+            selected.value = ""
+            runCurrent()
+            assertFalse(first.state.value.runConfig.midTurnInputSupported)
+            first.onSendQueuedNow(42L)
+            runCurrent()
+            assertTrue(sends.isEmpty())
             fake.setSessionSettingsReading("seed-channel-personal", settings.copy(sessionId = "s2"))
             runCurrent()
             assertTrue(first.state.value.runConfig.midTurnInputSupported)
+            first.onSendQueuedNow(43L)
+            runCurrent()
+            assertEquals(listOf("seed-channel-personal" to 43L), sends)
             fake.setSessionSettingsReading("seed-channel-personal", settings.copy(sessionId = "s2", held = true))
             runCurrent()
             assertFalse(first.state.value.runConfig.midTurnInputSupported)

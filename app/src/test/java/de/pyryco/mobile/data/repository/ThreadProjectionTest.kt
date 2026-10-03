@@ -112,6 +112,31 @@ class ThreadProjectionTest {
         }
 
     @Test
+    fun peerSendNow_turnEndsBeforeQueueRemoval_deliveredPushCorrectsPlacementOnce() =
+        runTest {
+            val projection = ThreadProjection()
+            val queue = QueueProjection()
+            val thread = collect(projection, "c1")
+            val sent = startQueuedTurn(projection, queue)
+            projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-1", "end_turn"))
+            projection.onQueueState(queue, turnOpen = false)
+            runCurrent()
+            // Closed-turn removal retains ordinary drain's immediate settlement until delivery is reported.
+            assertEquals(listOf("turn-1", "tool-1", "mine"), ids(thread.last()))
+            projection.applyToolUse(toolUse("turn-2", "tool-2"))
+            projection.appendLiveMessage("c1", userMessage("mine", "hello", PUSHED_AT))
+            runCurrent()
+            assertEquals(listOf("turn-1", "tool-1", "tool-2", "mine"), ids(thread.last()))
+            assertEquals(ThreadItem.MessageItem(sent), thread.last().last())
+            projection.applyToolUse(toolUse("turn-2", "tool-3"))
+            projection.appendLiveMessage("c1", userMessage("mine", "hello", PUSHED_AT))
+            projection.onQueueState(queue, 43L to "mine")
+            projection.onQueueState(queue)
+            runCurrent()
+            assertEquals(listOf("turn-1", "tool-1", "tool-2", "mine", "tool-3"), ids(thread.last()))
+        }
+
+    @Test
     fun sendNow_foreignId_cannotHideOrMoveHeldRows() =
         runTest {
             val projection = ThreadProjection()
@@ -386,6 +411,25 @@ class ThreadProjectionTest {
             runCurrent()
 
             assertEquals(listOf("turn-1", "tool-1"), ids(thread.last()))
+        }
+
+    @Test
+    fun droppedOwnEcho_lateDeliveredPushRendersOnceAtDaemonPosition() =
+        runTest {
+            val projection = ThreadProjection()
+            val queue = QueueProjection()
+            val thread = collect(projection, "c1")
+            startQueuedTurn(projection, queue)
+            projection.recordDrop("c1", 42L, "mine")
+            projection.onQueueState(queue)
+            runCurrent()
+            assertEquals(listOf("turn-1", "tool-1"), ids(thread.last()))
+            projection.applyToolUse(toolUse("turn-1", "tool-2"))
+            // Delivery may win the drop race; follow the daemon's push after the local id was spent.
+            projection.appendLiveMessage("c1", userMessage("mine", "hello", PUSHED_AT))
+            projection.appendLiveMessage("c1", userMessage("mine", "hello", PUSHED_AT))
+            runCurrent()
+            assertEquals(listOf("turn-1", "tool-1", "tool-2", "mine"), ids(thread.last()))
         }
 
     // #1356 AC #1: a live failed turn_end leaves one stopped row after the turn's last row, and it stays

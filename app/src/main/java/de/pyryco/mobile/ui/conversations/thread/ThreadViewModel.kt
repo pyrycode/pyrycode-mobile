@@ -426,6 +426,9 @@ class ThreadViewModel(
             ) to announced?.takeUnless { it.truncated }?.model.orEmpty()
         }
 
+    /** Last explicit selection; a summary's empty placeholder cannot restore a replaced session's support. */
+    private var lastKnownSessionId = ""
+
     /**
      * The conversation list, shared (#1110) so [state] and [conversationAgent] ride one upstream
      * subscription: the remote repository sends a `list_conversations` request on every subscription.
@@ -437,6 +440,9 @@ class ThreadViewModel(
         repository
             .observeConversations(ConversationFilter.All)
             .onEach { list ->
+                list.firstOrNull { it.id == conversationId }?.currentSessionId?.takeIf { it.isNotEmpty() }?.let {
+                    lastKnownSessionId = it
+                }
                 if (list.any { it.id == conversationId && it.archived } && leaveForList()) {
                     RelayLog.d { "event=thread_left_archived" }
                 }
@@ -647,7 +653,7 @@ class ThreadViewModel(
                 workspacePath = conv?.cwd ?: "",
                 lastUsedAt = conv?.lastUsedAt,
                 sessionCount = conv?.sessionHistory?.size ?: 0,
-                runConfig = runConfig.forLiveSession(conv?.currentSessionId.orEmpty()),
+                runConfig = runConfig.forLiveSession(lastKnownSessionId),
                 mutationsSupported = mutationsSupported,
                 historyTail = content.historyTail,
             )

@@ -136,6 +136,8 @@ internal class ThreadProjection(
      * A parked echo removed while a turn is open waits hidden in [OwnEchoQueue.awaitingPush] until
      * the delivered push establishes placement, including a Send now from another paired client.
      * Local send-now intent, recorded before enqueue, also defers a busy echo across a turn ending.
+     * Closed-turn removal retains ordinary settlement but keeps [OwnEchoQueue.placementPending]:
+     * a peer's late Send now is indistinguishable until the delivered push establishes its position.
      * Written atomically by the inbound collector and [recordSendNow] / [withdrawSendNow].
      * Connection-scoped and in-memory like [mintedMessageIds], and observed only through [observe].
      */
@@ -239,6 +241,9 @@ internal class ThreadProjection(
      * The one exception is position (#1558): the push of an echo still [OwnEchoQueue.queued] is its delivery,
      * so a [OwnEchoQueue.parked] one, unchanged, first moves to the end of the thread, after the turn it
      * waited behind. One queued while idle stays where it was drawn (#1636).
+     * A busy echo provisionally settled by closed-turn queue removal also moves on its first push:
+     * removal cannot distinguish ordinary drain from a peer's late Send now. [OwnEchoQueue.placementPending]
+     * retains that eligibility until this push consumes it, independently of duplicate suppression.
      */
     fun appendLiveMessage(
         conversationId: String,
@@ -246,8 +251,9 @@ internal class ThreadProjection(
     ) {
         if (message.id in mintedMessageIds.value[conversationId].orEmpty()) trail.delivered(message.id)
         val echoes = ownEchoQueues.value[conversationId]
-        if (echoes != null && (message.id in echoes.queued || message.id in echoes.awaitingPush)) {
-            if (message.id in echoes.parked || message.id in echoes.awaitingPush) {
+        val pendingPlacement = echoes != null && (message.id in echoes.awaitingPush || message.id in echoes.placementPending)
+        if (echoes != null && (message.id in echoes.queued || pendingPlacement)) {
+            if (message.id in echoes.parked || pendingPlacement) {
                 moveOwnEchoToEnd(conversationId, message.id)
             }
             ownEchoQueues.update { all ->
@@ -263,6 +269,7 @@ internal class ThreadProjection(
                                 sendNow = current.sendNow - message.id,
                                 awaitingPush =
                                     current.awaitingPush - message.id,
+                                placementPending = current.placementPending - message.id,
                             )
                     )
             }
@@ -600,7 +607,8 @@ internal class ThreadProjection(
      * has been applied and [settleDrops] has run. In each conversation this device minted into, an echo the
      * snapshot holds is [OwnEchoQueue.queued]. A busy echo leaving an open turn's backlog waits for its
      * delivered message in [OwnEchoQueue.awaitingPush], since the control may have come from a peer.
-     * Closed-turn ordinary drain moves the echo before it stops reading as queued. A dropped echo has
+     * Closed-turn removal moves the echo before it stops reading as queued, retaining ordinary drain's
+     * immediate settlement, but the first delivered push still owns its final position. A dropped echo has
      * already been removed and its id spent, so the move finds nothing.
      *
      * Only an echo first reported while [turnOpen] held for its conversation waits behind a turn (#1636): it
@@ -624,10 +632,10 @@ internal class ThreadProjection(
         ownEchoQueues.update { all ->
             val echoes = all[conversationId] ?: OwnEchoQueue()
             val drained = echoes.queued - inSnapshot
+            val minted = mintedMessageIds.value[conversationId].orEmpty()
             val deferred = drained.intersect(echoes.behindTurn).filterTo(HashSet()) { turnOpen || it in echoes.sendNow }
             drained.filter { it in echoes.behindTurn && it !in deferred }.forEach { moveOwnEchoToEnd(conversationId, it) }
             val delivered = echoes.delivered + (drained - deferred)
-            val minted = mintedMessageIds.value[conversationId].orEmpty()
             val queued = inSnapshot.intersect(minted) - delivered
             val behindTurn = (echoes.behindTurn intersect queued) + if (turnOpen) queued - echoes.queued else emptySet()
             val next =
@@ -636,6 +644,7 @@ internal class ThreadProjection(
                     delivered = delivered,
                     behindTurn = behindTurn,
                     awaitingPush = echoes.awaitingPush + deferred,
+                    placementPending = echoes.placementPending + drained.intersect(echoes.behindTurn).intersect(minted),
                 )
             drained.filter { it in minted && it !in deferred }.forEach(trail::delivered)
             next.queued.forEach(trail::queued)
@@ -878,6 +887,9 @@ internal class ThreadProjection(
      * [awaitingPush] holds busy echoes removed while a turn is open or a local intent is pending;
      * they are not yet reported delivered, and remain in the store
      * for identity and attachment metadata, hidden from the read and skipped by assistant deltas.
+     * [placementPending] retains every busy echo removed before its delivered push, including a
+     * provisionally settled closed-turn drain. The first push corrects placement and consumes this
+     * membership; duplicate pushes cannot move it again. Idle echoes never join it.
      *
      * [behindTurn] is the [queued] ids first reported while a turn was open (#1636), and only those, the
      * [parked] ones, read last and move on delivery. One queued while idle waits behind nothing: the daemon
@@ -890,6 +902,7 @@ internal class ThreadProjection(
         val behindTurn: Set<String> = emptySet(),
         val sendNow: Set<String> = emptySet(),
         val awaitingPush: Set<String> = emptySet(),
+        val placementPending: Set<String> = emptySet(),
     ) {
         val parked: Set<String> get() = queued intersect behindTurn
     }
