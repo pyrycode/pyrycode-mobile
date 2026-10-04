@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -315,6 +316,57 @@ class MessageBubbleTest {
         // The full arrived content, never the revealed prefix and never with the caret glyph attached —
         // the control is handed `Message.content`, not anything read back out of the render.
         assertEquals(listOf(STREAMING_BODY), clipboard.writes)
+    }
+
+    @Test
+    fun streamingReveal_frequentAppends_keepProgressAndCatchUpWithoutLosingThePrefix() {
+        composeTestRule.mainClock.autoAdvance = false
+        val arrived = mutableStateOf("word ".repeat(400)) // A 2000-character initial backlog.
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                MessageBubble(
+                    message(Role.Assistant, arrived.value, isStreaming = true),
+                    metaRowVisible = false,
+                )
+            }
+        }
+
+        fun revealedText(): String =
+            composeTestRule
+                .onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.Text), useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .single()
+                .config[SemanticsProperties.Text]
+                .single()
+                .text
+                .removeSuffix(STREAMING_CARET)
+                .trimEnd()
+
+        var previous = revealedText()
+        val snapshots = mutableListOf<Pair<Long, String>>()
+        repeat(128) { tick ->
+            composeTestRule.runOnIdle { arrived.value += "word " }
+            snapshots += composeTestRule.mainClock.currentTime to arrived.value.trimEnd()
+            // One 16 ms frame per arrival is faster than the 33 ms reveal interval.
+            composeTestRule.mainClock.advanceTimeByFrame()
+            val revealed = revealedText()
+            assertTrue("the revealed prefix must not shrink at tick $tick", revealed.startsWith(previous))
+            assertTrue(arrived.value.startsWith(revealed))
+            assertTrue("steps must end on whole words", revealed.isEmpty() || revealed.endsWith("word"))
+            if (tick >= 4) assertTrue("reveal must advance during arrivals", revealed.isNotEmpty())
+            snapshots.filter { (time, _) -> composeTestRule.mainClock.currentTime - time >= 512L }.forEach { (_, text) ->
+                // 495 ms reveal budget plus one presentation frame: about half a second.
+                assertTrue("each arrived snapshot must catch up during arrivals", revealed.startsWith(text))
+            }
+            previous = revealed
+        }
+
+        composeTestRule.mainClock.advanceTimeBy(512L)
+        assertEquals(arrived.value.trimEnd(), revealedText())
+        // After catching up, the same producer must still reveal a later arrival.
+        composeTestRule.runOnIdle { arrived.value += "word " }
+        composeTestRule.mainClock.advanceTimeBy(512L)
+        assertEquals(arrived.value.trimEnd(), revealedText())
     }
 
     private companion object {

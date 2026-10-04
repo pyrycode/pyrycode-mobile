@@ -400,12 +400,15 @@ private fun StreamingAssistantBody(
     onOpenMarkdownLink: ((String) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
-    val revealedLength by produceState(initialValue = 0, key1 = content) {
+    val currentContent by rememberUpdatedState(content)
+    val revealedLength by produceState(initialValue = 0, key1 = Unit) {
         var stepsRemaining = STREAMING_CATCH_UP_STEPS
-        while (value < content.length) {
+        while (true) {
             delay(STREAMING_REVEAL_STEP_MS)
-            value = nextStreamingRevealLength(content, value, stepsRemaining)
-            stepsRemaining--
+            val arrived = currentContent
+            value = nextStreamingRevealLength(arrived, value, stepsRemaining)
+            // Arrivals must not restart the clock or extend an outstanding backlog's deadline.
+            stepsRemaining = if (value == arrived.length) STREAMING_CATCH_UP_STEPS else stepsRemaining - 1
         }
     }
     val caretVisible by produceState(initialValue = true, key1 = Unit) {
