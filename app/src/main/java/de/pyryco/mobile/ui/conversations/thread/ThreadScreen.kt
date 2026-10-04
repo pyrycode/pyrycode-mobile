@@ -1419,13 +1419,16 @@ internal fun ThreadUiState.toChannelInfoUiModel(now: Instant = Clock.System.now(
     )
 
 /**
- * The thread's open tool call (#897): the latest row in [items] whose call is still
- * [ToolCallStatus.Running], or `null`. Denied, done and failed rows are not open. One call supplies both
+ * The thread's open tool call (#897): the latest main-thread row in [items] whose call is still
+ * [ToolCallStatus.Running], or `null`. Parented, denied, done and failed calls are not open here. One call supplies both
  * the name and the elapsed reading the status area shows, so the two can never come from different calls,
  * and a newer open call replaces an older one because it sits later in the chronological list.
  */
 internal fun openToolCall(items: List<ThreadItem>): ToolCall? =
     items
         .lastOrNull { item ->
-            item is ThreadItem.MessageItem && item.message.toolCall?.status == ToolCallStatus.Running
+            item is ThreadItem.MessageItem &&
+                item.message.toolCall?.status == ToolCallStatus.Running &&
+                item.message.toolCall.parentToolUseId
+                    .isEmpty()
         }.let { (it as? ThreadItem.MessageItem)?.message?.toolCall }
