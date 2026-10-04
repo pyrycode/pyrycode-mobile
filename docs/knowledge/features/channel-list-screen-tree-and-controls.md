@@ -141,15 +141,13 @@ create, for a host that stops being connected — this reverses #1190's keep-ope
   to `channel_list`. `TreeSectionHeader` and its resources remain available, but the list no longer emits
   that component or its pairing controls. See
   [Navigation](navigation.md#manual-pairing-entry-and-return).
-**Chats-section creation.** `TreeHostChatAddTapped(serverId)` opens a fieldless Create chat confirmation
-for that host without sending a request or folding the section. The dialog names the host and offers Create
-and Cancel. Confirming sends `createDiscussion(null)` to the held host, leaving `cwd` for the daemon to
-choose independently of the app's saved per-host default. Success selects and opens the returned chat;
-failure leaves the dialog open with a generic retryable error. Since #1336 the dialog and its error close,
-rather than survive, when the held host stops being connected — see [ChannelListViewModel](channel-list-viewmodel.md)
-for the snapshot watcher that clears it, reversing the keep-open rule #1190 set. A fresh dialog identity prevents a delayed
-reply from a dismissed dialog closing or navigating from a later one, even on the same host. The old host
-row plus and its Add workspace long press are removed; folder choice remains in the thread's
+**Chats-section creation.** Since #1563, `TreeHostChatAddTapped(serverId)` sends
+`createDiscussion(null)` directly to that host, leaving `cwd` for the daemon to choose.
+Success selects and opens the returned chat; failure shows the
+[timed Error pill](channel-list-screen.md#create-chat-failure-notice-1748), with retry
+through another plus tap. There is no Create chat confirmation dialog. Request identity
+prevents an older response from replacing a newer request's state. The old host-row
+plus and its Add workspace long press are removed; folder choice remains in the thread's
 [workspace picker](workspace-picker.md#consumers), while the underlying Add workspace state remains.
 
 **Naming rule.** Pairing is unique and needs no section qualifier. Host controls still repeat down the
@@ -161,7 +159,7 @@ connection/return waits. The retired section-qualified pairing name is no longer
 **Device-suite handles.** `treeHostChatAddTestTag(serverId)` and `treeHostChannelAddTestTag(serverId)`
 identify the two section controls. Their id clamp includes the original length after a 256-character
 prefix, so unusually long host ids cannot make the tags collide merely by sharing that prefix.
-`InteractiveStreamE2ETest.createChat()` uses the Chats tag and confirms the modal. See
+`InteractiveStreamE2ETest.createChat()` uses the Chats tag to create directly. See
 [`docs/e2e-interactive-stream.md`](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
 
 **Nesting.** A section plus sits inside `FoldableTreeRow`'s clickable but keeps its own semantics node,
