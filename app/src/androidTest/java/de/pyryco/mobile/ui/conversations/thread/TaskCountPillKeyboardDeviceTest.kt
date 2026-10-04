@@ -119,7 +119,10 @@ class TaskCountPillKeyboardDeviceTest {
         rule.onNodeWithContentDescription("Close").performTouchInput { click() }
 
         rule.onNodeWithText("Actions").performTouchInput { click() }
-        rule.onNodeWithText("Background tasks (2)").assertIsDisplayed()
+        rule.onNodeWithText("Background tasks (2)").assertDoesNotExist()
+        rule.onNodeWithText("Background tasks").assertDoesNotExist()
+        rule.onNodeWithText("Compact session").assertIsDisplayed()
+        rule.onNodeWithText("Knowledge capture").assertIsDisplayed()
         pill.assertIsDisplayed()
     }
 }

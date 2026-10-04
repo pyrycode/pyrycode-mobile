@@ -28,7 +28,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * The Actions menu's background-task row and its read-only panel (#678). The menu path is hosted on
+ * The top menu's background-task row and its read-only panel (#678). The menu path is hosted on
  * [ThreadScreen]; the panel's readings are composed directly.
  */
 @RunWith(AndroidJUnit4::class)
@@ -81,31 +81,31 @@ class BackgroundTaskPanelTest {
 
     private fun button(label: String) = composeTestRule.onNode(hasText(label) and hasClickAction() and !isSelectable())
 
-    private fun openPanelFromMenu(count: Int) {
-        button("Actions").performClick()
-        button("Background tasks ($count)").performClick()
+    private fun openPanelFromMenu() {
+        composeTestRule.onNodeWithContentDescription("More actions").performClick()
+        button("Background tasks").performClick()
     }
 
     @Test
-    fun overflow_withNoReport_opensTheSamePanelAsActions_andDismissesTheMenu() {
+    fun overflow_withNoReport_opensThePanel_andDismissesTheMenu() {
         setThread(roster = null, count = 0)
-        assertOverflowAndActionsReading(UNREPORTED)
+        assertOverflowReading(UNREPORTED)
     }
 
     @Test
     fun overflow_inAChat_withoutMutationsOrRunningTasks_opensTheEmptyPanel() {
         setThread(roster = BackgroundTaskRoster(emptyList(), 0), count = 0, isPromoted = false, mutationsSupported = false)
-        assertOverflowAndActionsReading(EMPTY)
+        assertOverflowReading(EMPTY)
     }
 
-    private fun assertOverflowAndActionsReading(reading: String) {
+    private fun assertOverflowReading(reading: String) {
         composeTestRule.onNodeWithContentDescription("More actions").performClick()
         button("Background tasks").performClick()
         composeTestRule.onNodeWithText("Channel info").assertDoesNotExist()
         composeTestRule.onNodeWithText(reading).assertIsDisplayed()
         composeTestRule.onNodeWithContentDescription("Close").performClick()
         composeTestRule.onNodeWithText("Background tasks").assertDoesNotExist()
-        openPanelFromMenu(count = 0)
+        openPanelFromMenu()
         composeTestRule.onNodeWithText(reading).assertIsDisplayed()
         composeTestRule.onNodeWithContentDescription("Close").performClick()
         assertTrue(overflowEvents.isEmpty())
@@ -166,23 +166,23 @@ class BackgroundTaskPanelTest {
     // Unmerged: a task row merges its fields for a screen reader, so two markers share one merged node.
     private fun markers() = composeTestRule.onAllNodesWithText(TRUNCATED, useUnmergedTree = true)
 
-    // AC#1: the row shows the state's live count, and opens the panel.
+    // #1668: the count-free top-menu row opens the existing roster.
     @Test
-    fun actionsRow_showsTheLiveCount_andOpensThePanel() {
+    fun overflowRow_withLiveTasks_opensThePanel() {
         setThread(roster = roster(task(), task(id = "t2", isFinished = true)), count = 1)
 
-        openPanelFromMenu(count = 1)
+        openPanelFromMenu()
 
         composeTestRule.onNodeWithText("Background tasks").assertIsDisplayed()
         composeTestRule.onAllNodesWithText("sleep 300").assertCountEquals(2)
     }
 
-    // AC#1: a host with nothing reported shows 0.
+    // A host with nothing reported retains the unreported panel reading.
     @Test
-    fun actionsRow_withNoReport_showsZero() {
+    fun overflowRow_withNoReport_showsUnreported() {
         setThread(roster = null, count = 0)
 
-        openPanelFromMenu(count = 0)
+        openPanelFromMenu()
 
         composeTestRule.onNodeWithText(UNREPORTED).assertIsDisplayed()
     }
@@ -192,13 +192,13 @@ class BackgroundTaskPanelTest {
     fun closing_sendsNothing() {
         setThread(roster = roster(task()), count = 1)
 
-        openPanelFromMenu(count = 1)
+        openPanelFromMenu()
         button("Close").assertDoesNotExist()
         Espresso.pressBack()
         composeTestRule.onNodeWithText(UNREPORTED).assertDoesNotExist()
         composeTestRule.onNodeWithText("sleep 300").assertDoesNotExist()
 
-        openPanelFromMenu(count = 1)
+        openPanelFromMenu()
         composeTestRule.onNodeWithContentDescription("Close").performClick()
         composeTestRule.onNodeWithText("sleep 300").assertDoesNotExist()
 

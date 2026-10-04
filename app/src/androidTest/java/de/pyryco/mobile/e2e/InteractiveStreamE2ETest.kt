@@ -63,6 +63,7 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
+import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
@@ -4246,8 +4247,8 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * A background task real claude starts shows in the thread pill and Actions menu count, opens the same
-     * panel from either entry, and returns to 0 when the task finishes (#1296, #967, #678). The phone asks for one backgrounded `sleep`; a
+     * A background task real claude starts shows in the thread pill, opens the same
+     * panel from the pill and top menu, and clears the pill when the task finishes (#1296, #967, #678). The phone asks for one backgrounded `sleep`; a
      * permission prompt for it is allowed through the main daemon's privileged peer, the #950 path. The peer's
      * recorded frames supply only timing and the task's identity: the count and the panel are read off the phone.
      *
@@ -4300,23 +4301,18 @@ class InteractiveStreamE2ETest {
             }
             closeBackgroundTasks()
 
-            // 3. The Actions menu reports the same count and opens the same panel.
+            // #1668: Actions keeps only composer actions; the top menu opens the live roster.
             openActions()
-            openBackgroundTasks { it >= 1 }
+            composeTestRule.onAllNodes(actionRow { it.startsWith("Background tasks") }).assertCountEquals(0)
+            composeTestRule.onNodeWithText("Compact session").assertIsDisplayed()
+            composeTestRule.onNodeWithText("Knowledge capture").assertIsDisplayed()
+            Espresso.pressBack()
+            openBackgroundTasks()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasText(started.taskType) and inBackgroundPanel()).fetchSemanticsNodes().isNotEmpty()
             }
             composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_unreported))).assertCountEquals(0)
             composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_empty))).assertCountEquals(0)
-            closeBackgroundTasks()
-
-            // #1631: the top menu opens that same live roster and dismisses itself.
-            composeTestRule.onNodeWithContentDescription(CD_MORE_ACTIONS).performClick()
-            composeTestRule.onNode(hasText(string(R.string.background_tasks_title)) and hasClickAction()).performClick()
-            composeTestRule.onNodeWithText(string(R.string.thread_overflow_channel_info)).assertDoesNotExist()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasText(started.taskType) and inBackgroundPanel()).fetchSemanticsNodes().isNotEmpty()
-            }
             closeBackgroundTasks()
 
             // 4. Once the task finishes, the count is 0 and the panel no longer lists the task as live. It
@@ -4335,8 +4331,10 @@ class InteractiveStreamE2ETest {
                         .getOrNull()
                         ?.let { it.taskId == started.taskId && it.status.isNotEmpty() } == true
             }
-            openActions()
-            openBackgroundTasks { it == 0 }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(taskPill).fetchSemanticsNodes().isEmpty()
+            }
+            openBackgroundTasks()
             val finishedOrGone =
                 (hasText(string(R.string.background_tasks_finished)) or hasText(string(R.string.background_tasks_empty))) and
                     inBackgroundPanel()
@@ -4411,8 +4409,7 @@ class InteractiveStreamE2ETest {
             awaitNoPromptDialog("a permission prompt still covers the thread")
 
             // 3. While the task runs, its card shows an activity line from a recorded frame and a tools segment.
-            openActions()
-            openBackgroundTasks { it >= 1 }
+            openBackgroundTasks()
             val tools = toolsSegmentPatterns()
 
             fun texts(node: SemanticsNode): List<String> =
@@ -5788,35 +5785,13 @@ class InteractiveStreamE2ETest {
                 )
             }
 
-    /**
-     * In the open Actions menu, wait until the Background tasks row's live count passes [count], then open the
-     * panel from it (#678). The failure names the labels the menu showed; they are the app's own.
-     */
-    private fun openBackgroundTasks(count: (Int) -> Boolean) {
-        val prefix = ComposerAction.BackgroundTasks.label + " ("
-        val row =
-            actionRow {
-                it.startsWith(prefix) &&
-                    it.endsWith(")") &&
-                    it
-                        .removePrefix(prefix)
-                        .removeSuffix(")")
-                        .toIntOrNull()
-                        ?.let(count) == true
-            }
-        try {
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(row).fetchSemanticsNodes().isNotEmpty() }
-        } catch (e: ComposeTimeoutException) {
-            val shown =
-                composeTestRule.onAllNodes(actionRow { it.startsWith(prefix) }).fetchSemanticsNodes().map {
-                    it.config
-                        .getOrNull(SemanticsProperties.Text)
-                        .orEmpty()
-                        .joinToString("") { text -> text.text }
-                }
-            throw AssertionError("the Actions menu's background-task count never passed the check; it shows $shown", e)
-        }
-        composeTestRule.onAllNodes(row).onFirst().performClick()
+    /** Open the count-free Background tasks row from the top menu (#1668). */
+    private fun openBackgroundTasks() {
+        composeTestRule.onNodeWithContentDescription(CD_MORE_ACTIONS).performClick()
+        val row = hasText(string(R.string.background_tasks_title)) and hasClickAction()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(row).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onNode(row).performClick()
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_channel_info)).assertDoesNotExist()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_title))).fetchSemanticsNodes().isNotEmpty()
         }
