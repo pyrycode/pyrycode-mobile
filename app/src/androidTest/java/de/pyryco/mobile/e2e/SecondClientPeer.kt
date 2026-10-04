@@ -1,5 +1,6 @@
 package de.pyryco.mobile.e2e
 
+import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.network.AttachmentChunkPayloadDto
@@ -53,14 +54,15 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * A second paired device on the live harness (#848) — the bounded stand-in for the desktop app or any
  * other client of the same daemon. It pairs with its own `pyry pair` token (`peerToken`, minted by
- * `scripts/e2e-emulator.sh`) and its own throwaway device key, never the phone's, and speaks the mobile
+ * `scripts/e2e-emulator.sh`) and its own process-retained device key, never the phone's, and speaks the mobile
  * wire protocol over the same relay the phone dials, through the app's own [OkHttpRelayTransport],
  * [NoiseSessionFactory] and [NoiseSessionPump]. Its static identity is retained in memory for this
  * pairing across scenarios by [PeerDeviceKeyStore], matching the daemon's token-to-key binding.
  *
  * It never touches the app under test: its pairing record and key live in memory only, so the phone's
  * credential store, host list and registry selection are exactly what they were. One peer per scenario,
- * [open]ed once and [close]d in the scenario's `finally`.
+ * [open]ed once and [close]d in the scenario's `finally`. Sequential peers using the same host and token
+ * retain the same static identity, because the daemon binds the token to its first accepted key.
  *
  * Its link to the daemon redials like the app's (#1036): a fresh relay connection often ends within a
  * second of its handshake (#1039), so each link counts as up only once it has answered a request, and a
@@ -75,7 +77,7 @@ import java.util.concurrent.atomic.AtomicLong
 class SecondClientPeer(
     private val pairing: PairedServer,
 ) : AutoCloseable {
-    private val keyStore = PeerDeviceKeyStore(pairing)
+    internal val keyStore: DeviceStaticKeyStore = PeerDeviceKeyStore(pairing)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val received = MutableStateFlow<List<Envelope>>(emptyList())
     private val requestId = AtomicLong()
@@ -390,7 +392,7 @@ class SecondClientPeer(
     internal fun recorded(conversationId: String): List<Envelope> =
         received.value.filter { it.payloadField("conversation_id") == conversationId }
 
-    /** Stop redialing and tear down the live session (wiping its keys), its socket and the recorders. Idempotent. */
+    /** Stop redialing and wipe session keys; retain the host/token static identity for later peers. Idempotent. */
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         link.close()
