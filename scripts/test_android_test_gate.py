@@ -220,12 +220,13 @@ class AndroidGateTest(unittest.TestCase):
             self.assertEqual(gate.fresh_reports(root, start), [fresh])
 
     def test_ui_skip_covers_only_paths_the_suite_cannot_see(self):
-        live, deterministic, peer = gate.E2E_ONLY_SOURCES
+        e2e = "app/src/androidTest/java/de/pyryco/mobile/e2e/"
+        live, deterministic, peer = [e2e + name + ".kt" for name in
+                                     ("InteractiveStreamE2ETest", "DeterministicInteractiveStreamE2ETest", "SecondClientPeer")]
         for paths in (["docs/knowledge/features/x.md"], ["README.md"], ["scripts/e2e-emulator.sh", live],
-                      ["scripts/android-test-gate.py", peer, deterministic]):
+                      ["scripts/android-test-gate.py", peer, deterministic], [e2e + "PeerIdentityLifecycleTest.kt"]):
             with self.subTest(paths=paths):
                 self.assertTrue(gate.ui_suite_skippable(paths))
-        e2e = "app/src/androidTest/java/de/pyryco/mobile/e2e/"
         for paths in ([], None, ["app/src/main/java/de/pyryco/mobile/MainActivity.kt"], [e2e + "E2eTestApplication.kt"],
                       [e2e + "E2eInstrumentationRunner.kt"],
                       ["app/src/sharedTest/java/de/pyryco/mobile/e2e/UnrecognizedRowSentinel.kt"],

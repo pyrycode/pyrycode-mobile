@@ -790,6 +790,9 @@ class InteractiveStreamE2ETest {
      * heartbeat. While it runs, the label reads `Running Bash…` with no elapsed reading. After the turn
      * ends, the label is gone.
      *
+     * A prior peer binds the shared token first, so this also guards #1698's identity custody when
+     * selected alone, independently of the live suite's scenario order (#1683).
+     *
      * **One real-claude turn**, of at least 10 s.
      */
     @Test
@@ -798,6 +801,9 @@ class InteractiveStreamE2ETest {
         val waitingReading =
             hasText(string(R.string.thread_status_waiting_for_permission)) and hasAnyAncestor(hasTestTag(STATUS_READING_TEST_TAG))
         try {
+            runningToolPeer().use { prior ->
+                peerStep(prior, "open prior running-tool peer") { prior.open(CONNECT_TIMEOUT_MS) }
+            }
             val (conversationId, modalId) = holdToolOnPermission(peer, HELD_TOOL_PROMPT)
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(waitingReading).fetchSemanticsNodes().isNotEmpty()
@@ -805,13 +811,13 @@ class InteractiveStreamE2ETest {
             composeTestRule.onNode(waitingReading).assertIsDisplayed()
             composeTestRule.onNode(hasContentDescription(runningToolLabel)).assertDoesNotExist()
 
-            runBlocking { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
+            peerStep(peer, "allow held tool once and await permission dismissal") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasContentDescription(runningToolLabel)).fetchSemanticsNodes().isNotEmpty()
             }
             composeTestRule.onNode(hasContentDescription(runningToolLabel)).assertIsDisplayed()
 
-            runBlocking { peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS) }
+            peerStep(peer, "await permission-held tool's turn_end") { peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS) }
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasContentDescription(runningToolLabel)).fetchSemanticsNodes().isEmpty()
             }
@@ -2830,15 +2836,14 @@ class InteractiveStreamE2ETest {
     fun interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain() {
         val args = InstrumentationRegistry.getArguments()
         val serverId = twoHostArg(ARG_SERVER_ID)
-        val peer =
-            SecondClientPeer(
-                PairedServer(
-                    serverId = serverId,
-                    token = twoHostArg(ARG_PEER_TOKEN),
-                    relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
-                    serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
-                ),
+        val pairing =
+            PairedServer(
+                serverId = serverId,
+                token = twoHostArg(ARG_PEER_TOKEN),
+                relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
             )
+        val peer = SecondClientPeer(pairing)
         val stopControl = hasContentDescription(string(R.string.cd_thread_interrupt))
         try {
             // 1. A fresh chat on the selected host, its id read off the host's repository as #849 does.
@@ -2853,6 +2858,11 @@ class InteractiveStreamE2ETest {
 
             // 2. The phone starts the held turn; the peer allows its command once, so the command runs and
             //    the permission dialog leaves the composer.
+            // Bind the token through a prior peer, as earlier full-suite scenarios do (#1696).
+            // A new static key on the observing peer must fail even when this method runs alone.
+            SecondClientPeer(pairing).use { prior ->
+                peerStep(prior, "open prior peer") { prior.open(CONNECT_TIMEOUT_MS) }
+            }
             peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
             sendFromPhone(STOP_HOLD_PROMPT)
             val modalId =
@@ -3022,7 +3032,11 @@ class InteractiveStreamE2ETest {
             awaitConnected()
             val (chatA, nameA) = answerChat(serverId, OFFSCREEN_CHAT_NAME_PREFIX + "a-")
             val (_, nameB) = answerChat(serverId, OFFSCREEN_CHAT_NAME_PREFIX + "b-")
-            peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
+            // Bind the token first, so identity reuse is checked even when selected alone (#1692).
+            runningToolPeer().use { prior ->
+                peerStep(prior, "open prior offscreen peer") { prior.open(CONNECT_TIMEOUT_MS) }
+            }
+            peerStep(peer, "open offscreen peer") { peer.open(CONNECT_TIMEOUT_MS) }
 
             // 2. A's first turn renders, ends and is cached by the open thread.
             openChatRow(nameA)
@@ -3630,7 +3644,7 @@ class InteractiveStreamE2ETest {
             pairAnswerHost()
             val (chatA, nameA) = answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "a-")
             val (chatB, nameB) = answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "b-")
-            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            peerStep(peer, "open answer peer") { peer.open(CONNECT_TIMEOUT_MS) }
 
             // 1. AC-1: A's command raises a prompt in A that carries claude's context and a don't-ask-again offer.
             openChatRow(nameA)
@@ -4523,13 +4537,17 @@ class InteractiveStreamE2ETest {
             awaitConnected()
             val connectedAt = SystemClock.elapsedRealtime()
             val (chatId, _) = answerChat(serverId, PUSH_PROMPT_NAME_PREFIX)
-            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            // Exercise the suite's shared-token binding even when this method runs alone (#1694, #1698).
+            runningToolPeer().use { prior ->
+                peerStep(prior, "open prior prompt peer") { prior.open(CONNECT_TIMEOUT_MS) }
+            }
+            peerStep(peer, "open prompt peer") { peer.open(CONNECT_TIMEOUT_MS) }
             awaitPushRegistered(serverId, connectedAt)
 
             // 2. The app goes to the background; the peer's turn raises a prompt while the phone is absent.
             val woke = sendAppToBackground(serverId, watch)
-            runBlocking { peer.sendMessage(chatId, RUNNING_TOOL_PROMPT, THREAD_TIMEOUT_MS) }
-            val modalId = runBlocking { peer.awaitPermissionModal(chatId, REPLY_TIMEOUT_MS) }
+            peerStep(peer, "send background prompt message") { peer.sendMessage(chatId, RUNNING_TOOL_PROMPT, THREAD_TIMEOUT_MS) }
+            val modalId = peerStep(peer, "await background permission modal") { peer.awaitPermissionModal(chatId, REPLY_TIMEOUT_MS) }
             held = chatId to modalId
 
             // 3. AC-2: the push wakes the app and exactly one prompt alert shows.
@@ -6925,10 +6943,8 @@ class InteractiveStreamE2ETest {
         step: String,
         block: suspend () -> T,
     ): T =
-        try {
-            runBlocking { block() }
-        } catch (e: TimeoutCancellationException) {
-            throw AssertionError("peer step '$step' timed out; ${peer.linkState()}", e)
+        runBlocking {
+            withTimeoutDiagnostic({ "peer step '$step' timed out; ${peer.linkState()}" }, block)
         }
 
     /**
@@ -7007,9 +7023,9 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
         val conversationId = newHostConversationId(serverId, before)
-        runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+        peerStep(peer, "open running-tool peer") { peer.open(CONNECT_TIMEOUT_MS) }
         sendFromPhone(prompt)
-        val modalId = runBlocking { peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS) }
+        val modalId = peerStep(peer, "await held tool's permission modal") { peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS) }
         return conversationId to modalId
     }
 
@@ -7405,9 +7421,13 @@ class InteractiveStreamE2ETest {
     ) {
         val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
         runBlocking {
-            withTimeout(CONNECT_TIMEOUT_MS) {
-                if (up) bundle.supervisor.connect() else bundle.supervisor.close()
-                bundle.coordinator.currentRepository.first { (it != null) == up }
+            withTimeoutDiagnostic({
+                "host link ${if (up) "reconnect" else "close"} timed out; repository present=${bundle.coordinator.currentRepository.value != null}"
+            }) {
+                withTimeout(CONNECT_TIMEOUT_MS) {
+                    if (up) bundle.supervisor.connect() else bundle.supervisor.close()
+                    bundle.coordinator.currentRepository.first { (it != null) == up }
+                }
             }
         }
     }
