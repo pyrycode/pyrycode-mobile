@@ -24,3 +24,16 @@ Sizing: one interaction repair with supporting regression, approximately 120 wri
 Add a shared screen regression beside the existing offscreen-action coverage: a short viewport and tall single-question block, controlled selection state, actions absent from semantics after selection, then action-container reveal, enabled Continue and a generation-scoped Continue event. First run the old wait-before-scroll ordering and confirm a Compose timeout despite `canContinue`; then use the repaired ordering and run `ThreadInlineQuestionTest` on Robolectric plus the focused new method on the managed device. Compile androidTest, run lint, assembleDebug, format and force spotlessCheck.
 
 The existing live scenario needs a real daemon, relay and Claude and therefore stays device-only. Builder does not run the credentialed live suite. Request `all` under the PR's Live tests so the dispatcher runs the full suite, as required by the ticket. Acceptance remains pending until fresh XML confirms the named method passed and records executed, failed and skipped counts; a focused result or exit code alone is insufficient.
+
+## Documentation handoff
+
+Pending for the documentation stage:
+
+- `docs/e2e-interactive-stream.md`, “What rung 3 is made of”: update the question-answer scenario to reveal `question-batch-actions` after option selection and before waiting for enabled Continue; preserve the phone and peer round-trip proof.
+- `docs/e2e-interactive-stream.md`, “Verification status”: record the dispatcher-produced fresh full live-suite executed, failed and skipped counts on the repaired PR head, and the named question-answer method's result. Keep acceptance pending until this evidence exists.
+- `docs/knowledge/features/question-batch-modal.md`, “Rendering”: valid selection does not guarantee the separate actions lazy row is composed; reveal its stable container before waiting for enabled button semantics.
+- `docs/knowledge/features/question-batch-modal.md`, “Testing”: describe `selected_option_can_reach_continue_when_the_actions_row_is_uncomposed`, which proves valid selection with absent actions, then reveal, enabled Continue and generation-scoped dispatch. Distinguish this Continue Compose timeout from the original #1637 coroutine timeout.
+
+## Revisions
+
+- 2026-10-04: the refined continuation adds the documentation requirements above. PR #1718 already implements the planned interaction and passed implementation review; the later #1689/#1687 failures came from unrepaired trees and do not change the design. Fresh dispatcher full-suite live acceptance remains pending.
