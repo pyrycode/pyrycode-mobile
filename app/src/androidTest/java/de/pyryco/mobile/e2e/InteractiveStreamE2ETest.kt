@@ -426,9 +426,9 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * #946: after one real turn, the composer footer's `Cxt:` segment shows the percentage Claude reported
+     * #946: after one real turn, the composer footer's circle announces the computed percentage
      * (`context_usage`, published after every completed turn and answered on the screen's own ask). Asserts
-     * only the `Cxt: N%` shape (or `Cxt high: N%` from 70, #1412) — the figure depends on the operator's claude and is never hard-coded.
+     * an available accessible percentage (including warning and high readings) — the figure depends on the operator's claude and is never hard-coded.
      */
     @Test
     fun interactiveTurn_pingPrompt_footerShowsContextUsage() {
@@ -442,10 +442,10 @@ class InteractiveStreamE2ETest {
         composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
         composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
 
-        val reported = Regex("Cxt(?: high)?: \\d+%")
+        val reported = CONTEXT_REPORTED
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasTestTag(CONTEXT_USAGE_TEST_TAG)).fetchSemanticsNodes().any { node ->
-                reported.matches(node.config[SemanticsProperties.Text].joinToString("") { it.text })
+                reported.matches(node.config[SemanticsProperties.ContentDescription].joinToString(""))
             }
         }
     }
@@ -513,10 +513,10 @@ class InteractiveStreamE2ETest {
                     hostRepository(serverId).observeContextUsage(conversationId).filterNotNull().first()
                 }
             }
-            val reported = Regex("Cxt: \\d+%")
+            val reported = CONTEXT_REPORTED
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasTestTag(CONTEXT_USAGE_TEST_TAG)).fetchSemanticsNodes().any { node ->
-                    reported.matches(node.config[SemanticsProperties.Text].joinToString("") { it.text })
+                    reported.matches(node.config[SemanticsProperties.ContentDescription].joinToString(""))
                 }
             }
         } finally {
@@ -5729,7 +5729,7 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * Wait until the footer's `Cxt:` segment shows text that passes [shows], and return that text. The failure
+     * Wait until the footer circle's accessible reading passes [shows], and return that description. The failure
      * names [what] was expected and what the segment showed; the text is the app's own, never claude's.
      */
     private fun awaitContextSegment(
@@ -5740,9 +5740,9 @@ class InteractiveStreamE2ETest {
         fun shown(): List<String> =
             composeTestRule.onAllNodes(hasTestTag(CONTEXT_USAGE_TEST_TAG)).fetchSemanticsNodes().map { node ->
                 node.config
-                    .getOrNull(SemanticsProperties.Text)
+                    .getOrNull(SemanticsProperties.ContentDescription)
                     .orEmpty()
-                    .joinToString("") { it.text }
+                    .joinToString("")
             }
         var matched: String? = null
         try {
@@ -7956,8 +7956,8 @@ class InteractiveStreamE2ETest {
         // The published row value of the inherited-default model (#972), which the model change skips.
         const val INHERITED_MODEL_VALUE = "default"
 
-        // The footer's `Cxt:` segment with a reported percentage (#946), `Cxt high:` from 70 (#1412).
-        val CONTEXT_REPORTED = Regex("Cxt(?: high)?: \\d+%")
+        // An available accessible percentage, including the warning and high states (#1660).
+        val CONTEXT_REPORTED = Regex("Context usage(?: warning,| high,)? \\d+%")
 
         // How many of the published commands the suggestions must list after the reconnect.
         const val SLASH_ROWS_CHECKED = 3

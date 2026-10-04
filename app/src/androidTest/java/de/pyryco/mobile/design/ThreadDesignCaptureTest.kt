@@ -359,7 +359,9 @@ class ThreadDesignCaptureTest {
     private fun captureFooter(name: String) {
         openThread()
         inputs.contextUsage.value = CONTEXT
-        await("Cxt high:", substring = true)
+        rule.waitUntil(5_000) {
+            rule.onAllNodesWithContentDescription("Context usage warning, 84%").fetchSemanticsNodes().isNotEmpty()
+        }
         assertFooterAboveKeyboard(name, keyboardVisible = false)
         design.capture("footer-1659", name, "533:1957")
         keyboard()
@@ -409,7 +411,10 @@ class ThreadDesignCaptureTest {
         assertEquals(12f, b.left.value - a.right.value, 0.5f)
         assertEquals("icons align with first Actions row", actions.bottom.value, b.bottom.value, 0.5f)
         assertTrue("Actions stays separate from icons", actions.right < a.left)
-        assertTrue("context stays separate from icons", context.right < a.left || context.top >= b.bottom)
+        assertEquals("circle width", 15f, context.right.value - context.left.value, 0.5f)
+        assertEquals("circle height", 15f, context.bottom.value - context.top.value, 0.5f)
+        assertEquals("circle before Actions with visual gap", 16f, actions.left.value - context.right.value, 0.5f)
+        assertEquals("circle top aligned in slot", actions.bottom.value - 16f, context.top.value, 0.5f)
         val density = design.view.resources.displayMetrics.density
         val screen = design.view.resources.displayMetrics.heightPixels
         assertTrue("icons stay above IME", b.bottom.value * density < screen - ime)

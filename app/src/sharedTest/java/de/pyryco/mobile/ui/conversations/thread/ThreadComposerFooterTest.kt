@@ -1,11 +1,8 @@
 package de.pyryco.mobile.ui.conversations.thread
 
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
@@ -13,7 +10,6 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
-import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
@@ -26,14 +22,12 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
-import androidx.compose.ui.text.TextLayoutResult
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
-import de.pyryco.mobile.ui.theme.warning
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -282,15 +276,14 @@ class ThreadComposerFooterTest {
 
     private fun contextSegment() = composeTestRule.onNode(hasTestTag(CONTEXT_USAGE_TEST_TAG))
 
-    // #946 AC#1: with a reading, the footer shows Claude's percentage after the buttons, and the Status sheet
+    // #1660: the footer announces the computed percentage, and the Status sheet
     // one tap away shows the same figure.
     @Test
     fun contextSegment_showsTheReportedPercentage_andTheSheetAgrees() {
         setThread(baseConfig.copy(contextPercent = 84))
 
         contextSegment()
-            .assertTextEquals("Cxt high: 84%")
-            .assert(hasContentDescription("Context usage high, 84%"))
+            .assert(hasContentDescription("Context usage warning, 84%"))
             .assertIsDisplayed()
         composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_status_expand)).performClick()
         composeTestRule.onNodeWithText("84% used").assertIsDisplayed()
@@ -303,7 +296,6 @@ class ThreadComposerFooterTest {
         setThread(baseConfig.copy(contextPercent = null))
 
         contextSegment()
-            .assertTextEquals("Cxt: n/a")
             .assert(hasContentDescription("Context usage unavailable"))
         composeTestRule.onAllNodes(hasText("%", substring = true)).assertCountEquals(0)
 
@@ -317,27 +309,20 @@ class ThreadComposerFooterTest {
     @Test
     fun contextSegment_showsAReplacedReading_andOpensNoOverlay() {
         setThread(baseConfig.copy(contextPercent = 12))
-        contextSegment().assertTextEquals("Cxt: 12%").assert(!hasClickAction())
+        contextSegment().assert(hasContentDescription("Context usage 12%")).assert(!hasClickAction())
 
         state = state(runConfig = baseConfig.copy(contextPercent = 37))
 
-        contextSegment().assertTextEquals("Cxt: 37%")
-        composeTestRule.onNodeWithText("Cxt: 12%").assertDoesNotExist()
+        contextSegment().assert(hasContentDescription("Context usage 37%"))
+        composeTestRule.onNodeWithContentDescription("Context usage 12%").assertDoesNotExist()
         overlay().assertDoesNotExist()
     }
 
-    // #1412: the reading turns warning at 50 and error at 70, where it also says the usage is high.
     @Test
-    fun contextSegment_warnsAtFifty_andReadsHighAtSeventy() {
-        var percent by mutableStateOf<Int?>(49)
-        var primary = Color.Unspecified
-        var warning = Color.Unspecified
-        var error = Color.Unspecified
+    fun contextSegment_accessibilityDistinguishesNormalWarningAndHigh() {
+        var percent by mutableStateOf<Int?>(69)
         composeTestRule.setContent {
             PyrycodeMobileTheme {
-                primary = MaterialTheme.colorScheme.primary
-                warning = MaterialTheme.colorScheme.warning
-                error = MaterialTheme.colorScheme.error
                 ThreadComposerFooter(
                     runConfig = baseConfig.copy(contextPercent = percent),
                     onOpen = {},
@@ -346,34 +331,15 @@ class ThreadComposerFooterTest {
                 )
             }
         }
-
-        contextSegment().assertTextEquals("Cxt: 49%").assert(hasContentDescription("Context usage 49%"))
-        assertEquals(primary, contextColor())
-
-        percent = 50
-        contextSegment().assertTextEquals("Cxt: 50%")
-        assertEquals(warning, contextColor())
-
-        percent = 69
-        contextSegment().assertTextEquals("Cxt: 69%").assert(hasContentDescription("Context usage 69%"))
-        assertEquals(warning, contextColor())
-
+        contextSegment().assert(hasContentDescription("Context usage 69%"))
         percent = 70
-        contextSegment()
-            .assertTextEquals("Cxt high: 70%")
-            .assert(hasContentDescription("Context usage high, 70%"))
-        assertEquals(error, contextColor())
-    }
-
-    private fun contextColor(): Color {
-        val layouts = mutableListOf<TextLayoutResult>()
-        contextSegment()
-            .fetchSemanticsNode()
-            .config[SemanticsActions.GetTextLayoutResult]
-            .action
-            ?.invoke(layouts)
-        return layouts
-            .single()
-            .layoutInput.style.color
+        contextSegment().assert(hasContentDescription("Context usage warning, 70%"))
+        percent = 84
+        contextSegment().assert(hasContentDescription("Context usage warning, 84%"))
+        percent = 85
+        contextSegment().assert(hasContentDescription("Context usage high, 85%"))
+        percent = null
+        contextSegment().assert(hasContentDescription("Context usage unavailable")).assert(!hasClickAction())
+        composeTestRule.onAllNodes(hasText("%", substring = true)).assertCountEquals(0)
     }
 }
