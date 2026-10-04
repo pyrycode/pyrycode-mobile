@@ -2633,15 +2633,14 @@ class InteractiveStreamE2ETest {
     fun interactiveTurn_peerStartedTurn_continuesOnPhone() {
         val args = InstrumentationRegistry.getArguments()
         val serverId = twoHostArg(ARG_SERVER_ID)
-        val peer =
-            SecondClientPeer(
-                PairedServer(
-                    serverId = serverId,
-                    token = twoHostArg(ARG_PEER_TOKEN),
-                    relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
-                    serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
-                ),
+        val pairing =
+            PairedServer(
+                serverId = serverId,
+                token = twoHostArg(ARG_PEER_TOKEN),
+                relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
             )
+        val peer = SecondClientPeer(pairing)
         try {
             // 1. The phone creates a chat and is in its thread; the new id is the one it did not hold before.
             awaitChannelList()
@@ -2654,6 +2653,11 @@ class InteractiveStreamE2ETest {
             val conversationId = newHostConversationId(serverId, before)
             val chatName = PEER_CHAT_NAME_PREFIX + System.currentTimeMillis()
             renameOpenThread(chatName)
+
+            // Bind the token first, so per-instance key rotation fails even when this scenario runs alone (#1691).
+            SecondClientPeer(pairing).use { prior ->
+                peerStep(prior, "open prior peer") { prior.open(CONNECT_TIMEOUT_MS) }
+            }
 
             // 2. AC-1: the peer, as its own device, sends into that conversation and observes its frames.
             peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
