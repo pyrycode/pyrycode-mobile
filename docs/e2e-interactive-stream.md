@@ -2402,7 +2402,24 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-04 (#1702).** The dispatcher ran the full
+**Current live verification — 2026-10-04 (#1641).** The dispatcher ran the full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1641`
+at `22db59699c`, merged with `origin/main` at `7129f39855` in a detached worktree (0 commits behind):
+**53 executed, 52 passed, 1 failed, 0 errors, 0 skipped**, exit 1. The fresh XML contains
+`InteractiveStreamE2ETest.interactiveTurn_toolThenText_statusBandNeverEmptyWhileBusy` without a
+failure, error or skip: this retained running-turn guard executed and passed in the full suite.
+The sole failure, `interactiveTurn_questionAnswer_reachesTheAskingConversation`, passed on a same-tree
+focused rerun (**1 executed, 1 passed, 0 failed/errors/skipped**). The dispatcher accepted PASS after
+rerun; this is not a second passing full suite or a focused run of the status-band method. See the
+[dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1641#issuecomment-5977652769).
+The XML reports are `2026-10-04T07-00-33-585Z_real-claude-gate_#1641.log` and
+`2026-10-04T07-00-33-585Z_real-claude-gate-rerun_#1641.log` under the dispatcher repository's `logs/`.
+Controlled Sending/Waiting transitions remain rung-2 proof in `ScriptedLocalSendTest` through
+`ScriptedThreadHarness`, independently holding acknowledgement and first turn-state; no new live
+scenario or transient-label assertion was added. See [Thinking indicator § Working and
+stalled](knowledge/features/thinking-indicator.md#working-and-stalled-1311).
+
+**Previous live verification — 2026-10-04 (#1702).** The dispatcher ran the full
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against repaired PR #1718,
 `feature/1702` at `addf5ef693e23f6810191a61b86fcebe1af842b2`, merged with `origin/main` at
 `7129f39855` in a detached worktree (0 commits behind before merge): **53 executed, 53 passed,

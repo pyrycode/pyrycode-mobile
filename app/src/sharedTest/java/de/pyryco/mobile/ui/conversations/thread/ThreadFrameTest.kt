@@ -105,11 +105,11 @@ class ThreadFrameTest {
         val overflow = composeTestRule.onNodeWithContentDescription(string(R.string.cd_more_actions)).getUnclippedBoundsInRoot()
         assertEquals(56f, title.left.value, 1f)
         assertEquals(8f, back.left.value, 1f)
-        assertEquals(16f, back.top.value, 1f)
+        assertEquals(14f, back.top.value, 1f)
         assertEquals(404f, overflow.right.value, 1f)
         val messages = composeTestRule.onNodeWithTag("thread-message-region").getUnclippedBoundsInRoot()
-        // #1562: Figma 621:3571 starts the message area at the rule's bottom edge.
-        assertEquals(69f, messages.top.value, 2f)
+        // #1646: the viewport fills the screen area behind the bar; resting rows use content padding.
+        assertEquals(0f, messages.top.value, 2f)
     }
 
     @OptIn(ExperimentalTestApi::class)
@@ -135,22 +135,24 @@ class ThreadFrameTest {
                     string(R.string.cd_send_message),
                     useUnmergedTree = true,
                 ).onParent()
-                .getUnclippedBoundsInRoot()
+                .fetchSemanticsNode()
+                .touchBoundsInRoot
         val attach =
             composeTestRule
-                .onNodeWithContentDescription(
-                    string(R.string.cd_attach_files),
-                    useUnmergedTree = true,
-                ).onParent()
-                .getUnclippedBoundsInRoot()
+                .onNodeWithContentDescription(string(R.string.cd_attach_files))
+                .fetchSemanticsNode()
+                .touchBoundsInRoot
         val status =
             composeTestRule
-                .onNodeWithContentDescription(
-                    string(R.string.cd_thread_status_expand),
-                    useUnmergedTree = true,
-                ).onParent()
-                .getUnclippedBoundsInRoot()
-        val field = composeTestRule.onNode(hasSetTextAction(), useUnmergedTree = true).onParent().getUnclippedBoundsInRoot()
+                .onNodeWithContentDescription(string(R.string.cd_thread_status_expand))
+                .fetchSemanticsNode()
+                .touchBoundsInRoot
+        val field =
+            composeTestRule
+                .onNode(hasSetTextAction(), useUnmergedTree = true)
+                .onParent()
+                .fetchSemanticsNode()
+                .boundsInRoot
         assertTrue("attachment touch target must clear send: send=$send attach=$attach", attach.top >= send.bottom)
         assertTrue("status touch target must clear send", status.top >= send.bottom)
         assertTrue("footer touch targets must clear the input surface", minOf(attach.top, status.top) >= field.bottom)

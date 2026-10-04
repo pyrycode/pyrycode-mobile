@@ -15,7 +15,7 @@ class StatusArmTest {
         hasTurnOutcome: Boolean = false,
         isThinking: Boolean = false,
         isBusy: Boolean = false,
-        localSendPending: Boolean = false,
+        localSendStage: LocalSendStage = LocalSendStage.None,
         hasOpenTool: Boolean = false,
     ): StatusArm =
         statusArm(
@@ -27,7 +27,7 @@ class StatusArmTest {
             hasTurnOutcome = hasTurnOutcome,
             isThinking = isThinking,
             isBusy = isBusy,
-            localSendPending = localSendPending,
+            localSendStage = localSendStage,
             hasOpenTool = hasOpenTool,
         )
 
@@ -50,16 +50,29 @@ class StatusArmTest {
     }
 
     @Test
-    fun aLocalSend_readsThinkingUntilTheDaemonSpeaks() {
-        assertEquals(StatusArm.Thinking, arm(localSendPending = true))
-        // A send issued mid-turn keeps the running turn's own label.
-        assertEquals(StatusArm.Working, arm(localSendPending = true, isBusy = true))
+    fun localStages_yieldToEveryRunningTurnArm_andHideStaleOutcomes() {
+        assertEquals(StatusArm.TurnOutcome, arm(hasTurnOutcome = true))
+        for ((stage, expected) in listOf(LocalSendStage.Sending to StatusArm.Sending, LocalSendStage.Waiting to StatusArm.Waiting)) {
+            assertEquals(expected, arm(localSendStage = stage))
+            assertEquals(expected, arm(localSendStage = stage, hasTurnOutcome = true))
+            assertEquals(StatusArm.Thinking, arm(localSendStage = stage, isThinking = true, isBusy = true))
+            assertEquals(StatusArm.Working, arm(localSendStage = stage, isBusy = true))
+            assertEquals(StatusArm.RunningTool, arm(localSendStage = stage, isBusy = true, hasOpenTool = true))
+            assertEquals(StatusArm.RunningTool, arm(localSendStage = stage, isThinking = true, isBusy = true, hasOpenTool = true))
+        }
     }
 
     @Test
-    fun aLocalSend_hidesTheLastTurnsStaleOutcome() {
-        assertEquals(StatusArm.TurnOutcome, arm(hasTurnOutcome = true))
-        assertEquals(StatusArm.Thinking, arm(hasTurnOutcome = true, localSendPending = true))
+    fun localStages_yieldToConnectionResetRetryCompactionAndStall() {
+        for (stage in listOf(LocalSendStage.Sending, LocalSendStage.Waiting)) {
+            assertEquals(StatusArm.None, arm(localSendStage = stage, connectionState = ConnectionState.Offline))
+            assertEquals(StatusArm.Connection, arm(localSendStage = stage, connectionState = ConnectionState.Connecting))
+            assertEquals(StatusArm.Connection, arm(localSendStage = stage, connectionState = ConnectionState.Reconnecting(5)))
+            assertEquals(StatusArm.Resetting, arm(localSendStage = stage, resetting = true, apiRetrying = true))
+            assertEquals(StatusArm.ApiRetry, arm(localSendStage = stage, apiRetrying = true, isCompacting = true))
+            assertEquals(StatusArm.Compacting, arm(localSendStage = stage, isCompacting = true, isStalled = true))
+            assertEquals(StatusArm.Stalled, arm(localSendStage = stage, isStalled = true))
+        }
     }
 
     @Test
@@ -114,7 +127,7 @@ class StatusArmTest {
         assertEquals(StatusArm.Stalled, arm(isStalled = true, isThinking = true, isBusy = true))
         assertEquals(StatusArm.Stalled, arm(isStalled = true, isBusy = true))
         assertEquals(StatusArm.Stalled, arm(isStalled = true, isBusy = true, hasOpenTool = true))
-        assertEquals(StatusArm.Stalled, arm(isStalled = true, localSendPending = true))
+        assertEquals(StatusArm.Stalled, arm(isStalled = true, localSendStage = LocalSendStage.Sending))
     }
 
     @Test

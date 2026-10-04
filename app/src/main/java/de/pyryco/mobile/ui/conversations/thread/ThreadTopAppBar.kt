@@ -26,6 +26,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.repository.MemorySearchReport
+import de.pyryco.mobile.ui.components.defaultChromeShadow
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.theme.threadColors
 
@@ -38,9 +39,10 @@ internal val BarTouchSize = 48.dp
 internal val BarTouchSlack = (BarTouchSize - BarGlyphSize) / 2
 internal val BarGutter = 20.dp
 
-// The reader retains its established top gap; only the thread moves down to the live 16:8 anchor.
+// The thread aligns its 28dp title row at 24dp; the reader keeps its established touch geometry.
 internal val BarTopGap = 24.dp - BarTouchSlack
-private val ThreadBarTopGap = 28.dp - BarTouchSlack
+private val ThreadBarTopGap = 24.dp - (BarTouchSize - 28.dp) / 2
+private val ThreadRuleGap = 16.dp - (BarTouchSize - 28.dp) / 2
 internal val BarRuleGap = 16.dp - BarTouchSlack
 
 // The reader's bar only: the thread's message area starts at its rule (#1562).
@@ -86,14 +88,14 @@ fun ThreadTopAppBar(
                         start = BarGutter - BarTouchSlack,
                         end = BarGutter - BarTouchSlack,
                         top = ThreadBarTopGap,
-                    ),
+                    ).defaultChromeShadow(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack, modifier = Modifier.size(BarTouchSize)) {
                 Icon(
                     painter = painterResource(R.drawable.ic_thread_back),
                     contentDescription = stringResource(R.string.cd_back),
-                    modifier = Modifier.size(BarGlyphSize),
+                    modifier = Modifier.size(BarGlyphSize).offset(y = 2.dp),
                     tint = MaterialTheme.colorScheme.onSurface,
                 )
             }
@@ -114,7 +116,7 @@ fun ThreadTopAppBar(
                     Icon(
                         painter = painterResource(R.drawable.ic_thread_overflow),
                         contentDescription = stringResource(R.string.cd_more_actions),
-                        modifier = Modifier.size(width = 6.dp, height = BarGlyphSize).offset(y = (-4).dp),
+                        modifier = Modifier.size(width = 6.dp, height = BarGlyphSize).offset(y = (-2).dp),
                         tint = MaterialTheme.colorScheme.primary,
                     )
                 }
@@ -133,7 +135,7 @@ fun ThreadTopAppBar(
                 Modifier.padding(
                     start = BarGutter,
                     end = BarGutter,
-                    top = BarRuleGap,
+                    top = ThreadRuleGap,
                 ),
             color =
                 MaterialTheme.colorScheme.threadColors.headerRule

@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -231,12 +230,12 @@ internal fun footerControlEnabled(
     return runConfig.writable && !outstanding && footerMenu(control, runConfig) != null
 }
 
-// Figma 16:8's `Input footer` (110:3494): a 16dp inset inside the composer gutter and a 16dp gap between
-// buttons. Each button is a body-small label plus a small up-chevron at a 4dp gap. The design's buttons
-// are 16dp tall. Here each is at least 32dp tall so a thumb can hit it.
-private val FooterHorizontalPadding = 16.dp
+// Figma Input area (533:1957): visible footer padding inside the composer gutter.
+private val FooterLeftPadding = 12.dp
+private val FooterRightPadding = 16.dp
+private val FooterTopPadding = 4.dp
 private val FooterButtonGap = 16.dp
-private val FooterButtonMinHeight = 32.dp
+private val FooterButtonMinHeight = 16.dp
 private val FooterChevronGap = 4.dp
 
 // Figma 679:4116's 4dp gap between Actions and the context label when the label wraps (#1549).
@@ -244,7 +243,9 @@ private val FooterLineGap = 4.dp
 private val FooterChevronWidth = 8.dp
 private val FooterChevronHeight = 4.dp
 private val FooterLabelMaxWidth = 140.dp
-private val StatusOpenerSize = 32.dp
+private val FooterControlWidth = 24.dp
+private val FooterControlHeight = 16.dp
+private val FooterControlGap = 12.dp
 private val StatusOpenerIconSize = 16.dp
 private val AttachIconWidth = 11.dp
 private val AttachIconHeight = 12.dp
@@ -278,7 +279,11 @@ fun ThreadComposerFooter(
     // #1032: the text controls share one weighted slot, measured after the paperclip and the Status opener,
     // so a footer full of long labels shrinks the labels and never squeezes out the two icons.
     Row(
-        modifier = modifier.fillMaxWidth().wrapContentHeight(Alignment.Bottom).padding(horizontal = FooterHorizontalPadding),
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .wrapContentHeight(Alignment.Bottom)
+                .padding(start = FooterLeftPadding, end = FooterRightPadding, top = FooterTopPadding),
         horizontalArrangement = Arrangement.spacedBy(FooterButtonGap),
     ) {
         // The buttons in order, then the `Cxt:` segment, which [FooterTextRow] gives the leftover width or, when
@@ -296,37 +301,52 @@ fun ThreadComposerFooter(
             )
             ContextSegment(percent = runConfig.contextPercent, modifier = Modifier.padding(bottom = contentBottomPadding))
         }
-        // Figma's `Attachment` (115:3654): the paperclip at the footer's trailing end, before the Status opener
-        // the design does not have.
-        Box(
-            modifier =
-                Modifier
-                    .alignBy { it.measuredHeight }
-                    .size(width = StatusOpenerSize, height = touchHeight)
-                    .clickable(role = Role.Button, onClick = onAttach),
-            contentAlignment = Alignment.BottomCenter,
+        // The visual group is 60 × 16dp. Only the touch boxes extend into bottom overflow;
+        // Compose expands their hit areas without participating in the row's visual spacing.
+        Row(
+            modifier = Modifier.alignBy { it.measuredHeight },
+            horizontalArrangement = Arrangement.spacedBy(FooterControlGap),
         ) {
-            Icon(
-                painter = painterResource(R.drawable.ic_attach_file),
-                contentDescription = stringResource(R.string.cd_attach_files),
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(AttachIconWidth, AttachIconHeight).offset(y = -contentBottomPadding),
-            )
-        }
-        Box(
-            modifier =
-                Modifier
-                    .alignBy { it.measuredHeight }
-                    .size(width = StatusOpenerSize, height = touchHeight)
-                    .clickable(role = Role.Button, onClick = onStatusClick),
-            contentAlignment = Alignment.BottomCenter,
-        ) {
-            Icon(
-                imageVector = Icons.Outlined.Tune,
-                contentDescription = stringResource(R.string.cd_thread_status_expand),
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(StatusOpenerIconSize).offset(y = -contentBottomPadding),
-            )
+            Box(
+                modifier =
+                    Modifier
+                        .size(width = FooterControlWidth, height = maxOf(touchHeight, FooterControlHeight + contentBottomPadding))
+                        .clickable(role = Role.Button, onClick = onAttach)
+                        .padding(bottom = contentBottomPadding),
+                contentAlignment = Alignment.BottomCenter,
+            ) {
+                Box(
+                    modifier = Modifier.size(FooterControlWidth, FooterControlHeight).testTag("footer_attach_visual"),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_attach_file),
+                        contentDescription = stringResource(R.string.cd_attach_files),
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(AttachIconWidth, AttachIconHeight).testTag("footer_attach_icon"),
+                    )
+                }
+            }
+            Box(
+                modifier =
+                    Modifier
+                        .size(width = FooterControlWidth, height = maxOf(touchHeight, FooterControlHeight + contentBottomPadding))
+                        .clickable(role = Role.Button, onClick = onStatusClick)
+                        .padding(bottom = contentBottomPadding),
+                contentAlignment = Alignment.BottomCenter,
+            ) {
+                Box(
+                    modifier = Modifier.size(FooterControlWidth, FooterControlHeight).testTag("footer_status_visual"),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Tune,
+                        contentDescription = stringResource(R.string.cd_thread_status_expand),
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(StatusOpenerIconSize).testTag("footer_status_icon"),
+                    )
+                }
+            }
         }
     }
 }

@@ -1,0 +1,52 @@
+Ticket #1659, captured 2026-10-04 in the real MainActivity with fake thread state.
+Static dark theme, wallpaper colours disabled, app version 1.0.0.
+Full pixel8Api35 Google Play arm64-v8a image, API 35, image revision 9.
+
+Figma reference: Input area 533:1957, fetched through Figma MCP.
+figma-footer.png crops (20,176)-(392,196) from the 412x212 input reference.
+reference-footer.png is the fresh app footer at the same 372x20 logical size.
+footer-comparison.png places Figma above the app, with no rescaling.
+The trailing controls match: 24x16 visual boxes, 12 gap, 60x16 group,
+right edge x=376 at the 412 viewport (20 composer gutter plus 16 footer inset).
+The 11x12 paperclip and 16x16 tune are centred; odd-width raster centring can
+round by half a pixel. Existing primary theme colours and icon assets are reused.
+Actions/context retain the existing presentation; the reference's new context
+circle and composer background changes belong to separate tickets.
+
+reference.png/reference-keyboard.png: 412x892, fontScale=1.0, density=1.0.
+compact.png/compact-keyboard.png: 320x700, fontScale=1.5, density=1.0.
+Every PNG is nonblank, captured from a full emulator with real system bars.
+Keyboard captures establish actual IME visibility and imePx=240 through the
+test IME service, rather than inferring keyboard state from field focus.
+At 412, both icons end at y=636 above the keyboard boundary y=652.
+At 320, both icons end at y=419 and wrapped context ends at y=444,
+above the keyboard boundary y=460. The context remains below Actions.
+Geometry and system-bar/IME metadata are retained beside the PNGs.
+Compact crops start 4px above the first Actions row (the minimum of Actions
+and icon tops), including the whole enlarged-text row; the preliminary raw
+crop field in the first capture measured from the icon top only.
+Implementation revision: 3972ead7. No daemon or real-Claude process was used.
+
+pixel8-four-tests.xml: four executed, zero failures/errors/skips:
+ThreadDesignCaptureTest#footerAt412By892
+ThreadDesignCaptureTest#footerAt320By700
+ThreadDesignCaptureTest#menusAndKeyboardAt412By892
+ThreadDesignCaptureTest#compactAt320By700
+Run: :app:pixel8Api35DebugAndroidTest --rerun, with these four methods in
+android.testInstrumentationRunnerArguments.class, notPackage=de.pyryco.mobile.e2e,
+and requireRealSystemBars=true, under the shared android-test-gate device hold.
+The icon-coordinate taps prove the existing run-configuration sheet and the
+ACTION_OPEN_DOCUMENT picker intent separately; the picker is answered with a
+cancelled ActivityIntentStub result to keep the fake fixture deterministic.
+
+unit-tests.xml: 35 executed, zero failures/errors/skips across
+ThreadComposerFooterWidthTest (8), ThreadComposerFooterTest (14),
+ThreadComposerFooterLayoutTest (4), and ThreadFrameTest (9).
+The frame test checks actual expanded touch bounds against the input/send
+surface, and pointer taps at the input boundary still focus the field or stop.
+Geometry expectations intentionally replace the old 32dp visual width with 24dp;
+the compact wrapping fixture now includes the real 20dp composer gutter.
+
+Lint, assembleDebug, compileDebugAndroidTestKotlin, spotlessApply, and
+spotlessCheck --rerun-tasks --console=plain passed. XML system output and host
+names are omitted; executed test identities and counts are preserved.
