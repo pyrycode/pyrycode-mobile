@@ -115,6 +115,35 @@ The pure rule itself — the label-first ordering, the unconditional win over th
 
 The `fixedRepo(conversations)` helper is an anonymous `object : ConversationRepository { … }` with `TODO("not used")` overrides plus a `flowOf(conversations)`-backed `observeConversations`. It's kept local rather than extracted — each test's bespoke conversation shape would force a builder-shaped helper that doesn't pay for itself yet. Since [#722](https://github.com/pyrycode/pyrycode-mobile/issues/722) it has a second overload, `fixedRepo(conversations: Flow<List<Conversation>>)`, that the original `fixedRepo(List<Conversation>)` now delegates to (`= fixedRepo(flowOf(conversations))`) — a one-line addition rather than a second 40-line stub, used by test 27 above for its live-emitting double.
 
+### Session-error graph and acknowledgement races (#1678)
+
+`ScriptedSessionErrorTest` uses `ScriptedThreadHarness` through the real remote
+repository → ViewModel → stateless screen. Its five scenarios cover exact known
+and hostile unknown-code copy for both agents, absence of raw code/prose and click
+or dismiss actions, persistence without timeout, conversation isolation, own-send
+and non-idle clearing, and Sending/Waiting closure before and after acknowledgement.
+Private error/ack envelope builders stay with this consumer. A durable inbound
+barrier must precede negative assertions: otherwise absence after a late ack could
+pass merely because the ack has not reached the repository yet.
+
+`ThreadViewModelLocalSendTest` also proves closure without any flow/screen subscriber,
+current-value observation, a fresh send after error, and an old acknowledgement
+arriving while a newer window is open. Ordinary successful-send tests cannot prove
+these generation boundaries. Existing turn-state, failure, reconnect and attachment
+cases remain covered. `ThreadTopOverlayTest` checks preserved persistent notices,
+inert semantics and native Error styling.
+
+The fresh [verifier report for PR #1733](https://github.com/pyrycode/pyrycode-mobile/pull/1733#issuecomment-5978652522)
+records the 2026-10-04 dispatcher full JVM run on `fe666d46`: **4,043 executed,
+0 failed, 0 errors, 0 skipped**, including all **5** `ScriptedSessionErrorTest`,
+**21** `ThreadViewModelLocalSendTest` and **13** `ThreadTopOverlayTest` methods passing.
+These are full-suite results, not a separate focused run. The full UI gate records
+**176 executed, 0 failed, 0 errors, 1 skipped** (177 entries; unrelated rename capture),
+and scripted-all **13 executed, 0 failed, 0 errors, 0 skipped**, using zero real Claude
+turns. This ticket establishes rung 2, not real daemon failure/recovery. Live proof
+belongs to [#1731](https://github.com/pyrycode/pyrycode-mobile/issues/1731) and its
+[daemon-control prerequisite](../../e2e-interactive-stream.md#follow-ups-to-ticket).
+
 ### Short-stream top anchoring (#1509)
 
 `ThreadScreenShortStreamTest` pins the arrangement change described in [Thread screen — how it works,

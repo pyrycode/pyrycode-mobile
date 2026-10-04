@@ -183,7 +183,13 @@ The [repository contract](conversation-repository.md) defaults to `flowOf(null)`
 keeping fakes and test doubles compatible. The [stable facade](stable-conversation-repository.md#cold-reads--flatmaplatest-switch-with-an-empty-fallback)
 and [caching decorator](caching-conversation-repository.md#contract) forward the
 observation without retaining it. [#1678](https://github.com/pyrycode/pyrycode-mobile/issues/1678)
-owns user-facing interpretation and rendering; #1677 supplies only the data contract.
+renders the held code as an [inert thread Error pill](thread-top-overlay.md#the-session-error-pill-1678)
+and eagerly closes the local send window before publication. `session.blocked` means
+queued delivery was abandoned; `session.child_crashing` retains the queued message
+while the child restarts. Clearing at send entry removes the pill even if that send
+fails; non-idle progress or reconnect also removes it. Idle and unrelated traffic
+leave it visible. An acknowledgement alone neither removes the pill nor reopens
+Sending/Waiting. #1677 supplies the data contract; #1678 adds its presentation.
 The wire source of truth remains the daemon's `docs/protocol-mobile.md` and
 `internal/protocol/messaging.go` (`SessionErrorPayload`).
 

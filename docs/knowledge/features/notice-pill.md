@@ -1,8 +1,7 @@
 # Notice pill — `NoticePill`
 
-The shared pill shape for [`ThreadTopOverlay`](thread-top-overlay.md)'s two notices
-([#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002)): claude's usage-limit report and the
-pairing-error notice. [#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043) added a third caller,
+The shared pill shape for [`ThreadTopOverlay`](thread-top-overlay.md)'s usage, MCP,
+pairing, Offline Retry and session-error notices. [#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043) added the task-count caller,
 the thread status band's task-count pill, hosted on `ThreadScreen` itself rather than the overlay. Figma
 `347:6617`'s `Pill` component set, variants **Default** and **Error**.
 
@@ -27,9 +26,9 @@ internal fun NoticePill(
 ```
 
 [#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043) added `shadowElevation`, defaulted to the
-existing `PillShadow` constant so [`ThreadTopOverlay`](thread-top-overlay.md)'s two overlay callers are
-unaffected — see [§ Four call sites, four contracts](#four-call-sites-four-contracts) below for the
-third caller that overrides it to `0.dp`.
+existing `PillShadow` constant so [`ThreadTopOverlay`](thread-top-overlay.md)'s overlay callers are
+unaffected — see [§ Caller contracts](#caller-contracts) below for the
+task-count caller that overrides it to `0.dp`.
 
 A `Surface` (6dp `RoundedCornerShape`, `shadowElevation` for the overlay's drop shadow) holding a `Row`
 (8dp horizontal / 4dp vertical padding, 8dp gap, centre-aligned): a `bodySmall`, right-aligned `Text` in
@@ -48,23 +47,28 @@ one TalkBack stop, the same "wording has one source" idiom every status-row indi
 `onClick != null` the whole pill is a clickable `Surface(onClick = onClick, ...)`; otherwise a plain
 `Surface`.
 
-## Four call sites, four contracts
+## Caller contracts
 
 - **Usage pill** ([`ThreadTopOverlay`](thread-top-overlay.md#the-usage-pill)): `onDismiss` is non-`null`
   only when [`usageLimitIsWarning`](usage-limit-indicator.md#shape) is true for the reading being shown —
   every other reading, including an unrecognised `status`, gets `onDismiss = null` and cannot be hidden.
   `onClick` is always `null` here; tapping the pill's body does nothing. Default `shadowElevation`.
-- **Pairing pill** ([`ThreadTopOverlay`](thread-top-overlay.md#the-pairing-pill)): `onClick` starts the same
+- **Pairing pill** ([`ThreadTopOverlay`](thread-top-overlay.md#the-pairing-or-offline-pill)): `onClick` starts the same
   re-pair flow the pre-#1002 `RePairButton` started (`onRePair`, bound at `MainActivity` to
   `navController.navigate(Routes.pairCode(target.serverId))`); `onDismiss` is always `null` — a rejected
   pairing is never hideable, matching the ticket's "never dismissible" requirement for anything that is not
   the one named warning status. Default `shadowElevation`.
 - **Task-count pill** ([Thread screen § Thinking-indicator placement](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643),
   [#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043)): drawn inside `ThreadStatusArea` in the
-  `bottomBar`, not by `ThreadTopOverlay` — the only caller not hosted by the overlay. `onClick` opens the
+  `bottomBar`, not by `ThreadTopOverlay`. `onClick` opens the
   same `BackgroundTaskPanel` the Actions menu's background-tasks row opens; `onDismiss` is always `null` — a
   running-task count is not something the user can wave away. `shadowElevation = 0.dp`: Figma `568:3162`
   sits in the page flow, not over the messages, so it carries none of the overlay's drop shadow.
+- **Session-error pill** ([Thread top overlay](thread-top-overlay.md#the-session-error-pill-1678)):
+  `isError = true`, default overlay shadow and wrapping, with no `onClick`, `onDismiss`
+  or `leadingIcon`. Its visible text and content description are the same fixed
+  Claude/Codex resource; daemon bytes never become copy. Repository state owns its
+  lifetime; the component starts no timeout.
 - **Turn-outcome pill** ([Turn-outcome indicator](turn-outcome-indicator.md)): inert error variant in the
   input status area, with a leading outcome icon, no shadow and a two-line ellipsized label. The full
   bounded label remains its content description. It has no click or dismiss callback.
@@ -74,7 +78,7 @@ shadow, optional leading icon and line limit let the outcome reuse the same shap
 
 ## Testing
 
-The two [`ThreadTopOverlay`](thread-top-overlay.md) callers are covered indirectly through
+The [`ThreadTopOverlay`](thread-top-overlay.md) callers are covered indirectly through
 [`ThreadTopOverlayTest`](thread-top-overlay.md#testing) (Robolectric, `app/src/sharedTest/.../thread/`)
 rather than a standalone Compose test of `NoticePill` in isolation — the component has no behaviour worth
 pinning apart from how each caller drives it (variant selection, dismiss wiring, wrap, shadow). Two

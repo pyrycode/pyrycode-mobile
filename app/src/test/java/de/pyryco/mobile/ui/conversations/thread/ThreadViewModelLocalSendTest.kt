@@ -17,7 +17,9 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
@@ -75,17 +77,27 @@ class ThreadViewModelLocalSendTest {
     ) : ConversationRepository by FakeConversationRepository() {
         var sends = 0
         var uploads = 0
+        val sessionErrors = MutableStateFlow<Map<String, String>>(emptyMap())
+
+        override fun observeSessionError(conversationId: String): Flow<String?> =
+            sessionErrors.map { it[conversationId] }.distinctUntilChanged()
 
         override suspend fun sendMessage(
             conversationId: String,
             text: String,
-        ): Message = send(text)
+        ): Message {
+            sessionErrors.value = sessionErrors.value - conversationId
+            return send(text)
+        }
 
         override suspend fun sendMessage(
             conversationId: String,
             text: String,
             attachments: List<MessageAttachment>,
-        ): Message = send(text)
+        ): Message {
+            sessionErrors.value = sessionErrors.value - conversationId
+            return send(text)
+        }
 
         override suspend fun uploadAttachment(
             conversationId: String,
@@ -137,6 +149,99 @@ class ThreadViewModelLocalSendTest {
         phase: LiveSessionEvent.TurnState.Phase,
         conversationId: String = CONV,
     ) = LiveSessionEvent.TurnState(conversationId, phase)
+
+    @Test
+    fun sessionError_observesCurrentValueReplacementAndClearing_forThisConversationOnly() =
+        runTest {
+            val repository = GatedRepository()
+            repository.sessionErrors.value = mapOf(CONV to "session.blocked", "other" to "session.child_crashing")
+            val vm = vm(repository)
+            advanceUntilIdle()
+            assertEquals("session.blocked", vm.sessionError.value)
+
+            repository.sessionErrors.value = mapOf(CONV to "future.error", "other" to "another.error")
+            advanceUntilIdle()
+            assertEquals("future.error", vm.sessionError.value)
+
+            repository.sessionErrors.value = mapOf("other" to "session.blocked")
+            advanceUntilIdle()
+            assertEquals(null, vm.sessionError.value)
+            assertTrue(logs.none { "future.error" in it || "another.error" in it })
+        }
+
+    @Test
+    fun ownSessionErrorBeforeAcknowledgement_closesWithoutSubscribers_andLateAckCannotReopen() =
+        runTest {
+            for (code in listOf("session.blocked", "session.child_crashing", "future.error")) {
+                val gate = CompletableDeferred<Unit>()
+                val repository = GatedRepository(gate)
+                val vm = vm(repository)
+                vm.sendMessage("hello")
+                advanceUntilIdle()
+                assertEquals(LocalSendStage.Sending, vm.localSendStage.value)
+
+                repository.sessionErrors.value = mapOf(CONV to code)
+                advanceUntilIdle()
+                assertEquals(code, vm.sessionError.value)
+                assertEquals(LocalSendStage.None, vm.localSendStage.value)
+                gate.complete(Unit)
+                advanceUntilIdle()
+                assertEquals("late ack after $code", LocalSendStage.None, vm.localSendStage.value)
+            }
+            assertTrue(logs.contains("event=local_send_window state=closed reason=session_error"))
+        }
+
+    @Test
+    fun anotherConversationsError_doesNotCloseWaiting_ownErrorDoes_andNewSendOpensFreshWindow() =
+        runTest {
+            val repository = GatedRepository()
+            val vm = vm(repository)
+            vm.sendMessage("first")
+            advanceUntilIdle()
+            assertEquals(LocalSendStage.Waiting, vm.localSendStage.value)
+
+            repository.sessionErrors.value = mapOf("other" to "session.blocked")
+            advanceUntilIdle()
+            assertEquals(null, vm.sessionError.value)
+            assertEquals(LocalSendStage.Waiting, vm.localSendStage.value)
+
+            repository.sessionErrors.value = repository.sessionErrors.value + (CONV to "session.child_crashing")
+            advanceUntilIdle()
+            assertEquals(LocalSendStage.None, vm.localSendStage.value)
+            advanceTimeBy(300_000)
+            advanceUntilIdle()
+            assertEquals("session.child_crashing", vm.sessionError.value)
+
+            vm.sendMessage("second")
+            advanceUntilIdle()
+            assertEquals(null, vm.sessionError.value)
+            assertEquals(LocalSendStage.Waiting, vm.localSendStage.value)
+            assertEquals("session.blocked", repository.sessionErrors.value["other"])
+        }
+
+    @Test
+    fun errorThenNewSend_oldAcknowledgementCannotAdvanceTheNewWindow() =
+        runTest {
+            val first = CompletableDeferred<Unit>()
+            val second = CompletableDeferred<Unit>()
+            val repository = GatedRepository(gates = listOf(first, second))
+            val vm = vm(repository)
+            vm.sendMessage("first")
+            advanceUntilIdle()
+            repository.sessionErrors.value = mapOf(CONV to "session.blocked")
+            advanceUntilIdle()
+            assertEquals(LocalSendStage.None, vm.localSendStage.value)
+
+            vm.sendMessage("second")
+            advanceUntilIdle()
+            assertEquals(LocalSendStage.Sending, vm.localSendStage.value)
+            first.complete(Unit)
+            advanceUntilIdle()
+            assertEquals(LocalSendStage.Sending, vm.localSendStage.value)
+            second.complete(Unit)
+            advanceUntilIdle()
+            assertEquals(LocalSendStage.Waiting, vm.localSendStage.value)
+        }
 
     @Test
     fun opensWhenTheSendIsHandedToTheDaemon_andStaysOpenAfterItIsAccepted() =

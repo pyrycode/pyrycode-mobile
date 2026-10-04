@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.conversations.components.NoticePill
 import de.pyryco.mobile.ui.conversations.components.boundMcpText
@@ -58,11 +59,13 @@ internal fun ThreadTopOverlay(
     onRetryConnection: () -> Unit = {},
     mcpFailure: String? = null,
     onOpenMcpFailure: () -> Unit = {},
+    sessionError: String? = null,
+    agent: ConversationAgent = ConversationAgent.Claude,
 ) {
     val usage = usageLimit?.takeUnless { usageLimitDismissed }
     val showOffline = connectionState == ConnectionState.Offline && !showRePair
     val mcp = mcpFailure?.takeUnless { showRePair || showOffline }
-    if (usage == null && mcp == null && !showRePair && !showOffline) return
+    if (usage == null && mcp == null && !showRePair && !showOffline && sessionError == null) return
     val viewConfiguration = LocalViewConfiguration.current
     val pillTouchConfiguration =
         remember(viewConfiguration) {
@@ -122,6 +125,35 @@ internal fun ThreadTopOverlay(
                     )
                 }
             }
+            if (sessionError != null) {
+                NoticePill(
+                    text = sessionErrorLabel(sessionError, agent),
+                    isError = true,
+                )
+            }
         }
     }
 }
+
+/** The wire code is an open, untrusted vocabulary. Only client-owned resources may reach the pill. */
+@Composable
+private fun sessionErrorLabel(
+    code: String,
+    agent: ConversationAgent,
+): String =
+    stringResource(
+        when (code) {
+            "session.blocked" ->
+                if (agent == ConversationAgent.Codex) R.string.thread_session_blocked_codex else R.string.thread_session_blocked
+            "session.child_crashing" ->
+                if (agent ==
+                    ConversationAgent.Codex
+                ) {
+                    R.string.thread_session_child_crashing_codex
+                } else {
+                    R.string.thread_session_child_crashing
+                }
+            else ->
+                if (agent == ConversationAgent.Codex) R.string.thread_session_error_codex else R.string.thread_session_error
+        },
+    )
