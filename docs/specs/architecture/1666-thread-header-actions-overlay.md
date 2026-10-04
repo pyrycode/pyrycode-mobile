@@ -3,12 +3,14 @@
 ## Files read
 
 - `ThreadOverflowMenu.kt`: `ThreadOverflowMenu` owns the ordered, client-owned rows, mutation/promotion/memory gates and dismiss-before-action routing.
+- `app/src/main/AndroidManifest.xml`: application Back opt-in is required for header-priority callbacks on Android 13.
 - `ThreadTopAppBar.kt`: `ThreadTopAppBar` owns the accessible three-dot control; its only production caller is `ThreadScreen`.
 - `ThreadScreen.kt`: `openControl`, `footerAnchors` and `layerOrigin` demonstrate same-window overlay hosting and live window-to-layer conversion.
 - `OptionsOverlay.kt`: `OptionsOverlay` already supplies Actions semantics, focus-preserving scrim, Back handling and Below placement.
 - `docs/knowledge/features/thread-screen.md`, `thread-overflow-menu.md`, `options-overlay.md`: current memory report must be read on every recomposition; same-window overlays consume outside taps without taking composer focus.
 - `ThreadOverflowMenuTest`, `ThreadScreenOverflowTest`, `ThreadFrameTest`, `ThreadComposerFooterTest`: existing routing, gates and frame/overlay regression coverage.
-- `ThreadDesignCaptureTest`: retained overflow-menu and compact-overflow-menu device captures.
+- `ThreadDesignCaptureTest`: retained overflow-menu and compact-overflow-menu device captures; its popup-root wait must become a visible header-row wait.
+- `TaskCountPillKeyboardDeviceTest`: existing test-IME setup reused for a focused header open/outside/Back preservation case (real IME requires a device).
 
 ## Design source
 
@@ -43,8 +45,13 @@ None.
 ## Documentation handoff
 
 Pending documentation stage:
+
 - `app/src/androidTest/assets/design-1220/README.md`, Overflow menu row: replace audited 675:5883 match with 533:1958 Actions style by Juhana's decision on #1666; retain both captures and #1631 approved addition.
 - `docs/knowledge/features/thread-overflow-menu.md` and linked wiring topic; `thread-screen.md` and overlay topic; `options-overlay.md`: update hosting and presentation consistently.
 - Record dispatcher-produced fresh full live evidence, counts and named #541 method pass; documentation does not produce evidence.
 
 Sizing: approximately 600 written lines, no new exported types, one production consumer for each changed host, five acceptance criteria, no new reject branches; below all ticket limits.
+
+## Revisions
+
+- 2026-10-04: The new real-IME test demonstrated that ordinary Compose BackHandler lets the IME consume Back first, leaving the header menu open. Register a header-only platform OnBackInvokedCallback at PRIORITY_OVERLAY while mounted, with DisposableEffect cleanup and rememberUpdatedState dismissal. The shared OptionsOverlay BackHandler remains the activity-dispatch fallback; composer and reader behavior stays unchanged. The application explicitly opts into platform Back callbacks, covering MainActivity and isolated ComponentActivity test hosts on Android 13; activity-only opt-in left callback registration disabled there. Android's overlay priority is intended for menus: https://developer.android.com/reference/android/window/OnBackInvokedDispatcher#PRIORITY_OVERLAY. The revised contract is that system Back closes the header before hiding an already-visible keyboard.

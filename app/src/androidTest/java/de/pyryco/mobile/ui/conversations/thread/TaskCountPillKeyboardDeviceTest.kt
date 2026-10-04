@@ -20,21 +20,24 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTouchInput
 import androidx.core.view.WindowCompat
 import androidx.test.core.app.ActivityScenario
+import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.BackgroundTask
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.ui.components.MobileModalTestIme
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** Real IME and pointer coverage for the thread's running-task entry. */
+/** Real IME and pointer coverage for the thread header menu and running-task entry. */
 @RunWith(AndroidJUnit4::class)
 class TaskCountPillKeyboardDeviceTest {
     @get:Rule val rule = createEmptyComposeRule()
@@ -71,6 +74,56 @@ class TaskCountPillKeyboardDeviceTest {
                 instrumentation.uiAutomation.executeShellCommand(command),
             ).bufferedReader()
             .use { it.readText() }
+    }
+
+    @Test
+    fun headerMenu_openOutsideDismissAndBack_preserveFocusedComposerAndKeyboard() {
+        var composeView: View? = null
+        var backs = 0
+        val events = mutableListOf<ThreadEvent>()
+        scenario = ActivityScenario.launch(ComponentActivity::class.java)
+        scenario?.onActivity { activity ->
+            WindowCompat.setDecorFitsSystemWindows(activity.window, false)
+            activity.window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            activity.setContent {
+                PyrycodeMobileTheme(darkTheme = true) {
+                    composeView = LocalView.current
+                    ThreadScreen(
+                        state = ThreadUiState("c1", "Keyboard thread", isPromoted = true),
+                        onBack = { backs++ },
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                        onOverflowEvent = { events += it },
+                    )
+                }
+            }
+        }
+        val field = rule.onNode(hasSetTextAction())
+        field.performTouchInput { click() }
+        rule.runOnIdle { composeView?.windowInsetsController?.show(WindowInsets.Type.ime()) }
+        rule.waitUntil(10_000) {
+            rule.runOnIdle { composeView?.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true }
+        }
+        val context = instrumentation.targetContext
+        val header = rule.onNodeWithContentDescription(context.getString(R.string.cd_more_actions))
+        header.performTouchInput { click() }
+        rule.onNodeWithText("Reset session").assertIsDisplayed()
+        field.assertIsFocused()
+        assertTrue(rule.runOnIdle { composeView?.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true })
+        rule.onNodeWithContentDescription(context.getString(R.string.cd_back)).performTouchInput { click() }
+        rule.onNodeWithText("Reset session").assertDoesNotExist()
+        field.assertIsFocused()
+        assertEquals(0, backs)
+        assertTrue(events.isEmpty())
+        assertTrue(rule.runOnIdle { composeView?.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true })
+        header.performTouchInput { click() }
+        Espresso.pressBack()
+        rule.waitForIdle()
+        rule.onNodeWithText("Reset session").assertDoesNotExist()
+        field.assertIsFocused()
+        assertTrue(rule.runOnIdle { composeView?.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true })
+        assertTrue(events.isEmpty())
     }
 
     @Test
