@@ -16,15 +16,25 @@ The retained #1753 branch stderr reports a bare `TimeoutCancellationException` a
 
 The branch report is `2026-10-04T20-06-38-354Z_real-claude-gate_#1753.stderr.log`; the base is its `real-claude-gate-base` counterpart under the agents repository's `logs/`. The branch's retained `pyry-e2e.LVvrhI/daemon-answer.log` contains eight handshake accepts and no `static_key_mismatch`, `bound_to_other_key` or handshake-reject records. The removed gate worktree prevents correlating per-test logcat with the daemon log. These artifacts do not identify the failed operation. No remaining cause is asserted.
 
-## Change
+## Design
 
 First make the failing wait identifiable, as the ticket explicitly requires when retained artifacts are insufficient. Add a test-only `QuestionAnswerStage` enum and an inline `questionAnswerStep(stage, linkState, block)` wrapper. Wrap setup, peer waits, phone selection/submission, disappearance checks and completed-turn waits in the named scenario. On coroutine or Compose timeout, report the fixed operation label and lazily read content-free peer link state, retaining the original exception as cause. Other failures and ordinary cancellation pass through unchanged. No payloads, ids, tokens, paths or answer labels enter the diagnostic.
+
+The enum and wrapper live in `app/src/sharedTest/java/de/pyryco/mobile/e2e/QuestionAnswerStage.kt`, with pure JVM regressions in `app/src/test/java/de/pyryco/mobile/e2e/QuestionAnswerStepTest.kt`. A local adapter in the existing device scenario supplies `peer::linkState`. No ViewModel, UI state or event shape changes.
 
 All waits retain their existing deadlines. Keep the scenario enabled, #1702's actions reveal, phone selection, remote/answered assertions, chosen-label-only reply, peer dismissal without a phone tap and both completed turns. No retries, production code or question UI changes are planned.
 
 Overlaps: #1642, #1682, #1689, #1690, #1691, #1693 and #1695 touch other scenario bodies; the named-method edit and separate diagnostic file are local and independent.
 
 Forecast: about 250 written lines including this plan, three test/harness files, one internal enum, no consumer signature changes, three acceptance criteria and two diagnostic timeout branches. This is within the ticket's estimate and builder limits. No decision record is needed.
+
+## State and concurrency model
+
+The synchronous inline wrapper owns no state, jobs, dispatchers or flows. It delegates to the existing operations on the test thread; their coroutine deadlines and Compose waits remain authoritative. `SecondClientPeer` retains its IO scope, recorded-frame StateFlow, redial supervision and cancellation through `close` in the scenario's `finally`. Phone connection lifecycle behavior is unchanged.
+
+## Error handling
+
+Raw `TimeoutCancellationException` and `ComposeTimeoutException` become an `AssertionError` identifying the operation, with the original throwable as cause. Existing helpers that already convert timeouts into named assertion failures retain those failures unchanged. Successful values, refusals and ordinary cancellation pass through without evaluating diagnostics. Failure text contains only test-authored stage labels and the peer's existing content-free status.
 
 ## Testing strategy
 
