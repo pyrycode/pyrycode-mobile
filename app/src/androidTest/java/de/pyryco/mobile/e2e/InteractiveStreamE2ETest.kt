@@ -2830,15 +2830,14 @@ class InteractiveStreamE2ETest {
     fun interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain() {
         val args = InstrumentationRegistry.getArguments()
         val serverId = twoHostArg(ARG_SERVER_ID)
-        val peer =
-            SecondClientPeer(
-                PairedServer(
-                    serverId = serverId,
-                    token = twoHostArg(ARG_PEER_TOKEN),
-                    relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
-                    serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
-                ),
+        val pairing =
+            PairedServer(
+                serverId = serverId,
+                token = twoHostArg(ARG_PEER_TOKEN),
+                relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
             )
+        val peer = SecondClientPeer(pairing)
         val stopControl = hasContentDescription(string(R.string.cd_thread_interrupt))
         try {
             // 1. A fresh chat on the selected host, its id read off the host's repository as #849 does.
@@ -2853,6 +2852,11 @@ class InteractiveStreamE2ETest {
 
             // 2. The phone starts the held turn; the peer allows its command once, so the command runs and
             //    the permission dialog leaves the composer.
+            // Bind the token through a prior peer, as earlier full-suite scenarios do (#1696).
+            // A new static key on the observing peer must fail even when this method runs alone.
+            SecondClientPeer(pairing).use { prior ->
+                peerStep(prior, "open prior peer") { prior.open(CONNECT_TIMEOUT_MS) }
+            }
             peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
             sendFromPhone(STOP_HOLD_PROMPT)
             val modalId =
@@ -3022,7 +3026,11 @@ class InteractiveStreamE2ETest {
             awaitConnected()
             val (chatA, nameA) = answerChat(serverId, OFFSCREEN_CHAT_NAME_PREFIX + "a-")
             val (_, nameB) = answerChat(serverId, OFFSCREEN_CHAT_NAME_PREFIX + "b-")
-            peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
+            // Bind the token first, so identity reuse is checked even when selected alone (#1692).
+            runningToolPeer().use { prior ->
+                peerStep(prior, "open prior offscreen peer") { prior.open(CONNECT_TIMEOUT_MS) }
+            }
+            peerStep(peer, "open offscreen peer") { peer.open(CONNECT_TIMEOUT_MS) }
 
             // 2. A's first turn renders, ends and is cached by the open thread.
             openChatRow(nameA)
