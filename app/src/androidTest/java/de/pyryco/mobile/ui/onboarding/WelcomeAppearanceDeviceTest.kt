@@ -123,7 +123,7 @@ class WelcomeAppearanceDeviceTest {
         if (bars.top > 0 && bars.bottom > 0) {
             val initialBounds =
                 mapOf(
-                    "title" to rule.onNodeWithText("Pyrycode Mobile").fetchSemanticsNode().boundsInWindow,
+                    "title" to rule.onNodeWithText("Pyrycode").fetchSemanticsNode().boundsInWindow,
                     "primary" to rule.onNodeWithText("I already have pyrycode").fetchSemanticsNode().boundsInWindow,
                 )
             saveCapture(width, height, fontScale, density, bars, body, "initial", initialBounds)

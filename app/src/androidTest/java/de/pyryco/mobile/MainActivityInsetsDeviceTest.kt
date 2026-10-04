@@ -213,7 +213,7 @@ class MainActivityInsetsDeviceTest {
             scenario?.close()
             paired = isPaired
             launch()
-            val anchor = if (isPaired) rule.onNodeWithContentDescription("Open settings") else rule.onNodeWithText("Pyrycode Mobile")
+            val anchor = if (isPaired) rule.onNodeWithContentDescription("Open settings") else rule.onNodeWithText("Pyrycode")
             anchor.assertIsDisplayed()
             scenario?.onActivity { activity ->
                 val night = activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
@@ -469,7 +469,7 @@ class MainActivityInsetsDeviceTest {
         instrumentation.waitForIdleSync()
         instrumentation.uiAutomation.waitForIdle(1_000, 5_000)
         launch()
-        rule.onNodeWithText("Pyrycode Mobile").assertIsDisplayed()
+        rule.onNodeWithText("Pyrycode").assertIsDisplayed()
         density = view.resources.displayMetrics.density
         assertEquals(1f, density, 0.01f)
         val bars = insets().getInsets(WindowInsetsCompat.Type.systemBars())
@@ -477,7 +477,7 @@ class MainActivityInsetsDeviceTest {
         if (InstrumentationRegistry.getArguments().getString("requireRealSystemBars") == "true") {
             assertTrue("full-image evidence must use physical system bars", !syntheticBars)
         }
-        assertEquals(bars.top + 304 * density, bounds(rule.onNodeWithText("Pyrycode Mobile")).top, 1f)
+        assertEquals(bars.top + 304 * density, bounds(rule.onNodeWithText("Pyrycode")).top, 1f)
         val footer = rule.onNodeWithText("Open source · github.com/pyrycode/pyrycode-mobile")
         assertEquals(height - bars.bottom - 4 * density, bounds(footer).bottom, 1f)
         capture("welcome")

@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Pyrycode Mobile</string>
+    <string name="app_name">Pyrycode</string>
     <string name="cd_open_settings">Open settings</string>
     <string name="cd_open_archive">Open archive</string>
     <string name="cd_pair_another_host">Pair another host</string>

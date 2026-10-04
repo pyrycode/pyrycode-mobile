@@ -40,7 +40,7 @@ class OnboardingDesignCaptureTest {
 
     @Test fun scannerFramesAt412By892() {
         design.launch()
-        rule.onNodeWithText("Pyrycode Mobile").assertIsDisplayed()
+        rule.onNodeWithText("Pyrycode").assertIsDisplayed()
         design.capture(FOLDER, "welcome", "6:32")
 
         val scanner = openScanner()
