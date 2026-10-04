@@ -16,13 +16,25 @@ application's fake binding when no relay arguments are supplied. Confirm its
 testcase appears in the gate XML; compilation alone does not prove isolation.
 
 Test peers sharing a pairing token must share its bound static identity for the instrumentation
-process (#1698). `PeerDeviceStaticKeyStore` in `sharedTest` serializes creation by exact server id
-and token, independently of app credential storage, peer close and Koin graph rebuild. Return copies
+process (#1698/#1686), matching daemon #2734's token-to-first-static-key binding. The live peer
+uses `PeerDeviceKeyStore` in `sharedTest`, serializing creation by server id and SHA-256 token
+fingerprint, independently of app credential storage, peer close and Koin graph rebuild. Return copies
 of both key arrays and of `publicKey()`: `NoiseSessionFactory` wipes its caller-owned private-key
 buffer after copying it into fresh per-dial Noise state. A returned buffer being zeroed must not
-corrupt the retained identity. `PeerDeviceStaticKeyStoreTest` covers continuity, host/token isolation,
-copy safety, concurrent creation and repeated factory creation; never include keys or tokens in
-assertion output. See [the rung-3 peer](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
+corrupt the retained identity. `PeerDeviceKeyStoreTest` covers continuity after destructive reads,
+host/token isolation, wrong-host rejection and concurrent creation. The merged tree still contains
+the independent `PeerDeviceStaticKeyStore` registry and its earlier factory/handshake regressions;
+those tests do not prove the live peer's new store (PR #1705's nonblocking consolidation finding).
+Never include keys or tokens in assertion output. See [the rung-3 peer](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
+
+The permission-answer regression (#1686) stalled in `SecondClientPeer.open` before any permission
+answer. The answer daemon's static `v2.handshake.reject.static_key_mismatch` / `bound_to_other_key`
+events distinguished permanent token/key rejection from other 30-second waits: 18 on #1631's branch,
+12 on base and 18 on #1637's branch. A coroutine timeout stack and teardown's launcher focus could
+not establish the cause. Label setup waits with `peerStep` and check retained content-free daemon
+events before attributing the failure to conversation routing or increasing a timeout. See
+[permission-answer coverage](../../e2e-interactive-stream.md#what-rung-3-is-made-of) and its
+[53-test full-suite proof](../../e2e-interactive-stream.md#verification-status).
 
 A standalone peer scenario can pass while later full-suite scenarios fail because an earlier peer
 bound their shared token. Open and close a prior peer with the same pairing before the observing peer
@@ -36,6 +48,19 @@ protecting identity continuity without sharing ephemeral or cipher state. Restor
 per-instance lifecycle made this exact method fail at the identity assertion (1 executed, 1 failed,
 0 skipped); the repaired focused peer/factory/redial/wait run passed all 30 tests (0 failed, 0 skipped).
 See [PR #1704's verification evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1704#issuecomment-5975107860).
+
+Readiness coverage must go beyond decrypting the initiator hello.
+`OffscreenPeerReadinessTest.sequentialClosedPeersCompleteBoundHandshakeAndEncryptedReadinessProbe`
+(#1692) completes `hello`/`hello_ack` for two sequential sessions, authenticates the same token-bound
+static identity, and exchanges encrypted `list_conversations` → `conversations` envelopes with matching
+`in_reply_to`. Each session uses a fresh factory and vendored Noise responder; destroy the session,
+responder and transport cipher pair before constructing the next. Only the static identity survives.
+This in-memory regression proves the encrypted readiness contract, while the live offscreen scenario's
+same-token prior-peer open/close protects it through the real relay. It does not model relay/redial
+scheduling. The former per-instance identity lifecycle failed the token-binding assertion (1 executed,
+1 failed, 0 skipped); the repaired focused peer/factory/redial/wait run passed 31 tests (0 failed/errors,
+0 skipped). See [PR #1711's verification evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1711#issuecomment-5975716513)
+and [the full live result](../../e2e-interactive-stream.md#verification-status).
 
 A graph-lifecycle identity test can pass while contaminating the next test's repository binding.
 `E2eTestApplication.rebuildGraph()` must preserve the original fake/relay mode selected by the relay
