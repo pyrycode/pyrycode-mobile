@@ -1,5 +1,6 @@
 package de.pyryco.mobile.e2e
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
@@ -11,6 +12,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -165,6 +167,68 @@ class PeerWaitTest {
             assertEquals("peer request_history refused: unknown_conversation", error?.message)
         }
 
+    @Test
+    fun `rejected peer dials name the opening wait and current link state`() =
+        runTest {
+            val link = RedialingLink<Unit>(backgroundScope, { null }, { awaitCancellation() }, {})
+            var diagnosed = 0
+            try {
+                val error =
+                    runCatching {
+                        withTimeoutDiagnostic({
+                            diagnosed += 1
+                            "peer step 'open prompt peer' timed out; ${link.describe()}"
+                        }) {
+                            withTimeout(CONNECT_TIMEOUT_MS) { link.start() }
+                        }
+                    }.exceptionOrNull()
+
+                assertTrue("the opening failure must identify its step", error is AssertionError)
+                assertEquals("peer step 'open prompt peer' timed out; no open session: none settled yet; redialing", error?.message)
+                assertTrue("retain the timed-out operation as cause", error?.cause is TimeoutCancellationException)
+                assertEquals(1, diagnosed)
+                assertEquals(CONNECT_TIMEOUT_MS, currentTime)
+            } finally {
+                link.close()
+            }
+        }
+
+    @Test
+    fun `an unanswered message names its own wait without extending the deadline`() =
+        runTest {
+            val error =
+                runCatching {
+                    withTimeoutDiagnostic({ "peer step 'send background prompt message' timed out; session open (link 1, replaced 0×)" }) {
+                        withTimeout(CONNECT_TIMEOUT_MS) { awaitCancellation() }
+                    }
+                }.exceptionOrNull()
+
+            assertTrue("the message failure must identify its step", error is AssertionError)
+            assertEquals("peer step 'send background prompt message' timed out; session open (link 1, replaced 0×)", error?.message)
+            assertTrue("retain the original timeout", error?.cause is TimeoutCancellationException)
+            assertEquals(CONNECT_TIMEOUT_MS, currentTime)
+        }
+
+    @Test
+    fun `successful scenario steps return without evaluating diagnostics`() =
+        runTest {
+            assertEquals("answer", withTimeoutDiagnostic({ error("diagnostic must be lazy") }) { "answer" })
+            assertEquals(0L, currentTime)
+        }
+
+    @Test
+    fun `scenario failures and ordinary cancellation are not relabelled`() =
+        runTest {
+            for (failure in listOf(IllegalStateException("refused: static_code"), CancellationException("scenario cancelled"))) {
+                val error =
+                    runCatching {
+                        withTimeoutDiagnostic({ error("diagnostic must be lazy") }) { throw failure }
+                    }.exceptionOrNull()
+                assertEquals(failure.javaClass, error?.javaClass)
+                assertEquals(failure.message, error?.message)
+            }
+        }
+
     private fun TestScope.assertClosedFault(error: Throwable?) {
         assertTrue("$error", error is AssertionError)
         assertEquals("the peer's session closed before it answered a request: a relay or daemon fault", error?.message)
@@ -172,6 +236,7 @@ class PeerWaitTest {
     }
 
     private companion object {
+        const val CONNECT_TIMEOUT_MS = 30_000L
         const val TIMEOUT_MS = 90_000L
         const val POLL_MS = 250L
     }

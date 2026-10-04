@@ -43,3 +43,9 @@ Dispatcher handoff: run the full live suite on the pushed candidate (`Live tests
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-04
+
+## Revisions
+
+### 2026-10-04 — Pin the opening wait to the retained scenario
+
+The isolated base daemon's `conversations.json` maps `e2e955-prompt-1791062837050` to conversation `52fb7ee0-7f62-445e-8f56-f90136224b8b`. Its retained `pyry-e2e.JKsJv3/daemon.log` records creation at 00:27:17.607+03:00 and successful rename at 00:27:17.632+03:00, followed by peer handshake rejections at 00:27:17.703, 00:27:18.793, 00:27:24.972, 00:27:33.089 and 00:27:41.195. The next scenario creates its chat at 00:27:49.097. Thus the named scenario reached its peer-opening call, which spent the original 30-second window retrying a token bound to another static key; it never reached push registration, backgrounding or alert assertions. The repaired #1698 full live report at `52b646ac8f2c8a557b85a34f98f354eaf0c42c08` explicitly passes this method (53 executed, 1 unrelated failure, 0 skipped), and `pyry-e2e.shYptv/daemon.log` has zero mismatch/bound-key rejections. This strengthens the diagnosis without changing the design or claiming candidate acceptance.
