@@ -15,25 +15,27 @@ canonical CLAUDE.md shape (hoist state to the ViewModel; UI receives state + `on
 
 ### The list's own top bar (#737)
 
-Replaced the M3 `TopAppBar` #21 gave the screen — the design retires the app's generic top app bar (with it,
-the app name and the Pyry logo, #68) and gives the list its own chrome: a settings entry at the leading
-content edge, an archive entry beside it, and (since #1186) one “Pair another host” plus at the right,
-with a 1dp rule closing the titleless bar. The screen still owns its own
-chrome rather than relying on a shared `TopAppBar` slot threaded through the NavHost; the outer `Scaffold` in
-`MainActivity` carries system-bar insets only.
+The list owns a titleless header rather than the generic M3 `TopAppBar`. Since #1665, one “Open menu”
+ellipsis occupies the leading edge, with “Pair another host” at the right and a 1dp rule below. The outer
+`Scaffold` in `MainActivity` carries system-bar insets only.
 
-The file-private `ChannelListTopBar(onEvent)` is a `Column`: a full-width `Row` keeps Settings and Archive
-together at the left and pairing at the right, followed by a `HorizontalDivider`. Each control is a
-44dp clickable `Box` with a distinct button role and a Figma-derived vector tinted `colorScheme.primary`:
+The file-private `ChannelListTopBar` is a `Column`: a full-width `Row` followed by a `HorizontalDivider`.
+Each control is a 44 × 44dp clickable `Box` with a button role, tinted `colorScheme.primary`:
 
-| Vector drawable | Drawn size | TalkBack name | Event |
+| Vector drawable | Drawn size | TalkBack name | Action |
 | --- | --- | --- | --- |
-| `ic_sidebar_settings` | 22 × 24dp | Open settings | `SettingsTapped` |
-| `ic_sidebar_archive` | 24 × 21dp | Open archive | `ArchiveTapped` |
+| `ic_thread_overflow` | 6 × 24dp | Open menu | Opens Settings then Archive |
 | `ic_sidebar_add_host` | 24 × 24dp | Pair another host | `PairHostTapped` |
 
-These paths replace the Material approximations, especially the visibly different Archive glyph. Both this
-divider and the tree's between-sections rule use the private `sidebarRuleColor()` helper: `inversePrimary`
+Settings and Archive are client-owned action rows in the shared [Options overlay](options-overlay.md),
+with no selected indicator or subset caption. Selecting either closes the menu before emitting
+`SettingsTapped` or `ArchiveTapped`. Outside taps and Back close it without navigation or tap-through.
+The local `remember` flag survives recomposition; configuration changes may close it. The screen wraps
+its Scaffold in a same-window `Box`, subtracts that layer's window origin from the menu button's live
+window bounds, and draws the overlay above the Scaffold. `Below` placement starts 4dp below the target,
+with the shared horizontal alignment, 8dp edge margins and scrolling constrained to the room below.
+
+Both this divider and the tree's between-sections rule use the private `sidebarRuleColor()` helper: `inversePrimary`
 for a dark surface, `outlineVariant` for a light surface, each at `SECTION_RULE_ALPHA = 0.60f`. Sampling
 the visible Figma `133:259` render confirmed the dark rule at RGB (34, 65, 92); its inline
 `inversePrimary` fallback alone was not a reliable colour reference.
@@ -61,13 +63,10 @@ needing to be re-proven per state.
 [#1521](../../specs/architecture/1521-channel-list-bar-top-gap.md)).** Each 24dp visual frame
 is centred in a 44dp target, giving `BarTouchSlack = 10.dp`. `BarTopGap = 32.dp - BarTouchSlack` (22dp)
 and `BarRuleGap = 16.dp - BarTouchSlack` (6dp) so the glyph tops sit at Figma `15:8`'s 32dp — the frame
-stacks body top padding 4 + sidebar top padding 24 + button-row top padding 4. The adjacent left
-targets touch without overlap, so Settings and Archive centres are exactly 44dp apart. At a 412dp panel
-width the Settings glyph spans x=21–43, Archive x=64–88, and add-host x=368–392; the first and last
-24dp visual frames align with the 20dp content gutters. The toolbar rule sits at y=72–73, 4dp below
-its pre-#1521 position, because the rule and the tree follow the bar in the `Scaffold` rather than
-moving independently. The Archive glyph's half-dp vertical centering rasterizes 2dp below the other two
-in the device geometry check (y=34 against y=32), while all three 24dp-tall glyphs top out at y=32.
+stacks body top padding 4 + sidebar top padding 24 + button-row top padding 4. Since #1665, the
+ellipsis is centred in the leading 24dp visual frame: at 412dp panel width it spans x=29–35,
+while add-host spans x=368–392. Those visual frames retain the 20dp content gutters. The toolbar rule
+sits at y=72–73, 4dp below its pre-#1521 position, because the rule and tree follow the bar in the Scaffold.
 Keeping 44dp targets is necessary to reproduce the design's icon centres without overlapping click
 regions. [#1521](../../specs/architecture/1521-channel-list-bar-top-gap.md) also proved, rather than
 changed, two things the single-host #1431 audit couldn't check: the 16dp gap between consecutive host

@@ -1,7 +1,7 @@
 # ChannelListScreen
 
 Stateless `(hostState, onEvent)` composable that renders a Material 3 `Scaffold` with the list's own
-top bar (Settings and Archive at the left, one “Pair another host” plus at the right, above a rule — see
+top bar (an “Open menu” ellipsis at the left, one “Pair another host” plus at the right, above a rule — see
 [The list's own top bar](channel-list-screen-how-it-works.md#the-lists-own-top-bar-737) below) above a single-`LazyColumn` conversation tree
 (#731, #1189): each host appears once, with fixed Channels and Chats sections and their direct conversation
 rows, drawn from `hostState` in host and source-list order using the row composables from
@@ -27,10 +27,11 @@ Tree labels use the [shared type ramp](shared-typography.md) checked against Fig
 ## What it does
 
 Wraps its body in a `Scaffold` whose `topBar` is the file-private `ChannelListTopBar` (rendered in **every**
-state and after scrolling to the final row). It has no title: “Open settings” and “Open archive” are at the
-left, and exactly one “Pair another host” control at the right emits `PairHostTapped` into the existing
-[scanner/code flow](navigation.md#manual-pairing-entry-and-return). The three 24dp glyphs retain separate
-48dp targets; 20dp gutters, a 1dp divider and a 24dp gap to the first row apply in both themes — see
+state and after scrolling to the final row). It has no title: “Open menu” at the left opens Settings
+then Archive, and exactly one “Pair another host” control at the right emits `PairHostTapped` into the existing
+[scanner/code flow](navigation.md#manual-pairing-entry-and-return). The menu's 6 × 24dp ellipsis and pairing's
+24 × 24dp plus sit in separate 44 × 44dp targets; 20dp visual-frame gutters, a 1dp divider and a 24dp gap
+to the first row apply in both themes — see
 [The list's own top bar](channel-list-screen-how-it-works.md#the-lists-own-top-bar-737). There is no `floatingActionButton`
 slot: #738 retired it, along with the flat `ChannelListUiState` it gated on.
 
@@ -39,7 +40,7 @@ The body branches on `hostState.hosts` — the only model the screen is fed:
 - **`hostState.hosts.isEmpty()`** — no host has produced a snapshot yet, or there are none paired. Falls back
   to the centred `R.string.channel_list_empty` ("To pair a host, tap Pair another host at the top right.")
   copy. The guidance names the always-present toolbar control without asserting that no host is paired
-  while snapshots are pending. Settings still opens with no selected host; Archive remains visible but
+  while snapshots are pending. Settings still opens with no selected host; Archive remains available in the menu but
   its tap does nothing without a selected host. This is the only
   blank-tree case; a paired host with a snapshot but no conversations still draws its own host row, which is
   content, not a blank screen. The `Loading` / `Error(message)` compatibility placeholders #738 removed drew
@@ -159,7 +160,7 @@ The file-private `ChannelListFab` — the manually-composed `Surface` #22 → #2
 directly (bypassing the M3 `FloatingActionButton` widget's own inner `Surface(onClick = ...)`, which would
 otherwise shadow an outer `combinedClickable` — see [`../codebase/25.md`](../codebase/25.md) and
 [`../codebase/221.md`](../codebase/221.md)) — is gone (#738). `TreeRowControl` now has a single
-`clickable` action; the toolbar uses `IconButton` for its single tap action.
+`clickable` action; the toolbar uses clickable `Box` controls with button semantics.
 See [Add controls (#738)](channel-list-screen-tree-and-controls.md#add-controls-738).
 
 ## Conversation tree (#731)
@@ -235,11 +236,18 @@ distinction from the tree's own blank at all — see the next section.
   section's test tag; a tree far taller than the viewport reaches its last row via
   `performScrollToNode(hasScrollAction())`; and a nameless host and a nameless conversation render their
   fallback labels.
-  `listBar_drawsThreeEntriesAndNoneOfTheRetiredChrome_onEveryDraw` walks one composition through the empty
-  placeholder and tree. It checks all three toolbar controls, their events, separate 48dp targets, 24dp
-  glyphs and outer 20dp gutters, plus absence of the global titles and old section-qualified pairing names.
-  A loaded-state-only assertion could miss a toolbar disappearing on the placeholder; the tall-tree test
-  also compares toolbar bounds and taps all three controls after scrolling to the final chat.
+  `listBar_drawsMenuAndPairingAndNoneOfTheRetiredChrome_onEveryDraw` walks one composition through the empty
+  placeholder and tree. It checks both toolbar controls, 44dp targets, the 6 × 24dp menu glyph, 24dp plus
+  and outer 20dp visual-frame gutters, plus absence of the retired Settings/Archive buttons and titles.
+  The tall-tree test also compares toolbar bounds and uses menu → Settings/Archive after scrolling.
+  Menu tests cover row order, event routing, touch edges, outside taps over pairing without tap-through,
+  Back, recomposition retention and anchor conversion with a nonzero screen origin. After a pointer tap
+  reopens the menu, assert that its rows are displayed before Espresso Back: the tap can return before
+  the new BackHandler composes (#1665).
+  A same-window scrim consumes taps but leaves underlying tree labels in the semantics tree. Scope menu
+  row selectors to action rows: a host or conversation named “Settings” or “Archive” can otherwise make
+  a global text matcher ambiguous. The verifier identified this remaining E2E helper limitation on
+  [PR #1743](https://github.com/pyrycode/pyrycode-mobile/pull/1743).
   `ChannelListColoursTest` measures the sole toolbar divider in light and dark themes: 1dp thickness, 20dp
   gutters and 24dp to the first host, including list padding. Measuring only a padding constant would
   miss extra space contributed by the list or row.
