@@ -54,3 +54,14 @@ internal suspend fun <T> requirePeerAnswer(
     } catch (e: TimeoutCancellationException) {
         throw AssertionError("the peer's open session answered no request within $timeoutMs ms: a relay or daemon fault", e)
     }
+
+/** Name a timed-out scenario operation using only test-authored labels and content-free state. */
+internal suspend fun <T> withTimeoutDiagnostic(
+    diagnostic: () -> String,
+    block: suspend () -> T,
+): T =
+    try {
+        block()
+    } catch (e: TimeoutCancellationException) {
+        throw AssertionError(diagnostic(), e)
+    }

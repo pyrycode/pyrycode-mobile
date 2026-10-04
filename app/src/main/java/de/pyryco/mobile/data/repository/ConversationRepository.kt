@@ -55,6 +55,14 @@ interface ConversationRepository {
     fun observeStall(conversationId: String): Flow<Boolean> = flowOf(false)
 
     /**
+     * Latest session-error wire code for this conversation, or null when none is held. Unknown codes
+     * remain verbatim; daemon prose is discarded. Supplies the current value on subscription. Clears
+     * on send entry, decoded non-idle turn state, and connection loss; never retries a message.
+     * Implementations without this feature inherit no error.
+     */
+    fun observeSessionError(conversationId: String): Flow<String?> = flowOf(null)
+
+    /**
      * Emits [conversationId]'s ordered queued-message backlog (FIFO) — the messages waiting while
      * claude is busy (#460). Each `queue_state` snapshot the daemon broadcasts replaces the backlog in
      * full; the flow re-emits the new ordered list. Empty until the first snapshot lands. Cold flow;

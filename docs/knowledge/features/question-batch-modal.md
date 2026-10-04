@@ -205,6 +205,12 @@ beside the uppercase `labelSmall` header. The `background` card uses a 1 dp `pri
 the 6 dp `modalControl` shape. Question text uses `bodyMedium`; choice labels and descriptions use
 `labelMedium`.
 
+**Valid selection does not compose the separate actions row (#1702).** An option can be selected and
+`state.canContinue` true while `question-batch-actions` is outside the viewport and absent from semantics.
+An interaction test must reveal that stable container before waiting for enabled Continue; waiting first
+can time out before ever reaching the scroll. A longer timeout cannot compose an offscreen lazy item.
+See [the question-answer live scenario](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
+
 **`QuestionBatchActions` takes a `connected: Boolean` (#1321), ANDed into Cancel's `!state.locked` and
 Continue's `state.canContinue` enabled checks.** `ThreadScreen` derives it the same way as the #1319 footer
 gate (`connectionState == ConnectionState.Connected`) and passes it alongside `pending` and `dispatch`.
@@ -346,7 +352,14 @@ question rows).
   two-question batch, asserted inside the region on each of 30 stepped frames — the regression test for the
   everyone-reveals mistake above), and `stacked_actions_sit_at_the_start_with_cancel_centred_over_continue`
   (font scale 1.5 at 320 dp: Continue's left edge equals the actions column's left edge, Cancel's centre equals
-  Continue's centre).
+  Continue's centre). #1702 adds
+  `selected_option_can_reach_continue_when_the_actions_row_is_uncomposed`: a 320 × 500 dp viewport with a
+  tall single-question block proves the option is selected and `canContinue` true while the actions tag
+  is absent, then reveals the container, asserts displayed/enabled Continue and dispatches exactly one
+  Continue event with the held generation. The old wait-before-scroll ordering reproduced a
+  `ComposeTimeoutException`; this diagnoses the Continue semantics wait, distinct from the original
+  #1637 `TimeoutCancellationException` in a coroutine. Historical timeout reports alone do not establish
+  the viewport mechanism; the controlled regression does.
 - `QuestionBatchModalTest` (androidTest — the file and class names predate #1305's move out of the dialog,
   § Where it lives) now mounts the real inline `ThreadScreen` host over a fake batch flow and recording send
   lambdas, not a standalone `QuestionBatchModal` call: radio semantics and Other clearing on single choice,

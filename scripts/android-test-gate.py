@@ -160,9 +160,11 @@ def combine_reports(paths, expected_class=None):
 
 # The e2e files no UI-suite test or the shared instrumentation runner uses. The suite leaves the e2e package out
 # at run time, but the runner, the test application and the unrecognised-row sentinel in that package serve every
-# device test, so only these three are safe to change without re-running it. A guard test keeps that true.
+# device test. Only the explicitly listed e2e-only sources are safe to change without re-running it;
+# a guard test keeps that true, including the peer's graph-lifecycle regression.
 E2E_ONLY_SOURCES = tuple(f"app/src/androidTest/java/de/pyryco/mobile/e2e/{name}.kt" for name in
-                         ("InteractiveStreamE2ETest", "DeterministicInteractiveStreamE2ETest", "SecondClientPeer"))
+                         ("InteractiveStreamE2ETest", "DeterministicInteractiveStreamE2ETest", "SecondClientPeer",
+                          "PeerIdentityLifecycleTest"))
 
 
 def ui_suite_skippable(paths):
