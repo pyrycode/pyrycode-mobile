@@ -1,8 +1,5 @@
 package de.pyryco.mobile.e2e
 
-import com.southernstorm.noise.protocol.Noise
-import de.pyryco.mobile.data.crypto.DeviceStaticKeyPair
-import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.network.AttachmentChunkPayloadDto
@@ -58,7 +55,8 @@ import java.util.concurrent.atomic.AtomicLong
  * other client of the same daemon. It pairs with its own `pyry pair` token (`peerToken`, minted by
  * `scripts/e2e-emulator.sh`) and its own throwaway device key, never the phone's, and speaks the mobile
  * wire protocol over the same relay the phone dials, through the app's own [OkHttpRelayTransport],
- * [NoiseSessionFactory] and [NoiseSessionPump].
+ * [NoiseSessionFactory] and [NoiseSessionPump]. Its static identity is retained in memory for this
+ * pairing across scenarios by [PeerDeviceKeyStore], matching the daemon's token-to-key binding.
  *
  * It never touches the app under test: its pairing record and key live in memory only, so the phone's
  * credential store, host list and registry selection are exactly what they were. One peer per scenario,
@@ -77,7 +75,7 @@ import java.util.concurrent.atomic.AtomicLong
 class SecondClientPeer(
     private val pairing: PairedServer,
 ) : AutoCloseable {
-    private val keyStore = ThrowawayDeviceKeyStore()
+    private val keyStore = PeerDeviceKeyStore(pairing)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val received = MutableStateFlow<List<Envelope>>(emptyList())
     private val requestId = AtomicLong()
@@ -565,32 +563,6 @@ class SecondClientPeer(
 
     private fun Envelope.payloadField(name: String): String? = (payload as? JsonObject)?.get(name)?.jsonPrimitive?.contentOrNull
 
-    /**
-     * The peer's own device key, generated once in memory. The daemon learns a device's static key from
-     * each handshake and keeps only the token, so any fresh key pairs with a fresh token. Each read is a
-     * copy: [NoiseSessionFactory] zeroes the private key it is handed.
-     */
-    private class ThrowawayDeviceKeyStore : DeviceStaticKeyStore {
-        private val publicKey = ByteArray(KEY_LENGTH)
-        private val privateKey = ByteArray(KEY_LENGTH)
-
-        init {
-            val dh = Noise.createDH(DH_NAME)
-            try {
-                dh.generateKeyPair()
-                dh.getPublicKey(publicKey, 0)
-                dh.getPrivateKey(privateKey, 0)
-            } finally {
-                dh.destroy()
-            }
-        }
-
-        override suspend fun loadOrCreate(serverId: String): DeviceStaticKeyPair =
-            DeviceStaticKeyPair(publicKey.copyOf(), privateKey.copyOf())
-
-        override suspend fun publicKey(serverId: String): ByteArray = publicKey.copyOf()
-    }
-
     /** The peer's one pairing record, held in memory; the app's credential store never sees it. */
     private class SinglePairingStore(
         private val pairing: PairedServer,
@@ -624,8 +596,6 @@ class SecondClientPeer(
         /** The id field of each prompt the daemon re-sends to a new connection. */
         val PROMPT_ID_FIELDS = mapOf("modal_shown" to "modal_id", "question_shown" to "question_batch_id")
         val CLIENT_INFO = NoiseClientInfo(deviceName = "e2e-peer", clientVersion = "e2e-peer")
-        const val DH_NAME = "25519"
-        const val KEY_LENGTH = 32
         const val PERMISSION_CLASS = "permission"
         const val ALLOW_ONCE = "allow_once"
         const val REMOTE_SOURCE = "remote"
