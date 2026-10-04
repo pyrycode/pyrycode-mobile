@@ -53,8 +53,8 @@ screen's `ScannerViewport`, [Scanner Denied](scanner-denied-screen.md) and
 row with its own top padding and height, and the three landed at three different
 heights on a real device (28, 24 and 6 px off Figma at 412×892 with real 24 dp
 system bars) even though all three frames put the title's 28 px line box 24 px
-below the status bar. **The geometry contract, not the pixels, is what's shared**:
-`PairingHeader(title, titleColor, onBack, backIcon, modifier, startPadding, backEnabled, divider)`
+below the status bar. The shared header owns geometry and chrome; callers retain their own content:
+`PairingHeader(title, titleColor, onBack, backIcon, backdropSource, modifier, startPadding, backEnabled, divider)`
 draws a `heightIn(min = 48.dp)` row padded 14 dp from its top — so the centered
 28 dp title line box starts 24 dp below wherever the row is placed — and, when
 `divider = true`, a `HorizontalDivider` 6 dp under the row (44 dp below the title
@@ -62,6 +62,19 @@ top). Each caller applies `systemBarsPadding()` first and places `PairingHeader`
 at the inset edge; the body below it keeps each frame's own layout, so a header
 move shifts the body with it (Scanner's card, Pair Screen's form) rather than
 leaving a gap or an overlap.
+
+Since #1648, the header Column uses `chromeBackdrop(backdropSource,
+MaterialTheme.colorScheme.threadColors.headerBackdrop, top = true)` for the
+shared theme-backed downward gradient and progressive background blur. Its
+content Row uses `defaultChromeShadow()` for the Default alpha-following shadow
+on the title and Back glyph; foreground controls draw sharp afterward. The
+divider stays outside the shadow. These are the [thread's shared effects](thread-screen-how-it-works-overlays-and-app-bar.md),
+not copied gradient or shadow constants.
+
+Each caller remembers a screen-local `HazeState` and records only its full-size
+background in a sibling `hazeSource` behind the inset-aware content. Recording
+the content itself would sample foreground controls or feed the header effect
+back into its own source. The decoration leaves the geometry below unchanged.
 
 Two things are easy to miss when touching this composable:
 
@@ -116,7 +129,7 @@ otherwise moves upward and shrinks only when needed. The helper stays bottom
 aligned; its top padding provides the 16 dp reticle-to-card gap. Measurement is
 synchronous and adds no state, coroutine or camera lifecycle behavior.
 
-- **Root atmosphere**: `scannerAtmosphere` draws a theme-derived blue radial center over the surface behind the header, window and actions. It fills the column before `systemBarsPadding()`, so atmospheric color reaches the screen edges while content respects system bars. The same drawing helper serves the denied surface.
+- **Root atmosphere**: `scannerAtmosphere` draws a theme-derived blue radial center over the surface behind the header, window and actions. It fills a full-size sibling `hazeSource` behind the `systemBarsPadding()` column, so atmospheric color reaches the screen edges while content respects system bars. The header samples this atmosphere; camera, reticle and controls are outside the source. The same drawing helper serves the denied surface.
 - **Background**: `colorScheme.surfaceContainerLowest` (darker than `surface`, M3 dark-scheme convention) clipped to `RoundedCornerShape(24.dp)` — now a **fallback fill** behind the camera feed (visible only before/without a bound camera). The 24dp clip also bounds the `TextureView` preview (only because the preview is `COMPATIBLE`/in-hierarchy; see [Camera preview](camera-preview.md)).
 - **Radial gradients**: two `drawRect(brush = Brush.radialGradient(...))` calls in a single `Modifier.drawBehind`, **moved in #334 from the `Box`'s own modifier into a `Box(Modifier.matchParentSize().drawBehind { … })` child**. The relocation is the AC1 lever: the `Box`'s own `drawBehind` paints behind *all* children including the camera, so the camera would hide the gradients; a `matchParentSize` sibling placed *after* `cameraPreview()` layers the gradients **over** it. The draw is byte-for-byte identical (same stops/centres/`radius`). Centers and radius are derived from the lambda's `size` (`size.width * 0.30f`, `size.height * 0.70f`, `radius = maxOf(size.width, size.height) * 0.7f`), so the gradients adapt to any viewport dimension. Each gradient is a 3-stop: token-derived inner stop (`primary.copy(alpha = 0.12f)` / `tertiary.copy(alpha = 0.06f)`) → same color at `alpha = 0f` at offset 0.6 → `Color.Transparent` at offset 1.
 - **Atmospheric stripes**: a single `Canvas(Modifier.matchParentSize())` runs a `while (y <= size.height) { drawRect(...); y += 7.dp.toPx() }` loop with stripe color hoisted to a `val` at the call site (`colorScheme.onSurface.copy(alpha = 0.04f)` — `MaterialTheme.colorScheme` is not addressable from the `DrawScope` receiver). Stripe count self-terminates against the measured height; the Figma "exactly 105 stripes" figure is a function of the 736dp panel height in the locked design.

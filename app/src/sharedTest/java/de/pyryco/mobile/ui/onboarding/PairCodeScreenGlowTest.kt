@@ -13,6 +13,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -42,11 +43,40 @@ class PairCodeScreenGlowTest {
         val pair = compose.runOnIdle { draw(view) }
         welcomeShown = true
         val welcome = compose.runOnIdle { draw(view) }
-        // Side-edge pixels clear of either screen's content: header band and mid-body.
-        for (y in listOf(pair.height / 40, pair.height * 3 / 10)) {
+        assertNotEquals("header has its own Top bar treatment", welcome.getPixel(2, pair.height / 40), pair.getPixel(2, pair.height / 40))
+        // The body keeps the shared glow; the header now owns the shared Top bar tint.
+        for (y in listOf(pair.height * 3 / 10)) {
             for (x in listOf(2, pair.width - 3)) {
                 assertEquals("glow at ($x, $y)", welcome.getPixel(x, y), pair.getPixel(x, y))
             }
+        }
+    }
+
+    @Test fun allPairingHeadersFadeFromTheSharedDarkTopBarColor() {
+        lateinit var view: View
+        var screen by mutableStateOf(0)
+        compose.setContent {
+            view = LocalView.current
+            PyrycodeMobileTheme(darkTheme = true) {
+                when (screen) {
+                    0 -> PairCodeScreen(PairCodeState(), {})
+                    1 -> ScannerScreen(ScannerUiState.ReadyToScan, {}, {}, {})
+                    else -> ScannerDeniedScreen({}, {}, {})
+                }
+            }
+        }
+        repeat(3) { index ->
+            compose.runOnIdle { screen = index }
+            val bitmap = compose.runOnIdle { draw(view) }
+            val density = view.resources.displayMetrics.density
+            val x = bitmap.width - 3
+            val top = Color(bitmap.getPixel(x, (2 * density).toInt()))
+            val bottom = Color(bitmap.getPixel(x, (60 * density).toInt()))
+            val expected = Color(0xFF09141D)
+            assertEquals("screen $index top red", expected.red, top.red, 0.015f)
+            assertEquals("screen $index top green", expected.green, top.green, 0.015f)
+            assertEquals("screen $index top blue", expected.blue, top.blue, 0.015f)
+            assertTrue("screen $index tint fades into atmosphere", bottom.blue > top.blue + 0.01f)
         }
     }
 

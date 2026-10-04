@@ -38,9 +38,12 @@ section's #1464 spec for the Figma frames this form was compared against.
 The 412×892 mobile design uses theme colors and typography, an atmospheric glow,
 the supplied 24 dp back-arrow asset and bottom-aligned 56 dp actions. Since #1462
 the glow is the shared `Modifier.onboardingGlow()` from
-[Welcome](welcome-screen.md#how-it-works) applied to the full-screen outer
-`Column`, right after its `surface` background and before `systemBarsPadding()` —
+[Welcome](welcome-screen.md#how-it-works) applied after the `surface` background on a full-screen sibling Box —
 the same Figma `6:32` transform scaled to the window, covering the header too.
+Since #1648 that Box is a `hazeSource` for a remembered screen-local `HazeState`,
+behind the inset-aware content Column. The header samples this glow with the
+shared theme-backed gradient/progressive blur and adds the Default shadow to
+its sharp title and Back glyph; form controls are excluded from the source.
 Before #1462 this screen drew its own `drawBehind` radial gradient scaled
 `scaleY = 1.5f` behind the body only, which left dark bands down both side edges
 between the header and the Pair button; a vertically scaled ellipse does not
@@ -351,9 +354,13 @@ of the Compose root also omits the keyboard window; the visible-IME captures use
 dark theme, #1462) draws the root view to a bitmap in first-pair, re-pair
 (`targetName`) and invalid-code states: both side edges at 30% height and the
 header's right edge are bluer than plain surface (no dark bands, glow reaches
-the header), and side-edge pixels in the header band and mid-body are
-pixel-identical to `WelcomeScreen` at the same window size — proving the shared
-modifier, not a separate reimplementation, produced the match.
+the header), and mid-body side-edge pixels are pixel-identical to `WelcomeScreen` at the
+same window size, proving reuse of the shared glow. Since #1648 the header
+intentionally differs from Welcome: `glowMatchesWelcome` asserts that difference,
+and `allPairingHeadersFadeFromTheSharedDarkTopBarColor` checks the dark gradient
+on Scanner, Denied and PairCode. These JVM pixels check tint and body glow;
+[hardware evidence](development-verification-compose-evidence.md#compose-evidence)
+is needed for progressive blur and foreground shadow.
 
 `PairCodeScreenInsetsTest` (Robolectric, `app/src/sharedTest`) puts the host
 activity edge to edge and applies fixed nonzero status and navigation insets

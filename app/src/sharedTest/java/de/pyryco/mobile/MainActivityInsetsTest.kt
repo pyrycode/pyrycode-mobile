@@ -20,7 +20,15 @@ class MainActivityInsetsTest {
     @get:Rule val rule = createAndroidComposeRule<MainActivity>()
 
     @Test fun welcomeConsumesChangingSystemBarsExactlyOnce() {
-        rule.onNodeWithText("Pyrycode Mobile").assertIsDisplayed()
+        rule.onNodeWithText("Pyrycode").assertIsDisplayed()
+        val manager = rule.activity.packageManager
+        assertEquals(
+            "Pyrycode",
+            rule.activity.applicationInfo
+                .loadLabel(manager)
+                .toString(),
+        )
+        assertEquals("Pyrycode", manager.getActivityInfo(rule.activity.componentName, 0).loadLabel(manager).toString())
         val density = rule.activity.resources.displayMetrics.density
         // Both cases leave room for the existing Welcome content on the 731 dp managed device.
         for ((top, bottom) in listOf(16 to 16, 24 to 24)) {
@@ -37,7 +45,7 @@ class MainActivityInsetsTest {
                 ViewCompat.dispatchApplyWindowInsets(content.getChildAt(0), bars)
             }
             rule.waitForIdle()
-            val title = rule.onNodeWithText("Pyrycode Mobile").fetchSemanticsNode().boundsInRoot
+            val title = rule.onNodeWithText("Pyrycode").fetchSemanticsNode().boundsInRoot
             // The decorative logo has no semantics: title top = logo top + logo height + hero gap.
             assertEquals("logo starts 172 dp below one status inset", topPx + 304 * density, title.top, 1f)
             val footer =

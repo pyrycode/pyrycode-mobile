@@ -118,7 +118,7 @@ fun WelcomeScreen(
                 )
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "Pyrycode Mobile",
+                        text = "Pyrycode",
                         style = MaterialTheme.typography.headlineLarge,
                         color = MaterialTheme.colorScheme.onSurface,
                     )

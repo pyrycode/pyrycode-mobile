@@ -1,0 +1,55 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="8" failures="2" errors="0" skipped="0" time="229.453" timestamp="2026-10-04T10:19:23" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.MainActivityInsetsDeviceTest" tests="3" failures="1" errors="0" skipped="0" time="136.867" timestamp="2026-10-04T10:19:23" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="activityAt360By800" classname="de.pyryco.mobile.MainActivityInsetsDeviceTest" time="40.393">
+      <failure>java.lang.AssertionError: expected:&lt;87.0&gt; but was:&lt;48.0&gt;
+at org.junit.Assert.fail(Assert.java:89)
+at org.junit.Assert.failNotEquals(Assert.java:835)
+at org.junit.Assert.assertEquals(Assert.java:577)
+at org.junit.Assert.assertEquals(Assert.java:701)
+at de.pyryco.mobile.MainActivityInsetsDeviceTest.exercise(MainActivityInsetsDeviceTest.kt:488)
+at de.pyryco.mobile.MainActivityInsetsDeviceTest.activityAt360By800(MainActivityInsetsDeviceTest.kt:228)
+</failure>
+    </testcase>
+    <testcase name="lightAndroidModeKeepsLightSystemBarIcons" classname="de.pyryco.mobile.MainActivityInsetsDeviceTest" time="16.939" />
+    <testcase name="activityAt412By892" classname="de.pyryco.mobile.MainActivityInsetsDeviceTest" time="79.535" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.design.OnboardingDesignCaptureTest" tests="1" failures="0" errors="0" skipped="0" time="18.92" timestamp="2026-10-04T10:19:23" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="scannerFramesAt412By892" classname="de.pyryco.mobile.design.OnboardingDesignCaptureTest" time="18.92" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.onboarding.WelcomeAppearanceDeviceTest" tests="3" failures="1" errors="0" skipped="0" time="33.846" timestamp="2026-10-04T10:19:23" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="darkAt360By800" classname="de.pyryco.mobile.ui.onboarding.WelcomeAppearanceDeviceTest" time="9.041" />
+    <testcase name="darkAt412By892" classname="de.pyryco.mobile.ui.onboarding.WelcomeAppearanceDeviceTest" time="12.835" />
+    <testcase name="darkAt360By800LargeText" classname="de.pyryco.mobile.ui.onboarding.WelcomeAppearanceDeviceTest" time="11.97">
+      <failure>java.lang.AssertionError: Open source · github.com/pyrycode/pyrycode-mobile clear of bars
+at org.junit.Assert.fail(Assert.java:89)
+at org.junit.Assert.assertTrue(Assert.java:42)
+at de.pyryco.mobile.ui.onboarding.WelcomeAppearanceDeviceTest.capture(WelcomeAppearanceDeviceTest.kt:140)
+at de.pyryco.mobile.ui.onboarding.WelcomeAppearanceDeviceTest.darkAt360By800LargeText(WelcomeAppearanceDeviceTest.kt:91)
+</failure>
+    </testcase>
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.design.DesignHarnessSmokeTest" tests="1" failures="0" errors="0" skipped="0" time="12.147" timestamp="2026-10-04T10:19:23" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="compactLargeTextLaunchCapturesRealFrame" classname="de.pyryco.mobile.design.DesignHarnessSmokeTest" time="12.147" />
+  </testsuite>
+</testsuites>

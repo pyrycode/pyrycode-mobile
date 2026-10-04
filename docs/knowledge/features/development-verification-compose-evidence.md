@@ -44,6 +44,25 @@ for executed/failed/skipped counts and named methods. Those full-suite passes
 resolve the retained focus-repair README's historical failed/busy attempts; they
 are not evidence of a separate focused device rerun.
 
+The [pairing chrome evidence](../../../app/src/androidTest/assets/pairing-chrome-1648/README.txt)
+retains all three onboarding surfaces, Figma exports fetched on 2026-10-04,
+header comparisons and real-inset sidecars. Its focused full `pixel8Api35` run
+selected `PairingHeaderCaptureTest` and `ScannerFrameTest` with real bars required;
+[api35-green.xml](../../../app/src/androidTest/assets/pairing-chrome-1648/api35-green.xml)
+records 4 executed/passed, 0 failures/errors and 0 skipped. The named method
+`PairingHeaderCaptureTest.threePairingHeadersKeepTheirGeometryAndBackActions`
+is present and passed, as are all three scanner frame methods. It checks actual
+pointer Back routing, 48 dp targets, title/rule offsets and Denied's absent rule.
+Sidecars record MainActivity, API 35, 412×892, density/font scale 1, hardware
+acceleration, `syntheticBars=false` and real 24 px status/navigation bars.
+
+These real-bar hardware pixels establish appearance and sharp foreground;
+ATD or injected-inset checks establish geometry without proving hardware blur.
+Smooth pairing backgrounds cannot independently quantify progressive blur radius:
+verified reuse of the unchanged shared effect relies on the thread's underlap
+evidence above. The [#1648 verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1741#issuecomment-5979693606)
+used retained Figma exports; it did not independently refresh the remote frames.
+
 For hardware-keyboard button tests, request `InputMode.Keyboard` through
 `LocalInputModeManager` after composition and before requesting focus. Establish
 it separately in the launcher and dialog windows. Assert launcher focus before

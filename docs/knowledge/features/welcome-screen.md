@@ -4,6 +4,13 @@ First screen of the onboarding flow. Shown to new users before any pairing state
 
 ## What it does
 
+The product name and Welcome title are **Pyrycode** as of #1732. The shared
+`app_name` resource also supplies the application and launcher activity labels,
+Android system notices such as the clipboard paste notice, and the notification
+fallback title when no conversation name is available. Welcome's title is a
+separate literal in `WelcomeScreen.kt`, so a rename must update both. The package
+id remains `de.pyryco.mobile`; the seeded demo channel remains “Pyrycode Mobile”.
+
 Greets the user, names the app, and offers two next steps:
 
 - **"I already have pyrycode"** — primary CTA (filled M3 `Button` with a QR-frame leading icon), invokes `onPaired`. Currently navigates to the `scanner` route (#12); Phase 4 replaces the stub scanner with real CameraX + ML Kit pairing.
@@ -123,6 +130,13 @@ text's `onSurface` role. Width assertions need Robolectric
 implausible roughly 178 dp body, while native font rendering exposed the old
 roughly 348 dp measure. Semantics checks alone do not establish the glow or shadow.
 
+`MainActivityInsetsTest` independently asserts the literal “Pyrycode” for the
+Welcome title and resolved application/activity labels. `AttentionNotifierTest`
+pins the same literal for the notification fallback: comparing it only to
+`app_name` would pass even if the resource still contained the old name. Welcome
+capture selectors must distinguish the product title from the unchanged demo
+channel name.
+
 `WelcomeAppearanceDeviceTest` launches real `MainActivity` in dark mode with
 wallpaper colors disabled at 412 × 892 and 360 × 800 dp, at 160 dpi. It checks
 body bounds and action/footer reachability, including 1.5× text at 360 × 800 dp. Its capture waits for a settled
@@ -131,7 +145,20 @@ the splash tint transition. Run it on the full `pixel8Api35`
 image with `requireRealSystemBars=true` for visual evidence; the ATD path can
 pass geometry checks without capturing pixels. See
 [Compose evidence](development-verification-compose-evidence.md#compose-evidence) and the
-[retained captures, metadata and command](../../../app/src/androidTest/assets/welcome-1212/capture-context.txt).
+[current captures, metadata and commands](../../../app/src/androidTest/assets/welcome-1732/capture-context.txt).
+The #1732 evidence includes the renamed title at reference, compact and enlarged
+text sizes, plus a [reference comparison](../../../app/src/androidTest/assets/welcome-1732/reference-side-by-side.png).
+The [initial XML](../../../app/src/androidTest/assets/welcome-1732/device-initial-results.xml)
+records eight executed, two failed, zero errors and zero skipped: Welcome's
+`darkAt412By892` and `darkAt360By800` passed. The
+[focused rerun XML](../../../app/src/androidTest/assets/welcome-1732/device-rerun-results.xml)
+records two executed with zero failures, errors or skips; both
+`WelcomeAppearanceDeviceTest#darkAt360By800LargeText` and
+`MainActivityInsetsDeviceTest#activityAt360By800` passed unchanged. Enlarged-text
+captures come from that rerun. A resize/inset transition is a hypothesis for the
+initial failures, not an established cause. [Earlier captures](../../../app/src/androidTest/assets/welcome-1212/capture-context.txt)
+and frozen ticket notes remain historical evidence, not executable baselines
+asserting the old title.
 
 ## Edge cases / limitations
 

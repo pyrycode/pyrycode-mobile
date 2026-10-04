@@ -44,7 +44,7 @@ class WelcomeScreenTest {
                 }
             }
         }
-        val titleTop = composeTestRule.onNodeWithText("Pyrycode Mobile").getUnclippedBoundsInRoot().top
+        val titleTop = composeTestRule.onNodeWithText("Pyrycode").getUnclippedBoundsInRoot().top
         assertEquals(304f, titleTop.value, 1f)
     }
 
