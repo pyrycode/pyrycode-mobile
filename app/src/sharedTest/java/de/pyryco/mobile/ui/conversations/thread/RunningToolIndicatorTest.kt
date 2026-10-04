@@ -48,6 +48,7 @@ class RunningToolIndicatorTest {
         name: String,
         status: ToolCallStatus,
         elapsedSeconds: Int? = null,
+        parentToolUseId: String = "",
     ): ThreadItem.MessageItem =
         ThreadItem.MessageItem(
             Message(
@@ -64,6 +65,7 @@ class RunningToolIndicatorTest {
                         output = "",
                         status = status,
                         elapsedSeconds = elapsedSeconds,
+                        parentToolUseId = parentToolUseId,
                     ),
             ),
         )
@@ -170,6 +172,29 @@ class RunningToolIndicatorTest {
 
         composeTestRule.onNodeWithContentDescription(runningDescription("Bash")).assertDoesNotExist()
         composeTestRule.onNodeWithText("Running Bash… 1m 05s").assertDoesNotExist()
+    }
+
+    @Test
+    fun backgroundTool_doesNotReplaceTheMainTool_orItsWorkingAndIdleFallbacks() {
+        val backgroundCall = toolRow("t2", "Grep", ToolCallStatus.Running, elapsedSeconds = 90, parentToolUseId = "agent")
+        state = stateOf(toolRow("t1", "Bash", ToolCallStatus.Running, elapsedSeconds = 65), backgroundCall)
+        setThreadScreen()
+
+        composeTestRule.onNodeWithText("Running Bash… 1m 05s").assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription(elapsedDescription("Bash", "1m 05s")).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Running Grep…", substring = true).assertDoesNotExist()
+
+        state = stateOf(toolRow("t1", "Bash", ToolCallStatus.Done), backgroundCall)
+
+        composeTestRule.onNodeWithText("Running Bash…", substring = true).assertDoesNotExist()
+        composeTestRule.onNodeWithText("Running Grep…", substring = true).assertDoesNotExist()
+        composeTestRule.onNodeWithText(context.getString(R.string.thread_working_label)).assertIsDisplayed()
+
+        isBusy = false
+
+        composeTestRule.onNodeWithText(context.getString(R.string.thread_working_label)).assertDoesNotExist()
+        composeTestRule.onNodeWithText("Running Grep…", substring = true).assertDoesNotExist()
+        composeTestRule.onNodeWithContentDescription(thinkingDescription).assertDoesNotExist()
     }
 
     @Test

@@ -4,6 +4,22 @@ Split out of [Thread screen](thread-screen.md) on 2026-09-05 to keep that docume
 
 ## Testing
 
+`OpenToolCallTest` covers the [main-thread status selector](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311):
+`aNewerSubagentCall_doesNotReplaceTheLatestMainThreadCall` checks that a newer background
+call replaces neither the latest main tool's name nor its elapsed reading;
+`onlySubagentCallsRunning_hasNoOpenCall_evenWhenTheParentIsNotLoaded` checks `null`
+with only background calls and with a completed main call. An absent parent is essential:
+a depth-based filter could pass with loaded parents while failing on paginated history.
+The shared Compose `RunningToolIndicatorTest.backgroundTool_doesNotReplaceTheMainTool_orItsWorkingAndIdleFallbacks`
+mounts `ThreadScreen`, checks the main tool's label and elapsed accessibility reading,
+then completes that tool while leaving the background call running. It checks the working
+fallback while busy and removal of working/tool/thinking readings once idle.
+`StatusArmTest` retains coverage of the fallback ladder. These regressions directly assert
+status isolation; existing real-Claude tool-status and background-agent scenarios do not
+assert that isolation, and #1763 adds no live scenario. See the
+[verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/1768#issuecomment-5982982880)
+for gate evidence and its live-coverage limits.
+
 Background-task panel tests open the count-free top menu after #1668, preserving unreported, empty,
 running and finished roster assertions. Pill tests retain pointer routing beside Actions; the real-IME
 keyboard test proves the running pill remains reachable. Capture helpers await and measure Knowledge
