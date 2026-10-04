@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-04T11:31:46.519Z" hostname="Juhanas-Air" time="11.308">
+  <properties/>
+  <testcase name="headerBlocksUnderlyingLinkWithPositiveClearAreaControl" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="10.167"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

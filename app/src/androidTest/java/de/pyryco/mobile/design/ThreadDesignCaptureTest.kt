@@ -134,6 +134,7 @@ class ThreadDesignCaptureTest {
 
     /** While set, the override's `setSessionSettings` awaits this gate instead of the fake's write. */
     @Volatile private var settingsGate: CompletableDeferred<Unit>? = null
+    private var readerNote = NOTE
     private val images = mutableListOf<Uri>()
     private var photo: File? = null
 
@@ -347,7 +348,27 @@ class ThreadDesignCaptureTest {
 
         checkNotNull(inputs.thread.value).onOpenMarkdownLink("docs/Builder Pipeline - Plan.md")
         await("Builder Pipeline Plan")
-        design.capture(FOLDER, "markdown-reader", "553:2574")
+        // Reference coordinates are measured at the capture's density 1, below the real status bar.
+        val restingBar = rule.onNodeWithTag("markdown-reader-top-bar").getUnclippedBoundsInRoot()
+        val restingTitle = rule.onNodeWithText("Builder Pipeline - Plan.md").getUnclippedBoundsInRoot()
+        val restingHeading = rule.onNodeWithText("Builder Pipeline Plan").getUnclippedBoundsInRoot()
+        assertEquals(69f, (restingBar.bottom - restingBar.top).value, 0.5f)
+        assertEquals(24f, (restingTitle.top - restingBar.top).value, 0.5f)
+        assertEquals(97f, (restingHeading.top - restingBar.top).value, 0.5f)
+        assertEquals(28f, (restingHeading.top - restingBar.bottom).value, 0.5f)
+        assertEquals(20f, restingHeading.left.value, 0.5f)
+        design.capture("reader-chrome-1647", "reference", "553:2574")
+        Espresso.pressBack()
+        rule.waitForIdle()
+        readerNote = NOTE + "\n\n" + (1..40).joinToString("\n\n") { "Reader scroll paragraph $it" }
+        checkNotNull(inputs.thread.value).onOpenMarkdownLink("docs/Builder Pipeline - Plan.md")
+        await("Builder Pipeline Plan")
+        val body = rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
+        body.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 72f * design.view.resources.displayMetrics.density) }
+        val heading = rule.onNodeWithText("Builder Pipeline Plan").fetchSemanticsNode().boundsInRoot
+        val header = rule.onNodeWithTag("markdown-reader-top-bar").fetchSemanticsNode().boundsInRoot
+        assertTrue("reader heading is drawn underneath bar", heading.top < header.bottom && heading.bottom > header.top)
+        design.capture("reader-chrome-1647", "scrolled-under-bar", "731:6010")
     }
 
     /** Real pixels and real IME insets for the revised footer; no daemon or live Claude needed. */
@@ -865,7 +886,11 @@ class ThreadDesignCaptureTest {
                             override suspend fun readWorkspaceFile(
                                 conversationId: String,
                                 path: String,
-                            ) = AttachmentFetchResult.Fetched(AttachmentContent(listOf(NOTE.toByteArray())), "Plan.md", "text/markdown")
+                            ) = AttachmentFetchResult.Fetched(
+                                AttachmentContent(listOf(readerNote.toByteArray())),
+                                "Plan.md",
+                                "text/markdown",
+                            )
                         }
                     val connection =
                         object : ConnectionStateSource {
