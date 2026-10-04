@@ -180,6 +180,7 @@ class RemoteConversationRepository(
      * pairing (#1317); the rest are this connection's own.
      */
     private val stallProjection = StallProjection()
+    private val sessionErrorProjection = SessionErrorProjection()
     private val queueProjection = QueueProjection()
     private val apiRetryProjection = ApiRetryProjection()
     private val compactingProjection = CompactingProjection()
@@ -426,6 +427,7 @@ class RemoteConversationRepository(
             try {
                 pump.inbound.collect { envelope -> onInbound(envelope) }
             } finally {
+                sessionErrorProjection.reset()
                 endDebugBundle()
                 messageCommands.endAttachmentUploads()
                 attachmentRetrievals.end()
@@ -612,6 +614,9 @@ class RemoteConversationRepository(
                         // Hold the conversation's turn phase (#1313) for every conversation, open or not, so
                         // a thread opened mid-turn reads it at once. Only `turn_state` and `turn_end` move it.
                         turnPhaseProjection.apply(event)
+                        if (event is LiveSessionEvent.TurnState && event.phase != LiveSessionEvent.TurnState.Phase.Idle) {
+                            sessionErrorProjection.clear(event.conversationId)
+                        }
                         // Fold the structured turn into the same thread store ([ThreadProjection]) the live
                         // `message` arm writes, so every row interleaves by arrival order (AC #4): a
                         // `tool_use`/`tool_result` pair into one evolving tool row (#387), and the
@@ -654,6 +659,11 @@ class RemoteConversationRepository(
                 // thread-store-only shape as `tool_denied`; it clears no stall and emits no live event.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     threadProjection.applyToolProgress(envelope)
+                }
+            }
+            TYPE_SESSION_ERROR -> {
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    sessionErrorProjection.apply(envelope)
                 }
             }
             TYPE_STALL -> {
@@ -964,7 +974,17 @@ class RemoteConversationRepository(
     private fun decodeLiveSessionEvent(envelope: Envelope): LiveSessionEvent? =
         try {
             when (envelope.type) {
-                TYPE_TURN_STATE -> MobileJson.decodeFromJsonElement<TurnStatePayloadDto>(envelope.payload).toEvent()
+                TYPE_TURN_STATE -> {
+                    // A coerced routing primitive cannot provide a trustworthy error-clearing edge.
+                    val payload = envelope.payload as? JsonObject
+                    if ((payload?.get("conversation_id") as? JsonPrimitive)?.isString == true &&
+                        (payload["state"] as? JsonPrimitive)?.isString == true
+                    ) {
+                        MobileJson.decodeFromJsonElement<TurnStatePayloadDto>(payload).toEvent()
+                    } else {
+                        null
+                    }
+                }
                 TYPE_ASSISTANT_DELTA -> MobileJson.decodeFromJsonElement<AssistantDeltaPayloadDto>(envelope.payload).toEvent()
                 TYPE_TOOL_USE -> MobileJson.decodeFromJsonElement<ToolUsePayloadDto>(envelope.payload).toEvent()
                 TYPE_TOOL_RESULT -> MobileJson.decodeFromJsonElement<ToolResultPayloadDto>(envelope.payload).toEvent()
@@ -1181,6 +1201,8 @@ class RemoteConversationRepository(
 
     override fun observeStall(conversationId: String): Flow<Boolean> = stallProjection.observe(conversationId)
 
+    override fun observeSessionError(conversationId: String): Flow<String?> = sessionErrorProjection.observe(conversationId)
+
     override fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> = queueProjection.observe(conversationId)
 
     override fun observeApiRetry(conversationId: String): Flow<ApiRetryStatus> = apiRetryProjection.observe(conversationId)
@@ -1261,14 +1283,20 @@ class RemoteConversationRepository(
     override suspend fun sendMessage(
         conversationId: String,
         text: String,
-    ): Message = messageCommands.sendMessage(conversationId, text)
+    ): Message {
+        sessionErrorProjection.clear(conversationId)
+        return messageCommands.sendMessage(conversationId, text)
+    }
 
     /** The same send naming [attachments] (#830, #983); see [MessageCommands.sendMessage]. */
     override suspend fun sendMessage(
         conversationId: String,
         text: String,
         attachments: List<MessageAttachment>,
-    ): Message = messageCommands.sendMessage(conversationId, text, attachments)
+    ): Message {
+        sessionErrorProjection.clear(conversationId)
+        return messageCommands.sendMessage(conversationId, text, attachments)
+    }
 
     /** Upload [bytes] as `attachment_chunk` frames (#829); see [MessageCommands.uploadAttachment]. */
     override suspend fun uploadAttachment(
@@ -1595,6 +1623,9 @@ class RemoteConversationRepository(
          * onset-only, no clearing edge on the wire (recovery is inferred from forward progress).
          */
         const val TYPE_STALL = "stall"
+
+        /** Unsolicited conversation-scoped failure; carries no replay event id or retry instruction. */
+        const val TYPE_SESSION_ERROR = "session_error"
 
         /**
          * Capability-gated snapshot event: a conversation's queued-message backlog
