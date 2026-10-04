@@ -4539,13 +4539,17 @@ class InteractiveStreamE2ETest {
             awaitConnected()
             val connectedAt = SystemClock.elapsedRealtime()
             val (chatId, _) = answerChat(serverId, PUSH_PROMPT_NAME_PREFIX)
-            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            // Exercise the suite's shared-token binding even when this method runs alone (#1694, #1698).
+            runningToolPeer().use { prior ->
+                peerStep(prior, "open prior prompt peer") { prior.open(CONNECT_TIMEOUT_MS) }
+            }
+            peerStep(peer, "open prompt peer") { peer.open(CONNECT_TIMEOUT_MS) }
             awaitPushRegistered(serverId, connectedAt)
 
             // 2. The app goes to the background; the peer's turn raises a prompt while the phone is absent.
             val woke = sendAppToBackground(serverId, watch)
-            runBlocking { peer.sendMessage(chatId, RUNNING_TOOL_PROMPT, THREAD_TIMEOUT_MS) }
-            val modalId = runBlocking { peer.awaitPermissionModal(chatId, REPLY_TIMEOUT_MS) }
+            peerStep(peer, "send background prompt message") { peer.sendMessage(chatId, RUNNING_TOOL_PROMPT, THREAD_TIMEOUT_MS) }
+            val modalId = peerStep(peer, "await background permission modal") { peer.awaitPermissionModal(chatId, REPLY_TIMEOUT_MS) }
             held = chatId to modalId
 
             // 3. AC-2: the push wakes the app and exactly one prompt alert shows.
@@ -6941,10 +6945,8 @@ class InteractiveStreamE2ETest {
         step: String,
         block: suspend () -> T,
     ): T =
-        try {
-            runBlocking { block() }
-        } catch (e: TimeoutCancellationException) {
-            throw AssertionError("peer step '$step' timed out; ${peer.linkState()}", e)
+        runBlocking {
+            withTimeoutDiagnostic({ "peer step '$step' timed out; ${peer.linkState()}" }, block)
         }
 
     /**
@@ -7421,9 +7423,13 @@ class InteractiveStreamE2ETest {
     ) {
         val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
         runBlocking {
-            withTimeout(CONNECT_TIMEOUT_MS) {
-                if (up) bundle.supervisor.connect() else bundle.supervisor.close()
-                bundle.coordinator.currentRepository.first { (it != null) == up }
+            withTimeoutDiagnostic({
+                "host link ${if (up) "reconnect" else "close"} timed out; repository present=${bundle.coordinator.currentRepository.value != null}"
+            }) {
+                withTimeout(CONNECT_TIMEOUT_MS) {
+                    if (up) bundle.supervisor.connect() else bundle.supervisor.close()
+                    bundle.coordinator.currentRepository.first { (it != null) == up }
+                }
             }
         }
     }
