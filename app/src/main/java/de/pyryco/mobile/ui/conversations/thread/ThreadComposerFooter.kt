@@ -56,8 +56,7 @@ enum class FooterControl { Model, Effort, Permission, Actions }
  * client-owned constant: nothing a server publishes is ever shown, handed back or sent through this menu.
  *
  * [value] identifies the row in the overlay. [command] is the text a command row sends as an ordinary
- * message; [ResetSession] has none, because it runs the overflow menu's Reset session path instead, and
- * [BackgroundTasks] (#678) has none because it only opens the read-only task panel.
+ * message; [ResetSession] has none, because it runs the overflow menu's Reset session path instead.
  */
 enum class ComposerAction(
     val value: String,
@@ -67,7 +66,6 @@ enum class ComposerAction(
     ResetSession("reset", "Reset session", null),
     CompactSession("compact", "Compact session", "/compact"),
     KnowledgeCapture("knowledge-capture", "Knowledge capture", "/knowledge-capture"),
-    BackgroundTasks("background-tasks", "Background tasks", null),
     ;
 
     companion object {
@@ -156,15 +154,13 @@ data class FooterMenu(
  *
  * The Actions menu (#884) reads only [mutationsSupported], which gates Reset session exactly as it gates
  * the overflow menu's item, and [absentActions], the commands the published menu proves absent, which are
- * greyed out. It is never `null`. The background-tasks row (#678) carries [backgroundTaskCount], the open
- * conversation's live count, in its label: a number, never a task string.
+ * greyed out. It is never `null`.
  */
 internal fun footerMenu(
     control: FooterControl,
     runConfig: ThreadRunConfig,
     mutationsSupported: Boolean = true,
     absentActions: Set<ComposerAction> = emptySet(),
-    backgroundTaskCount: Int = 0,
 ): FooterMenu? =
     when (control) {
         FooterControl.Model ->
@@ -202,8 +198,7 @@ internal fun footerMenu(
                     ComposerAction.entries
                         .filter { it != ComposerAction.ResetSession || mutationsSupported }
                         .map {
-                            val label = if (it == ComposerAction.BackgroundTasks) "${it.label} ($backgroundTaskCount)" else it.label
-                            OptionsOverlayOption(value = it.value, label = label, enabled = it !in absentActions)
+                            OptionsOverlayOption(value = it.value, label = it.label, enabled = it !in absentActions)
                         },
                 selectedValue = "",
                 notListed = 0,

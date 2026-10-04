@@ -4,6 +4,15 @@ Split out of [Thread screen](thread-screen.md) on 2026-09-05 to keep that docume
 
 ## Testing
 
+Background-task panel tests open the count-free top menu after #1668, preserving unreported, empty,
+running and finished roster assertions. Pill tests retain pointer routing beside Actions; the real-IME
+keyboard test proves the running pill remains reachable. Capture helpers await and measure Knowledge
+capture as the last Actions row, and open the panel through the top menu. The live method
+`InteractiveStreamE2ETest.interactiveTurn_backgroundTask_countsInActionsMenuAndPanel` keeps its old
+name but proves Actions omission and both surviving entries; after completion it accepts Finished or
+No background tasks, never the unreported reading. See [live evidence](../../e2e-interactive-stream.md)
+and [footer testing](thread-composer-footer-testing.md#testing).
+
 The [#1646 retained evidence](../../../app/src/androidTest/assets/chrome-1646/README.txt)
 supersedes earlier header/composer geometry captures. `ThreadDesignCaptureTest`
 retains explicit rows beneath both bars for `16:8`, `620:1577`, `696:4677` and
