@@ -433,13 +433,30 @@ permission prompt that the phone draws as a modal dialog over the composer, so t
 would not match how an operator reaches the button; the #848/#849 `SecondClientPeer`, paired
 `--allow-remote-permissions`, allows the prompt once so the dialog closes and the composer's Stop control
 (`cd_thread_interrupt`) is reachable. The test taps Stop, then asserts: the peer's first `turn_end` for the
-conversation carries `stop_reason == "cancelled"`; the status area shows a node whose content description
-starts with `thread_turn_outcome_interrupted`; and the Stop control is gone. A ping sent in the same open
-thread afterward gets claude's real reply (`awaitDisplayedPingReply`), proving the composer still works
+conversation carries `stop_reason == "cancelled"`; and the Stop control is gone. A ping sent in the same open
+thread afterward gets claude's real reply (`awaitPingReplyNamingLayer`) and a second `turn_end`, proving the composer still works
 after a stop, and no bubble ever carries the held turn's own reply token — the interrupted turn never
 finished. Two real claude turns: the held-then-interrupted turn and the follow-up ping. This proves only
 the **single-device** case; **cross-device** Stop (a turn started on one device, interrupted from another)
 remains [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679)'s open scope.
+
+The peer-opening regression in [#1696](https://github.com/pyrycode/pyrycode-mobile/issues/1696)
+failed before the held turn was sent. All four retained #1631/#1637 branch/base reports timed out
+at peer open; their daemon logs contained respectively **102/84/102/90** `static_key_mismatch`
+and `bound_to_other_key` occurrences, with zero redemption-window rejections. The harness reused
+one host-A peer token across scenarios, but each old peer generated a new static key after the
+daemon bound that token to the first accepted key. The repair reuses #1698's process-scoped,
+exact host/token identity store; daemon authentication and readiness waits remain unchanged.
+Before sending the held turn, this scenario now opens and closes a prior peer with the identical
+pairing, then opens its observing peer. Both must settle through the handshake and correlated
+`list_conversations` probe. This catches per-instance identity rotation even when the method runs
+alone, without spending another Claude turn. See [the handshake regression](knowledge/features/development-verification-test-scheduling.md#test-scheduling-and-harnesses).
+
+The fresh dispatcher full suite on 2026-10-04 explicitly passed
+`InteractiveStreamE2ETest#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`:
+**53 executed, 52 passed, 1 failed, 0 skipped**. The unrelated question-answer failure passed
+on a focused same-tree rerun; Stop passed in the original full run. See
+[Verification status](#verification-status) for the revisions and retained reports.
 
 The **delete-conversation** scenario (#554) is likewise **always-on** (not `@Ignore`d): both post-conditions
 are **durable** structural facts — a conversation is in the channel list or not, and the thread has popped
@@ -2318,7 +2335,21 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-04 (#1698).** The dispatcher ran the full
+**Current live verification — 2026-10-04 (#1696).** The dispatcher ran the full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1696`
+at `1ce59c32dc`, merged with `origin/main` at `d63e304b8e` (0 commits behind before merge):
+**53 executed, 52 passed, 1 failed, 0 skipped**, exit 1. The fresh full-suite XML contains
+`de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`
+with no failure, error or skip. Thus both peer opens and the unchanged permission, cancellation,
+Stop-removal, same-thread ping, second-turn-end and absent-held-reply assertions passed.
+The sole failure, `interactiveTurn_questionAnswer_reachesTheAskingConversation`, passed on a focused
+same-tree rerun (**1 executed, 1 passed, 0 failed, 0 skipped**). The dispatcher accepted the gate as
+PASS after rerun; this is neither a second full-suite pass nor a focused Stop run. See the
+[gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1696#issuecomment-5975218644).
+The retained XML reports are `2026-10-04T00-46-36-696Z_real-claude-gate_#1696.log` and
+`2026-10-04T00-46-36-696Z_real-claude-gate-rerun_#1696.log` under the dispatcher repository's `logs/`.
+
+**Previous live verification — 2026-10-04 (#1698).** The dispatcher ran the full
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1698`
 at `52b646ac8f`, merged with `origin/main` at `acf0f6591c`: **53 executed, 52 passed, 1 failed,
 0 skipped**, exit 1. The fresh full-suite XML explicitly records
@@ -3160,6 +3191,16 @@ The remaining checks here are specific to a real relay or real Claude execution:
 
 ## Follow-ups to ticket
 
+- **Coverage — hardened:** [#1696](https://github.com/pyrycode/pyrycode-mobile/issues/1696) makes
+  `InteractiveStreamE2ETest#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`
+  open and close a prior peer with the same pairing before opening its observing peer. This protects
+  #1698's token-bound static identity repair independently of scenario order. The JVM regression
+  authenticates successive Noise initiator keys rather than only comparing store arrays. All existing
+  Stop assertions remain: cancellation removes Stop, with no Interrupted status-label assertion since
+  #1357. The named method passed in the fresh full live suite; see
+  [Verification status](#verification-status) for counts and the unrelated focused rerun.
+  No scenario, deterministic twin, retry or longer wait was added.
+
 - **Coverage — hardened:** [#1698](https://github.com/pyrycode/pyrycode-mobile/issues/1698) repaired
   shared peer identity custody for
   `InteractiveStreamE2ETest#interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload` and other
@@ -3446,8 +3487,9 @@ The remaining checks here are specific to a real relay or real Claude execution:
 - **Coverage — shipped:** [#965](https://github.com/pyrycode/pyrycode-mobile/issues/965) added
   `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`, the twenty-first curated `LIVE=1`
   method: the phone's own turn is held open on a command that never returns on its own, the composer's
-  Stop control ends it with the Interrupted outcome, and a same-thread follow-up gets a real reply
-  afterward. It also extended `interactiveTurn_newSession_rendersSessionBoundaryDelimiter` to assert the
+  Stop control ends it with `stop_reason == "cancelled"` and disappears, and a same-thread follow-up
+  gets a real reply afterward. Since #1357 it does not assert an Interrupted status label.
+  It also extended `interactiveTurn_newSession_rendersSessionBoundaryDelimiter` to assert the
   Reset session status area's wrapping-up phase live, causally held by the daemon's own real-claude
   wrap-up turn; the restarting phase has no live hold and stays proven only by `ScriptedResettingTest`.
   This is **single-device** Stop only.
