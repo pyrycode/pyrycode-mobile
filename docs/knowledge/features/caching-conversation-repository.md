@@ -57,6 +57,13 @@ stay delegation: they are not removals, so neither can reach a cache-clearing pa
 cache § Removal on unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost) for the
 wording this mirrors).
 
+`requestHostSystemPrompt` and `setHostSystemPrompt` (#1774) also pass through by
+Kotlin delegation. Current/default prompt strings never enter `ConversationCache`
+or become offline readings. With the stable delegate, both operations keep its
+[live-only snapshot and failed-result behavior](stable-conversation-repository.md#host-system-prompts--snapshot-or-result-1774).
+`HostSystemPromptFacadesTest` checks read and write replies through this wrapper
+and asserts that these calls perform no cache read or write.
+
 `observeSessionError` (#1677) is also plain delegation: current and changing codes
 pass through without a cache read or write. It retains no code or daemon prose and
 cannot restore an error from history. With the stable delegate, disconnect emits

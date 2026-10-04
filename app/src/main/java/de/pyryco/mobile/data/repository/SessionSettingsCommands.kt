@@ -5,11 +5,13 @@ import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayErrorException
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.RequestSessionSettingsPayloadDto
 import de.pyryco.mobile.data.network.RequestSystemPromptPayloadDto
 import de.pyryco.mobile.data.network.SessionSettingsUpdatedPayloadDto
 import de.pyryco.mobile.data.network.SetSessionSettingsPayloadDto
 import de.pyryco.mobile.data.network.setSystemPromptPayload
+import de.pyryco.mobile.data.network.toHostSystemPromptReading
 import de.pyryco.mobile.data.network.toSessionSettings
 import de.pyryco.mobile.data.network.toSystemPromptReading
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.SYSTEM_PROMPT_READ_NOT_INTERACTIVE
@@ -18,6 +20,7 @@ import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.T
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_REQUEST_SYSTEM_PROMPT
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_SET_SESSION_SETTINGS
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_SET_SYSTEM_PROMPT
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,11 +33,15 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
 import kotlinx.datetime.Clock
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.put
 
 /**
- * The session settings and system prompt commands of one connection (#916): the settings read and its
+ * The session settings and channel/host prompt commands of one connection (#916): the settings read and its
  * refresh trigger, the settings write, and the system prompt read and write, split out of
  * [RemoteConversationRepository] the way the conversation (#914) and message (#915) commands were. The
  * repository keeps the routing — the `session_transition` arm of its `onInbound` calls
@@ -49,7 +56,8 @@ import kotlinx.serialization.json.encodeToJsonElement
  *
  * One instance per repository, and a fresh repository per connection (#351), so [settingsRevision] is
  * connection-scoped exactly as it was when it lived in the repository. The last successful reply per
- * conversation is held in [readings], the host's [HostReadings] (#1320). Nothing here logs.
+ * conversation is held in [readings], the host's [HostReadings] (#1320). Host prompt commands emit only
+ * static, content-free diagnostics; session and channel prompt commands stay silent.
  */
 internal class SessionSettingsCommands(
     private val requests: RelayRequests,
@@ -283,4 +291,57 @@ internal class SessionSettingsCommands(
         val reply = requests.sendAndAwaitReply(request)
         conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply))
     }
+
+    /** Host commands have no channel/session identity, capability gate or conversation fold. */
+    suspend fun requestHostSystemPrompt(): Result<HostSystemPromptReading> =
+        hostSystemPromptCommand("request_host_system_prompt", JsonObject(emptyMap()))
+
+    suspend fun setHostSystemPrompt(systemPrompt: String): Result<HostSystemPromptReading> {
+        if (!SystemPromptLimit.fits(systemPrompt)) {
+            RelayLog.w { "event=set_host_system_prompt outcome=too_long" }
+            return Result.failure(IllegalArgumentException("Host system prompt exceeds the byte limit"))
+        }
+        return hostSystemPromptCommand(
+            "set_host_system_prompt",
+            buildJsonObject { put("system_prompt", systemPrompt) },
+        )
+    }
+
+    private suspend fun hostSystemPromptCommand(
+        type: String,
+        payload: JsonObject,
+    ): Result<HostSystemPromptReading> =
+        try {
+            val request = Envelope(requests.nextRequestId(), type, Clock.System.now().toString(), payload)
+            val reading =
+                requests
+                    .sendAndAwaitReply(request, onSent = {
+                        RelayLog.d { "event=$type outcome=sent" }
+                    })
+                    .toHostSystemPromptReading()
+            RelayLog.d { "event=$type outcome=succeeded" }
+            Result.success(reading)
+        } catch (cancelled: CancellationException) {
+            RelayLog.d { "event=$type outcome=cancelled" }
+            throw cancelled
+        } catch (malformed: SerializationException) {
+            RelayLog.w { "event=$type outcome=malformed_reply" }
+            Result.failure(malformed)
+        } catch (error: RelayErrorException) {
+            // Keep only published host error codes. Neither a daemon message nor an unknown code
+            // may carry instructions into an exception representation or diagnostic log.
+            val code =
+                when (error.code) {
+                    "protocol.malformed", "host_system_prompt.unavailable" -> error.code
+                    else -> "host_system_prompt.failed"
+                }
+            RelayLog.w { "event=$type outcome=$code" }
+            Result.failure(RelayErrorException(code, error.retryable, "Host system prompt request failed"))
+        } catch (error: IllegalStateException) {
+            RelayLog.w { "event=$type outcome=disconnected" }
+            Result.failure(IllegalStateException("Host system prompt connection ended or is unavailable"))
+        } catch (error: Exception) {
+            RelayLog.w { "event=$type outcome=failed" }
+            Result.failure(IllegalStateException("Host system prompt request failed"))
+        }
 }

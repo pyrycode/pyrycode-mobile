@@ -218,3 +218,5 @@ _(none yet — system overview will land when there's more than one screen to ma
 - [Shared knowledge workflow](../shared-knowledge.md) — document ownership, reading order and capture rules.
 - [Project-memory compatibility pointer](../PROJECT-MEMORY.md) — legacy path retained without new status or lessons.
 - [MessageBubble — testing](features/message-bubble-testing.md) — selection-menu fixtures, metadata gestures, palette and geometry guards, and attachment coverage; split from `message-bubble.md` on 2026-10-03.
+
+- [ConversationRepository — interface and reading types](features/conversation-repository-shape.md): API shape and returned-value semantics, including required host prompt current/default readings and nullable channel prompts. Split from the parent overview to keep it under the size cap.

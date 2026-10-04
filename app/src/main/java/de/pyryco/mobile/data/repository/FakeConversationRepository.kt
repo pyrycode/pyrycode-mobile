@@ -271,6 +271,20 @@ class FakeConversationRepository(
         return updated
     }
 
+    // Empty reset text is demo data, never a copy of the daemon's shipped instructions.
+    private val hostSystemPrompt = MutableStateFlow(HostSystemPromptReading("", ""))
+
+    override suspend fun requestHostSystemPrompt(): Result<HostSystemPromptReading> = Result.success(hostSystemPrompt.value)
+
+    override suspend fun setHostSystemPrompt(systemPrompt: String): Result<HostSystemPromptReading> {
+        if (!SystemPromptLimit.fits(systemPrompt)) {
+            return Result.failure(IllegalArgumentException("Host system prompt exceeds the byte limit"))
+        }
+        val reading = HostSystemPromptReading(systemPrompt, "")
+        hostSystemPrompt.value = reading
+        return Result.success(reading)
+    }
+
     /**
      * Stored system prompts by conversation (#823), in memory for demo mode. A missing key is "no prompt
      * stored"; a present value, `""` included, is the stored text — so the three states stay distinct.
