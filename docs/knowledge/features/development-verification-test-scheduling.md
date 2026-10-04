@@ -39,7 +39,10 @@ events before attributing the failure to conversation routing or increasing a ti
 A standalone peer scenario can pass while later full-suite scenarios fail because an earlier peer
 bound their shared token. Open and close a prior peer with the same pairing before the observing peer
 when testing this lifecycle, as the [Stop scenario](../../e2e-interactive-stream.md#what-rung-3-is-made-of)
-does (#1696); both opens must satisfy the existing handshake/probe readiness contract. Comparing
+does (#1696), and as the permission-held running-tool scenario now does (#1683); both opens must
+satisfy the existing handshake/probe readiness contract. Label permission arrival, approval/dismissal
+and turn completion as well as opening, so a timeout identifies a peer operation separately from a
+status assertion. The prior peer needs no Claude turn. Comparing
 stored key arrays alone does not prove the authenticated identity on the wire.
 `PeerDeviceStaticKeyStoreTest.sequentialFactoriesPresentSameBoundIdentityInFreshNoiseHandshakes`
 uses fresh vendored Noise responders to authenticate successive initiator keys and decrypt each

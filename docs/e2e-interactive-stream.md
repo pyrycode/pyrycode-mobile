@@ -1181,6 +1181,17 @@ stays reserved for the two background-push scenarios below, which only need the 
 stay open. The rung-4 `tool` and `tool-progress` scenarios are this scenario's deterministic twins,
 proving the same label (without and with an elapsed reading) on every scripted run.
 
+Since #1683, `InteractiveStreamE2ETest` opens and closes a prior `runningToolPeer` with the same
+pairing before opening the observing peer. Both opens require the existing handshake/probe readiness;
+the prior peer sends no message and approves no permission. This exercises an already-bound token
+even when the method runs alone: a successful first attachment cannot detect per-instance static-key
+rotation. `peerStep` labels prior/current peer opening, permission-modal arrival, approval/dismissal
+and turn completion with content-free link diagnostics, separating those waits from the three status
+assertions above. The shared `holdToolOnPermission` also labels its existing waits for the ignored
+elapsed scenario. Deadlines and the real permission round-trip remain unchanged. See
+[peer identity coverage](knowledge/features/development-verification-test-scheduling.md#test-scheduling-and-harnesses)
+and [Verification status](#verification-status).
+
 **`@Ignore`d**, and deliberately not added to the LIVE curated list: `interactiveTurn_longRunningTool_statusAreaShowsElapsed`
 holds the same permission-prompt lever with `ELAPSED_TOOL_PROMPT`'s `python3 -c "import time;
 time.sleep(45)"`, then waits for any `cd_thread_tool_running_elapsed` reading (a regex matcher built from
@@ -2356,7 +2367,33 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-04 (#1686).** The dispatcher ran the full
+**Current live verification — 2026-10-04 (#1683).** The dispatcher ran the full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1683`
+at `b10c5a6fe02b89f4d55e0da14b4e0c0360e9390b`, merged with `origin/main` at `d54d7d9cad`
+in a detached worktree (6 commits behind before merge): **53 executed, 53 passed, 0 failed,
+0 skipped**, exit 0. The fresh XML explicitly includes
+`de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool`
+with no failure, error or skip: the method ran and passed, including both same-pairing peer opens,
+the permission-wait reading with no running-tool label, the running Bash label after real peer
+approval, and its disappearance after turn completion. This is full-suite evidence; no separate
+focused live run was required or claimed. See the
+[gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1683#issuecomment-5976372697).
+The retained XML report is
+`/Users/juhanailmoniemi/Workspace/Projects/pyrycode-mobile-agents/logs/2026-10-04T03-40-35-710Z_real-claude-gate_#1683.log`,
+with diagnostics in the adjacent `2026-10-04T03-40-35-710Z_real-claude-gate_#1683.stderr.log`.
+
+The original #1631/#1637 branch/base stderr reports show coroutine timeouts, not status assertion
+failures. Retained daemon logs `pyry-e2e.AOLbIc`, `pyry-e2e.JKsJv3`, `pyry-e2e.Cf5gl9` and
+`pyry-e2e.tWgsL4` contain respectively 102/84/102/90 static-key mismatch rejections: sequential peers
+rotated the static key for an already-bound token. #1698 repaired that identity custody; #1683
+protects it within this scenario. The repeated 30-second failures are consistent with peer opening.
+The separate #1631 base 90-second timeout matches `awaitPermissionModal`, but its underlying
+delivery/turn cause remains unestablished. Historical full #1698/#1696 XML each records this method
+as passed in a run with **53 executed, 1 unrelated failure, 0 skipped**; #1698's retained daemon
+log has zero key-mismatch rejections. Those observations support the setup diagnosis and are
+distinct from the fresh candidate pass above; they do not establish a status-rendering defect.
+
+**Previous live verification — 2026-10-04 (#1686).** The dispatcher ran the full
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1686`
 at `5aa6f23b79`, merged with `origin/main` at `ad547c6425` in a detached worktree (0 commits behind
 before merge): **53 executed, 53 passed, 0 failed, 0 skipped**, exit 0. The fresh XML includes
@@ -3238,6 +3275,14 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — hardened:** [#1683](https://github.com/pyrycode/pyrycode-mobile/issues/1683) protects
+  `InteractiveStreamE2ETest#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool` with a
+  same-pairing prior-peer open/close and labelled peer waits. The real permission hold, approval,
+  running Bash observation and completion clearing remain enabled in the curated suite.
+  `DeterministicInteractiveStreamE2ETest`'s `tool` and `tool-progress` twins prove rendering but
+  cannot prove this permission round-trip. See [Verification status](#verification-status) for the
+  fresh 53-test full-suite pass and the limits of the original timeout diagnosis.
 
 - **Coverage — hardened:** [#1686](https://github.com/pyrycode/pyrycode-mobile/issues/1686) restores
   `InteractiveStreamE2ETest#interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation` by
