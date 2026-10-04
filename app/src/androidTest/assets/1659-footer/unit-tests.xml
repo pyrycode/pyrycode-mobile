@@ -1,0 +1,41 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites tests="35" failures="0" errors="0" skipped="0"><testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterWidthTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-10-04T06:16:40.595Z" time="10.715">
+  <testcase name="compactWidthAndEnlargedText_keepThreeActionsSeparate" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterWidthTest" time="9.397" />
+  <testcase name="fullFooter_keepsThePaperclipAndStatusOpenerVisibleAndTappable" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterWidthTest" time="0.317" />
+  <testcase name="compactWidthAndEnlargedText_highReadingWrapsUnderActions" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterWidthTest" time="0.186" />
+  <testcase name="pixel8_highReadingStaysOnActionsRow" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterWidthTest" time="0.126" />
+  <testcase name="trailingControls_matchRevisedVisualGeometry_andPointerRouting" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterWidthTest" time="0.187" />
+  <testcase name="compactWidth_highReadingFitsOnOneLine" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterWidthTest" time="0.176" />
+  <testcase name="contextText_sitsAtBottomOfFooterTapRow" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterWidthTest" time="0.138" />
+  <testcase name="actionsChevron_matchesTheInputAreaAssetBounds" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterWidthTest" time="0.113" />
+  </testsuite><testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterTest" tests="14" skipped="0" failures="0" errors="0" timestamp="2026-10-04T06:16:22.651Z" time="17.933">
+  <testcase name="contextSegment_showsTheReportedPercentage_andTheSheetAgrees" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterTest" time="11.747" />
+  <testcase name="commandRows_dispatchTheirAction" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterTest" time="0.644" />
+  <testcase name="absentCommand_isDisabled_andInert" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterTest" time="0.393" />
+  <testcase name="openingRunConfiguration_sendsOneOpenEvent_andClosingSendsNone" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterTest" time="0.456" />
+  <testcase name="actionsButton_opensTheThreeRowsInOrder" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterTest" time="0.471" />
+  <testcase name="resetSession_isAbsentWithoutMutations" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterTest" time="0.52" />
+  <testcase name="contextSegment_withoutAReading_saysUnavailable_andShowsNoNumber" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterTest" time="0.69" />
+  <testcase name="contextSegment_warnsAtFifty_andReadsHighAtSeventy" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterTest" time="0.287" />
+  <testcase name="runConfigurationShowsUnavailablePermissionWhenNoConfirmedMode" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterTest" time="0.443" />
+  <testcase name="resetSession_dispatchesTheExistingNewSessionEvent" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterTest" time="0.215" />
+  <testcase name="actionsOverlay_outsideTapAndBack_closeWithoutActing" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterTest" time="0.377" />
+  <testcase name="runConfigurationSelectsModelEffortAndPermission" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterTest" time="0.498" />
+  <testcase name="contextSegment_showsAReplacedReading_andOpensNoOverlay" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterTest" time="0.271" />
+  <testcase name="footerKeepsActionsAndRunConfigurationWithoutDuplicateChoices" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterTest" time="0.291" />
+  </testsuite><testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterLayoutTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-04T06:16:22.499Z" time="0.023">
+  <testcase name="everythingOverBudget_sharesTheWidthEqually" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterLayoutTest" time="0.017" />
+  <testcase name="everythingFits_leavesEveryButtonUncapped" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterLayoutTest" time="0.0" />
+  <testcase name="oneWideLabel_isTheOnlyOneCapped" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterLayoutTest" time="0.0" />
+  <testcase name="noWidth_capsEveryButtonToNothing" classname="de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterLayoutTest" time="0.001" />
+  </testsuite><testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadFrameTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-10-04T06:16:51.316Z" time="3.188">
+  <testcase name="inputButton_isDisabledSendWhenIdleAndEmpty" classname="de.pyryco.mobile.ui.conversations.thread.ThreadFrameTest" time="0.334" />
+  <testcase name="inputButton_sendsWhenTextPresent" classname="de.pyryco.mobile.ui.conversations.thread.ThreadFrameTest" time="0.129" />
+  <testcase name="referenceFrame_pointerAtInputFooterBoundaryGoesToInputControls" classname="de.pyryco.mobile.ui.conversations.thread.ThreadFrameTest" time="0.8" />
+  <testcase name="referenceFrame_placesHeaderAndMessageRegionAtFigmaAnchors" classname="de.pyryco.mobile.ui.conversations.thread.ThreadFrameTest" time="0.36" />
+  <testcase name="busyThread_hasExactlyOneStopControlAndItSitsInTheComposer" classname="de.pyryco.mobile.ui.conversations.thread.ThreadFrameTest" time="0.169" />
+  <testcase name="header_backAndOverflowKeepTheirActions" classname="de.pyryco.mobile.ui.conversations.thread.ThreadFrameTest" time="0.582" />
+  <testcase name="inputButton_stopsWhileBusyWithEmptyField" classname="de.pyryco.mobile.ui.conversations.thread.ThreadFrameTest" time="0.233" />
+  <testcase name="referenceFrame_footerTouchTargetsClearTheSendButton" classname="de.pyryco.mobile.ui.conversations.thread.ThreadFrameTest" time="0.328" />
+  <testcase name="longTitle_truncatesAndLeavesBothControlsReachable" classname="de.pyryco.mobile.ui.conversations.thread.ThreadFrameTest" time="0.246" />
+  </testsuite></testsuites>
