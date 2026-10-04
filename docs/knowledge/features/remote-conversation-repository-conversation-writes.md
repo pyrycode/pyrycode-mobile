@@ -496,9 +496,8 @@ suspend fun setSystemPrompt(conversationId: String, systemPrompt: String?) {
 - **The byte limit is checked client-side before any frame is sent, using the one shared helper.**
   `SystemPromptLimit.fits` (co-located with `SystemPromptReading` on
   [`ConversationRepository`](conversation-repository.md)) is the single place the 8192-UTF-8-byte cap and
-  its counting logic live; `setSystemPrompt`'s `require(...)` is its only production caller today, and
-  the editing state (#824) and channel modals are meant to call `fits`/`utf8Bytes` themselves rather than
-  recount. The boundary is inclusive and multi-byte-aware — exactly 8192 UTF-8 bytes of multi-byte text is
+  its counting logic live. Channel and host setters, host reply validation and editing consumers
+  share `fits`/`utf8Bytes` rather than recounting. The boundary is inclusive and multi-byte-aware — exactly 8192 UTF-8 bytes of multi-byte text is
   sent, 8193 is refused — because the daemon counts bytes, not `String.length`.
 - **Errors:** `conversation.not_found` → `IllegalArgumentException` and any other server code →
   `RelayErrorException`, both through the existing `RelayRequests.mapError`, same as `rename`. A
@@ -519,3 +518,47 @@ suspend fun setSystemPrompt(conversationId: String, systemPrompt: String?) {
   text only, per the plan's security review, since it is operator-authored content that must not be
   trusted as markup or interpreted as instructions. None of the three route through #824's shared editing
   state.
+
+## Host system prompt read and durable save (#1774)
+
+`requestHostSystemPrompt()` and `setHostSystemPrompt(String)` delegate to
+`SessionSettingsCommands`, returning `Result<HostSystemPromptReading>`. The wire
+source of truth is the daemon's [Daemon-wide host system prompt](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md#daemon-wide-host-system-prompt)
+and [host prompt declarations](https://github.com/pyrycode/pyrycode/blob/main/internal/protocol/host_system_prompt.go).
+Read sends `request_host_system_prompt` with `{}`; write sends
+`set_host_system_prompt` with the required `system_prompt` string, including empty
+and whitespace. Neither carries conversation/session identifiers or checks the
+interactive capability. Both await `host_system_prompt`, returning the validated
+current/default pair. Empty clears; resetting writes the returned default. Do not
+reuse the nullable channel setter, its session-status reading or its
+`conversation_updated` acknowledgement for this host field.
+
+The shared `SystemPromptLimit` rejects oversized writes before sending. The
+[manual wire decoder](mobile-protocol-v2-wire-layer-application-payloads.md#host-system-prompt-validation-1774)
+requires both strings and checks their inclusive 8192-byte UTF-8 bounds. Malformed
+or oversized replies fail the operation without substituting empty text or
+truncating the default, which must remain writable unchanged.
+
+`onInbound` routes the reply only through connection-local `RelayRequests`
+correlation. It projects no conversation state and retains no host prompt reading.
+Registration precedes sending; reordered reads/writes settle their own waiters,
+and duplicate or unmatched replies change nothing. Cancellation removes the
+waiter and propagates; teardown fails outstanding calls. Even equal request IDs
+on two host repositories belong to separate ledgers.
+
+Failures contain no prompt text or original daemon-authored cause.
+`protocol.malformed` and `host_system_prompt.unavailable` retain their published
+code and retryability with a static message; unknown codes become
+`host_system_prompt.failed`. Debug-only diagnostics contain static operation and
+classified outcome names, never payloads, prompts, identifiers or raw error text.
+The reading's `toString` redacts both strings.
+
+The real-repository pump coverage in `RemoteConversationRepositoryHostSystemPromptTest`
+asserts serialized envelopes and authoritative acknowledgements, empty/custom/default
+round trips, ASCII/multibyte boundaries, malformed fields, sanitized errors and
+logs, cancellation/teardown, reordered/duplicate/unmatched replies and two-host
+isolation without an interactive capability. Testing only the decoder would miss
+reply registration or an accidental conversation projection. Facade coverage is
+in `HostSystemPromptFacadesTest`; see [stable delegation](stable-conversation-repository.md#host-system-prompts--snapshot-or-result-1774),
+[cache pass-through](caching-conversation-repository.md#contract) and
+[demo state](conversation-repository-fake-implementation.md#host-system-prompt-demo-state-1774).
