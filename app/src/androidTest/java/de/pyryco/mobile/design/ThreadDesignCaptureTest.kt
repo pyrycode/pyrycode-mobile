@@ -133,6 +133,7 @@ class ThreadDesignCaptureTest {
 
     /** While set, the override's `setSessionSettings` awaits this gate instead of the fake's write. */
     @Volatile private var settingsGate: CompletableDeferred<Unit>? = null
+    private var readerNote = NOTE
     private val images = mutableListOf<Uri>()
     private var photo: File? = null
 
@@ -346,7 +347,18 @@ class ThreadDesignCaptureTest {
 
         checkNotNull(inputs.thread.value).onOpenMarkdownLink("docs/Builder Pipeline - Plan.md")
         await("Builder Pipeline Plan")
-        design.capture(FOLDER, "markdown-reader", "553:2574")
+        design.capture("reader-chrome-1647", "reference", "553:2574")
+        Espresso.pressBack()
+        rule.waitForIdle()
+        readerNote = NOTE + "\n\n" + (1..40).joinToString("\n\n") { "Reader scroll paragraph $it" }
+        checkNotNull(inputs.thread.value).onOpenMarkdownLink("docs/Builder Pipeline - Plan.md")
+        await("Builder Pipeline Plan")
+        val body = rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
+        body.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 72f * design.view.resources.displayMetrics.density) }
+        val heading = rule.onNodeWithText("Builder Pipeline Plan").fetchSemanticsNode().boundsInRoot
+        val header = rule.onNodeWithTag("markdown-reader-top-bar").fetchSemanticsNode().boundsInRoot
+        assertTrue("reader heading is drawn underneath bar", heading.top < header.bottom && heading.bottom > header.top)
+        design.capture("reader-chrome-1647", "scrolled-under-bar", "731:6010")
     }
 
     /** Real pixels and real IME insets for the revised footer; no daemon or live Claude needed. */
@@ -836,7 +848,11 @@ class ThreadDesignCaptureTest {
                             override suspend fun readWorkspaceFile(
                                 conversationId: String,
                                 path: String,
-                            ) = AttachmentFetchResult.Fetched(AttachmentContent(listOf(NOTE.toByteArray())), "Plan.md", "text/markdown")
+                            ) = AttachmentFetchResult.Fetched(
+                                AttachmentContent(listOf(readerNote.toByteArray())),
+                                "Plan.md",
+                                "text/markdown",
+                            )
                         }
                     val connection =
                         object : ConnectionStateSource {

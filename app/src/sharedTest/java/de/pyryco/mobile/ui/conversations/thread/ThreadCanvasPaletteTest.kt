@@ -31,6 +31,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.threadColors
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -55,6 +56,7 @@ class ThreadCanvasPaletteTest {
     private var background = Color.Unspecified
     private var surface = Color.Unspecified
     private var divider = Color.Unspecified
+    private var headerBackdrop = Color.Unspecified
     private var foreground = Color.Unspecified
     private var titleColor = Color.Unspecified
     private var renderedMode: Pair<Boolean, Boolean>? = null
@@ -78,6 +80,7 @@ class ThreadCanvasPaletteTest {
                     background = if (dark && !wallpaper) Color(0xFF0B0E11) else scheme.background
                     surface = if (dark && !wallpaper) Color(0xFF0B0E11) else scheme.surface
                     divider = (if (dark && !wallpaper) Color(0xFF32628D) else scheme.outlineVariant).copy(alpha = 0.6f)
+                    headerBackdrop = scheme.threadColors.headerBackdrop
                     foreground = scheme.onSurface
                     titleColor = scheme.onPrimaryContainer
                     expectedWidth = LocalWindowInfo.current.containerSize.width
@@ -149,7 +152,16 @@ class ThreadCanvasPaletteTest {
             }
             val canvas = if (reader) surface else background
             val ruleY = 68.5f
-            if (dark && !wallpaper && !reader) {
+            if (reader) {
+                // #1647: the reader header shares the resolved backdrop gradient; canvas checks stay below it.
+                pixel(2f, 0f, headerBackdrop)
+                pixel(2f, 200f, canvas)
+                pixel(160f, ruleY + 1.5f, canvas)
+                val rulePixel = Color(bitmap.getPixel((bounds.left + 160 * density).toInt(), (bounds.top + ruleY * density).toInt()))
+                val besideRule = Color(bitmap.getPixel((bounds.left + 10 * density).toInt(), (bounds.top + ruleY * density).toInt()))
+                pixel(160f, ruleY, divider.compositeOver(besideRule))
+                assertTrue("reader rule differs from the shared backdrop", rulePixel != besideRule)
+            } else if (dark && !wallpaper) {
                 val glow = Color(bitmap.getPixel((bounds.left + 2 * density).toInt(), (bounds.top + 200 * density).toInt()))
                 val rule = Color(bitmap.getPixel((bounds.left + 160 * density).toInt(), (bounds.top + 68.5f * density).toInt()))
                 val above = Color(bitmap.getPixel((bounds.left + 160 * density).toInt(), (bounds.top + 67 * density).toInt()))

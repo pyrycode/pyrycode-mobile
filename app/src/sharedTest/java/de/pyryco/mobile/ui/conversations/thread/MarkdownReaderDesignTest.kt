@@ -1,7 +1,15 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
@@ -20,9 +28,11 @@ import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.width
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
@@ -46,11 +56,21 @@ class MarkdownReaderDesignTest {
         name: String = "Builder Pipeline - Plan.md",
         markdown: String = REFERENCE_MARKDOWN,
         onBack: () -> Unit = {},
+        fontScale: Float = 1f,
+        onUri: (String) -> Unit = {},
     ) {
         rule.setContent {
             PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
                 variant = MaterialTheme.colorScheme.onSurfaceVariant
-                MarkdownReaderScreen(MarkdownDocument(name, markdown), onBack = onBack)
+                CompositionLocalProvider(
+                    LocalDensity provides Density(LocalDensity.current.density, fontScale),
+                    LocalUriHandler provides
+                        object : UriHandler {
+                            override fun openUri(uri: String) = onUri(uri)
+                        },
+                ) {
+                    MarkdownReaderScreen(MarkdownDocument(name, markdown), onBack = onBack)
+                }
             }
         }
     }
@@ -78,6 +98,14 @@ class MarkdownReaderDesignTest {
         assertEquals(24f, title.top.value, 1f)
         assertEquals(20f, heading.left.value, 1f)
         assertEquals(97f, heading.top.value, 1f)
+        assertEquals(
+            69f,
+            rule
+                .onNodeWithTag("markdown-reader-top-bar")
+                .getUnclippedBoundsInRoot()
+                .bottom.value,
+            1f,
+        )
         assertEquals(141f, paragraph.top.value, 1f)
         assertEquals(225f, subheading.top.value, 1f)
         assertEquals(265f, firstItem.top.value, 1f)
@@ -87,6 +115,94 @@ class MarkdownReaderDesignTest {
         assertEquals(64f, code.height.value, 1f)
         assertEquals(35f, quote.left.value, 1f)
         assertEquals(461f, quote.top.value, 2f)
+    }
+
+    private fun body() = rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
+
+    @Test fun scrollViewportStartsBehindTheFixedBar() {
+        show(markdown = "# Underlap heading\n\n" + (1..80).joinToString("\n\n") { "Paragraph $it" })
+        val titleBefore = rule.onNodeWithText("Builder Pipeline - Plan.md").getUnclippedBoundsInRoot()
+        assertEquals(0f, body().getUnclippedBoundsInRoot().top.value, 0.5f)
+        body().performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 72f * rule.density.density) }
+        val heading = rule.onNodeWithText("Underlap heading").getUnclippedBoundsInRoot()
+        assertTrue("heading crosses beneath title row", heading.top < titleBefore.bottom && heading.bottom > titleBefore.top)
+        assertEquals(titleBefore, rule.onNodeWithText("Builder Pipeline - Plan.md").getUnclippedBoundsInRoot())
+        rule.onNodeWithText("Paragraph 80").performScrollTo().assertIsDisplayed()
+        body().performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 100_000f) }
+        val last = rule.onNodeWithText("Paragraph 80").getUnclippedBoundsInRoot()
+        assertEquals(16f, (body().getUnclippedBoundsInRoot().bottom - last.bottom).value, 1f)
+    }
+
+    @Test fun largeTextReservesMeasuredBarPlus28dp() {
+        show(fontScale = 1.5f, markdown = "# Large heading\n\n" + (1..80).joinToString("\n\n") { "Paragraph $it" })
+        val bar = rule.onNodeWithTag("markdown-reader-top-bar").getUnclippedBoundsInRoot()
+        val heading = rule.onNodeWithText("Large heading").getUnclippedBoundsInRoot()
+        assertEquals(28f, (heading.top - bar.bottom).value, 1f)
+        assertEquals(20f, heading.left.value, 0.5f)
+        for (label in listOf("Back", "More actions")) {
+            val target = rule.onNodeWithContentDescription(label).getUnclippedBoundsInRoot()
+            assertEquals(48f, target.width.value, 0.5f)
+            assertEquals(48f, target.height.value, 0.5f)
+        }
+        rule.onNodeWithText("Paragraph 80").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test fun headerBlocksUnderlyingLinkWithPositiveClearAreaControl() {
+        var opened = 0
+        show(
+            markdown = "[Underneath link](https://example.com)\n\n" + (1..80).joinToString("\n\n") { "Paragraph $it" },
+            onUri = { opened++ },
+        )
+        val link = rule.onNodeWithText("Underneath link")
+        link.performTouchInput { click(Offset(70f * rule.density.density, center.y)) }
+        assertEquals(1, opened)
+        body().performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 65f * rule.density.density) }
+        val bounds = link.getUnclippedBoundsInRoot()
+        assertTrue("link is under bar", bounds.top.value < 69f && bounds.bottom.value > 24f)
+        link.performTouchInput { click(Offset(70f * rule.density.density, center.y)) }
+        rule.onNodeWithText("Builder Pipeline - Plan.md").performTouchInput { click() }
+        assertEquals(1, opened)
+        rule.onNodeWithTag("markdown-reader-menu").assertDoesNotExist()
+        rule.onNodeWithContentDescription("More actions").performTouchInput { click() }
+        rule.onNodeWithText("Copy as markdown").assertIsDisplayed()
+        assertEquals(1, opened)
+    }
+
+    @Test fun headerBlocksUnderlyingCodePanelWithPositiveClearAreaControl() {
+        val clipboard = ApplicationProvider.getApplicationContext<Context>().getSystemService(ClipboardManager::class.java)
+        clipboard.setPrimaryClip(ClipData.newPlainText("sentinel", "unchanged"))
+        var backs = 0
+        show(
+            markdown = "```\ncopy this code\nand this line\n```\n\n" + (1..80).joinToString("\n\n") { "Paragraph $it" },
+            onBack = { backs++ },
+        )
+        val panel = rule.onNodeWithTag("reader-code-panel")
+        panel.performTouchInput { click(Offset(10f, 10f)) }
+        assertEquals(
+            "copy this code\nand this line",
+            clipboard.primaryClip
+                ?.getItemAt(0)
+                ?.text
+                .toString(),
+        )
+        clipboard.setPrimaryClip(ClipData.newPlainText("sentinel", "unchanged"))
+        body().performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 80f * rule.density.density) }
+        val bounds = panel.getUnclippedBoundsInRoot()
+        assertTrue("panel intersects bar", bounds.top.value < 69f && bounds.bottom.value > 24f)
+        // The blank strip above the rule, title and both control edges belong to chrome.
+        body().performTouchInput { click(Offset(200f * rule.density.density, 66f * rule.density.density)) }
+        rule.onNodeWithText("Builder Pipeline - Plan.md").performTouchInput { click() }
+        rule.onNodeWithContentDescription("Back").performTouchInput { click(Offset(width - 1f, center.y)) }
+        rule.onNodeWithContentDescription("More actions").performTouchInput { click(Offset(1f, center.y)) }
+        assertEquals(1, backs)
+        rule.onNodeWithText("Copy as markdown").assertIsDisplayed()
+        assertEquals(
+            "unchanged",
+            clipboard.primaryClip
+                ?.getItemAt(0)
+                ?.text
+                .toString(),
+        )
     }
 
     // #1533: `553:2574` writes each item as one `•  text` paragraph, so its wrapped line returns to the gutter.
