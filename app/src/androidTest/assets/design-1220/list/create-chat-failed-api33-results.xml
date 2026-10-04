@@ -1,0 +1,22 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="5" failures="0" errors="0" skipped="0" time="12.164" timestamp="2026-10-04T14:43:43" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.conversations.list.CreateChatFailureNoticeTest" tests="4" failures="0" errors="0" skipped="0" time="7.804" timestamp="2026-10-04T14:43:43" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="accessibilityAdjustsShortTimeoutWithSnackbarFlags" classname="de.pyryco.mobile.ui.conversations.list.CreateChatFailureNoticeTest" time="2.291" />
+    <testcase name="shortTimeoutExpiresAndRecompositionDoesNotReplayButNewRequestDoes" classname="de.pyryco.mobile.ui.conversations.list.CreateChatFailureNoticeTest" time="1.695" />
+    <testcase name="newRequestCancelsPriorTimerAndLeavingScreenCancelsNotice" classname="de.pyryco.mobile.ui.conversations.list.CreateChatFailureNoticeTest" time="1.922" />
+    <testcase name="failureOverlaysTreeBelowMeasuredHeaderWithoutSnackbarOrAction" classname="de.pyryco.mobile.ui.conversations.list.CreateChatFailureNoticeTest" time="1.896" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.design.ListDesignCaptureTest" tests="1" failures="0" errors="0" skipped="0" time="3.187" timestamp="2026-10-04T14:43:43" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="failedCreateChatNoticeAt412By892" classname="de.pyryco.mobile.design.ListDesignCaptureTest" time="3.187" />
+  </testsuite>
+</testsuites>
