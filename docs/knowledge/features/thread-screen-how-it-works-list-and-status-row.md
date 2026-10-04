@@ -345,6 +345,18 @@ readings override this ladder in `ThreadStatusArea`. Sending during a running tu
 running-tool, thinking or working reading. Both local stages suppress a previous outcome; connection,
 reset, retry, compaction and stall retain their precedence.
 
+`openToolCall` selects the last running **main-thread** tool in chronological `state.items`
+([#1763](https://github.com/pyrycode/pyrycode-mobile/issues/1763)). The selected call supplies
+both the tool name and its own elapsed reading. Every call with a nonempty
+`parentToolUseId` is excluded, including a background call whose parent row is not loaded;
+the selector must not infer main-thread membership from
+[row nesting depth](thread-screen-subagent-tool-rows.md#subagent-tool-row-nesting-896).
+When no call qualifies, it returns `null` and the existing ladder applies: thinking
+when the daemon reports thinking, working while busy, or the idle glyph when no other
+arm applies. Background tool rows alone do not select the running-tool arm. The screen
+also gates the selected call on `isBusy`; this display filter does not change daemon busy
+state. See [regression coverage](thread-screen-testing.md#testing).
+
 **Local acceptance stages (#1641).** `MainActivity` collects `ThreadViewModel.localSendStage` and passes
 it to `ThreadScreen`. Sending opens immediately before the repository send, including attachment-bearing
 messages after upload, and reads “Sending…” (`thread_sending_label`). The correlated acknowledgement

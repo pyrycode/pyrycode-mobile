@@ -381,9 +381,9 @@ after the ping turn, open the Status sheet from the footer's status icon and ass
 shows a non-empty value that is not the unavailable note, with no model name hard-coded — proving the #890
 `model_announced` reading reaches the sheet; **one** claude turn — the scenario's own ping); and a
 **footer-context-usage** scenario (#946 — `interactiveTurn_pingPrompt_footerShowsContextUsage`: after the
-ping turn, wait until the composer footer's `CONTEXT_USAGE_TEST_TAG` node's text matches `Cxt: \d+%`, with
-no percentage hard-coded — proving the daemon's post-turn `context_usage` push reaches
-`ThreadRunConfig.contextPercent` and renders in the footer; **one** claude turn — the scenario's own ping.
+ping turn, wait until the composer footer's `CONTEXT_USAGE_TEST_TAG` node's content description reports an available percentage (normal, warning or high), with
+no percentage hard-coded — proving an available computed `ThreadRunConfig.contextPercent`
+renders in the footer; **one** claude turn — the scenario's own ping.
 This method does not itself prove an ask was sent, since #1411 the footer can show a percentage from
 `SessionSettings` alone with no reading at all — see [Thread composer footer — context usage
 segment](knowledge/features/thread-composer-footer-context-usage.md) for that gap and
@@ -3207,7 +3207,7 @@ Earlier results and failure history:
   failures or skips, exit 0, wall clock 267.5s. `LIVE_MINIMUM` rose from 24 to 27 with this ticket (see
   [Pre-ship gate](#pre-ship-gate)); twenty-seven executed meets it exactly. This is the first live evidence
   that the composer footer's model, effort and permission readings settle on a fresh reading after a
-  cut-and-restore of the phone's link, that a further real turn brings the `Cxt:` percentage back (the
+  cut-and-restore of the phone's link, that a further real turn brings the accessible context percentage back (the
   reading belongs to the connection, per #946), that a model picked from the footer after a reconnect is
   confirmed by a later fresh reading, that the slash-command suggestions and a manual Compact session still
   work once the link is restored, and that the Actions menu's background-task count and panel track a real
@@ -4309,9 +4309,9 @@ The remaining checks here are specific to a real relay or real Claude execution:
   (`python3 scripts/android-test-gate.py live`, 2026-09-23, branch `feature/891` at `21fc690f4b` merged
   with `origin/main` at `3c771c7440`) executed all fourteen with no failures or skips; Layer-3 (real
   claude) footer context usage — **shipped (#946)**, proving that after one real turn the composer
-  footer's `Cxt:` segment shows the percentage Claude reported (`context_usage`, published after every
+  footer's context circle announces the computed percentage (`context_usage`, published after every
   completed turn): the scenario sends the ping prompt, awaits the reply, and waits for the
-  `CONTEXT_USAGE_TEST_TAG` node's text to match `Cxt: \d+%`, with no percentage hard-coded. Always-on (a
+  `CONTEXT_USAGE_TEST_TAG` node's content description to contain an available percentage, with no percentage hard-coded. Always-on (a
   reported percentage is a durable post-turn fact, not a transient spinner) and folded into the pre-ship
   `LIVE=1` gate as the 15th curated method, taking the gate from fourteen curated methods to fifteen, the
   floor from `LIVE_MINIMUM = 14` to `15` on the same `test_live_floor_matches_the_curated_list`
@@ -4323,7 +4323,20 @@ The remaining checks here are specific to a real relay or real Claude execution:
   removed the ask outright, so the reading now comes from the daemon's post-turn push alone and this
   scenario needed no change for it). The live run that closed the ticket
   (`python3 scripts/android-test-gate.py live`, 2026-09-24, branch `feature/946` at `a951201036` merged
-  with `origin/main` at `01042d232b`) executed all fifteen with no failures or skips; API-retry status
+  with `origin/main` at `01042d232b`) executed all fifteen with no failures or skips. The #1660 migration retains this rung-3 scenario in
+  `InteractiveStreamE2ETest` and moves footer reading, update, reopen and reconnect assertions to
+  content descriptions; normal, warning and high readings all carry a percentage, while unavailable
+  carries none. No new `DeterministicInteractiveStreamE2ETest` twin was added. The fresh full dispatcher
+  live suite on 2026-10-04 (`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`),
+  branch `38502955e6` merged with `origin/main` at `4fe49387ad`, executed **53, failed 0, skipped 0**.
+  Its fresh XML report explicitly contains
+  `InteractiveStreamE2ETest.interactiveTurn_pingPrompt_footerShowsContextUsage` with no failure or skip:
+  **PASS**, from the full suite, not a separate focused run. See the
+  [gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1660#issuecomment-5982012362).
+  The report is `2026-10-04T16-01-32-783Z_real-claude-gate_#1660.log` under the dispatcher repository's
+  `logs/`. For full-image footer captures, an available description may precede the hardware frame;
+  `ThreadDesignCaptureTest` therefore waits for the warning arc's yellow pixels as well as its 84%
+  description. Geometry-only ATD captures do not prove hardware pixels; API-retry status
   (attempt N/M) — **rung 2 shipped (#594)**, the
   `ScriptedApiRetryTest` scenarios driving `api_retry` edges through the real #593 repository projection
   into `ThreadViewModel.apiRetry` and `ApiRetryIndicator`, covering both edges (the rising edge, including
