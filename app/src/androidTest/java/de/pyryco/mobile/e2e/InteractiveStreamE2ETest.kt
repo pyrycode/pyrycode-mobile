@@ -3032,7 +3032,11 @@ class InteractiveStreamE2ETest {
             awaitConnected()
             val (chatA, nameA) = answerChat(serverId, OFFSCREEN_CHAT_NAME_PREFIX + "a-")
             val (_, nameB) = answerChat(serverId, OFFSCREEN_CHAT_NAME_PREFIX + "b-")
-            peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
+            // Bind the token first, so identity reuse is checked even when selected alone (#1692).
+            runningToolPeer().use { prior ->
+                peerStep(prior, "open prior offscreen peer") { prior.open(CONNECT_TIMEOUT_MS) }
+            }
+            peerStep(peer, "open offscreen peer") { peer.open(CONNECT_TIMEOUT_MS) }
 
             // 2. A's first turn renders, ends and is cached by the open thread.
             openChatRow(nameA)
