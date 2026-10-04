@@ -37,6 +37,19 @@ per-instance lifecycle made this exact method fail at the identity assertion (1 
 0 skipped); the repaired focused peer/factory/redial/wait run passed all 30 tests (0 failed, 0 skipped).
 See [PR #1704's verification evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1704#issuecomment-5975107860).
 
+Readiness coverage must go beyond decrypting the initiator hello.
+`OffscreenPeerReadinessTest.sequentialClosedPeersCompleteBoundHandshakeAndEncryptedReadinessProbe`
+(#1692) completes `hello`/`hello_ack` for two sequential sessions, authenticates the same token-bound
+static identity, and exchanges encrypted `list_conversations` → `conversations` envelopes with matching
+`in_reply_to`. Each session uses a fresh factory and vendored Noise responder; destroy the session,
+responder and transport cipher pair before constructing the next. Only the static identity survives.
+This in-memory regression proves the encrypted readiness contract, while the live offscreen scenario's
+same-token prior-peer open/close protects it through the real relay. It does not model relay/redial
+scheduling. The former per-instance identity lifecycle failed the token-binding assertion (1 executed,
+1 failed, 0 skipped); the repaired focused peer/factory/redial/wait run passed 31 tests (0 failed/errors,
+0 skipped). See [PR #1711's verification evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1711#issuecomment-5975716513)
+and [the full live result](../../e2e-interactive-stream.md#verification-status).
+
 A graph-lifecycle identity test can pass while contaminating the next test's repository binding.
 `E2eTestApplication.rebuildGraph()` must preserve the original fake/relay mode selected by the relay
 instrumentation argument, carry the existing DataStore, unregister the old lifecycle driver and dispose
