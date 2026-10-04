@@ -4,6 +4,13 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
 
 ## State & concurrency model
 
+- **Session errors have inbound, caller-send and teardown writers (#1677).**
+  `SessionErrorProjection` holds a connection-local `StateFlow<Map<String, String>>`;
+  pure atomic `update`/`getAndUpdate` operations replace or remove one conversation's
+  code without clobbering another. Its cold per-conversation read supplies the current
+  nullable code immediately and suppresses duplicate values and unrelated updates.
+  No extra collector, job or timer is needed. It is excluded from `HostReadings`,
+  replay reconstruction and the disk cache; teardown resets the map.
 - **Five `StateFlow` projections — `projection` (the conversation list, #312), `lastMessages` (#329's
   per-conversation most-recent `Message`), `threadByConversation` (#313's per-conversation ordered
   thread), `stalledConversations` (#395's per-conversation stall `Set<String>`), and `queuedByConversation`
@@ -98,7 +105,7 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
 | Malformed `message` payload (missing field / unmappable role e.g. `system` / bad `ts`) | `IllegalArgumentException` caught per-envelope (covers the #317 `SerializationException` decode failure and the `Instant.parse(ts)` throw); envelope **dropped silently** (no payload logged — content may be sensitive); collector survives; `lastMessages` **and** `threadByConversation` unchanged ([#329](../codebase/329.md) / [#313](../codebase/313.md)) |
 | Malformed `message_chunk` (any one row bad) | the **whole chunk** dropped in one `catch (IllegalArgumentException)` (decode + map-all under one `try`); collector survives; thread unchanged ([#313](../codebase/313.md)) |
 | `pump.send` returns `false` (session not `Open`) | request (`list_conversations` or `backfill_since`) silently not sent (no throw); the projection stays empty until a later subscribe succeeds or a push arrives — the live stream still fills the thread, and the next subscribe re-issues |
-| `pump.inbound` completes (teardown) | collector completes; last projections retained; live `StateFlow` collectors simply stop receiving updates (do not complete) |
+| `pump.inbound` completes (teardown) | collector completes; session errors reset to null; other last projections retained; live `StateFlow` collectors do not complete |
 | Unknown `Envelope.type` | no-op — `backfill_done` (informational) falls to the intentional `else`; `messages` (a never-defined type) stays ignored. `conversation_created` has no unsolicited half (the daemon never broadcasts a create), so an unmatched one is a harmless no-op in its own correlated-only arm |
 | Malformed `conversation_updated` payload, correlated or unsolicited (#721, #996) | decode via `ConversationResponseDto.toConversation()` throws `IllegalArgumentException` (⊃ `SerializationException`), caught before any fold; nothing is folded; collector survives; `projection` unchanged. A matching waiter still receives the raw payload and throws in its own decode in the caller's coroutine, as before #996. The catch logs nothing, since the payload carries the conversation's name and cwd |
 | Malformed `workspace_updated` payload — missing/wrong-typed `path` (#721) | `WorkspaceUpdatedPayloadDto` decode throws `IllegalArgumentException` (⊃ `SerializationException`), caught before `applyWorkspaceLabel` runs; envelope **dropped**; collector survives; `projection` unchanged; a later valid `workspace_updated` still applies. Neither `path` nor `label` is logged on this or any other branch |
@@ -140,6 +147,51 @@ repository keeps the consumer alive. Pre-`Open` send loss is **not** defended he
 retry-on-`Open`): the [coordinator](relay-repository-coordinator.md) publishes the repository through
 an Open-gated `currentRepository` and builds a fresh chain per reconnect. The facade only subscribes
 after that connection's pump is ready; see the [coordinator's Open gate](relay-repository-coordinator.md#the-single-connection-source-and-the-open-gated-currentrepository-421--493).
+
+### Conversation session errors (#1677)
+
+`observeSessionError(conversationId)` exposes the latest nullable wire code, including
+unknown and empty string codes. The `session_error` arm runs only with negotiated
+`interactive`; without it the frame has no effect. `SessionErrorPayloadDto` requires
+`conversation_id`, `code` and `message` to be JSON strings. Missing fields, null,
+numbers, booleans, arrays and objects drop the frame without changing held state or
+terminating inbound collection. Additional fields are ignored. Only id/code leave
+the decode boundary: daemon prose is discarded and never retained, rendered or
+logged. Diagnostics contain only static event/outcome strings, never raw codes,
+ids, payloads or exception messages.
+
+The clearing edges are deliberately narrower than stall's forward-progress rule:
+
+- Either `sendMessage` overload clears that conversation at entry, before delegation
+  or awaiting acknowledgement, including attachment sends and sends that fail.
+- A successfully decoded, recognized non-idle `turn_state` (`thinking` or
+  `responding`) clears its conversation. Idle, unknown or malformed turn states,
+  other live frames (including `turn_end` and `session_transition`), and sends or
+  turn states for other conversations leave the held code intact.
+- Inbound completion or connection-scope cancellation resets all errors. A fresh
+  connection starts empty; the frame has no replay event id. No error triggers an
+  automatic request, retry or message resend.
+
+Send completion does not clear again or restore an earlier code. An error received
+while a send awaits acknowledgement therefore survives that acknowledgement.
+Required turn-state routing/state fields are also checked with `JsonPrimitive.isString`
+before DTO decoding: a numeric routing id must never clear the error for its string
+representation. A Kotlin serialization `String` declaration alone does not enforce
+this boundary; see the [payload decoding guidance](mobile-protocol-v2-wire-layer-application-payloads.md#the-model-list-retention-791).
+
+The [repository contract](conversation-repository.md) defaults to `flowOf(null)`,
+keeping fakes and test doubles compatible. The [stable facade](stable-conversation-repository.md#cold-reads--flatmaplatest-switch-with-an-empty-fallback)
+and [caching decorator](caching-conversation-repository.md#contract) forward the
+observation without retaining it. [#1678](https://github.com/pyrycode/pyrycode-mobile/issues/1678)
+owns user-facing interpretation and rendering; #1677 supplies only the data contract.
+The wire source of truth remains the daemon's `docs/protocol-mobile.md` and
+`internal/protocol/messaging.go` (`SessionErrorPayload`).
+
+`RemoteConversationRepositorySessionErrorTest` exercises malformed-frame survival,
+current-value subscription, isolation, both send paths, clear/non-clear edges,
+pending-ack races, teardown, stable switching with and without held readings, cache
+delegation without disk writes, and the default fake observation. Keep the numeric
+routing-id and pending-ack cases: ordinary valid-frame tests cannot catch either trap.
 
 ## Hand-off — the live binding
 
