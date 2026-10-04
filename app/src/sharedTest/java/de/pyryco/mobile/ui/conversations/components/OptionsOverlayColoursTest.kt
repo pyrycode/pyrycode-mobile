@@ -6,6 +6,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -17,8 +20,10 @@ import androidx.compose.ui.test.FontScale
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -139,6 +144,97 @@ class OptionsOverlayColoursTest {
         assertEquals(28.dp, selected.bottom - selected.top)
         assertEquals(28.dp, other.bottom - other.top)
         assertEquals(4.dp, 300.dp - other.bottom - 2.dp)
+    }
+
+    @Test fun belowMenuFollowsLiveAnchorAndClampsBothHorizontalEdges() {
+        var anchorLeft by mutableStateOf(40.dp)
+        var anchorBottom by mutableStateOf(100.dp)
+        rule.setContent {
+            PyrycodeMobileTheme {
+                val density = LocalDensity.current
+                OptionsOverlay(
+                    options = listOf(OptionsOverlayOption("settings", "Settings"), OptionsOverlayOption("archive", "Archive")),
+                    selectedValue = "",
+                    notListed = 0,
+                    anchor = with(density) { Rect(anchorLeft.toPx(), 60.dp.toPx(), (anchorLeft + 44.dp).toPx(), anchorBottom.toPx()) },
+                    onSelect = {},
+                    onDismiss = {},
+                    actions = true,
+                    placement = OptionsOverlayPlacement.Below,
+                )
+            }
+        }
+        val first = rule.onNodeWithText("Settings").getUnclippedBoundsInRoot()
+        assertEquals(106.dp, first.top)
+        assertEquals(28.dp, first.left)
+        rule.runOnIdle {
+            anchorLeft = 0.dp
+            anchorBottom = 150.dp
+        }
+        val moved = rule.onNodeWithText("Settings").getUnclippedBoundsInRoot()
+        assertEquals(156.dp, moved.top)
+        assertEquals(8.dp, moved.left)
+        val root = rule.onRoot().getUnclippedBoundsInRoot()
+        rule.runOnIdle { anchorLeft = root.right }
+        assertEquals(root.right - 8.dp, rule.onNodeWithText("Settings").getUnclippedBoundsInRoot().right)
+    }
+
+    @Test fun belowMenuScrollsWithinTheSpaceBelowItsAnchor() {
+        rule.setContent {
+            PyrycodeMobileTheme {
+                val density = LocalDensity.current
+                OptionsOverlay(
+                    options = (1..60).map { OptionsOverlayOption(it.toString(), "Option $it") },
+                    selectedValue = "",
+                    notListed = 0,
+                    anchor = with(density) { Rect(40.dp.toPx(), 400.dp.toPx(), 84.dp.toPx(), 444.dp.toPx()) },
+                    onSelect = {},
+                    onDismiss = {},
+                    actions = true,
+                    placement = OptionsOverlayPlacement.Below,
+                )
+            }
+        }
+        val layerBottom = rule.onRoot().getUnclippedBoundsInRoot().bottom
+        val column = rule.onNode(hasScrollAction()).getUnclippedBoundsInRoot()
+        assertEquals(448.dp, column.top)
+        assertEquals(layerBottom - 8.dp, column.bottom)
+        rule.onNodeWithText("Option 60").performScrollTo().assertIsDisplayed()
+        assertEquals(true, rule.onNodeWithText("Option 60").getUnclippedBoundsInRoot().bottom <= layerBottom - 8.dp)
+    }
+
+    @Test fun belowActionsUseTheExistingLightPalette() = assertActionPalette(dark = false)
+
+    @Test fun belowActionsUseTheExistingDarkPalette() = assertActionPalette(dark = true)
+
+    private fun assertActionPalette(dark: Boolean) {
+        var view: android.view.View? = null
+        var expected = Color.Unspecified
+        rule.setContent {
+            PyrycodeMobileTheme(darkTheme = dark, dynamicColor = false) {
+                view = LocalView.current
+                expected = if (dark) MaterialTheme.colorScheme.onPrimaryFixed else MaterialTheme.colorScheme.surfaceContainerLowest
+                OptionsOverlay(
+                    options = listOf(OptionsOverlayOption("settings", "Settings"), OptionsOverlayOption("archive", "Archive")),
+                    selectedValue = "settings",
+                    notListed = 0,
+                    anchor = Rect(40f, 60f, 84f, 104f),
+                    onSelect = {},
+                    onDismiss = {},
+                    actions = true,
+                    placement = OptionsOverlayPlacement.Below,
+                )
+            }
+        }
+        val bitmap =
+            rule.runOnIdle {
+                val root = checkNotNull(view)
+                Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888).also { root.draw(Canvas(it)) }
+            }
+        for (label in listOf("Settings", "Archive")) {
+            val bounds = rule.onNodeWithText(label).fetchSemanticsNode().boundsInRoot
+            assertEquals(expected.toArgb(), bitmap.getPixel(bounds.left.roundToInt() + 6, bounds.center.y.roundToInt()))
+        }
     }
 
     @Test fun staticDarkMenuUsesBoundFixedAndOnPrimaryRoles() {

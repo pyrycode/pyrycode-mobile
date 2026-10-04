@@ -87,7 +87,8 @@ class ListDesignCaptureTest {
         design.capture(FOLDER, "create-channel$suffix", "671:5558")
         relaunch()
 
-        rule.onNodeWithContentDescription("Open settings").performClick()
+        rule.onNodeWithContentDescription("Open menu").performClick()
+        rule.onNodeWithText("Settings").performClick()
         awaitText("Notification sound")
         awaitModalFocus(rule.onNodeWithText("Notification sound"))
         assertNoWorkspaceText()
@@ -95,13 +96,15 @@ class ListDesignCaptureTest {
 
         // Before the walk archives any channel, Archive's Channels tab is the empty frame.
         relaunch()
-        rule.onNodeWithContentDescription("Open archive").performClick()
+        rule.onNodeWithContentDescription("Open menu").performClick()
+        rule.onNodeWithText("Archive").performClick()
         awaitText("No archived channels")
         design.capture(FOLDER, "archive-empty-channels$suffix", "673:3577")
 
         archiveChannels {
             relaunch()
-            rule.onNodeWithContentDescription("Open archive").performClick()
+            rule.onNodeWithContentDescription("Open menu").performClick()
+            rule.onNodeWithText("Archive").performClick()
             awaitText("Archived")
             // Archive opens on Channels, as 18:2 does (#1487), so the frame's state needs no tap.
             awaitText("Archived", substring = true, count = it + 1)
