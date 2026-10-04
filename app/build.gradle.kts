@@ -1,3 +1,4 @@
+import com.android.build.api.variant.BuildConfigField
 import org.gradle.api.provider.ValueSource
 import org.gradle.api.provider.ValueSourceParameters
 import org.gradle.process.ExecOperations
@@ -181,6 +182,21 @@ android {
                 }
             }
         }
+    }
+}
+
+// Debug builds carry a fixed version and build stamp instead of the commit count and hash (2026-10-05). The commit
+// changed BuildConfig on every commit, so even an identical tree rebuilt from scratch and missed the build cache.
+// Release keeps both. The fixed code sits above any commit count, so a phone's older debug install upgrades in
+// place; -PversionCode=N still overrides it.
+val debugVersionCode = providers.gradleProperty("versionCode").map { it.toInt() }.orElse(999_999)
+androidComponents {
+    onVariants(selector().withBuildType("debug")) { variant ->
+        variant.outputs.forEach { output ->
+            output.versionCode.set(debugVersionCode)
+            output.versionName.set(debugVersionCode.map { "1.0.$it" })
+        }
+        variant.buildConfigFields?.put("GIT_SHA", BuildConfigField("String", "\"dev\"", "Fixed in debug builds"))
     }
 }
 
