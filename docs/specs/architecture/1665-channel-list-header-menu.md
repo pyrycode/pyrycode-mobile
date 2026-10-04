@@ -65,4 +65,9 @@ Pending for the documentation stage:
 - `app/src/androidTest/assets/design-1220/README.md`, “Channel list (sidebar)”: record the closed-header node and #1665's no-separate-frame decision, citing reused Options overlay `533:1958`.
 - `docs/knowledge/features/channel-list-screen.md` and `channel-list-screen-how-it-works.md`, toolbar descriptions: use menu → Settings/Archive and the new glyph.
 - `docs/e2e-interactive-stream.md`, list-archive-entry scenario description: use menu → Archive.
+- `docs/knowledge/features/options-overlay.md`, Shape and Placement: document the optional below placement and unchanged default above behavior.
 - Record dispatcher-produced full live evidence, including executed/failed/skipped counts and `InteractiveStreamE2ETest.interactiveTurn_listArchiveEntry_opensArchived` passing. Documentation does not run the live gate.
+
+## Revisions
+
+- 2026-10-04: resource inspection found the thread description is “More actions”, rather than the ticket's required “Open menu”. Add client-owned `cd_open_menu` while preserving the thread label. The existing overflow drawable remains an exact match.

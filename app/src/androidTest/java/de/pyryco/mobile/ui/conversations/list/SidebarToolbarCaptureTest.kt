@@ -13,6 +13,7 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.model.ConnectionStatus
@@ -77,11 +78,11 @@ class SidebarToolbarCaptureTest {
             }
         }
         rule.onNodeWithText("Pyry").assertIsDisplayed()
-        val settings = rule.onNode(hasContentDescription("Open settings")).getUnclippedBoundsInRoot()
-        val archive = rule.onNode(hasContentDescription("Open archive")).getUnclippedBoundsInRoot()
+        val menu = rule.onNode(hasContentDescription("Open menu")).getUnclippedBoundsInRoot()
         val addHost = rule.onNode(hasContentDescription("Pair another host")).getUnclippedBoundsInRoot()
-        assertTrue(settings.right <= archive.left)
-        assertTrue(archive.right <= addHost.left)
+        assertEquals(44.dp, menu.right - menu.left)
+        assertEquals(44.dp, menu.bottom - menu.top)
+        assertTrue(menu.right <= addHost.left)
         rule.waitForIdle()
         val bitmap =
             rule.runOnIdle {
