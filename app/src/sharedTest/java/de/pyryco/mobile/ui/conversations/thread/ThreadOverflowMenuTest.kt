@@ -4,6 +4,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -32,6 +34,47 @@ class ThreadOverflowMenuTest {
     private val absent = MemorySearchReport(MemorySearchAvailability.Absent, emptyList())
 
     private fun string(resId: Int): String = InstrumentationRegistry.getInstrumentation().targetContext.getString(resId)
+
+    @Test
+    fun actionRows_keepFullOrder_andButtonSemantics_inBothThemes() {
+        val dark = mutableStateOf(false)
+        val promoted = mutableStateOf(false)
+        composeTestRule.setContent {
+            PyrycodeMobileTheme(darkTheme = dark.value) {
+                ThreadOverflowMenu(
+                    expanded = true,
+                    isPromoted = promoted.value,
+                    memorySearch = absent,
+                    onDismiss = {},
+                    onEvent = {},
+                )
+            }
+        }
+        for (theme in listOf(false, true)) {
+            for (channel in listOf(false, true)) {
+                composeTestRule.runOnIdle {
+                    dark.value = theme
+                    promoted.value = channel
+                }
+                val labels =
+                    buildList {
+                        if (!channel) add(R.string.save_as_channel_action)
+                        add(R.string.thread_overflow_new_session)
+                        add(if (channel) R.string.thread_overflow_edit else R.string.thread_overflow_rename)
+                        add(R.string.thread_overflow_archive)
+                        add(R.string.thread_overflow_channel_info)
+                        add(R.string.background_tasks_title)
+                        if (channel) add(R.string.thread_overflow_install_memory_plugin)
+                    }
+                val nodes = labels.map { composeTestRule.onNodeWithText(string(it)).fetchSemanticsNode() }
+                nodes.forEach {
+                    assertEquals(Role.Button, it.config[SemanticsProperties.Role])
+                    org.junit.Assert.assertFalse(it.config.contains(SemanticsProperties.Selected))
+                }
+                nodes.zipWithNext().forEach { (a, b) -> assertEquals(a.boundsInRoot.bottom, b.boundsInRoot.top, 1f) }
+            }
+        }
+    }
 
     @Test
     fun backgroundTasks_followsChannelInfo_inChannelsAndChats_withAndWithoutMutations() {
