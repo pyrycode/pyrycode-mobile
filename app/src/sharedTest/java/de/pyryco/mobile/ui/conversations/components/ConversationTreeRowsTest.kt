@@ -3,15 +3,19 @@ package de.pyryco.mobile.ui.conversations.components
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.view.View
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assert
@@ -20,6 +24,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -30,6 +35,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
@@ -41,6 +47,8 @@ import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.di.ConversationAttention
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.success
+import de.pyryco.mobile.ui.theme.warning
 import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -310,58 +318,120 @@ class ConversationTreeRowsTest {
         }
     }
 
-    // #1524: Figma 15:8 rings every dot in `inversePrimary` (#32628D) and fills the open row's idle dot with it.
-    // At the default density the 1dp ring is all anti-aliased edge; at xxxhdpi it paints solid pixels.
+    // #1679: only Idle has a ring; selection does not fill it, and only Running blinks.
     @Config(qualifiers = "xxxhdpi")
     @Test
-    fun conversationRow_staticDark_ringsInInversePrimary_andFillsTheSelectedIdleDot() {
-        data class Case(
-            val attention: ConversationAttention,
-            val selected: Boolean,
-        )
-        val case = mutableStateOf(Case(ConversationAttention.Idle, selected = false))
-        var ring = Color.Unspecified
+    fun conversationRow_statusDots_matchRedrawnPaintAndBlink() {
+        composeTestRule.mainClock.autoAdvance = false
+        val cases = ConversationAttention.entries.map { it to false } + (ConversationAttention.Idle to true)
+        val descriptions =
+            mapOf(
+                ConversationAttention.Idle to string(R.string.cd_conversation_attention_idle),
+                ConversationAttention.Running to string(R.string.cd_conversation_attention_running),
+                ConversationAttention.Unread to string(R.string.cd_conversation_attention_unread),
+                ConversationAttention.WaitingForAnswer to string(R.string.cd_conversation_attention_waiting),
+            )
         var primary = Color.Unspecified
+        var success = Color.Unspecified
+        var warning = Color.Unspecified
+        var surface = Color.Unspecified
+        var selectedFill = Color.Unspecified
         var view: View? = null
         composeTestRule.setContent {
-            PyrycodeMobileTheme(darkTheme = true) {
-                ring = MaterialTheme.colorScheme.inversePrimary
+            PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
                 primary = MaterialTheme.colorScheme.primary
+                success = MaterialTheme.colorScheme.success
+                warning = MaterialTheme.colorScheme.warning
+                surface = MaterialTheme.colorScheme.surface
+                selectedFill = MaterialTheme.colorScheme.primaryContainer
                 view = LocalView.current
-                Box(modifier = Modifier.width(rowWidth)) {
-                    TreeConversationRow(
-                        conversationName = "rocd-thinking",
-                        selected = case.value.selected,
-                        onClick = {},
-                        attention = case.value.attention,
-                    )
+                // Pin physical pixels on devices too; Robolectric qualifiers are ignored there.
+                CompositionLocalProvider(LocalDensity provides Density(4f)) {
+                    Column(modifier = Modifier.width(rowWidth).background(surface)) {
+                        cases.forEachIndexed { index, (attention, selected) ->
+                            TreeConversationRow(
+                                conversationName = "row-$index",
+                                selected = selected,
+                                onClick = {},
+                                attention = attention,
+                                modifier = Modifier.testTag("dot-row-$index"),
+                            )
+                        }
+                    }
                 }
             }
         }
+        composeTestRule.mainClock.advanceTimeByFrame()
+        composeTestRule.mainClock.advanceTimeByFrame()
 
-        fun countPixels(c: Case): Pair<Int, Int> {
-            case.value = c
+        fun pixels(index: Int): IntArray {
+            val dot =
+                composeTestRule.onNode(
+                    hasContentDescription(descriptions.getValue(cases[index].first)) and
+                        hasAnyAncestor(hasTestTag("dot-row-$index")),
+                    useUnmergedTree = true,
+                )
+            val bounds = dot.getUnclippedBoundsInRoot()
+            assertEquals(6.dp, bounds.right - bounds.left)
+            assertEquals(6.dp, bounds.bottom - bounds.top)
+            val rect = dot.fetchSemanticsNode().boundsInRoot
             return composeTestRule.runOnIdle {
                 val root = checkNotNull(view)
                 val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
                 root.draw(Canvas(bitmap))
-                val pixels = IntArray(bitmap.width * bitmap.height)
-                bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-                pixels.count { it == ring.toArgb() } to pixels.count { it == primary.toArgb() }
+                val width = rect.width.toInt()
+                val height = rect.height.toInt()
+                IntArray(width * height).also {
+                    bitmap.getPixels(it, 0, width, rect.left.toInt(), rect.top.toInt(), width, height)
+                    bitmap.recycle()
+                }
             }
         }
 
-        val idle = countPixels(Case(ConversationAttention.Idle, selected = false))
-        val unread = countPixels(Case(ConversationAttention.Unread, selected = false))
-        val selectedIdle = countPixels(Case(ConversationAttention.Idle, selected = true))
-        listOf("idle" to idle, "unread" to unread, "selected idle" to selectedIdle).forEach { (name, counts) ->
-            assertTrue("$name ring draws no inversePrimary", counts.first > 0)
-            assertEquals("$name ring still draws primary", 0, counts.second)
+        fun assertPaint(
+            index: Int,
+            alpha: Float = 1f,
+        ) {
+            val (attention, selected) = cases[index]
+            val background = if (selected) selectedFill else surface
+            val fill =
+                when (attention) {
+                    ConversationAttention.Idle -> background
+                    ConversationAttention.Running -> primary.copy(alpha = alpha).compositeOver(background)
+                    ConversationAttention.Unread -> success
+                    ConversationAttention.WaitingForAnswer -> warning
+                }
+            val ring = if (attention == ConversationAttention.Idle) primary.copy(alpha = 0.5f).compositeOver(background) else fill
+            val image = pixels(index)
+            val width = kotlin.math.sqrt(image.size.toDouble()).toInt()
+
+            fun assertColor(
+                label: String,
+                expected: Color,
+                actual: Int,
+            ) {
+                listOf(0, 8, 16, 24).forEach { shift ->
+                    val delta = kotlin.math.abs(((expected.toArgb() ushr shift) and 255) - ((actual ushr shift) and 255))
+                    assertTrue("$attention selected=$selected $label channel $shift differs by $delta", delta <= 3)
+                }
+            }
+            assertColor("centre", fill, image[(width / 2) * width + width / 2])
+            assertColor("ring region", ring, image[2 * width + width / 2])
         }
-        assertTrue(
-            "selected idle dot is not filled with its ring colour: ${selectedIdle.first} vs ${idle.first}",
-            selectedIdle.first > idle.first,
-        )
+
+        cases.indices.forEach { assertPaint(it) }
+        val first = cases.indices.map { pixels(it) }
+        composeTestRule.mainClock.advanceTimeBy(1_000)
+        cases.indices.forEach { index ->
+            if (cases[index].first == ConversationAttention.Running) {
+                assertPaint(index, alpha = 0.3f)
+                assertTrue("Running must blink", !first[index].contentEquals(pixels(index)))
+            } else {
+                assertTrue("${cases[index]} must not blink", first[index].contentEquals(pixels(index)))
+            }
+        }
+        composeTestRule.mainClock.advanceTimeBy(1_000)
+        cases.indices.forEach { assertPaint(it) }
     }
 
     @Test

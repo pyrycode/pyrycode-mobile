@@ -172,6 +172,14 @@ class DeterministicInteractiveStreamE2ETest {
     fun interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread() {
         arriveInSeededThread()
 
+        // #1631: the top menu reaches the panel even before any task has been reported.
+        composeTestRule.onNode(hasContentDescription("More actions")).performClick()
+        composeTestRule.onNode(hasText("Background tasks") and hasClickAction()).performClick()
+        composeTestRule.onNodeWithText("Channel info").assertDoesNotExist()
+        composeTestRule.onNodeWithText("No background-task report yet").assertIsDisplayed()
+        composeTestRule.onNode(hasContentDescription("Close")).performClick()
+        composeTestRule.onNodeWithText("Background tasks").assertDoesNotExist()
+
         // Type a non-"ping" prompt into the only editable field, then send. The scripted backend replies
         // "ping" regardless, so the prompt text never contributes a "ping" node.
         typeAndSend(SEND_PROMPT)

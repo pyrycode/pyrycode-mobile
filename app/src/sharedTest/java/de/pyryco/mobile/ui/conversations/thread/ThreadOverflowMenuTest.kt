@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.test.assertIsDisplayed
@@ -31,6 +32,62 @@ class ThreadOverflowMenuTest {
     private val absent = MemorySearchReport(MemorySearchAvailability.Absent, emptyList())
 
     private fun string(resId: Int): String = InstrumentationRegistry.getInstrumentation().targetContext.getString(resId)
+
+    @Test
+    fun backgroundTasks_followsChannelInfo_inChannelsAndChats_withAndWithoutMutations() {
+        val promoted = mutableStateOf(true)
+        val mutations = mutableStateOf(true)
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ThreadOverflowMenu(
+                    expanded = true,
+                    isPromoted = promoted.value,
+                    mutationsSupported = mutations.value,
+                    memorySearch = absent,
+                    onDismiss = {},
+                    onEvent = {},
+                )
+            }
+        }
+        for (isPromoted in listOf(true, false)) {
+            for (mutationsSupported in listOf(true, false)) {
+                composeTestRule.runOnIdle {
+                    promoted.value = isPromoted
+                    mutations.value = mutationsSupported
+                }
+                val info = composeTestRule.onNodeWithText(string(R.string.thread_overflow_channel_info))
+                val tasks = composeTestRule.onNodeWithText(string(R.string.background_tasks_title))
+                tasks.assertIsDisplayed()
+                val infoBounds = info.fetchSemanticsNode().boundsInRoot
+                val tasksBounds = tasks.fetchSemanticsNode().boundsInRoot
+                assertEquals(infoBounds.bottom, tasksBounds.top, 1f)
+                if (isPromoted) {
+                    val install = composeTestRule.onNodeWithText(string(R.string.thread_overflow_install_memory_plugin))
+                    assertEquals(tasksBounds.bottom, install.fetchSemanticsNode().boundsInRoot.top, 1f)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun tapping_backgroundTasks_dismisses_then_opensPanel_withoutDispatchingAnEvent() {
+        val log = mutableListOf<String>()
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ThreadOverflowMenu(
+                    expanded = true,
+                    isPromoted = true,
+                    onDismiss = { log.add("dismiss") },
+                    onEvent = { log.add("event:$it") },
+                    onBackgroundTasks = { log.add("panel") },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText(string(R.string.background_tasks_title)).performClick()
+
+        assertEquals(listOf("dismiss", "panel"), log)
+    }
 
     private class RecordingUriHandler : UriHandler {
         val openedUris = mutableListOf<String>()

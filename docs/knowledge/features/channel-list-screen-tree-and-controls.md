@@ -403,39 +403,28 @@ this write bypasses that editor.
 
 ## Attention dot (#878)
 
-`TreeConversationRow` gained `attention: ConversationAttention = ConversationAttention.Idle`
-(`di/ConversationAttention.kt`, #877) — the row's one state, declared last, after #667's `editDescription`,
-rather than directly after `modifier`; it is still a trailing defaulted parameter, so every existing
-positional call site still compiles. The row's leading slot, previously `IdleStatusDot` and always the design's plain
-ring, became `ConversationStatusDot(attention, selected)`: the same 8dp box and 1dp ring on every state
-(`TreeDotSize`, `TreeDotRingWidth`), now filled by an exhaustive `when` — mirrors desktop's
-`ConversationStatusDot` (`pyrycode-desktop/src/renderer/src/screens/channels/ConversationStatusDot.tsx`)
-one-for-one. An earlier mobile-only `Failed` state, filled `error`, was removed by #1451: desktop's
-`resolveConversationStatus` has no failed state, so a turn that ends Failed or StoppedEarly while its
-conversation is not viewed now counts as an ordinary completed turn and resolves Unread, then Idle once
-opened, like any other completed turn. No dot ever draws the `error` fill.
+`TreeConversationRow` accepts `attention: ConversationAttention = ConversationAttention.Idle`
+(`di/ConversationAttention.kt`, #877) and passes it to the private
+`ConversationStatusDot(attention)`. The dot is a 6dp circle (`TreeDotSize`); only Idle has a
+1dp border (`TreeDotRingWidth`). An earlier mobile-only `Failed` state, filled `error`,
+was removed by #1451: a turn that ends Failed or StoppedEarly while its conversation is
+not viewed counts as an ordinary completed turn and resolves Unread, then Idle once
+opened. No dot ever draws the `error` fill.
 
-**Ring colour and the selected-Idle fill (#1524).** Figma `15:8` draws the ring as `#32628D`
-(`Schemes/Inverse Primary`) on every dot, not `primary` — the frame's rendered pixels and
-`get_variable_defs` agree, though the SVG export of the same node gives `primary` (`#9DCBFC`); read the
-rendered frame, not the SVG export, when comparing a hairline stroke against a token. Under
-`LocalStaticDarkPalette` the ring is `colorScheme.inversePrimary`; other palettes keep `primary`, the
-same split [Session boundary delimiter](session-boundary-delimiter.md) makes, because `inversePrimary`
-on a light surface would vanish. The frame's blue dot on the darker `pyrycode discord integration` row
-(`I133:259;103:2972;403:7411`) is not an attention state — it is the Idle dot on the selected (open) row,
-filled with its own ring colour, the same open-row rule desktop scopes to `--idle`
-(`channels.css`, `.channel-list__row:has(> …[aria-current='true']) > .conversation-status-dot--idle`).
-`ConversationStatusDot` takes `selected: Boolean` from `TreeConversationRow`; only Idle's fill changes
-when selected, the other states keep their attention fill. The frame's pressed/hover variant (`398:7259`)
-shows an empty ring, so a pressed row does not fill — only `selected` does.
+**Paint and selection (#1679).** The redraw at Figma `106:3077` supersedes #1524's
+all-state inverse-primary ring and selected-Idle fill. Both blue states now use
+`colorScheme.primary` in every palette (`#9DCBFC` in static dark). Idle keeps only that
+ring at 50% alpha, with a transparent centre whether its row is selected, open or
+pressed. Selection still changes the row background; it is no longer an input to the
+dot. Running is a solid primary disc; Unread and WaitingForAnswer are solid success
+and warning discs with no border.
 
 | State | Ring | Fill | Content description |
 | --- | --- | --- | --- |
-| `Idle` | `inversePrimary` (static dark) / `primary` | none (`Color.Transparent`) | "Idle" |
-| `Idle`, selected | `inversePrimary` (static dark) / `primary` | same as ring | "Idle" |
-| `Running` | `inversePrimary` (static dark) / `primary` | `colorScheme.tertiary`, blinking | "Running" |
-| `Unread` | `inversePrimary` (static dark) / `primary` | `colorScheme.success` | "Unread" |
-| `WaitingForAnswer` | `inversePrimary` (static dark) / `primary` | `colorScheme.warning` | "Waiting for your answer" |
+| `Idle`, including selected | `primary` at 50% alpha, 1dp | none (`Color.Transparent`) | "Idle" |
+| `Running` | none | `primary` (`#9DCBFC` in static dark), blinking | "Running" |
+| `Unread` | none | `success` (`#2FC038`) | "Unread" |
+| `WaitingForAnswer` | none | `warning` (`#D8B85A` in static dark) | "Waiting for your answer" |
 
 **Blink stays off the row.** `Running`'s alpha comes from `rememberInfiniteTransition`, created only
 inside the `Running` branch — leaving that state drops the transition from composition — animating
@@ -455,7 +444,16 @@ so TalkBack reads e.g. "Running, kitchenclaw refactor" — the meaning never res
 [`HostChannelListEntry.attentionFor`](channel-list-viewmodel.md), Idle by default, joined from
 `hostSource.attention` (see [state projection § Attention
 join](channel-list-viewmodel-projection.md#attention-join-877)). This ticket only draws the state;
-deriving it — the five-state precedence, the turn-state/turn-end join — is #877's.
+deriving it — the attention precedence and turn-state/turn-end join — belongs to the host source.
+
+**Paint regression coverage.**
+`ConversationTreeRowsTest.conversationRow_statusDots_matchRedrawnPaintAndBlink` renders
+all four states plus selected Idle on known static-dark backgrounds. It checks 6dp
+bounds and centre/ring-region pixels, then advances the clock through both blink
+half-periods: Running fades to 0.3 alpha and returns, while the other dots' pixels stay
+unchanged. Semantics alone cannot catch a wrong fill or an unwanted border. The
+shared fixture pins its Compose density so the 1dp ring samples remain comparable on
+Robolectric and devices; see [Compose evidence](development-verification-compose-evidence.md#compose-evidence).
 
 **Scope.** The live run of these states on a real turn, split from #676, is proven by
 `interactiveTurn_attentionDot_followsARealTurn` (#1090, rung 3) in

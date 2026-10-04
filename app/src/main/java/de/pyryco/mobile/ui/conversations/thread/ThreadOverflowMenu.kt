@@ -23,6 +23,7 @@ fun ThreadOverflowMenu(
     // actions throw or no-op. Defaulted for previews/tests only — production always threads the real value.
     mutationsSupported: Boolean = true,
     memorySearch: MemorySearchReport = MemorySearchReport.Unknown,
+    onBackgroundTasks: () -> Unit = {},
 ) {
     val uriHandler = LocalUriHandler.current
     DropdownMenu(
@@ -79,6 +80,13 @@ fun ThreadOverflowMenu(
             onClick = {
                 onDismiss()
                 onEvent(ThreadEvent.ChannelInfo)
+            },
+        )
+        DropdownMenuItem(
+            text = { Text(stringResource(R.string.background_tasks_title)) },
+            onClick = {
+                onDismiss()
+                onBackgroundTasks()
             },
         )
         if (isPromoted && memorySearch.shouldOfferMemoryInstall()) {

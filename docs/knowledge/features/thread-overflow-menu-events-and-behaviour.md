@@ -52,7 +52,7 @@ Declared in `ThreadUiState.kt` with the other thread state types; until the 2026
 
 ## What it does
 
-Renders one M3 `DropdownMenu` containing the five common `DropdownMenuItem`s, wrapped by two mutually-exclusive context-aware items ([#204](../codebase/204.md)). Each item's `onClick` calls `onDismiss()` **before** its action — `onEvent(ThreadEvent.X)`, or `uriHandler.openUri(MEMORY_PLUGIN_DOCS_URL)` (install-memory-plugin):
+Renders one M3 `DropdownMenu` containing the common `DropdownMenuItem`s, wrapped by two mutually-exclusive context-aware items ([#204](../codebase/204.md)). Each item's `onClick` calls `onDismiss()` **before** its action — `onEvent(ThreadEvent.X)`, `onBackgroundTasks()` (Background tasks), or `uriHandler.openUri(MEMORY_PLUGIN_DOCS_URL)` (install-memory-plugin):
 
 | Order             | When                | String resource                            | Label              | Side effect                                                |
 | ----------------- | ------------------- | ------------------------------------------ | ------------------ | ---------------------------------------------------------- |
@@ -60,27 +60,30 @@ Renders one M3 `DropdownMenu` containing the five common `DropdownMenuItem`s, wr
 | 2 (mutations)     | `mutationsSupported` | `R.string.thread_overflow_new_session`     | Reset session      | `onEvent(ThreadEvent.NewSession)`                          |
 | 3 (mutations, channel)    | `mutationsSupported && isPromoted`  | `R.string.thread_overflow_edit`   | Edit               | `onEvent(ThreadEvent.EditChannel)` — #1561                 |
 | 3 (mutations, discussion) | `mutationsSupported && !isPromoted` | `R.string.thread_overflow_rename` | Rename             | `onEvent(ThreadEvent.Rename)`                              |
-| 4 (mutations)     | `mutationsSupported` | `R.string.thread_overflow_change_workspace`| Change workspace…  | `onEvent(ThreadEvent.ChangeWorkspace)`                     |
-| 5 (mutations)     | `mutationsSupported` | `R.string.thread_overflow_archive`         | Archive            | `onEvent(ThreadEvent.Archive)`                             |
-| 6 (always)        | —                   | `R.string.thread_overflow_channel_info`    | Channel info       | `onEvent(ThreadEvent.ChannelInfo)`                         |
+| 4 (mutations)     | `mutationsSupported` | `R.string.thread_overflow_archive`         | Archive            | `onEvent(ThreadEvent.Archive)`                             |
+| 5 (always)        | —                   | `R.string.thread_overflow_channel_info`    | Channel info       | `onEvent(ThreadEvent.ChannelInfo)`                         |
+| 6 (always)        | —                   | `R.string.background_tasks_title`          | Background tasks   | `onBackgroundTasks()` (no event)                          |
 | 7 (channel)       | `isPromoted && memorySearch.shouldOfferMemoryInstall()` | `R.string.thread_overflow_install_memory_plugin` | Install memory plugin | `uriHandler.openUri(MEMORY_PLUGIN_DOCS_URL)` (no event)    |
 
-[#382](../codebase/382.md) had added an eighth, leading, unconditional **Show the literal screen** item, purely navigating via `onShowLiteralScreen()`. [#883](../../specs/architecture/883-retire-literal-screen.md) removed it along with the server-side render path it opened; the table above reflects the current, post-#883 order. **Order 3 itself became context-aware in [#1561](https://github.com/pyrycode/pyrycode-mobile/issues/1561)**, Figma `675:5883`: the slot still sits inside `if (mutationsSupported)`, but which item renders there now also depends on `isPromoted` — Edit for a channel, Rename for a discussion — so Edit is hidden in exactly the cases Rename was hidden in before, with no new gating condition of its own.
+[#382](../codebase/382.md) had added an eighth, leading, unconditional **Show the literal screen** item, purely navigating via `onShowLiteralScreen()`. [#883](../../specs/architecture/883-retire-literal-screen.md) removed it along with the server-side render path it opened; the table above reflects the current order, including #1631’s Background tasks addition. **Order 3 itself became context-aware in [#1561](https://github.com/pyrycode/pyrycode-mobile/issues/1561)**, Figma `675:5883`: the slot still sits inside `if (mutationsSupported)`, but which item renders there now also depends on `isPromoted` — Edit for a channel, Rename for a discussion — so Edit is hidden in exactly the cases Rename was hidden in before, with no new gating condition of its own.
 
-The four mutation items — Reset session, Rename-or-Edit, Change workspace…, Archive
-(orders 2–5) — share `if (mutationsSupported)`. Both the remote repository and the
+The mutation items — Reset session, Rename-or-Edit and Archive — share `if (mutationsSupported)`. Both the remote repository and the
 fake support mutations. Reset is available in discussions and channels; promotion
 is not a reset prerequisite.
 
 With mutations supported, the final orders are:
 
-- **Discussion:** Save as channel… → Reset session → Rename → Change workspace… → Archive → Channel info.
-- **Channel with confirmed absent memory search:** Reset session → Edit → Change workspace… → Archive → Channel info → Install memory plugin. Other reports stop at Channel info.
+- **Discussion:** Save as channel… → Reset session → Rename → Archive → Channel info → Background tasks.
+- **Channel with confirmed absent memory search:** Reset session → Edit → Archive → Channel info → Background tasks → Install memory plugin. Other reports stop at Background tasks.
 
-When `mutationsSupported == false`, the four mutation items — including whichever of Rename / Edit applies — are hidden; the other
+Background tasks is unconditional in channels and chats, including zero running tasks. It dismisses
+the menu before opening the [same conversation-local panel](thread-screen-how-it-works-overlays-and-app-bar.md#background-tasks-panel-placement-post-678)
+as Actions and the running-task pill, preserving empty and never-reported readings.
+
+When `mutationsSupported == false`, the mutation items — including whichever of Rename / Edit applies — are hidden; the other
 items retain their order.
 
-The two context-aware items render as two `if` blocks around the five common items — `if (!isPromoted) { ... }` prepended; `if (isPromoted && memorySearch.shouldOfferMemoryInstall()) { ... }` appended. A `when (isPromoted)` over the entire menu body was considered and rejected — it would either duplicate the five common items in both branches or collapse to the same `if` pair around two extra items, and the `if`-pair shape directly expresses the AC wording ([per-ticket rationale](../codebase/204.md#patterns-established)).
+The two context-aware items render as two `if` blocks around the common items — `if (!isPromoted) { ... }` prepended; `if (isPromoted && memorySearch.shouldOfferMemoryInstall()) { ... }` appended. A `when (isPromoted)` over the entire menu body was considered and rejected — it would either duplicate the common items in both branches or collapse to the same `if` pair around two extra items, and the `if`-pair shape directly expresses the AC wording ([per-ticket rationale](../codebase/204.md#patterns-established)).
 
 **`save_as_channel_action` is reused, not duplicated** ([#204](../codebase/204.md)). The same `strings.xml:11` key serves [`DiscussionListScreen`](discussion-list-screen.md)'s long-press promote menu ([#25](../codebase/25.md)) and this menu's first item — same English copy, same semantic action, one localization entry.
 

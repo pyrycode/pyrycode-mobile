@@ -78,6 +78,7 @@ fun ThreadTopAppBar(
     modifier: Modifier = Modifier,
     mutationsSupported: Boolean = true,
     memorySearch: MemorySearchReport = MemorySearchReport.Unknown,
+    onBackgroundTasks: () -> Unit = {},
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
@@ -127,6 +128,7 @@ fun ThreadTopAppBar(
                     memorySearch = memorySearch,
                     onDismiss = onOverflowDismiss,
                     onEvent = onOverflowEvent,
+                    onBackgroundTasks = onBackgroundTasks,
                 )
             }
         }
