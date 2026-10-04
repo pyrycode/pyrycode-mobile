@@ -1,6 +1,9 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.rememberScrollableState
 import androidx.compose.foundation.gestures.scrollable
@@ -20,6 +23,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
@@ -171,7 +176,7 @@ private const val PERMISSION_ROW_COUNT = 2
 /** The refused-answer notice's slot in the thread (#1340). */
 internal const val PERMISSION_REJECTION_TEST_TAG = "thread-permission-rejection"
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun ThreadScreen(
     state: ThreadUiState,
@@ -678,10 +683,12 @@ fun ThreadScreen(
                                     if (!shown) listState.scrollToItem(actionsIndex)
                                 }
                             }
-                        LazyColumn(
+                        val rowRelocationSpec = LocalBringIntoViewSpec.current
+                        ThreadMessageList(
                             state = listState,
                             modifier = Modifier.fillMaxSize().olderHistoryPull(listPull),
-                            reverseLayout = true,
+                            headerHeight = headerHeight,
+                            composerHeight = composerHeight,
                             // Padding follows measured chrome; the drawing viewport continues underneath both bars.
                             contentPadding =
                                 PaddingValues(
@@ -756,7 +763,7 @@ fun ThreadScreen(
                                 key = { reversedIndex, row -> row.listKey(rows.size - 1 - reversedIndex) },
                             ) { reversedIndex, row ->
                                 val chronologicalIndex = rows.size - 1 - reversedIndex
-                                Box {
+                                ThreadRowContent(rowRelocationSpec) {
                                     when (row) {
                                         is ThreadRow.Delivered ->
                                             when (val item = row.item) {
@@ -1045,6 +1052,57 @@ fun ThreadScreen(
             }
         }
         ModalUiState.Hidden -> Unit
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ThreadRowContent(
+    relocationSpec: BringIntoViewSpec,
+    content: @Composable () -> Unit,
+) {
+    CompositionLocalProvider(LocalBringIntoViewSpec provides relocationSpec) { Box { content() } }
+}
+
+/** Keep the drawing viewport full size while relocating focus between the measured chrome surfaces. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ThreadMessageList(
+    state: LazyListState,
+    headerHeight: Dp,
+    composerHeight: Dp,
+    contentPadding: PaddingValues,
+    verticalArrangement: Arrangement.Vertical,
+    modifier: Modifier = Modifier,
+    content: LazyListScope.() -> Unit,
+) {
+    val density = LocalDensity.current
+    val relocationSpec =
+        remember(headerHeight, composerHeight, density) {
+            val headerPx = with(density) { headerHeight.toPx() }
+            val composerPx = with(density) { composerHeight.toPx() }
+            object : BringIntoViewSpec {
+                override fun calculateScrollDistance(
+                    offset: Float,
+                    size: Float,
+                    containerSize: Float,
+                ): Float =
+                    super.calculateScrollDistance(
+                        offset - headerPx,
+                        size,
+                        (containerSize - headerPx - composerPx).coerceAtLeast(0f),
+                    )
+            }
+        }
+    CompositionLocalProvider(LocalBringIntoViewSpec provides relocationSpec) {
+        LazyColumn(
+            state = state,
+            modifier = modifier,
+            reverseLayout = true,
+            contentPadding = contentPadding,
+            verticalArrangement = verticalArrangement,
+            content = content,
+        )
     }
 }
 

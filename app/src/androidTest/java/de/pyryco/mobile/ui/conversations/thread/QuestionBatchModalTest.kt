@@ -381,6 +381,80 @@ class QuestionBatchModalTest {
     }
 
     @Test
+    fun ime_keeps_an_earlier_other_clear_of_chrome_on_open_dismiss_and_reopen() {
+        show(batch(extra = 3))
+        rule.waitUntil(10_000) {
+            rule.runOnIdle {
+                rule.activity.window.decorView
+                    .hasWindowFocus()
+            }
+        }
+        val host = rule.activity.window.decorView
+        val list = rule.onNode(hasScrollToIndexAction())
+        list.performScrollToIndex(5)
+        val field = rule.onNodeWithTag("question_other_0")
+        val header = rule.onNodeWithTag("thread-top-bar").fetchSemanticsNode().boundsInRoot
+        val before = field.fetchSemanticsNode().boundsInRoot
+        var calibration = 10f
+        list.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, calibration) }
+        rule.waitForIdle()
+        var moved = field.fetchSemanticsNode().boundsInRoot
+        // With no history the first question can be at the oldest limit; calibrate toward newer rows there.
+        if (kotlin.math.abs(moved.top - before.top) < 1f) {
+            calibration = -10f
+            list.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, calibration) }
+            rule.waitForIdle()
+            moved = field.fetchSemanticsNode().boundsInRoot
+        }
+        val direction = (moved.top - before.top) / calibration
+        assertTrue("setup scroll moves the earlier field", kotlin.math.abs(direction) > 0.5f)
+        list.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, (header.bottom - 40f - moved.top) / direction) }
+        rule.waitForIdle()
+        val obscured = field.fetchSemanticsNode().boundsInRoot
+        assertTrue("setup: earlier field wholly beneath header: $obscured", obscured.top >= header.top && obscured.bottom < header.bottom)
+        field.performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+        field.assertIsFocused()
+        field.performTextInput("earlier draft")
+        for (open in listOf(true, false, true)) {
+            rule.runOnIdle {
+                if (open) {
+                    host.windowInsetsController?.show(WindowInsets.Type.ime())
+                } else {
+                    host.windowInsetsController?.hide(WindowInsets.Type.ime())
+                }
+            }
+            rule.waitUntil(5_000) {
+                rule.runOnIdle { (ViewCompat.getRootWindowInsets(host)?.isVisible(WindowInsetsCompat.Type.ime()) == true) == open }
+            }
+            rule.waitForIdle()
+            field.assertIsFocused().assertTextContains("earlier draft")
+            if (open) {
+                rule.runOnIdle {
+                    assertTrue(
+                        "real IME has a positive inset",
+                        (ViewCompat.getRootWindowInsets(host)?.getInsets(WindowInsetsCompat.Type.ime())?.bottom ?: 0) > 0,
+                    )
+                }
+            }
+            val bounds = field.fetchSemanticsNode().boundsInRoot
+            val top =
+                rule
+                    .onNodeWithTag("thread-top-bar")
+                    .fetchSemanticsNode()
+                    .boundsInRoot.bottom
+            val bottom =
+                rule
+                    .onNodeWithTag("thread-composer")
+                    .fetchSemanticsNode()
+                    .boundsInRoot.top
+            assertTrue(
+                "IME open=$open: focused field $bounds must clear chrome $top..$bottom",
+                bounds.top >= top - 1f && bounds.bottom <= bottom + 1f,
+            )
+        }
+    }
+
+    @Test
     fun large_text_actions_stack_and_pointer_edges_submit_only_this_batch() {
         show(fontScale = 1.5f)
         // Display-size changes can leave the ATD launcher focused while semantic actions still work.
