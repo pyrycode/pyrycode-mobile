@@ -426,7 +426,7 @@ class ThreadViewModel(
             ) to announced?.takeUnless { it.truncated }?.model.orEmpty()
         }
 
-    /** Last explicit selection; a summary's empty placeholder cannot restore a replaced session's support. */
+    /** Last selection on this connection; empty summaries cannot undo a known session replacement. */
     private var lastKnownSessionId = ""
 
     /**
@@ -440,8 +440,10 @@ class ThreadViewModel(
         repository
             .observeConversations(ConversationFilter.All)
             .onEach { list ->
-                list.firstOrNull { it.id == conversationId }?.currentSessionId?.takeIf { it.isNotEmpty() }?.let {
-                    lastKnownSessionId = it
+                if (hostAvailable.value) {
+                    list.firstOrNull { it.id == conversationId }?.currentSessionId?.takeIf { it.isNotEmpty() }?.let {
+                        lastKnownSessionId = it
+                    }
                 }
                 if (list.any { it.id == conversationId && it.archived } && leaveForList()) {
                     RelayLog.d { "event=thread_left_archived" }
@@ -580,7 +582,13 @@ class ThreadViewModel(
      * the #861 reason on [repositoryAvailable].
      */
     private val hostAvailable: StateFlow<Boolean> =
-        repositoryAvailable.distinctUntilChanged().stateIn(viewModelScope, SharingStarted.Eagerly, false)
+        repositoryAvailable
+            .distinctUntilChanged()
+            .onEach { available ->
+                // A replacement connection may report only empty summaries after the session changed offline.
+                // Forget its predecessor's selection, while held settings remain display-only.
+                if (!available) lastKnownSessionId = ""
+            }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     /**
      * The thread rows (#337): the #313 finished-message projection from [ConversationRepository.observeMessages]
