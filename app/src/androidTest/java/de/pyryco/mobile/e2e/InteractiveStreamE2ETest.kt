@@ -3854,6 +3854,8 @@ class InteractiveStreamE2ETest {
             val continueButton =
                 hasText(string(R.string.question_continue)) and hasClickAction() and isEnabled() and
                     hasAnyAncestor(hasTestTag("question-batch-actions"))
+            // The actions are a separate lazy item; selecting an option need not compose them (#1702).
+            composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(hasTestTag("question-batch-actions"))
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(continueButton).fetchSemanticsNodes().isNotEmpty()
             }

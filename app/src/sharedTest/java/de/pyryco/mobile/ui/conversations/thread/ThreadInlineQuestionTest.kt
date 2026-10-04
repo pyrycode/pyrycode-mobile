@@ -9,7 +9,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.FontScale
+import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
@@ -22,19 +24,24 @@ import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasScrollToIndexAction
+import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
+import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.DpRect
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -291,6 +298,70 @@ class ThreadInlineQuestionTest {
         rule.runOnIdle { pending = question.copy(generation = 2) }
         rule.waitForIdle()
         rule.runOnIdle { assertEquals("prompt replacement cannot manufacture an oldest-history demand", 0, demands) }
+    }
+
+    @Test
+    @OptIn(ExperimentalTestApi::class)
+    fun selected_option_can_reach_continue_when_the_actions_row_is_uncomposed() {
+        var pending by mutableStateOf(
+            question.copy(
+                batch =
+                    question.batch.copy(
+                        questions =
+                            listOf(
+                                Question(
+                                    "Choose a language",
+                                    "Language",
+                                    listOf(QuestionOption("Kotlin", "JVM\n".repeat(8)), QuestionOption("Rust", "Systems\n".repeat(8))),
+                                    false,
+                                ),
+                            ),
+                    ),
+            ),
+        )
+        val continued = mutableListOf<Long>()
+        rule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 500.dp))) {
+                CompositionLocalProvider(LocalOverscrollFactory provides null) {
+                    PyrycodeMobileTheme {
+                        ThreadScreen(
+                            ThreadUiState("chat", "Client planning", isPromoted = false),
+                            {},
+                            {},
+                            ConnectionState.Connected,
+                            {},
+                            questionState = pending,
+                            onQuestionEvent = { event, generation ->
+                                when (event) {
+                                    is QuestionModalEvent.OptionToggled ->
+                                        pending =
+                                            pending.copy(
+                                                selections = listOf(QuestionSelection(optionIndices = setOf(event.optionIndex))),
+                                            )
+                                    QuestionModalEvent.Continue -> continued += generation
+                                    else -> Unit
+                                }
+                            },
+                        )
+                    }
+                }
+            }
+        }
+        val option = hasText("Kotlin", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("thread-question-row"))
+        rule.onNode(hasScrollToNodeAction()).performScrollToNode(option)
+        rule.onNode(option).performClick().assertIsSelected()
+        rule.runOnIdle { assertTrue("selection already permits Continue", pending.canContinue) }
+        rule.onNodeWithTag("question-batch-actions").assertDoesNotExist()
+        val continueButton =
+            hasText("Continue") and hasClickAction() and isEnabled() and hasAnyAncestor(hasTestTag("question-batch-actions"))
+        rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasTestTag("question-batch-actions"))
+        rule.waitUntil(1_000) { rule.onAllNodes(continueButton).fetchSemanticsNodes().isNotEmpty() }
+        rule
+            .onNode(continueButton)
+            .assertIsDisplayed()
+            .assertIsEnabled()
+            .performClick()
+        rule.runOnIdle { assertEquals(listOf(pending.generation), continued) }
     }
 
     // #1484, Figma 636:3803: the focus scroll shows the focused field and both actions, not only the field's own row.
