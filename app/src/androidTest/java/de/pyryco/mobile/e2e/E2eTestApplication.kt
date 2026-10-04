@@ -84,7 +84,7 @@ class E2eTestApplication : Application() {
 
     /**
      * The app restart an instrumented test can perform (#847): it cannot kill its own process, so it
-     * rebuilds the relay branch's object graph over the same on-device state — the Keystore-backed
+     * rebuilds the run's original fake/relay object graph over the same on-device state — the Keystore-backed
      * paired-server store, the host-keyed conversation cache and `app_prefs`. Nothing is re-saved: the
      * hosts the store already holds are the state under test. Call with no activity alive (the old
      * view models hold the old graph) and on the main thread, which `ProcessLifecycleOwner` requires.
@@ -99,12 +99,18 @@ class E2eTestApplication : Application() {
         check(Looper.myLooper() == Looper.getMainLooper()) { "rebuildGraph must run on the main thread" }
         val old = GlobalContext.get()
         val preferences = old.get<DataStore<Preferences>>()
+        val repositoryModule =
+            if (InstrumentationRegistry.getArguments().getString(ARG_RELAY_URL) == null) {
+                conversationRepositoryModule(useRelay = false)
+            } else {
+                tappedRelayRepositoryModule()
+            }
         ProcessLifecycleOwner.get().lifecycle.removeObserver(old.get<LifecycleConnectionDriver>())
         stopKoin()
         startKoin {
             allowOverride(true)
             androidContext(this@E2eTestApplication)
-            modules(appModule, tappedRelayRepositoryModule(), module { single<DataStore<Preferences>> { preferences } })
+            modules(appModule, repositoryModule, module { single<DataStore<Preferences>> { preferences } })
         }
         Log.i("E2E", "app.rebuildGraph: object graph rebuilt over the same on-device state")
     }
