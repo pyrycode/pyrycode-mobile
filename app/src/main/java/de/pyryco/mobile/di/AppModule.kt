@@ -86,8 +86,9 @@ import java.io.File
 val appModule =
     module {
         single<DataStore<Preferences>> {
+            val context = androidContext()
             PreferenceDataStoreFactory.create(
-                produceFile = { androidContext().preferencesDataStoreFile("app_prefs") },
+                produceFile = { context.preferencesDataStoreFile("app_prefs") },
             )
         }
         single { AppPreferences(get()) }
