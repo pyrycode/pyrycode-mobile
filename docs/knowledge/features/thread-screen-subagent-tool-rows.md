@@ -23,6 +23,12 @@ because the disk cache doesn't persist the field — any cache-restored row), ot
 depth. The map holds only rows with depth `> 0`; a row absent from it renders at top level, which is what
 `?: 0` above falls back to.
 
+Depth zero does not establish that a call belongs to the main thread. The
+[status selector](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311)
+excludes every call with a nonempty `parentToolUseId` directly, even when missing loaded
+parents leave its row at depth zero. Using the depth map for status selection would
+let background activity replace the main tool's name and elapsed reading again.
+
 **Matching is independent of list order.** Candidates are collected into a `parentOf: Map<String, String>`
 first (one pass over `items`), then each row's depth is found by walking up its parent chain in that map,
 memoising every id the walk passes through `depthOf` so no id is walked twice — O(tool rows) total however
