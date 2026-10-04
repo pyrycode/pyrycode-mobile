@@ -197,6 +197,7 @@ fun ThreadScreen(
     isBusy: Boolean = false, // #459: a turn is in flight (thinking OR responding) → show the interrupt affordance
     isStalled: Boolean = false, // #1311: the daemon reported a stall; the band's stall arm
     localSendStage: LocalSendStage = LocalSendStage.None,
+    sessionError: String? = null,
     onInterrupt: () -> Unit = {}, // #459: wired by MainActivity → vm::onInterrupt (the #458 send path)
     onTitleClick: () -> Unit = {},
     onOverflowEvent: (ThreadEvent) -> Unit = {},
@@ -863,6 +864,8 @@ fun ThreadScreen(
                                 .padding(start = ComposerGutter, top = headerHeight + TopOverlayTopGap, end = ComposerGutter),
                         mcpFailure = mcpFailure,
                         onOpenMcpFailure = onOpenMcpFailure,
+                        sessionError = sessionError,
+                        agent = state.agent,
                     )
                 }
             }

@@ -137,6 +137,7 @@ class ScriptedThreadHarness(
                     isBusy = open.isBusy.collectAsState().value,
                     // #1311: the stall arm and the local-send window.
                     isStalled = open.isStalled.collectAsState().value,
+                    sessionError = open.sessionError.collectAsState().value,
                     localSendStage = open.localSendStage.collectAsState().value,
                     onInterrupt = open::onInterrupt,
                 )
