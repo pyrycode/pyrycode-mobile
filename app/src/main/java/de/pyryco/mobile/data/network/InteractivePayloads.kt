@@ -167,6 +167,24 @@ internal data class TurnEndPayloadDto(
 )
 
 /**
+ * Decode-only session failure. All three wire fields must be JSON strings; primitives keep numeric
+ * and boolean values distinguishable from strings instead of allowing decoder coercion. The mapper
+ * discards daemon prose immediately. Wire SSOT: pyrycode `SessionErrorPayload` and protocol Error codes.
+ */
+@Serializable
+internal class SessionErrorPayloadDto(
+    @SerialName("conversation_id") val conversationId: JsonPrimitive,
+    val code: JsonPrimitive,
+    val message: JsonPrimitive,
+)
+
+/** Validates the complete wire shape and retains only the routing id and open-vocabulary code. */
+internal fun SessionErrorPayloadDto.toSessionError(): Pair<String, String>? {
+    if (!conversationId.isString || !code.isString || !message.isString) return null
+    return conversationId.content to code.content
+}
+
+/**
  * The `stall` control event (#395, pyrycode#638/#639): the remote claude has stopped making forward
  * progress. The wire payload is `{conversation_id}` only — the peer of [TurnStatePayloadDto] minus
  * `state` — and is **onset-only** (tui-driver's `stall_detected` has no clearing edge; recovery is

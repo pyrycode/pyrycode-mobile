@@ -235,17 +235,20 @@ the render consumer (#649) will open the domain type and never the DTO. The rend
 sanitization/length-bound obligation itself belongs to #649; this slice renders nothing and holds the
 strings inert.
 
-**A `MobileJson` lesson, not a `model_list`-specific one.** `isLenient` is off, so an *unquoted* number
-where a `String` is declared fails the frame (`conversation_id: 17`, a numeric `resolved_model`) — but a
-*quoted* number where the `Int` count (`dropped_models`) is declared **coerces** rather than rejects:
-`"dropped_models":"40"` decodes as `40`, because the tree decoder reads a primitive's content and parses
-it regardless of the JSON token's quoting. This is a property of the shared `MobileJson` codec that every
-sibling payload decodes through, not a `model_list` decision, so it is not worked around on this one frame
-— it is pinned by `ModelListPayloadsTest.quotedNumberForDroppedModels_coercesRatherThanFailing`. The
-coercion touches only count-typed fields; every claude-authored **string** field still fails the frame
-when wrong-typed, which is the case the security posture actually rests on. Worth checking before writing
-a "rejects a wrong-typed numeric field" test against this codec on any future payload — the rejection is
-real for a `String` target, not for an `Int` one.
+**Validate JSON token types at untrusted boundaries.** A Kotlin serialization `String`
+declaration and `isLenient = false` do not by themselves guarantee rejection of numeric
+JSON primitives during tree decoding. For a required wire string, retain the field
+as a `JsonPrimitive` and check `isString` before taking `content`, or check the raw
+object before DTO decoding. [Session errors (#1677)](remote-conversation-repository-state-errors-and-handoff.md#conversation-session-errors-1677)
+apply this to all three required fields and to `turn_state`'s routing id/state before
+allowing a clear. Otherwise a malformed error can replace held state, or a numeric id
+can clear the error under its string representation. Test numeric, boolean and null
+values explicitly rather than inferring strictness from valid strings or array failures.
+
+Count decoding also coerces: `"dropped_models":"40"` becomes `40`, pinned by
+`ModelListPayloadsTest.quotedNumberForDroppedModels_coercesRatherThanFailing`.
+The tree decoder parses primitive content regardless of quoting; strict token shape
+therefore needs an explicit check whenever the contract requires it.
 
 ### The on-demand ask — `request_model_list` (#792)
 

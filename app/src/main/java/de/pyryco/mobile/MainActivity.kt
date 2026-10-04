@@ -466,7 +466,7 @@ internal fun PyryNavHost(
                 val isBusy by vm.isBusy.collectAsStateWithLifecycle()
                 // #1311: the band's stall arm and its local-send window.
                 val isStalled by vm.isStalled.collectAsStateWithLifecycle()
-                val localSendPending by vm.localSendPending.collectAsStateWithLifecycle()
+                val localSendStage by vm.localSendStage.collectAsStateWithLifecycle()
                 val modalState by vm.currentModal.collectAsStateWithLifecycle()
                 val armedOptionId by vm.armedOptionId.collectAsStateWithLifecycle()
                 val alwaysAllowAccepted by vm.alwaysAllowAccepted.collectAsStateWithLifecycle()
@@ -520,7 +520,7 @@ internal fun PyryNavHost(
                     thinkingProgress = thinkingProgress,
                     isBusy = isBusy,
                     isStalled = isStalled,
-                    localSendPending = localSendPending,
+                    localSendStage = localSendStage,
                     onInterrupt = vm::onInterrupt,
                     modalState = modalState,
                     armedOptionId = armedOptionId,

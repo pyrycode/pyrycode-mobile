@@ -9,6 +9,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
@@ -114,7 +115,17 @@ class ThreadScreenNewestRowTest {
      * composer's text field also exposes `ScrollBy`.
      */
     private fun scrollAwayFromTheNewestEnd() {
-        composeRule.onNode(hasScrollToIndexAction()).performTouchInput { swipeDown() }
+        val top =
+            composeRule
+                .onNodeWithTag("thread-top-bar")
+                .fetchSemanticsNode()
+                .boundsInRoot.bottom + 24f
+        val bottom =
+            composeRule
+                .onNodeWithTag("thread-composer")
+                .fetchSemanticsNode()
+                .boundsInRoot.top - 24f
+        composeRule.onNode(hasScrollToIndexAction()).performTouchInput { swipeDown(startY = top, endY = bottom) }
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Row 30.").assertDoesNotExist()
     }

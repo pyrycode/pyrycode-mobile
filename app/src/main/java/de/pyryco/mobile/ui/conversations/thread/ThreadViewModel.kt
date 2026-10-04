@@ -875,17 +875,16 @@ class ThreadViewModel(
                 initialValue = false,
             )
 
-    private val _localSendPending = MutableStateFlow(false)
+    private val _localSendStage = MutableStateFlow(LocalSendStage.None)
+    private var localSendGeneration = 0L
 
     /**
-     * The local-send window (#1311), desktop's `localSendPending`: `true` from the moment a send is handed
-     * to the daemon until the daemon first speaks, so the status band reads "Thinking…" across the round
-     * trip instead of going dark. Opened in [sendMessage] and [sendWithAttachments] immediately before the
-     * repository send, so a blank, refused or upload-failed send never opens it. Closed by any `turn_state`
-     * for this conversation, by a failed send, and by a change of connection ([closeLocalSendWindow]).
-     * Not [isBusy]: a window the daemon has not confirmed must never arm the stop control.
+     * Sending until the repository's correlated acknowledgement, then Waiting until this conversation's
+     * first turn_state (#1641). Closed by any phase, a failed send or availability change. A completion
+     * cannot reopen a closed window or alter a newer send's window. Blank/refused/upload-failed sends
+     * never open it. This is independent of [isBusy] and must never arm Stop on its own.
      */
-    val localSendPending: StateFlow<Boolean> = _localSendPending.asStateFlow()
+    val localSendStage: StateFlow<LocalSendStage> = _localSendStage.asStateFlow()
 
     /**
      * Whether this conversation's remote claude is stuck retrying an API error, and at which attempt
@@ -1404,30 +1403,37 @@ class ThreadViewModel(
         onOverflowEvent(ThreadEvent.ChannelInfo)
     }
 
-    private fun openLocalSendWindow() {
-        if (!_localSendPending.value) RelayLog.d { "event=local_send_window state=open" }
-        _localSendPending.value = true
+    private fun openLocalSendWindow(): Long {
+        if (_localSendStage.value == LocalSendStage.None) RelayLog.d { "event=local_send_window state=open" }
+        localSendGeneration++
+        _localSendStage.value = LocalSendStage.Sending
+        return localSendGeneration
     }
 
     private fun closeLocalSendWindow(reason: String) {
-        if (_localSendPending.value) RelayLog.d { "event=local_send_window state=closed reason=$reason" }
-        _localSendPending.value = false
+        if (_localSendStage.value != LocalSendStage.None) RelayLog.d { "event=local_send_window state=closed reason=$reason" }
+        localSendGeneration++
+        _localSendStage.value = LocalSendStage.None
     }
 
     /**
-     * Hand one send to the daemon inside the local-send window (#1311): a send that throws closes it. A send
-     * that returns was accepted, and tells the screen to follow the newest end again (#1314).
+     * Hand one send to the daemon inside the local window. Only its current generation may advance to
+     * Waiting or close on failure; acceptance still tells the screen to follow the newest end (#1314).
      */
     private suspend fun <T> sendInLocalWindow(send: suspend () -> T): T {
         clearTurnOutcome("send")
-        openLocalSendWindow()
+        val generation = openLocalSendWindow()
         val sent =
             try {
                 send()
             } catch (e: Throwable) {
-                closeLocalSendWindow("send_failed")
+                if (generation == localSendGeneration) closeLocalSendWindow("send_failed")
                 throw e
             }
+        if (generation == localSendGeneration && _localSendStage.value == LocalSendStage.Sending) {
+            _localSendStage.value = LocalSendStage.Waiting
+            RelayLog.d { "event=local_send_window state=waiting" }
+        }
         RelayLog.d { "event=thread_send_accepted" }
         sentMessageChannel.trySend(Unit)
         return sent

@@ -90,7 +90,7 @@ class ThreadScreenHistoryTest {
         // 100dp short of the oldest end is inside the band...
         scrollToOldestThenTowardNewer(100)
         composeRule.onNodeWithText("Row 1.").assertExists()
-        assertTrue("Row 1 should be partly hidden above the list", oldestRowTop() < listTop())
+        assertTrue("Row 1 should be partly hidden behind the header", oldestRowTop() < readingAreaTop())
         pullTowardOlder(fraction = 0.05f)
         composeRule.runOnIdle { assertEquals(1, demands) }
 
@@ -208,11 +208,11 @@ class ThreadScreenHistoryTest {
             .fetchSemanticsNode()
             .boundsInRoot.top
 
-    private fun listTop(): Float =
+    private fun readingAreaTop(): Float =
         composeRule
-            .onNode(hasScrollToIndexAction())
+            .onNodeWithTag("thread-top-bar")
             .fetchSemanticsNode()
-            .boundsInRoot.top
+            .boundsInRoot.bottom
 
     private fun setScreen(
         state: () -> ThreadUiState,

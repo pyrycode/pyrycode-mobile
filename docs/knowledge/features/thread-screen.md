@@ -19,9 +19,28 @@ The sections that stay here: `## What it does`, `## Wiring` (minus the two subse
 
 ## What it does
 
-The static dark thread frame follows [Figma `16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) at 412 × 892 dp: a 61 dp top-bar frame at (20, 24), an inset rule at y=68, and a message region beginning at (20, 97). Rows keep their own 20 dp gutters; the list gains no second horizontal inset. The top overlay shares the message region's top edge and right gutter. The input area's Figma frame begins at (20, 696) in the attachment-bearing [task-pill variant `568:3139`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=568-3139). There the task pill, at "2 tasks running", occupies (288, 696)–(392, 720), a 104 × 24 dp surface ending at
-the 20 dp right gutter — that width is the two-task label's hug width, not an enforced minimum; a shorter
-label like "1 task running" hugs narrower ([#1628](https://github.com/pyrycode/pyrycode-mobile/issues/1628)). [The 412 × 892 emulator comparison](../../../app/src/androidTest/assets/task-pill-1296/comparison-412x892.png) shows this placement against the Figma render. Shorter composer states rise from the bottom rather than holding that absolute y coordinate. The bottom bar's IME padding moves the composer while the header and remembered reverse-layout list remain in place. See [app bar and overlay placement](thread-screen-how-it-works-overlays-and-app-bar.md#threadtopappbar--figma-168-chrome) and [frame evidence](thread-screen-testing.md#testing).
+The thread follows [Figma `16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8).
+Its message list fills the screen area below the system status bar and above the IME,
+scrolling behind the full-width translucent, progressively blurred header and composer.
+The frame glow and scrim remain behind the thread; foreground controls stay sharp.
+Rows own their 20dp gutters, without a second list inset.
+
+The header's visible content row starts 24dp below the screen-area top, with a 28dp
+row, 16dp rule gap and 1dp rule: 69dp total, retaining 48dp Back and overflow targets.
+At the oldest end, measured header height plus 28dp places the oldest row below the
+rule; short threads keep their top alignment. Top-overlay pills share that 28dp
+clearance and the 20dp right gutter. The composer owns 16dp top/bottom and 20dp side
+padding. Its measured height follows attachments and multiline drafts, excluding
+IME padding. At the newest end an ordinary message surface rests 12dp above the
+status band. Other row types keep their own internal spacing, owned by
+[#1630](https://github.com/pyrycode/pyrycode-mobile/issues/1630); whichever ticket
+integrates second must recheck the combined ordinary-row gap.
+
+IME opening, dismissal and reopening resize the drawing viewport and lift the
+composer. The remembered reverse list retains its follow-newest and history-reader
+rules. See [list reservations](thread-screen-how-it-works-list-and-status-row.md),
+[chrome and overlays](thread-screen-how-it-works-overlays-and-app-bar.md#threadtopappbar--figma-168-chrome)
+and [hardware evidence](thread-screen-testing.md#testing).
 
 `ThreadScreen` uses a `Scaffold` with `ThreadTopAppBar`, a message-region `Box` containing either `EmptyThreadState` or the remembered reverse-layout `LazyColumn`, and a composer column in `bottomBar`. Connecting and Reconnecting appear in the composer status band; Offline Retry and pairing Re-pair appear in `ThreadTopOverlay`, pinned over the message region without reflowing the list. The list folds delivered and queued rows, draws every row at full opacity (session boundaries included, since #1578), and leaves each row's rendering to its own component. The footer, attachments and input keep their existing behavior and visual ownership.
 

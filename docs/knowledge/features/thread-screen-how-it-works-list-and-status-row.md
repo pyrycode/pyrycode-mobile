@@ -4,6 +4,31 @@ Split out of [Thread screen](thread-screen.md) on 2026-09-05 to keep that docume
 
 ### `LazyColumn(reverseLayout = true)` — established in #126, populated in #246, dimmed in #136, nested in a `Column` since #201, rows folded with the queued backlog since #782
 
+Since [#1646](https://github.com/pyrycode/pyrycode-mobile/issues/1646), the list's drawing
+viewport spans the screen area above the IME, beneath both chrome layers. Scaffold
+bar slots still host controls, but their padding is used as a reservation rather
+than applied to the list's drawing bounds. In the reversed list, top content padding
+is the oldest end: measured header height + 28dp. `Arrangement.Top` preserves short
+threads' top alignment; the 69dp header places the oldest row and pinned overlay
+28dp below its rule.
+
+Newest-end padding is `composerHeight - ComposerTopGap - restAdjustment`, clamped
+at zero. Composer height is measured inside its IME padding; `ComposerTopGap` is
+16dp. For a delivered message without tools or attachments, and with no prompt
+rows, `restAdjustment` is 4dp: its existing 16dp `BubbleFrame` trailing space then
+leaves the visible surface 12dp above the status band. Other row kinds get no such
+adjustment or additional list gap. Non-rendering Info banners keep their stable
+rows and keys but are skipped when finding the newest rendered row; otherwise
+appending an invisible banner would change the ordinary-message resting gap.
+Internal row spacing belongs to [#1630](https://github.com/pyrycode/pyrycode-mobile/issues/1630).
+Recheck the combined ordinary-row gap when the second ticket integrates.
+
+Reservations follow actual attachment and draft height changes. When a prompt or
+row-kind change changes the rest adjustment, an idle history reader's keyed anchor
+and physical offset are preserved with `requestScrollToItem`; active drags are not
+cancelled. `FollowNewestEnd` retains its existing rules. The empty state is centered
+within measured chrome reservations rather than behind the bars.
+
 The body shape since [#246](../codebase/246.md) iterated `state.items.asReversed()` with stable composite keys and dispatched at the `ThreadItem` sealed-interface level. **Since [#782](../codebase/782.md) the list walks `ThreadRow`s, not `ThreadItem`s directly:** `val rows = remember(state.items, state.queuedMessages) { foldQueuedRows(state.items, state.queuedMessages) }` joins the thread's items against the daemon's queued backlog (see
 [Queued backlog rendering § The render-time join](queued-backlog-section.md#the-render-time-join-782)),
 and `itemsIndexed(items = rows.asReversed(), ...)` dispatches at the `ThreadRow` sealed-interface level
@@ -72,6 +97,17 @@ branch* below) also gates on `questionState == null`, so a thread whose only con
 renders the `LazyColumn` with the prompt rows, not `EmptyThreadState`. [#1306](permission-modal-overlay.md)
 adds the same `openRequest == null` gate beside it for a pending permission or trust request — see §
 *Inline permission rows and the shared reveal* below, which reuses every mechanism this section describes.
+
+**Focus relocation uses the clear area, not the drawing viewport (#1646).** Content
+padding only reserves resting space; Compose otherwise treats an Other field behind
+chrome as already visible. `ThreadMessageList` supplies a `BringIntoViewSpec` that
+uses the default minimal-distance relocation within measured header/composer bounds.
+`QuestionBlock` retries the focused field's reveal on IME inset or relocation-spec
+changes, including attachment and multiline composer resizing, while retaining the
+last-field action reveal. Limit this spec to the list: `ThreadRowContent` restores
+the inherited spec for nested message scrollables, and the Other field restores
+default relocation within its own well. Without that isolation, a field-local
+scroller incorrectly subtracts the thread's chrome from its own small viewport.
 
 **Prompt rows count as a fixed prefix in the oldest-end history predicate (§ below), never as loaded
 history.** `val promptRowCount = questionState?.let { it.batch.questions.size + 2 } ?: 0` (`+2` for the
@@ -288,24 +324,46 @@ Post-[#254](../codebase/254.md) the `onExpandClick` parameter on `ThreadScreen` 
 
 ### The arm order (#1311)
 
+The band is the first content in the measured composer, after its 16dp top padding.
+The full-width composer owns its translucent background and blur; list reservations
+follow its measured height without counting IME padding. Ordinary messages rest
+12dp above the band at the newest end, as described in the reverse-list section.
+One shape-following Default shadow wraps the status band; in-band `NoticePill` and
+outcome-pill shadows stay disabled to avoid stacking. See
+[chrome treatment](thread-screen-how-it-works-overlays-and-app-bar.md#threadtopappbar--figma-168-chrome).
+
 Not to be confused with the retired `ThreadStatusRow` above (`model · effort`) — this is `ThreadStatusArea`,
 the composer's turn-status band (§ "fourth, static reading" above covers its `waitingForAnswers` arm, above
 this order).
 
-[#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311) ported desktop's `workingIndicatorState` so
-the band keeps one reading up for the whole running turn, instead of going dark once no tool is open during
-`responding`. The precedence used to live only as a `when`'s clause order; it now lives once, as `statusArm`
-beside `StatusReading`, returning a `StatusArm` enum: `None, Connection, Resetting, ApiRetry, Compacting,
-Stalled, TurnOutcome, Thinking, Working, RunningTool`, top wins. Reset session now outranks api-retry
-(matching desktop); `Stalled` (riding [`StallProjection`](stall-state.md) unchanged) and `Working` (the
-`responding` phase, no open tool) are new. Rationale:
-[Thinking indicator § Working and stalled](thinking-indicator.md#working-and-stalled-1311).
+[#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311) ported desktop's `workingIndicatorState`
+so the band keeps a reading throughout a running turn. `statusArm` beside `StatusReading` selects one
+arm. The current order, first match wins, is connection, Reset session, api-retry, compaction, stall,
+turn outcome (only with no local window), running tool while busy, daemon thinking, working while busy,
+Sending, Waiting, None. Offline selects None because the top overlay owns Retry. Permission and question
+readings override this ladder in `ThreadStatusArea`. Sending during a running turn therefore keeps its
+running-tool, thinking or working reading. Both local stages suppress a previous outcome; connection,
+reset, retry, compaction and stall retain their precedence.
 
-**The band is always composed, one glyph (#1312).** `StatusArm.None` still makes `StatusReading` emit
-nothing, but the band no longer collapses when it does: `ThreadStatusArea` always draws the snowflake
-(`ThreadStatusGlyph`) at its leading edge, in a weighted reading box that holds its place even when empty, so
-the input field's position does not depend on which arm — or no arm — is showing. The waiting-for-answers
-reading (above this order) still draws its own question glyph in the snowflake's place instead. The glyph
-turns while `ThreadViewModel.isBusy || localSendPending` holds, independent of `statusArm`, so switching arms
-never restarts the rotation; see [Thinking indicator § The band is always composed, and the glyph always
-turns with it](thinking-indicator.md#working-and-stalled-1311) for the gate and the per-arm cleanup.
+**Local acceptance stages (#1641).** `MainActivity` collects `ThreadViewModel.localSendStage` and passes
+it to `ThreadScreen`. Sending opens immediately before the repository send, including attachment-bearing
+messages after upload, and reads “Sending…” (`thread_sending_label`). The correlated acknowledgement
+advances only the still-current Sending generation to Waiting: “Waiting for Claude” (`thread_waiting_label`)
+or “Waiting for Codex” (`thread_waiting_label_codex`). Acceptance does not establish a started turn:
+Waiting persists indefinitely if no phase arrives. Both labels are plain primary-coloured bodySmall
+text with the existing vertical padding, without thinking tokens or Stop eligibility.
+
+The first `turn_state` of any phase for this conversation closes the local window, as do a failed current
+send and availability changes. Another conversation's event does not close it. Closing invalidates the
+send generation, so a late acknowledgement cannot reopen Waiting and an older success or failure cannot
+alter a newer window. Blank, refused and upload-failed sends retain their no-window paths. See
+[Thinking indicator § Working and stalled](thinking-indicator.md#working-and-stalled-1311) for the
+acceptance/turn distinction and controlled render coverage.
+
+**The band is always composed, one glyph (#1312).** `StatusArm.None` makes `StatusReading` emit nothing,
+but `ThreadStatusArea` retains the snowflake (`ThreadStatusGlyph`) and weighted reading box, keeping the
+input field in place. Waiting for answers substitutes its question glyph. The snowflake turns while
+`ThreadViewModel.isBusy || localSendStage != LocalSendStage.None`, independently of `statusArm`:
+Sending → Waiting and changes to higher-priority readings never restart rotation. Neither local stage
+sets `isBusy`; Stop remains controlled by the daemon turn. See [Thinking indicator § Working and
+stalled](thinking-indicator.md#working-and-stalled-1311) for reduced motion and rotation lifetime.

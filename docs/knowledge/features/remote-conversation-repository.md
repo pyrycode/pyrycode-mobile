@@ -75,6 +75,7 @@ retrieval](attachment-retrieval.md).
 
 Since 2026-09-22 the status events the thread observes each live in their own small internal class
 beside the repository: `StallProjection` (#395), `QueueProjection` (#460), `ApiRetryProjection` (#593),
+`SessionErrorProjection` (#1677),
 `CompactingProjection` (#596), `ThinkingProgressProjection` (#801), `UsageLimitProjection` (#802),
 `AnnouncedModelProjection` (#890), `SessionFactsProjection` (#890) and `McpStatusProjection` (#1343).
 `McpStatusProjection` is the one member of this family that also owns three outbound sends and their own
@@ -128,6 +129,9 @@ and calls the projection's `apply(envelope)`. Its `observe…` override returns 
 `observe(conversationId)`. And a clear that one event causes in another stays in the arm that causes
 it, through the projection's `clear`: every decoded live-session event clears that conversation's
 stall, and a `turn_end` or `session_transition` clears its thinking-progress reading.
+Session errors clear only on send entry, a decoded recognized non-idle `turn_state`,
+or connection teardown; see [conversation session errors](remote-conversation-repository-state-errors-and-handoff.md#conversation-session-errors-1677)
+for validation, observation and clearing rules.
 `dropQueuedMessage` reads `QueueProjection.current` to resolve the echo id before it sends.
 
 A new status event takes the same shape: a new `…Projection.kt` holding its state, decoder and read,
