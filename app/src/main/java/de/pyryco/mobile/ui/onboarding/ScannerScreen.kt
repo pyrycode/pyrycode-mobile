@@ -24,6 +24,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -53,6 +54,8 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.ui.components.MobileModal
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeSource
 
 @Composable
 fun ScannerScreen(
@@ -144,92 +147,102 @@ private fun ScannerViewport(
         color = MaterialTheme.colorScheme.surface,
         modifier = modifier.fillMaxSize(),
     ) {
-        Column(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .scannerAtmosphere(colors.primaryContainer, colors.surfaceContainerLowest, colors.surface)
-                    .systemBarsPadding(),
-        ) {
-            PairingHeader(
-                title = "Pairing",
-                titleColor = colors.onPrimaryContainer,
-                onBack = onNavigateBack,
-                backIcon = rememberVectorPainter(Icons.AutoMirrored.Filled.ArrowBack),
-            )
+        val backdropSource = remember { HazeState() }
+        Box(Modifier.fillMaxSize()) {
             Box(
+                Modifier.matchParentSize().hazeSource(backdropSource).scannerAtmosphere(
+                    MaterialTheme.colorScheme.primaryContainer,
+                    MaterialTheme.colorScheme.surfaceContainerLowest,
+                    MaterialTheme.colorScheme.surface,
+                ),
+            )
+            Column(
                 modifier =
                     Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .padding(start = 16.dp, end = 16.dp, top = 24.dp)
-                        .clip(RoundedCornerShape(24.dp))
-                        .background(MaterialTheme.colorScheme.surfaceContainerLowest),
+                        .fillMaxSize()
+                        .systemBarsPadding(),
             ) {
-                // Back-most layer: the live camera feed (route injects it for ReadyToScan; renders
-                // nothing otherwise). The atmosphere/reticle/hint overlay below composites over it.
-                cameraPreview()
-                Box(Modifier.matchParentSize().background(colors.scrim.copy(alpha = 0.6f)))
-                // Figma uses elliptical gradients; retain the existing circular atmospheric approximation.
-                // Atmosphere gradients, moved off the Box's own drawBehind (which paints behind ALL
-                // children incl. the camera) into a matchParentSize child so they layer over the feed.
+                PairingHeader(
+                    title = "Pairing",
+                    titleColor = colors.onPrimaryContainer,
+                    onBack = onNavigateBack,
+                    backIcon = rememberVectorPainter(Icons.AutoMirrored.Filled.ArrowBack),
+                    backdropSource = backdropSource,
+                )
                 Box(
                     modifier =
                         Modifier
-                            .matchParentSize()
-                            .drawBehind {
-                                val radius = maxOf(size.width, size.height) * 0.7f
-                                drawRect(
-                                    brush =
-                                        Brush.radialGradient(
-                                            0f to blueStop,
-                                            0.6f to blueStop.copy(alpha = 0f),
-                                            1f to Color.Transparent,
-                                            center = Offset(size.width * 0.30f, size.height * 0.40f),
-                                            radius = radius,
-                                        ),
-                                )
-                                drawRect(
-                                    brush =
-                                        Brush.radialGradient(
-                                            0f to coralStop,
-                                            0.6f to coralStop.copy(alpha = 0f),
-                                            1f to Color.Transparent,
-                                            center = Offset(size.width * 0.70f, size.height * 0.70f),
-                                            radius = radius,
-                                        ),
-                                )
-                            },
-                )
-                Canvas(modifier = Modifier.matchParentSize()) {
-                    val spacing = 7.dp.toPx()
-                    val thickness = 1.dp.toPx()
-                    var y = 0f
-                    while (y <= size.height) {
-                        drawRect(
-                            color = stripeColor,
-                            topLeft = Offset(0f, y),
-                            size = Size(size.width, thickness),
-                        )
-                        y += spacing
-                    }
-                }
-                ScannerGuides(Modifier.matchParentSize())
-            }
-            Box(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                TextButton(onClick = onPasteCode, modifier = Modifier.heightIn(min = 48.dp)) {
-                    Text(
-                        text = "Trouble scanning? Paste the pairing code instead",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                        textAlign = TextAlign.Center,
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .padding(start = 16.dp, end = 16.dp, top = 24.dp)
+                            .clip(RoundedCornerShape(24.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainerLowest),
+                ) {
+                    // Back-most layer: the live camera feed (route injects it for ReadyToScan; renders
+                    // nothing otherwise). The atmosphere/reticle/hint overlay below composites over it.
+                    cameraPreview()
+                    Box(Modifier.matchParentSize().background(colors.scrim.copy(alpha = 0.6f)))
+                    // Figma uses elliptical gradients; retain the existing circular atmospheric approximation.
+                    // Atmosphere gradients, moved off the Box's own drawBehind (which paints behind ALL
+                    // children incl. the camera) into a matchParentSize child so they layer over the feed.
+                    Box(
+                        modifier =
+                            Modifier
+                                .matchParentSize()
+                                .drawBehind {
+                                    val radius = maxOf(size.width, size.height) * 0.7f
+                                    drawRect(
+                                        brush =
+                                            Brush.radialGradient(
+                                                0f to blueStop,
+                                                0.6f to blueStop.copy(alpha = 0f),
+                                                1f to Color.Transparent,
+                                                center = Offset(size.width * 0.30f, size.height * 0.40f),
+                                                radius = radius,
+                                            ),
+                                    )
+                                    drawRect(
+                                        brush =
+                                            Brush.radialGradient(
+                                                0f to coralStop,
+                                                0.6f to coralStop.copy(alpha = 0f),
+                                                1f to Color.Transparent,
+                                                center = Offset(size.width * 0.70f, size.height * 0.70f),
+                                                radius = radius,
+                                            ),
+                                    )
+                                },
                     )
+                    Canvas(modifier = Modifier.matchParentSize()) {
+                        val spacing = 7.dp.toPx()
+                        val thickness = 1.dp.toPx()
+                        var y = 0f
+                        while (y <= size.height) {
+                            drawRect(
+                                color = stripeColor,
+                                topLeft = Offset(0f, y),
+                                size = Size(size.width, thickness),
+                            )
+                            y += spacing
+                        }
+                    }
+                    ScannerGuides(Modifier.matchParentSize())
+                }
+                Box(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    TextButton(onClick = onPasteCode, modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text(
+                            text = "Trouble scanning? Paste the pairing code instead",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
                 }
             }
         }

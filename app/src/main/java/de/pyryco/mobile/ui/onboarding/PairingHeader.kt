@@ -20,6 +20,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import de.pyryco.mobile.ui.components.chromeBackdrop
+import de.pyryco.mobile.ui.components.defaultChromeShadow
+import de.pyryco.mobile.ui.theme.threadColors
+import dev.chrisbanes.haze.HazeState
 
 /**
  * The back-and-title header shared by Scanner (13:2), Scanner — Denied (32:2) and Pair Screen (533:2147).
@@ -32,14 +36,19 @@ internal fun PairingHeader(
     titleColor: Color,
     onBack: () -> Unit,
     backIcon: Painter,
+    backdropSource: HazeState,
     modifier: Modifier = Modifier,
     startPadding: Dp = 8.dp,
     backEnabled: Boolean = true,
     divider: Boolean = true,
 ) {
-    Column(modifier.fillMaxWidth()) {
+    Column(modifier.fillMaxWidth().chromeBackdrop(backdropSource, MaterialTheme.colorScheme.threadColors.headerBackdrop, top = true)) {
         Row(
-            Modifier.fillMaxWidth().padding(start = startPadding, end = 20.dp, top = 14.dp).heightIn(min = 48.dp),
+            Modifier
+                .fillMaxWidth()
+                .padding(start = startPadding, end = 20.dp, top = 14.dp)
+                .heightIn(min = 48.dp)
+                .defaultChromeShadow(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack, enabled = backEnabled, modifier = Modifier.size(48.dp)) {

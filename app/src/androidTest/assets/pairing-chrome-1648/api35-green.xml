@@ -1,0 +1,21 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="4" failures="0" errors="0" skipped="0" time="73.447" timestamp="2026-10-04T11:19:06" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.design.PairingHeaderCaptureTest" tests="1" failures="0" errors="0" skipped="0" time="25.872" timestamp="2026-10-04T11:19:06" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="threePairingHeadersKeepTheirGeometryAndBackActions" classname="de.pyryco.mobile.design.PairingHeaderCaptureTest" time="25.872" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.onboarding.ScannerFrameTest" tests="3" failures="0" errors="0" skipped="0" time="43.113" timestamp="2026-10-04T11:19:06" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="compactEnlargedTextFrames" classname="de.pyryco.mobile.ui.onboarding.ScannerFrameTest" time="17.556" />
+    <testcase name="fullSizeLightAndDarkFrames" classname="de.pyryco.mobile.ui.onboarding.ScannerFrameTest" time="15.212" />
+    <testcase name="compactLightAndDarkFrames" classname="de.pyryco.mobile.ui.onboarding.ScannerFrameTest" time="10.345" />
+  </testsuite>
+</testsuites>
