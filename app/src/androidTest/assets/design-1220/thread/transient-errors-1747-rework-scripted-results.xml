@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="1" failures="0" errors="0" skipped="0" time="66.458" timestamp="2026-10-04T16:36:28" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest" tests="1" failures="0" errors="0" skipped="0" time="66.056" timestamp="2026-10-04T16:36:28" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply" classname="de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest" time="66.056" />
+  </testsuite>
+</testsuites>

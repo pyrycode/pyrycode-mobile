@@ -15,3 +15,5 @@ Known ignored methods: MarkdownReaderScreenTest.copiesOfANoteAtTheReadersBound_a
 Before ignores: device crash run had 14 passes and one crashed method; native overlap run had 42 passes, one failure and one skip. Both raw XMLs and the memory-kill excerpt are retained beside this file.
 Requested pixel8 failure/reader PNGs, comparisons, inset/viewport sidecars and capture XML remain unchanged; these frames have no Offline notice. See transient-errors-1747-evidence.txt for their original fresh capture/comparison commands and counts.
 Documentation handoff remains pending, including unresolved Saved/dismissed-elsewhere discrepancies.
+
+python3 scripts/android-test-gate.py scripted offline-retry: exit 0; 1 passed, 0 failures/errors/skips. XML: transient-errors-1747-rework-scripted-results.xml. Device lease freed after 205s; the earlier reconnect attempt exited busy (75) after 300s without running tests.
