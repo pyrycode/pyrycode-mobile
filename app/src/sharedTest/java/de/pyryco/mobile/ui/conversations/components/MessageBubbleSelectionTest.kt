@@ -31,6 +31,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -83,10 +84,13 @@ class MessageBubbleSelectionTest {
      * suspends, so the open menu is the one whose call has not been cancelled yet.
      */
     private class RecordingToolbarProvider : TextContextMenuProvider {
+        var presentationDelayMs: Long = 0
+
         var shown: TextContextMenuDataProvider? = null
             private set
 
         override suspend fun showTextContextMenu(dataProvider: TextContextMenuDataProvider) {
+            delay(presentationDelayMs)
             shown = dataProvider
             try {
                 awaitCancellation()
@@ -153,6 +157,8 @@ class MessageBubbleSelectionTest {
             .onNodeWithText(word, substring = true, useUnmergedTree = true)
             .performTouchInput { longClick() }
         composeTestRule.waitForIdle()
+        // Toolbar presentation can follow Compose becoming idle.
+        composeTestRule.waitUntil(timeoutMillis = TIMEOUT_MS) { toolbar.copyAction() != null }
         val copy = toolbar.copyAction()
         assertNotNull("a long press on '$word' must offer the system Copy action", copy)
         composeTestRule.runOnIdle { copy?.invoke() }
@@ -172,6 +178,14 @@ class MessageBubbleSelectionTest {
         composeTestRule.onRoot().performTouchInput { click(Offset(1f, 1f)) }
         composeTestRule.waitForIdle()
         assertEquals(CODE_WORD, longPressAndCopy(CODE_WORD))
+    }
+
+    @Test
+    fun longPress_waitsForTheAsynchronousCopyMenu() {
+        toolbar.presentationDelayMs = 500
+        setBubble(message(Role.Assistant, PROSE_WORD))
+
+        assertEquals(PROSE_WORD, longPressAndCopy(PROSE_WORD))
     }
 
     // AC2: the code block's own copy button still takes the whole block from inside the selection area.
