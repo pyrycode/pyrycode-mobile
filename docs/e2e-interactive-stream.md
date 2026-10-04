@@ -1112,7 +1112,9 @@ contract.
 `--allow-remote-permissions` peer (the #950 path), to run a command in the background
 (`python3 -c "import time; time.sleep(40)"` — a bare `sleep` of 25s+ is refused by claude's Bash tool, the
 same constraint #849's `WAIT_PROMPT` documents). Once the task starts, the visible thread pill opens the
-panel while work is running; the Actions menu's `Background tasks (N)` count and panel also show it.
+panel while work is running; since #1631 the top overflow's Background tasks row also opens
+the same populated panel after dismissing the menu. The Actions menu's `Background tasks (N)`
+count and panel still show it.
 Once it finishes, the count reads 0. The panel's own end state
 is **not** durable: the terminal `background_task_updated` marks the task Finished, but real claude also
 sends an empty `background_task_roster` unprompted after a finish, and `BackgroundTaskProjection`'s
@@ -3416,6 +3418,20 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — updated:** [#1631](https://github.com/pyrycode/pyrycode-mobile/issues/1631)
+  extends `InteractiveStreamE2ETest.interactiveTurn_backgroundTask_countsInActionsMenuAndPanel`
+  with the top-menu opener while a task runs. Its rung-4 coverage is
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread`:
+  before sending, the top menu opens “No background-task report yet”, dismisses the menu,
+  and the panel closes before the scripted reply. Run it with
+  `python3 scripts/android-test-gate.py scripted ping`; no new method or selector was added.
+  The 2026-10-04 candidate selected live run executed 6, passed 5, failed 1 and skipped 0;
+  the background-task and file methods each passed. The question-answer method failed once,
+  then passed in a same-tree rerun with 1 executed, 0 failed and 0 skipped. This was a selected
+  run, not a full-suite pass. Retained dispatcher reports are
+  `2026-10-04T08-35-25-235Z_real-claude-gate_#1631.log` and its `-rerun_#1631.log` counterpart.
+
 
 - **Coverage — hardened:** [#1637](https://github.com/pyrycode/pyrycode-mobile/issues/1637)
   fixes pending CameraX initialization blocking scanner exit on main, protecting

@@ -460,6 +460,17 @@ settles (`ComposerFileTileTintTest`, #1532). Drawing `LocalView.current` into a
 way `ConversationTreeRowsTest` does, samples the same real pixels without
 going through `forceRedraw` at all.
 
+Shared JVM/device pixel fixtures using fixed pixel offsets must pin Compose density
+as well as Robolectric's qualifier. `@Config(qualifiers = "xxxhdpi")` does not configure device density, so a
+fixed ring-region pixel offset can sample a different part of a 1dp stroke on the
+device even when the JVM assertion passes. `ConversationTreeRowsTest.conversationRow_statusDots_matchRedrawnPaintAndBlink`
+(#1679) scopes
+`CompositionLocalProvider(LocalDensity provides Density(4f))` to its rows and checks
+6dp semantic bounds before sampling centre and ring pixels. This fixes the fixture's
+physical sampling scale without changing the device display; it proves component
+paint, not full-screen geometry at the device's native density. See the
+[list attention dot](channel-list-screen-tree-and-controls.md#attention-dot-878).
+
 ## Probe the evidence itself
 
 An injection or sanitizer test must forge the exact line shape its reader matches.

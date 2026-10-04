@@ -235,8 +235,11 @@ death never restores one a fresh screen instance never opened. The Actions menu'
 it (see [Thread composer footer § Actions menu](thread-composer-footer-actions-menu.md#actions-menu-884)); since
 [#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043) the status band's task-count pill (§
 [Thinking-indicator placement](#thinking-indicator-placement-post-407-moved-in-643) above) sets the same
-flag through the same `{ backgroundTasksOpen = true }` lambda, so the panel now has two openers over one
-piece of state rather than a second flag to keep in sync. Closing the
+flag through the same `{ backgroundTasksOpen = true }` lambda, so both share one piece of state. Since #1631 the
+[thread overflow](thread-overflow-menu.md) adds a third opener immediately after Channel info:
+`ThreadTopAppBar` forwards `onBackgroundTasks = { backgroundTasksOpen = true }`. The row is
+unconditional in channels and chats, even without mutation support or running tasks. It dismisses
+the menu first and preserves the same empty and never-reported panel readings. Closing the
 panel — the close glyph or Back, routed through `MobileReadOnlyModal`'s single
 `onDismissRequest` — only flips it back, sending nothing and touching no task or conversation state.
 [#1496](mobile-modal.md#the-read-only-panel-mobilereadonlymodal) removed the footer Close button and its

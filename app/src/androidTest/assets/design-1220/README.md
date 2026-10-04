@@ -61,6 +61,18 @@ not a mismatch; everything inside the app's window is compared. A host row's con
 disconnected, re-pair-required, update-required — count as reachable list-side states under this rule,
 even though the audited frame draws every host connected (#1431).
 
+## Approved additions without a separate frame
+
+[#1631](https://github.com/pyrycode/pyrycode-mobile/issues/1631) records Juhana's
+2026-10-03 decision that the thread overflow's additional **Background tasks** row
+needs no separate Figma frame. Against
+[Figma `675:5883`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=675-5883),
+it reuses the surrounding flat, text-only Material 3 menu item style, with no icon
+or separator, immediately after Channel info in channels and chats. This is an
+approved addition rather than design drift. It opens the existing task panel even
+with no running tasks; Actions and the task pill retain their entry points. This
+records the design decision, not a new pixel capture or parity verdict.
+
 ## Harness
 
 All under `app/src/androidTest/java/de/pyryco/mobile/design/`. No file under `app/src/main/` is changed.

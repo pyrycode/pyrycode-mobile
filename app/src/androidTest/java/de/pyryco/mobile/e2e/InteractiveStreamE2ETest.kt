@@ -4407,6 +4407,15 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_empty))).assertCountEquals(0)
             closeBackgroundTasks()
 
+            // #1631: the top menu opens that same live roster and dismisses itself.
+            composeTestRule.onNodeWithContentDescription(CD_MORE_ACTIONS).performClick()
+            composeTestRule.onNode(hasText(string(R.string.background_tasks_title)) and hasClickAction()).performClick()
+            composeTestRule.onNodeWithText(string(R.string.thread_overflow_channel_info)).assertDoesNotExist()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasText(started.taskType) and inBackgroundPanel()).fetchSemanticsNodes().isNotEmpty()
+            }
+            closeBackgroundTasks()
+
             // 4. Once the task finishes, the count is 0 and the panel no longer lists the task as live. It
             //    labels the task finished until the empty roster claude sends after a finish drops it (#677's
             //    `applyRoster`), then says there are no tasks; the live gate saw the empty roster win.
