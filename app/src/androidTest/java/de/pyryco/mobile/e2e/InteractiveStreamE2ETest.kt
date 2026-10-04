@@ -2830,15 +2830,14 @@ class InteractiveStreamE2ETest {
     fun interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain() {
         val args = InstrumentationRegistry.getArguments()
         val serverId = twoHostArg(ARG_SERVER_ID)
-        val peer =
-            SecondClientPeer(
-                PairedServer(
-                    serverId = serverId,
-                    token = twoHostArg(ARG_PEER_TOKEN),
-                    relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
-                    serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
-                ),
+        val pairing =
+            PairedServer(
+                serverId = serverId,
+                token = twoHostArg(ARG_PEER_TOKEN),
+                relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
             )
+        val peer = SecondClientPeer(pairing)
         val stopControl = hasContentDescription(string(R.string.cd_thread_interrupt))
         try {
             // 1. A fresh chat on the selected host, its id read off the host's repository as #849 does.
@@ -2853,6 +2852,11 @@ class InteractiveStreamE2ETest {
 
             // 2. The phone starts the held turn; the peer allows its command once, so the command runs and
             //    the permission dialog leaves the composer.
+            // Bind the token through a prior peer, as earlier full-suite scenarios do (#1696).
+            // A new static key on the observing peer must fail even when this method runs alone.
+            SecondClientPeer(pairing).use { prior ->
+                peerStep(prior, "open prior peer") { prior.open(CONNECT_TIMEOUT_MS) }
+            }
             peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
             sendFromPhone(STOP_HOLD_PROMPT)
             val modalId =

@@ -1,8 +1,13 @@
 package de.pyryco.mobile.e2e
 
+import com.southernstorm.noise.protocol.HandshakeState
+import com.southernstorm.noise.protocol.Noise
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyPair
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerStore
+import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.HelloClientPayload
+import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.NoiseSessionFactory
 import kotlinx.coroutines.Dispatchers
@@ -10,6 +15,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.decodeFromJsonElement
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -24,6 +31,59 @@ class PeerDeviceStaticKeyStoreTest {
             relayUrl = "ws://localhost:1234",
             serverStaticPublicKey = Base64.getEncoder().encodeToString(ByteArray(32) { 7 }),
         )
+
+    @Test
+    fun sequentialFactoriesPresentSameBoundIdentityInFreshNoiseHandshakes() =
+        runTest {
+            val dispatcher = StandardTestDispatcher(testScheduler)
+            val responderKey = Noise.createDH("25519")
+            val responderPrivateKey = ByteArray(32)
+            try {
+                responderKey.generateKeyPair()
+                responderKey.getPrivateKey(responderPrivateKey, 0)
+                val responderPublicKey = ByteArray(32).also { responderKey.getPublicKey(it, 0) }
+                val server = pairing.copy(serverStaticPublicKey = Base64.getEncoder().encodeToString(responderPublicKey))
+                val identities = mutableListOf<ByteArray>()
+                val handshakes = mutableListOf<ByteArray>()
+                repeat(2) {
+                    val pairingStore =
+                        object : PairedServerStore {
+                            override suspend fun load(): PairedServer = server
+
+                            override suspend fun save(record: PairedServer): Unit = error("fixed test pairing")
+                        }
+                    val session =
+                        NoiseSessionFactory(
+                            PeerDeviceStaticKeyStore(server.copy()),
+                            pairingStore,
+                            NoiseClientInfo("test-peer", "test"),
+                            dispatcher,
+                        ).create()
+                    val responder = HandshakeState("Noise_IK_25519_ChaChaPoly_BLAKE2s", HandshakeState.RESPONDER)
+                    try {
+                        responder.localKeyPair.setPrivateKey(responderPrivateKey, 0)
+                        responder.start()
+                        val init = session.writeInit()
+                        val plaintext = ByteArray(init.size)
+                        val length = responder.readMessage(init, 0, init.size, plaintext, 0)
+                        val envelope = MobileJson.decodeFromString<Envelope>(String(plaintext, 0, length, Charsets.UTF_8))
+                        val hello = MobileJson.decodeFromJsonElement<HelloClientPayload>(envelope.payload)
+                        assertTrue("handshake carries hello", envelope.type == "hello")
+                        assertTrue("successive peers use the same synthetic pairing", hello.token == server.token)
+                        identities += ByteArray(32).also { responder.remotePublicKey.getPublicKey(it, 0) }
+                        handshakes += init
+                    } finally {
+                        responder.destroy()
+                        session.close()
+                    }
+                }
+                assertTrue("successive handshakes present the token-bound static identity", identities[0].contentEquals(identities[1]))
+                assertFalse("successive peers still generate fresh handshake state", handshakes[0].contentEquals(handshakes[1]))
+            } finally {
+                responderPrivateKey.fill(0)
+                responderKey.destroy()
+            }
+        }
 
     @Test
     fun `sequential stores retain the host and token identity`() =
