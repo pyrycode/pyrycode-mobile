@@ -56,7 +56,8 @@ import java.util.concurrent.atomic.AtomicLong
  * other client of the same daemon. It pairs with its own `pyry pair` token (`peerToken`, minted by
  * `scripts/e2e-emulator.sh`) and its own process-retained device key, never the phone's, and speaks the mobile
  * wire protocol over the same relay the phone dials, through the app's own [OkHttpRelayTransport],
- * [NoiseSessionFactory] and [NoiseSessionPump].
+ * [NoiseSessionFactory] and [NoiseSessionPump]. Its static identity is retained in memory for this
+ * pairing across scenarios by [PeerDeviceKeyStore], matching the daemon's token-to-key binding.
  *
  * It never touches the app under test: its pairing record and key live in memory only, so the phone's
  * credential store, host list and registry selection are exactly what they were. One peer per scenario,
@@ -76,7 +77,7 @@ import java.util.concurrent.atomic.AtomicLong
 class SecondClientPeer(
     private val pairing: PairedServer,
 ) : AutoCloseable {
-    internal val keyStore: DeviceStaticKeyStore = PeerDeviceStaticKeyStore(pairing)
+    internal val keyStore: DeviceStaticKeyStore = PeerDeviceKeyStore(pairing)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val received = MutableStateFlow<List<Envelope>>(emptyList())
     private val requestId = AtomicLong()
