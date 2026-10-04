@@ -118,7 +118,7 @@ class ThreadCanvasPaletteTest {
 
     private fun assertCanvas() {
         val bounds = rule.onNodeWithTag("canvas").fetchSemanticsNode().boundsInRoot
-        val stream = if (reader) null else rule.onNodeWithTag("thread-message-region").fetchSemanticsNode().boundsInRoot
+        val composer = if (reader) null else rule.onNodeWithTag("thread-composer").fetchSemanticsNode().boundsInRoot
         assertEquals(dark to wallpaper, renderedMode)
         assertEquals(expectedWidth.toFloat(), bounds.width, 1f)
         val title = if (reader) "Canvas.md" else "Canvas thread"
@@ -163,11 +163,11 @@ class ThreadCanvasPaletteTest {
                 pixel(160f, ruleY - 1.5f, canvas)
                 pixel(160f, ruleY + 1.5f, canvas)
             }
-            if (dark && !wallpaper && stream != null) {
-                // #1548: the input area paints no band of its own, so the glow runs across its top edge unbroken.
+            if (dark && !wallpaper && composer != null) {
+                // #1646: the new composer gradient begins transparent, preserving the canvas at its top edge.
                 val x = bounds.center.x.toInt()
-                val above = Color(bitmap.getPixel(x, (stream.bottom - 4 * density).toInt()))
-                val below = Color(bitmap.getPixel(x, (stream.bottom + 4 * density).toInt()))
+                val above = Color(bitmap.getPixel(x, (composer.top - 4 * density).toInt()))
+                val below = Color(bitmap.getPixel(x, (composer.top + 4 * density).toInt()))
                 assertTrue("the glow reaches the input area top edge", above.blue > canvas.blue + 2f / 255f)
                 assertEquals("no band edge where the input area starts", above.blue, below.blue, 2f / 255f)
             } else {

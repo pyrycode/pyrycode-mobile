@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="1" failures="0" errors="0" skipped="0" time="3.558" timestamp="2026-10-03T23:19:51" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" tests="1" failures="0" errors="0" skipped="0" time="3.315" timestamp="2026-10-03T23:19:51" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd_0" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="large_text_actions_stack_and_pointer_edges_submit_only_this_batch" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="3.315" />
+  </testsuite>
+</testsuites>

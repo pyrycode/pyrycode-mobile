@@ -1,6 +1,9 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.rememberScrollableState
 import androidx.compose.foundation.gestures.scrollable
@@ -20,6 +23,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
@@ -34,6 +39,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -53,6 +59,7 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -77,6 +84,8 @@ import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.components.EditChannelModal
+import de.pyryco.mobile.ui.components.chromeBackdrop
+import de.pyryco.mobile.ui.components.defaultChromeShadow
 import de.pyryco.mobile.ui.conversations.components.ApiRetryIndicator
 import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
@@ -111,6 +120,8 @@ import de.pyryco.mobile.ui.conversations.components.UnrecognizedMessageRow
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.conversations.components.formatRelativeTime
 import de.pyryco.mobile.ui.theme.threadColors
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeSource
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
@@ -121,11 +132,10 @@ import kotlinx.datetime.Instant
 internal const val STATUS_READING_TEST_TAG = "thread-status-reading"
 
 // Figma 16:8's `Input area` (533:1957) and its offsets inside the 412dp reference frame: a 20dp
-// content gutter (372dp of content), 8dp between the area's three bands, 12dp of air above it where
-// the message area ends, and 16dp below it at the frame's foot.
+// content gutter (372dp of content), 8dp between the bands, and 16dp above and below its content.
 internal val ComposerGutter = 20.dp
 private val ComposerSectionGap = 8.dp
-private val ComposerTopGap = 12.dp
+private val ComposerTopGap = 16.dp
 private val ComposerBottomGap = 16.dp
 private val AttachmentStripTouchOverlap = 5.dp
 
@@ -134,8 +144,7 @@ private val AttachmentStripTouchOverlap = 5.dp
 private val FooterTouchBottomOverflow = 12.dp
 private val FrameFooterTouchHeight = 28.dp
 
-// #1562: the message area starts at the header's rule, so scrolled rows run up to it. This inset keeps a
-// short stream, the empty state and the top overlay where they sat when the area began 28dp lower.
+// Resting rows and top pills begin 28dp below the measured header rule; scrolled rows draw behind it.
 private val MessageAreaTopInset = 28.dp
 private val TopOverlayTopGap = MessageAreaTopInset
 private val FrameGlowRadius = 480.dp
@@ -167,7 +176,7 @@ private const val PERMISSION_ROW_COUNT = 2
 /** The refused-answer notice's slot in the thread (#1340). */
 internal const val PERMISSION_REJECTION_TEST_TAG = "thread-permission-rejection"
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun ThreadScreen(
     state: ThreadUiState,
@@ -394,31 +403,32 @@ fun ThreadScreen(
     val imeVisible = WindowInsets.isImeVisible
     val scheme = MaterialTheme.colorScheme
     val frameColors = scheme.threadColors
-    Box(
-        modifier =
-            modifier
-                .drawWithCache {
-                    val brush =
-                        frameColors.glow?.let { glow ->
-                            Brush.radialGradient(
-                                0f to glow,
-                                (FRAME_GLOW_STOP / 2f) to lerp(glow, scheme.onPrimary, 0.5f).copy(alpha = 0.5f),
-                                FRAME_GLOW_STOP to scheme.onPrimary.copy(alpha = 0f),
-                                center = Offset(size.width * (196f / 412f), 265.dp.toPx()),
-                                radius = FrameGlowRadius.toPx(),
-                            )
-                        }
-                    onDrawBehind {
-                        if (brush == null) {
-                            drawRect(frameColors.background)
-                        } else {
-                            drawRect(scheme.surface)
-                            drawRect(brush)
-                            drawRect(scheme.scrim.copy(alpha = FRAME_SCRIM_ALPHA))
-                        }
-                    }
-                }.onGloballyPositioned { layerOrigin = it.positionInWindow() },
-    ) {
+    val chromeSource = remember { HazeState() }
+    val density = LocalDensity.current
+    var composerHeight by remember { mutableStateOf(0.dp) }
+    val frameBackground =
+        Modifier.drawWithCache {
+            val brush =
+                frameColors.glow?.let { glow ->
+                    Brush.radialGradient(
+                        0f to glow,
+                        (FRAME_GLOW_STOP / 2f) to lerp(glow, scheme.onPrimary, 0.5f).copy(alpha = 0.5f),
+                        FRAME_GLOW_STOP to scheme.onPrimary.copy(alpha = 0f),
+                        center = Offset(size.width * (196f / 412f), 265.dp.toPx()),
+                        radius = FrameGlowRadius.toPx(),
+                    )
+                }
+            onDrawBehind {
+                if (brush == null) {
+                    drawRect(frameColors.background)
+                } else {
+                    drawRect(scheme.surface)
+                    drawRect(brush)
+                    drawRect(scheme.scrim.copy(alpha = FRAME_SCRIM_ALPHA))
+                }
+            }
+        }
+    Box(modifier = modifier.then(frameBackground).onGloballyPositioned { layerOrigin = it.positionInWindow() }) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             containerColor = if (frameColors.glow == null) frameColors.background else Color.Transparent,
@@ -436,21 +446,23 @@ fun ThreadScreen(
                     isPromoted = state.isPromoted,
                     mutationsSupported = state.mutationsSupported,
                     memorySearch = state.runConfig.memorySearch,
+                    modifier =
+                        Modifier
+                            .chromeBackdrop(chromeSource, frameColors.headerBackdrop, top = true)
+                            .testTag("thread-top-bar"),
                 )
             },
-            // Figma 16:8's `Input area` (533:1957): a gap-8 column of the status area, the input field and
-            // the model/effort footer, opening 12dp below the message area and closing 16dp above the
-            // frame's foot. It owns the IME lift, so the whole input area rises above the keyboard as one
-            // unit while the header and the list stay put, and sitting in the bottomBar slot it leaves the
-            // message list the only scrolling region. #1548: it paints no background, so the frame's glow
-            // runs behind it as in 16:8; the list still ends above it at the Scaffold's inner padding.
+            // The full-width composer owns its chrome; IME padding stays outside its measured height.
             bottomBar = {
                 Column(
                     modifier =
                         Modifier
                             .fillMaxWidth()
                             .imePadding()
-                            .padding(top = ComposerTopGap, bottom = ComposerBottomGap),
+                            .chromeBackdrop(chromeSource, frameColors.composerBackdrop, top = false)
+                            .onSizeChanged { composerHeight = with(density) { it.height.toDp() } }
+                            .testTag("thread-composer")
+                            .padding(start = ComposerGutter, top = ComposerTopGap, end = ComposerGutter, bottom = ComposerBottomGap),
                     verticalArrangement = Arrangement.spacedBy(ComposerSectionGap),
                 ) {
                     // #897: the open tool call names itself in the thinking arm's slot, only while a turn runs.
@@ -495,7 +507,6 @@ fun ThreadScreen(
                             connected = connected,
                             modifier =
                                 Modifier
-                                    .padding(horizontal = ComposerGutter)
                                     .frameHeightWithTouchOverflow(top = AttachmentStripTouchOverlap),
                         )
                     }
@@ -507,7 +518,7 @@ fun ThreadScreen(
                         // Blank sends are still refused — the button disables, and the IME Send action that
                         // can still fire on an empty field hits the ViewModel's own blank guard.
                         onSend = { onSendMessage(draft) },
-                        modifier = Modifier.padding(horizontal = ComposerGutter),
+                        modifier = Modifier,
                         isBusy = isBusy,
                         onInterrupt = onInterrupt,
                         onAnchorChanged = { inputAnchor = it },
@@ -526,7 +537,6 @@ fun ThreadScreen(
                         onAnchorChanged = { control, bounds -> footerAnchors[control] = bounds },
                         modifier =
                             Modifier
-                                .padding(horizontal = ComposerGutter)
                                 .frameHeightWithTouchOverflow(bottom = FooterTouchBottomOverflow),
                         onAttach = openAttachmentPicker,
                         agent = state.agent,
@@ -537,11 +547,14 @@ fun ThreadScreen(
                 }
             },
         ) { inner ->
+            val headerHeight = inner.calculateTopPadding()
             Column(
                 modifier =
                     Modifier
-                        .padding(inner)
-                        .fillMaxSize(),
+                        .imePadding()
+                        .fillMaxSize()
+                        .hazeSource(chromeSource)
+                        .then(frameBackground),
             ) {
                 // #782: the thread's rows are the join of its items with the daemon's queued backlog, so a
                 // message the daemon parked draws once — in place, carrying the queue treatment — instead
@@ -589,6 +602,7 @@ fun ThreadScreen(
                                     .fillMaxSize()
                                     .olderHistoryPull(emptyThreadPull)
                                     .scrollable(rememberScrollableState { 0f }, Orientation.Vertical)
+                                    .padding(top = headerHeight, bottom = composerHeight)
                                     .padding(start = 24.dp, top = MessageAreaTopInset, end = 24.dp),
                         )
                     } else {
@@ -600,6 +614,33 @@ fun ThreadScreen(
                             (shownQuestion?.let { it.batch.questions.size + 2 } ?: 0) +
                                 (if (openRequest != null) PERMISSION_ROW_COUNT else 0) +
                                 (if (answerRejected) 1 else 0)
+                        // Info banners retain their keys but render nothing; spacing follows the visible row.
+                        val newestRenderedRow =
+                            rows.lastOrNull { row ->
+                                ((row as? ThreadRow.Delivered)?.item as? ThreadItem.Banner)?.level != BannerLevel.Info
+                            }
+                        val restAdjustment = ordinaryMessageRestAdjustment(newestRenderedRow, promptRowCount)
+                        var previousRestAdjustment by remember(listState) { mutableStateOf(restAdjustment) }
+                        SideEffect {
+                            val delta = with(density) { (previousRestAdjustment - restAdjustment).roundToPx() }
+                            // End spacing must not move a keyed history reader when a prompt or row kind changes.
+                            if (delta != 0 && listState.firstVisibleItemIndex > 0 && !listState.isScrollInProgress) {
+                                val anchor =
+                                    listState.layoutInfo.visibleItemsInfo.firstOrNull {
+                                        it.index == listState.firstVisibleItemIndex
+                                    }
+                                reversedRows.indices
+                                    .firstOrNull { index ->
+                                        reversedRows[index].listKey(rows.lastIndex - index) == anchor?.key
+                                    }?.let { index ->
+                                        listState.requestScrollToItem(
+                                            index + promptRowCount,
+                                            listState.firstVisibleItemScrollOffset + delta,
+                                        )
+                                    }
+                            }
+                            previousRestAdjustment = restAdjustment
+                        }
                         // #1352: prompt rows take the lowest indices of the reversed list and are never
                         // history, so the oldest thread row sits after them.
                         val oldestRowIndex by rememberUpdatedState(if (rows.isEmpty()) -1 else rows.size + promptRowCount - 1)
@@ -635,17 +676,23 @@ fun ThreadScreen(
                                     val actions = info.visibleItemsInfo.firstOrNull { it.index == actionsIndex }
                                     val shown =
                                         actions != null &&
-                                            actions.offset >= info.viewportStartOffset &&
-                                            actions.offset + actions.size <= info.viewportEndOffset
+                                            actions.offset >= 0 &&
+                                            actions.offset + actions.size <= info.viewportEndOffset - info.afterContentPadding
                                     if (!shown) listState.scrollToItem(actionsIndex)
                                 }
                             }
-                        LazyColumn(
+                        val rowRelocationSpec = LocalBringIntoViewSpec.current
+                        ThreadMessageList(
                             state = listState,
                             modifier = Modifier.fillMaxSize().olderHistoryPull(listPull),
-                            reverseLayout = true,
-                            // #1562: padding at the oldest end, inside the clip, so scrolled rows still reach the rule.
-                            contentPadding = PaddingValues(top = MessageAreaTopInset),
+                            headerHeight = headerHeight,
+                            composerHeight = composerHeight,
+                            // Padding follows measured chrome; the drawing viewport continues underneath both bars.
+                            contentPadding =
+                                PaddingValues(
+                                    top = headerHeight + MessageAreaTopInset,
+                                    bottom = (composerHeight - ComposerTopGap - restAdjustment).coerceAtLeast(0.dp),
+                                ),
                             // #1509: a reversed list defaults to bottom-anchored; Figma `640:2646` starts a
                             // short stream under the header. An overflowing stream is unaffected.
                             verticalArrangement = Arrangement.Top,
@@ -714,7 +761,7 @@ fun ThreadScreen(
                                 key = { reversedIndex, row -> row.listKey(rows.size - 1 - reversedIndex) },
                             ) { reversedIndex, row ->
                                 val chronologicalIndex = rows.size - 1 - reversedIndex
-                                Box {
+                                ThreadRowContent(rowRelocationSpec) {
                                     when (row) {
                                         is ThreadRow.Delivered ->
                                             when (val item = row.item) {
@@ -813,7 +860,7 @@ fun ThreadScreen(
                         modifier =
                             Modifier
                                 .align(Alignment.TopEnd)
-                                .padding(start = ComposerGutter, top = TopOverlayTopGap, end = ComposerGutter),
+                                .padding(start = ComposerGutter, top = headerHeight + TopOverlayTopGap, end = ComposerGutter),
                         mcpFailure = mcpFailure,
                         onOpenMcpFailure = onOpenMcpFailure,
                     )
@@ -1006,6 +1053,57 @@ fun ThreadScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ThreadRowContent(
+    relocationSpec: BringIntoViewSpec,
+    content: @Composable () -> Unit,
+) {
+    CompositionLocalProvider(LocalBringIntoViewSpec provides relocationSpec) { Box { content() } }
+}
+
+/** Keep the drawing viewport full size while relocating focus between the measured chrome surfaces. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ThreadMessageList(
+    state: LazyListState,
+    headerHeight: Dp,
+    composerHeight: Dp,
+    contentPadding: PaddingValues,
+    verticalArrangement: Arrangement.Vertical,
+    modifier: Modifier = Modifier,
+    content: LazyListScope.() -> Unit,
+) {
+    val density = LocalDensity.current
+    val relocationSpec =
+        remember(headerHeight, composerHeight, density) {
+            val headerPx = with(density) { headerHeight.toPx() }
+            val composerPx = with(density) { composerHeight.toPx() }
+            object : BringIntoViewSpec {
+                override fun calculateScrollDistance(
+                    offset: Float,
+                    size: Float,
+                    containerSize: Float,
+                ): Float =
+                    super.calculateScrollDistance(
+                        offset - headerPx,
+                        size,
+                        (containerSize - headerPx - composerPx).coerceAtLeast(0f),
+                    )
+            }
+        }
+    CompositionLocalProvider(LocalBringIntoViewSpec provides relocationSpec) {
+        LazyColumn(
+            state = state,
+            modifier = modifier,
+            reverseLayout = true,
+            contentPadding = contentPadding,
+            verticalArrangement = verticalArrangement,
+            content = content,
+        )
+    }
+}
+
 /**
  * Figma `16:8`'s `Status area` (`111:3525`) — the composer's top band, carrying whichever live turn-status
  * signal is current (#643 moved this block here from the foot of the content `Column`).
@@ -1072,7 +1170,12 @@ private fun ThreadStatusArea(
     // #1312: one always-composed band. The glyph is its first child in every state, so a reading change or
     // the task pill never gives the snowflake a new composition node and its turn never restarts.
     Row(
-        modifier = Modifier.fillMaxWidth().heightIn(min = 24.dp).padding(horizontal = ComposerGutter),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 24.dp)
+                .defaultChromeShadow()
+                .testTag("thread-status-band"),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1141,6 +1244,15 @@ private fun ThreadStatusArea(
             }
         }
     }
+}
+
+/** Account only for ordinary BubbleFrame trailing space; other row kinds own their resting gap (#1630). */
+private fun ordinaryMessageRestAdjustment(
+    row: ThreadRow?,
+    promptRows: Int,
+): Dp {
+    val message = ((row as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)?.message
+    return if (promptRows == 0 && message != null && message.toolCall == null && message.attachments.isEmpty()) 4.dp else 0.dp
 }
 
 /** Which one reading the status band shows (#1311); see [statusArm]. */

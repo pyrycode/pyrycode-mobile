@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.thread.SessionBoundaryVisibilityTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-03T22:34:53.727Z" hostname="Juhanas-Air" time="0.133">
+  <properties/>
+  <testcase name="appended_boundary_is_revealed_after_a_tall_wrap_up_reply" classname="de.pyryco.mobile.ui.conversations.thread.SessionBoundaryVisibilityTest" time="0.132"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

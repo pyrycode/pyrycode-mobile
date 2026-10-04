@@ -405,7 +405,10 @@ class MainActivityInsetsDeviceTest {
                 assertTrue("send reachable on reopening", screenBounds(send.assertIsEnabled()).bottom <= reopenedKeyboardTop)
                 // The preservation cycle above never scrolls; now prove scrolling with the IME open.
                 val beforeScroll = list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
-                list.performTouchInput { swipeDown() }
+                val listTop = bounds(list).top
+                val dragTop = bounds(rule.onNodeWithTag("thread-top-bar")).bottom - listTop + 24 * density
+                val dragBottom = bounds(rule.onNodeWithTag("thread-composer")).top - listTop - 24 * density
+                list.performTouchInput { swipeDown(startY = dragTop, endY = dragBottom) }
                 assertTrue(
                     "messages scroll with keyboard open",
                     list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value() > beforeScroll,

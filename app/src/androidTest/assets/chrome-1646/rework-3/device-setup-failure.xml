@@ -1,0 +1,28 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="12" failures="1" errors="0" skipped="0" time="30.353" timestamp="2026-10-04T03:35:50" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" tests="12" failures="1" errors="0" skipped="0" time="30.111" timestamp="2026-10-04T03:35:50" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd_0" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="overlapping_prompts_restore_an_originally_protected_window" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="2.321" />
+    <testcase name="overlapping_prompts_keep_protection_when_the_incoming_owner_exits_first" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="1.096" />
+    <testcase name="failed_refusal_shows_an_error_and_keeps_selections" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="1.769" />
+    <testcase name="ime_keeps_an_earlier_other_clear_of_chrome_on_open_dismiss_and_reopen" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="11.716">
+      <failure>androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 10000 ms
+at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidComposeUiTestImpl.waitUntil(ComposeUiTest.android.kt:809)
+at androidx.compose.ui.test.junit4.AndroidComposeTestRule.waitUntil(AndroidComposeTestRule.android.kt:378)
+at de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest.ime_keeps_an_earlier_other_clear_of_chrome_on_open_dismiss_and_reopen(QuestionBatchModalTest.kt:386)
+</failure>
+    </testcase>
+    <testcase name="overlapping_prompts_keep_protection_when_the_outgoing_owner_exits_first" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="1.028" />
+    <testcase name="multiple_choice_uses_checkboxes_and_continue_sends_one_answer" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="1.973" />
+    <testcase name="ime_keeps_the_last_other_field_and_actions_reachable_at_320_by_700" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="2.694" />
+    <testcase name="question_components_use_figma_control_geometry_and_keep_other_editable" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="1.658" />
+    <testcase name="large_text_actions_stack_and_pointer_edges_submit_only_this_batch" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="1.735" />
+    <testcase name="single_choice_uses_radio_semantics_and_other_clears_the_pick" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="1.457" />
+    <testcase name="inline_prompt_protects_capture_rejects_obscured_touches_and_restores_window_policy" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="1.143" />
+    <testcase name="long_daemon_text_wraps_and_other_draft_survives_a_choice_change_at_large_text" classname="de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest" time="1.521" />
+  </testsuite>
+</testsuites>

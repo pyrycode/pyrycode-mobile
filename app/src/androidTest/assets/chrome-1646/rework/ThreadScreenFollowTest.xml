@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadScreenFollowTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-10-03T22:34:58.428Z" hostname="Juhanas-Air" time="2.965">
+  <properties/>
+  <testcase name="while_not_following_no_row_tool_result_or_queued_row_moves_the_reader" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenFollowTest" time="0.081"/>
+  <testcase name="a_reader_on_a_prompt_resolved_elsewhere_follows_the_reply_that_follows" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenFollowTest" time="0.063"/>
+  <testcase name="a_swipe_at_the_newest_end_that_cannot_move_the_list_leaves_following_on_for_a_new_row_and_a_streamed_delta" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenFollowTest" time="0.814"/>
+  <testcase name="a_position_restored_away_from_the_end_is_not_following_and_one_at_the_end_is" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenFollowTest" time="0.109"/>
+  <testcase name="while_following_a_tool_result_and_a_queued_row_stay_in_view" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenFollowTest" time="0.061"/>
+  <testcase name="a_reader_in_history_while_a_prompt_is_open_stays_there_when_it_is_resolved" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenFollowTest" time="0.085"/>
+  <testcase name="an_accepted_attachment_send_after_scrolling_up_brings_the_newest_row_into_view" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenFollowTest" time="0.057"/>
+  <testcase name="a_refused_send_does_not_move_the_list" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenFollowTest" time="0.045"/>
+  <testcase name="a_scroll_refused_mid_stream_costs_one_scroll_and_later_growth_is_followed" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenFollowTest" time="0.807"/>
+  <testcase name="a_reply_whose_pin_is_refused_at_arrival_is_followed_once_the_finger_lifts" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenFollowTest" time="0.731"/>
+  <testcase name="an_accepted_text_send_after_scrolling_up_brings_the_newest_row_and_the_reply_into_view" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenFollowTest" time="0.109"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

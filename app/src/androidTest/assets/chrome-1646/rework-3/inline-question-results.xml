@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadInlineQuestionTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-10-04T03:30:02.966Z" hostname="Juhanas-Air" time="2.679">
+  <properties/>
+  <testcase name="arrival_and_edits_preserve_a_history_reader_and_prompt_rows_do_not_advance_history_demand" classname="de.pyryco.mobile.ui.conversations.thread.ThreadInlineQuestionTest" time="0.196"/>
+  <testcase name="continue_and_refuse_are_disabled_offline_while_picks_stay_editable_and_re_enable_on_reconnect" classname="de.pyryco.mobile.ui.conversations.thread.ThreadInlineQuestionTest" time="0.255"/>
+  <testcase name="focusing_other_reveals_the_field_and_both_actions" classname="de.pyryco.mobile.ui.conversations.thread.ThreadInlineQuestionTest" time="0.126"/>
+  <testcase name="focusing_an_earlier_other_keeps_the_field_in_view_on_every_frame" classname="de.pyryco.mobile.ui.conversations.thread.ThreadInlineQuestionTest" time="0.193"/>
+  <testcase name="arrival_reveals_the_batch_to_a_reader_at_the_newest_end" classname="de.pyryco.mobile.ui.conversations.thread.ThreadInlineQuestionTest" time="0.107"/>
+  <testcase name="an_open_permission_prompt_withholds_the_question_until_it_resolves_with_picks_intact" classname="de.pyryco.mobile.ui.conversations.thread.ThreadInlineQuestionTest" time="0.124"/>
+  <testcase name="empty_thread_has_inline_questions_active_back_and_composer_without_history_demand" classname="de.pyryco.mobile.ui.conversations.thread.ThreadInlineQuestionTest" time="0.13"/>
+  <testcase name="stacked_actions_sit_at_the_start_with_cancel_centred_over_continue" classname="de.pyryco.mobile.ui.conversations.thread.ThreadInlineQuestionTest" time="0.142"/>
+  <testcase name="failure_feedback_is_announced_and_the_title_is_a_heading" classname="de.pyryco.mobile.ui.conversations.thread.ThreadInlineQuestionTest" time="0.1"/>
+  <testcase name="other_choice_matches_the_frame_and_keeps_a_48dp_field_target" classname="de.pyryco.mobile.ui.conversations.thread.ThreadInlineQuestionTest" time="0.295"/>
+  <testcase name="earlier_other_focus_clears_both_bars_and_tracks_viewport_and_composer_changes" classname="de.pyryco.mobile.ui.conversations.thread.ThreadInlineQuestionTest" time="0.991"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -314,6 +314,8 @@ fun PyrycodeMobileTheme(
             surface = threadCanvas ?: colorScheme.surface,
             headerRule = if (threadCanvas != null) colorScheme.inversePrimary else colorScheme.outlineVariant,
             glow = if (threadCanvas != null) colorScheme.primaryContainer else null,
+            headerBackdrop = if (threadCanvas != null) Color(0xFF09141D) else colorScheme.surface,
+            composerBackdrop = if (threadCanvas != null) Color(0xFF0B0E11) else colorScheme.surface,
         )
     val composerFieldContainer =
         if (darkTheme && !dynamicColor) onPrimaryDark.copy(alpha = 0.41f) else colorScheme.surfaceContainerHigh

@@ -1,0 +1,12 @@
+de.pyryco.mobile.ui.conversations.thread.SlashCommandTypeAheadScreenTest: executed=9 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadCanvasPaletteTest: executed=5 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadChromeTest: executed=3 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterTest: executed=14 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadFrameTest: executed=9 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadInlineQuestionTest: executed=10 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadMessageAreaTopTest: executed=3 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadScreenFollowTest: executed=11 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest: executed=11 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadScreenNewestRowTest: executed=4 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadScreenShortStreamTest: executed=2 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest: executed=11 failed=0 errors=0 skipped=0

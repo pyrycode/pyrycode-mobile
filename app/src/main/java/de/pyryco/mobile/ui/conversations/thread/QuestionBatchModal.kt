@@ -6,9 +6,12 @@ import android.view.View
 import android.view.Window
 import android.view.WindowManager
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -35,6 +38,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -241,6 +245,7 @@ private const val MAX_QUESTION_TEXT = 8192
  * view, so the field and both actions show above the keyboard (#1484, Figma `636:3803`). The thread passes it to the
  * last question only; the others keep [NoReveal].
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun QuestionBlock(
     index: Int,
@@ -320,6 +325,7 @@ internal fun QuestionBlock(
                             val scope = rememberCoroutineScope()
                             var focused by remember { mutableStateOf(false) }
                             val imeBottom = WindowInsets.ime.getBottom(LocalDensity.current)
+                            val relocationSpec = LocalBringIntoViewSpec.current
                             // The last run sees the settled inset, so every run ends at the same position. The effect can
                             // start while the lazy item is composed inside the list's measure, where a scroll may not run,
                             // so the scroll waits for the next frame.
@@ -328,49 +334,53 @@ internal fun QuestionBlock(
                                 currentRevealActions()
                                 requester.bringIntoView()
                             }
-                            LaunchedEffect(focused, imeBottom) {
+                            LaunchedEffect(focused, imeBottom, relocationSpec) {
                                 if (focused) reveal()
                             }
                             val placeholder = stringResource(R.string.question_other_placeholder)
                             // Figma `636:3279`: the 32 dp well is the field's whole layout, 28 dp below the label's top. Its 48 dp
                             // touch target comes from pointer hit-test expansion to `ViewConfiguration.minimumTouchTargetSize`,
                             // which takes no layout space (#1501).
-                            BasicTextField(
-                                value = selection.otherText,
-                                onValueChange = { onEvent(QuestionModalEvent.OtherTextChanged(index, it)) },
-                                modifier =
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .bringIntoViewRequester(requester)
-                                        .onFocusChanged { focus ->
-                                            focused = focus.isFocused
-                                            if (focused) scope.launch { reveal() }
-                                        }.testTag("question_other_$index"),
-                                enabled = enabled,
-                                textStyle = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.modalFieldText),
-                                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                                decorationBox = { field ->
-                                    Box(
-                                        modifier =
-                                            Modifier
-                                                .fillMaxWidth()
-                                                .heightIn(min = 32.dp)
-                                                .background(
-                                                    MaterialTheme.colorScheme.modalFieldContainer,
-                                                    MaterialTheme.shapes.modalControl,
-                                                ).padding(horizontal = 12.dp, vertical = 8.dp),
-                                    ) {
-                                        if (selection.otherText.isEmpty()) {
-                                            Text(
-                                                placeholder,
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.inversePrimary,
-                                            )
+                            // The field's own scrolling uses its local well, not the thread's chrome reservations.
+                            val fieldRelocationSpec = remember { object : BringIntoViewSpec {} }
+                            CompositionLocalProvider(LocalBringIntoViewSpec provides fieldRelocationSpec) {
+                                BasicTextField(
+                                    value = selection.otherText,
+                                    onValueChange = { onEvent(QuestionModalEvent.OtherTextChanged(index, it)) },
+                                    modifier =
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .bringIntoViewRequester(requester)
+                                            .onFocusChanged { focus ->
+                                                focused = focus.isFocused
+                                                if (focused) scope.launch { reveal() }
+                                            }.testTag("question_other_$index"),
+                                    enabled = enabled,
+                                    textStyle = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.modalFieldText),
+                                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                                    decorationBox = { field ->
+                                        Box(
+                                            modifier =
+                                                Modifier
+                                                    .fillMaxWidth()
+                                                    .heightIn(min = 32.dp)
+                                                    .background(
+                                                        MaterialTheme.colorScheme.modalFieldContainer,
+                                                        MaterialTheme.shapes.modalControl,
+                                                    ).padding(horizontal = 12.dp, vertical = 8.dp),
+                                        ) {
+                                            if (selection.otherText.isEmpty()) {
+                                                Text(
+                                                    placeholder,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.inversePrimary,
+                                                )
+                                            }
+                                            field()
                                         }
-                                        field()
-                                    }
-                                },
-                            )
+                                    },
+                                )
+                            }
                         }
                     }
                 }

@@ -1,0 +1,22 @@
+Focused thread selection: 148 executed, 0 failed, 0 errors, 0 skipped; 21 classes.
+de.pyryco.mobile.ui.conversations.components.MessageBubbleSelectionTest: tests=5 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest: tests=13 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.SessionBoundaryVisibilityTest: tests=1 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.SlashCommandTypeAheadScreenTest: tests=9 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadBannerLevelTest: tests=1 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadCanvasPaletteTest: tests=5 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadChromeTest: tests=6 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadComposerFooterTest: tests=14 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadFrameTest: tests=9 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadInlineQuestionTest: tests=11 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadInputBarDraftBindingTest: tests=1 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadInputBarEnterKeyTest: tests=3 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadInputBarStyleTest: tests=8 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadMessageAreaTopTest: tests=3 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest: tests=11 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadScreenFollowTest: tests=11 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest: tests=11 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadScreenNewestRowTest: tests=4 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest: tests=9 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadScreenShortStreamTest: tests=2 failed=0 errors=0 skipped=0
+de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest: tests=11 failed=0 errors=0 skipped=0

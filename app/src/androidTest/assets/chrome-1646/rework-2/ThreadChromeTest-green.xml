@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadChromeTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-03T23:21:51.905Z" hostname="Juhanas-MacBook-Air.local" time="11.918">
+  <properties/>
+  <testcase name="pending_attachment_strip_accepts_a_gradual_pointer_swipe" classname="de.pyryco.mobile.ui.conversations.thread.ThreadChromeTest" time="9.033"/>
+  <testcase name="chrome_background_taps_do_not_open_message_details" classname="de.pyryco.mobile.ui.conversations.thread.ThreadChromeTest" time="0.375"/>
+  <testcase name="composer_accepts_long_press_text_selection_and_drag" classname="de.pyryco.mobile.ui.conversations.thread.ThreadChromeTest" time="1.266"/>
+  <testcase name="short_thread_starts_28dp_below_the_measured_rule" classname="de.pyryco.mobile.ui.conversations.thread.ThreadChromeTest" time="0.176"/>
+  <testcase name="newest_text_surface_rests_12dp_above_status_after_each_composer_resize" classname="de.pyryco.mobile.ui.conversations.thread.ThreadChromeTest" time="0.26"/>
+  <testcase name="invisible_info_banners_preserve_the_newest_text_rest_gap" classname="de.pyryco.mobile.ui.conversations.thread.ThreadChromeTest" time="0.2"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -15,6 +15,35 @@ action, wait for a positive effect of that action, then assert the resulting
 absence or replacement. Use `useUnmergedTree = true` when a merged semantics
 container hides per-row text or controls.
 
+For overlapping chrome, semantic display and full list containment do not establish
+readability. Measure the clear area between the header and composer and assert
+focused fields, tested button edges and swipe coordinates against those bounds.
+Content padding reserves end positions but does not narrow Compose's relocation
+viewport; a field fully behind a bar can otherwise be considered already in view.
+Scope `LocalBringIntoViewSpec` to the containing list and restore local specs for
+nested message scrollables and the field's own well, or those small scrollables
+inherit the outer chrome reservations. Check an already-readable field's physical
+anchor on every frame, as well as focus from behind both bars and composer resizing.
+
+`performScrollTo` uses the drawing viewport, so it can leave a target under chrome.
+Wait for window focus after display resizing, move the physical click target into
+clear bounds, assert the selected state, and verify action edges before tapping.
+A chrome pointer node can exclude underlying siblings without consuming child
+movement; gradual attachment swipes and composer selection drags must cross touch
+slop successfully. A tap-only test misses cancellation of those recognizers.
+
+The [thread chrome evidence](../../../app/src/androidTest/assets/chrome-1646/README.txt)
+uses full `pixel8Api35`, real bars and hardware framebuffer captures for progressive
+backdrop blur; JVM pixels or synthetic-inset geometry cannot prove it. It retains
+explicit underlap at both bars, four current-Figma comparisons, viewport/inset
+sidecars and IME before/open/dismissed/reopened states at newest/history anchors.
+The [final #1646 verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1700#issuecomment-5977891679)
+records the fresh complete gates and confirms the earlier-field real-IME
+open/dismiss/reopen method passed. See [thread testing](thread-screen-testing.md#testing)
+for executed/failed/skipped counts and named methods. Those full-suite passes
+resolve the retained focus-repair README's historical failed/busy attempts; they
+are not evidence of a separate focused device rerun.
+
 For hardware-keyboard button tests, request `InputMode.Keyboard` through
 `LocalInputModeManager` after composition and before requesting focus. Establish
 it separately in the launcher and dialog windows. Assert launcher focus before
