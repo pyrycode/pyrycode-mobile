@@ -20,3 +20,9 @@ In-flight overlap: #1694 adds the regression test but depends on this repair; co
 ## Testing strategy
 
 Run the retained teardown regression unignored before implementation and require its `ClosedScopeException` failure, then rerun it alongside `AppPreferencesTest` and `ConversationRepositoryBindingTest` after the fix. Run `testDebugUnitTest` once for the ticket's explicit full-unit acceptance criterion, plus lint, assembleDebug and forced spotlessCheck after formatting. Run the existing managed-device `PeerIdentityLifecycleTest` and `RepositoryBindingInstrumentedTest` together, and the scripted reconnect scenario for graph/harness continuity. These existing device tests require Android lifecycle owners and on-device storage; add no device-only tests or live scenarios because this repair has no operator-facing behavior.
+
+## Revisions
+
+### 2026-10-04: Bind the demo graph's backing preferences store
+
+The first full-unit run executed 3,976 tests with one failure: `HostChannelListViewModelTest.appModuleInjectsSharedDemoSourceAndCreatesThroughExistingFakeSingleton` resolved the real DataStore without Context through the production paired-server store constructor. Its in-memory `AppPreferences` override did not replace that second consumer's backing store. The failure also reproduced in isolation. Read that test and `KeystorePairedServerStore`'s constructor; hoist the existing in-memory DataStore, bind it alongside `AppPreferences`, and assert its identity. This fixture adjustment preserves the demo graph's portable test setup and adds no production behavior. Include the whole `HostChannelListViewModelTest` class in focused verification, then rerun the full unit gate after the repair.

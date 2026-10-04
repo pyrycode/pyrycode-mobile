@@ -941,15 +941,14 @@ class HostChannelListViewModelTest {
             // queues them for this thread instead.
             Dispatchers.setMain(StandardTestDispatcher(testScheduler))
             val values = MutableStateFlow(emptyPreferences())
-            val prefs =
-                AppPreferences(
-                    object : DataStore<Preferences> {
-                        override val data = values
+            val store =
+                object : DataStore<Preferences> {
+                    override val data = values
 
-                        override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences =
-                            transform(values.value).also { values.value = it }
-                    },
-                )
+                    override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences =
+                        transform(values.value).also { values.value = it }
+                }
+            val prefs = AppPreferences(store)
             prefs.setDefaultWorkspace("/paired-host-only")
             prefs.migrateDefaultWorkspace(setOf("saved-host")).getOrThrow()
             // Built inside the guard: resolving the ViewModel starts a Dispatchers.Default-backed
@@ -962,9 +961,11 @@ class HostChannelListViewModelTest {
                         appModule,
                         conversationRepositoryModule(false),
                         module {
+                            single<DataStore<Preferences>> { store }
                             single { prefs }
                         },
                     )
+                assertSame(store, app.koin.get<DataStore<Preferences>>())
                 val source = hostSources.source(app)
                 val vm = app.koin.get<ChannelListViewModel>().also { viewModel = it }
                 val fake = app.koin.get<FakeConversationRepository>()
