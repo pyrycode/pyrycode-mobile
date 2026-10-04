@@ -64,3 +64,13 @@ Pending for the documentation stage:
 - Preserve unresolved non-error dismissal/Saved discrepancies and #1619's scope conflict.
 - `docs/knowledge/features/thread-top-overlay.md` and `thread-screen.md`: fold in transient placement, FIFO lifetime and cancellation.
 - `docs/knowledge/features/markdown-reader-screen.md`: fold in error overlay placement and lifetime, retaining Saved behavior.
+
+## Revisions
+
+### 2026-10-04 — preserve Material accessibility flags
+
+Inspection of the installed Material 3 1.4.0 `SnackbarHostKt.toMillis` confirms Short is 4000ms and always passes icons=true, text=true, controls=hasAction to the accessibility manager. Match those flags (controls=false here), rather than deriving icons=false from the new pill's appearance, to retain the previous adjusted timeout exactly.
+
+### 2026-10-04 — transient pill height
+
+The full-device capture showed a 22dp short Error pill: shared typography trims the line box, while the Figma frames use a 24dp pill. Give only `TransientErrorPill` a 24dp minimum visible height, retaining its bodySmall text, 8/4dp padding and growth for wrapped or enlarged text. Persistent pills remain unchanged. Pin the floor with a native text-measurement test and refresh both requested captures.

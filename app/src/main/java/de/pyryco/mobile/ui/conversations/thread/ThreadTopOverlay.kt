@@ -42,7 +42,8 @@ private val OverlayPillGap = 12.dp
  * report is a Default pill with an X only when [usageLimitIsWarning] says so, and it is left out once
  * [usageLimitDismissed]; any other reading is an Error pill that cannot be hidden. Pairing failure takes
  * precedence over the offline pill because a network retry cannot repair a rejected pairing. With none of
- * them, nothing is emitted.
+ * them, nothing is emitted. Session errors follow these persistent notices; [transientError] follows
+ * all persistent notices and expires independently under the screen's queue.
  *
  * [mcpFailure] (#1345) is the Claude-authored name of a failed MCP server: an Error pill with no X whose tap
  * runs [onOpenMcpFailure]. It is never drawn beside the pairing or offline pill.
@@ -61,11 +62,12 @@ internal fun ThreadTopOverlay(
     onOpenMcpFailure: () -> Unit = {},
     sessionError: String? = null,
     agent: ConversationAgent = ConversationAgent.Claude,
+    transientError: String? = null,
 ) {
     val usage = usageLimit?.takeUnless { usageLimitDismissed }
     val showOffline = connectionState == ConnectionState.Offline && !showRePair
     val mcp = mcpFailure?.takeUnless { showRePair || showOffline }
-    if (usage == null && mcp == null && !showRePair && !showOffline && sessionError == null) return
+    if (usage == null && mcp == null && !showRePair && !showOffline && sessionError == null && transientError == null) return
     val viewConfiguration = LocalViewConfiguration.current
     val pillTouchConfiguration =
         remember(viewConfiguration) {
@@ -131,6 +133,7 @@ internal fun ThreadTopOverlay(
                     isError = true,
                 )
             }
+            transientError?.let { TransientErrorPill(it) }
         }
     }
 }

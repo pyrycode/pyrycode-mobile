@@ -215,7 +215,7 @@ class ComposerAttachmentStripTest {
     }
 
     @Test
-    fun aFailedSend_saysWhyInOneSnackbar_withTheLimitDerivedFromTheConstant() {
+    fun aFailedSend_saysWhyInOneNotice_withTheLimitDerivedFromTheConstant() {
         val failures = Channel<AttachmentSendFailure>(Channel.BUFFERED)
         setScreen(attachments = emptyList(), sendFailures = failures.receiveAsFlow())
 
