@@ -99,6 +99,45 @@ No audit declares app-wide parity; #1434 owns that verdict.
 height mismatch deferred to [#1757](https://github.com/pyrycode/pyrycode-mobile/issues/1757).
 This is not a list-frame or app-wide parity verdict.
 
+### Restore failure — Error-pill reuse `685:4337`
+
+- **Owning ticket:** [#1749](https://github.com/pyrycode/pyrycode-mobile/issues/1749).
+- **Reference:** [thread notice `685:4337`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=685-4337)
+  and [Error component `347:6619`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=347-6619),
+  X hidden, with placement reuse authorised by #1604. Thread contents are not an Archive frame reference.
+- **Capture:** [restore-failed.png](restore-failed.png), [metadata](restore-failed.txt),
+  [retained Figma export](figma-685-4337.png), [side-by-side](restore-failed-side-by-side.png)
+  and [overlay](restore-failed-overlay.png). `ListDesignCaptureTest.failedRestoreNoticeAt412By892`
+  taps a restore in real `MainActivity` with a scoped failing Archive ViewModel binding.
+  Replacing the list host source alone would not affect Archive's direct demo repository.
+- **Viewport:** API 35, 412×892px, density/font scale 1, fixed dark theme, hardware rendering,
+  `syntheticBars=false`, real 24px top/bottom bars and zero IME insets. Real bars were required.
+- **Execution:** builder's retained [API 35 XML](restore-failed-api35-results.xml),
+  timestamp `2026-10-04T18:09:41`: 4 executed, 0 failures/errors/skipped. The named
+  `failedRestoreNoticeAt412By892` method and all three `ArchiveAppearanceCaptureTest`
+  methods are present and passed. This was a focused builder run, not a documentation rerun.
+- **Behavior evidence:** [verifier PASS on PR #1772](https://github.com/pyrycode/pyrycode-mobile/pull/1772#issuecomment-5983544593)
+  at `e83886ef` reports fresh full unit XML with 4067 executed, 0 failures/errors/skipped,
+  including all seven passing `ArchiveRestoreNoticeTest` methods. These cover placement,
+  unchanged geometry and usable header controls, inert/polite semantics, success/error
+  distinction, expiry, accessibility flags, sequential notices and screen-exit cancellation.
+  The capture holds the Compose clock for hardware pixels; it makes no timing claim.
+- **Provenance limit:** the verifier inspected the retained export, images, metadata and XML;
+  a fresh remote Figma screenshot and the original Gradle console run were not independently
+  observed. The architect recorded frame/component inspection on 2026-10-04.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry / spacing | match: container x=117..392, y=188..210, 20px right gutter, 28px below the complete header ending at y=160; host label, tabs and rows retain their layout |
+| Padding | match: shared 8dp horizontal / 4dp vertical padding |
+| Typography | right-aligned body-small unchanged local text; inherited 22px single-line background versus reference's 24px |
+| Colour / radii / shadow | match: shared errorContainer/error colours, 6dp corners and overlay shadow |
+| Component state | match: no X, tap or dismissal action, no failure snackbar; success retains its existing snackbar |
+
+**Verdict:** authorised Error-pill reuse and header-relative placement match. The inherited
+height mismatch is routed to [#1757](https://github.com/pyrycode/pyrycode-mobile/issues/1757).
+This judges notice reuse, not Archive-frame or app-wide parity.
+
 ### Archive — `18:2`
 
 - **Owning ticket:** #1265; re-audited by #1487

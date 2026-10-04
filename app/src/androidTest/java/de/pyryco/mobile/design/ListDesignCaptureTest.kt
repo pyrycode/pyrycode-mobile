@@ -41,10 +41,13 @@ import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.di.HostConversationConnection
 import de.pyryco.mobile.di.HostConversationSource
+import de.pyryco.mobile.di.ThreadDestinationFactory
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHAT_ROW_TEST_TAG
+import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -52,6 +55,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.koin.core.context.GlobalContext
 import org.koin.core.context.loadKoinModules
+import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.module
 
 /**
@@ -114,6 +118,46 @@ class ListDesignCaptureTest {
         } finally {
             loadKoinModules(module { single { previous } })
             source.dispose()
+        }
+    }
+
+    /** Real bars and hardware pixels are the reason this restore notice capture is device-only. */
+    @Test
+    fun failedRestoreNoticeAt412By892() {
+        design.paired = true
+        val koin = GlobalContext.get()
+        val fake = koin.get<FakeConversationRepository>()
+        val failing =
+            object : ConversationRepository by fake {
+                override suspend fun unarchive(conversationId: String): Unit = error("deterministic restore failure")
+            }
+        // Archive's demo destination resolves the fake directly, rather than through the list source.
+        loadKoinModules(module { viewModel { ArchivedDiscussionsViewModel(failing, flowOf("Demo")) } })
+        try {
+            archiveChannels {
+                relaunch()
+                rule.onNodeWithContentDescription("Open menu").performClick()
+                rule.onNodeWithText("Archive").performClick()
+                awaitText("Archived", substring = true, count = it + 1)
+                rule.onAllNodesWithTag("archive-restore-error").assertCountEquals(0)
+                // Hold the transient notice while hardware rendering and capture settle on a cold device.
+                // Its real lifetime is tested with the controlled clock in ArchiveRestoreNoticeTest.
+                rule.mainClock.autoAdvance = false
+                try {
+                    rule.onAllNodes(hasContentDescription("Restore", substring = true)).onFirst().performClick()
+                    rule.waitUntil(5_000) {
+                        rule.mainClock.advanceTimeByFrame()
+                        rule.onAllNodesWithTag("archive-restore-error").fetchSemanticsNodes().isNotEmpty()
+                    }
+                    rule.onNodeWithText("Couldn't restore this conversation. Try again.").assertIsDisplayed()
+                    // #1604 authorises the Error pill and placement reuse, not a replacement Archive layout.
+                    design.capture(FOLDER, "restore-failed", "685:4337")
+                } finally {
+                    rule.mainClock.autoAdvance = true
+                }
+            }
+        } finally {
+            loadKoinModules(module { viewModel { get<ThreadDestinationFactory>().archive(get()) } })
         }
     }
 
