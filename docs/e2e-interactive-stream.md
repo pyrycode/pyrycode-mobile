@@ -650,12 +650,14 @@ post-conditions, so it belongs in the always-on gate alongside #740's bar and #5
 inversions. It rides a new fixture, `SecondClientPeer` (`app/src/androidTest/.../e2e/SecondClientPeer.kt`)
 — a second paired device standing in for the desktop, built from the app's own `OkHttpRelayTransport`,
 `NoiseSessionFactory` and `NoiseSessionPump`, with a process-scoped in-memory X25519 identity
-(`PeerDeviceStaticKeyStore`, never the phone's Keystore key) and its own `pyry pair`
+(`PeerDeviceKeyStore`, never the phone's Keystore key) and its own `pyry pair`
 token — `peerToken`, minted on host A by `scripts/e2e-emulator.sh`'s `pair_token` alongside the existing
 two-host pairing, never logged. The peer's read-only `PairedServerStore` is a file-private in-memory
 test double. Its
-`PeerDeviceStaticKeyStore` retains one static pair for each exact server id/token combination for the
-instrumentation process (#1698), across peer close, reconnect and app graph rebuild. Different hosts
+`PeerDeviceKeyStore` retains one static pair for each server id/SHA-256 token fingerprint for the
+instrumentation process (#1686, preserving #1698's lifetime contract), across peer close, reconnect
+and app graph rebuild. Creation and publication share one lock so concurrent first readers cannot
+bind competing keys. The registry retains no raw token and writes nothing to disk. Different hosts
 or tokens select independent identities; relay URL and server-key metadata changes do not rotate one.
 The daemon binds a token to its first accepted static key, so generating a new key for each scenario
 rejects later peers even when a standalone scenario passes. Every dial still creates fresh Noise
@@ -1012,7 +1014,9 @@ default mode asks for permission as normal. The phone is paired `--allow-remote-
 host alone**; nothing else pairs the phone with it, so every other scenario still sees an unprivileged
 phone, and both #966 methods remove the pairing from `PairedServerCollectionStore` in `finally`. A second
 `SecondClientPeer` is paired `--allow-remote-permissions` on the same host, gaining `awaitQuestion` and
-`answerQuestion` alongside its existing `awaitPermissionModal` / `allowOnce`. An unmet prerequisite (no
+`answerQuestion` alongside its existing `awaitPermissionModal` / `allowOnce`. All answer peers using
+the suite's one answer-peer pairing share its process-local static identity; closing a peer releases
+its session and sockets without rotating that identity. An unmet prerequisite (no
 credential, `claude` missing, the isolated HOME failing to build, either pairing failing to mint) sets one
 static `ANSWER_UNMET` code that fails only these two methods, naming the cause — it never skips and never
 fails the rest of the run.
@@ -1031,6 +1035,16 @@ frames the peer recorded for that turn, so a reply claude could compute or recal
 place of the command actually running. The same prompt sent again in A shows no second `modal_shown` and
 still passes `assertBashRan`, proving the grant held; the same prompt sent in B (whose session holds no
 grant) shows the card again, and the peer allowing it removes it with no phone tap. Three real claude turns.
+
+[#1686](https://github.com/pyrycode/pyrycode-mobile/issues/1686) repaired setup before these permission
+checks: `SecondClientPeer.open` redialled until its 30-second deadline because a later scenario used a
+new static key with the already-bound answer-peer token (daemon #2734). Retained answer-daemon logs
+showed `v2.handshake.reject.static_key_mismatch` with `bound_to_other_key`: 18 events on #1631's branch,
+12 on its base, and 18 on #1637's branch. The coroutine timeout and captured launcher focus alone did
+not identify that operation. The permission method now labels its unchanged open wait with
+`peerStep(peer, "open answer peer")`; every permission assertion above remains enabled. Its fresh
+full-suite pass is recorded in [Verification status](#verification-status).
+
 The question-answer
 scenario opens one conversation and sends a prompt asking claude to call `AskUserQuestion` with two labels
 and then echo the chosen one back (`QUESTION_PROMPT`); the phone answers one label from the batch and
@@ -1167,6 +1181,17 @@ stays reserved for the two background-push scenarios below, which only need the 
 stay open. The rung-4 `tool` and `tool-progress` scenarios are this scenario's deterministic twins,
 proving the same label (without and with an elapsed reading) on every scripted run.
 
+Since #1683, `InteractiveStreamE2ETest` opens and closes a prior `runningToolPeer` with the same
+pairing before opening the observing peer. Both opens require the existing handshake/probe readiness;
+the prior peer sends no message and approves no permission. This exercises an already-bound token
+even when the method runs alone: a successful first attachment cannot detect per-instance static-key
+rotation. `peerStep` labels prior/current peer opening, permission-modal arrival, approval/dismissal
+and turn completion with content-free link diagnostics, separating those waits from the three status
+assertions above. The shared `holdToolOnPermission` also labels its existing waits for the ignored
+elapsed scenario. Deadlines and the real permission round-trip remain unchanged. See
+[peer identity coverage](knowledge/features/development-verification-test-scheduling.md#test-scheduling-and-harnesses)
+and [Verification status](#verification-status).
+
 **`@Ignore`d**, and deliberately not added to the LIVE curated list: `interactiveTurn_longRunningTool_statusAreaShowsElapsed`
 holds the same permission-prompt lever with `ELAPSED_TOOL_PROMPT`'s `python3 -c "import time;
 time.sleep(45)"`, then waits for any `cd_thread_tool_running_elapsed` reading (a regex matcher built from
@@ -1211,15 +1236,29 @@ control present and the channel-list marker absent. One real claude turn.
 guarantee across a second reconnect inside the same wake window: with the phone already absent, the
 peer's turn raises a permission prompt, the push wakes the app, and exactly one prompt alert shows. The
 test then cuts and restores the host link a second time, and the daemon shows the still-outstanding
-prompt again. A retained permission modal does **not** re-emit on `HostConversationSource.alerts` across
-a reconnect ([Dependency injection — host conversation source § Attention alerts](knowledge/features/dependency-injection-host-conversation-source.md#attention-alerts-685)) —
-unlike a question batch, which is actually cleared and re-shown — so there is no second-alert signal to
-wait on; the scenario instead sleeps a bounded settle after the reconnect, then asserts there is still
+prompt again. Since #1337, the new connection clears held prompts and the source re-emits the
+re-shown prompt's alert; the notifier's `AlertLedger` drops the repeat
+([Dependency injection — host conversation source § Attention alerts](knowledge/features/dependency-injection-host-conversation-source.md#attention-alerts-685)).
+There is no observable second notification to await; the scenario sleeps a bounded settle after the
+reconnect, then asserts there is still
 exactly one notification and that its `postTime` is **unchanged**. A second `notify` for the same tag
 would replace the notification and change its `postTime`, which a bare count cannot see. What this proves
-is the operator-visible outcome — one notification, never re-posted — not which of the two guards behind
-it (the source's per-generation prompt-key set, or the notifier's own `AlertLedger`) did the suppressing.
-One real claude turn: the peer's held command.
+is the operator-visible outcome — one notification, never re-posted.
+One real claude turn: the peer's held command. Cleanup cancels the wake watcher, releases the held
+permission and awaits turn completion when available, closes the peer and cancels notifications.
+
+The #1694 shared failure occurred before push registration or backgrounding: the uniquely named
+conversation's creation/rename was followed by `static_key_mismatch` / `bound_to_other_key`
+rejections throughout `SecondClientPeer.open`'s 30-second window. This localization comes from retained
+conversation/daemon timestamps and source ordering, not the unlocalized coroutine stack. The peer
+must retain the static identity bound to its shared host/token (#1698/#1686). The scenario now opens
+and closes a prior same-pairing peer through `use` before opening its prompt peer; both must complete
+the handshake and readiness probe, even in a focused run. This guard spends no Claude turn.
+`peerStep` names prior/current opening, message acknowledgement and permission arrival; the shared
+`withTimeoutDiagnostic` evaluates content-free state only on timeout and preserves its cause.
+`setHostLink` similarly distinguishes close from reconnect and reports repository presence. Existing
+deadlines and alert assertions remain unchanged. See
+[test scheduling and harnesses](knowledge/features/development-verification-test-scheduling.md#test-scheduling-and-harnesses).
 
 No rung-4 twin: the loopback relay the scripted harness dials cannot send FCM, and
 [#685](https://github.com/pyrycode/pyrycode-mobile/issues/685) already covers synthetic delivery
@@ -1251,6 +1290,14 @@ cached sent row instead (`awaitCachedSentAttachmentIds`) — a fact the ticket's
 and had to rework around (see [Verification status](#verification-status)). That daemon gap was filed as
 [#1020](https://github.com/pyrycode/pyrycode-mobile/issues/1020); once it landed, this method went back
 to reading the peer's history and `awaitCachedSentAttachmentIds` was deleted.
+
+[#1697](https://github.com/pyrycode/pyrycode-mobile/issues/1697) confirmed this
+`InteractiveStreamE2ETest` scenario passes unchanged after #1698/#1686's shared peer identity
+repairs. A 30-second timeout plus daemon `static_key_mismatch` / `bound_to_other_key` events
+establishes a shared authentication problem, not an attachment-byte defect; distinguish peer
+opening from history and retrieval waits before changing the attachment path. The exact-byte,
+three-chunk and conversation-isolation checks remain intact. See [Verification status](#verification-status)
+for the retained #1686 proof and #1697's fresh full-suite pass.
 
 `interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload` (#1020) proves the sibling leg #1016
 could not: another client's upload, named on a message, read back after `E2eTestApplication.rebuildGraph`
@@ -1801,8 +1848,16 @@ zero-count or failed reports and nonzero process exits fail it. Sanitized output
 is saved as `build/dispatcher-tests/live-*/dispatcher.xml` and printed to stdout.
 Connected-path regression coverage does not establish a live result on a connected
 device. The [recorded baseline](#verification-status) proves only managed
-`pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD arm64. API 33 is the sole required
+`pixel2Api33Atd`, Pixel 2 / API 33 / `google-atd` arm64 with Play services/FCM. API 33 is the sole required
 version for now; API 35 is deferred.
+
+For the background-push proof, keep the production relay, real Claude, push-capable daemon and
+FCM-configured `google-atd` device. #1694 changes shared peer/host-link diagnostics, so its acceptance
+uses the full live suite. Require the named background-prompt testcase to be present without
+failure/error/skip alongside the tested commit and executed/failed/skipped counts. A focused
+identity test or scripted reconnect cannot prove FCM delivery; #1698's repaired-baseline pass is
+also separate from candidate acceptance. See [Verification status](#verification-status) for the
+candidate result and its unrelated focused rerun.
 
 **What it runs.** The current curated selector passes 44 runnable methods as a comma-separated
 `class#method` list. Its source of truth is `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET`, checked
@@ -2342,7 +2397,85 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-04 (#1692).** The dispatcher ran the full
+**Current live verification — 2026-10-04 (#1694).** The dispatcher ran the full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1694`
+at `6edcce71cef99c2ce7e24c3cff56bbf9cd9dfc27`, merged with `origin/main` at `fb2ca8f1a3`
+in a detached worktree (0 commits behind before merge): **53 executed, 52 passed, 1 failed,
+0 errors, 0 skipped**, exit 1. The fresh XML explicitly contains
+`de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect`
+with no failure, error or skip: this method ran and passed in the full suite, including both peer
+opens, real background FCM wake, exactly one alert and unchanged `postTime` after the second reconnect.
+The sole failure, `interactiveTurn_questionAnswer_reachesTheAskingConversation`, passed on a same-tree
+focused rerun (**1 executed, 1 passed, 0 failed/errors/skipped**). The dispatcher accepted PASS after
+rerun; this is full-suite proof of the background-prompt scenario, not a separate focused run of it
+or a second passing full suite. See the
+[gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1694#issuecomment-5976866278).
+The retained reports are `2026-10-04T05-01-10-594Z_real-claude-gate_#1694.log` and
+`2026-10-04T05-01-10-594Z_real-claude-gate-rerun_#1694.log` under the dispatcher repository's `logs/`.
+The earlier #1698 repaired-baseline full suite (53 executed, 1 unrelated failure, 0 skipped, this
+method passed) supported the identity diagnosis; it did not establish this candidate's acceptance.
+
+**Previous live verification — 2026-10-04 (#1697).** The dispatcher ran the full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1697`
+at `b1a11e755f`, merged with `origin/main` at `d54d7d9cad` in a detached worktree (0 commits
+behind before merge): **53 executed, 53 passed, 0 failed, 0 errors, 0 skipped**, exit 0.
+The fresh XML contains exactly one passing
+`de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes`
+testcase, with no failure, error or skip. The prerequisite #1698/#1686 identity repairs restored
+the scenario unchanged from failing base `acf0f6591c`; #1697 required no additional code repair,
+longer timeout or weakened assertion. See the
+[gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1697#issuecomment-5976504334).
+The retained XML report is `2026-10-04T04-03-12-661Z_real-claude-gate_#1697.log` under the dispatcher
+repository's `logs/`, with diagnostics in the adjacent `.stderr.log`.
+
+The retained [#1686 full-suite proof](https://github.com/pyrycode/pyrycode-mobile/issues/1686#issuecomment-5976044606)
+also contains exactly one passing phone-attachment testcase: **53 executed, 53 passed, 0 failed,
+0 errors, 0 skipped**, exit 0, in `2026-10-04T02-57-03-837Z_real-claude-gate_#1686.log`.
+Both are entirely passing full suites. In contrast, #1698's earlier full suite passed this
+attachment method but had **53 executed, 52 passed, 1 unrelated failure, 0 errors, 0 skipped**;
+its focused question-answer rerun is recorded separately below and is not a second full-suite pass.
+No separate focused phone-attachment run is claimed.
+
+**Previous live verification — 2026-10-04 (#1683).** The dispatcher ran the full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1683`
+at `b10c5a6fe02b89f4d55e0da14b4e0c0360e9390b`, merged with `origin/main` at `d54d7d9cad`
+in a detached worktree (6 commits behind before merge): **53 executed, 53 passed, 0 failed,
+0 skipped**, exit 0. The fresh XML explicitly includes
+`de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool`
+with no failure, error or skip: the method ran and passed, including both same-pairing peer opens,
+the permission-wait reading with no running-tool label, the running Bash label after real peer
+approval, and its disappearance after turn completion. This is full-suite evidence; no separate
+focused live run was required or claimed. See the
+[gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1683#issuecomment-5976372697).
+The retained XML report is
+`/Users/juhanailmoniemi/Workspace/Projects/pyrycode-mobile-agents/logs/2026-10-04T03-40-35-710Z_real-claude-gate_#1683.log`,
+with diagnostics in the adjacent `2026-10-04T03-40-35-710Z_real-claude-gate_#1683.stderr.log`.
+
+The original #1631/#1637 branch/base stderr reports show coroutine timeouts, not status assertion
+failures. Retained daemon logs `pyry-e2e.AOLbIc`, `pyry-e2e.JKsJv3`, `pyry-e2e.Cf5gl9` and
+`pyry-e2e.tWgsL4` contain respectively 102/84/102/90 static-key mismatch rejections: sequential peers
+rotated the static key for an already-bound token. #1698 repaired that identity custody; #1683
+protects it within this scenario. The repeated 30-second failures are consistent with peer opening.
+The separate #1631 base 90-second timeout matches `awaitPermissionModal`, but its underlying
+delivery/turn cause remains unestablished. Historical full #1698/#1696 XML each records this method
+as passed in a run with **53 executed, 1 unrelated failure, 0 skipped**; #1698's retained daemon
+log has zero key-mismatch rejections. Those observations support the setup diagnosis and are
+distinct from the fresh candidate pass above; they do not establish a status-rendering defect.
+
+**Previous live verification — 2026-10-04 (#1686).** The dispatcher ran the full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1686`
+at `5aa6f23b79`, merged with `origin/main` at `ad547c6425` in a detached worktree (0 commits behind
+before merge): **53 executed, 53 passed, 0 failed, 0 skipped**, exit 0. The fresh XML includes
+`de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation`
+with no failure, error or skip: the named method ran and passed, including A-only visibility, checked
+grant retention and cleared arm after navigation, successful phone-approved Bash/output, prompt-free
+repeat, and B's independent prompt closing after peer approval. This is full-suite evidence, not a
+separate focused run. See the
+[gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1686#issuecomment-5976044606).
+The retained XML report is `2026-10-04T02-57-03-837Z_real-claude-gate_#1686.log` under the dispatcher
+repository's `logs/`, with diagnostics in the adjacent `.stderr.log`.
+
+**Previous live verification — 2026-10-04 (#1692).** The dispatcher ran the full
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1692`
 at `b5e8174949c9cb3c652c0f6cc84301fa31075db5`, merged with `origin/main` at `ad547c6425`
 in a detached worktree (0 commits behind before merge): **53 executed, 53 passed, 0 failed,
@@ -3211,6 +3344,43 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — hardened:** [#1694](https://github.com/pyrycode/pyrycode-mobile/issues/1694) makes
+  `InteractiveStreamE2ETest#interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect`
+  exercise a prior same-pairing peer before its prompt peer, protecting token-bound identity in a
+  focused run as well as the full suite. Named timeout diagnostics distinguish peer operations and
+  host-link close/reconnect without longer deadlines. Background-before-message ordering, real FCM,
+  exactly-one alert, original `postTime` and cleanup remain intact. The named method passed in the
+  fresh full candidate suite; see [Verification status](#verification-status) for counts and the
+  unrelated question-answer rerun. No scenario or deterministic FCM twin was added.
+
+- **Coverage — confirmed:** [#1697](https://github.com/pyrycode/pyrycode-mobile/issues/1697) records
+  the no-code resolution of
+  `InteractiveStreamE2ETest#interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes` after
+  #1698/#1686's shared identity repairs. The picker-selected PNG and 100,000-byte three-chunk
+  document still reach the peer through one message in X, with distinct ids, exact SHA-256 digests
+  and no user message in Y. See [Verification status](#verification-status) for both the retained
+  #1686 proof and #1697's fresh 53-test full-suite pass. No scenario or deterministic twin was added.
+
+- **Coverage — hardened:** [#1683](https://github.com/pyrycode/pyrycode-mobile/issues/1683) protects
+  `InteractiveStreamE2ETest#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool` with a
+  same-pairing prior-peer open/close and labelled peer waits. The real permission hold, approval,
+  running Bash observation and completion clearing remain enabled in the curated suite.
+  `DeterministicInteractiveStreamE2ETest`'s `tool` and `tool-progress` twins prove rendering but
+  cannot prove this permission round-trip. See [Verification status](#verification-status) for the
+  fresh 53-test full-suite pass and the limits of the original timeout diagnosis.
+
+- **Coverage — hardened:** [#1686](https://github.com/pyrycode/pyrycode-mobile/issues/1686) restores
+  `InteractiveStreamE2ETest#interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation` by
+  retaining the answer pairing's static identity across peers. A standalone method can pass while
+  later suite methods cannot authenticate an already-bound token. `PeerDeviceKeyStoreTest` covers
+  recreation after returned-array wiping, host/token isolation, wrong-host rejection and concurrent
+  first access; the permission method labels its open wait without changing its checks or deadline.
+  See [Verification status](#verification-status) for the fresh full-suite pass. No scenario or
+  deterministic twin was added. The merged tree also retains `PeerDeviceStaticKeyStore` and its
+  earlier handshake regressions with a separate registry; these tests do not exercise the live
+  peer's new store. Consolidation is the verifier's nonblocking finding on
+  [PR #1705](https://github.com/pyrycode/pyrycode-mobile/pull/1705#issuecomment-5975917069).
 
 - **Coverage — hardened:** [#1692](https://github.com/pyrycode/pyrycode-mobile/issues/1692) protects
   `InteractiveStreamE2ETest#interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk`

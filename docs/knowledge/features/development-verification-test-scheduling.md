@@ -16,18 +16,34 @@ application's fake binding when no relay arguments are supplied. Confirm its
 testcase appears in the gate XML; compilation alone does not prove isolation.
 
 Test peers sharing a pairing token must share its bound static identity for the instrumentation
-process (#1698). `PeerDeviceStaticKeyStore` in `sharedTest` serializes creation by exact server id
-and token, independently of app credential storage, peer close and Koin graph rebuild. Return copies
+process (#1698/#1686), matching daemon #2734's token-to-first-static-key binding. The live peer
+uses `PeerDeviceKeyStore` in `sharedTest`, serializing creation by server id and SHA-256 token
+fingerprint, independently of app credential storage, peer close and Koin graph rebuild. Return copies
 of both key arrays and of `publicKey()`: `NoiseSessionFactory` wipes its caller-owned private-key
 buffer after copying it into fresh per-dial Noise state. A returned buffer being zeroed must not
-corrupt the retained identity. `PeerDeviceStaticKeyStoreTest` covers continuity, host/token isolation,
-copy safety, concurrent creation and repeated factory creation; never include keys or tokens in
-assertion output. See [the rung-3 peer](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
+corrupt the retained identity. `PeerDeviceKeyStoreTest` covers continuity after destructive reads,
+host/token isolation, wrong-host rejection and concurrent creation. The merged tree still contains
+the independent `PeerDeviceStaticKeyStore` registry and its earlier factory/handshake regressions;
+those tests do not prove the live peer's new store (PR #1705's nonblocking consolidation finding).
+Never include keys or tokens in assertion output. See [the rung-3 peer](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
+
+The permission-answer regression (#1686) stalled in `SecondClientPeer.open` before any permission
+answer. The answer daemon's static `v2.handshake.reject.static_key_mismatch` / `bound_to_other_key`
+events distinguished permanent token/key rejection from other 30-second waits: 18 on #1631's branch,
+12 on base and 18 on #1637's branch. A coroutine timeout stack and teardown's launcher focus could
+not establish the cause. Label setup waits with `peerStep` and check retained content-free daemon
+events before attributing the failure to conversation routing or increasing a timeout. See
+[permission-answer coverage](../../e2e-interactive-stream.md#what-rung-3-is-made-of) and its
+[53-test full-suite proof](../../e2e-interactive-stream.md#verification-status).
 
 A standalone peer scenario can pass while later full-suite scenarios fail because an earlier peer
 bound their shared token. Open and close a prior peer with the same pairing before the observing peer
 when testing this lifecycle, as the [Stop scenario](../../e2e-interactive-stream.md#what-rung-3-is-made-of)
-does (#1696); both opens must satisfy the existing handshake/probe readiness contract. Comparing
+does (#1696), as the permission-held running-tool scenario does (#1683), and as the
+background-prompt scenario does (#1694); both opens must
+satisfy the existing handshake/probe readiness contract. Label permission arrival, approval/dismissal
+and turn completion as well as opening, so a timeout identifies a peer operation separately from a
+status assertion. The prior peer needs no Claude turn. Comparing
 stored key arrays alone does not prove the authenticated identity on the wire.
 `PeerDeviceStaticKeyStoreTest.sequentialFactoriesPresentSameBoundIdentityInFreshNoiseHandshakes`
 uses fresh vendored Noise responders to authenticate successive initiator keys and decrypt each
@@ -49,6 +65,30 @@ scheduling. The former per-instance identity lifecycle failed the token-binding 
 1 failed, 0 skipped); the repaired focused peer/factory/redial/wait run passed 31 tests (0 failed/errors,
 0 skipped). See [PR #1711's verification evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1711#issuecomment-5975716513)
 and [the full live result](../../e2e-interactive-stream.md#verification-status).
+
+The background-prompt failure (#1694) also occurred in `SecondClientPeer.open`, before push
+registration or backgrounding. Correlating its uniquely named conversation's creation/rename with
+bound-key rejections throughout the 30-second opening window localized a wait the coroutine stack
+could not name. Do not infer a notification deduplication defect from the scenario's name.
+`withTimeoutDiagnostic` keeps existing deadlines, obtains test-authored/content-free diagnostics
+lazily on timeout and retains the timeout as cause; ordinary failures and cancellation pass through.
+`peerStep` reports the operation and current link state, while `setHostLink` reports close/reconnect
+and repository presence. JVM regressions cover rejected opening, stalled message acknowledgement,
+success and non-timeout propagation. The full candidate live XML explicitly passed this scenario:
+see [the counted proof](../../e2e-interactive-stream.md#verification-status), which distinguishes
+candidate acceptance from #1698's repaired-baseline and focused identity/scripted checks.
+
+An unrelated asynchronous teardown failure can attach to the next Compose test. During #1694,
+`WorkspacePickerSheetTest.recent_rows_render_full_paths` reported `UncaughtExceptionsBeforeTest`
+with a suppressed `ClosedScopeException` from DataStore's lazy file callback. Cancelling the relay
+registry does not stop DataStore's separate I/O scope; resolving `androidContext()` inside that
+callback can consult Koin after graph closure. Green full baseline/candidate reruns did not exclude
+the race. `AppPreferencesTeardownTest.resolvedDataStoreDoesNotLookUpContextInAClosedGraph` resolves
+the real binding, closes an isolated graph, then triggers file initialization; it reproduced the same
+failure on both merge base and candidate (1 executed, 1 failed, 0 skipped each). This was inherited
+and distinct from peer identity. #1709 captures the context when constructing DataStore; the retained
+regression now runs unignored and passes. See [App preferences](app-preferences.md#testing) for the
+binding/fixture contract. Closing the graph alone is not proof that deferred callbacks are safe.
 
 A graph-lifecycle identity test can pass while contaminating the next test's repository binding.
 `E2eTestApplication.rebuildGraph()` must preserve the original fake/relay mode selected by the relay
