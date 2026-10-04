@@ -7,7 +7,6 @@ import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.koin.android.ext.koin.androidContext
@@ -19,7 +18,6 @@ import org.robolectric.annotation.Config
 @Config(application = Application::class)
 class AppPreferencesTeardownTest {
     @Test
-    @Ignore("blocked on #1709: lazy preferences file callback consults a closed Koin scope")
     fun resolvedDataStoreDoesNotLookUpContextInAClosedGraph() =
         runBlocking {
             val app =

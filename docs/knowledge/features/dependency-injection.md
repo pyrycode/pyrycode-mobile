@@ -190,6 +190,23 @@ too.
 
 ## Testing
 
+Context-free fixtures overriding `AppPreferences` must also override its backing
+`DataStore<Preferences>` with the same in-memory instance: the production
+`KeystorePairedServerStore` resolves that store directly. The wrapper override
+alone leaves an Android-bound dependency reachable through a second consumer.
+`HostChannelListViewModelTest.appModuleInjectsSharedDemoSourceAndCreatesThroughExistingFakeSingleton`
+binds both and checks store identity. Eager Context capture in the preferences
+binding exposed this incomplete fixture; supplying Android Context would hide
+it. See [preferences testing](app-preferences.md#testing) for the retained
+teardown regression and graph-rebuild evidence.
+
+Deferred callbacks owned by a separate coroutine scope must capture dependencies
+while the Koin binding is constructed. Resolving the real preferences binding,
+closing its isolated graph, and only then reading the store checks this lifetime
+boundary; a fixture-created store would bypass the production callback entirely.
+Koin closure does not own the preferences I/O scope, and e2e graph rebuilds reuse
+the existing store. See [preferences concurrency](app-preferences.md#state--concurrency).
+
 `RelayConnectionFactoryTest.destinationBindingsKeepCollidingIdsOnTheirHostAcrossSelectionAndReconnect`
 resolves the production thread binding against two Noise peers. It combines
 colliding conversation, modal and queue ids with distinct content and snapshots,
