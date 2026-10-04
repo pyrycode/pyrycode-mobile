@@ -50,9 +50,17 @@ class ToolRowFormatTest {
     }
 
     @Test
-    fun `description is the last preferred field`() {
+    fun `description follows query and precedes skill`() {
         assertEquals("q", toolRowSubject("WebSearch", mapOf("description" to "d", "query" to "q"), "p"))
-        assertEquals("d", toolRowSubject("Task", mapOf("description" to "d", "prompt" to "long"), "p"))
+        assertEquals("d", toolRowSubject("Task", mapOf("description" to "d", "skill" to "s", "prompt" to "long"), "p"))
+    }
+
+    @Test
+    fun `Skill shows the skill name instead of the JSON precis`() {
+        val fields = mapOf("skill" to "file-pyrycode-ticket", "args" to "1726")
+        val input = "{\"skill\":\"file-pyrycode-ticket\",\"args\":\"1726\"}"
+        assertEquals("file-pyrycode-ticket", toolRowSubject("Skill", fields, input))
+        assertEquals(ToolHeadline.Simple(lead = "Skill", subject = "file-pyrycode-ticket"), toolHeadline("Skill", fields, input))
     }
 
     @Test
@@ -115,6 +123,7 @@ class ToolRowFormatTest {
     @Test
     fun `only empty or unknown fields fall back to the precis`() {
         assertEquals("précis", toolRowSubject("X", mapOf("file_path" to "", "symbol" to "Foo"), "précis"))
+        assertEquals("{\"skill\":\"\"}", toolRowSubject("Skill", mapOf("skill" to ""), "{\"skill\":\"\"}"))
     }
 
     // ---- shortenToolPath -------------------------------------------------------------------------
