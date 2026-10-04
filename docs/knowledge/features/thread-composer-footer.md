@@ -6,7 +6,7 @@ Package: `de.pyryco.mobile.ui.conversations.thread` (`app/src/main/java/de/pyryc
 
 ## What it does
 
-The current footer shows Actions and context usage, then attachment and Run configuration icons. The separate Model, Effort and Permission buttons were removed by #1196; their choices live in the Run configuration sheet opened by the `Tune` icon. `footerMenu` still projects model options for tests and legacy callers, using the same `selectedChoice` as the sheet. The Actions button opens an [`OptionsOverlay`](options-overlay.md); see [Actions menu](thread-composer-footer-actions-menu.md#actions-menu-884).
+The current footer shows the context circle before Actions, then attachment and Run configuration icons. The separate Model, Effort and Permission buttons were removed by #1196; their choices live in the Run configuration sheet opened by the `Tune` icon. `footerMenu` still projects model options for tests and legacy callers, using the same `selectedChoice` as the sheet. The Actions button opens an [`OptionsOverlay`](options-overlay.md); see [Actions menu](thread-composer-footer-actions-menu.md#actions-menu-884).
 
 ## Sourcing
 
@@ -172,7 +172,7 @@ fun ThreadComposerFooter(
 ### `FooterButton` and Run configuration access
 
 The current footer renders an Actions button disabled only while the host is
-not connected (#1319), the `Cxt:` reading, the attachment button and the
+not connected (#1319), preceded by the context circle, the attachment button and the
 trailing `Tune` icon. The icon opens the
 [Run configuration sheet](status-sheet.md), where Model, Effort and Permission
 choices are rendered. The sheet receives `runConfig.selectedChoice?.value` for
@@ -182,32 +182,25 @@ a choice; a fresh conversation-scoped settings reading confirms the pending
 value. The old `FooterControl.Model`, `.Effort` and `.Permission` projections
 remain in `footerMenu`, but no separate footer button opens them after #1196.
 
-The current dark Input area uses 12 dp left, 16 dp right, 4 dp top and zero visible bottom footer padding inside the unchanged 20 dp composer gutter (#1659). Actions and context retain their 16 dp gap, body-small text and primary colour; Actions' chevron is 8 × 4 dp with a 4 dp label gap. The trailing group is 60 × 16 dp: two 24 × 16 dp visual boxes with a 12 dp gap, centring the 11 × 12 dp paperclip and 16 × 16 dp tune icon. At the 412 dp viewport it spans x=316–376, ending 16 dp inside the footer's right edge. The new context circle is a separate change.
+The current dark Input area uses 12 dp left, 16 dp right, 4 dp top and zero visible bottom footer padding inside the unchanged 20 dp composer gutter (#1659). Context precedes Actions with a 16 dp visual gap and a 4 dp inset within the left group; Actions retains body-small text and primary colour; Actions' chevron is 8 × 4 dp with a 4 dp label gap. The trailing group is 60 × 16 dp: two 24 × 16 dp visual boxes with a 12 dp gap, centring the 11 × 12 dp paperclip and 16 × 16 dp tune icon. At the 412 dp viewport it spans x=316–376, ending 16 dp inside the footer's right edge.
 
 ### Trailing icons stay outside the weighted text region (#1032, wrap shape #1549)
 
 The outer `Row` measures the paperclip and Run configuration opener as fixed
-24dp-wide controls beside the weighted `FooterTextRow`, preserving both icons
-when the Actions label or context reading grows. `FooterTextRow` gives the
-`ContextSegment` whatever width the Actions button leaves. See
-[context usage](thread-composer-footer-context-usage.md) for the original
-width failure and its measurement rule.
+24 dp-wide controls beside the weighted `FooterTextRow`, preserving both icons
+when Actions grows. Since #1660, the left group has a 4 dp inset and measures the fixed Context
+slot first, then reserves a 16 dp visual gap and gives Actions the remaining width. Context is a
+15 × 16 dp slot containing a top-aligned 15 dp circle with a 2 dp stroke. There is no percentage
+label to wrap below Actions; the circle and Actions remain on one row at 320 dp with default and
+150% font scale inside the real composer gutter.
 
-Since [#1549](https://github.com/pyrycode/pyrycode-mobile/issues/1549) (design decision on
-[#1485](https://github.com/pyrycode/pyrycode-mobile/issues/1485), 2026-10-02), `FooterTextRow` first checks
-whether Actions, the gap and the label fit one row at their natural widths. If they do, layout is unchanged
-from #1032: one row, bottom-aligned. If not, the label moves whole to its own line under the button row,
-`FooterLineGap` (4dp, Figma `679:4116`) below the buttons' visible text — measured above
-`contentBottomPadding`, the 12dp of invisible touch overflow the thread passes in, not above the buttons'
-full touch box, since a 4dp gap from the touch box rendered as roughly 16dp on device. The layout reports a
-`FooterFirstRowBottom` `HorizontalAlignmentLine` at the button row's bottom; the outer `Row` aligns
-`FooterTextRow` by that line and the trailing group by its touch-box bottom (`Modifier.alignBy`), so both centred visual boxes stay aligned with the first visible Actions row whether or not the label has wrapped. `alignBy` places the aligned group at
-the *top* of a row taller than its content, unlike the old `Alignment.Bottom`, so the outer `Row` also takes
-`wrapContentHeight(Alignment.Bottom)` to keep the footer's bottom placement in a slot taller than its
-content (a forced test size, or any fixed-height parent). `ContextSegment` still has `maxLines = 1` and
-`TextOverflow.Ellipsis`: the wrapped line is only `FooterTextRow`'s own width, so a wide enough font scale
-could still ellipsize it, but #1549's 150%-text acceptance scope fits in full. See [context
-usage](thread-composer-footer-context-usage.md) for the test coverage and the accepted ellipsis boundary.
+Centre the Context measurable within the left group's height, rather than bottom-aligning it:
+at enlarged fonts, bottom alignment puts the circle below the taller Actions visual band's centre.
+Both children include the same invisible bottom touch overflow. The group's `FooterFirstRowBottom`
+alignment line is its full height; the trailing controls still align by their touch-box bottom.
+`wrapContentHeight(Alignment.Bottom)` preserves bottom placement in a taller parent.
+Keep the fixed trailing reservation and expanded-touch input clearance when changing wrappers; see
+[testing](thread-composer-footer-testing.md#testing) and [context usage](thread-composer-footer-context-usage.md).
 
 ### Wiring in `ThreadScreen`
 
