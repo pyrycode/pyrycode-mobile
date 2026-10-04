@@ -4,6 +4,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.AccessibilityManager
 import androidx.compose.ui.platform.LocalAccessibilityManager
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.DeviceConfigurationOverride
@@ -116,6 +117,8 @@ class CreateChatFailureNoticeTest {
         fail()
         pill().assertIsDisplayed().assert(!hasClickAction())
         rule.onAllNodes(hasContentDescription("Dismiss notice")).assertCountEquals(0)
+        // The sole message belongs to the pill; a snackbar would add another message and a dismiss action.
+        pill().assert(hasText("Couldn’t create the chat. Try again."))
         rule.onAllNodes(hasText("Couldn’t create the chat. Try again.")).assertCountEquals(1)
         val notice = pill().getUnclippedBoundsInRoot()
         val header = rule.onNodeWithTag("channel-list-header").getUnclippedBoundsInRoot()
@@ -125,7 +128,8 @@ class CreateChatFailureNoticeTest {
         assertTrue(notice.right - notice.left < 372.dp)
         assertEquals(treeBefore, rule.onNodeWithContentDescription("New chat on Host").getUnclippedBoundsInRoot())
         rule.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsActions.Dismiss)).assertCountEquals(0)
-        rule.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.LiveRegion)).assertCountEquals(0)
+        pill().assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
+        rule.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.LiveRegion)).assertCountEquals(1)
         listOf("Settings", "Archive").forEach { label ->
             rule.onNodeWithContentDescription("Open menu").performClick()
             advance(64)

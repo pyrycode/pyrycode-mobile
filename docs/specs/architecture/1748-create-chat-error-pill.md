@@ -57,3 +57,9 @@ Sizing: one deliverable, approximately 400 written lines including plan/tests/ev
 ### 2026-10-04 — capture inspection
 
 The real-bar capture places the notice at x=173..392, y=149..171: the right gutter is 20px and its top is 28px below the measured list header. The reused shared `NoticePill` trims its body-small line box, producing a 22px single-line background rather than Figma's 24px. This inherited shared-component difference is deferred to #1757; the current ticket preserves reuse, tokens, padding and actions. Record it in the documentation-stage verdict. No state or placement contract changed.
+
+### 2026-10-04 — verifier accessibility repair and main merge
+
+PR #1758's MUST FIX finding identified the SnackbarHost's polite announcement as a separate accessibility contract from its timeout adjustment. Add `LiveRegionMode.Polite` semantics at the Create chat `NoticePill` caller, retaining its inert behavior, request identity and timer. The regression test now requires the polite live region and independently checks that the sole failure message belongs to the pill and there is no snackbar dismissal action.
+
+Merged main's #1665 toolbar menu around the existing Scaffold-body notice. Preserve the menu anchor, actions and overlay, and exercise Settings and Archive through that menu in the notice test. No notice geometry changes. Pending documentation stage: include polite announcement in the channel-list feature description.
