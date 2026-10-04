@@ -17,6 +17,7 @@ import xml.etree.ElementTree as ET
 spec = importlib.util.spec_from_file_location("gate", Path(__file__).with_name("android-test-gate.py"))
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
+REAL_BUILD_APKS = gate.build_apks
 
 
 def live_report(count):
@@ -35,6 +36,10 @@ def live_report(count):
 
 
 class AndroidGateTest(unittest.TestCase):
+    def setUp(self):
+        # The APK build before the device hold has its own tests; elsewhere it succeeds without running.
+        self.enterContext(patch.object(gate, "build_apks", return_value=0))
+
     def report(self, root, xml):
         path = root / "TEST-result.xml"
         path.write_text(xml)
@@ -566,6 +571,7 @@ class DeviceHoldTest(unittest.TestCase):
     def setUp(self):
         self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.enterContext(patch.dict(os.environ, {"ANDROID_USER_HOME": str(self.home)}))
+        self.build = self.enterContext(patch.object(gate, "build_apks", return_value=0))
         self.path = self.home / "avd" / "pyrycode-device-gate.lock"
         self.path.parent.mkdir(parents=True)
 
@@ -636,6 +642,7 @@ class DeviceHoldTest(unittest.TestCase):
 
         def run(command, **kwargs):
             seen.append(self.held_elsewhere())
+            self.assertEqual(kwargs["env"].get("E2E_APKS_BUILT"), "1")
             return subprocess.CompletedProcess(command, 0)
 
         root = self.home / "tree"
@@ -660,6 +667,41 @@ class DeviceHoldTest(unittest.TestCase):
                 self.assertTrue(seen)
                 self.assertTrue(all(seen))
                 self.assertFalse(self.held_elsewhere())
+
+    def test_the_apks_are_built_before_the_device_is_taken(self):
+        for argv in (["ui"], ["scripted", "ping"], ["scripted-all"], ["live"]):
+            with self.subTest(argv=argv):
+                held = []
+                self.build.side_effect = lambda env, mode: held.append(
+                    (mode, self.path.exists() and self.held_elsewhere())) or 0
+                _, seen, _, _ = self.run_main(argv)
+                self.assertEqual(held, [(argv[0], False)])
+                self.assertTrue(seen)
+
+    def test_a_failed_apk_build_never_takes_the_device(self):
+        self.build.return_value = 3
+        for argv in (["ui"], ["scripted-all"], ["live"]):
+            with self.subTest(argv=argv):
+                result, seen, stdout, stderr = self.run_main(argv)
+                self.assertEqual(result, 1)
+                self.assertEqual(seen, [])
+                self.assertEqual(stdout, "")
+                self.assertIn("APK build exited 3; the device was not taken", stderr)
+                self.assertFalse(self.path.exists() and self.path.read_text())
+
+    def test_the_apk_build_uses_each_modes_build_properties(self):
+        # The e2e modes match scripts/e2e-emulator.sh's GRADLE_BUILD_ARGS, so its test task finds both APKs current.
+        root = self.home / "tree"
+        for mode, properties in (("ui", []), ("scripted", ["-PuseRelayRepository=true"]),
+                                 ("scripted-all", ["-PuseRelayRepository=true"]), ("live", ["-PuseRelayRepository=true"])):
+            with self.subTest(mode=mode):
+                run = Mock(return_value=subprocess.CompletedProcess([], 4))
+                with patch.object(gate, "ROOT", root), patch.object(gate.subprocess, "run", run):
+                    self.assertEqual(REAL_BUILD_APKS({"K": "v"}, mode), 4)
+                self.assertEqual(run.call_args.args[0], [str(root / "gradlew"), ":app:assembleDebug",
+                                                         ":app:assembleDebugAndroidTest", *properties, "--console=plain"])
+                self.assertEqual(run.call_args.kwargs["env"], {"K": "v"})
+                self.assertEqual(run.call_args.kwargs["cwd"], root)
 
     def test_a_run_that_gives_up_starts_nothing_and_is_not_a_test_result(self):
         self.holder(30)

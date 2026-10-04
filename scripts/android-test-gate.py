@@ -334,6 +334,20 @@ def device_hold(mode, wait):
         os.close(fd)
 
 
+def build_apks(env, mode):
+    """Build the app and test APKs before queueing for the device, and return Gradle's exit code.
+
+    A cold build took 40 seconds to 3 minutes, and every other device run waited behind it while it held the
+    device (measured 2026-10-04). Now the hold covers only boot, install and run: the device task and the
+    emulator script find both APKs up to date. The e2e modes build with the emulator script's -P properties
+    (GRADLE_BUILD_ARGS there), so its test task's up-to-date check matches.
+    """
+    command = [str(ROOT / "gradlew"), ":app:assembleDebug", ":app:assembleDebugAndroidTest", "--console=plain"]
+    if mode != "ui":
+        command.insert(3, "-PuseRelayRepository=true")
+    return subprocess.run(command, cwd=ROOT, env=env, stdout=sys.stderr, stderr=sys.stderr).returncode
+
+
 def raise_interrupt(*_):
     raise KeyboardInterrupt
 
@@ -499,6 +513,12 @@ def main():
                 print(f"Android gate: failed to build {binary}", file=sys.stderr)
                 return 1
             env[variable] = str(destination)
+    built = build_apks(env, args.mode)
+    if built != 0:
+        print(f"Android gate failed: the app and test APK build exited {built}; the device was not taken",
+              file=sys.stderr)
+        return 1
+    env["E2E_APKS_BUILT"] = "1"
     try:
         with device_hold(args.mode, wait):
             print(f"Android gate: {args.mode} {args.scenario or ''}; artifacts: {run_dir}", file=sys.stderr)

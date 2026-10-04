@@ -1059,12 +1059,17 @@ fi
 # A code must be redeemed within the daemon's 15-minute window, and a slow or contended Gradle build once
 # took 28 minutes. Building here leaves only the device boot and install inside the window: the test task
 # below finds these APKs up to date. The -P build properties must match the test task's (-PuseRelayRepository
-# feeds BuildConfig); scripts/test_e2e_emulator_gradle.py checks that they do.
-log "building the app and test APKs before minting pairing codes…"
+# feeds BuildConfig); scripts/test_e2e_emulator_gradle.py checks that they do. scripts/android-test-gate.py
+# builds both with these properties before it takes the device and sets E2E_APKS_BUILT=1, so this run skips it.
 GRADLE_BUILD_ARGS=(-PuseRelayRepository=true)
-"${GRADLEW}" -p "${REPO_ROOT}" assembleDebug assembleDebugAndroidTest "${GRADLE_BUILD_ARGS[@]}" \
-  --console=plain \
-  || die "the Gradle build of the app and test APKs failed (see the output above); no pairing code was minted"
+if [ "${E2E_APKS_BUILT:-}" = "1" ]; then
+  log "the app and test APKs were built before the device hold; not building again"
+else
+  log "building the app and test APKs before minting pairing codes…"
+  "${GRADLEW}" -p "${REPO_ROOT}" assembleDebug assembleDebugAndroidTest "${GRADLE_BUILD_ARGS[@]}" \
+    --console=plain \
+    || die "the Gradle build of the app and test APKs failed (see the output above); no pairing code was minted"
+fi
 
 # ---- pair against the running test daemon ---------------
 # `pyry pair` prints a QR plus one base64url-encoded JSON line: {server, relay, token,

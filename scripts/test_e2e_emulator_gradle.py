@@ -148,8 +148,13 @@ class EmulatorBuildBeforeMintTest(unittest.TestCase):
         return subprocess.run(["bash", "-c", "set -euo pipefail\n" + body], env=dict(base, **env),
                               capture_output=True, text=True)
 
+    def build_block(self, **env):
+        stubs = 'log() { :; }\ndie() { echo "died: $*" >&2; exit 9; }\n'
+        return self.run_block(stubs + self.block("GRADLE_BUILD_ARGS=(", "\nfi\n"),
+                              **{"GRADLEW": str(self.stub()), "E2E_APKS_BUILT": "", **env})
+
     def test_build_uses_the_test_invocations_build_properties(self):
-        build = self.run_block(self.block("GRADLE_BUILD_ARGS=(", "  --console=plain"), GRADLEW=str(self.stub()))
+        build = self.build_block()
         self.assertEqual(0, build.returncode, build.stderr)
         self.assertEqual(["-p", str(self.root), "assembleDebug", "assembleDebugAndroidTest",
                           "-PuseRelayRepository=true", "--console=plain"], build.stdout.splitlines())
@@ -158,6 +163,11 @@ class EmulatorBuildBeforeMintTest(unittest.TestCase):
         test_properties = [arg for arg in test.stdout.splitlines()
                            if arg.startswith("-P") and not arg.startswith("-Pandroid.testInstrumentationRunnerArguments.")]
         self.assertEqual(test_properties, build_properties)
+
+    def test_build_is_skipped_when_the_gate_built_before_the_device_hold(self):
+        built = self.build_block(E2E_APKS_BUILT="1")
+        self.assertEqual(0, built.returncode, built.stderr)
+        self.assertEqual("", built.stdout)
 
     def test_every_pairing_is_minted_after_the_build(self):
         build = self.script.index('"${GRADLEW}" -p "${REPO_ROOT}" assembleDebug')
