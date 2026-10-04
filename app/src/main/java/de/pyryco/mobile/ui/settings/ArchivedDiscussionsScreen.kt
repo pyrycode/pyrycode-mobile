@@ -32,9 +32,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -42,10 +44,15 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalAccessibilityManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -56,9 +63,11 @@ import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.ui.conversations.components.ArchiveRow
+import de.pyryco.mobile.ui.conversations.components.NoticePill
 import de.pyryco.mobile.ui.theme.LocalStaticDarkPalette
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.datetime.Instant
@@ -73,17 +82,44 @@ fun ArchivedDiscussionsScreen(
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     val resources = LocalResources.current
+    val accessibilityManager = LocalAccessibilityManager.current
+    var restoreFailure by remember { mutableStateOf<Int?>(null) }
+    var hostLabelHeightPx by remember { mutableStateOf(0) }
+    var tabsHeightPx by remember { mutableStateOf(0) }
+    val density = LocalDensity.current
+    val headerBodyHeight =
+        with(density) {
+            (
+                (if (hostName.isNotBlank()) hostLabelHeightPx else 0) +
+                    (if (state is ArchivedDiscussionsUiState.Loaded) tabsHeightPx else 0)
+            ).toDp()
+        }
     LaunchedEffect(effects, snackbarHostState) {
+        var noticeId = 0
         effects.collect { effect ->
             when (effect) {
                 is ArchivedDiscussionsEffect.RestoreSucceeded ->
                     snackbarHostState.showSnackbar(
                         resources.getString(R.string.restored_snackbar, effect.displayName),
                     )
-                ArchivedDiscussionsEffect.RestoreFailed ->
-                    snackbarHostState.showSnackbar(
-                        resources.getString(R.string.restore_failed),
-                    )
+                ArchivedDiscussionsEffect.RestoreFailed -> {
+                    restoreFailure = ++noticeId
+                    try {
+                        // Match Material Short's lifetime and accessibility flags, with no action.
+                        val timeout =
+                            accessibilityManager?.calculateRecommendedTimeoutMillis(
+                                originalTimeoutMillis = 4_000L,
+                                containsIcons = true,
+                                containsText = true,
+                                containsControls = false,
+                            ) ?: 4_000L
+                        delay(timeout)
+                    } finally {
+                        restoreFailure = null
+                    }
+                    // Keep queued identical failures separate, as the sequential snackbar collector did.
+                    withFrameNanos { }
+                }
             }
         }
     }
@@ -140,31 +176,60 @@ fun ArchivedDiscussionsScreen(
             },
             snackbarHost = { SnackbarHost(snackbarHostState) },
         ) { inner ->
-            Column(modifier = Modifier.padding(inner)) {
-                // The owning host (#715); Figma 18:2 draws it as the 24 px label above the tabs.
-                // Keep it outside the fixed-height header so enlarged text can grow vertically.
-                if (hostName.isNotBlank()) {
-                    Text(
-                        text = hostName.take(MAX_WORKSPACE_LABEL_CHARS),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                    )
+            Box(Modifier.fillMaxSize()) {
+                Column(modifier = Modifier.padding(inner)) {
+                    // The owning host (#715); Figma 18:2 draws it as the 24 px label above the tabs.
+                    // Keep it outside the fixed-height header so enlarged text can grow vertically.
+                    if (hostName.isNotBlank()) {
+                        Text(
+                            text = hostName.take(MAX_WORKSPACE_LABEL_CHARS),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .onSizeChanged { hostLabelHeightPx = it.height }
+                                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
+                    }
+                    when (state) {
+                        ArchivedDiscussionsUiState.Loading -> CenteredText("Loading…", Modifier)
+                        is ArchivedDiscussionsUiState.Error ->
+                            CenteredText(
+                                "Couldn't load archived discussions: ${state.message}",
+                                Modifier,
+                            )
+                        is ArchivedDiscussionsUiState.Loaded ->
+                            LoadedBody(
+                                state = state,
+                                onEvent = onEvent,
+                                onTabsHeightChanged = { tabsHeightPx = it },
+                            )
+                    }
                 }
-                when (state) {
-                    ArchivedDiscussionsUiState.Loading -> CenteredText("Loading…", Modifier)
-                    is ArchivedDiscussionsUiState.Error ->
-                        CenteredText(
-                            "Couldn't load archived discussions: ${state.message}",
-                            Modifier,
-                        )
-                    is ArchivedDiscussionsUiState.Loaded ->
-                        LoadedBody(
-                            state = state,
-                            onEvent = onEvent,
-                        )
+                restoreFailure?.let { noticeId ->
+                    key(noticeId) {
+                        // #1604 authorises Figma 685:4337 placement below Archive's title, host and tab controls.
+                        Box(
+                            Modifier.fillMaxWidth().padding(
+                                start = 20.dp,
+                                end = 20.dp,
+                                top = inner.calculateTopPadding() + headerBodyHeight + 28.dp,
+                            ),
+                            contentAlignment = Alignment.TopEnd,
+                        ) {
+                            NoticePill(
+                                text = stringResource(R.string.restore_failed),
+                                isError = true,
+                                modifier =
+                                    Modifier.testTag("archive-restore-error").semantics {
+                                        liveRegion = LiveRegionMode.Polite
+                                    },
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -175,13 +240,14 @@ fun ArchivedDiscussionsScreen(
 private fun LoadedBody(
     state: ArchivedDiscussionsUiState.Loaded,
     onEvent: (ArchivedDiscussionsEvent) -> Unit,
+    onTabsHeightChanged: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val outline = MaterialTheme.colorScheme.outlineVariant
     Column(modifier = modifier.fillMaxSize()) {
         Column(
             modifier =
-                Modifier.fillMaxWidth().testTag("archive_tabs").drawBehind {
+                Modifier.fillMaxWidth().onSizeChanged { onTabsHeightChanged(it.height) }.testTag("archive_tabs").drawBehind {
                     drawLine(outline, Offset(0f, size.height - 0.5f), Offset(size.width, size.height - 0.5f))
                 },
         ) {
