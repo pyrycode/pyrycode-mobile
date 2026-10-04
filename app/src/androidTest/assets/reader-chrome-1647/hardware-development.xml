@@ -1,0 +1,36 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="11" failures="1" errors="0" skipped="0" time="102.968" timestamp="2026-10-04T11:42:35" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" tests="10" failures="1" errors="0" skipped="0" time="78.969" timestamp="2026-10-04T11:42:35" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="longNameAndBodyLeaveControlsAndMenuReachable" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="17.518" />
+    <testcase name="headerBlocksUnderlyingCodePanelWithPositiveClearAreaControl" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="14.587" />
+    <testcase name="largeTextReservesMeasuredBarPlus28dp" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="7.736" />
+    <testcase name="headerPointerAreasRouteOnlyTheirOwnActions" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="7.983" />
+    <testcase name="headerBlocksUnderlyingLinkWithPositiveClearAreaControl" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="8.352" />
+    <testcase name="readerCodeAndQuoteUseReferenceRoles" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="4.205" />
+    <testcase name="plainReaderCodeScrollsHorizontallyInsideItsPanel" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="5.24" />
+    <testcase name="wrappedListItemContinuesAtTheGutter" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="3.071" />
+    <testcase name="referencePlacesBarRuleAndBodyAtFigmaCoordinates" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="5.348">
+      <failure>java.lang.AssertionError: expected:&lt;265.0&gt; but was:&lt;266.2857&gt;
+at org.junit.Assert.fail(Assert.java:89)
+at org.junit.Assert.failNotEquals(Assert.java:835)
+at org.junit.Assert.assertEquals(Assert.java:577)
+at org.junit.Assert.assertEquals(Assert.java:701)
+at de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest.referencePlacesBarRuleAndBodyAtFigmaCoordinates(MarkdownReaderDesignTest.kt:111)
+</failure>
+    </testcase>
+    <testcase name="scrollViewportStartsBehindTheFixedBar" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="4.929" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.design.ThreadDesignCaptureTest" tests="1" failures="0" errors="0" skipped="0" time="20.194" timestamp="2026-10-04T11:42:35" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="runConfigurationAndReaderAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="20.194" />
+  </testsuite>
+</testsuites>

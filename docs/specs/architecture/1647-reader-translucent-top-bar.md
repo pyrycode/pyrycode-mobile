@@ -43,3 +43,7 @@ Extend `runConfigurationAndReaderAt412By892` to retain the resting reader and ex
 ## Open Questions
 
 None.
+
+## Revisions
+
+2026-10-04: An additional whole shared-class Pixel 8 run executed 11 tests with one failure in the existing absolute-coordinate fixture at native density 2.625 (first list item 266.29dp versus 265dp). The reference fixture's Robolectric density-1 assertions remain unchanged. Add explicit 24dp title, 69dp bar, 97dp heading, 28dp clearance and 20dp gutter assertions to the capture method, whose viewport rule supplies density 1 and real bars. Final hardware selection is that capture method and the four new underlap, enlarged-text and pointer tests; no production design or coordinate expectation changes.

@@ -347,6 +347,15 @@ class ThreadDesignCaptureTest {
 
         checkNotNull(inputs.thread.value).onOpenMarkdownLink("docs/Builder Pipeline - Plan.md")
         await("Builder Pipeline Plan")
+        // Reference coordinates are measured at the capture's density 1, below the real status bar.
+        val restingBar = rule.onNodeWithTag("markdown-reader-top-bar").getUnclippedBoundsInRoot()
+        val restingTitle = rule.onNodeWithText("Builder Pipeline - Plan.md").getUnclippedBoundsInRoot()
+        val restingHeading = rule.onNodeWithText("Builder Pipeline Plan").getUnclippedBoundsInRoot()
+        assertEquals(69f, (restingBar.bottom - restingBar.top).value, 0.5f)
+        assertEquals(24f, (restingTitle.top - restingBar.top).value, 0.5f)
+        assertEquals(97f, (restingHeading.top - restingBar.top).value, 0.5f)
+        assertEquals(28f, (restingHeading.top - restingBar.bottom).value, 0.5f)
+        assertEquals(20f, restingHeading.left.value, 0.5f)
         design.capture("reader-chrome-1647", "reference", "553:2574")
         Espresso.pressBack()
         rule.waitForIdle()

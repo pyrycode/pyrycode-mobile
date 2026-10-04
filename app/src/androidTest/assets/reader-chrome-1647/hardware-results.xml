@@ -1,0 +1,22 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="5" failures="0" errors="0" skipped="0" time="62.213" timestamp="2026-10-04T11:52:07" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" tests="4" failures="0" errors="0" skipped="0" time="40.395" timestamp="2026-10-04T11:52:07" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="headerBlocksUnderlyingCodePanelWithPositiveClearAreaControl" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="22.645" />
+    <testcase name="largeTextReservesMeasuredBarPlus28dp" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="6.277" />
+    <testcase name="headerBlocksUnderlyingLinkWithPositiveClearAreaControl" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="6.398" />
+    <testcase name="scrollViewportStartsBehindTheFixedBar" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="5.075" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.design.ThreadDesignCaptureTest" tests="1" failures="0" errors="0" skipped="0" time="18.735" timestamp="2026-10-04T11:52:07" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="runConfigurationAndReaderAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="18.735" />
+  </testsuite>
+</testsuites>
