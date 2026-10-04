@@ -4,14 +4,64 @@ Split out of [Thread screen](thread-screen.md) on 2026-09-05 to keep that docume
 
 ## Testing
 
-The [frame captures](../../../app/src/androidTest/assets/frame-1206/README.txt) compare live Figma
-`16:8` and `568:3139` renders inspected on 2026-09-29 with real 412 × 892 emulator captures and
-labelled overlays. Header paths, inset rule, message-region origin, radial canvas, input-area
-position and task-pill anchor match the reference. Figma supplies no matching empty, compact,
-enlarged-text, keyboard-open or menu-open state; the companion captures check those states for
-clipping and reachability. The `533:1946` container metadata reports light tokens despite the dark
-renders, so the dark render and shared theme roles govern this frame. Fixture text, attachments,
-notices and footer controls differ from the art and retain their own visual owners.
+The [#1646 retained evidence](../../../app/src/androidTest/assets/chrome-1646/README.txt)
+supersedes earlier header/composer geometry captures. `ThreadDesignCaptureTest`
+retains explicit rows beneath both bars for `16:8`, `620:1577`, `696:4677` and
+`675:6160`, plus keyboard Actions and slash suggestions. Full `pixel8Api35` captures
+with `requireRealSystemBars=true` are nonblank hardware framebuffers; sidecars record
+412×892, density/font scale 1, hardware acceleration, `syntheticBars=false`, real
+24px system bars and 240px keyboard insets. Four Figma comparisons disclose transcript,
+placeholder-image, test-keyboard and physical-viewport differences. The final verifier
+refreshed all four Figma exports on 2026-10-04 and confirmed their decoded pixels
+match the retained references. The focus repair changed no visual values or fixtures.
+
+Geometry, readability, focus and pointer checks use the clear area between measured
+header and composer, not merely `thread-message-region` containment or semantic
+display: underlapping rows are intentionally still drawn there. `performScrollTo`
+can leave a question choice beneath the header or Continue beneath the composer.
+Before physical clicks, wait for host focus after resizing, move the target into
+the clear area, assert selection, and restore actions to the newest resting end.
+Follow-test swipes must start between the bars to reach the list.
+
+`ThreadChromeTest` covers measured draft/attachment resizing, resting gaps, blank
+chrome isolation, gradual attachment swipes and long-press selection/dragging.
+`ThreadMessageAreaTopTest`, `ThreadFrameTest`, `ThreadScreenShortStreamTest` and
+`ThreadScreenFollowTest` cover full drawing bounds, rule-relative oldest alignment,
+pinned overlays, short-thread alignment and reader follow behavior. Invisible Info
+banner append/remove coverage keeps the ordinary-message surface 12dp above status.
+`ThreadInlineQuestionTest` checks focus from behind both bars, viewport
+shrink/restore/re-shrink and attachment/multiline composer changes. Its earlier-field
+assertion checks chrome clearance and an already-readable field's physical anchor
+on every frame. Nested message/field scrollers must retain local relocation bounds.
+
+The final [verifier PASS and dispatcher gates](https://github.com/pyrycode/pyrycode-mobile/pull/1700#issuecomment-5977891679)
+record all seven commands passing: docs guard, script unit tests, Gradle check,
+assembleDebug, androidTest compilation, full UI and scripted-all. Fresh JVM XML is
+reported as **3,987 executed, 0 failed, 0 errors, 0 skipped**; affected geometry,
+gesture, follow and inline-focus classes all passed. Full UI XML records **173
+executed, 0 failed, 0 errors, 1 skipped** (174 records); the unrelated
+`RenameDialogCaptureTest.renameAtFigmaViewport` skip supplies no pass.
+`QuestionBatchModalTest.ime_keeps_an_earlier_other_clear_of_chrome_on_open_dismiss_and_reopen`,
+`large_text_actions_stack_and_pointer_edges_submit_only_this_batch`, and both
+`MainActivityInsetsDeviceTest` populated-thread keyboard methods are present and
+passed. The earlier-field method establishes complete header overlap before focus,
+then verifies preserved draft, real positive IME insets and clearance through
+open/dismiss/reopen. Scripted-all records **13 executed, 0 failed, 0 errors,
+0 skipped**, including passing `interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`.
+These are full-suite results, not separate focused reruns.
+
+The retained [initial hardware XML](../../../app/src/androidTest/assets/chrome-1646/hardware-results.xml)
+records **6 executed, 0 failed, 0 errors, 0 skipped**: all four affected capture
+methods and both populated-thread IME methods passed. The
+[gesture-repair hardware XML](../../../app/src/androidTest/assets/chrome-1646/rework/hardware-results.xml)
+records **3 executed, 0 failed, 0 errors, 0 skipped**: explicit translucent chrome,
+gradual attachment swipe and composer selection/drag all passed. History/newest
+keyboard sidecars show before/open/dismissed/reopened insets of 0/240/0/240px,
+at both viewport sizes and across the retained palettes. Historical failed setup
+and device-busy attempts in `rework-3/` are not passing evidence; the fresh dispatcher
+UI and scripted results resolve its pending checks. No real-Claude scenario was
+required for this chrome-only change. Internal row gaps remain #1630's ownership;
+the second ticket to integrate rechecks their combined ordinary-row resting gap.
 
 `ThreadFrameTest` uses native graphics to check visible geometry and real pointer taps at the
 send/field/footer boundary. Layout bounds alone missed Compose's automatic touch-target expansion:

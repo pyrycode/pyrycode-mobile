@@ -42,8 +42,9 @@ When a reading is live, `StatusReading` takes `Modifier.weight(1f)` inside the `
 keeps the pill flush against the gutter; when no reading is live, `StatusReading` emits no node (§ *The band
 collapses when nothing is live* below still holds), its weight goes with it, and `Arrangement.End` leaves the
 pill alone at the right end. `NoticePill` gained a `shadowElevation: Dp = PillShadow` parameter for this
-caller — Figma `568:3162` (the in-band pill) carries no drop shadow, unlike [`ThreadTopOverlay`](thread-top-overlay.md)'s
-pills, which keep the default; see [Notice pill § Three call sites](notice-pill.md#three-call-sites-three-contracts).
+caller — the in-band pill disables its individual drop shadow. Since #1646 it
+receives the status band's single Default shadow; [`ThreadTopOverlay`](thread-top-overlay.md)'s
+pills keep their own default; see [Notice pill § Three call sites](notice-pill.md#three-call-sites-three-contracts).
 A clickable `Surface` inside a 24dp band would otherwise lay out at M3's 48dp minimum interactive size and
 double the band's height — `CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides
 Dp.Unspecified)` around the pill keeps the layout at Figma's 24dp while Compose's hit-test still expands the
@@ -108,57 +109,24 @@ The `bottomBar` column's third band was `ThreadStatusRow(model = …, effort = �
 - **[#804](https://github.com/pyrycode/pyrycode-mobile/issues/804) had added a flat sibling, `usageLimit: UsageLimitReading?`, and one `when` arm between api-retry and resetting; [#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) removed both.** See the callout above the code block for the full account. The ladder is now turn status only: `api-retry → resetting → compaction → turn outcome → thinking/running tool`.
 - **`ComposerStatusGutter = 20dp − 16dp = 4dp`.** The three indicator files each already carry their own 16dp horizontal padding (sized for their old full-bleed foot-of-list mount), so reaching the design's 20dp content gutter needs only the 4dp remainder here, not the full 20dp — passing the full gutter would double the inset and land the indicators' content at 36dp, a fidelity miss that reads as a design error rather than a padding sum.
 - **The band collapses when nothing is live.** Every arm still early-returns when its flag is false, so an idle status area emits no node and the composer column's `Arrangement.spacedBy(8.dp)` gap simply doesn't open above the input field.
-- **The 12dp gap above the whole `Input area`** (`ComposerTopGap`, the composer column's own top padding) is what used to be the space between the list and the foot-of-list `Column`; it now holds regardless of whether a status arm is showing.
+- **Composer padding (#1646).** `ComposerTopGap` is 16dp, owned by the full-width composer along with 20dp sides and 16dp bottom. The list draws underneath it; measured reservations leave an ordinary message surface 12dp above the status band at the newest end. Other rows retain their internal gaps (owned by #1630).
 - No longer gated on `hasMessages` in any special way — moving out of the content `Column` entirely means the empty-thread and populated cases share the same composer, so the old "outside the branch" reasoning is moot.
 
 ### Thread top overlay placement (post-#1002)
 
-[#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) draws
-[`ThreadTopOverlay`](thread-top-overlay.md) — the usage-limit, pairing-error and Offline Retry pills this section's
-callouts describe leaving `ThreadStatusArea` for — as an **overlap**, not a `Column` child, inside the
-message-area `Box` in the content `Column` (not the `bottomBar` column `ThreadStatusArea` lives in):
+[`ThreadTopOverlay`](thread-top-overlay.md) owns usage-limit, pairing-error and
+Offline Retry pills as a sibling drawn after the empty state or list inside the
+message-region `Box`. Its `Alignment.TopEnd` and early return when empty keep it
+out of list layout, so appearing or clearing a pill never reflows rows. See the
+component topic for dismissal ownership and why these arms left the status band.
 
-```kotlin
-Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
-    if (!state.hasMessages && state.queuedMessages.isEmpty()) {
-        EmptyThreadState(
-            modifier = Modifier.fillMaxSize()
-                .olderHistoryPull(emptyThreadPull)
-                .scrollable(rememberScrollableState { 0f }, Orientation.Vertical)
-                .padding(start = 24.dp, top = MessageAreaTopInset, end = 24.dp),
-        )
-    } else {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().olderHistoryPull(listPull),
-            reverseLayout = true,
-            contentPadding = PaddingValues(top = MessageAreaTopInset),
-            …
-        ) { … }
-    }
-    ThreadTopOverlay(
-        usageLimit = usageLimit,
-        usageLimitDismissed = usageLimit?.dismissalKey() in dismissedUsageLimits,
-        onDismissUsageLimit = { usageLimit?.let(onDismissUsageLimit) },
-        showRePair = showRePair,
-        onRePair = onRePair,
-        connectionState = connectionState,
-        onRetryConnection = onRetry,
-        modifier = Modifier.align(Alignment.TopEnd).padding(start = ComposerGutter, top = TopOverlayTopGap, end = ComposerGutter),
-    )
-}
-```
-
-Wrapping both branches of the empty/populated `if` in one `Box` is what lets one `ThreadTopOverlay` call
-cover both — the pre-#1002 code had no shared parent at this level, since the empty and populated branches
-each took the `weight(1f)` slot directly. The overlay draws *after* (so *over*) whichever branch rendered,
-and `Alignment.TopEnd` plus the overlay's own early-return-to-nothing keeps it from taking layout space —
-the list never reflows as a pill appears or clears. See [Thread top overlay](thread-top-overlay.md) for the
-composable itself, the dismissal holder `UsageLimitDismissals`, and why this replaced the status-row arms.
-[#1562](https://github.com/pyrycode/pyrycode-mobile/issues/1562) moved the message region's top edge to the
-app bar's rule, so a scrolled row now draws through what used to be dead space: `TopOverlayTopGap =
-MessageAreaTopInset` (28dp, shared with the `LazyColumn`'s top `contentPadding` and `EmptyThreadState`'s top
-padding) keeps the overlay's visible content at the same y it held before, rather than letting it ride up to
-the new region top with the rest. Its right edge still shares the 20 dp gutter with the rows.
+Since [#1646](https://github.com/pyrycode/pyrycode-mobile/issues/1646), the message
+region begins at the screen-area top and draws behind the header. Overlay placement
+therefore adds measured `headerHeight` to `TopOverlayTopGap = MessageAreaTopInset`
+(28dp), with 20dp side gutters. Pills stay pinned 28dp below the rule, sharing the
+oldest row's resting clearance without following scroll position. The empty state
+also reserves measured header/composer heights; the list uses content padding
+instead, preserving its full drawing bounds.
 
 ### Interrupt-affordance placement (post-#459, retired from the screen in #643)
 
@@ -311,25 +279,46 @@ The VM's own `connectionStateSource.observe()` call is unchanged by #1318 — wh
 
 - **Back** — a 48dp `IconButton(onClick = onBack)` around the 24dp `ic_thread_back` Figma vector, tinted `onSurface`; `R.string.cd_back` ("Back") remains its accessible name.
 - **Title** — `Text(text = title, modifier = Modifier.weight(1f).clickable(onClick = onTitleClick).semantics { role = Role.Button }, style = titleLarge, color = onPrimaryContainer, maxLines = 1, overflow = TextOverflow.Ellipsis)`, sitting between the two controls. `weight(1f)` precedes `.clickable(...)`, so the `Text` measures to the **full title slot**, not just its visible glyphs — the tap area and ripple cover the trailing space after a short title too (harmless: `Row` siblings never overlap, so it can't reach either control, and it is arguably a better target than the stock bar's text-sized one). `maxLines = 1` + `TextOverflow.Ellipsis` is what makes a display name longer than the slot truncate inside it rather than overlap or cover a control. `Role.Button` keeps TalkBack announcing the title as activatable.
-- **Overflow** — keeps the `Box { IconButton; ThreadOverflowMenu }` anchor. Its 48dp target contains the Figma `ic_thread_overflow` vector, a 6 × 24dp path tinted `primary` and shifted 4dp upward; `R.string.cd_more_actions` ("More actions") remains its accessible name.
-- **Rule** — a 1dp `HorizontalDivider` at y=68, inset 20dp on both sides (`x=20`, width 372dp at the reference viewport). Colour comes from `threadColors.headerRule` at 60% alpha: `inversePrimary` (`#32628D`) in static dark, and `outlineVariant` in static light and wallpaper modes. [#1562](https://github.com/pyrycode/pyrycode-mobile/issues/1562) dropped the rule's own `bottom = BarBottomGap` padding — that 16dp gap is now a reader-only concern (`BarBottomGap` still applies to `MarkdownReaderTopBar`'s rule) — so the message region starts flush against the rule's bottom edge instead of 16dp under it.
-- **Geometry.** At 412 × 892 dp, the 61dp top-bar frame starts at (20, 24), its rule is at y=68–69, and the message region begins at y=69, directly under the rule, with no spacer and no bottom padding on the rule ([#1562](https://github.com/pyrycode/pyrycode-mobile/issues/1562); Figma `16:8` / `685:4337`). A scrolled row now draws up to that edge; `MessageAreaTopInset` (28dp — see [Thread top overlay](thread-top-overlay.md#placement-in-threadscreen)) keeps a short or empty stream, and the top-overlay pills, at the y they held when the region began at 97. The visible back and title use the 20dp gutter while 48dp targets extend into available space. `ThreadBarTopGap` raises only this bar; the markdown reader keeps `BarTopGap`, avoiding an unrelated 4dp shift. The title still truncates inside its middle slot.
+- **Overflow** — keeps the `Box { IconButton; ThreadOverflowMenu }` anchor. Its 48dp target contains the Figma `ic_thread_overflow` vector, a 6 × 24dp path tinted `primary` and shifted 2dp upward; `R.string.cd_more_actions` ("More actions") remains its accessible name.
+- **Rule** — a 1dp `HorizontalDivider`, inset 20dp on both sides (372dp wide at 412dp). `threadColors.headerRule` uses 60% alpha: static-dark `inversePrimary` (`#32628D`), or `outlineVariant` in static light and wallpaper modes.
+- **Geometry (#1646).** The visible 28dp content row begins 24dp below the screen-area top; a 16dp gap places the rule at 68–69dp. The bar is 69dp high. The 48dp Back/overflow touch boxes extend around their glyphs without changing this geometry or the 20dp visible gutters. The title truncates inside its middle slot. The list draws from the screen-area top underneath this bar; measured header height + 28dp reserves oldest-row and top-overlay clearance. Reader bar spacing remains reader-owned.
 
-Under the static dark palette, `ThreadScreen` draws a radial `primaryContainer` glow over the
-theme surface with a 30% scrim, matching the live `16:8` root. Its `Scaffold` is transparent in
-this mode so the glow reaches the header, blank message region, and — as of
-[#1548](https://github.com/pyrycode/pyrycode-mobile/issues/1548) — the input area: the `bottomBar`
-`Column` (status area, input field and footer) paints no background of its own, so the glow runs
-behind it instead of ending at a flat band, matching Figma `16:8` and `635:2036`. Static light and
-wallpaper variants keep the flat thread background, because there the frame paints
-`threadColors.background`, which is the same colour `surface` was.
+`ThreadScreen` retains Scaffold's bar slots and snackbar layering, but does not
+apply its bar padding to the message drawing viewport. `HazeState` is UI-local:
+Haze 1.5.4 `hazeSource` records the message region, and the bars' reusable
+`chromeBackdrop` modifier uses `hazeEffect` to sample that source. Ordinary Compose
+node blur would blur the controls themselves. There is one list, without duplicate
+content; effect, gradient and foreground remain separate so controls draw sharp.
+The modifiers are reusable, with reader and pairing-header adoption left to their
+own tickets.
 
-A keyboard-closed capture at 412 × 892 cannot tell the band from the gradient: at that height the
-glow has already faded to the flat canvas colour by the input area's top edge, in both the app and
-Figma. The discriminating check is `ThreadCanvasPaletteTest.assertCanvas` on Robolectric's
-320 × 731dp screen, which samples 4dp above and 4dp below the bottom of `thread-message-region` in
-static dark and requires both the glow's presence and a match between the two pixels; a capture
-alone does not prove this regression is fixed.
+In static dark, the header paints a vertical `#09141D` gradient from opaque at
+the top to 9% at the rule, over linear progressive blur from 10dp to zero. The
+composer paints `#0B0E11`, transparent at its top, reaching 60% opacity at 25% of
+its measured height and staying flat thereafter. Its blur rises linearly from zero
+to 10dp at 20% height and stays there. Haze adds no noise or tint; the gradient is
+painted separately using the resolved thread palette. The composer owns 16dp
+top/bottom and 20dp side padding, measured inside its outer IME padding, so the
+whole layer lifts with the keyboard and expands with attachments or multiline input.
+The frame's radial glow and scrim remain behind these layers; static light and
+wallpaper variants keep their resolved flat canvas and palette roles.
+
+`defaultChromeShadow` records rendered alpha in a graphics layer, colours it with
+black/theme scrim at 20%, blurs it by 5dp and translates it (0, 4dp), then draws the
+original content sharp. This follows glyph, text and pill shapes rather than a
+rectangular box. Apply it around the header content row and once around
+`ThreadStatusArea`. In-band pill shadows remain zero to avoid double shadows;
+top-overlay pills retain their own treatment. Transparent layer margins prevent
+the 24dp status band's shadow from clipping at the recorded edge.
+
+Both full-width bar backgrounds have a pointer-input node, including blank pixels.
+It wins sibling hit testing over underlying row copy, attachment and details actions
+without adding a fake accessibility action. It observes events without consuming
+them: consuming Main-pass movement cancels child recognizers in their Final pass
+before touch slop, breaking gradual attachment swipes and composer selection drags.
+Child controls retain their actions and gestures. Footer menus and slash suggestions
+continue to use window-coordinate control anchors, following the IME lift; verify
+physical targets within measured chrome rather than the full list viewport.
 
 `PyrycodeMobileTheme` provides the immutable `ThreadColors` palette from the resolved app mode and
 wallpaper setting, also used by the [markdown reader](markdown-reader-screen.md#what-it-does).
@@ -345,4 +334,10 @@ The composable is **stateless** per the project convention — no `remember`, no
 
 ### Modifier ordering inside the body
 
-`Modifier.padding(inner).fillMaxSize()` — same shape as `DiscussionListScreen.kt:101`. Do **not** invert to `.fillMaxSize().padding(inner)` (that would draw under the AppBar shadow before applying the inset). No `Modifier.systemBarsPadding()` — the outer `Scaffold` in `MainActivity` already passes `innerPadding` into `PyryNavHost`, and the per-screen `Scaffold` adds its own `inner` for the AppBar; both are applied.
+The thread body uses `.imePadding().fillMaxSize().hazeSource(chromeSource)` followed
+by the frame background. Scaffold's measured top padding supplies `headerHeight`;
+its bar padding is not applied to the drawing bounds. Chrome reservations belong
+in list content padding and focus relocation, not in a smaller drawing viewport.
+The outer `MainActivity` already supplies system-bar insets, so no second
+`systemBarsPadding()` belongs here. Composer IME padding wraps its backdrop and
+height measurement, keeping the keyboard out of the measured composer reservation.
