@@ -22,7 +22,8 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    asserts "ping" renders. Also covers a **tool-use** scenario (#481): a constrained prompt makes real
    claude run a shell tool and asserts the tool step renders; a **thinking-spinner** scenario (#482,
    the flakiest — ships `@Ignore`-gated / manual): a pure-reasoning prompt makes real claude think a beat
-   and asserts the spinner shows mid-turn; and a **create-workspace-folder** scenario (#566): long-press
+   and asserts the spinner shows mid-turn; and a **create-workspace-folder** scenario (#566, `@Ignore`d since
+   PR #1196): long-press
    the paired host's own add control on the channel list (#738 — the tree's host row, not the retired
    floating button) → Workspace Picker → create a folder → land in a fresh discussion whose
    workspace is the created folder → send the ping prompt in it → re-open the picker and confirm the
@@ -42,7 +43,8 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    restore it (list toolbar → "Open archive" → the Archived screen's restore affordance) and assert it
    is back in the list (exercises the #549 archive/unarchive wire, the #556 archive-from-thread and #557
    restore surfacings against a real daemon; no claude turn — archive and restore are daemon round-trips);
-   and a **change-workspace** scenario (#562): via the real thread overflow "Change workspace…" → Workspace
+   and a **change-workspace** scenario (#562, `@Ignore`d since PR #1196): via the real thread overflow
+   "Change workspace…" → Workspace
    Picker → create a new folder, complete a `change_workspace` round-trip to that runtime-unique target path
    and assert the conversation's recorded workspace (the chip) durably re-labels to it (exercises the #560
    change_workspace wire and #561 surfacing against a real daemon; no claude turn — change_workspace is a
@@ -298,14 +300,28 @@ production-side KDoc and its relationship to the tier tags #731 minted the same 
 [Add controls](../knowledge/features/channel-list-screen-tree-and-controls.md#add-controls-738) for `treeHostAddTestTag`'s own
 clamping rule.
 
+**Since [PR #1196](https://github.com/pyrycode/pyrycode-mobile/pull/1196) (2026-09-27) a chat is created in
+one tap and the chat UI has no workspaces.** `createChat()` taps the host's Chats plus,
+`treeHostChatAddTestTag(serverId)` through `awaitHostChatAddControl()` (#1190 replaced the
+`treeHostAddTestTag` and `openWorkspacePicker()` handles above), and the app creates and opens the chat
+directly in the host's default folder, with no Create chat confirmation. The workspace chip is gone, and
+Change workspace is no longer offered in the chat and channel overflow menus or Channel Info's actions, so
+`interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` (#566) and
+`interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace` (#562) are `@Ignore`d and outside the curated
+selector; their descriptions below record how they ran. The daemon's workspace verbs remain. The
+save-as-channel scenario now finds the chip absent before the promote as well as after, so its chip check no
+longer proves the tier flip; the top bar and the tree tags carry it. Model, effort and permission are chosen
+in the Run configuration sheet, which `awaitFooter()` and `pickFooterOption()` open from the footer's
+"Expand status details" control rather than from separate footer controls.
+
 Rung 3 covers twenty-four scenarios on this one harness: the **ping** happy path (a constrained reply renders);
 a **tool-use** scenario (#481 — a constrained prompt makes real claude run a shell tool, asserting the
 tool step renders, keyed on the resolved row's accessible Done status); a
 **thinking-spinner** scenario (#482 — a pure-reasoning prompt makes real claude think a beat, asserting
 the spinner is displayed mid-turn, keyed tolerantly on the `cd_thread_thinking` content-description); a
-**create-workspace-folder** scenario (#566, migrated in #1190 —
+**create-workspace-folder** scenario (#566, migrated in #1190, `@Ignore`d since PR #1196 —
 `interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace`: create a chat through its host's
-Chats plus and confirmation → open the thread's Change workspace picker → create and select a folder →
+Chats plus → open the thread's Change workspace picker → create and select a folder →
 send the ping prompt there → reopen that picker and find the folder in Recent, proving the #564 create
 wire, #565 recents wire and live folder use); a **new-session**
 scenario (#541 — `interactiveTurn_newSession_rendersSessionBoundaryDelimiter`: prove the session is live
@@ -325,7 +341,7 @@ name, confirm it is present on the channel list, archive it from the thread (ove
 archive" → the Archived screen's restore affordance) and assert it is **back** in the list — the round
 trip closes; proving the #549 archive/unarchive wire, the #556 archive-from-thread and #557 restore
 surfacings against a real daemon; **zero** claude turns — create/rename/archive/restore are daemon
-round-trips); and a **change-workspace** scenario (#562 —
+round-trips); and a **change-workspace** scenario (#562, `@Ignore`d since PR #1196 —
 `interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace`: create a plain discussion, then via the real
 thread overflow "Change workspace…" → Workspace Picker → "Create new folder…" → a runtime-unique name,
 complete a `change_workspace` round-trip to that new target path and assert the conversation's recorded
@@ -339,8 +355,8 @@ thread top bar (in-thread, immediately after submit; there is **no** PopBack, so
 `state.displayName` re-labels in place) and the conversation list (after popping back) — proving the #530
 rename wire against a real daemon; **zero** claude turns — create/rename are conversation-scoped daemon
 round-trips with no session transition); and a **save-as-channel (promote)** scenario (#581 —
-`interactiveTurn_saveAsChannel_promotesToChannelTier`, driven through the Chats-section Create chat
-confirmation and #957 `MobileModal` form: create a scratch discussion, drive the real thread overflow
+`interactiveTurn_saveAsChannel_promotesToChannelTier`, driven through the Chats-section plus and
+the #957 `MobileModal` form: create a scratch discussion, drive the real thread overflow
 "Save as channel…" → `SaveAsChannelDialog` to a
 runtime-unique channel name and a short system prompt, tap OK, and assert the promote round-trip lands on
 **three** durable surfaces — the thread top bar re-labels **in place** (there is **no** PopBack), the
@@ -491,9 +507,10 @@ navigating back — otherwise `popBackStack` would cancel a launched-but-unstart
 presence check would flake to a timeout. Total real-claude cost: **zero** turns — create/rename/archive/restore
 are all daemon round-trips, and the durable identity is the typed name, so no ping is sent.
 
-The **change-workspace** scenario (#562) is likewise **always-on** (not `@Ignore`d): the recorded workspace
-is a **durable** fact — the `WorkspaceChip` re-label survives the turn — so, like #554's / #551's list
-inversions and #541's delimiter, it belongs in the always-on gate. Via the real thread overflow "Change
+The **change-workspace** scenario (#562) has been `@Ignore`d since PR #1196 removed the thread's Change
+workspace action; this paragraph records how it ran. It was **always-on**: the recorded workspace
+was a **durable** fact — the `WorkspaceChip` re-label survived the turn — so, like #554's / #551's list
+inversions and #541's delimiter, it belonged in the always-on gate. Via the real thread overflow "Change
 workspace…" (`mutationsSupported`-gated, **not** promotion-gated, so reachable on a plain discussion — PR
 #572) → the Workspace Picker → "Create new folder…" it drives a runtime-unique target folder (`"e2e562-" +
 System.currentTimeMillis()`), then asserts the chip re-labels to that basename. Because `change_workspace`
@@ -1271,6 +1288,20 @@ No rung-4 twin: the loopback relay the scripted harness dials cannot send FCM, a
 [#685](https://github.com/pyrycode/pyrycode-mobile/issues/685) already covers synthetic delivery
 deterministically.
 
+**Testing push by hand on a real phone** (2026-10-03, from the
+[#1573](https://github.com/pyrycode/pyrycode-mobile/issues/1573) investigation). A notification proves push
+only when the phone had disconnected first. While the app's connection is open the daemon logs
+`push_wake.skipped reason=device_connected` and the app posts the notification itself from the live turn
+end, so check the daemon log for the phone's `v2.peer_close.teardown` before the turn ended. A delivered wake
+reconnects within about a second of `push_wake.sent`; a reconnect 7 seconds, 22 seconds or minutes later is a
+delayed delivery or a manual app open, and telling the two apart needs the relay's outcome line for that wake
+(pyrycode/pyrycode-relay#160) and the phone's `FirebaseMessaging` log, which
+`adb shell setprop log.tag.FirebaseMessaging VERBOSE` turns on even in a release build. Every turn end on a
+daemon wakes each absent paired phone, so a session you keep replying to on the same daemon resets the
+phone's standby with each reply. A charging phone never dozes: for a realistic standby test, enlarge the log
+buffer with `adb logcat -G 16M`, switch to Wi-Fi adb, unplug the phone and drop every adb connection, since
+adb traffic keeps Wi-Fi awake, then read the log afterwards and return the phone to USB-only adb.
+
 The **attachments-from-phone**, **claude-offered-file** and **peer-attachment** scenarios (#1016 —
 `interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes`,
 `interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart`; #1020 —
@@ -1670,6 +1701,14 @@ Prerequisites on the host:
   On this machine `cmdline-tools` was absent at authoring time — install it before the first run.
 - `python3` (decodes the base64url pairing payload).
 
+Off the `LIVE` path the script starts a local relay on a free port it picks, unless `PORT` pins one, and
+refuses a port that already answers `/healthz`. Until [PR #787](https://github.com/pyrycode/pyrycode-mobile/pull/787)
+(2026-09-22) every run used one fixed port, so a second run's relay died on the clash while its health check
+answered from the first run's relay; the second run carried on through a connection it did not own and went
+red mid-test when the first run tore that relay down. Several runs can be alive at once: the dispatcher works
+on more than one ticket, and a builder runs a scripted scenario before handing back a repair, so do not
+assume any fixed host resource is free.
+
 The script: starts the relay → starts the daemon (`PYRY_MOBILE_V2=1`, pointed at the loopback relay,
 alongside any other harness daemons the mode needs) → builds the app and test APKs
 (`assembleDebug assembleDebugAndroidTest`, the same `-PuseRelayRepository` build properties the test task
@@ -1941,7 +1980,9 @@ section and use the daemon default; the folder-settings method keeps the reposit
 rename/archive and Archive restore round trip without a tree-row pencil. The create-channel test archives
 the harness's seeded promoted channel for the empty-section check and restores it in `finally`.
 #1190 moves `createChat()` and the save-as-channel setup through the host's Chats plus and confirmation;
-the folder-use method now creates a chat before using the thread's picker. At #1190, the two-host defaults method also checked that
+the folder-use method now creates a chat before using the thread's picker. PR #1196 then dropped the
+confirmation, so the Chats plus creates and opens the chat directly, and `@Ignore`d the folder-use method
+with the change-workspace one. At #1190, the two-host defaults method also checked that
 Chats creation used the daemon default independently of saved app defaults; #1249 later removed that
 obsolete Settings proof and retained the host-isolated Archive round trip. The host-row-only #1087 method
 is retired; its selector and the executed-test floor were lowered together.
