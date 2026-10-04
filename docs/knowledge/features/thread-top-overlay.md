@@ -2,7 +2,7 @@
 
 The **notice surface** for the thread ([#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002)):
 claude's usage-limit report, a failed MCP server ([#1345](https://github.com/pyrycode/pyrycode-mobile/issues/1345)),
-the pairing-error notice and Offline Retry, drawn as a right-aligned stack of
+the pairing-error notice, Offline Retry and conversation session errors, drawn as a right-aligned stack of
 [`NoticePill`](notice-pill.md)s pinned over the top of the message area — replacing the two arms they used
 to share with live turn status inside `ThreadStatusArea`.
 
@@ -39,16 +39,16 @@ internal fun ThreadTopOverlay(
     onRetryConnection: () -> Unit = {},
     mcpFailure: String? = null,
     onOpenMcpFailure: () -> Unit = {},
+    sessionError: String? = null,
+    agent: ConversationAgent = ConversationAgent.Claude,
 )
 ```
 
-[#1519](https://github.com/pyrycode/pyrycode-mobile/issues/1519) dropped the `agent` parameter this
-composable used to forward into `usageLimitLabel` — the lead no longer names the conversation's agent (see
-[Usage-limit indicator](usage-limit-indicator.md)), so `ThreadTopOverlay` has nothing left to do with it.
-`ThreadScreen`'s call site dropped its `agent = state.agent` argument to match.
+The usage lead no longer names the agent ([Usage-limit indicator](usage-limit-indicator.md), #1519).
+Since #1678, `agent = state.agent` selects the session-error copy independently of usage copy.
 
 Emits nothing when there is no pill to show (`usageLimit == null || usageLimitDismissed`, `mcpFailure == null`,
-`!showRePair`, and `connectionState != Offline`) — the overlay is an overlap (`Box` alignment, not a layout slot), so an empty overlay costs
+`!showRePair`, `connectionState != Offline`, and `sessionError == null`) — the overlay is an overlap (`Box` alignment, not a layout slot), so an empty overlay costs
 nothing and the message area draws exactly as if it were absent. Otherwise a `Column(horizontalAlignment =
 End, verticalArrangement = spacedBy(12.dp))` — Figma `541:2446`'s 12dp pill gap — with, top to bottom:
 
@@ -94,6 +94,27 @@ rejected-pairing state; `onRePair` is bound at `MainActivity` to
 is never hideable, unlike a warning reading.
 
 Usage sits above the lower action, matching Figma `533:1956`. When `connectionState` is Offline and `showRePair` is false, the lower action is the error-toned [Retry pill](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=627-4910). Its 48 dp clickable box extends below the visible pill, preserving the 12 dp gap and avoiding the usage dismiss target. Since [#1499](https://github.com/pyrycode/pyrycode-mobile/issues/1499), the visible pill no longer fills that box: it hugs "Offline · Retry" (94dp under Robolectric — the label plus 8dp padding on each side) at the box's top-right corner, which the box's `Alignment.TopEnd` places at the overlay's right edge, matching frame `627:4910`. The 144 x 48 dp box itself is unchanged from [#1283](https://github.com/pyrycode/pyrycode-mobile/issues/1283) — only the drawn pill's width changed, not the touch target. `showRePair` wins when pairing is rejected, since a network retry cannot repair that state.
+
+### The session-error pill (#1678)
+
+Every non-null `sessionError`, including an empty or unknown code, shows an inert
+Error `NoticePill` after the existing persistent usage/MCP/pairing/offline notices.
+It has no click, dismiss control, leading icon or timeout; long copy wraps. Reserve
+placement below it for #1604's future transient failure notice; that notice is not
+implemented here. Repository clearing alone removes this pill.
+
+Exact code matches select client resources; neither raw codes nor daemon prose
+reach visible text or accessibility semantics:
+
+| Code | Claude copy | Codex copy (`_codex` resource variants) |
+| --- | --- | --- |
+| `session.blocked` | Claude did not pick up the last message. It was not delivered. | Codex did not pick up the last message. It was not delivered. |
+| `session.child_crashing` | Claude keeps failing to start. Your message is waiting. | Codex keeps failing to start. Your message is waiting. |
+| Any other code | Claude stopped responding. | Codex stopped responding. |
+
+Blocked delivery has abandoned the backlog; child crashing retains the queued
+message. Showing an error never resends it. See [repository clearing rules](remote-conversation-repository-state-errors-and-handoff.md#conversation-session-errors-1677)
+and [destination observation](thread-screen-how-it-works-state.md#session-errors-and-local-send-settlement-1678).
 
 ## Placement in `ThreadScreen`
 
@@ -218,6 +239,10 @@ for why that ask shares a daemon worker with sending a message and can stall beh
     "Turn interrupted" still renders — written first, and it fails against the pre-#1002 ladder.
   - **#1345:** a failed-server name renders "MCP server NAME failed" as a tappable Error pill below the
     usage pill; it is absent alongside either the Re-pair pill or the offline retry target.
+- **Session errors (#1678):** `ThreadTopOverlayTest` checks persistent-notice ordering,
+  inert semantics and the reused Error colors/right-aligned bodySmall text with native graphics.
+  `ScriptedSessionErrorTest` proves the real repository-to-screen graph; see
+  [thread testing](thread-screen-testing.md#session-error-graph-and-acknowledgement-races-1678).
 - **Emulator (rung 4, #1457):** the scripted `mcp-failed` scenario
   (`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_failedMcpServerPillOpensChannelInfo`,
   [Scenarios](../../e2e-interactive-stream.md#scenarios-454)) drives the pill through the real daemon and
@@ -268,7 +293,7 @@ only a count or a static reason, never the server name, the status or the conver
 
 ## Related
 
-- Content: [Notice pill](notice-pill.md) — the shared pill composable all three notices render through.
+- Content: [Notice pill](notice-pill.md) — the shared pill composable the overlay notices render through.
 - Usage reading: [Usage-limit indicator](usage-limit-indicator.md) — the label/warning helpers, the
   dismissal key extension, and the removed status-row arm's history.
 - MCP failure: [#1345](https://github.com/pyrycode/pyrycode-mobile/issues/1345) and [Channel info sheet §
