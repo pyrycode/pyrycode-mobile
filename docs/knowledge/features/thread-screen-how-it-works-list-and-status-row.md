@@ -292,20 +292,34 @@ Not to be confused with the retired `ThreadStatusRow` above (`model · effort`) 
 the composer's turn-status band (§ "fourth, static reading" above covers its `waitingForAnswers` arm, above
 this order).
 
-[#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311) ported desktop's `workingIndicatorState` so
-the band keeps one reading up for the whole running turn, instead of going dark once no tool is open during
-`responding`. The precedence used to live only as a `when`'s clause order; it now lives once, as `statusArm`
-beside `StatusReading`, returning a `StatusArm` enum: `None, Connection, Resetting, ApiRetry, Compacting,
-Stalled, TurnOutcome, Thinking, Working, RunningTool`, top wins. Reset session now outranks api-retry
-(matching desktop); `Stalled` (riding [`StallProjection`](stall-state.md) unchanged) and `Working` (the
-`responding` phase, no open tool) are new. Rationale:
-[Thinking indicator § Working and stalled](thinking-indicator.md#working-and-stalled-1311).
+[#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311) ported desktop's `workingIndicatorState`
+so the band keeps a reading throughout a running turn. `statusArm` beside `StatusReading` selects one
+arm. The current order, first match wins, is connection, Reset session, api-retry, compaction, stall,
+turn outcome (only with no local window), running tool while busy, daemon thinking, working while busy,
+Sending, Waiting, None. Offline selects None because the top overlay owns Retry. Permission and question
+readings override this ladder in `ThreadStatusArea`. Sending during a running turn therefore keeps its
+running-tool, thinking or working reading. Both local stages suppress a previous outcome; connection,
+reset, retry, compaction and stall retain their precedence.
 
-**The band is always composed, one glyph (#1312).** `StatusArm.None` still makes `StatusReading` emit
-nothing, but the band no longer collapses when it does: `ThreadStatusArea` always draws the snowflake
-(`ThreadStatusGlyph`) at its leading edge, in a weighted reading box that holds its place even when empty, so
-the input field's position does not depend on which arm — or no arm — is showing. The waiting-for-answers
-reading (above this order) still draws its own question glyph in the snowflake's place instead. The glyph
-turns while `ThreadViewModel.isBusy || localSendPending` holds, independent of `statusArm`, so switching arms
-never restarts the rotation; see [Thinking indicator § The band is always composed, and the glyph always
-turns with it](thinking-indicator.md#working-and-stalled-1311) for the gate and the per-arm cleanup.
+**Local acceptance stages (#1641).** `MainActivity` collects `ThreadViewModel.localSendStage` and passes
+it to `ThreadScreen`. Sending opens immediately before the repository send, including attachment-bearing
+messages after upload, and reads “Sending…” (`thread_sending_label`). The correlated acknowledgement
+advances only the still-current Sending generation to Waiting: “Waiting for Claude” (`thread_waiting_label`)
+or “Waiting for Codex” (`thread_waiting_label_codex`). Acceptance does not establish a started turn:
+Waiting persists indefinitely if no phase arrives. Both labels are plain primary-coloured bodySmall
+text with the existing vertical padding, without thinking tokens or Stop eligibility.
+
+The first `turn_state` of any phase for this conversation closes the local window, as do a failed current
+send and availability changes. Another conversation's event does not close it. Closing invalidates the
+send generation, so a late acknowledgement cannot reopen Waiting and an older success or failure cannot
+alter a newer window. Blank, refused and upload-failed sends retain their no-window paths. See
+[Thinking indicator § Working and stalled](thinking-indicator.md#working-and-stalled-1311) for the
+acceptance/turn distinction and controlled render coverage.
+
+**The band is always composed, one glyph (#1312).** `StatusArm.None` makes `StatusReading` emit nothing,
+but `ThreadStatusArea` retains the snowflake (`ThreadStatusGlyph`) and weighted reading box, keeping the
+input field in place. Waiting for answers substitutes its question glyph. The snowflake turns while
+`ThreadViewModel.isBusy || localSendStage != LocalSendStage.None`, independently of `statusArm`:
+Sending → Waiting and changes to higher-priority readings never restart rotation. Neither local stage
+sets `isBusy`; Stop remains controlled by the daemon turn. See [Thinking indicator § Working and
+stalled](thinking-indicator.md#working-and-stalled-1311) for reduced motion and rotation lifetime.

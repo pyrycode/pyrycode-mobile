@@ -35,6 +35,7 @@ import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.ResetStatus
+import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.components.STATUS_GLYPH_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
@@ -73,6 +74,7 @@ class ThreadStatusBandTest {
         val runningTool: Boolean = false,
         val taskCount: Int = 0,
         val waiting: Boolean = false,
+        val localSendStage: LocalSendStage = LocalSendStage.None,
     )
 
     private var reading by mutableStateOf(Reading("idle"))
@@ -138,6 +140,8 @@ class ThreadStatusBandTest {
                         questionState = question.takeIf { r.waiting },
                         isThinking = r.isThinking,
                         isBusy = r.isBusy,
+                        localSendStage = r.localSendStage,
+                        thinkingProgress = ThinkingProgress(184, 184).takeIf { r.localSendStage != LocalSendStage.None },
                         apiRetry = r.apiRetry,
                         isCompacting = r.isCompacting,
                         resetting = r.resetting,
@@ -152,6 +156,8 @@ class ThreadStatusBandTest {
     private val states =
         listOf(
             Reading("idle"),
+            Reading("sending", localSendStage = LocalSendStage.Sending),
+            Reading("waiting", localSendStage = LocalSendStage.Waiting),
             Reading("offline", connectionState = ConnectionState.Offline),
             Reading("connecting", connectionState = ConnectionState.Connecting),
             Reading("reconnecting", connectionState = ConnectionState.Reconnecting(5)),
@@ -192,11 +198,17 @@ class ThreadStatusBandTest {
 
     @Test
     fun waitingForAnswers_keepsItsQuestionGlyph_insteadOfTheSnowflake() {
-        reading = Reading("waiting", isBusy = true, waiting = true)
+        reading = Reading("waiting", isBusy = true, waiting = true, localSendStage = LocalSendStage.Sending)
         setThread()
 
-        composeTestRule.onNodeWithText(string(R.string.question_waiting_for_answers)).assertIsDisplayed()
-        composeTestRule.onAllNodesWithTag(STATUS_GLYPH_TEST_TAG, useUnmergedTree = true).assertCountEquals(0)
+        for (stage in listOf(LocalSendStage.Sending, LocalSendStage.Waiting)) {
+            reading = reading.copy(localSendStage = stage)
+            composeTestRule.waitForIdle()
+            composeTestRule.onNodeWithText(string(R.string.question_waiting_for_answers)).assertIsDisplayed()
+            composeTestRule.onAllNodesWithTag(STATUS_GLYPH_TEST_TAG, useUnmergedTree = true).assertCountEquals(0)
+            composeTestRule.onNodeWithText(string(R.string.thread_sending_label)).assertDoesNotExist()
+            composeTestRule.onNodeWithText(string(R.string.thread_waiting_label)).assertDoesNotExist()
+        }
     }
 
     @Test
@@ -222,6 +234,15 @@ class ThreadStatusBandTest {
         composeTestRule.onNodeWithText(string(R.string.thread_thinking_label)).assertIsDisplayed()
         assertEquals(idle, field.getUnclippedBoundsInRoot())
 
+        for ((stage, label) in listOf(
+            LocalSendStage.Sending to R.string.thread_sending_label,
+            LocalSendStage.Waiting to R.string.thread_waiting_label,
+        )) {
+            reading = Reading("local", localSendStage = stage)
+            composeTestRule.waitForIdle()
+            composeTestRule.onNodeWithText(string(label)).assertIsDisplayed()
+            assertEquals(idle, field.getUnclippedBoundsInRoot())
+        }
         reading = Reading("idle")
         composeTestRule.waitForIdle()
         assertEquals(idle, field.getUnclippedBoundsInRoot())
@@ -236,6 +257,21 @@ class ThreadStatusBandTest {
         composeTestRule
             .onNodeWithText(string(R.string.thread_thinking_label), useUnmergedTree = true)
             .assertLeftPositionInRootIsEqualTo(42.dp)
+    }
+
+    @Test
+    fun localStages_showOnlyTheirLabel_withoutAStaleThinkingTokenReading() {
+        setThread()
+        for ((stage, label) in listOf(
+            LocalSendStage.Sending to R.string.thread_sending_label,
+            LocalSendStage.Waiting to R.string.thread_waiting_label,
+        )) {
+            reading = Reading("local", localSendStage = stage)
+            composeTestRule.waitForIdle()
+            composeTestRule.onNodeWithText(string(label)).assertIsDisplayed()
+            composeTestRule.onNodeWithText(string(R.string.thread_thinking_label)).assertDoesNotExist()
+            composeTestRule.onAllNodes(hasText("184", substring = true)).assertCountEquals(0)
+        }
     }
 
     @Test
