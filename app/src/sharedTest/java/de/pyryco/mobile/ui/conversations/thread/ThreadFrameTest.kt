@@ -135,22 +135,24 @@ class ThreadFrameTest {
                     string(R.string.cd_send_message),
                     useUnmergedTree = true,
                 ).onParent()
-                .getUnclippedBoundsInRoot()
+                .fetchSemanticsNode()
+                .touchBoundsInRoot
         val attach =
             composeTestRule
-                .onNodeWithContentDescription(
-                    string(R.string.cd_attach_files),
-                    useUnmergedTree = true,
-                ).onParent()
-                .getUnclippedBoundsInRoot()
+                .onNodeWithContentDescription(string(R.string.cd_attach_files))
+                .fetchSemanticsNode()
+                .touchBoundsInRoot
         val status =
             composeTestRule
-                .onNodeWithContentDescription(
-                    string(R.string.cd_thread_status_expand),
-                    useUnmergedTree = true,
-                ).onParent()
-                .getUnclippedBoundsInRoot()
-        val field = composeTestRule.onNode(hasSetTextAction(), useUnmergedTree = true).onParent().getUnclippedBoundsInRoot()
+                .onNodeWithContentDescription(string(R.string.cd_thread_status_expand))
+                .fetchSemanticsNode()
+                .touchBoundsInRoot
+        val field =
+            composeTestRule
+                .onNode(hasSetTextAction(), useUnmergedTree = true)
+                .onParent()
+                .fetchSemanticsNode()
+                .boundsInRoot
         assertTrue("attachment touch target must clear send: send=$send attach=$attach", attach.top >= send.bottom)
         assertTrue("status touch target must clear send", status.top >= send.bottom)
         assertTrue("footer touch targets must clear the input surface", minOf(attach.top, status.top) >= field.bottom)

@@ -129,10 +129,10 @@ private val ComposerTopGap = 12.dp
 private val ComposerBottomGap = 16.dp
 private val AttachmentStripTouchOverlap = 5.dp
 
-// The footer's 32dp boxes start below the input gap. Compose expands them to 48dp, using that gap
-// without entering the input surface. The visible controls stay in their 20dp design band.
+// The footer reserves 4dp top padding and a 16dp visual band. Its 28dp touch boxes include
+// 12dp bottom overflow; Compose expands them to 48dp without entering the input surface.
 private val FooterTouchBottomOverflow = 12.dp
-private val FrameFooterTouchHeight = 32.dp
+private val FrameFooterTouchHeight = 28.dp
 
 // #1562: the message area starts at the header's rule, so scrolled rows run up to it. This inset keeps a
 // short stream, the empty state and the top overlay where they sat when the area began 28dp lower.
@@ -515,9 +515,7 @@ fun ThreadScreen(
                         onImagesReceived = onImagesPasted,
                         enabled = connected,
                     )
-                    // The design puts the model/effort controls in the footer, below the input field, not
-                    // above it. Its own 16dp horizontal padding reproduces the footer frame's further `px-16`
-                    // inside the 20dp content gutter applied here.
+                    // The footer owns its asymmetric padding inside the same 20dp composer gutter.
                     ThreadComposerFooter(
                         runConfig = state.runConfig,
                         onOpen = { openControl = it },
