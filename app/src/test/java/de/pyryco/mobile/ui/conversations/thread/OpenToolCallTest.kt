@@ -16,6 +16,7 @@ class OpenToolCallTest {
         name: String,
         status: ToolCallStatus,
         elapsedSeconds: Int? = null,
+        parentToolUseId: String = "",
     ): ThreadItem.MessageItem =
         ThreadItem.MessageItem(
             Message(
@@ -32,6 +33,7 @@ class OpenToolCallTest {
                         output = "",
                         status = status,
                         elapsedSeconds = elapsedSeconds,
+                        parentToolUseId = parentToolUseId,
                     ),
             ),
         )
@@ -99,5 +101,28 @@ class OpenToolCallTest {
             )
 
         assertEquals("Bash", openToolCall(items)?.toolName)
+    }
+
+    @Test
+    fun aNewerSubagentCall_doesNotReplaceTheLatestMainThreadCall() {
+        val items =
+            listOf(
+                toolRow("t1", "Bash", ToolCallStatus.Running, elapsedSeconds = 65),
+                toolRow("t2", "Grep", ToolCallStatus.Running, elapsedSeconds = 30),
+                toolRow("t3", "Read", ToolCallStatus.Running, elapsedSeconds = 90, parentToolUseId = "agent"),
+            )
+
+        val open = openToolCall(items)
+
+        assertEquals("Grep", open?.toolName)
+        assertEquals(30, open?.elapsedSeconds)
+    }
+
+    @Test
+    fun onlySubagentCallsRunning_hasNoOpenCall_evenWhenTheParentIsNotLoaded() {
+        val backgroundCall = toolRow("t1", "Bash", ToolCallStatus.Running, parentToolUseId = "absent-agent")
+
+        assertNull(openToolCall(listOf(backgroundCall)))
+        assertNull(openToolCall(listOf(toolRow("t2", "Read", ToolCallStatus.Done), backgroundCall)))
     }
 }
