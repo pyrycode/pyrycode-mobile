@@ -51,3 +51,17 @@ Run focused `PeerDeviceKeyStoreTest`, `RedialingLinkTest`, `PeerWaitTest` and `N
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-04
+
+## Verification evidence — 2026-10-04
+
+The inherited answer-peer opening failure is resolved on the repaired source: the named method reaches and passes every attention assertion. No remaining scenario or harness defect was observed, so this ticket makes no implementation change.
+
+- Full dispatcher command: `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`, reported in the [#1683 gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1683#issuecomment-5976372697). Retained XML independently confirms **53 executed, 53 passed, 0 failed/errors, 0 skipped**, and stderr confirms exit 0.
+- Named testcase: `de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_attentionDot_followsARealTurn` occurs exactly once, with no failure, error or skipped child: **PASS**. Its unchanged control flow proves peer opening, A-only Unread, opening A to Idle, B's held Waiting state across settle with A Idle, and B Unread after approval/completion.
+- XML: `/Users/juhanailmoniemi/Workspace/Projects/pyrycode-mobile-agents/logs/2026-10-04T03-40-35-710Z_real-claude-gate_#1683.log`; diagnostics: adjacent `2026-10-04T03-40-35-710Z_real-claude-gate_#1683.stderr.log`. XML SHA-256: `3f1b9e58cff011372ce34b02d2f02f83dae70862d6bb3ae10d32bff1e73b0e11`.
+- Tested-source equivalence: `git diff --name-only 160057a22565329a67255c97c7d189e1fa3440d6 4badff912b35ecc1b8f798887ee464b2b0725555 -- app scripts gradle build.gradle.kts settings.gradle.kts gradle.properties` is empty. The app tree id is `d4839d655cd480351300e4d2c5d8f6b5f8b1eee7` on both; scripts tree id is `add6041860ce9dd36597c3b12fc714126dfd1876` on both. This confirms equivalent repaired source, not a newly executed #1687 suite.
+- Independent earlier full #1686 report `2026-10-04T02-57-03-837Z_real-claude-gate_#1686.log` also records 53 executed, 0 failed/errors, 0 skipped and the named method passing. The #1698 report records 53 executed, 1 unrelated failure, 0 skipped with this method passing; do not describe that run plus its one-method rerun as a full-suite pass.
+- Builder focused command: `./gradlew testDebugUnitTest --tests de.pyryco.mobile.e2e.PeerDeviceKeyStoreTest --tests de.pyryco.mobile.e2e.RedialingLinkTest --tests de.pyryco.mobile.e2e.PeerWaitTest --tests de.pyryco.mobile.data.network.NoiseSessionFactoryTest lint assembleDebug spotlessApply --console=plain`, with the installed SDK supplied through `ANDROID_HOME`: exit 0. Fresh XML records **28 executed, 0 failed/errors, 0 skipped** (6 key-store, 6 redial, 11 peer-wait, 5 factory tests). Lint, app build and formatting passed; command log retained at `/tmp/builder-1687/checks.log` and counted XML at `/tmp/builder-1687/jvm/`.
+- `bash scripts/docs-guard.sh`: exit 0. No implementation, assertion, timeout, suite membership or security behavior changed.
+
+Dispatcher handoff: retain `needs-real-claude` and request `all` in the PR so any fresh #1687 full-suite gate is counted before documentation/merge. Reuse the equivalent-source named proof above where appropriate; record any new run separately. Documentation remains pending for the owning stage.
