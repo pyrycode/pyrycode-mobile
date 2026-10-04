@@ -4,13 +4,16 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.AccessibilityManager
 import androidx.compose.ui.platform.LocalAccessibilityManager
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
@@ -18,6 +21,8 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -43,11 +48,13 @@ class ThreadTransientErrorTest {
     private val refusals = Channel<AttachmentRefusal>(Channel.UNLIMITED)
     private val sends = Channel<AttachmentSendFailure>(Channel.UNLIMITED)
     private var visible by mutableStateOf(true)
+    private var retryTaps = 0
 
     private fun show(
         persistent: Boolean = false,
         accessibility: AccessibilityManager? = null,
         dismissedElsewhere: Boolean = false,
+        offline: Boolean = false,
     ) {
         val flows = errors.map { it.receiveAsFlow() }
         val refusalFlow = refusals.receiveAsFlow()
@@ -60,8 +67,8 @@ class ThreadTransientErrorTest {
                             state = ThreadUiState("c1", "Thread"),
                             onBack = {},
                             onSendMessage = {},
-                            connectionState = ConnectionState.Connected,
-                            onRetry = {},
+                            connectionState = if (offline) ConnectionState.Offline else ConnectionState.Connected,
+                            onRetry = { retryTaps++ },
                             modalState =
                                 if (dismissedElsewhere) {
                                     ModalUiState.Dismissed("modal", "allow", "remote", "c1")
@@ -187,6 +194,29 @@ class ThreadTransientErrorTest {
             .onNodeWithText("Resolved on another device")
             .assertIsDisplayed()
             .assert(hasAnyAncestor(hasTestTag("thread_confirmation_snackbar")))
+    }
+
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Test
+    fun offlineAndTransient_keep12dpBetweenVisiblePills_andThe48dpRetryTarget() {
+        show(offline = true)
+        val offline = rule.onNodeWithText(context.getString(R.string.thread_connection_offline_retry))
+        val before = offline.getUnclippedBoundsInRoot()
+        rule.runOnIdle { errors[4].trySend(Unit) }
+        assertPill(context.getString(AttachmentNotice.OPEN_FAILED.message))
+        val transient = rule.onNodeWithTag("transient_error_notice").getUnclippedBoundsInRoot()
+        assertEquals(12f, (transient.top - before.bottom).value, 0.5f)
+        assertEquals(before, offline.getUnclippedBoundsInRoot())
+        val retry = rule.onNodeWithTag("offline_retry_target")
+        assertEquals(48f, retry.getUnclippedBoundsInRoot().height.value, 0.5f)
+        rule.onNodeWithContentDescription(context.getString(R.string.thread_connection_offline_retry)).assertHasClickAction()
+        rule.onNodeWithTag("transient_error_notice").performTouchInput { click(center) }
+        rule.runOnIdle { assertEquals(0, retryTaps) }
+        retry.performTouchInput { click(Offset(2.dp.toPx(), bottom - 2.dp.toPx())) }
+        rule.runOnIdle { assertEquals(1, retryTaps) }
+        expire()
+        rule.onNodeWithTag("transient_error_notice").assertDoesNotExist()
+        offline.assertIsDisplayed()
     }
 
     @Test fun accessibilityAdjustment_extendsTheShortTimeout_withTextAndNoControls() {

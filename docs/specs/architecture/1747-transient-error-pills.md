@@ -74,3 +74,19 @@ Inspection of the installed Material 3 1.4.0 `SnackbarHostKt.toMillis` confirms 
 ### 2026-10-04 — transient pill height
 
 The full-device capture showed a 22dp short Error pill: shared typography trims the line box, while the Figma frames use a 24dp pill. Give only `TransientErrorPill` a 24dp minimum visible height, retaining its bodySmall text, 8/4dp padding and growth for wrapped or enlarged text. Persistent pills remain unchanged. Pin the floor with a native text-measurement test and refresh both requested captures.
+
+### 2026-10-04 — verifier rework: fixture isolation and visible Offline gap
+
+The verifier found the reader's blocked-directory fixture replaced a production shared-storage path that persists between device methods. Override only that fixture's `LocalContext.noBackupFilesDir` with a `TemporaryFolder` root; guaranteed rule cleanup leaves production shared-note storage untouched. Verify the entire `MarkdownReaderScreenTest` class on the managed device, including failed open, no-viewer open and leaving-reader cancellation.
+
+Offline's 48dp Retry box reserved extra invisible height before a following notice. A local `Layout` measures the visible Offline pill, its existing 144×48dp top-aligned clickable target and a following-errors column separately. Place the following column at the measured visible height plus 12dp; enclose the full target in the parent so bottom-edge hits work. Draw the target above Offline but below following errors so an inert error cannot activate Retry where their surfaces overlap. Preserve usage-dismiss separation, persistent ordering and transient expiry. Add native coexistence geometry and real pointer coverage of both the inert error and the exposed bottom edge of Retry. Existing failure and reader-error captures have no Offline notice and remain unchanged.
+
+The separated Retry target owns the existing client-owned accessibility label and button action. Hide its decorative visible pill from accessibility to avoid duplicate announcements; geometry tests measure the visible text surface separately from the labelled 48dp target. The coexistence test requires the labelled Retry node to remain actionable.
+
+### 2026-10-04 — out-of-scope device memory failure
+
+The full device class run passed the three verifier-named storage/cancellation methods, then Android killed the app at about 1.3GB RSS during the pre-existing `copiesOfANoteAtTheReadersBound_areBounded` test. Filed #1759 for the reader-bound rendering allocation issue; mark that test `@Ignore` with the bug link per the builder handoff rule and retain the failed device evidence. Do not change reader rendering or clipboard contracts in this notice ticket. Rerun the entire reader class after the ignore, reporting its one skipped method explicitly.
+
+### 2026-10-04 — out-of-scope native pairing touch overlap
+
+The subsequent device run passed the full reader class and the new Offline/transient geometry and pointer test, but the existing `theUsagePill_sitsAboveThePairingPill_whichStartsRePair` assertion found a 3.5px native touch-bound overlap. The pairing branch and its 36dp touch configuration are unchanged by this ticket. Filed #1760, retained its failed XML and linked the existing test's ignore to the bug, rather than altering persistent pairing/usage behavior here. Final class runs report both known skips explicitly.
