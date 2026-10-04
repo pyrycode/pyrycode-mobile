@@ -61,7 +61,7 @@ one TalkBack stop, the same "wording has one source" idiom every status-row indi
 - **Task-count pill** ([Thread screen § Thinking-indicator placement](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643),
   [#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043)): drawn inside `ThreadStatusArea` in the
   `bottomBar`, not by `ThreadTopOverlay`. `onClick` opens the
-  same `BackgroundTaskPanel` the Actions menu's background-tasks row opens; `onDismiss` is always `null` — a
+  same `BackgroundTaskPanel` the count-free top menu opens; `onDismiss` is always `null` — a
   running-task count is not something the user can wave away. `shadowElevation = 0.dp`: Figma `568:3162`
   sits in the page flow, not over the messages, so it carries none of the overlay's drop shadow.
 - **Session-error pill** ([Thread top overlay](thread-top-overlay.md#the-session-error-pill-1678)):
