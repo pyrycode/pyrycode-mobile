@@ -908,6 +908,8 @@ fun ThreadScreen(
                 mutationsSupported = state.mutationsSupported,
                 memorySearch = state.runConfig.memorySearch,
                 anchor = anchor.translate(-layerOrigin),
+                // The header stays fixed while the column scrolls in the room above the visible IME.
+                modifier = Modifier.imePadding(),
                 onDismiss = { overflowExpanded = false },
                 onEvent = onOverflowEvent,
                 onBackgroundTasks = { backgroundTasksOpen = true },

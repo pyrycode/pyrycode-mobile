@@ -671,8 +671,7 @@ class ThreadDesignCaptureTest {
     }
 
     private fun openHeaderMenu() {
-        rule.onNodeWithContentDescription("More actions").performClick()
-        await("Reset session")
+        design.openHeaderMenu()
     }
 
     /** Run configuration with a four-model menu and Sonnet selected; no "Default" option in any spelling. */
