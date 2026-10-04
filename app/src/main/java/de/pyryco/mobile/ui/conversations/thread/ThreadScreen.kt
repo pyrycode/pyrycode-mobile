@@ -446,6 +446,7 @@ fun ThreadScreen(
                     isPromoted = state.isPromoted,
                     mutationsSupported = state.mutationsSupported,
                     memorySearch = state.runConfig.memorySearch,
+                    onBackgroundTasks = { backgroundTasksOpen = true },
                     modifier =
                         Modifier
                             .chromeBackdrop(chromeSource, frameColors.headerBackdrop, top = true)
