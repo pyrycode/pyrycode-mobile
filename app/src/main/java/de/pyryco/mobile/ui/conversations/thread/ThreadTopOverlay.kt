@@ -5,8 +5,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.width
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -134,8 +132,6 @@ internal fun ThreadTopOverlay(
                         )
                         Box(
                             Modifier
-                                .height(48.dp)
-                                .width(144.dp)
                                 .testTag("offline_retry_target")
                                 .semantics { contentDescription = offlineLabel }
                                 .clickable(role = Role.Button, onClick = onRetryConnection),
@@ -148,7 +144,13 @@ internal fun ThreadTopOverlay(
                 ) { measurables, constraints ->
                     val childConstraints = constraints.copy(minWidth = 0, minHeight = 0)
                     val pill = measurables[0].measure(childConstraints)
-                    val target = measurables[1].measure(childConstraints)
+                    val target =
+                        measurables[1].measure(
+                            childConstraints.copy(
+                                minWidth = maxOf(144.dp.roundToPx(), pill.width).coerceAtMost(constraints.maxWidth),
+                                minHeight = maxOf(48.dp.roundToPx(), pill.height).coerceAtMost(constraints.maxHeight),
+                            ),
+                        )
                     val following = measurables[2].measure(childConstraints)
                     val followingTop = pill.height + OverlayPillGap.roundToPx()
                     val visibleHeight = if (following.height > 0) followingTop + following.height else pill.height
