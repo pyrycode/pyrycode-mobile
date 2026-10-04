@@ -2402,7 +2402,41 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-04 (#1641).** The dispatcher ran the full
+**Current live verification — 2026-10-04 (#1637).** The dispatcher ran the full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against
+`feature/1637` at `6b6d9fa51c`, merged with `origin/main` at `5efa2a90d4` in a detached
+worktree (19 commits behind before merge): **53 executed, 53 passed, 0 failed,
+0 errors, 0 skipped**, exit 0. The fresh XML contains exactly one passing testcase
+for each of `InteractiveStreamE2ETest#interactiveTurn_twoHostsCollidingConversationId_stayPerHost`
+and `InteractiveStreamE2ETest#interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart`,
+without failure, error or skip. Both ran and passed in this full suite; no separate
+focused live run is claimed. See the
+[dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1637#issuecomment-5977974713).
+The retained report is `2026-10-04T07-53-48-669Z_real-claude-gate_#1637.log` under the
+dispatcher repository's `logs/`, with diagnostics in the adjacent `.stderr.log`.
+
+The original #1581 failure maps to the **code-field lookup after Paste** in
+`pairHostByCode` at `70aee9838d`, correcting the issue body's paste-link interpretation.
+Scanner disposal blocked main on a pending CameraX provider future; a rerun can
+pass when initialization completes before exit. The
+[causal explanation](https://github.com/pyrycode/pyrycode-mobile/issues/1637#issuecomment-5972778396)
+and [controlled red/green evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1637#issuecomment-5972754369)
+show the real-device form opening with initialization still pending after repair
+(red 1 executed / 1 failed / 0 skipped; green 1 / 0 / 0). MainActivity was
+RESUMED/focused before Paste. Post-cleanup launcher focus does not establish the
+activity state during the stall, and the missing historical artifact does not
+allow recovery of that run's provider state. See
+[scanner testing](knowledge/features/scanner-screen-edge-cases-and-testing.md#focused-verification).
+
+This candidate's earlier full suite executed 53, failed 20 and skipped 0, with
+collision passing but offered-file failing. The
+[rework attribution](https://github.com/pyrycode/pyrycode-mobile/issues/1637#issuecomment-5977506653)
+links those peer authentication failures to the shared token-bound identity defect
+repaired by #1686/#1698. Reduced base comparisons changed scenario order and could
+misattribute that defect. Their repaired-baseline passes supported the diagnosis;
+the fresh candidate full-suite pass above supplies this ticket's acceptance.
+
+**Previous live verification — 2026-10-04 (#1641).** The dispatcher ran the full
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1641`
 at `22db59699c`, merged with `origin/main` at `7129f39855` in a detached worktree (0 commits behind):
 **53 executed, 52 passed, 1 failed, 0 errors, 0 skipped**, exit 1. The fresh XML contains
@@ -2430,8 +2464,9 @@ phone and peer round-trips. This is full-suite evidence, not a focused rerun. Se
 [dispatcher gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1702#issuecomment-5977521066).
 The retained XML report is `2026-10-04T06-47-10-320Z_real-claude-gate_#1702.log` under the dispatcher
 repository's `logs/`, with diagnostics in the adjacent `.stderr.log`. The repaired Continue wait's
-`ComposeTimeoutException` on unrepaired trees is distinct from #1637's original coroutine
-`TimeoutCancellationException`; the short-viewport regression proves the lazy-row mechanism (see
+`ComposeTimeoutException` on unrepaired trees is distinct from the coroutine
+`TimeoutCancellationException` in #1637's later offered-file live failure; the short-viewport
+regression proves the lazy-row mechanism (see
 [Question batch modal § Testing](knowledge/features/question-batch-modal.md#testing)).
 
 **Previous live verification — 2026-10-04 (#1694).** The dispatcher ran the full
@@ -3381,6 +3416,16 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — hardened:** [#1637](https://github.com/pyrycode/pyrycode-mobile/issues/1637)
+  fixes pending CameraX initialization blocking scanner exit on main, protecting
+  `InteractiveStreamE2ETest#interactiveTurn_twoHostsCollidingConversationId_stayPerHost`'s
+  scanner → paste-code path. Held-initialization device and seven controlled JVM
+  lifecycle checks cover the race; the live helper, per-host rows/threads, rename
+  isolation, both reconnects, graph restart and host-B cleanup remain intact.
+  Both collision and offered-file ran and passed in the fresh 53-test full suite
+  recorded in [Verification status](#verification-status). No scenario or
+  `DeterministicInteractiveStreamE2ETest` twin was added.
 
 - **Coverage — hardened:** [#1702](https://github.com/pyrycode/pyrycode-mobile/issues/1702) repairs
   `InteractiveStreamE2ETest#interactiveTurn_questionAnswer_reachesTheAskingConversation` by revealing

@@ -62,30 +62,24 @@ It owns no app state — it feeds the `ScannerViewModel` only through those two 
 - **`LocalLifecycleOwner`** is imported from `androidx.lifecycle.compose` — the
   `androidx.compose.ui.platform` one is deprecated and trips `lint { abortOnError = true }`.
 
-```kotlin
-DisposableEffect(Unit) {
-    val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
-    cameraProviderFuture.addListener({
-        try {
-            val provider = cameraProviderFuture.get()
-            val preview = Preview.Builder().build().apply { setSurfaceProvider(previewView.surfaceProvider) }
-            val imageAnalysis = ImageAnalysis.Builder()
-                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .build().apply { setAnalyzer(analysisExecutor, analyzer) }
-            provider.unbindAll()
-            provider.bindToLifecycle(
-                lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageAnalysis,
-            )
-        } catch (_: Exception) {
-            currentOnCameraError(CAMERA_BIND_ERROR_MESSAGE)   // fixed message — never interpolate `$e`
-        }
-    }, ContextCompat.getMainExecutor(context))
-    onDispose {
-        runCatching { cameraProviderFuture.get().unbindAll() }
-        analysisExecutor.shutdown()
-    }
-}
-```
+### Disposal and initialization
+
+`CameraPreviewBinding` owns the provider listener and disposal, both on the main
+executor. The listener reads the completed future and retains its provider **before**
+binding, so even a partial bind failure can be unbound on exit. A mounted failure
+still reports the fixed camera-error message.
+
+Disposal marks the composition departed, unbinds only the retained provider and
+clears that reference; `CameraPreview` then shuts down its analysis executor. It
+never reads or cancels CameraX's shared initialization future. Completion queued
+before disposal or delivered afterward returns without binding or reporting an
+error to the departed scanner.
+
+Calling `future.get()` from disposal can block main while CameraX initializes,
+preventing the scanner → pasted-code form transition from reaching Compose idle.
+`runCatching` catches exceptions but cannot prevent that wait. The
+[#1637 reproduction and repair](https://github.com/pyrycode/pyrycode-mobile/issues/1637#issuecomment-5972778396)
+establish this race; initialization finishing before exit explains a passing rerun.
 
 ### Rendering position (behind the overlay)
 
@@ -146,15 +140,15 @@ this slice.
 
 ## Edge cases / limitations
 
-- **Not unit-tested by design** — it needs a physical camera / `ProcessCameraProvider`; mocking the
-  CameraX bind chain has negative value. Its collaborators are covered: the analyzer's decode/debounce
-  by #333's `QrCodeAnalyzerTest` (JVM), the VM transitions by `ScannerViewModelTest`. The scanner's
-  instrumented `cameraPreviewSlot_rendersBehindLockedOverlay` test pins the slot wiring with a **fake**
-  preview (no real camera).
-- **`onDispose` re-fetches the provider via `cameraProviderFuture.get()` on the main thread** (NIT,
-  accepted). If disposal races the very first camera-HAL init, `.get()` can briefly block the UI thread;
-  `runCatching` guards exceptions, not the block. Canonical CameraX-in-Compose idiom, no leak/crash. If
-  revisited: remember the resolved `provider` in the bind listener and null-check it in `onDispose`.
+- **Lifecycle and camera rendering need different coverage.** Seven JVM
+  `CameraPreviewLifecycleTest` checks use a controlled provider future to cover
+  nonblocking disposal, late successful/failed completion, queued completion,
+  mounted initialization failure, normal unbinding and partial-bind cleanup.
+  Real CameraX behavior is covered by the
+  [held-initialization device regression](scanner-screen-edge-cases-and-testing.md#focused-verification).
+  A fake preview slot proves overlay wiring, not provider initialization or camera
+  binding. Analyzer decode/debounce and scanner state transitions remain covered
+  separately by `QrCodeAnalyzerTest` and `ScannerViewModelTest`.
 - **First-scan model latency.** The bundled ML Kit model (#333) has a small first-call init cost, now
   measurable against a live camera. If the first scan feels slow on-device, an eager `getClient` warm-up
   is a cheap follow-up — out of scope here.

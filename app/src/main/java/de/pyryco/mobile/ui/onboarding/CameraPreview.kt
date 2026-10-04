@@ -60,10 +60,11 @@ fun CameraPreview(
 
     DisposableEffect(Unit) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
-        cameraProviderFuture.addListener(
-            {
-                try {
-                    val provider = cameraProviderFuture.get()
+        val binding =
+            CameraPreviewBinding(
+                future = cameraProviderFuture,
+                executor = ContextCompat.getMainExecutor(context),
+                bind = { provider ->
                     val preview =
                         Preview.Builder().build().apply {
                             setSurfaceProvider(previewView.surfaceProvider)
@@ -81,16 +82,13 @@ fun CameraPreview(
                         preview,
                         imageAnalysis,
                     )
-                } catch (_: Exception) {
-                    // Never interpolate the exception — a fixed message keeps device/stack detail
-                    // out of the Error UI (AC5 / security review).
-                    currentOnCameraError(CAMERA_BIND_ERROR_MESSAGE)
-                }
-            },
-            ContextCompat.getMainExecutor(context),
-        )
+                },
+                unbind = { it.unbindAll() },
+                // Never include exception details in the recovery UI.
+                onError = { currentOnCameraError(CAMERA_BIND_ERROR_MESSAGE) },
+            )
         onDispose {
-            runCatching { cameraProviderFuture.get().unbindAll() }
+            binding.dispose()
             analysisExecutor.shutdown()
         }
     }
