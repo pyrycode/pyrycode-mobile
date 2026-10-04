@@ -11,9 +11,20 @@ The `markdown_reader/{serverId}/{conversationId}/{attachmentId}` route, copy/ref
 
 The fixed top bar uses the Figma-matching `ic_thread_back` and `ic_thread_overflow` vectors in
 48dp touch areas, a single-line ellipsised file name in `titleLarge` / `onPrimaryContainer`,
-and a 60%-alpha inset rule. Its reader-only top gap puts the scrolling body at y=97dp in
-the 412 × 892 dark reference; the title is not tappable.
-The body uses [`MarkdownText`](markdown-text.md#public-surface) in a `weight(1f)` `verticalScroll` column.
+and a 60%-alpha inset rule. The title is inert and overflow keeps its own menu anchor.
+The body and fixed bar are sibling layers in a `Box`: a full-screen-area `verticalScroll`
+column supplies the Haze source, and the full-width bar samples it through shared
+`chromeBackdrop` gradient/progressive blur. The title/glyph row uses `defaultChromeShadow`
+once, keeping foreground shapes sharp while text scrolls behind them. The bar owns pointer
+hits across its controls, title and blank background, preventing links or code panels beneath
+it from activating.
+
+The screen area begins below the system status bar. At rest, the reference title starts
+24dp from that area's top, the bar through its rule ends at 69dp, and the first heading starts
+at 97dp. [`MarkdownText`](markdown-text.md#public-surface) reserves the bar's actual measured
+height plus 28dp as scrollable top padding, so enlarged text retains the rule-to-heading gap.
+The reader removes `BarBottomGap`; counting it again would enlarge that gap. Body gutters
+remain 20dp and bottom padding 16dp, with the final block reachable at the scroll end.
 Both attachment and linked-note readers select M3 `bodyLarge` (16sp/24sp), 12dp block gaps
 and 6dp sibling-list-item gaps. Reader headings and prose use untrimmed line-height boxes; the
 thread keeps its existing metrics. Unlabelled and indented code uses a plain, tappable,
@@ -48,13 +59,19 @@ thread](#load-and-navigate-from-the-thread)). A failed Refresh retains the open 
 same notice inside the reader; see [Copy and refresh menu](#copy-and-refresh-menu-since-1067).
 
 Under the app root's static dark palette, the full-size reader `Surface` uses
-`#0B0E11` (30% black over `#101418`), including the transparent header's background and blank space
-below short notes or around scrolling content. The existing 1dp rule, inset 20dp, uses `inversePrimary`
+`#0B0E11` (30% black over `#101418`) for blank space below short notes or around scrolling
+content. The header overlays the canvas/content with the resolved `ThreadColors.headerBackdrop`
+gradient and progressive blur rather than a flat canvas fill. The existing 1dp rule, inset 20dp, uses `inversePrimary`
 (`#32628D`) at 60% alpha. Explicit static light and wallpaper light/dark variants in isolated tests retain
 the `surface` canvas and an `outlineVariant` rule at 60%. This is the shared screen-local `ThreadColors` mapping from `PyrycodeMobileTheme`, following
 the app's resolved mode even when it differs from the system; global Material roles stay unchanged.
 See [thread canvas and header](thread-screen-how-it-works-overlays-and-app-bar.md#threadtopappbar--figma-168-chrome)
 and the [palette plan](../../specs/architecture/1162-thread-reader-canvas.md).
+
+Reader notices currently remain bottom snackbars. When #1604 introduces the top-overlay
+Error pill from frame `696:5101`, its placement must be rechecked at 28dp below the actual
+measured bar-through-rule height. That notice migration and capture are not proven by the
+chrome evidence here.
 
 ## Routing a tap to the reader
 
@@ -234,6 +251,39 @@ shows.
 The top bar's overflow menu — copy as markdown/plain text/HTML, Refresh, Open in another app (since #1068) and Save to device (since #1069), plus their logging — moved to [Markdown reader menu](markdown-reader-menu.md) under the docs guard's size cap (#1533).
 
 ## Testing
+
+The [reader chrome evidence](../../../app/src/androidTest/assets/reader-chrome-1647/README.txt)
+retains fresh Figma exports for `553:2574` and `731:6010`, resting and scrolled-under-bar
+hardware PNGs, [reader comparison](../../../app/src/androidTest/assets/reader-chrome-1647/reader-comparison.png),
+[bar comparison](../../../app/src/androidTest/assets/reader-chrome-1647/top-bar-comparison.png),
+overlay/difference and viewport/inset sidecars (2026-10-04). Full `pixel8Api35` with
+`requireRealSystemBars=true` produced nonblank hardware-accelerated captures with
+`syntheticBars=false`, density/font scale 1 and real 24px status/navigation bars:
+the 412 × 892 framebuffer contains a 412 × 844 app area, whereas Figma's frame is a
+412 × 892 screen area. Comparison crops remove the bars without stretching the images.
+The existing date-wrap difference preserves three-line paragraph height and subsequent
+block positions.
+
+[Final hardware XML](../../../app/src/androidTest/assets/reader-chrome-1647/hardware-results.xml)
+records 5 executed, 0 failed/errors, 0 skipped. `ThreadDesignCaptureTest.runConfigurationAndReaderAt412By892`
+passed with exact 24/69/97dp coordinates, 28dp clearance and 20dp gutters.
+The four passing `MarkdownReaderDesignTest` methods are
+`scrollViewportStartsBehindTheFixedBar` (underlap and final 16dp padding),
+`largeTextReservesMeasuredBarPlus28dp` (1.5× text and 48dp targets),
+`headerBlocksUnderlyingLinkWithPositiveClearAreaControl` and
+`headerBlocksUnderlyingCodePanelWithPositiveClearAreaControl` (physical pointer isolation
+with positive taps outside chrome). Retained focused JVM reports record 35 executed,
+0 failed/errors/skipped across reader design (10), reader screen (20) and palette (5),
+plus a separate passing link-pointer rerun (1 executed, 0 failed/errors/skipped).
+This local chrome adoption adds no real-Claude scenario.
+
+Robolectric `@Config` does not set emulator density. An earlier whole-class hardware run
+executed 11 tests, with 1 failure and 0 skipped: the existing absolute-coordinate list fixture
+accumulated pixel rounding at native density 2.625 (266.29dp versus 265dp). Keep its strict
+density-1 JVM assertions; exact hardware coordinates belong in the capture harness's
+explicit density-1 viewport. Also, `performScrollTo` makes the final block visible without
+traversing trailing content padding. A bottom-padding assertion must scroll to the actual
+end before measuring, as `scrollViewportStartsBehindTheFixedBar` does.
 
 `ThreadCanvasPaletteTest` uses native-graphics pixel checks for both screens' canvases and inset rules,
 including short and scrolled reader content. It exercises all four theme mappings with system/app modes
