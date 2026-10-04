@@ -1047,9 +1047,14 @@ full-suite pass is recorded in [Verification status](#verification-status).
 
 The question-answer
 scenario opens one conversation and sends a prompt asking claude to call `AskUserQuestion` with two labels
-and then echo the chosen one back (`QUESTION_PROMPT`); the phone answers one label from the batch and
-claude's reply names it and not the other, then the peer answers the batch shown for a repeat of the same
-prompt, closing it with no phone tap. Two real claude turns. #1305 moved the batch from its own dialog into
+and then echo the chosen one back (`QUESTION_PROMPT`); after selecting `QUESTION_PICK`, the phone reveals
+the stable `question-batch-actions` container before the unchanged 30-second wait for enabled Continue
+(#1702). Valid selection need not compose that separate lazy row; waiting before revealing it can time
+out without reaching the scroll. Continue sends the selected label to the asking conversation;
+`question_dismissed` must report `source = remote` and `outcome = answered`, and the completed reply must
+name the chosen label and exclude the other. The peer then answers the batch shown for a repeat of the
+same prompt, clearing it with no phone tap and completing the second turn. Two real claude turns.
+\#1305 moved the batch from its own dialog into
 `ThreadScreen`'s scrollable stream (see [Question batch modal § Placement](knowledge/features/question-batch-modal.md#placement-inline-in-threadscreen-since-1305));
 `awaitInlineQuestion` / `awaitNoInlineQuestion` scroll the lazy list to the `question-batch-title` tag
 instead of waiting on a dialog-scoped title match, and the absence check also requires the
@@ -2397,7 +2402,22 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-04 (#1694).** The dispatcher ran the full
+**Current live verification — 2026-10-04 (#1702).** The dispatcher ran the full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against repaired PR #1718,
+`feature/1702` at `addf5ef693e23f6810191a61b86fcebe1af842b2`, merged with `origin/main` at
+`7129f39855` in a detached worktree (0 commits behind before merge): **53 executed, 53 passed,
+0 failed, 0 errors, 0 skipped**, exit 0. The fresh compact XML explicitly contains
+`de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_questionAnswer_reachesTheAskingConversation`
+with no failure, error or skip: the named method executed and passed in this full suite, preserving both
+phone and peer round-trips. This is full-suite evidence, not a focused rerun. See the
+[dispatcher gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1702#issuecomment-5977521066).
+The retained XML report is `2026-10-04T06-47-10-320Z_real-claude-gate_#1702.log` under the dispatcher
+repository's `logs/`, with diagnostics in the adjacent `.stderr.log`. The repaired Continue wait's
+`ComposeTimeoutException` on unrepaired trees is distinct from #1637's original coroutine
+`TimeoutCancellationException`; the short-viewport regression proves the lazy-row mechanism (see
+[Question batch modal § Testing](knowledge/features/question-batch-modal.md#testing)).
+
+**Previous live verification — 2026-10-04 (#1694).** The dispatcher ran the full
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1694`
 at `6edcce71cef99c2ce7e24c3cff56bbf9cd9dfc27`, merged with `origin/main` at `fb2ca8f1a3`
 in a detached worktree (0 commits behind before merge): **53 executed, 52 passed, 1 failed,
@@ -3344,6 +3364,14 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — hardened:** [#1702](https://github.com/pyrycode/pyrycode-mobile/issues/1702) repairs
+  `InteractiveStreamE2ETest#interactiveTurn_questionAnswer_reachesTheAskingConversation` by revealing
+  the actions container after selection and before waiting for enabled Continue. The shared
+  short-viewport regression proves valid selection with an uncomposed actions row and generation-scoped
+  dispatch after reveal. Both phone and peer round-trip assertions remain enabled; the named method
+  passed in the fresh 53-test full live suite recorded in [Verification status](#verification-status).
+  No scenario or `DeterministicInteractiveStreamE2ETest` twin was added.
 
 - **Coverage — hardened:** [#1694](https://github.com/pyrycode/pyrycode-mobile/issues/1694) makes
   `InteractiveStreamE2ETest#interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect`
