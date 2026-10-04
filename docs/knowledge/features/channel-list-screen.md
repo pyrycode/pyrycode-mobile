@@ -84,6 +84,13 @@ drives the Chats plus through a failing repository; see the
 The shared pill's inherited 22px single-line background versus Figma's 24px is tracked
 in [#1757](https://github.com/pyrycode/pyrycode-mobile/issues/1757).
 
+Archive reached through the list menu uses the same inert Error pill for failed
+restores (#1749), while successful restores retain their confirmation snackbar.
+Its placement measures the title, host label and tabs together so the notice clears
+all header controls; its sequential effect collector preserves queued failures and
+successes. See [Archive behavior and coverage](archived-discussions-screen.md#what-it-does)
+and the [retained restore-failure verdict](../../../app/src/androidTest/assets/design-1220/list/index.md#restore-failure--error-pill-reuse-6854337).
+
 ## Shape
 
 ```kotlin
