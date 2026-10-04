@@ -266,12 +266,20 @@ fun Effort.label(): String =
 ```kotlin
 // de/pyryco/mobile/di/AppModule.kt (excerpt)
 single<DataStore<Preferences>> {
+    val context = androidContext()
     PreferenceDataStoreFactory.create(
-        produceFile = { androidContext().preferencesDataStoreFile("app_prefs") },
+        produceFile = { context.preferencesDataStoreFile("app_prefs") },
     )
 }
 single { AppPreferences(get()) }
 ```
+
+Context is resolved when the singleton is constructed; file initialization remains
+deferred on DataStore's own I/O scope. That callback can run after Koin closes,
+so it must capture its dependencies rather than look them up in the disposed
+graph. A full suite can pass while the old callback remains broken because
+initialization timing determines whether it reaches the closed scope
+([#1709](../../specs/architecture/1709-preferences-context-capture.md)).
 
 Reads are reactive: collectors receive the current persisted value on subscription and subsequent DataStore updates. Writes are `suspend` and durable on success. Host workspace writes, removal and migration return IO failures as `Result.failure`; cancellation propagates. A failed migration commits neither ownership nor transfer and can be retried. Legacy setters retain their throwing error behavior. Workspace operation logs contain static event/outcome codes, never server ids, paths or exception messages.
 
@@ -305,7 +313,7 @@ The threshold is crossed but the split stays deferred. Workspace keys and migrat
 - **Dependency:** `androidx.datastore:datastore-preferences` (alias `androidx-datastore-preferences`, version `1.1.7`). Pinned for Kotlin `2.2.10` + AGP `9.2.1`. If a later bump trips an unresolved-artifact or stdlib-alignment warning, bump *up* to the latest stable `1.1.x` / `1.2.x` (`./gradlew --refresh-dependencies assembleDebug`). Do not downgrade below `1.1.x` — the typed Preferences API stabilised there.
 - **Flavor:** Preferences (locked by Stack Decision). Not Proto. The typed-key API (`booleanPreferencesKey` …) is the only sanctioned path.
 - **On-disk filename:** `app_prefs` — part of the storage contract from #11 onward. Renaming orphans every installed user's state.
-- **Injection:** consumers get `AppPreferences` via Koin (`koinInject()` in composables, `by inject()` / `get()` in non-Compose code). They do **not** depend on `DataStore<Preferences>` directly; the wrapper is the seam.
+- **Injection:** consumers get `AppPreferences` via Koin (`koinInject()` in composables, `by inject()` / `get()` in non-Compose code). The wrapper is the settings seam; `KeystorePairedServerStore` consumes the same `DataStore<Preferences>` directly for encrypted paired-server state.
 
 ## Usage
 
@@ -330,10 +338,30 @@ the first DataStore emission; the app stays on the static dark palette.
 - **Cold-to-hot Flow.** Each preference flow (e.g. `themeMode`) is cold; on collection it emits the current persisted value first, then a new value on each subsequent `edit { }`.
 - **Dispatcher.** DataStore's internal scope runs on `Dispatchers.IO`. Collectors don't need to switch — collecting from `Main` is idiomatic.
 - **Writes serialise.** Concurrent `edit { }` calls from multiple coroutines are serialised by DataStore. The wrapper does not add its own mutex.
-- **Lifecycle.** DataStore's scope outlives any individual collector or `viewModelScope`. Process death is the only teardown.
+- **Lifecycle.** DataStore's scope outlives any individual collector or `viewModelScope`. The production binding has no Koin `onClose`; closing the graph does not cancel the store. `E2eTestApplication.rebuildGraph` carries the resolved instance into the replacement graph, preserving `app_prefs` continuity and avoiding a second active store for the same file.
 - **Default-on-miss.** `prefs[KEY] ?: <default>` handles cold start without a sentinel write — the first launch reads `false` without writing anything to disk.
 
 ## Testing
+
+`AppPreferencesTeardownTest.resolvedDataStoreDoesNotLookUpContextInAClosedGraph`
+resolves the real binding in an isolated graph, closes Koin before the first
+read, then requires empty preferences. Keep it unignored: initializing the store
+before closure would miss the deferred lookup failure. Retained
+[#1709 evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1715#issuecomment-5976429381)
+and XML record the red control (1 executed, 1 failed, 0 skipped), then the same
+method passing in the focused unit selection (107 executed, 0 failed/skipped)
+and full unit gate (3,976 executed, 0 failed/skipped); neither green run had errors.
+The separate focused device run executed 2 tests, with 0 failures/errors/skips:
+`PeerIdentityLifecycleTest.sequentialPeersRetainIdentityAfterCloseAndAppGraphRebuild`
+and `RepositoryBindingInstrumentedTest.ordinaryInstrumentation_explicitlyBindsFakeRepository`
+both passed, covering graph/DataStore continuity and repository mode.
+
+Context-free graph fixtures must bind their in-memory `DataStore<Preferences>`
+as well as the `AppPreferences` built over it. Overriding only the wrapper leaves
+`KeystorePairedServerStore` resolving the real store, which now requires Context
+at construction. `HostChannelListViewModelTest.appModuleInjectsSharedDemoSourceAndCreatesThroughExistingFakeSingleton`
+binds both and asserts store identity; keep the fixture portable rather than
+adding Android Context. See [DI testing](dependency-injection.md#testing).
 
 `AppPreferencesTest` covers missing and unknown theme names, setter round trips,
 and `themeMode_existingStoredNames_surviveRestart`, which reopens temporary stores
@@ -393,7 +421,7 @@ full mechanism.
 - **No corruption handler installed.** `PreferenceDataStoreFactory.create` accepts a `corruptionHandler: ReplaceFileCorruptionHandler<Preferences>?` parameter — currently `null`. If on-disk corruption is ever observed in the field, the right fix is a single line at the binding site. Evidence-based — not adding a defense for an unobserved failure mode.
 - **No `.catch { }` on read paths.** Non-cancellation throwables propagate; callers decide what to do (today: nothing — Phase 3 may add a UI banner once a real failure mode appears).
 - **Not a secret store.** Anything sensitive (the pairing token, the device static key, credentials) belongs Keystore-wrapped under `data/crypto/`, not here. **Not every token is a secret, though:** the FCM `pushToken` (#364) is a low-value, rotating wake *address* and lives here by design — classify by value × revocability, not by "it's called a token." See the storage-tier note under § What it does.
-- **Compose Multiplatform walk-back.** `AppPreferences` itself is portable Kotlin (depends only on DataStore + coroutines). The Android-specific `androidContext().preferencesDataStoreFile(...)` lives in `AppModule.kt` — if the walk-back happens, only the Koin binding needs replacing.
+- **Compose Multiplatform walk-back.** `AppPreferences` itself is portable Kotlin (depends only on DataStore + coroutines). The Android-specific `Context.preferencesDataStoreFile(...)` call and eager `androidContext()` lookup live in `AppModule.kt` — if the walk-back happens, only the Koin binding needs replacing.
 
 ## Related
 
