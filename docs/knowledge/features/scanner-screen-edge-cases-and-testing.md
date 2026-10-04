@@ -46,6 +46,43 @@ their headings and anchors intact.
 
 ### Focused verification
 
+`ScannerPasteTransitionDeviceTest.listScannerPaste_beforeAndAfterCameraInitialization_opensCodeForm`
+uses production navigation, fake repositories and dummy pairing data with CAMERA
+granted. It resets CameraX before entry, holds its initialization executor, and
+requires the pasted-code form to open while the provider future is still pending.
+After release it completes five list → scanner → Paste → Cancel → Back transitions
+with a real STREAMING preview. Warm STREAMING runs alone miss the disposal race:
+the old main-thread `get()` returns immediately once initialization has finished.
+
+The 30-second release fuse only prevents a broken test from hanging during cleanup;
+any fuse release fails the assertion and cannot count as successful navigation.
+Diagnostics inspect activity lifecycle, focus and camera readiness without a
+Compose idle barrier or credential contents. The
+[published red/green evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1637#issuecomment-5972754369)
+records MainActivity RESUMED/focused with initialization pending: red **1 executed,
+1 failed, 0 skipped**, green **1 executed, 0 failed, 0 skipped**. The code-field lookup
+after Paste was the stalled phase. ActivityScenario closes before the failure
+listener reads focus, so post-test `EmptyHomeActivity` / `anr=none` does not describe
+the failing transition's activity state.
+
+Seven controlled JVM `CameraPreviewLifecycleTest` checks cover disposal without a
+pending-future read, successful and failed completion after exit, completion queued
+before exit, cleanup after partial bind failure, normal mounted bind/unbind, and
+mounted initialization errors. All seven passed with zero failures/skips; the
+[verifier](https://github.com/pyrycode/pyrycode-mobile/pull/1675#issuecomment-5977865759)
+confirmed their fresh XML. See [camera disposal](camera-preview.md#disposal-and-initialization)
+for the ownership contract.
+
+Fixture teardown must survive setup and camera-shutdown failures. The test-only
+`ScannerTransitionCleanup` registers cleanup as resources are acquired and runs
+all actions in reverse order, after ActivityScenario closes. Camera shutdown
+failure cannot skip executor closure or host removal; Kotlin `use` keeps the
+original transition failure primary and suppresses cleanup failures. Four JVM
+`ScannerTransitionCleanupTest` checks cover setup failure, shutdown failure,
+primary-failure preservation and multiple cleanup failures (4 passed, 0 failed,
+0 skipped in the verifier's report). The successful device path also asserts the
+dummy host was removed, preventing pairing state from contaminating later tests.
+
 `ScannerScreenTest` covers the Pairing title, permission/decoded viewport shells,
 denial/error fallbacks, fake camera slot and fingerprint display, accessibility,
 confirmation callbacks and 48 dp actions. `ScannerFrameTest` exercises 412×892 and
