@@ -1277,6 +1277,14 @@ and had to rework around (see [Verification status](#verification-status)). That
 [#1020](https://github.com/pyrycode/pyrycode-mobile/issues/1020); once it landed, this method went back
 to reading the peer's history and `awaitCachedSentAttachmentIds` was deleted.
 
+[#1697](https://github.com/pyrycode/pyrycode-mobile/issues/1697) confirmed this
+`InteractiveStreamE2ETest` scenario passes unchanged after #1698/#1686's shared peer identity
+repairs. A 30-second timeout plus daemon `static_key_mismatch` / `bound_to_other_key` events
+establishes a shared authentication problem, not an attachment-byte defect; distinguish peer
+opening from history and retrieval waits before changing the attachment path. The exact-byte,
+three-chunk and conversation-isolation checks remain intact. See [Verification status](#verification-status)
+for the retained #1686 proof and #1697's fresh full-suite pass.
+
 `interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload` (#1020) proves the sibling leg #1016
 could not: another client's upload, named on a message, read back after `E2eTestApplication.rebuildGraph`
 with the thread cache cleared so the row can only come from history replay. It shipped `@Ignore`d and out
@@ -2367,7 +2375,28 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-04 (#1683).** The dispatcher ran the full
+**Current live verification — 2026-10-04 (#1697).** The dispatcher ran the full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1697`
+at `b1a11e755f`, merged with `origin/main` at `d54d7d9cad` in a detached worktree (0 commits
+behind before merge): **53 executed, 53 passed, 0 failed, 0 errors, 0 skipped**, exit 0.
+The fresh XML contains exactly one passing
+`de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes`
+testcase, with no failure, error or skip. The prerequisite #1698/#1686 identity repairs restored
+the scenario unchanged from failing base `acf0f6591c`; #1697 required no additional code repair,
+longer timeout or weakened assertion. See the
+[gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1697#issuecomment-5976504334).
+The retained XML report is `2026-10-04T04-03-12-661Z_real-claude-gate_#1697.log` under the dispatcher
+repository's `logs/`, with diagnostics in the adjacent `.stderr.log`.
+
+The retained [#1686 full-suite proof](https://github.com/pyrycode/pyrycode-mobile/issues/1686#issuecomment-5976044606)
+also contains exactly one passing phone-attachment testcase: **53 executed, 53 passed, 0 failed,
+0 errors, 0 skipped**, exit 0, in `2026-10-04T02-57-03-837Z_real-claude-gate_#1686.log`.
+Both are entirely passing full suites. In contrast, #1698's earlier full suite passed this
+attachment method but had **53 executed, 52 passed, 1 unrelated failure, 0 errors, 0 skipped**;
+its focused question-answer rerun is recorded separately below and is not a second full-suite pass.
+No separate focused phone-attachment run is claimed.
+
+**Previous live verification — 2026-10-04 (#1683).** The dispatcher ran the full
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1683`
 at `b10c5a6fe02b89f4d55e0da14b4e0c0360e9390b`, merged with `origin/main` at `d54d7d9cad`
 in a detached worktree (6 commits behind before merge): **53 executed, 53 passed, 0 failed,
@@ -3275,6 +3304,14 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — confirmed:** [#1697](https://github.com/pyrycode/pyrycode-mobile/issues/1697) records
+  the no-code resolution of
+  `InteractiveStreamE2ETest#interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes` after
+  #1698/#1686's shared identity repairs. The picker-selected PNG and 100,000-byte three-chunk
+  document still reach the peer through one message in X, with distinct ids, exact SHA-256 digests
+  and no user message in Y. See [Verification status](#verification-status) for both the retained
+  #1686 proof and #1697's fresh 53-test full-suite pass. No scenario or deterministic twin was added.
 
 - **Coverage — hardened:** [#1683](https://github.com/pyrycode/pyrycode-mobile/issues/1683) protects
   `InteractiveStreamE2ETest#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool` with a
