@@ -17,6 +17,9 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    3-way, all riding the same harness) adds tool rows (**shipped #472**), the connection banner
    (**shipped #474**), and the session divider (**shipped #473**). See
    [Layer 1 — component render harness (rung 2)](#layer-1--component-render-harness-rung-2).
+   Session errors (#1678) are rung-2 proof in `ScriptedSessionErrorTest`: both agents,
+   known/unknown copy, isolation, clearing and Sending/Waiting closure through the
+   real repository → ViewModel → screen. No daemon failure or live recovery is proved.
 3. **Emulator + host daemon + real constrained claude** ← **what this directory ships.** The real app
    on a headless emulator connects to a host `pyry` + relay, sends "reply with exactly: ping", and
    asserts "ping" renders. Also covers a **tool-use** scenario (#481): a constrained prompt makes real
@@ -202,6 +205,10 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    not `lastUsedAt`, decides the order; the old order would put the first-archived (newer-by-last-use) chat
    on top instead. Zero claude turns. In the curated `LIVE=1` list in `scripts/e2e-emulator.sh`, which
    raised `LIVE_MINIMUM` by one.
+   **Pending session-error recovery:** [#1731](https://github.com/pyrycode/pyrycode-mobile/issues/1731)
+   owns `InteractiveStreamE2ETest.interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog`.
+   The live harness currently lacks a reproducible daemon failure trigger; this method
+   is not implemented or in the curated gate. Its deterministic twin is also pending.
    **Pending coverage:** #679 owns **cross-device** Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
    ending B while A continues. #965 proves only the **single-device** case — the phone stopping its own
@@ -3418,6 +3425,19 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Session-error recovery — pending (#1731):**
+  `InteractiveStreamE2ETest.interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog`
+  must prove real daemon → live relay → phone recovery for retained crash-loop backlog
+  without resend, and for abandoned delivery followed by a fresh send. #1678 proves
+  only rung 2. The separate daemon-owned prerequisite is an isolated test-only control
+  that triggers startup failure, holds retained backlog, advances to give-up/drop,
+  and releases failure for real-Claude recovery; its issue number awaits daemon-owner
+  filing. The current live harness has no reproducible trigger. A rung-4 twin in
+  `DeterministicInteractiveStreamE2ETest` remains pending until that control/fixture
+  can hold both states. Neither scenario is part of the pre-ship selector; keep
+  `python3 scripts/android-test-gate.py live` unchanged until runnable coverage lands.
+  An ignored manual method or skipped run supplies no live proof.
 
 - **Coverage — updated:** [#1631](https://github.com/pyrycode/pyrycode-mobile/issues/1631)
   extends `InteractiveStreamE2ETest.interactiveTurn_backgroundTask_countsInActionsMenuAndPanel`

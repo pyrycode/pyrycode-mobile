@@ -1,10 +1,18 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.view.View
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
@@ -14,7 +22,10 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.width
@@ -39,6 +50,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.GraphicsMode
+import java.io.File
 
 /**
  * #1002: notices draw as pills in the thread's Top overlay, and the status row keeps only live turn status.
@@ -70,13 +82,20 @@ class ThreadTopOverlayTest {
     private var turnOutcome by mutableStateOf<TurnRecoveryNotice?>(null)
     private var connectionState by mutableStateOf<ConnectionState>(ConnectionState.Connected)
     private var mcpFailure by mutableStateOf<String?>(null)
+    private var sessionError by mutableStateOf<String?>(null)
+    private var view: View? = null
+    private var errorContainer = Color.Unspecified
+    private var errorText = Color.Unspecified
     private var rePairTaps = 0
     private var mcpTaps = 0
     private var retryTaps = 0
 
-    private fun setScreen() {
+    private fun setScreen(darkTheme: Boolean = false) {
         composeRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = darkTheme, dynamicColor = false) {
+                view = LocalView.current
+                errorContainer = MaterialTheme.colorScheme.errorContainer
+                errorText = MaterialTheme.colorScheme.error
                 ThreadScreen(
                     state = state,
                     onBack = {},
@@ -93,6 +112,7 @@ class ThreadTopOverlayTest {
                     isBusy = isBusy,
                     resetting = resetting,
                     turnOutcome = turnOutcome,
+                    sessionError = sessionError,
                 )
             }
         }
@@ -107,6 +127,79 @@ class ThreadTopOverlayTest {
 
         composeRule.onNodeWithContentDescription(dismissDescription).assertDoesNotExist()
         composeRule.onNodeWithText(RE_PAIR_LABEL).assertDoesNotExist()
+    }
+
+    @Test
+    fun sessionError_sitsBelowExistingPersistentNotices_andLeavesTheirActionsWorking() {
+        sessionError = "session.blocked"
+        usageLimit = warning
+        mcpFailure = "github"
+        setScreen()
+        val errorLabel = context.getString(R.string.thread_session_blocked)
+        val pill = composeRule.onNodeWithContentDescription(errorLabel)
+        pill.assertIsDisplayed().assertHasNoClickAction()
+        val mcpBounds = composeRule.onNodeWithContentDescription(MCP_FAILED_LABEL).getUnclippedBoundsInRoot()
+        val errorBounds = pill.getUnclippedBoundsInRoot()
+        assertEquals(12f, (errorBounds.top - mcpBounds.bottom).value, 0.5f)
+        composeRule.onAllNodesWithContentDescription(dismissDescription).assertCountEquals(1)
+        composeRule.onNodeWithText(MCP_FAILED_LABEL).performClick()
+        composeRule.runOnIdle { assertEquals(1, mcpTaps) }
+
+        showRePair = true
+        val pairingBounds = composeRule.onNodeWithContentDescription(RE_PAIR_LABEL).getUnclippedBoundsInRoot()
+        assertEquals(12f, (pill.getUnclippedBoundsInRoot().top - pairingBounds.bottom).value, 0.5f)
+        composeRule.onNodeWithText(RE_PAIR_LABEL).performClick()
+        composeRule.runOnIdle { assertEquals(1, rePairTaps) }
+        pill.assertIsDisplayed()
+
+        showRePair = false
+        connectionState = ConnectionState.Offline
+        val retryBounds = composeRule.onNodeWithTag("offline_retry_target").getUnclippedBoundsInRoot()
+        assertEquals(12f, (pill.getUnclippedBoundsInRoot().top - retryBounds.bottom).value, 0.5f)
+        composeRule.onNodeWithTag("offline_retry_target").performClick()
+        composeRule.runOnIdle { assertEquals(1, retryTaps) }
+        pill.assertIsDisplayed()
+
+        sessionError = null
+        pill.assertDoesNotExist()
+        composeRule.onNodeWithText(OFFLINE_RETRY_LABEL).assertIsDisplayed()
+        composeRule.onNodeWithContentDescription(label("allowed_warning")).assertIsDisplayed()
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun sessionError_reusesErrorColors_andRightAlignedBodySmall_withNoDismissAction() {
+        sessionError = "session.blocked"
+        setScreen(darkTheme = true)
+        val label = context.getString(R.string.thread_session_blocked)
+        val pill = composeRule.onNodeWithContentDescription(label)
+        pill.assertIsDisplayed().assertHasNoClickAction()
+        composeRule.onNodeWithContentDescription(dismissDescription).assertDoesNotExist()
+        val results = mutableListOf<TextLayoutResult>()
+        composeRule
+            .onNodeWithText(
+                label,
+                useUnmergedTree = true,
+            ).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+        val text = results.single().layoutInput.style
+        assertEquals(errorText, text.color)
+        assertEquals(12f, text.fontSize.value, 0.01f)
+        assertEquals(TextAlign.End, text.textAlign)
+        val bounds = pill.fetchSemanticsNode().boundsInRoot
+        val inset = with(composeRule.density) { 2.dp.toPx() }
+        composeRule.runOnIdle {
+            val root = checkNotNull(view)
+            val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
+            root.draw(Canvas(bitmap))
+            val actual = Color(bitmap.getPixel(bounds.center.x.toInt(), (bounds.top + inset).toInt()))
+            assertEquals(errorContainer.red, actual.red, 1f / 255f)
+            assertEquals(errorContainer.green, actual.green, 1f / 255f)
+            assertEquals(errorContainer.blue, actual.blue, 1f / 255f)
+            System.getenv("SESSION_ERROR_CAPTURE")?.let { path ->
+                File(path).outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            }
+            bitmap.recycle()
+        }
     }
 
     @Test

@@ -148,6 +148,12 @@
     <string name="thread_sending_label">Sending…</string>
     <string name="thread_waiting_label">Waiting for Claude</string>
     <string name="thread_waiting_label_codex">Waiting for Codex</string>
+    <string name="thread_session_blocked">Claude did not pick up the last message. It was not delivered.</string>
+    <string name="thread_session_blocked_codex">Codex did not pick up the last message. It was not delivered.</string>
+    <string name="thread_session_child_crashing">Claude keeps failing to start. Your message is waiting.</string>
+    <string name="thread_session_child_crashing_codex">Codex keeps failing to start. Your message is waiting.</string>
+    <string name="thread_session_error">Claude stopped responding.</string>
+    <string name="thread_session_error_codex">Codex stopped responding.</string>
     <string name="cd_thread_thinking">Agent is thinking</string>
     <string name="thread_thinking_progress_label">Thinking… ~%1$d tokens this step</string>
     <string name="cd_thread_thinking_progress">Claude is thinking, about %1$d tokens into its current reasoning step</string>
