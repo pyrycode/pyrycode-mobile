@@ -180,11 +180,24 @@ segments existed.
 - **Cancelled / refusal turn** (`turn_end` with no finished `message` ever) — the settled
   `isStreaming = false` partial text remains rendered (the partial output claude produced) and is
   superseded when the next turn starts. No infinite "streaming" state, no orphan.
-- **The #184 typewriter restarts on every delta.** `StreamingAssistantBody` keys its reveal on
-  `content`, so each appended delta restarts the 50-char/sec reveal from 0. By existing #184 design,
-  now exercised live for the first time; self-limiting (reveal outpaces typical delta cadence, settles
-  to static `MarkdownText` on `turn_end`). VM-side reveal hoisting is a possible future follow-up if a
-  bursty live stream reads as a stutter — see [Message bubble](message-bubble.md).
+- **Reveal lifetime follows the streaming body's composition.** Since #1754,
+  `StreamingAssistantBody` consumes the latest text on a stable 33 ms clock, revealing
+  whitespace-delimited words at about 30 words/sec and larger steps when behind. Its
+  15-tick countdown resets only when caught up; arrivals preserve the prefix and
+  outstanding deadline, reaching each snapshot within 495 ms of reveal-clock time
+  plus presentation. The earlier content-keyed producer retained its state value,
+  contrary to the historical claim that every delta reset the prefix to zero, but
+  restarted its delay and local budget; frequent arrivals could prevent progress.
+  Both reveal and independent caret producers cancel on disposal. Finalization
+  switches to full static `MarkdownText`, removing the caret. See
+  [Message bubble](message-bubble.md#streaming-variant--progressive-reveal--blinking-caret-since-184)
+  and its [step and frequent-arrival coverage](message-bubble-testing.md#testing).
+- **End-to-end reveal observation remains pending.**
+  [#1765](https://github.com/pyrycode/pyrycode-mobile/issues/1765) owns the manually
+  gated real-Claude `InteractiveStreamE2ETest` observation and the held-stream
+  `DeterministicInteractiveStreamE2ETest` twin, observing the reply before turn end
+  and caret removal on finalization. Neither observation has been executed for
+  #1754; the local step and Compose-clock tests cover its timing contract.
 
 ## Security
 
