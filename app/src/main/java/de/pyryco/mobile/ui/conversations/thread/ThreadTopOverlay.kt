@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,6 +66,7 @@ internal fun ThreadTopOverlay(
     sessionError: String? = null,
     agent: ConversationAgent = ConversationAgent.Claude,
     transientError: String? = null,
+    transientErrorOccurrence: Long = 0L,
 ) {
     val usage = usageLimit?.takeUnless { usageLimitDismissed }
     val showOffline = connectionState == ConnectionState.Offline && !showRePair
@@ -89,7 +91,9 @@ internal fun ThreadTopOverlay(
             if (sessionError != null) {
                 NoticePill(text = sessionErrorLabel(sessionError, agent), isError = true)
             }
-            transientError?.let { TransientErrorPill(it) }
+            transientError?.let { text ->
+                key(transientErrorOccurrence) { TransientErrorPill(text) }
+            }
         }
         Column(
             modifier = modifier.fillMaxWidth(),

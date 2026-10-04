@@ -24,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -417,10 +418,12 @@ fun MarkdownReaderScreen(
                         .chromeBackdrop(chromeSource, MaterialTheme.colorScheme.threadColors.headerBackdrop, top = true),
             )
             errorNotices.currentMessage?.let { text ->
-                TransientErrorPill(
-                    text,
-                    Modifier.align(Alignment.TopEnd).padding(start = BarGutter, top = barHeight + ReaderBodyTopGap, end = BarGutter),
-                )
+                key(errorNotices.currentOccurrence) {
+                    TransientErrorPill(
+                        text,
+                        Modifier.align(Alignment.TopEnd).padding(start = BarGutter, top = barHeight + ReaderBodyTopGap, end = BarGutter),
+                    )
+                }
             }
             SnackbarHost(
                 hostState = snackbarHostState,

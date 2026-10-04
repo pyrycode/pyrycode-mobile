@@ -41,6 +41,7 @@ import kotlinx.coroutines.CompletableDeferred
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -499,6 +500,33 @@ class MarkdownReaderScreenTest {
 
         composeRule.onNodeWithText("Old note").assertIsDisplayed()
         assertErrorPill(openFailed)
+    }
+
+    @Test fun identicalRefreshFailures_renderSeparateOccurrences_withFullTimeouts() {
+        var reads = 0
+        showRefreshable(MarkdownDocument("Plan.md", "# Old note")) {
+            reads++
+            null
+        }
+        choose(refresh)
+        composeRule.mainClock.autoAdvance = false
+        assertErrorPill(openFailed)
+        val first = composeRule.onNodeWithTag("transient_error_notice").fetchSemanticsNode().id
+        composeRule.mainClock.autoAdvance = true
+        choose(refresh)
+        composeRule.mainClock.autoAdvance = false
+        assertEquals(2, reads)
+        composeRule.mainClock.advanceTimeBy(3_000)
+        assertEquals(first, composeRule.onNodeWithTag("transient_error_notice").fetchSemanticsNode().id)
+        composeRule.mainClock.advanceTimeBy(1_100)
+        assertErrorPill(openFailed)
+        val second = composeRule.onNodeWithTag("transient_error_notice").fetchSemanticsNode().id
+        assertNotEquals(first, second)
+        composeRule.mainClock.advanceTimeBy(3_000)
+        assertEquals(second, composeRule.onNodeWithTag("transient_error_notice").fetchSemanticsNode().id)
+        composeRule.mainClock.advanceTimeBy(1_000)
+        composeRule.onNodeWithTag("transient_error_notice").assertDoesNotExist()
+        composeRule.onNodeWithText("Old note").assertIsDisplayed()
     }
 
     @Test

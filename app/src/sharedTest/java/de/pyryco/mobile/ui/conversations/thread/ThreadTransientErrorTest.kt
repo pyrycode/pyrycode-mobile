@@ -34,6 +34,7 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.receiveAsFlow
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -168,6 +169,28 @@ class ThreadTransientErrorTest {
         rule.onNodeWithText(many).assertIsDisplayed()
         expire()
         rule.onNodeWithTag("transient_error_notice").assertDoesNotExist()
+    }
+
+    @Test fun identicalArchiveFailures_renderSeparateOccurrences_withFullTimeouts() {
+        show(persistent = true)
+        rule.runOnIdle {
+            repeat(2) { errors[1].trySend(Unit) }
+        }
+        val text = context.getString(R.string.archive_failed)
+        assertPill(text)
+        val first = rule.onNodeWithTag("transient_error_notice").fetchSemanticsNode().id
+        rule.mainClock.advanceTimeBy(3_500)
+        assertEquals(first, rule.onNodeWithTag("transient_error_notice").fetchSemanticsNode().id)
+        rule.mainClock.advanceTimeBy(600)
+        assertPill(text)
+        val second = rule.onNodeWithTag("transient_error_notice").fetchSemanticsNode().id
+        assertNotEquals(first, second)
+        rule.onNodeWithContentDescription(context.getString(R.string.thread_session_blocked)).assertIsDisplayed()
+        rule.mainClock.advanceTimeBy(3_000)
+        assertEquals(second, rule.onNodeWithTag("transient_error_notice").fetchSemanticsNode().id)
+        rule.mainClock.advanceTimeBy(1_000)
+        rule.onNodeWithTag("transient_error_notice").assertDoesNotExist()
+        rule.onNodeWithContentDescription(context.getString(R.string.thread_session_blocked)).assertIsDisplayed()
     }
 
     @Test fun expiryOnlyRemovesTransient_belowPersistentSessionError() {

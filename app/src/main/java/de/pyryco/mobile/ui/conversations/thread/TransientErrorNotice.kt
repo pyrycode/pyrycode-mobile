@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -30,12 +31,17 @@ class TransientErrorNoticeState internal constructor(
     private val timeoutMillis: () -> Long,
 ) {
     private val mutex = Mutex()
+
+    // Text can repeat between queued callers; consumers key the pill by its occurrence instead.
+    internal var currentOccurrence by mutableLongStateOf(0L)
+        private set
     internal var currentMessage by mutableStateOf<String?>(null)
         private set
 
     internal suspend fun show(message: String) {
         mutex.withLock {
             try {
+                currentOccurrence++
                 currentMessage = message
                 RelayLog.d { "event=transient_error_notice phase=shown" }
                 delay(timeoutMillis())

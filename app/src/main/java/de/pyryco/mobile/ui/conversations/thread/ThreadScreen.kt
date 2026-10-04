@@ -859,6 +859,7 @@ fun ThreadScreen(
                         sessionError = sessionError,
                         agent = state.agent,
                         transientError = errorNotices.currentMessage,
+                        transientErrorOccurrence = errorNotices.currentOccurrence,
                     )
                 }
             }
