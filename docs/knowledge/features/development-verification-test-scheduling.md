@@ -24,6 +24,19 @@ corrupt the retained identity. `PeerDeviceStaticKeyStoreTest` covers continuity,
 copy safety, concurrent creation and repeated factory creation; never include keys or tokens in
 assertion output. See [the rung-3 peer](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
 
+A standalone peer scenario can pass while later full-suite scenarios fail because an earlier peer
+bound their shared token. Open and close a prior peer with the same pairing before the observing peer
+when testing this lifecycle, as the [Stop scenario](../../e2e-interactive-stream.md#what-rung-3-is-made-of)
+does (#1696); both opens must satisfy the existing handshake/probe readiness contract. Comparing
+stored key arrays alone does not prove the authenticated identity on the wire.
+`PeerDeviceStaticKeyStoreTest.sequentialFactoriesPresentSameBoundIdentityInFreshNoiseHandshakes`
+uses fresh vendored Noise responders to authenticate successive initiator keys and decrypt each
+synthetic hello. It checks the same static identity and token but different handshake messages,
+protecting identity continuity without sharing ephemeral or cipher state. Restoring the former
+per-instance lifecycle made this exact method fail at the identity assertion (1 executed, 1 failed,
+0 skipped); the repaired focused peer/factory/redial/wait run passed all 30 tests (0 failed, 0 skipped).
+See [PR #1704's verification evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1704#issuecomment-5975107860).
+
 A graph-lifecycle identity test can pass while contaminating the next test's repository binding.
 `E2eTestApplication.rebuildGraph()` must preserve the original fake/relay mode selected by the relay
 instrumentation argument, carry the existing DataStore, unregister the old lifecycle driver and dispose
