@@ -4252,9 +4252,37 @@ class InteractiveStreamE2ETest {
         try {
             // 1. Claude starts a background task in a fresh chat.
             awaitChannelList()
-            awaitConnected()
-            val (chatId, name) = answerChat(serverId, BACKGROUND_NAME_PREFIX)
-            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+            try {
+                awaitConnected()
+            } catch (e: TimeoutCancellationException) {
+                val bundle = registry.connectionFor(serverId)
+                val repositoryPresent = bundle?.coordinator?.currentRepository?.value != null
+                val relayState =
+                    bundle
+                        ?.supervisor
+                        ?.relayStatus
+                        ?.value
+                        ?.let { it::class.simpleName } ?: "unregistered"
+                throw AssertionError(
+                    "background-task phone connection timed out; repository present=$repositoryPresent; relay=$relayState",
+                    e,
+                )
+            }
+            val bundle = checkNotNull(registry.connectionFor(serverId)) { "host not registered" }
+            val name = BACKGROUND_NAME_PREFIX + System.currentTimeMillis()
+            val chatId =
+                runBlocking {
+                    bundle.coordinator.currentRepository
+                        .createLiveChatWithDiagnostics(
+                            THREAD_TIMEOUT_MS,
+                            REDIAL_WAIT_MS,
+                            bundle.supervisor.relayStatus,
+                            create = { it.createDiscussion() },
+                            rename = { repository, chat -> repository.rename(chat.id, name) },
+                        ).id
+                }
+            peerStep(peer, "open background-task peer") { peer.open(CONNECT_TIMEOUT_MS) }
             openChatRow(name)
             sendFromPhone(BACKGROUND_PROMPT)
             val allowed = mutableSetOf<String>()

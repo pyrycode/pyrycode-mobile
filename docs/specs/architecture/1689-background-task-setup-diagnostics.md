@@ -19,7 +19,7 @@ Original #1631 branch/base XML records 53/19 executed, 20/17 failed, and zero sk
 
 The retained dispatcher full run after #1698 (`2026-10-03T23-52-08-061Z_real-claude-gate_#1698.log`) records 53 executed, 52 passed, one unrelated question-answer failure, zero skipped; this background-task method passed. Its retained primary daemon log (`pyry-e2e.shYptv/daemon.log`) has zero mismatch/bound-to-other-key events. No remaining scenario-local task defect is established. Add actionable setup diagnostics, without changing authentication, task timing, or assertions. No decision record is needed.
 
-Sizing: about 260 written lines, three implementation/test files plus this plan, no production changes, zero exported production types or simultaneous consumer updates, three acceptance criteria, one timeout branch. One deliverable: protect the existing live scenario's setup diagnosis.
+Sizing: about 310 written lines, three implementation/test files plus this plan, no production changes, zero exported production types or simultaneous consumer updates, three acceptance criteria, one timeout branch. One deliverable: protect the existing live scenario's setup diagnosis.
 
 In-flight overlaps: #1631, #1642, #1683, #1690, #1691, #1693, #1694, and #1695 touch `InteractiveStreamE2ETest`; their edits add a panel entry or alter other methods/helpers. This change stays local to this scenario's setup, leaving `answerChat` and `peerStep` unchanged; no redesign dependency.
 
@@ -68,3 +68,7 @@ None. Prior repaired-suite evidence supports the shared identity diagnosis; fres
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-04
+
+## Revisions
+
+- **2026-10-04, implementation.** Distinguish `await replacement repository` after an ordinary request failure from a stalled create/rename. Preserve the original replacement retry and overall deadline. Check caller activity before converting a timeout, so an outer deadline remains cancellation. JVM regressions cover both contracts. The red baseline extracted the existing create/rename contract without diagnostics: four setup-message assertions failed on unnamed timeouts (8 executed, 6 failures total; two identity assertions also exposed coroutine stack-recovery copies and were corrected to check the preserved cause chain). Green tests cover the real diagnostic rather than exception-copy identity.
