@@ -1,7 +1,6 @@
 <resources>
     <string name="app_name">Pyrycode</string>
-    <string name="cd_open_settings">Open settings</string>
-    <string name="cd_open_archive">Open archive</string>
+    <string name="cd_open_menu">Open menu</string>
     <string name="cd_pair_another_host">Pair another host</string>
     <string name="channel_list_empty">To pair a host, tap Pair another host at the top right.</string>
     <string name="discussion_list_title">Recent discussions</string>

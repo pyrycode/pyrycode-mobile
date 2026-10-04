@@ -53,6 +53,9 @@ data class OptionsOverlayOption(
     val detail: String? = null,
 )
 
+/** Which side of the live anchor has room for the option column. */
+enum class OptionsOverlayPlacement { Above, Below }
+
 // Figma 533:1958's `Options overlay`: a 6dp-rounded column with 2dp of vertical padding;
 // each 28dp row has 12dp horizontal and 6dp vertical padding.
 private val OverlayShape = RoundedCornerShape(6.dp)
@@ -76,7 +79,7 @@ private const val DETAIL_MAX_LINES = 2
 
 /**
  * Figma `533:1958`'s `Options overlay` (#808): a compact popup of options that opens above the control
- * that anchors it.
+ * that anchors it by default; [placement] also allows header menus to open below it.
  *
  * **A full-size layer in the caller's own window, not a `Popup`.** A focusable popup takes the input
  * field's focus and drops the keyboard. A non-focusable one lets the tap that dismisses it fall through
@@ -84,7 +87,7 @@ private const val DETAIL_MAX_LINES = 2
  * outside the options, so it takes the dismissing tap and nothing beneath it sees the tap. [anchor] is in
  * this layer's coordinates. The caller reads it from the live bounds of the anchoring control, so the
  * overlay follows the composer's keyboard lift. The option column's height is capped at the space
- * above the anchor, and it scrolls when there are more options than fit.
+ * on the chosen side of the anchor, and it scrolls when there are more options than fit.
  *
  * Static dark follows the design's `Schemes/On Primary` surface and selected row,
  * with `Schemes/On Primary Fixed` on idle rows. Other theme paths use their
@@ -107,6 +110,7 @@ fun OptionsOverlay(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     actions: Boolean = false,
+    placement: OptionsOverlayPlacement = OptionsOverlayPlacement.Above,
 ) {
     val currentOnDismiss by rememberUpdatedState(onDismiss)
     BackHandler(onBack = { currentOnDismiss() })
@@ -125,7 +129,7 @@ fun OptionsOverlay(
                         }
                     },
         )
-        AnchoredAbove(anchor = anchor) {
+        AnchoredOptions(anchor = anchor, placement = placement) {
             OptionsColumn(
                 options = options,
                 selectedValue = selectedValue,
@@ -137,21 +141,30 @@ fun OptionsOverlay(
     }
 }
 
-/** Places its single child with the child's foot [OverlayAnchorGap] above [anchor]'s top. The child's
- *  start aligns its row text with the anchor's own text, clamped inside [OverlayEdgeMargin]. */
+/** Constrains the column to the chosen side of [anchor], separated by [OverlayAnchorGap].
+ * Its start retains the row-text alignment, clamped inside [OverlayEdgeMargin]. */
 @Composable
-private fun AnchoredAbove(
+private fun AnchoredOptions(
     anchor: Rect,
+    placement: OptionsOverlayPlacement,
     content: @Composable () -> Unit,
 ) {
     Layout(content = content, modifier = Modifier.fillMaxSize()) { measurables, constraints ->
         val margin = OverlayEdgeMargin.roundToPx()
         val bottom = (anchor.top.roundToInt() - OverlayAnchorGap.roundToPx()).coerceIn(0, constraints.maxHeight)
+        val top =
+            (anchor.bottom.roundToInt() + OverlayAnchorGap.roundToPx())
+                .coerceIn(margin.coerceAtMost(constraints.maxHeight), constraints.maxHeight)
+        val availableHeight =
+            when (placement) {
+                OptionsOverlayPlacement.Above -> bottom - margin
+                OptionsOverlayPlacement.Below -> constraints.maxHeight - margin - top
+            }
         val placeable =
             measurables.single().measure(
                 Constraints(
                     maxWidth = (constraints.maxWidth - 2 * margin).coerceAtLeast(0),
-                    maxHeight = (bottom - margin).coerceAtLeast(0),
+                    maxHeight = availableHeight.coerceAtLeast(0),
                 ),
             )
         layout(constraints.maxWidth, constraints.maxHeight) {
@@ -159,7 +172,12 @@ private fun AnchoredAbove(
                 (anchor.left.roundToInt() - OptionHorizontalPadding.roundToPx())
                     .coerceAtMost(constraints.maxWidth - margin - placeable.width)
                     .coerceAtLeast(margin)
-            placeable.place(x, bottom - placeable.height)
+            val y =
+                when (placement) {
+                    OptionsOverlayPlacement.Above -> bottom - placeable.height
+                    OptionsOverlayPlacement.Below -> top
+                }
+            placeable.place(x, y)
         }
     }
 }

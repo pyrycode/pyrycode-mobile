@@ -176,7 +176,7 @@ class ThreadDesignCaptureTest {
         openActions()
         assertTrue(
             "footer menu remains above its keyboard-lifted anchor",
-            rule.onNodeWithText("Background tasks", substring = true).getUnclippedBoundsInRoot().bottom < actionsTop,
+            rule.onNodeWithText("Knowledge capture").getUnclippedBoundsInRoot().bottom < actionsTop,
         )
         design.capture("chrome-1646", "keyboard-actions", "675:6160")
         // Back can be consumed by the IME instead of the footer overlay. Close that overlay explicitly
@@ -698,8 +698,7 @@ class ThreadDesignCaptureTest {
     /** The footer's Actions menu draws in the screen's own window, not a popup, so wait for its last row. */
     private fun openActions() {
         rule.onNodeWithText("Actions").performTouchInput { click() }
-        // The row reads "Background tasks (N)".
-        await("Background tasks", substring = true)
+        await("Knowledge capture")
     }
 
     private fun openThread() {
@@ -792,8 +791,8 @@ class ThreadDesignCaptureTest {
     /** Opens and closes through the header X, which stays when #1496 removes the panel's Close button. */
     private fun openPanel() {
         rule.waitForIdle()
-        openActions()
-        rule.onNodeWithText("Background tasks", substring = true).performTouchInput { click() }
+        design.openMenu(rule.onNodeWithContentDescription("More actions"))
+        rule.onNodeWithText("Background tasks").performTouchInput { click() }
         rule.waitUntil(5_000) { rule.onAllNodesWithContentDescription("Close").fetchSemanticsNodes().isNotEmpty() }
         rule.waitForIdle()
     }

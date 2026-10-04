@@ -77,7 +77,8 @@ class SettingsNavigationTest {
         compose.onNodeWithContentDescription("Close").performClick()
         assertOnList()
 
-        compose.onNodeWithContentDescription("Open archive").performClick()
+        compose.onNodeWithContentDescription("Open menu").performClick()
+        compose.onNodeWithText("Archive").performClick()
         compose.runOnIdle { assertEquals(Routes.ARCHIVED_DISCUSSIONS, nav.currentDestination?.route) }
     }
 
@@ -119,7 +120,8 @@ class SettingsNavigationTest {
     }
 
     private fun openSettings() {
-        compose.onNodeWithContentDescription("Open settings").performClick()
+        compose.onNodeWithContentDescription("Open menu").performClick()
+        compose.onNodeWithText("Settings").performClick()
         compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.SETTINGS }
     }
 

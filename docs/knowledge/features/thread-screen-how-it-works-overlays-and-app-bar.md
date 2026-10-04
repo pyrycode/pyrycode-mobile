@@ -34,7 +34,7 @@ right end, and split the `when` out into `StatusReading` to make room for it.** 
 `state.backgroundTaskCount` (§ [Background-tasks panel placement](#background-tasks-panel-placement-post-678)
 below) renders as a [`NoticePill`](notice-pill.md) reading the client-owned plural `R.plurals.thread_task_count`
 ("1 task running" / "N tasks running") beside whichever `StatusReading` arm is live, right-aligned on the
-20dp gutter; tapping it sets the same `backgroundTasksOpen` flag the Actions menu's row sets, opening the
+20dp gutter; tapping it sets the same `backgroundTasksOpen` flag the top menu's row sets, opening the
 same `BackgroundTaskPanel`. `StatusReading` itself is byte-identical to the pre-#1043 `when` above, just
 parameterised on `modifier` instead of closing over the file-private `slot` — at `taskCount <= 0` it still
 gets exactly that `slot`, so an idle thread with no running tasks renders identically to before this ticket.
@@ -214,7 +214,7 @@ SlashCommandTypeAhead(
 ### Background-tasks panel placement (post-#678)
 
 [#678](https://github.com/pyrycode/pyrycode-mobile/issues/678) draws
-[`BackgroundTaskPanel`](thread-composer-footer-actions-menu.md#actions-menu-884) directly inside `ThreadScreen`, right
+[`BackgroundTaskPanel`](mobile-modal-callers.md#callers) directly inside `ThreadScreen`, right
 after the footer's `OptionsOverlay` `Box` closes and before the `WorkspacePicker` mount — not as an eighth
 `Scaffold` sibling and not from the `MainActivity` destination block the way
 [`QuestionBatchModal`](question-batch-modal.md) is drawn (`MobileReadOnlyModal` opens its own `Dialog`
@@ -231,12 +231,8 @@ WorkspacePicker(...)
 
 `backgroundTasksOpen` is a plain `remember`, not `rememberSaveable`, keyed on `state.conversationId` — the
 same idiom `openControl` uses one field up: switching conversations drops an open panel, and a process
-death never restores one a fresh screen instance never opened. The Actions menu's background-tasks row sets
-it (see [Thread composer footer § Actions menu](thread-composer-footer-actions-menu.md#actions-menu-884)); since
-[#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043) the status band's task-count pill (§
-[Thinking-indicator placement](#thinking-indicator-placement-post-407-moved-in-643) above) sets the same
-flag through the same `{ backgroundTasksOpen = true }` lambda, so both share one piece of state. Since #1631 the
-[thread overflow](thread-overflow-menu.md) adds a third opener immediately after Channel info:
+death never restores one a fresh screen instance never opened. The two panel entries after #1668 are the status band's running-task pill and the count-free
+[thread overflow](thread-overflow-menu.md) row immediately after Channel info. Both set the same flag.
 `ThreadTopAppBar` forwards `onBackgroundTasks = { backgroundTasksOpen = true }`. The row is
 unconditional in channels and chats, even without mutation support or running tasks. It dismisses
 the menu first and preserves the same empty and never-reported panel readings. Closing the

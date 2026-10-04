@@ -1,10 +1,12 @@
 package de.pyryco.mobile.ui.conversations.list
 
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -41,6 +43,7 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
@@ -744,7 +747,7 @@ class ChannelListScreenTest {
     }
 
     /**
-     * The list draws its own bar (#737), so all three entries have to survive every draw — not just the one a
+     * The list draws its own bar (#737), so both controls have to survive every draw — not just the one a
      * single-state test happens to pick. A bar placed inside the tree's scroll container would pass on the
      * loaded draw and vanish on the centred placeholder, which is exactly the mistake this walks.
      *
@@ -756,7 +759,7 @@ class ChannelListScreenTest {
      * the generic top app bar, and the floating button's description with #738.
      */
     @Test
-    fun listBar_drawsThreeEntriesAndNoneOfTheRetiredChrome_onEveryDraw() {
+    fun listBar_drawsMenuAndPairingAndNoneOfTheRetiredChrome_onEveryDraw() {
         var hostState: HostChannelListState by mutableStateOf(HostChannelListState())
         composeTestRule.setContent {
             PyrycodeMobileTheme {
@@ -798,8 +801,10 @@ class ChannelListScreenTest {
         composeTestRule.onNode(hasContentDescription("Pair another host")).assertIsDisplayed()
         composeTestRule.onNode(hasContentDescription("Pair another host, Channels")).assertDoesNotExist()
         composeTestRule.onNode(hasContentDescription("Pair another host, Chats")).assertDoesNotExist()
-        composeTestRule.onNode(hasContentDescription(string(R.string.cd_open_settings))).assertIsDisplayed()
-        composeTestRule.onNode(hasContentDescription(string(R.string.cd_open_archive))).assertIsDisplayed()
+        composeTestRule.onAllNodes(hasContentDescription("Open menu")).assertCountEquals(1)
+        composeTestRule.onNode(hasContentDescription("Open menu")).assertIsDisplayed()
+        composeTestRule.onNode(hasContentDescription("Open settings")).assertDoesNotExist()
+        composeTestRule.onNode(hasContentDescription("Open archive")).assertDoesNotExist()
         // The generic top app bar's app name and Pyry logo go with it.
         composeTestRule.onNode(hasText(string(R.string.app_name))).assertDoesNotExist()
         composeTestRule.onNode(hasContentDescription("Pyrycode logo")).assertDoesNotExist()
@@ -808,26 +813,85 @@ class ChannelListScreenTest {
     }
 
     @Test
-    fun toolbarTouchBoundary_routesToOnlyTheControlOnEachSide() {
+    fun menuTouchEdgesOpenIt_andThePairingEdgeStillRoutesOnlyToPairing() {
         setTree(entry("pyrybox", "Pyrybox"))
-
-        composeTestRule.onNodeWithTag(CHANNEL_LIST_TEST_TAG).performTouchInput {
-            click(Offset(53f, 40f))
-            click(Offset(55f, 40f))
+        for (rightEdge in listOf(false, true)) {
+            composeTestRule.onNode(hasContentDescription("Open menu")).performTouchInput {
+                click(Offset(if (rightEdge) width - 1f else 1f, center.y))
+            }
+            composeTestRule.onNode(hasText("Settings")).assertIsDisplayed()
+            composeTestRule.onNode(hasText("Archive")).performTouchInput { click() }
         }
-
-        assertEquals(listOf(ChannelListEvent.SettingsTapped, ChannelListEvent.ArchiveTapped), events)
+        composeTestRule.onNode(hasContentDescription("Pair another host")).performTouchInput {
+            click(Offset(1f, center.y))
+        }
+        assertEquals(listOf(ChannelListEvent.ArchiveTapped, ChannelListEvent.ArchiveTapped, ChannelListEvent.PairHostTapped), events)
     }
 
-    private val toolbarNames = listOf("Open settings", "Open archive", "Pair another host")
+    @Test
+    fun menuOutsideTapAndBack_closeWithoutTapThrough() {
+        setTree(entry("pyrybox", "Pyrybox"))
+        openMenu()
+        val pairing = composeTestRule.onNode(hasContentDescription("Pair another host")).fetchSemanticsNode().boundsInRoot
+        composeTestRule.onNodeWithTag(CHANNEL_LIST_TEST_TAG).performTouchInput { click(pairing.center) }
+        composeTestRule.onNode(hasText("Settings")).assertDoesNotExist()
+        assertTrue(events.isEmpty())
+        openMenu()
+        composeTestRule.onNode(hasText("Archive")).assertIsDisplayed()
+        Espresso.pressBack()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNode(hasText("Archive")).assertDoesNotExist()
+        assertTrue(events.isEmpty())
+        composeTestRule.onNode(hasContentDescription("Pair another host")).performTouchInput { click() }
+        assertEquals(listOf(ChannelListEvent.PairHostTapped), events)
+    }
+
+    @Test
+    fun menuSurvivesRecomposition_andUsesLiveBoundsInAnInsetScreen() {
+        var state by mutableStateOf(HostChannelListState())
+        var inset by mutableStateOf(20.dp)
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ChannelListScreen(state, { events += it }, Modifier.padding(top = inset))
+            }
+        }
+        openMenu()
+        composeTestRule.runOnIdle {
+            state = HostChannelListState(listOf(entry("pyrybox", "Pyrybox")))
+            inset = 40.dp
+        }
+        val anchor = composeTestRule.onNode(hasContentDescription("Open menu")).getUnclippedBoundsInRoot()
+        val settings = composeTestRule.onNode(hasText("Settings")).getUnclippedBoundsInRoot()
+        val archive = composeTestRule.onNode(hasText("Archive")).getUnclippedBoundsInRoot()
+        assertEquals(6.dp, settings.top - anchor.bottom) // 4dp anchor gap + 2dp column padding.
+        assertEquals(8.dp, settings.left)
+        assertEquals(settings.bottom, archive.top)
+        composeTestRule.onNode(hasText("Settings")).assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button))
+        composeTestRule.onNode(hasText("Settings")).assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.Selected))
+        composeTestRule.onNode(hasText("Archive")).assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.Selected))
+        composeTestRule.onNode(hasText("Settings")).performTouchInput { click() }
+        composeTestRule.onNode(hasText("Archive")).assertDoesNotExist()
+        assertEquals(listOf(ChannelListEvent.SettingsTapped), events)
+    }
+
+    private val toolbarNames = listOf("Open menu", "Pair another host")
 
     private fun toolbarBounds() =
         toolbarNames.map {
             composeTestRule.onNode(hasContentDescription(it)).getUnclippedBoundsInRoot()
         }
 
+    private fun openMenu() {
+        composeTestRule.onNode(hasContentDescription("Open menu")).performTouchInput { click() }
+    }
+
     private fun clickToolbar() {
-        toolbarNames.forEach { composeTestRule.onNode(hasContentDescription(it)).performClick() }
+        for (label in listOf("Settings", "Archive")) {
+            openMenu()
+            composeTestRule.onNode(hasText(label)).performTouchInput { click() }
+            composeTestRule.onNode(hasText(label)).assertDoesNotExist()
+        }
+        composeTestRule.onNode(hasContentDescription("Pair another host")).performClick()
         assertEquals(listOf(ChannelListEvent.SettingsTapped, ChannelListEvent.ArchiveTapped, ChannelListEvent.PairHostTapped), events)
     }
 
@@ -838,26 +902,20 @@ class ChannelListScreenTest {
             assertEquals(44.dp, it.bottom - it.top)
             assertEquals(targets.first().top, it.top)
         }
-        assertEquals(targets[0].right, targets[1].left)
-        assertTrue(targets[1].right <= targets[2].left)
+        assertTrue(targets[0].right <= targets[1].left)
         val glyphs =
             toolbarNames.map {
                 composeTestRule.onNode(hasContentDescription(it), useUnmergedTree = true).getUnclippedBoundsInRoot()
             }
         val root = composeTestRule.onNodeWithTag(CHANNEL_LIST_TEST_TAG).getUnclippedBoundsInRoot()
-        assertEquals(22.dp, glyphs[0].right - glyphs[0].left)
+        assertEquals(6.dp, glyphs[0].right - glyphs[0].left)
         assertEquals(24.dp, glyphs[0].bottom - glyphs[0].top)
         assertEquals(24.dp, glyphs[1].right - glyphs[1].left)
-        assertEquals(21.dp, glyphs[1].bottom - glyphs[1].top)
-        assertEquals(24.dp, glyphs[2].right - glyphs[2].left)
-        assertEquals(24.dp, glyphs[2].bottom - glyphs[2].top)
-        assertEquals(21.dp, glyphs[0].left - root.left)
-        assertEquals(64.dp, glyphs[1].left - root.left)
-        assertEquals(20.dp, root.right - glyphs[2].right)
-        // `15:8` stacks body 4 + sidebar 24 + button row 4 above the glyphs (#1521).
+        assertEquals(24.dp, glyphs[1].bottom - glyphs[1].top)
+        assertEquals(29.dp, glyphs[0].left - root.left)
+        assertEquals(20.dp, root.right - glyphs[1].right)
         assertEquals(32.dp, glyphs[0].top - root.top)
-        assertEquals(34.dp, glyphs[1].top - root.top)
-        assertEquals(32.dp, glyphs[2].top - root.top)
+        assertEquals(32.dp, glyphs[1].top - root.top)
         val rule = composeTestRule.onNodeWithTag("channel-list-toolbar-rule").getUnclippedBoundsInRoot()
         assertEquals(20.dp, rule.left - root.left)
         assertEquals(20.dp, root.right - rule.right)
@@ -1701,22 +1759,24 @@ class ChannelListScreenTest {
     }
 
     @Test
-    fun settingsGear_emitsSettingsTapped() {
+    fun settingsMenuRow_emitsSettingsTapped() {
         setTree(entry(serverId = "pyrybox", displayName = "Pyrybox"))
 
+        openMenu()
         composeTestRule
-            .onNode(hasContentDescription(string(R.string.cd_open_settings)))
+            .onNode(hasText("Settings"))
             .performClick()
 
         assertEquals(listOf(ChannelListEvent.SettingsTapped), events)
     }
 
     @Test
-    fun archiveEntry_emitsArchiveTapped() {
+    fun archiveMenuRow_emitsArchiveTapped() {
         setTree(entry(serverId = "pyrybox", displayName = "Pyrybox"))
 
+        openMenu()
         composeTestRule
-            .onNode(hasContentDescription(string(R.string.cd_open_archive)))
+            .onNode(hasText("Archive"))
             .performClick()
 
         assertEquals(listOf(ChannelListEvent.ArchiveTapped), events)
@@ -1780,8 +1840,9 @@ class ChannelListScreenTest {
         assertEquals(listOf(ChannelListEvent.PairHostTapped), events)
         events.clear()
         composeTestRule.onNode(hasText("Tap + to start a conversation")).assertDoesNotExist()
+        openMenu()
         composeTestRule
-            .onNode(hasContentDescription(string(R.string.cd_open_settings)))
+            .onNode(hasText("Settings"))
             .assertIsDisplayed()
             .performClick()
         assertEquals(listOf(ChannelListEvent.SettingsTapped), events)

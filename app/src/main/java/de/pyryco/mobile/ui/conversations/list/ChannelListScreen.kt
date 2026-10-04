@@ -25,11 +25,15 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RadialGradientShader
@@ -38,6 +42,9 @@ import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -57,6 +64,9 @@ import de.pyryco.mobile.ui.components.CreateChannelModal
 import de.pyryco.mobile.ui.components.EditChannelModal
 import de.pyryco.mobile.ui.components.EditChatModal
 import de.pyryco.mobile.ui.components.EditWorkspaceModal
+import de.pyryco.mobile.ui.conversations.components.OptionsOverlay
+import de.pyryco.mobile.ui.conversations.components.OptionsOverlayOption
+import de.pyryco.mobile.ui.conversations.components.OptionsOverlayPlacement
 import de.pyryco.mobile.ui.conversations.components.TreeConversationRow
 import de.pyryco.mobile.ui.conversations.components.TreeHostRow
 import de.pyryco.mobile.ui.conversations.components.TreeHostSectionRow
@@ -368,25 +378,58 @@ fun ChannelListScreen(
         if (createChat?.failed == true) snackbarHostState.showSnackbar(createChatFailure)
     }
     val staticDark = LocalStaticDarkPalette.current
-    Scaffold(
-        // The arrival marker goes on the root, above the branch below, so both draws carry it (#736).
-        modifier = modifier.testTag(CHANNEL_LIST_TEST_TAG).then(if (staticDark) Modifier.canvasGlow(colors) else Modifier),
-        containerColor =
-            when {
-                staticDark -> Color.Transparent
-                colors.surface.luminance() < 0.5f -> colors.scrim.copy(alpha = CANVAS_SCRIM_ALPHA).compositeOver(colors.surface)
-                else -> colors.surface
+    var menuOpen by remember { mutableStateOf(false) }
+    var menuAnchor by remember { mutableStateOf<Rect?>(null) }
+    var layerOrigin by remember { mutableStateOf(Offset.Zero) }
+    Box(modifier = modifier.testTag(CHANNEL_LIST_TEST_TAG).onGloballyPositioned { layerOrigin = it.positionInWindow() }) {
+        Scaffold(
+            modifier = Modifier.fillMaxSize().then(if (staticDark) Modifier.canvasGlow(colors) else Modifier),
+            containerColor =
+                when {
+                    staticDark -> Color.Transparent
+                    colors.surface.luminance() < 0.5f -> colors.scrim.copy(alpha = CANVAS_SCRIM_ALPHA).compositeOver(colors.surface)
+                    else -> colors.surface
+                },
+            topBar = {
+                ChannelListTopBar(
+                    onEvent = onEvent,
+                    onMenuOpen = { menuOpen = true },
+                    onMenuBounds = { menuAnchor = it },
+                )
             },
-        topBar = { ChannelListTopBar(onEvent) },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-    ) { inner ->
-        val bodyModifier = Modifier.padding(inner)
-        if (hostState.hosts.isEmpty()) {
-            // No host at all is the only blank tree: a paired host with no conversations still draws its
-            // own rows, which is content rather than an empty screen.
-            CenteredText(stringResource(R.string.channel_list_empty), bodyModifier)
-        } else {
-            ConversationTree(hostState = hostState, onEvent = onEvent, modifier = bodyModifier)
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+        ) { inner ->
+            val bodyModifier = Modifier.padding(inner)
+            if (hostState.hosts.isEmpty()) {
+                // No host at all is the only blank tree: a paired host with no conversations still draws its
+                // own rows, which is content rather than an empty screen.
+                CenteredText(stringResource(R.string.channel_list_empty), bodyModifier)
+            } else {
+                ConversationTree(hostState = hostState, onEvent = onEvent, modifier = bodyModifier)
+            }
+        }
+        val anchor = menuAnchor
+        if (menuOpen && anchor != null) {
+            OptionsOverlay(
+                options =
+                    listOf(
+                        OptionsOverlayOption("settings", stringResource(R.string.settings_title)),
+                        OptionsOverlayOption("archive", stringResource(R.string.thread_overflow_archive)),
+                    ),
+                selectedValue = "",
+                notListed = 0,
+                anchor = anchor.translate(-layerOrigin),
+                onSelect = { value ->
+                    menuOpen = false
+                    when (value) {
+                        "settings" -> onEvent(ChannelListEvent.SettingsTapped)
+                        "archive" -> onEvent(ChannelListEvent.ArchiveTapped)
+                    }
+                },
+                onDismiss = { menuOpen = false },
+                actions = true,
+                placement = OptionsOverlayPlacement.Below,
+            )
         }
     }
     AddWorkspaceModalBinding(hostState = hostState, onEvent = onEvent)
@@ -615,7 +658,7 @@ private fun WorkspaceEditorModal(
 }
 
 /**
- * The list's fixed, titleless bar: Settings and Archive at the left, host pairing at the right,
+ * The list's fixed, titleless bar: the menu at the left, host pairing at the right,
  * and the rule that closes the bar.
  *
  * It lives in the `Scaffold`'s `topBar` slot rather than in the tree's scroll container, so it draws above the
@@ -625,7 +668,11 @@ private fun WorkspaceEditorModal(
  * already pads the whole `PyryNavHost` past the system bars, and the old bar applied its own on top of that.
  */
 @Composable
-private fun ChannelListTopBar(onEvent: (ChannelListEvent) -> Unit) {
+private fun ChannelListTopBar(
+    onEvent: (ChannelListEvent) -> Unit,
+    onMenuOpen: () -> Unit,
+    onMenuBounds: (Rect) -> Unit,
+) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier =
@@ -636,22 +683,14 @@ private fun ChannelListTopBar(onEvent: (ChannelListEvent) -> Unit) {
                 ),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Row {
-                ChannelListBarEntry(
-                    icon = R.drawable.ic_sidebar_settings,
-                    glyphWidth = 22.dp,
-                    glyphHeight = 24.dp,
-                    label = stringResource(R.string.cd_open_settings),
-                    onClick = { onEvent(ChannelListEvent.SettingsTapped) },
-                )
-                ChannelListBarEntry(
-                    icon = R.drawable.ic_sidebar_archive,
-                    glyphWidth = 24.dp,
-                    glyphHeight = 21.dp,
-                    label = stringResource(R.string.cd_open_archive),
-                    onClick = { onEvent(ChannelListEvent.ArchiveTapped) },
-                )
-            }
+            ChannelListBarEntry(
+                icon = R.drawable.ic_thread_overflow,
+                glyphWidth = 6.dp,
+                glyphHeight = 24.dp,
+                label = stringResource(R.string.cd_open_menu),
+                onClick = onMenuOpen,
+                modifier = Modifier.onGloballyPositioned { onMenuBounds(it.boundsInWindow()) },
+            )
             ChannelListBarEntry(
                 icon = R.drawable.ic_sidebar_add_host,
                 glyphWidth = 24.dp,
@@ -690,8 +729,9 @@ private fun ChannelListBarEntry(
     glyphHeight: Dp,
     label: String,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    Box(modifier = Modifier.size(BarTouchSize).clickable(role = Role.Button, onClick = onClick), contentAlignment = Alignment.Center) {
+    Box(modifier = modifier.size(BarTouchSize).clickable(role = Role.Button, onClick = onClick), contentAlignment = Alignment.Center) {
         Icon(
             painter = painterResource(icon),
             contentDescription = label,

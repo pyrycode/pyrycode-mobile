@@ -63,6 +63,7 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
+import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
@@ -1190,7 +1191,7 @@ class InteractiveStreamE2ETest {
      * wire, the #556 archive-from-thread surfacing, and the #557 restore-from-Archive-screen surfacing. Give
      * a scratch discussion a runtime-unique, list-visible identity via **Rename**, confirm it is **present**
      * on the channel list, archive it from the thread (overflow → "Archive", **immediate — no confirm**) and
-     * assert it is **gone** from the list, then restore it (list toolbar → Archived
+     * assert it is **gone** from the list, then restore it (list header menu → Archive → Archived
      * screen's restore affordance) and assert it is **back** in the list. The same unique token flips **out
      * of** and then **back into** the same surface, so each list assertion is a genuine inversion of the other.
      *
@@ -1305,8 +1306,8 @@ class InteractiveStreamE2ETest {
             awaitChannelList()
             composeTestRule.onAllNodesWithText(uniqueName, substring = true).assertCountEquals(0)
 
-            // 9. The list toolbar opens Archive for the selected host. Its Discussions tab shows the chat.
-            composeTestRule.onNode(hasContentDescription(CD_OPEN_ARCHIVE)).performClick()
+            // 9. The list header menu opens Archive for the selected host. Its Discussions tab shows the chat.
+            openListMenuEntry(R.string.thread_overflow_archive)
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
             }
@@ -1346,8 +1347,8 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * The list's own archive entry reaches the Archived screen (#740). #737 put two entries on the channel
-     * list's bar; [interactiveTurn_archiveRestore_roundTripsListMembership] now uses the same Archive entry
+     * The list header's menu → Archive reaches the Archived screen (#740, #1665).
+     * [interactiveTurn_archiveRestore_roundTripsListMembership] uses the same Archive entry
      * for a complete round trip, while this method checks the entry without creating a conversation.
      *
      * The bar is drawn on every state of the list, so the scenario needs no connection wait, no seeded
@@ -1359,7 +1360,7 @@ class InteractiveStreamE2ETest {
         awaitChannelList()
         composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).assertCountEquals(0)
 
-        composeTestRule.onNode(hasContentDescription(CD_OPEN_ARCHIVE)).performClick()
+        openListMenuEntry(R.string.thread_overflow_archive)
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
         }
@@ -1409,7 +1410,7 @@ class InteractiveStreamE2ETest {
             archivedIds(serverId) { idA in it }
 
             // 3. Open Archive on its Discussions tab: A, archived last, is the first row.
-            composeTestRule.onNode(hasContentDescription(CD_OPEN_ARCHIVE)).performClick()
+            openListMenuEntry(R.string.thread_overflow_archive)
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
             }
@@ -2275,7 +2276,7 @@ class InteractiveStreamE2ETest {
      * Each host's Archive stays its own with two live hosts paired (#1086, rung 3).
      *
      * **Archive.** One of host A's chats is archived from its thread and restored from A's Archive, reached
-     * through A's list toolbar. B's full list and B's archived list are read before and compared after each step.
+     * through A's list header menu. B's full list and B's archived list are read before and compared after each step.
      *
      * **Cleanup.** Both created chats are deleted and B's pairing is removed in `finally`.
      *
@@ -2336,10 +2337,10 @@ class InteractiveStreamE2ETest {
             assertEquals("archiving A's chat changed B's archive", archivedB, archivedBAfterArchive)
             assertEquals("archiving A's chat changed B's active list", activeB, hostConversationIds(serverIdB) - archivedBAfterArchive)
 
-            // 5. Select A for the list toolbar's host-scoped Archive, then restore after observing the row.
+            // 5. Select A for the list header menu's host-scoped Archive, then restore after observing the row.
             val koin = GlobalContext.get()
             selectHost(koin.get(), koin.get(), serverIdA)
-            composeTestRule.onNode(hasContentDescription(CD_OPEN_ARCHIVE)).performClick()
+            openListMenuEntry(R.string.thread_overflow_archive)
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
             }
@@ -2552,11 +2553,11 @@ class InteractiveStreamE2ETest {
             }
             archivedIds(serverId) { id in it }
 
-            // 8. Restore it from the selected host's Archive through the list toolbar. The snackbar wait
+            // 8. Restore it from the selected host's Archive through the list header menu. The snackbar wait
             //    keeps the restore coroutine from being cancelled by the Back that follows (#551).
             val koin = GlobalContext.get()
             selectHost(koin.get(), koin.get(), serverId)
-            composeTestRule.onNode(hasContentDescription(CD_OPEN_ARCHIVE)).performClick()
+            openListMenuEntry(R.string.thread_overflow_archive)
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
             }
@@ -4246,8 +4247,8 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * A background task real claude starts shows in the thread pill and Actions menu count, opens the same
-     * panel from either entry, and returns to 0 when the task finishes (#1296, #967, #678). The phone asks for one backgrounded `sleep`; a
+     * A background task real claude starts shows in the thread pill, opens the same
+     * panel from the pill and top menu, and clears the pill when the task finishes (#1296, #967, #678). The phone asks for one backgrounded `sleep`; a
      * permission prompt for it is allowed through the main daemon's privileged peer, the #950 path. The peer's
      * recorded frames supply only timing and the task's identity: the count and the panel are read off the phone.
      *
@@ -4300,23 +4301,18 @@ class InteractiveStreamE2ETest {
             }
             closeBackgroundTasks()
 
-            // 3. The Actions menu reports the same count and opens the same panel.
+            // #1668: Actions keeps only composer actions; the top menu opens the live roster.
             openActions()
-            openBackgroundTasks { it >= 1 }
+            composeTestRule.onAllNodes(actionRow { it.startsWith("Background tasks") }).assertCountEquals(0)
+            composeTestRule.onNodeWithText("Compact session").assertIsDisplayed()
+            composeTestRule.onNodeWithText("Knowledge capture").assertIsDisplayed()
+            Espresso.pressBack()
+            openBackgroundTasks()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasText(started.taskType) and inBackgroundPanel()).fetchSemanticsNodes().isNotEmpty()
             }
             composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_unreported))).assertCountEquals(0)
             composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_empty))).assertCountEquals(0)
-            closeBackgroundTasks()
-
-            // #1631: the top menu opens that same live roster and dismisses itself.
-            composeTestRule.onNodeWithContentDescription(CD_MORE_ACTIONS).performClick()
-            composeTestRule.onNode(hasText(string(R.string.background_tasks_title)) and hasClickAction()).performClick()
-            composeTestRule.onNodeWithText(string(R.string.thread_overflow_channel_info)).assertDoesNotExist()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasText(started.taskType) and inBackgroundPanel()).fetchSemanticsNodes().isNotEmpty()
-            }
             closeBackgroundTasks()
 
             // 4. Once the task finishes, the count is 0 and the panel no longer lists the task as live. It
@@ -4335,8 +4331,10 @@ class InteractiveStreamE2ETest {
                         .getOrNull()
                         ?.let { it.taskId == started.taskId && it.status.isNotEmpty() } == true
             }
-            openActions()
-            openBackgroundTasks { it == 0 }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(taskPill).fetchSemanticsNodes().isEmpty()
+            }
+            openBackgroundTasks()
             val finishedOrGone =
                 (hasText(string(R.string.background_tasks_finished)) or hasText(string(R.string.background_tasks_empty))) and
                     inBackgroundPanel()
@@ -4411,8 +4409,7 @@ class InteractiveStreamE2ETest {
             awaitNoPromptDialog("a permission prompt still covers the thread")
 
             // 3. While the task runs, its card shows an activity line from a recorded frame and a tools segment.
-            openActions()
-            openBackgroundTasks { it >= 1 }
+            openBackgroundTasks()
             val tools = toolsSegmentPatterns()
 
             fun texts(node: SemanticsNode): List<String> =
@@ -5788,35 +5785,13 @@ class InteractiveStreamE2ETest {
                 )
             }
 
-    /**
-     * In the open Actions menu, wait until the Background tasks row's live count passes [count], then open the
-     * panel from it (#678). The failure names the labels the menu showed; they are the app's own.
-     */
-    private fun openBackgroundTasks(count: (Int) -> Boolean) {
-        val prefix = ComposerAction.BackgroundTasks.label + " ("
-        val row =
-            actionRow {
-                it.startsWith(prefix) &&
-                    it.endsWith(")") &&
-                    it
-                        .removePrefix(prefix)
-                        .removeSuffix(")")
-                        .toIntOrNull()
-                        ?.let(count) == true
-            }
-        try {
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(row).fetchSemanticsNodes().isNotEmpty() }
-        } catch (e: ComposeTimeoutException) {
-            val shown =
-                composeTestRule.onAllNodes(actionRow { it.startsWith(prefix) }).fetchSemanticsNodes().map {
-                    it.config
-                        .getOrNull(SemanticsProperties.Text)
-                        .orEmpty()
-                        .joinToString("") { text -> text.text }
-                }
-            throw AssertionError("the Actions menu's background-task count never passed the check; it shows $shown", e)
-        }
-        composeTestRule.onAllNodes(row).onFirst().performClick()
+    /** Open the count-free Background tasks row from the top menu (#1668). */
+    private fun openBackgroundTasks() {
+        composeTestRule.onNodeWithContentDescription(CD_MORE_ACTIONS).performClick()
+        val row = hasText(string(R.string.background_tasks_title)) and hasClickAction()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(row).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onNode(row).performClick()
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_channel_info)).assertDoesNotExist()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_title))).fetchSemanticsNodes().isNotEmpty()
         }
@@ -7163,9 +7138,14 @@ class InteractiveStreamE2ETest {
         }
     }
 
-    /** Tap the channel list's gear, which opens the selected host's Settings. */
+    /** Open Settings through the channel list header menu. */
     private fun openSettings() {
-        composeTestRule.onNode(hasContentDescription(CD_OPEN_SETTINGS)).performClick()
+        openListMenuEntry(R.string.settings_title)
+    }
+
+    private fun openListMenuEntry(label: Int) {
+        composeTestRule.onNode(hasContentDescription(string(R.string.cd_open_menu))).performClick()
+        composeTestRule.onNodeWithText(string(label)).performClick()
     }
 
     /**
@@ -7609,7 +7589,7 @@ class InteractiveStreamE2ETest {
 
         // #551 archive/restore round-trip scenario. Archive from the thread overflow (ARCHIVE_ITEM,
         // mutationsSupported-gated) is IMMEDIATE — no confirm dialog, unlike #554's DELETE_ACTION. Restore
-        // opens Archive from the list toolbar; ARCHIVED_TITLE is its top-bar arrival anchor; RESTORED_SNACKBAR
+        // opens Archive from the list header menu; ARCHIVED_TITLE is its top-bar arrival anchor; RESTORED_SNACKBAR
         // is the restore-completion guard (a prefix of "Restored %1$s", appearing in no other on-screen
         // string). The restore affordance is keyed on the unique name via its content-description ("Restore
         // <name>"), so it needs no constant. Keep in sync with res/values/strings.xml:
@@ -7618,14 +7598,9 @@ class InteractiveStreamE2ETest {
         const val ARCHIVE_ITEM = "Archive"
 
         // Other scenarios still reference the retired Settings row while their #1245 ignores remain.
-        const val CD_OPEN_SETTINGS = "Open settings"
         const val ARCHIVED_ROW = "Archived discussions"
         const val ARCHIVED_TITLE = "Archived"
         const val RESTORED_SNACKBAR = "Restored"
-
-        // #740 list-archive-entry scenario: the archive entry on the list's own bar (#737), the sibling of
-        // CD_OPEN_SETTINGS. Keep in sync with res/values/strings.xml: cd_open_archive = "Open archive".
-        const val CD_OPEN_ARCHIVE = "Open archive"
 
         // Runtime-unique rename target: "e2e551-" + System.currentTimeMillis(). Distinct from #554's
         // CONVERSATION_NAME_PREFIX (the shared companion forbids redeclaration). Unique so a substring match

@@ -199,6 +199,8 @@ class ThreadComposerFooterTest {
                     .top
             }
         assertEquals(tops.sorted(), tops)
+        actionRow("Background tasks (0)").assertDoesNotExist()
+        actionRow("Background tasks").assertDoesNotExist()
         composeTestRule.onAllNodes(isSelectable()).assertCountEquals(0)
     }
 

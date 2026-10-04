@@ -186,7 +186,7 @@ class MainActivityInsetsDeviceTest {
                 val expectedNight = if (night == "yes") Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO
                 assertEquals("Android mode applied for case $index", expectedNight, actualNight)
             }
-            rule.onNodeWithContentDescription("Open settings").assertIsDisplayed()
+            rule.onNodeWithContentDescription("Open menu").assertIsDisplayed()
             assertEquals(theme, runBlocking { preferences.themeMode.first() })
             assertEquals(wallpaper, runBlocking { preferences.useWallpaperColors.first() })
             assertTrue(runBlocking { preferences.defaultYolo.first() })
@@ -213,7 +213,7 @@ class MainActivityInsetsDeviceTest {
             scenario?.close()
             paired = isPaired
             launch()
-            val anchor = if (isPaired) rule.onNodeWithContentDescription("Open settings") else rule.onNodeWithText("Pyrycode")
+            val anchor = if (isPaired) rule.onNodeWithContentDescription("Open menu") else rule.onNodeWithText("Pyrycode")
             anchor.assertIsDisplayed()
             scenario?.onActivity { activity ->
                 val night = activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
@@ -509,10 +509,11 @@ class MainActivityInsetsDeviceTest {
         scenario?.close()
         paired = true
         launch()
-        val settings = rule.onNodeWithContentDescription("Open settings")
+        val settings = rule.onNodeWithContentDescription("Open menu")
         clearOfBars(settings)
         capture("list")
         settings.performClick()
+        rule.onNodeWithText("Settings").performClick()
         rule.onNodeWithText("Settings").assertIsDisplayed()
         rule.onNodeWithContentDescription("Close").assertIsDisplayed()
         rule.onNodeWithText("Notifications").assertIsDisplayed()
