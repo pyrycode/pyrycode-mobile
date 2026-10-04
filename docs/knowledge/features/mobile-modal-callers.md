@@ -320,7 +320,7 @@ in the composition tree does not affect what it draws over. See
 
 [`BackgroundTaskPanel`](../../../app/src/main/java/de/pyryco/mobile/ui/conversations/thread/BackgroundTaskPanel.kt)
 (#678, #1041) uses `MobileReadOnlyModal` inside `ThreadScreen`, with conversation-keyed visibility
-toggled by the [Actions menu](thread-composer-footer-actions-menu.md#actions-menu-884).
+toggled by the count-free [top menu](thread-overflow-menu.md) or running-task pill (#1668).
 See [panel placement](thread-screen-how-it-works-overlays-and-app-bar.md#background-tasks-panel-placement-post-678).
 It lists the conversation's `BackgroundTaskRoster?` read-only, with three
 readings: `null` draws a dashed ring, "No background-task report yet" and "The daemon has not reported on
