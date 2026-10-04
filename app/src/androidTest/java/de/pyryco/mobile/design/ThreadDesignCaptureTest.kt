@@ -14,6 +14,7 @@ import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
@@ -414,8 +415,31 @@ class ThreadDesignCaptureTest {
         assertEquals("circle width", 15f, context.right.value - context.left.value, 0.5f)
         assertEquals("circle height", 15f, context.bottom.value - context.top.value, 0.5f)
         assertEquals("circle before Actions with visual gap", 16f, actions.left.value - context.right.value, 0.5f)
-        assertEquals("circle top aligned in slot", actions.bottom.value - 16f, context.top.value, 0.5f)
+        val actionTarget = rule.onNode(hasText("Actions") and hasClickAction()).getUnclippedBoundsInRoot()
+        val slotTop = actionTarget.top.value + (actionTarget.bottom.value - actionTarget.top.value - 12f - 16f) / 2f
+        assertEquals("Context slot centred in left group", slotTop, context.top.value, 0.5f)
         val density = design.view.resources.displayMetrics.density
+        rule
+            .onNodeWithTag("thread_footer_context_usage", useUnmergedTree = true)
+            .assertContentDescriptionEquals("Context usage warning, 84%")
+        if (InstrumentationRegistry.getArguments().getString("requireRealSystemBars") == "true") {
+            // Hardware drawing can trail semantics; a warning description alone cannot fence a snapshot.
+            rule.waitUntil(5_000) {
+                val bitmap = checkNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+                try {
+                    var yellowPixels = 0
+                    for (y in (context.top.value * density).toInt() until (context.bottom.value * density).toInt()) {
+                        for (x in (context.left.value * density).toInt() until (context.right.value * density).toInt()) {
+                            val pixel = bitmap.getPixel(x, y)
+                            if (Color.red(pixel) > Color.blue(pixel) + 40 && Color.green(pixel) > Color.blue(pixel) + 40) yellowPixels++
+                        }
+                    }
+                    yellowPixels >= 5
+                } finally {
+                    bitmap.recycle()
+                }
+            }
+        }
         val screen = design.view.resources.displayMetrics.heightPixels
         assertTrue("icons stay above IME", b.bottom.value * density < screen - ime)
         val output =

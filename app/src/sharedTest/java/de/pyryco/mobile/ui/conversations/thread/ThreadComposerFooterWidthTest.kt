@@ -212,8 +212,9 @@ class ThreadComposerFooterWidthTest {
         val text = actionsText.getUnclippedBoundsInRoot()
         assertEquals("4dp group inset after footer padding", footer.left + 16.dp, c.left)
         assertEquals("16dp visual gap", 16.dp, text.left - c.right)
-        assertEquals("circle top aligned in 16dp slot", text.bottom - 16.dp, c.top)
-        assertEquals("slot ends 1dp below circle", text.bottom - 1.dp, c.bottom)
+        val slotTop = actionBounds.top + (actionBounds.bottom - actionBounds.top - 12.dp - 16.dp) / 2
+        assertEquals("Context slot centred in left group", slotTop.value, c.top.value, 0.5f)
+        assertEquals("circle top aligned in 16dp slot", slotTop.value + 15f, c.bottom.value, 0.5f)
         val layouts = mutableListOf<TextLayoutResult>()
         actionsText.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
         assertFalse("Actions ellipsizes", layouts.single().isLineEllipsized(0))

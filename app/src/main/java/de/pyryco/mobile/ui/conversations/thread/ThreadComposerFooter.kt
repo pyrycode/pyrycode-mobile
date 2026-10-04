@@ -369,7 +369,7 @@ private fun FooterTextRow(
         val actions = button.measure(Constraints(maxWidth = minOf(natural, cap), maxHeight = constraints.maxHeight))
         val height = maxOf(circle.height, actions.height)
         layout(constraints.maxWidth, height, mapOf(FooterFirstRowBottom to height)) {
-            circle.placeRelative(0, height - circle.height)
+            circle.placeRelative(0, (height - circle.height) / 2)
             actions.placeRelative(circle.width + gap, height - actions.height)
         }
     }
