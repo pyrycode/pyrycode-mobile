@@ -39,7 +39,8 @@ events before attributing the failure to conversation routing or increasing a ti
 A standalone peer scenario can pass while later full-suite scenarios fail because an earlier peer
 bound their shared token. Open and close a prior peer with the same pairing before the observing peer
 when testing this lifecycle, as the [Stop scenario](../../e2e-interactive-stream.md#what-rung-3-is-made-of)
-does (#1696), and as the permission-held running-tool scenario now does (#1683); both opens must
+does (#1696), as the permission-held running-tool scenario does (#1683), and as the
+background-prompt scenario does (#1694); both opens must
 satisfy the existing handshake/probe readiness contract. Label permission arrival, approval/dismissal
 and turn completion as well as opening, so a timeout identifies a peer operation separately from a
 status assertion. The prior peer needs no Claude turn. Comparing
@@ -64,6 +65,30 @@ scheduling. The former per-instance identity lifecycle failed the token-binding 
 1 failed, 0 skipped); the repaired focused peer/factory/redial/wait run passed 31 tests (0 failed/errors,
 0 skipped). See [PR #1711's verification evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1711#issuecomment-5975716513)
 and [the full live result](../../e2e-interactive-stream.md#verification-status).
+
+The background-prompt failure (#1694) also occurred in `SecondClientPeer.open`, before push
+registration or backgrounding. Correlating its uniquely named conversation's creation/rename with
+bound-key rejections throughout the 30-second opening window localized a wait the coroutine stack
+could not name. Do not infer a notification deduplication defect from the scenario's name.
+`withTimeoutDiagnostic` keeps existing deadlines, obtains test-authored/content-free diagnostics
+lazily on timeout and retains the timeout as cause; ordinary failures and cancellation pass through.
+`peerStep` reports the operation and current link state, while `setHostLink` reports close/reconnect
+and repository presence. JVM regressions cover rejected opening, stalled message acknowledgement,
+success and non-timeout propagation. The full candidate live XML explicitly passed this scenario:
+see [the counted proof](../../e2e-interactive-stream.md#verification-status), which distinguishes
+candidate acceptance from #1698's repaired-baseline and focused identity/scripted checks.
+
+An unrelated asynchronous teardown failure can attach to the next Compose test. During #1694,
+`WorkspacePickerSheetTest.recent_rows_render_full_paths` reported `UncaughtExceptionsBeforeTest`
+with a suppressed `ClosedScopeException` from DataStore's lazy file callback. Cancelling the relay
+registry does not stop DataStore's separate I/O scope; resolving `androidContext()` inside that
+callback can consult Koin after graph closure. Green full baseline/candidate reruns did not exclude
+the race. `AppPreferencesTeardownTest.resolvedDataStoreDoesNotLookUpContextInAClosedGraph` resolves
+the real binding, closes an isolated graph, then triggers file initialization; it reproduced the same
+failure on both merge base and candidate (1 executed, 1 failed, 0 skipped each). This was inherited
+and distinct from peer identity. #1709 captures the context when constructing DataStore; the retained
+regression now runs unignored and passes. See [App preferences](app-preferences.md#testing) for the
+binding/fixture contract. Closing the graph alone is not proof that deferred callbacks are safe.
 
 A graph-lifecycle identity test can pass while contaminating the next test's repository binding.
 `E2eTestApplication.rebuildGraph()` must preserve the original fake/relay mode selected by the relay
