@@ -67,8 +67,9 @@ even though the audited frame draws every host connected (#1431).
 2026-10-03 decision that the thread overflow's additional **Background tasks** row
 needs no separate Figma frame. Against
 [Figma `675:5883`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=675-5883),
-it reuses the surrounding flat, text-only Material 3 menu item style, with no icon
-or separator, immediately after Channel info in channels and chats. This is an
+the added text-only row remains immediately after Channel info in channels and chats,
+with no icon or separator. Juhana’s #1666 decision replaces the surrounding Material
+menu appearance with Options overlay `533:1958` in Actions mode. This is an
 approved addition rather than design drift. It opens the existing task panel even
 with no running tasks; Actions and the task pill retain their entry points. This
 records the design decision, not a new pixel capture or parity verdict.
@@ -84,7 +85,8 @@ All under `app/src/androidTest/java/de/pyryco/mobile/design/`. No file under `ap
   camera and notification permission (not revoked: a revoke kills the instrumentation process), pins dark theme with wallpaper colours off, controls the startup
   paired snapshot (`design.paired = true` opens the channel list), installs the Koin override, and
   restores everything. `launch()`, `capture(folder, name, figmaNode)`, `openKeyboard(node)`,
-  `closeKeyboard()`, `openMenu(anchor)`, `insets()`.
+  `closeKeyboard()`, `openHeaderMenu()`, `insets()`. Header opening awaits Channel info
+  in the same window rather than an additional popup root.
 - `DesignInputs` (`design.inputs`) — the Koin override, loaded over the app graph. It redefines
   `ThreadViewModel`, `ScannerViewModel` and `PairCodeViewModel`. Set these before or after launch; the open
   thread collects them:
@@ -208,7 +210,7 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 | Task count, usage-limit and pairing-error pills | `568:3139` | audited, mismatch | › Task count pill | #1043, #1002, #1115, #842 | #1499 (family root), #1519 |
 | Session delimiter (clear and idle-evict) | `675:3682` | audited, mismatch | › Session delimiter | #1207, #1358 | #1512, #1498, #1500 |
 | Session boundary without the explanation line, and full-opacity rows above it | `675:3682`, `675:5883` (decision on #1578: the frames keep their `Explanation` node and faded rows; the app draws the `Rule row` alone) | no separate frame | › Session delimiter | #1578 | #1580 (closed, not needed) |
-| Overflow menu | `675:5883` | audited, match | › Overflow menu | #1199 | #1500 |
+| Overflow menu | `533:1958` | Options overlay Actions style by Juhana’s #1666 decision; supersedes `675:5883` audited match | › Overflow menu | #1199, #1666 | #1500 |
 | Actions menu | `675:5938` | audited, match | › Actions menu | #884 | #1500 |
 | Keyboard open | `675:6160` | audited, match | › Keyboard open | #1149 | #1500 |
 | Keyboard open, compact 150 % | `676:3981` | audited, mismatch | › Keyboard open / Compact 150% | #1149, #1347, #1412 | #1485, #1500; Line-box and Cancel-height gaps accepted by decision, not routed (`prompts/index.md` › Compact frames at 150 %) |

@@ -202,14 +202,14 @@ ThreadInputBar(
 SlashCommandTypeAhead(
     text = draft,
     commands = state.slashCommands,
-    anchor = inputAnchor?.takeIf { openMenu == null }?.translate(-layerOrigin),
+    anchor = inputAnchor?.takeIf { openMenu == null && !overflowExpanded }?.translate(-layerOrigin),
     imeVisible = imeVisible,
     onComplete = onDraftChange,
     resetKey = state.conversationId,
 )
 ```
 
-`inputAnchor` mirrors the existing `footerAnchors` map's own pattern one level up — [`Thread input bar`](thread-input-bar.md)'s new `onAnchorChanged` parameter reports the field's live `boundsInWindow()`, translated into the layer's own coordinates by subtracting `layerOrigin`, the same translation every `OptionsOverlay` anchor in this file already applies. `anchor?.takeIf { openMenu == null }` is what keeps this overlay and the footer's from ever drawing at once — passing `null` closes [`SlashCommandTypeAhead`](slash-command-type-ahead.md) unconditionally whenever a footer menu (`openMenu != null`) is open, rather than relying on z-order or manual dismissal. `resetKey = state.conversationId` matches the conversation-keyed `remember` idiom the footer's own overlay state already uses, so no suggestion state survives a conversation switch. See [Slash-command type-ahead](slash-command-type-ahead.md) for the composable's own state machine (`dismissedFor`, the two `LaunchedEffect`s) and [Thread input bar § Draft binding](thread-input-bar.md#draft-binding--cursor-at-end-undo-and-redo-885-934) for what a pick's `onDraftChange` call requires of the field underneath it.
+`inputAnchor` mirrors the existing `footerAnchors` map's own pattern one level up — [`Thread input bar`](thread-input-bar.md)'s new `onAnchorChanged` parameter reports the field's live `boundsInWindow()`, translated into the layer's own coordinates by subtracting `layerOrigin`, the same translation every `OptionsOverlay` anchor in this file already applies. `anchor?.takeIf { openMenu == null && !overflowExpanded }` is what keeps this overlay and the footer's from ever drawing at once — passing `null` closes [`SlashCommandTypeAhead`](slash-command-type-ahead.md) unconditionally whenever a header or footer menu is open, rather than relying on z-order or manual dismissal. `resetKey = state.conversationId` matches the conversation-keyed `remember` idiom the footer's own overlay state already uses, so no suggestion state survives a conversation switch. See [Slash-command type-ahead](slash-command-type-ahead.md) for the composable's own state machine (`dismissedFor`, the two `LaunchedEffect`s) and [Thread input bar § Draft binding](thread-input-bar.md#draft-binding--cursor-at-end-undo-and-redo-885-934) for what a pick's `onDraftChange` call requires of the field underneath it.
 
 ### Background-tasks panel placement (post-#678)
 
@@ -233,7 +233,7 @@ WorkspacePicker(...)
 same idiom `openControl` uses one field up: switching conversations drops an open panel, and a process
 death never restores one a fresh screen instance never opened. The two panel entries after #1668 are the status band's running-task pill and the count-free
 [thread overflow](thread-overflow-menu.md) row immediately after Channel info. Both set the same flag.
-`ThreadTopAppBar` forwards `onBackgroundTasks = { backgroundTasksOpen = true }`. The row is
+`ThreadScreen` binds `onBackgroundTasks = { backgroundTasksOpen = true }` directly to the menu. The row is
 unconditional in channels and chats, even without mutation support or running tasks. It dismisses
 the menu first and preserves the same empty and never-reported panel readings. Closing the
 panel — the close glyph or Back, routed through `MobileReadOnlyModal`'s single
@@ -272,13 +272,27 @@ val connectionState: StateFlow<ConnectionState> =
 
 The VM's own `connectionStateSource.observe()` call is unchanged by #1318 — what changed is what `ThreadDestinationFactory.thread` (`di/AppModule.kt`) passes as the `ConnectionStateSource`. It now reads `bundle.coordinator.connectionStatus.map { it.toConnectionState() }`, the two-leg model, in place of the relay-only `bundle.supervisor.observe()`: `Connected` now means the pyrycode leg's Noise handshake finished, not just the relay socket opening, so a live-socket-but-unhandshaken host reads `Connecting`. See [Connection state § #1318](connection-state.md) for the mapping and [Relay reconnect supervisor § #1318](relay-reconnect-supervisor.md) for the `toConnectionState()` overload.
 
+### Header Actions overlay (#1666)
+
+`ThreadScreen` hosts [ThreadOverflowMenu](thread-overflow-menu.md) beside the footer overlay in its
+full-size layer over the Scaffold. Live header bounds are translated by `-layerOrigin`; shared Below
+placement starts 4dp below the button, with horizontal alignment and 8dp edge clamping. `imePadding`
+limits the scrollable column to space above the preserved keyboard. Opening the header clears
+`openControl`; opening a footer clears `overflowExpanded`; slash suggestions are suppressed for both.
+Rows derive from current conversation state and memory reports on recomposition.
+
+Outside taps dismiss through the shared scrim without tap-through or focus changes. The header-only
+platform Back callback has overlay priority, so it dismisses before the visible IME consumes Back.
+It is registered only while open and cleaned up on disposal; the shared BackHandler remains the fallback.
+See [menu wiring and device coverage](thread-overflow-menu-wiring-tests-and-edge-cases.md).
+
 ### `ThreadTopAppBar` — Figma `16:8` chrome
 
-**[#643](../codebase/643.md) replaced the stock M3 `TopAppBar` with a hand-rolled bar plus a closing rule** — the Figma `16:8` `Top bar` frame (`533:1948`), the same design language [`ChannelListTopBar`](channel-list-screen.md) already shipped for the channel list. `ThreadTopAppBar(title, onBack, onTitleClick, onOverflowClick, overflowExpanded, onOverflowDismiss, onOverflowEvent, isPromoted, mutationsSupported, modifier)` (the `onShowLiteralScreen` parameter [#382](../codebase/382.md) had added here was removed by [#883](../../specs/architecture/883-retire-literal-screen.md)) stays a **public** stateless composable in its own file (`ThreadTopAppBar.kt`); only its body changed. It is now a `Column` of a content `Row` and a `HorizontalDivider`:
+**[#643](../codebase/643.md) replaced the stock M3 `TopAppBar` with a hand-rolled bar plus a closing rule** — the Figma `16:8` `Top bar` frame (`533:1948`), the same design language [`ChannelListTopBar`](channel-list-screen.md) already shipped for the channel list. `ThreadTopAppBar(title, onBack, onTitleClick, onOverflowClick, modifier, onOverflowAnchorChanged)` (the `onShowLiteralScreen` parameter [#382](../codebase/382.md) had added here was removed by [#883](../../specs/architecture/883-retire-literal-screen.md)) stays a **public** stateless composable in its own file (`ThreadTopAppBar.kt`); the menu is hosted separately by the screen (#1666). It is now a `Column` of a content `Row` and a `HorizontalDivider`:
 
 - **Back** — a 48dp `IconButton(onClick = onBack)` around the 24dp `ic_thread_back` Figma vector, tinted `onSurface`; `R.string.cd_back` ("Back") remains its accessible name.
 - **Title** — `Text(text = title, modifier = Modifier.weight(1f).clickable(onClick = onTitleClick).semantics { role = Role.Button }, style = titleLarge, color = onPrimaryContainer, maxLines = 1, overflow = TextOverflow.Ellipsis)`, sitting between the two controls. `weight(1f)` precedes `.clickable(...)`, so the `Text` measures to the **full title slot**, not just its visible glyphs — the tap area and ripple cover the trailing space after a short title too (harmless: `Row` siblings never overlap, so it can't reach either control, and it is arguably a better target than the stock bar's text-sized one). `maxLines = 1` + `TextOverflow.Ellipsis` is what makes a display name longer than the slot truncate inside it rather than overlap or cover a control. `Role.Button` keeps TalkBack announcing the title as activatable.
-- **Overflow** — keeps the `Box { IconButton; ThreadOverflowMenu }` anchor. Its 48dp target contains the Figma `ic_thread_overflow` vector, a 6 × 24dp path tinted `primary` and shifted 2dp upward; `R.string.cd_more_actions` ("More actions") remains its accessible name.
+- **Overflow** — reports the IconButton’s live window bounds through `onOverflowAnchorChanged`; it does not host the menu. Its 48dp target contains the Figma `ic_thread_overflow` vector, a 6 × 24dp path tinted `primary` and shifted 2dp upward; `R.string.cd_more_actions` ("More actions") remains its accessible name.
 - **Rule** — a 1dp `HorizontalDivider`, inset 20dp on both sides (372dp wide at 412dp). `threadColors.headerRule` uses 60% alpha: static-dark `inversePrimary` (`#32628D`), or `outlineVariant` in static light and wallpaper modes.
 - **Geometry (#1646).** The visible 28dp content row begins 24dp below the screen-area top; a 16dp gap places the rule at 68–69dp. The bar is 69dp high. The 48dp Back/overflow touch boxes extend around their glyphs without changing this geometry or the 20dp visible gutters. The title truncates inside its middle slot. The list draws from the screen-area top underneath this bar; measured header height + 28dp reserves oldest-row and top-overlay clearance. Reader bar spacing remains reader-owned.
 
