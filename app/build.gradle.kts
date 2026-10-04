@@ -141,6 +141,9 @@ android {
     }
     lint {
         abortOnError = true
+        // Lint read about 217000 lines, of which 59000 are app code; the shared screen tests were read twice,
+        // once per test source set. Test code is no longer analysed, so its lint findings no longer show.
+        ignoreTestSources = true
     }
     // Screen tests live in sharedTest and compile into both runs: on the JVM under Robolectric for
     // every check, and on the emulator for an in-depth device run.
