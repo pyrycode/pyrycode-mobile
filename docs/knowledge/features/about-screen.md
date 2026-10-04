@@ -62,12 +62,13 @@ it cannot catch a fixed version name that still satisfies the format. Inspect
 release manifest or APK metadata for both the default and an override to check
 the code/name pair.
 
-For #1722, the verifier's preserved release manifests confirm default
-`3997 / 1.0.3997` and override `3901 / 1.0.3901`. The PR also records the builder's
-release APK metadata checks. These establish packaged metadata, not the actual
-Android Settings app-details display: that manual acceptance check remains
-pending because the gate's Android ATD emulator has no Settings package. See the
-[verifier evidence and pending check](https://github.com/pyrycode/pyrycode-mobile/pull/1736#issuecomment-5978834246).
+For #1722, the verifier's fresh release APK checks confirm default
+`4004 / 1.0.4004` and override `3901 / 1.0.3901`. Android 15 Settings' App info
+page visibly shows `version 1.0.3901` for the installed override release APK;
+installed-package evidence also confirms that code/name pair and absence of
+`DEBUGGABLE`. Both packaged metadata and the actual Settings display are
+verified. See the [passing verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/1736#issuecomment-5979213734)
+for the preserved metadata, Settings XML and screenshot evidence.
 
 ## Configuration / usage
 
