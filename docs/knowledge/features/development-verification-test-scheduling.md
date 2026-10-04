@@ -15,6 +15,38 @@ gate. Keep ordinary application-wiring assertions in their owning package:
 application's fake binding when no relay arguments are supplied. Confirm its
 testcase appears in the gate XML; compilation alone does not prove isolation.
 
+Test peers sharing a pairing token must share its bound static identity for the instrumentation
+process (#1698). `PeerDeviceStaticKeyStore` in `sharedTest` serializes creation by exact server id
+and token, independently of app credential storage, peer close and Koin graph rebuild. Return copies
+of both key arrays and of `publicKey()`: `NoiseSessionFactory` wipes its caller-owned private-key
+buffer after copying it into fresh per-dial Noise state. A returned buffer being zeroed must not
+corrupt the retained identity. `PeerDeviceStaticKeyStoreTest` covers continuity, host/token isolation,
+copy safety, concurrent creation and repeated factory creation; never include keys or tokens in
+assertion output. See [the rung-3 peer](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
+
+A graph-lifecycle identity test can pass while contaminating the next test's repository binding.
+`E2eTestApplication.rebuildGraph()` must preserve the original fake/relay mode selected by the relay
+instrumentation argument, carry the existing DataStore, unregister the old lifecycle driver and dispose
+old Koin owners. Call it on the main thread with no activity alive; rebuild in guaranteed cleanup and
+assert repository mode and DataStore continuity. `PeerIdentityLifecycleTest` is e2e-only in
+`E2E_ONLY_SOURCES`, so the routine UI gate skips it; preserve the source-dependency guard that prevents
+ordinary UI/runner sources from depending on peer helpers.
+
+Run the lifecycle test followed by the binding check in one no-relay instrumentation process under
+the shared device lock:
+
+```bash
+./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun -Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.e2e.PeerIdentityLifecycleTest,de.pyryco.mobile.di.RepositoryBindingInstrumentedTest --console=plain
+```
+
+Retain fresh XML from the selected managed-device report path before another device run overwrites
+it, alongside the command log and exit status. Require both named methods to execute and pass, with
+failed/error/skipped counts recorded. For #1698, `/tmp/builder-1698/rework-device-green.xml` records
+**2 executed, 0 failed/errors, 0 skipped**: `sequentialPeersRetainIdentityAfterCloseAndAppGraphRebuild`
+then `ordinaryInstrumentation_explicitlyBindsFakeRepository`; the adjacent command log records exit 0.
+This focused check supplements dispatcher gates. The full live attachment proof and daemon diagnostic
+comparison are recorded in [Verification status](../../e2e-interactive-stream.md#verification-status).
+
 Use `runCurrent()` after pushing a fake relay item when the test path is a
 channel-to-StateFlow cascade with no timer. `advanceUntilIdle()` does not
 necessarily drain that background collector. Reserve it for tests whose contract
