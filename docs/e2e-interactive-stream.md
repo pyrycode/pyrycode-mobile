@@ -1865,6 +1865,15 @@ device. The [recorded baseline](#verification-status) proves only managed
 `pixel2Api33Atd`, Pixel 2 / API 33 / `google-atd` arm64 with Play services/FCM. API 33 is the sole required
 version for now; API 35 is deferred.
 
+A 2026-10-04 connected run on the GM1911 with Android 16 failed before either
+selected scenario started: Espresso raised `NoSuchMethodException` for
+`android.hardware.input.InputManager.getInstance`. Direct adb interaction with
+the same app worked. That driver failure supplies no product acceptance result.
+The connected runner removed its debug installation during cleanup; reinstall
+the debug APK before following up with `scripts/hands-on.sh`. The manual Send now
+and normal queue-drain checks recorded in [PR #1673](https://github.com/pyrycode/pyrycode-mobile/pull/1673)
+do not replace the curated live gate.
+
 For the background-push proof, keep the production relay, real Claude, push-capable daemon and
 FCM-configured `google-atd` device. #1694 changes shared peer/host-link diagnostics, so its acceptance
 uses the full live suite. Require the named background-prompt testcase to be present without
