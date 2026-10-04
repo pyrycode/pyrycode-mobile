@@ -14,6 +14,7 @@ import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
@@ -133,6 +134,7 @@ class ThreadDesignCaptureTest {
 
     /** While set, the override's `setSessionSettings` awaits this gate instead of the fake's write. */
     @Volatile private var settingsGate: CompletableDeferred<Unit>? = null
+    private var readerNote = NOTE
     private val images = mutableListOf<Uri>()
     private var photo: File? = null
 
@@ -174,10 +176,15 @@ class ThreadDesignCaptureTest {
         openActions()
         assertTrue(
             "footer menu remains above its keyboard-lifted anchor",
-            rule.onNodeWithText("Background tasks", substring = true).getUnclippedBoundsInRoot().bottom < actionsTop,
+            rule.onNodeWithText("Knowledge capture").getUnclippedBoundsInRoot().bottom < actionsTop,
         )
         design.capture("chrome-1646", "keyboard-actions", "675:6160")
-        Espresso.pressBack()
+        // Back can be consumed by the IME instead of the footer overlay. Close that overlay explicitly
+        // before editing: suggestions intentionally stay hidden while a footer menu is open.
+        rule.onNodeWithContentDescription("Close options").performClick()
+        rule.waitUntil(5_000) {
+            rule.onAllNodesWithText("Background tasks", substring = true).fetchSemanticsNodes().isEmpty()
+        }
         fake().setSlashCommandMenu(
             CONVERSATION,
             SlashCommandMenu(listOf(SlashCommandMenuRow("clear", "", "Start a new session", emptyList(), null)), 0),
@@ -346,7 +353,27 @@ class ThreadDesignCaptureTest {
 
         checkNotNull(inputs.thread.value).onOpenMarkdownLink("docs/Builder Pipeline - Plan.md")
         await("Builder Pipeline Plan")
-        design.capture(FOLDER, "markdown-reader", "553:2574")
+        // Reference coordinates are measured at the capture's density 1, below the real status bar.
+        val restingBar = rule.onNodeWithTag("markdown-reader-top-bar").getUnclippedBoundsInRoot()
+        val restingTitle = rule.onNodeWithText("Builder Pipeline - Plan.md").getUnclippedBoundsInRoot()
+        val restingHeading = rule.onNodeWithText("Builder Pipeline Plan").getUnclippedBoundsInRoot()
+        assertEquals(69f, (restingBar.bottom - restingBar.top).value, 0.5f)
+        assertEquals(24f, (restingTitle.top - restingBar.top).value, 0.5f)
+        assertEquals(97f, (restingHeading.top - restingBar.top).value, 0.5f)
+        assertEquals(28f, (restingHeading.top - restingBar.bottom).value, 0.5f)
+        assertEquals(20f, restingHeading.left.value, 0.5f)
+        design.capture("reader-chrome-1647", "reference", "553:2574")
+        Espresso.pressBack()
+        rule.waitForIdle()
+        readerNote = NOTE + "\n\n" + (1..40).joinToString("\n\n") { "Reader scroll paragraph $it" }
+        checkNotNull(inputs.thread.value).onOpenMarkdownLink("docs/Builder Pipeline - Plan.md")
+        await("Builder Pipeline Plan")
+        val body = rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
+        body.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 72f * design.view.resources.displayMetrics.density) }
+        val heading = rule.onNodeWithText("Builder Pipeline Plan").fetchSemanticsNode().boundsInRoot
+        val header = rule.onNodeWithTag("markdown-reader-top-bar").fetchSemanticsNode().boundsInRoot
+        assertTrue("reader heading is drawn underneath bar", heading.top < header.bottom && heading.bottom > header.top)
+        design.capture("reader-chrome-1647", "scrolled-under-bar", "731:6010")
     }
 
     /** Real pixels and real IME insets for the revised footer; no daemon or live Claude needed. */
@@ -359,7 +386,9 @@ class ThreadDesignCaptureTest {
     private fun captureFooter(name: String) {
         openThread()
         inputs.contextUsage.value = CONTEXT
-        await("Cxt high:", substring = true)
+        rule.waitUntil(5_000) {
+            rule.onAllNodesWithContentDescription("Context usage warning, 84%").fetchSemanticsNodes().isNotEmpty()
+        }
         assertFooterAboveKeyboard(name, keyboardVisible = false)
         design.capture("footer-1659", name, "533:1957")
         keyboard()
@@ -409,8 +438,34 @@ class ThreadDesignCaptureTest {
         assertEquals(12f, b.left.value - a.right.value, 0.5f)
         assertEquals("icons align with first Actions row", actions.bottom.value, b.bottom.value, 0.5f)
         assertTrue("Actions stays separate from icons", actions.right < a.left)
-        assertTrue("context stays separate from icons", context.right < a.left || context.top >= b.bottom)
+        assertEquals("circle width", 15f, context.right.value - context.left.value, 0.5f)
+        assertEquals("circle height", 15f, context.bottom.value - context.top.value, 0.5f)
+        assertEquals("circle before Actions with visual gap", 16f, actions.left.value - context.right.value, 0.5f)
+        val actionTarget = rule.onNode(hasText("Actions") and hasClickAction()).getUnclippedBoundsInRoot()
+        val slotTop = actionTarget.top.value + (actionTarget.bottom.value - actionTarget.top.value - 12f - 16f) / 2f
+        assertEquals("Context slot centred in left group", slotTop, context.top.value, 0.5f)
         val density = design.view.resources.displayMetrics.density
+        rule
+            .onNodeWithTag("thread_footer_context_usage", useUnmergedTree = true)
+            .assertContentDescriptionEquals("Context usage warning, 84%")
+        if (InstrumentationRegistry.getArguments().getString("requireRealSystemBars") == "true") {
+            // Hardware drawing can trail semantics; a warning description alone cannot fence a snapshot.
+            rule.waitUntil(5_000) {
+                val bitmap = checkNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+                try {
+                    var yellowPixels = 0
+                    for (y in (context.top.value * density).toInt() until (context.bottom.value * density).toInt()) {
+                        for (x in (context.left.value * density).toInt() until (context.right.value * density).toInt()) {
+                            val pixel = bitmap.getPixel(x, y)
+                            if (Color.red(pixel) > Color.blue(pixel) + 40 && Color.green(pixel) > Color.blue(pixel) + 40) yellowPixels++
+                        }
+                    }
+                    yellowPixels >= 5
+                } finally {
+                    bitmap.recycle()
+                }
+            }
+        }
         val screen = design.view.resources.displayMetrics.heightPixels
         assertTrue("icons stay above IME", b.bottom.value * density < screen - ime)
         val output =
@@ -643,8 +698,7 @@ class ThreadDesignCaptureTest {
     /** The footer's Actions menu draws in the screen's own window, not a popup, so wait for its last row. */
     private fun openActions() {
         rule.onNodeWithText("Actions").performTouchInput { click() }
-        // The row reads "Background tasks (N)".
-        await("Background tasks", substring = true)
+        await("Knowledge capture")
     }
 
     private fun openThread() {
@@ -737,8 +791,8 @@ class ThreadDesignCaptureTest {
     /** Opens and closes through the header X, which stays when #1496 removes the panel's Close button. */
     private fun openPanel() {
         rule.waitForIdle()
-        openActions()
-        rule.onNodeWithText("Background tasks", substring = true).performTouchInput { click() }
+        design.openMenu(rule.onNodeWithContentDescription("More actions"))
+        rule.onNodeWithText("Background tasks").performTouchInput { click() }
         rule.waitUntil(5_000) { rule.onAllNodesWithContentDescription("Close").fetchSemanticsNodes().isNotEmpty() }
         rule.waitForIdle()
     }
@@ -836,7 +890,11 @@ class ThreadDesignCaptureTest {
                             override suspend fun readWorkspaceFile(
                                 conversationId: String,
                                 path: String,
-                            ) = AttachmentFetchResult.Fetched(AttachmentContent(listOf(NOTE.toByteArray())), "Plan.md", "text/markdown")
+                            ) = AttachmentFetchResult.Fetched(
+                                AttachmentContent(listOf(readerNote.toByteArray())),
+                                "Plan.md",
+                                "text/markdown",
+                            )
                         }
                     val connection =
                         object : ConnectionStateSource {

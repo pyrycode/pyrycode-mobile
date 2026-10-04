@@ -1,7 +1,7 @@
 # ChannelListScreen
 
 Stateless `(hostState, onEvent)` composable that renders a Material 3 `Scaffold` with the list's own
-top bar (Settings and Archive at the left, one “Pair another host” plus at the right, above a rule — see
+top bar (an “Open menu” ellipsis at the left, one “Pair another host” plus at the right, above a rule — see
 [The list's own top bar](channel-list-screen-how-it-works.md#the-lists-own-top-bar-737) below) above a single-`LazyColumn` conversation tree
 (#731, #1189): each host appears once, with fixed Channels and Chats sections and their direct conversation
 rows, drawn from `hostState` in host and source-list order using the row composables from
@@ -15,7 +15,7 @@ incoming snapshot and the thread round trip.
 
 The floating action button that used to create a chat and open pairing is gone (#738). Pairing opens from
 the fixed top-right toolbar control (#1186), and each host's Chats section carries a plus
-that opens a host-named Create chat confirmation (#1190) — see
+that creates a chat directly on that host (since #1563) — see
 [Add controls](channel-list-screen-tree-and-controls.md#add-controls-738). With the button
 gone, the flat `ChannelListUiState` compatibility model (loading/error/empty placeholders,
 `workspacePickerVisible`) retired with it: `hostState.hosts.isEmpty()` is now the tree's only blank.
@@ -27,10 +27,11 @@ Tree labels use the [shared type ramp](shared-typography.md) checked against Fig
 ## What it does
 
 Wraps its body in a `Scaffold` whose `topBar` is the file-private `ChannelListTopBar` (rendered in **every**
-state and after scrolling to the final row). It has no title: “Open settings” and “Open archive” are at the
-left, and exactly one “Pair another host” control at the right emits `PairHostTapped` into the existing
-[scanner/code flow](navigation.md#manual-pairing-entry-and-return). The three 24dp glyphs retain separate
-48dp targets; 20dp gutters, a 1dp divider and a 24dp gap to the first row apply in both themes — see
+state and after scrolling to the final row). It has no title: “Open menu” at the left opens Settings
+then Archive, and exactly one “Pair another host” control at the right emits `PairHostTapped` into the existing
+[scanner/code flow](navigation.md#manual-pairing-entry-and-return). The menu's 6 × 24dp ellipsis and pairing's
+24 × 24dp plus sit in separate 44 × 44dp targets; 20dp visual-frame gutters, a 1dp divider and a 24dp gap
+to the first row apply in both themes — see
 [The list's own top bar](channel-list-screen-how-it-works.md#the-lists-own-top-bar-737). There is no `floatingActionButton`
 slot: #738 retired it, along with the flat `ChannelListUiState` it gated on.
 
@@ -39,7 +40,7 @@ The body branches on `hostState.hosts` — the only model the screen is fed:
 - **`hostState.hosts.isEmpty()`** — no host has produced a snapshot yet, or there are none paired. Falls back
   to the centred `R.string.channel_list_empty` ("To pair a host, tap Pair another host at the top right.")
   copy. The guidance names the always-present toolbar control without asserting that no host is paired
-  while snapshots are pending. Settings still opens with no selected host; Archive remains visible but
+  while snapshots are pending. Settings still opens with no selected host; Archive remains available in the menu but
   its tap does nothing without a selected host. This is the only
   blank-tree case; a paired host with a snapshot but no conversations still draws its own host row, which is
   content, not a blank screen. The `Loading` / `Error(message)` compatibility placeholders #738 removed drew
@@ -47,13 +48,41 @@ The body branches on `hostState.hosts` — the only model the screen is fed:
   than a distinct message — see [Edge cases](#edge-cases--limitations).
 - **Otherwise** — a private `ConversationTree(hostState, onEvent, modifier)` composable renders each host
   with its Channels and Chats sections. It draws no global tier divider or workspace rows.
-  Each Chats-section plus opens Create chat for its host; the Channels-section plus opens Create channel.
+  Each Chats-section plus creates a chat for its host; the Channels-section plus opens Create channel.
   Both create in their host's daemon-default folder. See
   [Conversation tree (#731)](#conversation-tree-731) and [Add controls (#738)](channel-list-screen-tree-and-controls.md#add-controls-738).
 
 `Routes.DISCUSSION_LIST` / `DiscussionListScreen` stay in the graph, unreachable — removing them was out of
 \#731's scope and remains out of \#738's. The generic top app bar #732 was going to retire is already gone —
 \#737 replaced it with the list's own bar, split off as the first of #732's two slices.
+
+## Create chat failure notice (#1748)
+
+A failed `hostState.createChat` request shows the unchanged `create_chat_failed` text
+(“Couldn’t create the chat. Try again.”) in the shared [Error NoticePill](notice-pill.md).
+It overlays the tree within 20dp side gutters, right-aligned 28dp below the measured
+screen header. The tree keeps its layout, and the Settings/Archive menu and pairing
+control remain usable. There is no error snackbar, X, dismissal or tap action.
+The placement reuses Figma `685:4337` under #1604's authorisation; it does not introduce
+a separate list frame. There is currently no sibling notice to stack beneath.
+
+The composition-local timer is keyed by request ID and failure state. It preserves
+Material's Short lifetime of 4000ms, adjusted through the accessibility manager with
+icons/text/controls flags `true/true/false`. Recomposition cannot replay an expired
+failure; a later failed request starts a fresh notice, a new request cancels the old
+timer, and leaving composition cancels it. The caller supplies `LiveRegionMode.Polite`:
+preserving a snackbar's accessibility-adjusted timeout alone would lose its failure
+announcement. This announcement is independent of the pill's inert behavior.
+
+`CreateChatFailureNoticeTest` supplies the actual failed-create state and checks text,
+header-relative placement, unchanged tree geometry, usable menu/pairing controls,
+polite semantics and absence of snackbar/dismiss/click actions. Its other methods
+cover expiry, adjusted timeout flags, no recomposition replay, later failures and
+screen exit. The real-activity `ListDesignCaptureTest.failedCreateChatNoticeAt412By892`
+drives the Chats plus through a failing repository; see the
+[retained comparison and evidence limits](../../../app/src/androidTest/assets/design-1220/list/index.md#create-chat-failure--error-pill-reuse-6854337).
+The shared pill's inherited 22px single-line background versus Figma's 24px is tracked
+in [#1757](https://github.com/pyrycode/pyrycode-mobile/issues/1757).
 
 ## Shape
 
@@ -67,10 +96,8 @@ sealed interface ChannelListEvent {
     data object ArchiveTapped : ChannelListEvent
     /** The fixed toolbar's add control opens the existing scanner/code pairing flow. */
     data object PairHostTapped : ChannelListEvent
-    /** The Chats-section plus opens Create chat for its own host. */
+    /** The Chats-section plus creates a chat for its own host. */
     data class TreeHostChatAddTapped(val serverId: String) : ChannelListEvent
-    data object CreateChatSubmitted : ChannelListEvent
-    data object CreateChatDismissed : ChannelListEvent
     /** A host row's edit control: open the Edit host modal for **that** row's host (#744). */
     data class TreeHostEditTapped(val serverId: String) : ChannelListEvent
     /** The open modal's OK, already trimmed. No `serverId` — the target is the open editor's, held in the
@@ -146,7 +173,7 @@ nothing can emit is dead code. `CreateDiscussionTapped` and `LongPressFab` are g
 `TreeHostChatAddTapped` now opens the host-qualified Create chat modal; `PairHostTapped` opens pairing.
 `ChannelListEvent` still lives in `ChannelListScreen.kt`, with the destination wiring calling explicit
 ViewModel methods for host and modal events
-(`TreeHostChatAddTapped`, `CreateChatSubmitted`, `CreateChatDismissed`, `TreeHostEditTapped`, `HostEditNameSubmitted`,
+(`TreeHostChatAddTapped`, `TreeHostEditTapped`, `HostEditNameSubmitted`,
 `HostEditDismissed` (#744), `TreeChatEditTapped`, `ChatEditNameSubmitted`, `ChatEditDismissed` (#827),
 `AddWorkspaceSelected`, `AddWorkspaceFolderCreateRequested`, `AddWorkspaceSubmitted`,
 `AddWorkspaceDismissed` (#904, replacing `WorkspacePicked` / `WorkspacePickerDismissed`),
@@ -159,7 +186,7 @@ The file-private `ChannelListFab` — the manually-composed `Surface` #22 → #2
 directly (bypassing the M3 `FloatingActionButton` widget's own inner `Surface(onClick = ...)`, which would
 otherwise shadow an outer `combinedClickable` — see [`../codebase/25.md`](../codebase/25.md) and
 [`../codebase/221.md`](../codebase/221.md)) — is gone (#738). `TreeRowControl` now has a single
-`clickable` action; the toolbar uses `IconButton` for its single tap action.
+`clickable` action; the toolbar uses clickable `Box` controls with button semantics.
 See [Add controls (#738)](channel-list-screen-tree-and-controls.md#add-controls-738).
 
 ## Conversation tree (#731)
@@ -219,9 +246,9 @@ distinction from the tree's own blank at all — see the next section.
 - **No `rememberLazyListState` / scroll-position persistence.** Unchanged from the flat-list era: `LazyColumn`
   auto-saves scroll position within a single composition; `rememberSaveable(saver = LazyListState.Saver)` is
   the next step if a real bug surfaces.
-- **No error/loading affordance on the create call itself**, **no retry affordance on `Error`**, **no
-  `flowOn(Dispatchers.IO)` anywhere in the chain** — all unchanged from the flat-list era; see
-  [ChannelListViewModel](channel-list-viewmodel.md) for the state-projection side of each.
+- **Create chat failure is transient.** The [timed Error pill](#create-chat-failure-notice-1748)
+  supplies the error affordance; retry is another Chats-plus tap, with no action on the notice.
+  No `flowOn(Dispatchers.IO)` is added; see [ChannelListViewModel](channel-list-viewmodel.md).
 - **Press-elevation animation is lost** on the manual-`Surface` construction `ChannelListFab` pioneered and
   `TreeRowControl` inherits (#221, #738, #744) — unchanged; the `combinedClickable` default ripple covers
   the feedback gap.
@@ -235,11 +262,18 @@ distinction from the tree's own blank at all — see the next section.
   section's test tag; a tree far taller than the viewport reaches its last row via
   `performScrollToNode(hasScrollAction())`; and a nameless host and a nameless conversation render their
   fallback labels.
-  `listBar_drawsThreeEntriesAndNoneOfTheRetiredChrome_onEveryDraw` walks one composition through the empty
-  placeholder and tree. It checks all three toolbar controls, their events, separate 48dp targets, 24dp
-  glyphs and outer 20dp gutters, plus absence of the global titles and old section-qualified pairing names.
-  A loaded-state-only assertion could miss a toolbar disappearing on the placeholder; the tall-tree test
-  also compares toolbar bounds and taps all three controls after scrolling to the final chat.
+  `listBar_drawsMenuAndPairingAndNoneOfTheRetiredChrome_onEveryDraw` walks one composition through the empty
+  placeholder and tree. It checks both toolbar controls, 44dp targets, the 6 × 24dp menu glyph, 24dp plus
+  and outer 20dp visual-frame gutters, plus absence of the retired Settings/Archive buttons and titles.
+  The tall-tree test also compares toolbar bounds and uses menu → Settings/Archive after scrolling.
+  Menu tests cover row order, event routing, touch edges, outside taps over pairing without tap-through,
+  Back, recomposition retention and anchor conversion with a nonzero screen origin. After a pointer tap
+  reopens the menu, assert that its rows are displayed before Espresso Back: the tap can return before
+  the new BackHandler composes (#1665).
+  A same-window scrim consumes taps but leaves underlying tree labels in the semantics tree. Scope menu
+  row selectors to action rows: a host or conversation named “Settings” or “Archive” can otherwise make
+  a global text matcher ambiguous. The verifier identified this remaining E2E helper limitation on
+  [PR #1743](https://github.com/pyrycode/pyrycode-mobile/pull/1743).
   `ChannelListColoursTest` measures the sole toolbar divider in light and dark themes: 1dp thickness, 20dp
   gutters and 24dp to the first host, including list padding. Measuring only a padding constant would
   miss extra space contributed by the list or row.
@@ -248,7 +282,7 @@ distinction from the tree's own blank at all — see the next section.
   Reading the expected copy from the same string resource would also pass with guidance pointing to a
   missing control (#1169).
   `chatsSectionAddControl_targetsItsOwnHost` drives a two-host tree's **second** Chats plus with colliding
-  conversation ids, checks its host-specific name, and asserts its dialog names that host;
+  conversation ids and checks its host-specific name and emitted target;
   `chatsSectionAddControl_doesNotFoldTheRowItSitsIn` proves the plus keeps its own click action.
   `emptySecondHostHasItsOwnChatsCreateControlWithoutFolding` covers a host with no conversations.
   `addWorkspaceModal_drawsOnItsStateAndGatesOkOnSelectionAndItsHost`
@@ -336,7 +370,7 @@ distinction from the tree's own blank at all — see the next section.
   `docs/specs/architecture/905-edit-and-archive-workspace.md`,
   `docs/specs/architecture/878-tree-conversation-attention-dot.md`
 - Upstream: [ChannelListViewModel](./channel-list-viewmodel.md) (`hostState` producer — fold/selection state,
-  `onHostRowTapped`, `onFoldToggled`, `openCreateChat`, `submitCreateChat`, `dismissCreateChat`,
+  `onHostRowTapped`, `onFoldToggled`, `createChat`,
   and the retained `openAddWorkspace`,
   `selectAddWorkspaceFolder`, `createAddWorkspaceFolder`, `submitAddWorkspace`, `dismissAddWorkspace`
   (replacing `openHostWorkspacePicker`, `pickHostWorkspace`, `dismissHostWorkspacePicker`), since #744

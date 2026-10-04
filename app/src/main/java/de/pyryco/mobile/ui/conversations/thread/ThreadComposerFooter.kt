@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.annotation.StringRes
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,8 +21,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.HorizontalAlignmentLine
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.boundsInWindow
@@ -56,8 +59,7 @@ enum class FooterControl { Model, Effort, Permission, Actions }
  * client-owned constant: nothing a server publishes is ever shown, handed back or sent through this menu.
  *
  * [value] identifies the row in the overlay. [command] is the text a command row sends as an ordinary
- * message; [ResetSession] has none, because it runs the overflow menu's Reset session path instead, and
- * [BackgroundTasks] (#678) has none because it only opens the read-only task panel.
+ * message; [ResetSession] has none, because it runs the overflow menu's Reset session path instead.
  */
 enum class ComposerAction(
     val value: String,
@@ -67,7 +69,6 @@ enum class ComposerAction(
     ResetSession("reset", "Reset session", null),
     CompactSession("compact", "Compact session", "/compact"),
     KnowledgeCapture("knowledge-capture", "Knowledge capture", "/knowledge-capture"),
-    BackgroundTasks("background-tasks", "Background tasks", null),
     ;
 
     companion object {
@@ -156,15 +157,13 @@ data class FooterMenu(
  *
  * The Actions menu (#884) reads only [mutationsSupported], which gates Reset session exactly as it gates
  * the overflow menu's item, and [absentActions], the commands the published menu proves absent, which are
- * greyed out. It is never `null`. The background-tasks row (#678) carries [backgroundTaskCount], the open
- * conversation's live count, in its label: a number, never a task string.
+ * greyed out. It is never `null`.
  */
 internal fun footerMenu(
     control: FooterControl,
     runConfig: ThreadRunConfig,
     mutationsSupported: Boolean = true,
     absentActions: Set<ComposerAction> = emptySet(),
-    backgroundTaskCount: Int = 0,
 ): FooterMenu? =
     when (control) {
         FooterControl.Model ->
@@ -202,8 +201,7 @@ internal fun footerMenu(
                     ComposerAction.entries
                         .filter { it != ComposerAction.ResetSession || mutationsSupported }
                         .map {
-                            val label = if (it == ComposerAction.BackgroundTasks) "${it.label} ($backgroundTaskCount)" else it.label
-                            OptionsOverlayOption(value = it.value, label = label, enabled = it !in absentActions)
+                            OptionsOverlayOption(value = it.value, label = it.label, enabled = it !in absentActions)
                         },
                 selectedValue = "",
                 notListed = 0,
@@ -238,8 +236,9 @@ private val FooterButtonGap = 16.dp
 private val FooterButtonMinHeight = 16.dp
 private val FooterChevronGap = 4.dp
 
-// Figma 679:4116's 4dp gap between Actions and the context label when the label wraps (#1549).
-private val FooterLineGap = 4.dp
+private val FooterGroupInset = 4.dp
+private val ContextCircleSize = 15.dp
+private val ContextCircleStroke = 2.dp
 private val FooterChevronWidth = 8.dp
 private val FooterChevronHeight = 4.dp
 private val FooterLabelMaxWidth = 140.dp
@@ -257,8 +256,8 @@ private const val PENDING_ALPHA = 0.55f
  *
  * It replaces #602's single monospace `model · effort` line (`ThreadStatusRow`). The design has no
  * footer affordance for the Status sheet, so a trailing icon keeps it one tap away. The design's
- * paperclip (#933) sits just before that icon and calls [onAttach], which opens the file picker. The Actions button (#884) leads the row, as in the design,
- * and always opens its menu. The `Cxt:` segment (#946) follows the buttons as plain text, not a control.
+ * paperclip (#933) sits just before that icon and calls [onAttach], which opens the file picker. The context circle (#1660) leads the left group before Actions
+ * and is non-interactive. Actions opens its menu.
  *
  * Stateless. Model, effort and permission choices live in the run configuration sheet. [onAnchorChanged]
  * reports the Actions button's window bounds so the screen can place its overlay above it.
@@ -286,9 +285,8 @@ fun ThreadComposerFooter(
                 .padding(start = FooterLeftPadding, end = FooterRightPadding, top = FooterTopPadding),
         horizontalArrangement = Arrangement.spacedBy(FooterButtonGap),
     ) {
-        // The buttons in order, then the `Cxt:` segment, which [FooterTextRow] gives the leftover width or, when
-        // that is too little, a line under the buttons (#1549). The two icons stay level with the buttons.
-        FooterTextRow(contentBottomPadding = contentBottomPadding, modifier = Modifier.weight(1f).alignBy(FooterFirstRowBottom)) {
+        FooterTextRow(modifier = Modifier.weight(1f).alignBy(FooterFirstRowBottom).padding(start = FooterGroupInset)) {
+            ContextSegment(percent = runConfig.contextPercent, modifier = Modifier.padding(bottom = contentBottomPadding))
             FooterButton(
                 label = stringResource(R.string.thread_footer_actions),
                 clickLabel = stringResource(R.string.thread_footer_open_actions),
@@ -299,7 +297,6 @@ fun ThreadComposerFooter(
                 touchHeight = touchHeight,
                 contentBottomPadding = contentBottomPadding,
             )
-            ContextSegment(percent = runConfig.contextPercent, modifier = Modifier.padding(bottom = contentBottomPadding))
         }
         // The visual group is 60 × 16dp. Only the touch boxes extend into bottom overflow;
         // Compose expands their hit areas without participating in the row's visual spacing.
@@ -351,53 +348,29 @@ fun ThreadComposerFooter(
     }
 }
 
-/**
- * The footer's text controls in a row at [FooterButtonGap] (#1032). Every child but the last is a button,
- * held to its natural width until the buttons overflow, then to [footerShrinkCap]'s shared cap. The last
- * child, the `Cxt:` segment, follows the buttons when it fits whole beside them. Otherwise it moves to its own
- * line [FooterLineGap] under the buttons' visible text (#1549, Figma 639:3308), measured above their invisible
- * [contentBottomPadding]. [FooterFirstRowBottom] marks the button row's bottom.
- */
+/** Fixed context slot before Actions; the trailing controls are measured outside this weighted region. */
 @Composable
 private fun FooterTextRow(
-    contentBottomPadding: Dp,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
     Layout(content = content, modifier = modifier) { measurables, constraints ->
+        val circle = measurables.first().measure(constraints.copy(minWidth = 0, minHeight = 0))
         val gap = FooterButtonGap.roundToPx()
-        val buttons = measurables.dropLast(1)
-        val label = measurables.last()
-        val natural = buttons.map { it.maxIntrinsicWidth(constraints.maxHeight) }
-        val oneRow = natural.sum() + gap * buttons.size + label.maxIntrinsicWidth(constraints.maxHeight) <= constraints.maxWidth
-        val available = (constraints.maxWidth - gap * (if (oneRow) buttons.size else buttons.size - 1)).coerceAtLeast(0)
-        val cap = footerShrinkCap(natural, available)
-        val placed =
-            buttons.zip(natural) { button, width ->
-                button.measure(Constraints(maxWidth = minOf(width, cap), maxHeight = constraints.maxHeight))
-            }
-        val rowHeight = placed.maxOf { it.height }
-        val labelWidth = if (oneRow) (available - placed.sumOf { it.width }).coerceAtLeast(0) else constraints.maxWidth
-        val placedLabel = label.measure(Constraints(maxWidth = labelWidth, maxHeight = constraints.maxHeight))
-        val labelTop = if (oneRow) 0 else rowHeight - contentBottomPadding.roundToPx() + FooterLineGap.roundToPx()
-        val firstRowBottom = if (oneRow) maxOf(rowHeight, placedLabel.height) else rowHeight
-        val height = if (oneRow) firstRowBottom else maxOf(rowHeight, labelTop + placedLabel.height)
-        layout(constraints.maxWidth, height, mapOf(FooterFirstRowBottom to firstRowBottom)) {
-            var x = 0
-            placed.forEach {
-                it.placeRelative(x, firstRowBottom - it.height)
-                x += it.width + gap
-            }
-            if (oneRow) {
-                placedLabel.placeRelative(x, firstRowBottom - placedLabel.height)
-            } else {
-                placedLabel.placeRelative(0, labelTop)
-            }
+        val button = measurables.last()
+        val natural = button.maxIntrinsicWidth(constraints.maxHeight)
+        val available = (constraints.maxWidth - circle.width - gap).coerceAtLeast(0)
+        val cap = footerShrinkCap(listOf(natural), available)
+        val actions = button.measure(Constraints(maxWidth = minOf(natural, cap), maxHeight = constraints.maxHeight))
+        val height = maxOf(circle.height, actions.height)
+        layout(constraints.maxWidth, height, mapOf(FooterFirstRowBottom to height)) {
+            circle.placeRelative(0, (height - circle.height) / 2)
+            actions.placeRelative(circle.width + gap, height - actions.height)
         }
     }
 }
 
-/** The bottom of [FooterTextRow]'s button row (#1549), which the paperclip and tune align their bottoms to. */
+/** The bottom of the left group, including invisible touch overflow; trailing controls align here. */
 private val FooterFirstRowBottom = HorizontalAlignmentLine(::minOf)
 
 /**
@@ -422,58 +395,57 @@ internal fun footerShrinkCap(
 /** The footer's context-usage steps (#1412), after desktop's `contextUsageStep` (desktop #1062). */
 internal enum class ContextUsageStep { Normal, Warning, High }
 
-/** The step for a reported [percent] (#1412): below 50 is normal, 50 to 69 a warning, 70 and above high. */
+/** The step for a computed [percent] (#1660): below 70 normal, 70–84 warning, 85 and above high. */
 internal fun contextUsageStep(percent: Int): ContextUsageStep =
     when {
-        percent >= 70 -> ContextUsageStep.High
-        percent >= 50 -> ContextUsageStep.Warning
+        percent >= 85 -> ContextUsageStep.High
+        percent >= 70 -> ContextUsageStep.Warning
         else -> ContextUsageStep.Normal
     }
 
-/**
- * Figma's `Cxt: 84%` text (110:3497): Claude's reported [percent] as sent, in the footer's body-small style.
- * `null` is the unavailable state, dimmed like a disabled button and described as unavailable — never `0%`.
- * A reading is coloured by its [contextUsageStep] (#1412), and the high step says so in text and description.
- */
+/** A dynamic, non-interactive ring; null is unavailable and never announced as zero usage. */
 @Composable
 private fun ContextSegment(
     percent: Int?,
     modifier: Modifier = Modifier,
 ) {
-    val text: String
-    val description: String
-    val color: Color
-    if (percent == null) {
-        text = stringResource(R.string.thread_footer_context_unavailable)
-        description = stringResource(R.string.cd_context_usage_unavailable)
-        color = MaterialTheme.colorScheme.onSurfaceVariant
-    } else {
-        when (contextUsageStep(percent)) {
-            ContextUsageStep.Normal -> {
-                text = stringResource(R.string.thread_footer_context, percent)
-                description = stringResource(R.string.cd_context_usage, percent)
-                color = MaterialTheme.colorScheme.primary
-            }
-            ContextUsageStep.Warning -> {
-                text = stringResource(R.string.thread_footer_context, percent)
-                description = stringResource(R.string.cd_context_usage, percent)
-                color = MaterialTheme.colorScheme.warning
-            }
-            ContextUsageStep.High -> {
-                text = stringResource(R.string.thread_footer_context_high, percent)
-                description = stringResource(R.string.cd_context_usage_high, percent)
-                color = MaterialTheme.colorScheme.error
+    val step = percent?.let(::contextUsageStep)
+    val description =
+        when (step) {
+            null -> stringResource(R.string.cd_context_usage_unavailable)
+            ContextUsageStep.Normal -> stringResource(R.string.cd_context_usage, percent)
+            ContextUsageStep.Warning -> stringResource(R.string.cd_context_usage_warning, percent)
+            ContextUsageStep.High -> stringResource(R.string.cd_context_usage_high, percent)
+        }
+    val track = MaterialTheme.colorScheme.primaryContainer
+    val used =
+        when (step) {
+            ContextUsageStep.Warning -> MaterialTheme.colorScheme.warning
+            ContextUsageStep.High -> MaterialTheme.colorScheme.error
+            else -> MaterialTheme.colorScheme.primary
+        }
+    Box(modifier = modifier.size(ContextCircleSize, FooterControlHeight), contentAlignment = Alignment.TopStart) {
+        Canvas(
+            modifier = Modifier.size(ContextCircleSize).testTag(CONTEXT_USAGE_TEST_TAG).semantics { contentDescription = description },
+        ) {
+            val stroke = ContextCircleStroke.toPx()
+            val radius = (size.minDimension - stroke) / 2f
+            drawCircle(color = track, radius = radius, style = Stroke(stroke))
+            if (percent == 100) {
+                drawCircle(color = used, radius = radius, style = Stroke(stroke))
+            } else if (percent != null && percent > 0) {
+                drawArc(
+                    color = used,
+                    startAngle = -90f,
+                    sweepAngle = -360f * percent / 100f,
+                    useCenter = false,
+                    topLeft = Offset(stroke / 2f, stroke / 2f),
+                    size = Size(size.width - stroke, size.height - stroke),
+                    style = Stroke(stroke),
+                )
             }
         }
     }
-    Text(
-        text = text,
-        style = MaterialTheme.typography.bodySmall,
-        color = color,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = modifier.testTag(CONTEXT_USAGE_TEST_TAG).semantics { contentDescription = description },
-    )
 }
 
 /** Marks the footer's context-usage segment for the rung-3 scenario (#946). A static tag; never daemon text. */
@@ -547,7 +519,7 @@ private val previewRunConfig =
         savedEffort = "max",
         permissionMode = "plan",
         sessionId = "s1",
-        // An ordinary reading, as Figma 110:3497 draws it; 84 would now be the high step (#1412).
+        // An ordinary reading below the warning threshold (#1660).
         contextPercent = 42,
     )
 

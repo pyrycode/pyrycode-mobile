@@ -380,7 +380,7 @@ fun ThreadScreen(
     // #1321: so do the inline permission and question answers.
     val connected = connectionState == ConnectionState.Connected
     var openControl by remember(state.conversationId) { mutableStateOf<FooterControl?>(null) }
-    // #678: the read-only background-task panel the Actions menu opens. Local and keyed like [openControl]:
+    // #678: the read-only background-task panel the top menu and task pill open. Local and keyed like [openControl]:
     // closing it only flips this flag, so nothing is sent and no conversation or task changes.
     var backgroundTasksOpen by remember(state.conversationId) { mutableStateOf(false) }
     val footerAnchors = remember { mutableStateMapOf<FooterControl, Rect>() }
@@ -394,7 +394,6 @@ fun ThreadScreen(
                     state.runConfig,
                     state.mutationsSupported,
                     state.absentActions,
-                    state.backgroundTaskCount,
                 )?.let { control to it }
             }
     LaunchedEffect(openControl, openMenu == null) {
@@ -898,7 +897,6 @@ fun ThreadScreen(
                                 when (val action = ComposerAction.fromValue(value)) {
                                     null -> Unit
                                     ComposerAction.ResetSession -> onOverflowEvent(ThreadEvent.NewSession)
-                                    ComposerAction.BackgroundTasks -> backgroundTasksOpen = true
                                     else -> onComposerCommand(action)
                                 }
                         }

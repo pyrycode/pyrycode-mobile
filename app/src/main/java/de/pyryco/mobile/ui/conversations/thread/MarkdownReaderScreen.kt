@@ -32,9 +32,11 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -48,6 +50,8 @@ import de.pyryco.mobile.data.network.attachmentDisplayName
 import de.pyryco.mobile.data.repository.AttachmentFetchResult
 import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.ui.components.chromeBackdrop
+import de.pyryco.mobile.ui.components.defaultChromeShadow
 import de.pyryco.mobile.ui.conversations.components.MAX_CLIPBOARD_CHARS
 import de.pyryco.mobile.ui.conversations.components.MarkdownPresentation
 import de.pyryco.mobile.ui.conversations.components.MarkdownText
@@ -58,6 +62,8 @@ import de.pyryco.mobile.ui.conversations.components.markdownHtml
 import de.pyryco.mobile.ui.conversations.components.markdownPlainText
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.theme.threadColors
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -77,9 +83,8 @@ import java.nio.charset.CodingErrorAction
  */
 internal const val MAX_MARKDOWN_READER_BYTES = 262_144
 
-// Figma 553:2574: the markdown body opens 12dp below the bar (whose rule already carries 16dp beneath it)
-// and keeps the bar's 20dp gutter.
-private val ReaderBodyTopGap = 12.dp
+// Figma 553:2574: reserve the measured bar through its rule, then 28dp inside the scrolling body.
+private val ReaderBodyTopGap = 28.dp
 private val ReaderBodyBottomGap = 16.dp
 private val ReaderBarTopGap = BarTopGap + 4.dp
 
@@ -355,6 +360,9 @@ fun MarkdownReaderScreen(
         }
     }
     val saveNote = rememberNoteSaver { notice -> scope.launch { snackbarHostState.showSnackbar(notices.getValue(notice)) } }
+    val chromeSource = remember { HazeState() }
+    val density = LocalDensity.current
+    var barHeight by remember { mutableStateOf(0.dp) }
     // A Surface, not a bare background: it also sets `onSurface` as the content colour MarkdownText's text uses.
     Surface(
         modifier = modifier.fillMaxSize(),
@@ -362,42 +370,45 @@ fun MarkdownReaderScreen(
         contentColor = MaterialTheme.colorScheme.onSurface,
     ) {
         Box {
-            Column {
-                MarkdownReaderTopBar(
-                    name = document.name,
-                    onBack = onBack,
-                    onCopy = onCopy,
-                    onRefresh = onRefresh,
-                    onOpenInApp = onOpenInApp,
-                    onSaveToDevice = { saveNote(document) },
-                )
-                Column(
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .hazeSource(chromeSource)
+                        .verticalScroll(rememberScrollState()),
+            ) {
+                MarkdownText(
+                    markdown = document.text,
+                    style =
+                        MarkdownTextStyle(
+                            body = MaterialTheme.typography.bodyLarge,
+                            blockSpacing = 12.dp,
+                            listItemSpacing = 6.dp,
+                            code = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, lineHeight = 20.sp),
+                            presentation = MarkdownPresentation.Reader,
+                        ),
                     modifier =
-                        Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                            .verticalScroll(rememberScrollState()),
-                ) {
-                    MarkdownText(
-                        markdown = document.text,
-                        style =
-                            MarkdownTextStyle(
-                                body = MaterialTheme.typography.bodyLarge,
-                                blockSpacing = 12.dp,
-                                listItemSpacing = 6.dp,
-                                code = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, lineHeight = 20.sp),
-                                presentation = MarkdownPresentation.Reader,
-                            ),
-                        modifier =
-                            Modifier.padding(
-                                start = BarGutter,
-                                end = BarGutter,
-                                top = ReaderBodyTopGap,
-                                bottom = ReaderBodyBottomGap,
-                            ),
-                    )
-                }
+                        Modifier.padding(
+                            start = BarGutter,
+                            end = BarGutter,
+                            top = barHeight + ReaderBodyTopGap,
+                            bottom = ReaderBodyBottomGap,
+                        ),
+                )
             }
+            MarkdownReaderTopBar(
+                name = document.name,
+                onBack = onBack,
+                onCopy = onCopy,
+                onRefresh = onRefresh,
+                onOpenInApp = onOpenInApp,
+                onSaveToDevice = { saveNote(document) },
+                modifier =
+                    Modifier
+                        .testTag("markdown-reader-top-bar")
+                        .onSizeChanged { barHeight = with(density) { it.height.toDp() } }
+                        .chromeBackdrop(chromeSource, MaterialTheme.colorScheme.threadColors.headerBackdrop, top = true),
+            )
             SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))
         }
     }
@@ -412,14 +423,16 @@ private fun MarkdownReaderTopBar(
     onRefresh: () -> Unit,
     onOpenInApp: () -> Unit,
     onSaveToDevice: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = modifier.fillMaxWidth()) {
         Row(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(start = BarGutter - BarTouchSlack, end = BarGutter - BarTouchSlack, top = ReaderBarTopGap),
+                    .padding(start = BarGutter - BarTouchSlack, end = BarGutter - BarTouchSlack, top = ReaderBarTopGap)
+                    .defaultChromeShadow(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack, modifier = Modifier.size(BarTouchSize)) {
@@ -458,7 +471,7 @@ private fun MarkdownReaderTopBar(
             }
         }
         HorizontalDivider(
-            modifier = Modifier.padding(start = BarGutter, end = BarGutter, top = BarRuleGap, bottom = BarBottomGap),
+            modifier = Modifier.padding(start = BarGutter, end = BarGutter, top = BarRuleGap),
             color =
                 MaterialTheme.colorScheme.threadColors.headerRule
                     .copy(alpha = BAR_RULE_ALPHA),

@@ -90,7 +90,7 @@ android {
                 .map { it.toInt() }
                 .orElse(providers.of(GitCommitCountValueSource::class.java) {})
                 .get()
-        versionName = "1.0.0"
+        versionName = "1.0.$versionCode"
 
         val gitSha = providers.of(GitShaValueSource::class.java) {}
         buildConfigField("String", "GIT_SHA", "\"${gitSha.get()}\"")

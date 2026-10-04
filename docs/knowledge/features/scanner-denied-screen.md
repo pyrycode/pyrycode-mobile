@@ -30,12 +30,15 @@ fun ScannerDeniedScreen(
 )
 ```
 
-The root `Surface` receives `modifier`. Its column draws the shared
-`scannerAtmosphere` blue radial center from dark theme roles before it applies
-`systemBarsPadding()`, then the shared [`PairingHeader`](scanner-screen.md#pairingheader--one-header-for-scanner-denied-and-pair-screen)
+The root `Surface` receives `modifier`. A full-size sibling Box records the shared
+`scannerAtmosphere` blue radial center in a remembered screen-local `HazeState`.
+The content column applies `systemBarsPadding()`, then draws the shared [`PairingHeader`](scanner-screen.md#pairingheader--one-header-for-scanner-denied-and-pair-screen)
 (#1463) with `title = "Pair with pyrycode"`, `onSurface`, `startPadding = 4.dp`
 and `divider = false` — this is the one frame of the three with no divider. The
 header places the title's 28 dp line box 24 dp below the status inset. The
+header reuses the theme-backed gradient/progressive backdrop blur and Default
+foreground shadow (#1648), sampling only the sibling atmosphere so the title
+and Back glyph remain sharp. Insets and body spacing are unchanged. The
 header belongs to this state surface: the host supplies navigation callbacks,
 not an additional top bar.
 

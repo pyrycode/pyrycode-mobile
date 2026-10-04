@@ -342,7 +342,7 @@ survive a reconnect.
 - **A consumer must read the per-conversation surface** (`observeBackgroundTasks` /
   `observeLiveBackgroundTaskCount`), not `backgroundTasks` directly — the whole-host map risks showing
   one conversation's tasks inside another's panel, the same rule as `observeQuestionBatch`. The
-  Actions-menu panel and count that read this seam are [#678](https://github.com/pyrycode/pyrycode-mobile/issues/678);
+  background-task panel and running-task pill count that read this seam are [#678](https://github.com/pyrycode/pyrycode-mobile/issues/678);
   this seam is data only.
 
 ## Outbound modal-send passthrough (#451)

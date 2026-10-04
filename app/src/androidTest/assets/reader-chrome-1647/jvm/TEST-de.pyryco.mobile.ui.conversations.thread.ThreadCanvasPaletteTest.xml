@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadCanvasPaletteTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-04T11:17:51.997Z" hostname="Juhanas-Air" time="15.775">
+  <properties/>
+  <testcase name="staticDarkMatchesBothReferenceCanvasesAndRules" classname="de.pyryco.mobile.ui.conversations.thread.ThreadCanvasPaletteTest" time="6.878"/>
+  <testcase name="staticLightRetainsBothCanvasesAndRules" classname="de.pyryco.mobile.ui.conversations.thread.ThreadCanvasPaletteTest" time="1.777"/>
+  <testcase name="wallpaperLightRetainsBothCanvasesAndRules" classname="de.pyryco.mobile.ui.conversations.thread.ThreadCanvasPaletteTest" time="3.495"/>
+  <testcase name="themeChangesUpdateAlreadyComposedScreens" classname="de.pyryco.mobile.ui.conversations.thread.ThreadCanvasPaletteTest" time="2.583"/>
+  <testcase name="wallpaperDarkRetainsBothCanvasesAndRules" classname="de.pyryco.mobile.ui.conversations.thread.ThreadCanvasPaletteTest" time="1.035"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -69,8 +69,8 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    **backfill** of the one operator-facing flow that shipped before the real-stack definition-of-done rule
    (pyrycode-mobile-agents#9), and is **red on any daemon older than pyrycode/pyrycode#949**, which registered
    the handler the verb had been answering `unsupported` without; and a **list-archive-entry** scenario
-   (#740): arrive on the channel list, assert the Archived screen's title is absent, tap the list's own
-   archive entry (`CD_OPEN_ARCHIVE`, the sibling of the settings entry #737 put on the bar) and assert the
+   (#740): arrive on the channel list, assert the Archived screen's title is absent, open the list's header menu
+   (“Open menu”) and select Archive (#1665), then assert the
    title appears — proving the entry #737 shipped reaches Archived on its own. The full round trip
    `interactiveTurn_archiveRestore_roundTripsListMembership` now uses that entry too; no claude turn,
    no seeded conversation — the bar is drawn on every state of the list; and a
@@ -359,7 +359,7 @@ a real daemon. Since #957 there is **no location choice**: the chat promotes in 
 scenario creates no folder, and the typed prompt exercises the modal's post-promote `set_system_prompt`
 write on the same run; **zero** claude turns — create/promote/prompt-write are conversation-scoped daemon
 round-trips, promote being a pure registry op daemon-side); a **list-archive-entry** scenario (#740 —
-`interactiveTurn_listArchiveEntry_opensArchived`: tap the list's own archive entry and assert the
+`interactiveTurn_listArchiveEntry_opensArchived`: use Open menu → Archive (#1665) and assert the
 Archived screen appears, proving the entry #737 put on the list's bar reaches Archived independently of
 the Settings route; **zero** claude turns, no daemon round-trip at all — the bar is drawn on every state
 of the list); and a **two-hosts-colliding-conversation-id** scenario (#847 —
@@ -381,9 +381,9 @@ after the ping turn, open the Status sheet from the footer's status icon and ass
 shows a non-empty value that is not the unavailable note, with no model name hard-coded — proving the #890
 `model_announced` reading reaches the sheet; **one** claude turn — the scenario's own ping); and a
 **footer-context-usage** scenario (#946 — `interactiveTurn_pingPrompt_footerShowsContextUsage`: after the
-ping turn, wait until the composer footer's `CONTEXT_USAGE_TEST_TAG` node's text matches `Cxt: \d+%`, with
-no percentage hard-coded — proving the daemon's post-turn `context_usage` push reaches
-`ThreadRunConfig.contextPercent` and renders in the footer; **one** claude turn — the scenario's own ping.
+ping turn, wait until the composer footer's `CONTEXT_USAGE_TEST_TAG` node's content description reports an available percentage (normal, warning or high), with
+no percentage hard-coded — proving an available computed `ThreadRunConfig.contextPercent`
+renders in the footer; **one** claude turn — the scenario's own ping.
 This method does not itself prove an ask was sent, since #1411 the footer can show a percentage from
 `SessionSettings` alone with no reading at all — see [Thread composer footer — context usage
 segment](knowledge/features/thread-composer-footer-context-usage.md) for that gap and
@@ -577,10 +577,10 @@ The **list-archive-entry** scenario (#740 — `interactiveTurn_listArchiveEntry_
 **always-on** (not `@Ignore`d): the bar #737 drew on the channel list's `topBar` slot is a **durable** fact
 of every draw of the screen, so the scenario needs no host wait, no seeded conversation, no prompt and no
 claude turn — unlike every sibling above, it spends nothing even in daemon round-trips. It proves the
-list's **own** archive entry (`CD_OPEN_ARCHIVE = "Open archive"`, the sibling of `CD_OPEN_SETTINGS`, kept
-in sync with `cd_open_archive` in `strings.xml` by a comment on the constant) reaches the Archived screen,
+list's **own** menu → Archive route (#1665), using the client-owned `cd_open_menu` and
+`thread_overflow_archive` labels, reaches the Archived screen,
 which until #740 was proven only at the event boundary
-(`ChannelListScreenTest.archiveEntry_emitsArchiveTapped`). The full round trip now uses the same
+(`ChannelListScreenTest.archiveEntry_emitsArchiveTapped` before #1665). The full round trip now uses the same
 toolbar entry. `awaitChannelList()` is followed
 by an absence check (`ARCHIVED_TITLE` has zero nodes — the list draws no "Archived" text) before the tap, so
 the arrival after it is a genuine inversion, not a match-everything.
@@ -1120,9 +1120,10 @@ contract.
 (`python3 -c "import time; time.sleep(40)"` — a bare `sleep` of 25s+ is refused by claude's Bash tool, the
 same constraint #849's `WAIT_PROMPT` documents). Once the task starts, the visible thread pill opens the
 panel while work is running; since #1631 the top overflow's Background tasks row also opens
-the same populated panel after dismissing the menu. The Actions menu's `Background tasks (N)`
-count and panel still show it.
-Once it finishes, the count reads 0. The panel's own end state
+the same populated panel after dismissing the menu. Since #1668, the method retains its historical
+name but asserts Background tasks is absent from Actions. `openBackgroundTasks` and its progress-scenario
+caller use the count-free top menu. Once the task finishes, the pill disappears and the top menu reopens
+the panel. The panel's own end state
 is **not** durable: the terminal `background_task_updated` marks the task Finished, but real claude also
 sends an empty `background_task_roster` unprompted after a finish, and `BackgroundTaskProjection`'s
 wholesale-replace rule (see [`backgroundTasks`](knowledge/features/remote-conversation-repository-live-stream-and-modals.md#backgroundtasks--the-v2-background-task-decodefold-seam-677))
@@ -2969,6 +2970,29 @@ handoff; this table does not claim a later execution.
 
 Earlier results and failure history:
 
+- **LIVE verified for #1665 (2026-10-04):** the dispatcher ran the full
+  `InteractiveStreamE2ETest` suite with
+  `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`: **53 executed, 53 passed,
+  0 failed/errors, 0 skipped**, exit 0, wall clock 1033.4s. The fresh XML report
+  `/Users/juhanailmoniemi/Workspace/Projects/pyrycode-mobile-agents/logs/2026-10-04T14-25-57-932Z_real-claude-gate_#1665.log`
+  contains a passing, unskipped testcase for
+  `InteractiveStreamE2ETest.interactiveTurn_listArchiveEntry_opensArchived`; its migrated helper opens
+  Open menu → Archive and the method asserts Archived appears. This is full-suite evidence, with no
+  separate focused live run. The tested branch was `feature/1665` at `c210a62415`, merged with
+  `origin/main` at `5b1d6bdfe7` in the gate worktree. See the
+  [dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1665#issuecomment-5981193557).
+
+- **LIVE verified for #1668 (2026-10-04):** the fresh full `InteractiveStreamE2ETest` suite ran
+  `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on `6f366e38dc`, merged
+  with `origin/main` at `5b1d6bdfe7`: 53 executed, 52 passed, 1 failed, 0 skipped.
+  The fresh XML confirms `interactiveTurn_backgroundTask_countsInActionsMenuAndPanel` executed and
+  passed in that full suite, covering pill and top-menu opening, Actions omission, and finished-or-empty
+  roster assertions. This was not a separate focused run. The sole failure was
+  `interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`; its same-tree rerun
+  executed 1, passed 1, failed 0, skipped 0. The dispatcher accepted the gate after that rerun.
+  See [gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1668#issuecomment-5981025994).
+  The reports are `2026-10-04T13-46-23-631Z_real-claude-gate_#1668.log` and the matching
+  `real-claude-gate-rerun_#1668.log` under the agents repository's `logs/`.
 - **LIVE verified for #1078 (2026-09-26):** the dispatcher's real-claude gate ran
   `python3 scripts/android-test-gate.py live` against `feature/1078` at `8d13a8d849` merged with
   `origin/main` at `c76a483330` (0 commits behind before the merge) — 45 executed, 45 passed, no
@@ -3192,7 +3216,7 @@ Earlier results and failure history:
   failures or skips, exit 0, wall clock 267.5s. `LIVE_MINIMUM` rose from 24 to 27 with this ticket (see
   [Pre-ship gate](#pre-ship-gate)); twenty-seven executed meets it exactly. This is the first live evidence
   that the composer footer's model, effort and permission readings settle on a fresh reading after a
-  cut-and-restore of the phone's link, that a further real turn brings the `Cxt:` percentage back (the
+  cut-and-restore of the phone's link, that a further real turn brings the accessible context percentage back (the
   reading belongs to the connection, per #946), that a model picked from the footer after a reconnect is
   confirmed by a later fresh reading, that the slash-command suggestions and a manual Compact session still
   work once the link is restored, and that the Actions menu's background-task count and panel track a real
@@ -3434,6 +3458,14 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- #1668 revises `InteractiveStreamE2ETest.interactiveTurn_backgroundTask_countsInActionsMenuAndPanel`
+  in place: its historical name stays for acceptance tracking, while entry coverage uses the pill and
+  count-free top menu and asserts Actions omission. The full live-suite proof is recorded above;
+  finished-or-empty roster assertions remain. The shared `openBackgroundTasks` helper also serves
+  `interactiveTurn_backgroundAgentProgress_showsOnRunningCard` through the top menu. No new
+  `DeterministicInteractiveStreamE2ETest` twin was added; the existing scripted ping scenario retains
+  its top-menu panel assertion.
 
 - **Session-error recovery — pending (#1731):**
   `InteractiveStreamE2ETest.interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog`
@@ -4191,7 +4223,8 @@ The remaining checks here are specific to a real relay or real Claude execution:
   to an octet at three ping turns plus an optional reset wrap-up; Layer-3 (real claude) list-archive-entry —
   **shipped (#740)**, proving the list's own archive entry #737 put on the channel list's bar reaches the
   Archived screen on its own (at #740 the full round trip still used Settings; #1249 moved it to the
-  same toolbar entry; previously proven only at the event boundary,
+  same toolbar entry; #1665 migrated `InteractiveStreamE2ETest.interactiveTurn_listArchiveEntry_opensArchived`
+  and the round trip to Open menu → Archive; previously proven only at the event boundary,
   `ChannelListScreenTest.archiveEntry_emitsArchiveTapped`), always-on (the bar is a durable fact of every
   draw of the list, so the scenario needs no host wait, no seeded conversation and no claude turn — the
   only curated method that spends nothing at all, not even a daemon round-trip) and folded into the
@@ -4285,9 +4318,9 @@ The remaining checks here are specific to a real relay or real Claude execution:
   (`python3 scripts/android-test-gate.py live`, 2026-09-23, branch `feature/891` at `21fc690f4b` merged
   with `origin/main` at `3c771c7440`) executed all fourteen with no failures or skips; Layer-3 (real
   claude) footer context usage — **shipped (#946)**, proving that after one real turn the composer
-  footer's `Cxt:` segment shows the percentage Claude reported (`context_usage`, published after every
+  footer's context circle announces the computed percentage (`context_usage`, published after every
   completed turn): the scenario sends the ping prompt, awaits the reply, and waits for the
-  `CONTEXT_USAGE_TEST_TAG` node's text to match `Cxt: \d+%`, with no percentage hard-coded. Always-on (a
+  `CONTEXT_USAGE_TEST_TAG` node's content description to contain an available percentage, with no percentage hard-coded. Always-on (a
   reported percentage is a durable post-turn fact, not a transient spinner) and folded into the pre-ship
   `LIVE=1` gate as the 15th curated method, taking the gate from fourteen curated methods to fifteen, the
   floor from `LIVE_MINIMUM = 14` to `15` on the same `test_live_floor_matches_the_curated_list`
@@ -4299,7 +4332,20 @@ The remaining checks here are specific to a real relay or real Claude execution:
   removed the ask outright, so the reading now comes from the daemon's post-turn push alone and this
   scenario needed no change for it). The live run that closed the ticket
   (`python3 scripts/android-test-gate.py live`, 2026-09-24, branch `feature/946` at `a951201036` merged
-  with `origin/main` at `01042d232b`) executed all fifteen with no failures or skips; API-retry status
+  with `origin/main` at `01042d232b`) executed all fifteen with no failures or skips. The #1660 migration retains this rung-3 scenario in
+  `InteractiveStreamE2ETest` and moves footer reading, update, reopen and reconnect assertions to
+  content descriptions; normal, warning and high readings all carry a percentage, while unavailable
+  carries none. No new `DeterministicInteractiveStreamE2ETest` twin was added. The fresh full dispatcher
+  live suite on 2026-10-04 (`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`),
+  branch `38502955e6` merged with `origin/main` at `4fe49387ad`, executed **53, failed 0, skipped 0**.
+  Its fresh XML report explicitly contains
+  `InteractiveStreamE2ETest.interactiveTurn_pingPrompt_footerShowsContextUsage` with no failure or skip:
+  **PASS**, from the full suite, not a separate focused run. See the
+  [gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1660#issuecomment-5982012362).
+  The report is `2026-10-04T16-01-32-783Z_real-claude-gate_#1660.log` under the dispatcher repository's
+  `logs/`. For full-image footer captures, an available description may precede the hardware frame;
+  `ThreadDesignCaptureTest` therefore waits for the warning arc's yellow pixels as well as its 84%
+  description. Geometry-only ATD captures do not prove hardware pixels; API-retry status
   (attempt N/M) — **rung 2 shipped (#594)**, the
   `ScriptedApiRetryTest` scenarios driving `api_retry` edges through the real #593 repository projection
   into `ThreadViewModel.apiRetry` and `ApiRetryIndicator`, covering both edges (the rising edge, including

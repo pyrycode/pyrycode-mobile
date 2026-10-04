@@ -71,7 +71,8 @@ class UnpairNavigationTest {
 
     @Test fun unpairingTheLastHostFromSettingsShowsWelcomeWithNothingBehindIt() {
         start("alpha")
-        compose.onNodeWithContentDescription("Open settings").performClick()
+        compose.onNodeWithContentDescription("Open menu").performClick()
+        compose.onNodeWithText("Settings").performClick()
         compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.SETTINGS }
         // Settings has drawn no host editor since #1239, so its own view model is driven directly.
         val vm = compose.runOnIdle { ViewModelProvider(nav.getBackStackEntry(Routes.SETTINGS))[SettingsViewModel::class.java] }

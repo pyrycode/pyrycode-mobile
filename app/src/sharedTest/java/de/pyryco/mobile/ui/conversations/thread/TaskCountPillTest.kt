@@ -44,7 +44,7 @@ import org.robolectric.annotation.GraphicsMode
 
 /**
  * #1043: the status band's task count pill, hosted on [ThreadScreen]. The count is
- * [ThreadUiState.backgroundTaskCount]; the pill opens the same panel the Actions menu's row does.
+ * [ThreadUiState.backgroundTaskCount]; the pill opens the same panel the top menu's row does.
  * Native graphics, so the pill's label measures its real width and the band its real height.
  */
 @RunWith(AndroidJUnit4::class)
@@ -302,7 +302,10 @@ class TaskCountPillTest {
         root.performTouchInput {
             click(Offset((actionsBounds.left + actionsBounds.right).toPx() / 2f, (actionsBounds.top + actionsBounds.bottom).toPx() / 2f))
         }
-        composeTestRule.onNodeWithText("Background tasks (2)").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Background tasks (2)").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Background tasks").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Compact session").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Knowledge capture").assertIsDisplayed()
         pill("2 tasks running").assertIsDisplayed()
     }
 }

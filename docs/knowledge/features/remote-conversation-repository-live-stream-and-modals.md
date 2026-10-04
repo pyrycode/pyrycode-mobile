@@ -390,8 +390,8 @@ no stall is cleared.
   held `patch`, and a later mid-life frame never erases a held `status`/`summary` — each keeps its own
   frame's `truncatedFields`, following the same `truncated_fields` convention as the rest of
   `InteractivePayloads.kt` (`List<String>?`, explicit `null` = nothing cut).
-- **On the concrete repo only, like `questionBatches`** — not on `ConversationRepository`. The Actions-menu
-  panel and live-task count that read this seam ([#678](https://github.com/pyrycode/pyrycode-mobile/issues/678))
+- **On the concrete repo only, like `questionBatches`** — not on `ConversationRepository`. The background-task
+  panel and running-task pill count that read this seam ([#678](https://github.com/pyrycode/pyrycode-mobile/issues/678))
   reach it through
   [`RelayRepositoryCoordinator.observeBackgroundTasks` / `observeLiveBackgroundTaskCount`](relay-repository-coordinator-seams-and-passthroughs.md#background-task-roster-677),
   never the raw whole-host map, for the same one-conversation-inside-another risk `observeQuestionBatch`

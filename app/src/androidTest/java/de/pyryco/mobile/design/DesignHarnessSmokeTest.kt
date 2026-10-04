@@ -29,7 +29,7 @@ class DesignHarnessSmokeTest {
     @Test
     fun compactLargeTextLaunchCapturesRealFrame() {
         design.launch()
-        rule.onNodeWithText("Pyrycode Mobile").assertIsDisplayed()
+        rule.onNodeWithText("Pyrycode").assertIsDisplayed()
         assertEquals(1.5f, design.view.resources.configuration.fontScale, 0.01f)
         assertEquals(320, design.view.resources.displayMetrics.widthPixels)
         design.capture("smoke", "welcome-320x700-1.5x", "6:32")
