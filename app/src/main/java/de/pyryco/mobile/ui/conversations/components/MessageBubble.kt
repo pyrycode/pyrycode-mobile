@@ -108,6 +108,7 @@ fun MessageBubble(
     onOpenMarkdownLink: ((String) -> Unit)? = null,
     metaRowVisible: Boolean = true,
     onToggleMetaRow: (() -> Unit)? = null,
+    threadOpenedAt: Instant? = null,
 ) {
     val metaRow = MetaRowControl(metaRowVisible, onToggleMetaRow)
     val attachments: @Composable () -> Unit = {
@@ -123,7 +124,7 @@ fun MessageBubble(
     }
     when (message.role) {
         Role.User -> UserMessageBubble(message, attachments, metaRow, modifier)
-        Role.Assistant -> AssistantMessage(message, attachments, onOpenMarkdownLink, metaRow, modifier)
+        Role.Assistant -> AssistantMessage(message, attachments, onOpenMarkdownLink, metaRow, threadOpenedAt, modifier)
         // The gutter is applied here rather than inside ToolCallRow: moving it into the components left
         // the tool row as the one list kind still bleeding to the screen edge, which reads as a ragged
         // left edge next to the bubbles. The row's own layout belongs to #658, and this arm reaches it
@@ -195,6 +196,7 @@ private fun AssistantMessage(
     attachments: @Composable () -> Unit,
     onOpenMarkdownLink: ((String) -> Unit)?,
     metaRow: MetaRowControl,
+    threadOpenedAt: Instant?,
     modifier: Modifier = Modifier,
 ) {
     MessageContainer(
@@ -214,6 +216,7 @@ private fun AssistantMessage(
             // at `turn_end`: one snap rather than continuous jitter.
             StreamingAssistantBody(
                 content = message.content,
+                initialRevealedLength = if (threadOpenedAt != null && message.timestamp < threadOpenedAt) message.content.length else 0,
                 onOpenMarkdownLink = onOpenMarkdownLink,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -377,10 +380,12 @@ private fun Message.hasNoBody(): Boolean = attachments.isNotEmpty() && content.i
 @Composable
 private fun StreamingAssistantBody(
     content: String,
+    initialRevealedLength: Int,
     onOpenMarkdownLink: ((String) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
-    val revealedLength by produceState(initialValue = 0, key1 = content) {
+    // Content updates restart the producer while retaining its value, so only appended text reveals.
+    val revealedLength by produceState(initialValue = initialRevealedLength, key1 = content) {
         while (value < content.length) {
             delay(STREAMING_REVEAL_STEP_MS)
             value = (value + STREAMING_REVEAL_STEP_CHARS).coerceAtMost(content.length)
