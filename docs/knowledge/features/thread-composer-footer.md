@@ -2,7 +2,7 @@
 
 Always-visible row at the bottom of [`ThreadScreen`](thread-screen.md), stacked below the [`ThreadInputBar`](thread-input-bar.md) inside the same `Scaffold.bottomBar` slot. **[#808](../codebase/808.md) replaced [the retired `ThreadStatusRow`](thread-screen-how-it-works-list-and-status-row.md#status-row-wiring-post-145)** — one monospace `model · effort` string with a single expand affordance — with independent buttons, each opening the design's [Options overlay](options-overlay.md) directly above it. **[#650](https://github.com/pyrycode/pyrycode-mobile/issues/650)** added a third button, Permission, ordered first per Figma `110:3494` (`Actions · Auto · Opus · Max · Cxt`), and retired the [`StatusSheet`](status-sheet.md)'s YOLO switch — the control later moved back into Run configuration in #1196. The trailing icon is the current entry to Run configuration, which includes Model, Effort and Permission after #1196. **[#884](https://github.com/pyrycode/pyrycode-mobile/issues/884)** added a fourth button, Actions, leading the row per that same Figma order — a client-owned menu of Reset session, Compact session and Knowledge capture; see [Actions menu](thread-composer-footer-actions-menu.md#actions-menu-884).
 
-Package: `de.pyryco.mobile.ui.conversations.thread` (`app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadComposerFooter.kt`). Current dark Figma reference (inspected 2026-09-28): [`Input area` 533:1957](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=533-1957), [`footer button` 115:3677](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=115-3677), and [thread frame 16:8](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8). The older `Input footer` 110:3494 shows retired selectors and is historical.
+Package: `de.pyryco.mobile.ui.conversations.thread` (`app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadComposerFooter.kt`). Current dark Figma reference (inspected 2026-10-04): [`Input area` 533:1957](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=533-1957), [`footer button` 115:3677](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=115-3677), and [thread frame 16:8](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8). The older `Input footer` 110:3494 shows retired selectors and is historical.
 
 ## What it does
 
@@ -183,12 +183,12 @@ a choice; a fresh conversation-scoped settings reading confirms the pending
 value. The old `FooterControl.Model`, `.Effort` and `.Permission` projections
 remain in `footerMenu`, but no separate footer button opens them after #1196.
 
-The current dark Input area places the footer 16 px from either side and 4 px below the input content. Actions and context form a left cluster with a 16 px gap; both use theme body-small text and primary colour. Actions' upward chevron uses the supplied 8 × 4 path with a 4 px label gap. The attachment icon keeps the supplied 11 × 12 paperclip path. The text and icons align to the bottom of their 32 dp tap row: centring a small glyph in that row makes the visible footer sit too high even when tap-target coordinates match Figma.
+The current dark Input area uses 12 dp left, 16 dp right, 4 dp top and zero visible bottom footer padding inside the unchanged 20 dp composer gutter (#1659). Actions and context retain their 16 dp gap, body-small text and primary colour; Actions' chevron is 8 × 4 dp with a 4 dp label gap. The trailing group is 60 × 16 dp: two 24 × 16 dp visual boxes with a 12 dp gap, centring the 11 × 12 dp paperclip and 16 × 16 dp tune icon. At the 412 dp viewport it spans x=316–376, ending 16 dp inside the footer's right edge. The new context circle is a separate change.
 
 ### Trailing icons stay outside the weighted text region (#1032, wrap shape #1549)
 
 The outer `Row` measures the paperclip and Run configuration opener as fixed
-32dp boxes beside the weighted `FooterTextRow`, preserving both tap targets
+24dp-wide controls beside the weighted `FooterTextRow`, preserving both icons
 when the Actions label or context reading grows. `FooterTextRow` gives the
 `ContextSegment` whatever width the Actions button leaves. See
 [context usage](thread-composer-footer-context-usage.md) for the original
@@ -202,8 +202,7 @@ from #1032: one row, bottom-aligned. If not, the label moves whole to its own li
 `contentBottomPadding`, the 12dp of invisible touch overflow the thread passes in, not above the buttons'
 full touch box, since a 4dp gap from the touch box rendered as roughly 16dp on device. The layout reports a
 `FooterFirstRowBottom` `HorizontalAlignmentLine` at the button row's bottom; the outer `Row` aligns
-`FooterTextRow` by that line and the paperclip/tune boxes by their own bottoms (`Modifier.alignBy`), so all
-three stay level with Actions whether or not the label has wrapped. `alignBy` places the aligned group at
+`FooterTextRow` by that line and the trailing group by its touch-box bottom (`Modifier.alignBy`), so both centred visual boxes stay aligned with the first visible Actions row whether or not the label has wrapped. `alignBy` places the aligned group at
 the *top* of a row taller than its content, unlike the old `Alignment.Bottom`, so the outer `Row` also takes
 `wrapContentHeight(Alignment.Bottom)` to keep the footer's bottom placement in a slot taller than its
 content (a forced test size, or any fixed-height parent). `ContextSegment` still has `maxLines = 1` and
@@ -221,6 +220,8 @@ comes from the button's live window bounds translated into the screen's
 The trailing `Tune` icon opens `StatusSheet`, whose Model selection uses the
 same `ThreadRunConfig` projection as `footerMenu(Model)`. Running-model text
 is a separate reading and never selects a model row.
+
+`ThreadScreen` supplies 28 dp-high touch boxes, including 12 dp of invisible bottom overflow beyond the 16 dp visual band. `frameHeightWithTouchOverflow` keeps that overflow outside the visible frame; Compose expands the hit areas to 48 dp without changing visual widths or gaps. Preserve the [expanded-touch input-clearance checks](thread-composer-footer-testing.md#testing) when changing wrappers: visual bounds alone cannot establish that the input remains reachable.
 
 ## State + concurrency model
 
@@ -246,8 +247,7 @@ Two `@Preview`s in `ThreadComposerFooter.kt` — `ThreadComposerFooterDarkPrevie
 
 ## Edge cases / limitations
 
-- **The current Input area has no Run configuration opener.** The product requires the trailing `Tune` icon after Attach, so its extra 32 dp tap region shifts the paperclip left of the Figma position. It retains `cd_thread_status_expand` and opens the sheet containing Model, Effort and Permission. See [the labelled comparison](../../../app/src/androidTest/assets/1258-footer/412x892-footer-comparison.png).
-- **The paperclip ([#933](https://github.com/pyrycode/pyrycode-mobile/issues/933), Figma `115:3654`).** A plain `Box` (32dp touch target like the Status opener, 11×12dp glyph, `R.drawable.ic_attach_file` tinted `primary`) sits right before the Status opener, at the row's trailing end — not a `FooterControl`, since it opens no `OptionsOverlay`: its `onAttach: () -> Unit` parameter is bound in `ThreadScreen` to `rememberAttachmentPicker`'s launch action. See [Thread screen § Composer pending attachments](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments) for the picker and the strip it fills, and [Thread input bar § Shape](thread-input-bar.md#shape) for how a pending attachment changes Send/Stop.
+- **The paperclip ([#933](https://github.com/pyrycode/pyrycode-mobile/issues/933), revised spacing #1659).** Its 24 × 16 dp visual box precedes the Tune opener and retains `cd_attach_files`; Tune retains `cd_thread_status_expand`. Attach is not a `FooterControl`, since it opens no `OptionsOverlay`: `onAttach` is bound in `ThreadScreen` to `rememberAttachmentPicker`'s launch action. See [composer pending attachments](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments) for the picker and strip.
 - **Adding a footer button before Model shifts where every later overlay opens.** [#884](https://github.com/pyrycode/pyrycode-mobile/issues/884) put Actions ahead of Permission/Model/Effort, so the Model overlay now opens far enough right, at narrow widths, to reach past the composer's horizontal centre — a test (or any other geometry assumption) that treats "near the composer's centre" as "clearly outside every overlay" needs re-checking whenever a button is added or reordered ahead of it. See [Thread composer footer — testing](thread-composer-footer-testing.md#testing) for the regression this caused and its fix.
 - **`effortLevels` has no count cap**, unlike the model menu's `MAX_RENDERED_MODEL_CHOICES = 32` / `hiddenChoices`. [Options overlay](options-overlay.md) scrolls, so an unbounded effort menu degrades to a tall scrolling list rather than a layout break, but it composes every row. Flagged for triage on the #808 PR as an out-of-scope hostile-daemon-frame finding; a cap would belong beside `MAX_RENDERED_MODEL_CHOICES` in `ThreadViewModel.kt`.
 - **Keyboard evidence is limited to footer layout.** Emulator captures show the footer above the software keyboard at 412 × 892 and 360 × 640; they do not prove overlay placement after an Actions tap with the keyboard open. The overlay still depends on the anchoring button's live bounds inside the `imePadding()` column.

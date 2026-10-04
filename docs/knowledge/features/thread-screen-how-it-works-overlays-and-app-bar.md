@@ -10,109 +10,24 @@ Split out of [Thread screen](thread-screen.md) on 2026-09-05 to keep that docume
 
 ### Thinking-indicator placement (post-#407, moved in #643, re-expressed as `statusArm` in #1311)
 
-[#407](../codebase/407.md) originally mounted the stateless [`ThinkingIndicator`](thinking-indicator.md) as the final child of the content `Column`, at the foot of the list above the `bottomBar`. [#643](../codebase/643.md) moved it — along with the retry and compaction arms it shares a slot with — into the composer itself, as the **`Status area`** band of the Figma `16:8` `Input area` (`533:1957`). It is now the first child of the `bottomBar` `Column`, rendered by a private `ThreadStatusArea` composable (`ThreadScreen.kt`) that exists purely so the `bottomBar` lambda stays readable. [#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311) is the most recent change to this slot: it added `isStalled`, `isBusy` and `localSendPending` parameters, moved the arm-selection logic out of an inline `when` into the named `statusArm` function, and added the `waitingForAnswers` branch (#1305/#1306, below) beside the ladder dispatch rather than inside it:
+[#407](../codebase/407.md) originally mounted the stateless [`ThinkingIndicator`](thinking-indicator.md) as the final child of the content `Column`, at the foot of the list above the `bottomBar`. [#643](../codebase/643.md) moved it — along with the retry and compaction arms it shares a slot with — into the composer itself, as the **`Status area`** band of the Figma `16:8` `Input area` (`533:1957`). It is now the first child of the `bottomBar` `Column`, rendered by a private `ThreadStatusArea` composable (`ThreadScreen.kt`) that exists purely so the `bottomBar` lambda stays readable. [#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311) added `isStalled`, `isBusy` and the local-send window, moved the arm-selection logic out of an inline `when` into the named `statusArm` function, and added the `waitingForAnswers` branch (#1305/#1306, below) beside the ladder dispatch rather than inside it.
 
-```kotlin
-bottomBar = {
-    Column(Modifier.fillMaxWidth().imePadding().padding(top = 12.dp, bottom = 16.dp)) {
-        ThreadStatusArea(apiRetry = apiRetry, resetting = resetting, isCompacting = isCompacting, isStalled = isStalled, turnOutcome = turnOutcome, onCompact = onCompact, isThinking = isThinking, isBusy = isBusy, localSendPending = localSendPending, thinkingProgress = thinkingProgress, runningTool = if (isBusy) openTool else null, waitingForAnswers = …, connectionState = connectionState, taskCount = state.backgroundTaskCount, onTasksClick = { backgroundTasksOpen = true }, agent = state.agent)
-        ThreadInputBar(onSend = onSendMessage, isBusy = isBusy, onInterrupt = onInterrupt, …)
-        ThreadComposerFooter(runConfig = state.runConfig, onOpen = { openControl = it }, onStatusClick = { sheetVisible = true }, onAnchorChanged = { control, bounds -> footerAnchors[control] = bounds }, …)
-    }
-}
+`ThreadScreen` passes the hoisted `localSendStage: LocalSendStage` to `ThreadStatusArea` alongside
+`isThinking` and `isBusy`. Since #1641, its Sending and Waiting readings describe repository acceptance
+separately from daemon thinking; they do not change the input bar's `isBusy`/Stop gate. The area always
+owns the glyph and weighted reading box, and permission/question readings override `StatusReading`.
+See [the arm order](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311) for the local
+window's closure, late-ack protection, precedence and independent rotation; [`ThinkingIndicator`](thinking-indicator.md)
+receives only the selected stalled/thinking/working/running-tool reading.
 
-@Composable
-private fun ThreadStatusArea(
-    apiRetry: ApiRetryStatus,
-    resetting: ResetStatus?, // #872
-    isCompacting: Boolean,
-    isStalled: Boolean, // #1311
-    turnOutcome: TurnRecoveryNotice?, // #1357
-    onCompact: (() -> Unit)?, // #1357
-    isThinking: Boolean,
-    isBusy: Boolean, // #1311
-    localSendPending: Boolean, // #1311
-    thinkingProgress: ThinkingProgress?, // #803
-    runningTool: ToolCall?, // #897
-    waitingForAnswers: Boolean, // #1305
-    connectionState: ConnectionState,
-    taskCount: Int, // #1043
-    onTasksClick: () -> Unit, // #1043
-    agent: ConversationAgent, // #1114
-) {
-    val reading: @Composable (Modifier) -> Unit = { modifier ->
-        if (waitingForAnswers) {
-            // the fixed "Waiting for answers" row (#1305) — see § Inline question rows below
-        } else {
-            StatusReading(
-                arm = statusArm(connectionState, resetting != null, apiRetry != ApiRetryStatus.NotRetrying, isCompacting, isStalled, turnOutcome != null, isThinking, isBusy, localSendPending, runningTool != null),
-                apiRetry, resetting, turnOutcome, onCompact, isThinking, thinkingProgress, runningTool, connectionState, agent, modifier,
-            )
-        }
-    }
-    if (taskCount <= 0) {
-        reading(Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter))
-        return
-    }
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(start = ComposerStatusGutter, end = ComposerGutter),
-        horizontalArrangement = Arrangement.End,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        reading(Modifier.weight(1f))
-        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
-            NoticePill(text = pluralStringResource(R.plurals.thread_task_count, taskCount, taskCount), isError = false, onClick = onTasksClick, modifier = Modifier.sizeIn(minHeight = 24.dp), shadowElevation = 0.dp)
-        }
-    }
-}
-
-/** Which one reading the band shows, decided once by [statusArm] (#1311); see [Thread screen § The arm
- * order](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311) for the full enum and
- * precedence table. [StatusReading] below only switches on the already-decided arm. */
-@Composable
-private fun StatusReading(
-    arm: StatusArm,
-    apiRetry: ApiRetryStatus,
-    resetting: ResetStatus?,
-    turnOutcome: TurnRecoveryNotice?,
-    onCompact: (() -> Unit)?,
-    isThinking: Boolean,
-    thinkingProgress: ThinkingProgress?,
-    runningTool: ToolCall?,
-    connectionState: ConnectionState,
-    agent: ConversationAgent, // #1114
-    modifier: Modifier = Modifier,
-) {
-    when (arm) {
-        StatusArm.None -> Unit
-        StatusArm.Connection -> ConnectionStatusIndicator(state = connectionState, modifier = modifier)
-        StatusArm.Resetting -> ResettingIndicator(status = resetting, modifier = modifier, agent = agent) // agent: #1112
-        StatusArm.ApiRetry -> ApiRetryIndicator(status = apiRetry, modifier = modifier, agent = agent)
-        StatusArm.Compacting -> CompactingIndicator(isCompacting = true, modifier = modifier, agent = agent)
-        StatusArm.TurnOutcome -> TurnOutcomeIndicator(notice = turnOutcome, agent = agent, onCompact = onCompact, modifier = modifier)
-        // One branch, so the glyph keeps its composition identity, and its pulse, across these readings (#1311).
-        StatusArm.Stalled, StatusArm.Thinking, StatusArm.Working, StatusArm.RunningTool ->
-            ThinkingIndicator(
-                isThinking = arm == StatusArm.Thinking,
-                modifier = modifier,
-                progress = thinkingProgress.takeIf { isThinking },
-                runningTool = runningTool.takeIf { arm == StatusArm.RunningTool },
-                agent = agent,
-                isWorking = arm == StatusArm.Working, // #1311
-                isStalled = arm == StatusArm.Stalled, // #1311
-            )
-    }
-}
-```
-
-`agent` reaches both functions from `ThreadScreen`'s own `state.agent` (see [Thinking indicator § The agent
+`agent` reaches the area and its reading from `ThreadScreen`'s own `state.agent` (see [Thinking indicator § The agent
 name](thinking-indicator.md#the-agent-name-1114)); `resetting`'s branch is the only one of the arms that
 picked up `agent` after #1114 shipped, closed by #1112 — see [Resetting indicator § The agent
 name](resetting-indicator.md#the-agent-name-1112). Since [#1357](turn-outcome-indicator.md) the turn-outcome arm
 shows only client-owned recovery copy — no daemon text crosses into it at all — and carries the `onCompact`
 callback the context notice's Compact pill uses. See [Thread screen § The arm
-order](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311) for `statusArm`'s full
-signature, the precedence table and the local-send window that feeds `localSendPending`.
+order](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311) for `statusArm`'s
+precedence and the local-send window that feeds `localSendStage`.
 
 **[#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043) added the task-count pill at the band's
 right end, and split the `when` out into `StatusReading` to make room for it.** Above zero,

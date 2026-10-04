@@ -11,6 +11,7 @@ import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
@@ -56,11 +57,13 @@ class ScriptedThreadHarness(
     private val composeRule: ComposeContentTestRule,
     private val conversationId: String = "c1",
     private val seedName: String = SEED_NAME,
+    private val seedAgent: ConversationAgent = ConversationAgent.Claude,
+    onSend: (Envelope) -> Boolean = { true },
 ) {
     /** Owns the repository's inbound collector + the DataStore; cancelled by [close]. */
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    private val pump = FakeSessionPump()
+    private val pump = FakeSessionPump(onSend)
 
     /**
      * The connection-state seam driving the banner (#200/#201), distinct from the [pump] envelope
@@ -116,7 +119,9 @@ class ScriptedThreadHarness(
                 ThreadScreen(
                     state = open.state.collectAsState().value,
                     onBack = {},
-                    onSendMessage = {},
+                    onSendMessage = open::sendMessage,
+                    draft = open.draft.collectAsState().value,
+                    onDraftChange = open::onDraftChange,
                     connectionState = open.connectionState.collectAsState().value,
                     onRetry = {},
                     isThinking = open.isThinking.collectAsState().value,
@@ -132,7 +137,7 @@ class ScriptedThreadHarness(
                     isBusy = open.isBusy.collectAsState().value,
                     // #1311: the stall arm and the local-send window.
                     isStalled = open.isStalled.collectAsState().value,
-                    localSendPending = open.localSendPending.collectAsState().value,
+                    localSendStage = open.localSendStage.collectAsState().value,
                     onInterrupt = open::onInterrupt,
                 )
             }
@@ -149,6 +154,9 @@ class ScriptedThreadHarness(
     fun interruptInvocations(): Int = interruptTargets.size
 
     fun interruptedConversations(): List<String> = interruptTargets.toList()
+
+    /** Generic inbound seam; scenario-specific reply scripting stays with the test. */
+    fun pushEnvelope(envelope: Envelope) = pump.push(envelope)
 
     /** Script one `assistant_delta` for [turnId] at [seq] carrying [text] (#337). */
     fun pushAssistantDelta(
@@ -175,7 +183,7 @@ class ScriptedThreadHarness(
         conversationId: String,
         name: String,
     ) {
-        pump.push(conversationsEnvelope(seedSnapshot(conversationId, name)))
+        pump.push(conversationsEnvelope(seedSnapshot(conversationId, name, seedAgent)))
         composeRule.runOnIdle { vm = newVm(conversationId) }
         awaitReady(name)
     }
@@ -365,7 +373,7 @@ class ScriptedThreadHarness(
      * `conversations` snapshot is safe to push at any time — it is a retained cold projection, unlike the
      * `replay = 0` live stream (the subscribe-before-push constraint applies only to the `push*` events).
      */
-    private fun seedConversation() = pump.push(conversationsEnvelope(seedSnapshot(conversationId, seedName)))
+    private fun seedConversation() = pump.push(conversationsEnvelope(seedSnapshot(conversationId, seedName, seedAgent)))
 
     /**
      * Block until the render pipeline is live and the VM's `replay = 0` live-event collectors are
@@ -406,12 +414,14 @@ private const val TS = "2026-05-31T00:00:00Z"
  * unlimited buffer so a push pre-subscription survives, and a non-throwing [send] (the reads' fire-and-
  * forget requests ignore its result). Depends only on `main/` [SessionPump] / [Envelope].
  */
-private class FakeSessionPump : SessionPump {
+private class FakeSessionPump(
+    private val onSend: (Envelope) -> Boolean,
+) : SessionPump {
     private val inboundChannel = Channel<Envelope>(Channel.UNLIMITED)
 
     override val inbound: Flow<Envelope> = inboundChannel.receiveAsFlow()
 
-    override fun send(envelope: Envelope): Boolean = true
+    override fun send(envelope: Envelope): Boolean = onSend(envelope)
 
     fun push(envelope: Envelope) {
         inboundChannel.trySend(envelope)
@@ -727,9 +737,10 @@ private fun conversationsEnvelope(rawConversationsPayload: String): Envelope =
 private fun seedSnapshot(
     conversationId: String,
     name: String,
+    agent: ConversationAgent,
 ): String =
     """
     {"conversations":[
-      {"id":"$conversationId","name":"$name","is_promoted":true,"cwd":"/p/$conversationId","last_message_ts":"$TS","last_used_at":"$TS"}
+      {"id":"$conversationId","name":"$name","agent":"${agent.name.lowercase()}","is_promoted":true,"cwd":"/p/$conversationId","last_message_ts":"$TS","last_used_at":"$TS"}
     ]}
     """.trimIndent()

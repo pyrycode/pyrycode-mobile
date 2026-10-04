@@ -1,6 +1,9 @@
 package de.pyryco.mobile.design
 
+import android.app.Activity
+import android.app.Instrumentation
 import android.content.ContentValues
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -38,6 +41,7 @@ import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.SavedStateHandle
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -74,6 +78,7 @@ import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UnrecognizedSite
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.di.ConversationViewing
+import de.pyryco.mobile.e2e.ActivityIntentStub
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.PickedAttachment
@@ -87,6 +92,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.Instant
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -341,6 +347,87 @@ class ThreadDesignCaptureTest {
         checkNotNull(inputs.thread.value).onOpenMarkdownLink("docs/Builder Pipeline - Plan.md")
         await("Builder Pipeline Plan")
         design.capture(FOLDER, "markdown-reader", "553:2574")
+    }
+
+    /** Real pixels and real IME insets for the revised footer; no daemon or live Claude needed. */
+    @Test fun footerAt412By892() = captureFooter("reference")
+
+    @Viewport("320x700", fontScale = 1.5f)
+    @Test
+    fun footerAt320By700() = captureFooter("compact")
+
+    private fun captureFooter(name: String) {
+        openThread()
+        inputs.contextUsage.value = CONTEXT
+        await("Cxt high:", substring = true)
+        assertFooterAboveKeyboard(name, keyboardVisible = false)
+        design.capture("footer-1659", name, "533:1957")
+        keyboard()
+        assertFooterAboveKeyboard(name, keyboardVisible = true)
+        design.capture("footer-1659", "$name-keyboard", "533:1957")
+        design.closeKeyboard()
+        // A pointer on the tune's visible pixels reaches only the existing sheet.
+        rule.onNodeWithTag("footer_status_icon", useUnmergedTree = true).performTouchInput { click(center) }
+        await("Run configuration")
+        Espresso.pressBack()
+        rule.waitForIdle()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val picker =
+            ActivityIntentStub().apply {
+                answer(Intent.ACTION_OPEN_DOCUMENT) { Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null) }
+            }
+        instrumentation.addMonitor(picker)
+        try {
+            rule.onNodeWithTag("footer_attach_icon", useUnmergedTree = true).performTouchInput { click(center) }
+            rule.waitUntil(5_000) { picker.answered.size == 1 }
+            assertEquals(Intent.ACTION_OPEN_DOCUMENT, picker.answered.single().action)
+            rule.onNodeWithText("Run configuration").assertDoesNotExist()
+        } finally {
+            instrumentation.removeMonitor(picker)
+        }
+    }
+
+    private fun assertFooterAboveKeyboard(
+        name: String,
+        keyboardVisible: Boolean,
+    ) {
+        rule.waitForIdle()
+        val insets = design.insets()
+        assertEquals(keyboardVisible, insets.isVisible(WindowInsetsCompat.Type.ime()))
+        val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+        if (keyboardVisible) assertTrue("keyboard has a positive inset", ime > 0)
+        val attach = rule.onNodeWithTag("footer_attach_visual", useUnmergedTree = true)
+        val tune = rule.onNodeWithTag("footer_status_visual", useUnmergedTree = true)
+        attach.assertIsDisplayed()
+        tune.assertIsDisplayed()
+        val a = attach.getUnclippedBoundsInRoot()
+        val b = tune.getUnclippedBoundsInRoot()
+        val actions = rule.onNodeWithText("Actions", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val context = rule.onNodeWithTag("thread_footer_context_usage", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertEquals(24f, a.right.value - a.left.value, 0.5f)
+        assertEquals(16f, a.bottom.value - a.top.value, 0.5f)
+        assertEquals(12f, b.left.value - a.right.value, 0.5f)
+        assertEquals("icons align with first Actions row", actions.bottom.value, b.bottom.value, 0.5f)
+        assertTrue("Actions stays separate from icons", actions.right < a.left)
+        assertTrue("context stays separate from icons", context.right < a.left || context.top >= b.bottom)
+        val density = design.view.resources.displayMetrics.density
+        val screen = design.view.resources.displayMetrics.heightPixels
+        assertTrue("icons stay above IME", b.bottom.value * density < screen - ime)
+        val output =
+            File(
+                checkNotNull(InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")),
+                "design-1220/footer-1659",
+            ).apply { mkdirs() }
+        File(output, "$name-geometry-${if (keyboardVisible) "ime" else "rest"}.txt").writeText(
+            "attach=$a tune=$b actions=$actions context=$context imeVisible=$keyboardVisible imePx=$ime\n" +
+                "footerCropPx=20,${(
+                    minOf(
+                        actions.top.value,
+                        b.top.value,
+                    ) - 4
+                ).toInt()},${design.view.resources.displayMetrics.widthPixels - 20}," +
+                "${maxOf(b.bottom.value, context.bottom.value).toInt()}\n",
+        )
     }
 
     @Test fun menusAndKeyboardAt412By892() {

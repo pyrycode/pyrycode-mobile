@@ -8,12 +8,16 @@ Normal builds bind the [`StableConversationRepository`](stable-conversation-repo
 
 ## Shape
 
+`observeSessionError` supplies the current nullable wire code per conversation;
+fakes inherit null. See [validation and clearing rules](remote-conversation-repository-state-errors-and-handoff.md#conversation-session-errors-1677).
+
 ```kotlin
 interface ConversationRepository {
     fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>>
     fun observeMessages(conversationId: String): Flow<List<ThreadItem>>
     fun observeLastMessage(conversationId: String): Flow<Message?>
     fun observeStall(conversationId: String): Flow<Boolean> = flowOf(false)
+    fun observeSessionError(conversationId: String): Flow<String?> = flowOf(null)
     fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> = flowOf(emptyList())
     fun observeApiRetry(conversationId: String): Flow<ApiRetryStatus> = flowOf(ApiRetryStatus.NotRetrying)
     fun observeCompacting(conversationId: String): Flow<Boolean> = flowOf(false)
