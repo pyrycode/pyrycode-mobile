@@ -123,7 +123,8 @@ class VerifierReconnectSessionTest {
             assertTrue(
                 "Fresh s2: supported=${config.midTurnInputSupported}, permission=${config.permissionMode}, " +
                     "effort=${config.appliedEffort}, memory=${config.memorySearch}, sends=$sends",
-                config.midTurnInputSupported && config.permissionMode == "plan" &&
+                config.midTurnInputSupported &&
+                    config.permissionMode == "plan" &&
                     config.appliedEffort == EffectiveEffort.Applied("high") &&
                     config.memorySearch.availability == MemorySearchAvailability.Available &&
                     sends == listOf(CONV to 42L),
