@@ -4,7 +4,7 @@ Split out of [Mobile Protocol v2 — wire models + codec](mobile-protocol-v2-wir
 
 ## Application payloads (decoded on top of `Envelope`)
 
-`Envelope.payload` stays a generic `JsonElement` until a consumer decodes it into a typed payload DTO. Those application-payload DTOs — and the pure functions that map them to domain types — live in `data/network/` alongside the wire models, **one file per payload `type`**, with **decode as the single validate boundary**: a malformed/field-incomplete payload throws at `MobileJson.decodeFromJsonElement` rather than producing a partial domain object.
+`Envelope.payload` stays a generic `JsonElement` until a consumer validates it, using a typed payload DTO or a manual decoder for sensitive fields. Those application-payload DTOs — and the pure functions that map them to domain types — live in `data/network/` alongside the wire models, **one file per payload `type`**, with **decode as the single validate boundary**: a malformed/field-incomplete payload throws at `MobileJson.decodeFromJsonElement` rather than producing a partial domain object.
 
 The first one landed in [#316](../codebase/316.md): `ConversationsPayload` / `ConversationSummaryDto` (`ConversationsPayload.kt`) for the `conversations` reply, plus a pure `ConversationsPayload.toConversations(): List<Conversation>` mapper to the domain [`Conversation`](data-model.md). Two precedents it sets for the payloads that follow (#317 `message`, #318 write-responses):
 
@@ -330,3 +330,20 @@ here:** `SlashCommandMenuProjection`'s decoder also drops a frame whose `convers
 daemon's `_zero` fixture shape), where `decodeModelList` would retain such a frame under the map key `""`.
 This is a routing decision on the decoded value, not a DTO-shape one, so it lives in the repository doc
 linked above rather than being duplicated on this wire-layer page.
+
+### Host system prompt validation (#1774)
+
+`HostSystemPromptPayloads.kt` manually decodes the correlated `host_system_prompt`
+reply through `toHostSystemPromptReading`. The payload must be an object and both
+`system_prompt` and `default_system_prompt` must be JSON strings. Missing, null,
+numeric, boolean, array or object values fail; empty strings remain valid. Each
+string must fit `SystemPromptLimit` (8192 UTF-8 bytes inclusive). Additional keys
+are tolerated; strings are never trimmed, truncated or replaced with defaults.
+
+Manual decoding avoids serialization exceptions that quote sensitive input.
+Errors name only static fields and constraints; both reading fields are redacted
+by `toString`. The host command layer also sanitizes daemon error replies, since
+safe payload decoding alone cannot prevent error messages from exposing prompts.
+See [host operations](remote-conversation-repository-conversation-writes.md#host-system-prompt-read-and-durable-save-1774)
+for the exchange and authoritative daemon protocol links. The channel's nullable
+prompt decoder is a separate contract and must not be used here.

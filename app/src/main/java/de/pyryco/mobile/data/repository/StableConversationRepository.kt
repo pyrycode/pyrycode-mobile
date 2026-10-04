@@ -366,6 +366,17 @@ class StableConversationRepository(
         limit: Int,
     ): HistoryPage = live.requestHistory(conversationId, cursor, limit)
 
+    /** Host settings are live-only; snapshot once so reconnect cannot redirect an operation. */
+    override suspend fun requestHostSystemPrompt(): Result<HostSystemPromptReading> {
+        val repository = currentRepository.value ?: return Result.failure(IllegalStateException(NOT_CONNECTED))
+        return repository.requestHostSystemPrompt()
+    }
+
+    override suspend fun setHostSystemPrompt(systemPrompt: String): Result<HostSystemPromptReading> {
+        val repository = currentRepository.value ?: return Result.failure(IllegalStateException(NOT_CONNECTED))
+        return repository.setHostSystemPrompt(systemPrompt)
+    }
+
     /**
      * One-shot delegation of the system-prompt read and write (#823) to the live repository — the one
      * for this host's connection, so the id and value pass through verbatim with no routing here. With
