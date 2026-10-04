@@ -33,6 +33,7 @@ import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.crypto.PairedServerEntry
 import de.pyryco.mobile.data.model.ConnectionStatus
+import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.repository.ConversationFilter
@@ -75,6 +76,46 @@ class ListDesignCaptureTest {
     @Viewport("320x700", fontScale = 1.5f)
     @Test
     fun listFramesAt320By700LargeText() = walk(suffix = "-compact")
+
+    /** Real bars and hardware pixels are the reason this notice capture is device-only. */
+    @Test
+    fun failedCreateChatNoticeAt412By892() {
+        design.paired = true
+        val koin = GlobalContext.get()
+        val previous = koin.get<HostConversationSource>()
+        val fake = koin.get<FakeConversationRepository>()
+        val failing =
+            object : ConversationRepository by fake {
+                override suspend fun createDiscussion(workspace: String?): Conversation = error("deterministic create failure")
+            }
+        val source =
+            HostConversationSource(
+                MutableStateFlow(
+                    listOf(
+                        HostConversationConnection(
+                            HostConversationSource.DEMO_SERVER_ID,
+                            "Demo",
+                            MutableStateFlow(failing),
+                            MutableStateFlow(ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)),
+                        ),
+                    ),
+                ),
+                { serverId -> failing.takeIf { serverId == HostConversationSource.DEMO_SERVER_ID } },
+                viewing = koin.get(),
+            )
+        loadKoinModules(module { single { source } })
+        try {
+            relaunch()
+            rule.onAllNodes(hasText("Couldn’t create the chat. Try again.")).assertCountEquals(0)
+            rule.onNodeWithContentDescription("New chat on Demo").performClick()
+            awaitText("Couldn’t create the chat. Try again.")
+            // Reuse the Error pill and placement, not the thread frame's unrelated contents.
+            design.capture(FOLDER, "create-chat-failed", "685:4337")
+        } finally {
+            loadKoinModules(module { single { previous } })
+            source.dispose()
+        }
+    }
 
     private fun walk(suffix: String) {
         design.paired = true

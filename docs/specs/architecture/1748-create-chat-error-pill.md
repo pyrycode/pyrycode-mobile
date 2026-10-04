@@ -51,3 +51,9 @@ None.
 - Pending documentation stage: `docs/knowledge/features/channel-list-screen.md`, describe the timed Create chat failure notice.
 
 Sizing: one deliverable, approximately 400 written lines including plan/tests/evidence metadata; no new exported production type or consumer update, three acceptance criteria, no new error branch. Within all builder limits.
+
+## Revisions
+
+### 2026-10-04 — capture inspection
+
+The real-bar capture places the notice at x=173..392, y=149..171: the right gutter is 20px and its top is 28px below the measured list header. The reused shared `NoticePill` trims its body-small line box, producing a 22px single-line background rather than Figma's 24px. This inherited shared-component difference is deferred to #1757; the current ticket preserves reuse, tokens, padding and actions. Record it in the documentation-stage verdict. No state or placement contract changed.
