@@ -233,7 +233,7 @@ A `Box(Modifier.clickable(role = Role.Button) { ... }.padding(horizontal = 6.dp,
 
 When `message.isStreaming = true`, the assistant arm routes to a private `StreamingAssistantBody(content, modifier)` instead of the static `MarkdownText(...)` call. The composable derives two pieces of state via `produceState`:
 
-- `revealedLength: State<Int>` keyed on `content`. Producer: `while (value < content.length) { delay(STREAMING_REVEAL_STEP_MS); value = (value + STREAMING_REVEAL_STEP_CHARS).coerceAtMost(content.length) }`. Reveal rate is one character per `STREAMING_REVEAL_STEP_MS = 20L` tick → 50 chars/sec. The `key1 = content` causes the producer to restart from 0 if the content snapshot changes (Phase 4: token-by-token growth from the WS feed).
+- `revealedLength: State<Int>` keyed on `Unit` since [#1754](../../specs/architecture/1754-word-reveal-catch-up.md). The composition-lifetime producer reads the latest `content` through `rememberUpdatedState` every `STREAMING_REVEAL_STEP_MS = 33L` tick. Small backlogs reveal one whitespace-delimited word per tick (about 30 words/sec); `nextStreamingRevealLength` includes adjacent whitespace and the last arrived word even without trailing whitespace. A 15-tick catch-up budget divides the remaining words across the remaining ticks, rounding up, so larger backlogs reveal several words per step. While behind, the countdown decreases on each tick; it resets only once caught up. Arrivals preserve the visible prefix, delay and outstanding countdown, and the deadline tick reveals all currently arrived text: each snapshot catches up within 495 ms of reveal-clock time, with presentation adding a frame.
 - `caretVisible: State<Boolean>` keyed on `Unit`. Producer: `while (true) { delay(STREAMING_CARET_BLINK_PERIOD_MS); value = !value }`. `STREAMING_CARET_BLINK_PERIOD_MS = 500L` → 1 Hz toggle / 0.5 Hz full blink cycle. Independent of the reveal — the caret keeps blinking after the prefix is fully revealed until `isStreaming` flips `false`.
 
 Both producers cancel automatically when the composable leaves composition. No `LaunchedEffect`, no `DisposableEffect`, no `viewModelScope` involvement — carried over unchanged through #644's new container.
@@ -244,7 +244,7 @@ The two values feed a second private composable `StreamingAssistantBodyView(reve
 
 **Zero animation cost when not streaming.** Historical messages take the unchanged static `MarkdownText(...)` path — no `produceState`, no coroutine, no extra recomposition.
 
-**Reveal restart on `content` change; lifetime tied to `LazyColumn` item disposal.** Unchanged since #184 — see [Edge cases / limitations](#edge-cases--limitations).
+**Prefix retention alone does not preserve the clock.** A content-keyed `produceState` retains its state value when the key changes; the historical claim that every delta reset the prefix to zero was incorrect. It does restart the producer, cancelling the pending delay and resetting local countdowns. Arrivals faster than 33 ms can therefore starve a content-keyed reveal indefinitely. Keep the stable producer and latest-content state together, and exercise repeated arrivals as well as fixed backlogs — see [Testing](message-bubble-testing.md#testing). Disposal still ends both producers; see [Edge cases / limitations](#edge-cases--limitations).
 
 ### Fill vs. hug: the streaming arm keeps `fillMaxWidth()`, the finalized arm doesn't (since #644)
 
@@ -273,7 +273,7 @@ internal const val MESSAGE_BUBBLE_TEST_TAG = "message-bubble"
 
 **`UserBubbleShape` and `UserBubbleMaxWidth` are gone** — the pre-#644 asymmetric 20/20/6/20 "tail" corner radius and the 320dp cap are both superseded by the shared `BubbleShape` (uniform 6dp) and the `MessageRoleInset` mechanism above. There is no longer a separate max-width constant for either role: the inset *is* the mechanism, and 272dp is its value at the 412dp reference width.
 
-The streaming constants (`STREAMING_CARET_GLYPH`, `STREAMING_REVEAL_*`, `STREAMING_CARET_BLINK_PERIOD_MS`) are unchanged and stay file-private — nothing outside this file needs them.
+The caret glyph and blink period stay file-private. The word rate and catch-up budget are also private; `STREAMING_REVEAL_STEP_MS` and the pure `nextStreamingRevealLength` helper are internal so the step tests can pin cadence and word boundaries.
 
 Naming note: the shared row-spacing constant is `MessageAreaRowSpacing`, not (as an earlier draft of this ticket's plan called it) `MessageRowVerticalSpacing` — [`ToolCallRow.kt`](./tool-call-row.md) already owns a file-private constant of that exact name, and promoting `MessageBubble.kt`'s to `internal` under the same identifier would have been a package-level conflicting declaration at `ToolCallRow`'s own use site. `ToolCallRow.kt` is owned by [#658](../codebase/658.md) and #644 left it untouched; searching the package for a name before promoting it to `internal` is the general lesson.
 
@@ -326,8 +326,8 @@ fixtures, metadata gestures, palette and geometry guards, and attachment coverag
 ## Edge cases / limitations
 
 - **User variant is plain text; assistant variant renders markdown** (since #129, unchanged by #644). User blank-line paragraphs have a 12dp gap while single line breaks remain literal. Assistant messages render through [`MarkdownText`](./markdown-text.md).
-- **Streaming reveal is character-by-character at a fixed rate; no token-batch awareness.** Unchanged since #184 — see [`streaming-assistant-turns.md`](./streaming-assistant-turns.md) for the Phase 4 live-feed behaviour.
-- **Streaming state is lost on `LazyColumn` item disposal.** Scrolling a streaming message off-screen disposes the item, cancels both `produceState` coroutines, and forgets `revealedLength`; scrolling back re-mounts and the reveal restarts from 0. Phase-0 acceptable.
+- **Word boundaries follow arrived whitespace, not token boundaries.** A final arrived word is revealed even without trailing whitespace, so later deltas may extend that word. A 2000-character string with no whitespace reveals in one step. Large backlogs accelerate beyond the nominal one-word cadence to meet the catch-up deadline — see [Streaming assistant turns](streaming-assistant-turns.md#lifecycle-errors-edge-cases).
+- **Streaming state is lost on `LazyColumn` item disposal.** Disposing a streaming item cancels both `produceState` coroutines and forgets `revealedLength`; re-mounting starts at 0 with a new catch-up budget. Appended content during the same composition preserves the prefix and both clocks. Finalization removes the streaming body and renders the full static markdown immediately.
 - **Caret inside an open markdown construct falls back to plain text.** Unchanged since #184 — see [`MarkdownText`](./markdown-text.md).
 - **`Role.Tool` routes to [`ToolCallRow`](./tool-call-row.md) since #131.** The null-safe `?.let` renders nothing if a `Role.Tool` message arrives with `toolCall = null`.
 - **RTL.** `Arrangement.spacedBy(0.dp, alignment)` and `Modifier.fillMaxWidth()` respect `LayoutDirection` automatically — in RTL locales the user bubble pins to the left and the assistant bubble to the right. `BubbleShape`'s uniform 6dp corners mean there is no longer an asymmetric "tail" to worry about flipping (the pre-#644 shape's `bottomEnd = 6.dp` notch is gone).
