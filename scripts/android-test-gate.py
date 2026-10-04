@@ -207,8 +207,9 @@ def changed_paths(base="main"):
 # Each `scripted <scenario>` run has Gradle boot and tear down its own managed emulator, and Gradle's own
 # waits for the device cost about 10 of each scenario's 23 seconds (measured 2026-09-23). scripted-all boots
 # the managed device's AVD once, read-only from its snapshot, and runs every scenario against it through
-# the harness's `connected` device, each with its own daemon, relay and pairing as before. The app is
-# reinstalled per scenario, so no app state carries over.
+# the harness's `connected` device, each with its own daemon, relay and pairing as before. Both APKs are installed
+# once; before each scenario the app's data is cleared and the runtime permissions the install granted are granted
+# again, so no app state carries over and no scenario pays Gradle's install and removal (2026-10-05).
 
 def avd_root():
     return Path(os.environ.get("ANDROID_USER_HOME") or Path.home() / ".android") / "avd"
@@ -221,6 +222,46 @@ def managed_avd(device):
     home = avd_root() / "gradle-managed"
     found = sorted(home.glob("dev33_google_atd_*_Pixel_2.ini"))
     return (home, found[0].stem) if found else None
+
+
+APP_ID = "de.pyryco.mobile"
+APKS = ("app/build/outputs/apk/debug/app-debug.apk", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
+
+
+def adb_call(env, serial, *args, capture=False):
+    adb = str(Path(env["ANDROID_HOME"]) / "platform-tools" / "adb")
+    output = {"capture_output": True, "text": True} if capture else {"stdout": sys.stderr, "stderr": sys.stderr}
+    try:
+        return subprocess.run([adb, "-s", serial, *args], timeout=300, **output)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        print(f"Android gate: adb {' '.join(args[:2])} failed: {error}", file=sys.stderr)
+        return None
+
+
+def install_once(env, serial):
+    """Install both APKs as Gradle's device task does, with test packages allowed and runtime permissions granted.
+
+    Returns the runtime permissions the install granted, for reset_app to grant again, or None when the install
+    failed, in which case each scenario installs for itself through Gradle as before.
+    """
+    for apk in APKS:
+        installed = adb_call(env, serial, "install", "-r", "-t", "-g", str(ROOT / apk))
+        if installed is None or installed.returncode != 0:
+            return None
+    dump = adb_call(env, serial, "shell", "dumpsys", "package", APP_ID, capture=True)
+    if dump is None or dump.returncode != 0:
+        return None
+    granted = re.findall(r"^\s+([\w.]+): granted=true", dump.stdout.partition("runtime permissions:")[2], re.MULTILINE)
+    return list(dict.fromkeys(granted))
+
+
+def reset_app(env, serial, granted):
+    """Clear the app's data and grant back what clearing revoked, so a scenario starts as on a fresh install."""
+    for args in (("shell", "pm", "clear", APP_ID), *(("shell", "pm", "grant", APP_ID, name) for name in granted)):
+        done = adb_call(env, serial, *args)
+        if done is None or done.returncode != 0:
+            return False
+    return True
 
 
 def free_emulator_port(start=5600, end=5680):
@@ -370,10 +411,21 @@ def run_scripted_all(env, run_dir, device):
     directory = results / "connected/debug" if target == "connected" else results / "managedDevice/debug" / target
     all_paths, failed = [], []
     try:
+        granted = install_once(env, serial) if serial else None
+        if serial and granted is None:
+            print("Android gate: scripted-all could not install the APKs once; each scenario installs its own",
+                  file=sys.stderr)
         for scenario in SCENARIOS:
             scenario_env = {**env, "DETERMINISTIC": "1", "SCENARIO": scenario, "DEVICE": target}
             if serial:
                 scenario_env["ANDROID_SERIAL"] = serial
+            if granted is not None and reset_app(env, serial, granted):
+                scenario_env["E2E_INSTALLED"] = "1"
+            elif granted is not None:
+                # Gradle's device task removes the app when it finishes, so the rest install their own too.
+                print(f"Android gate: scripted {scenario}: could not clear the app; it and the rest install their own",
+                      file=sys.stderr)
+                granted = None
             started = time.time_ns()
             outcome = subprocess.run(["bash", str(ROOT / "scripts" / "e2e-emulator.sh")], cwd=ROOT,
                                      env=scenario_env, stdout=sys.stderr, stderr=sys.stderr)
@@ -477,6 +529,7 @@ def main():
         env.pop("LIVE_TESTS", None)
         env.pop("DETERMINISTIC", None)
         env.pop("E2E_DISABLE_ANIMATIONS", None)
+        env.pop("E2E_INSTALLED", None)
         command = ["bash", str(ROOT / "scripts" / "e2e-emulator.sh")]
         if args.mode in ("scripted", "scripted-all"):
             # Animations off on the emulator for each scenario (E2eInstrumentationRunner). The live run keeps them.

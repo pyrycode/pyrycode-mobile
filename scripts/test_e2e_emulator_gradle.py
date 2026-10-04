@@ -5,13 +5,20 @@ import tempfile
 import unittest
 
 
+TEST_RUN_END = "|| TEST_STATUS=$?\nfi\n"
+
+
+def device_test_run(script):
+    """The device test run, from its argument list to the end of the Gradle-or-installed choice."""
+    start = script.index("GRADLE_TEST_ARGS=(")
+    return script[start:script.index(TEST_RUN_END, start) + len(TEST_RUN_END)]
+
+
 class EmulatorGradleTest(unittest.TestCase):
     def test_invocation_selects_real_without_editing_source(self):
         root = Path(__file__).resolve().parent.parent
         script = (root / "scripts/e2e-emulator.sh").read_text()
-        start = script.index("GRADLE_TEST_ARGS=(")
-        end = script.index("  --console=plain", start) + len("  --console=plain")
-        invocation = script[start:end]
+        invocation = device_test_run(script)
         tracked = subprocess.check_output(["git", "ls-files", "-z"], cwd=root).split(b"\0")
         before = {path: (root / os.fsdecode(path)).read_bytes() for path in tracked if path}
         with tempfile.TemporaryDirectory() as tmp:
@@ -45,8 +52,7 @@ class EmulatorGradleTest(unittest.TestCase):
         # #847: only a run that minted a second host passes its five arguments, after --rerun.
         root = Path(__file__).resolve().parent.parent
         script = (root / "scripts/e2e-emulator.sh").read_text()
-        start = script.index("GRADLE_TEST_ARGS=(")
-        invocation = script[start:script.index("  --console=plain", start) + len("  --console=plain")]
+        invocation = device_test_run(script)
         with tempfile.TemporaryDirectory() as tmp:
             stub = Path(tmp) / "gradlew"
             stub.write_text('#!/bin/bash\nprintf "%s\\n" "$@"\n')
@@ -68,8 +74,7 @@ class EmulatorGradleTest(unittest.TestCase):
     def test_animations_argument_is_passed_only_when_the_gate_asks(self):
         root = Path(__file__).resolve().parent.parent
         script = (root / "scripts/e2e-emulator.sh").read_text()
-        start = script.index("GRADLE_TEST_ARGS=(")
-        invocation = script[start:script.index("  --console=plain", start) + len("  --console=plain")]
+        invocation = device_test_run(script)
         with tempfile.TemporaryDirectory() as tmp:
             stub = Path(tmp) / "gradlew"
             stub.write_text('#!/bin/bash\nprintf "%s\\n" "$@"\n')
@@ -89,8 +94,7 @@ class EmulatorGradleTest(unittest.TestCase):
         # #848: the second-client peer's token rides its own block, after the two-host arguments.
         root = Path(__file__).resolve().parent.parent
         script = (root / "scripts/e2e-emulator.sh").read_text()
-        start = script.index("GRADLE_TEST_ARGS=(")
-        invocation = script[start:script.index("  --console=plain", start) + len("  --console=plain")]
+        invocation = device_test_run(script)
         with tempfile.TemporaryDirectory() as tmp:
             stub = Path(tmp) / "gradlew"
             stub.write_text('#!/bin/bash\nprintf "%s\\n" "$@"\n')
@@ -110,8 +114,7 @@ class EmulatorGradleTest(unittest.TestCase):
         # #687: the operator-bypass daemon passes nothing, only its unmet prerequisite, or its six arguments.
         root = Path(__file__).resolve().parent.parent
         script = (root / "scripts/e2e-emulator.sh").read_text()
-        start = script.index("GRADLE_TEST_ARGS=(")
-        invocation = script[start:script.index("  --console=plain", start) + len("  --console=plain")]
+        invocation = device_test_run(script)
         prefix = "-Pandroid.testInstrumentationRunnerArguments."
         pairing = {"SERVER_ID_BYPASS": "srv-byp", "PAIR_CODE_BYPASS": "code-byp",
                    "BYPASS_PEER_TOKEN": "peer-byp", "BYPASS_PEER_SERVER_STATIC_PUBKEY": "key-byp",
@@ -178,7 +181,7 @@ class EmulatorBuildBeforeMintTest(unittest.TestCase):
         self.assertEqual(0, build.returncode, build.stderr)
         self.assertEqual(["-p", str(self.root), "assembleDebug", "assembleDebugAndroidTest",
                           "-PuseRelayRepository=true", "--console=plain"], build.stdout.splitlines())
-        test = self.run_block(self.block("GRADLE_TEST_ARGS=(", "  --console=plain"), GRADLEW=str(self.stub()))
+        test = self.run_block(device_test_run(self.script), GRADLEW=str(self.stub()))
         build_properties = [arg for arg in build.stdout.splitlines() if arg.startswith("-P")]
         test_properties = [arg for arg in test.stdout.splitlines()
                            if arg.startswith("-P") and not arg.startswith("-Pandroid.testInstrumentationRunnerArguments.")]
@@ -281,6 +284,81 @@ class EmulatorBuildBeforeMintTest(unittest.TestCase):
         result = self.run_test_task(0, {"daemon.log": self.NO_ADDRESS})
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual("", result.stderr)
+
+
+class InstalledRunTest(unittest.TestCase):
+    """scripted-all's emulator already holds both APKs: the run calls the instrumentation itself, never Gradle."""
+
+    FAKE_ADB = """#!/bin/bash
+printf '%s\\n' "$*" >> "$ADB_LOG"
+case "$1" in
+  shell) cat "$RAW_FIXTURE" ;;
+  logcat) [ "$2" = "-d" ] && echo "I TestRunner: started: ping" ;;
+esac
+"""
+    PASSED = ("INSTRUMENTATION_STATUS: class=fixture.Class\nINSTRUMENTATION_STATUS: test=method\n"
+              "INSTRUMENTATION_STATUS_CODE: 1\nINSTRUMENTATION_STATUS: class=fixture.Class\n"
+              "INSTRUMENTATION_STATUS: test=method\nINSTRUMENTATION_STATUS_CODE: 0\n"
+              "INSTRUMENTATION_RESULT: stream=\nOK (1 test)\nINSTRUMENTATION_CODE: -1\n")
+
+    def setUp(self):
+        self.root = Path(__file__).resolve().parent.parent
+        self.script = (self.root / "scripts/e2e-emulator.sh").read_text()
+        self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.repo = self.tmp / "repo"
+        (self.repo / "scripts").mkdir(parents=True)
+        (self.repo / "scripts/instrument-report.py").write_text((self.root / "scripts/instrument-report.py").read_text())
+        adb = self.tmp / "sdk/platform-tools/adb"
+        adb.parent.mkdir(parents=True)
+        adb.write_text(self.FAKE_ADB)
+        adb.chmod(0o700)
+        self.gradle = self.tmp / "gradlew"
+        self.gradle.write_text('#!/bin/bash\necho "gradle $*" >> "$ADB_LOG"\n')
+        self.gradle.chmod(0o700)
+
+    def run_scenario(self, raw, token="stub-token"):
+        start = self.script.index("device_quote() {")
+        functions = self.script[start:self.script.index("\n}\n", self.script.index("run_installed_instrumentation() {")) + 3]
+        (self.tmp / "raw.txt").write_text(raw)
+        body = "log() { :; }\n" + functions + device_test_run(self.script) + 'exit "${TEST_STATUS}"\n'
+        env = dict(os.environ, ANDROID_HOME=str(self.tmp / "sdk"), REPO_ROOT=str(self.repo), GRADLEW=str(self.gradle),
+                   E2E_INSTALLED="1", ADB_LOG=str(self.tmp / "adb.log"), RAW_FIXTURE=str(self.tmp / "raw.txt"),
+                   DEVICE="connected", TEST_TARGET="fixture.Class#method", PHONE_RELAY_URL="ws://10.0.2.2:8888",
+                   TOKEN=token, SERVER_ID="stub-server", SERVER_STATIC_PUBKEY="stub-key", PYRY_FORCE_TEST_RUN="1",
+                   E2E_DISABLE_ANIMATIONS="1")
+        result = subprocess.run(["bash", "-c", "set -euo pipefail\n" + body], env=env, capture_output=True, text=True)
+        return result, (self.tmp / "adb.log").read_text().splitlines()
+
+    def test_the_runner_arguments_reach_the_instrumentation_and_gradle_never_runs(self):
+        result, calls = self.run_scenario(self.PASSED, token="it's")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(calls[0], "logcat -c")
+        self.assertEqual(calls[1], "shell am instrument -w -r -e listener de.pyryco.mobile.e2e.FocusRecordListener "
+                                   "-e disableAnimations 'true' -e class 'fixture.Class#method' "
+                                   "-e relayUrl 'ws://10.0.2.2:8888' -e token 'it'\\''s' -e serverId 'stub-server' "
+                                   "-e serverStaticPublicKey 'stub-key' "
+                                   "de.pyryco.mobile.test/de.pyryco.mobile.e2e.E2eInstrumentationRunner")
+        self.assertEqual(calls[2], "logcat -d")
+        self.assertFalse(any(call.startswith("gradle") for call in calls))
+        results = self.repo / "app/build/outputs/androidTest-results/connected/debug"
+        self.assertIn('name="method"', (results / "TEST-installed.xml").read_text())
+        self.assertIn("started: ping", (results / "logcat-fixture.Class-method.txt").read_text())
+
+    def test_a_failed_or_crashed_instrumentation_fails_the_scenario(self):
+        for raw in (self.PASSED.replace("STATUS_CODE: 0", "STATUS_CODE: -2"),
+                    self.PASSED.replace("INSTRUMENTATION_CODE: -1", "INSTRUMENTATION_CODE: 0"), ""):
+            with self.subTest(raw=raw[-40:]):
+                result, _ = self.run_scenario(raw)
+                self.assertEqual(1, result.returncode)
+
+    def test_the_runner_and_listener_match_the_build(self):
+        build = (self.root / "app/build.gradle.kts").read_text()
+        self.assertIn('applicationId = "de.pyryco.mobile"', build)
+        self.assertNotIn("testApplicationId", build)
+        self.assertIn('testInstrumentationRunner = "de.pyryco.mobile.e2e.E2eInstrumentationRunner"', build)
+        self.assertIn('testInstrumentationRunnerArguments["listener"] = "de.pyryco.mobile.e2e.FocusRecordListener"',
+                      build)
+        self.assertEqual(1, build.count("testInstrumentationRunnerArguments["))
 
 
 if __name__ == "__main__":

@@ -370,6 +370,92 @@ class AndroidGateTest(unittest.TestCase):
         self.assertIn("failed: reconnect", stderr.getvalue())
         self.assertEqual(stdout.getvalue().count("<testcase"), len(gate.SCENARIOS))
 
+    def scripted_all_on_own_emulator(self, reset_results):
+        """scripted-all with a booted emulator: the env each scenario saw and the order of resets and scenarios."""
+        expected = gate.E2E_PACKAGE + ".DeterministicInteractiveStreamE2ETest"
+        events, envs = [], []
+        with tempfile.TemporaryDirectory() as tmp:
+            root, run_dir = Path(tmp), Path(tmp) / "run"
+            run_dir.mkdir()
+            reports = root / "app/build/outputs/androidTest-results/connected/debug"
+            reports.mkdir(parents=True)
+
+            def run(command, **kwargs):
+                scenario = kwargs["env"]["SCENARIO"]
+                events.append(("scenario", scenario))
+                envs.append(kwargs["env"])
+                (reports / "TEST-installed.xml").write_text(
+                    f'<testsuite tests="1"><testcase classname="{expected}" name="{scenario}"/></testsuite>')
+                return subprocess.CompletedProcess(command, 0)
+
+            resets = iter(reset_results)
+
+            def reset(env, serial, granted):
+                events.append(("reset", serial, tuple(granted)))
+                return next(resets, True)
+
+            with patch.object(gate, "ROOT", root), patch.object(gate, "managed_avd", return_value=(root, "avd")), \
+                    patch.object(gate, "boot_emulator", return_value=("emulator-5600", None)), \
+                    patch.object(gate, "install_once", return_value=["android.permission.CAMERA"]) as install, \
+                    patch.object(gate, "reset_app", side_effect=reset), \
+                    patch.object(gate.subprocess, "run", run), patch.object(gate.signal, "signal"), \
+                    contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+                result = gate.run_scripted_all({"ANDROID_HOME": "/sdk"}, run_dir, "pixel2Api33Atd")
+        install.assert_called_once_with({"ANDROID_HOME": "/sdk"}, "emulator-5600")
+        return result, events, envs
+
+    def test_scripted_all_installs_once_and_clears_the_app_before_every_scenario(self):
+        result, events, envs = self.scripted_all_on_own_emulator([])
+        self.assertEqual(result, 0)
+        reset = ("reset", "emulator-5600", ("android.permission.CAMERA",))
+        self.assertEqual(events, [item for scenario in gate.SCENARIOS for item in (reset, ("scenario", scenario))])
+        self.assertTrue(all(env["E2E_INSTALLED"] == "1" and env["ANDROID_SERIAL"] == "emulator-5600"
+                            and env["DEVICE"] == "connected" for env in envs))
+
+    def test_scripted_all_falls_back_to_gradle_installs_once_a_clear_fails(self):
+        result, events, envs = self.scripted_all_on_own_emulator([True, False])
+        self.assertEqual(result, 0)
+        self.assertEqual([event[0] for event in events[:4]], ["reset", "scenario", "reset", "scenario"])
+        self.assertEqual([event[0] for event in events[4:]], ["scenario"] * (len(gate.SCENARIOS) - 2))
+        self.assertEqual([env.get("E2E_INSTALLED") for env in envs], ["1"] + [None] * (len(gate.SCENARIOS) - 1))
+
+    def test_install_once_installs_both_apks_and_returns_the_granted_runtime_permissions(self):
+        dump = ("    install permissions:\n      android.permission.INTERNET: granted=true\n"
+                "    User 0: installed=true\n      runtime permissions:\n"
+                "        android.permission.POST_NOTIFICATIONS: granted=true, flags=[ ]\n"
+                "        android.permission.CAMERA: granted=true, flags=[ ]\n"
+                "        android.permission.READ_CONTACTS: granted=false, flags=[ ]\n")
+        calls = []
+
+        def run(command, **kwargs):
+            calls.append(command)
+            return subprocess.CompletedProcess(command, 0, dump if "dumpsys" in command else "", "")
+
+        root = Path("/tree")
+        with patch.object(gate, "ROOT", root), patch.object(gate.subprocess, "run", run):
+            granted = gate.install_once({"ANDROID_HOME": "/sdk"}, "emulator-5600")
+        adb = ["/sdk/platform-tools/adb", "-s", "emulator-5600"]
+        self.assertEqual(calls, [adb + ["install", "-r", "-t", "-g", str(root / gate.APKS[0])],
+                                 adb + ["install", "-r", "-t", "-g", str(root / gate.APKS[1])],
+                                 adb + ["shell", "dumpsys", "package", "de.pyryco.mobile"]])
+        self.assertEqual(granted, ["android.permission.POST_NOTIFICATIONS", "android.permission.CAMERA"])
+        failed = Mock(return_value=subprocess.CompletedProcess([], 1))
+        with patch.object(gate.subprocess, "run", failed), contextlib.redirect_stderr(io.StringIO()):
+            self.assertIsNone(gate.install_once({"ANDROID_HOME": "/sdk"}, "emulator-5600"))
+        self.assertEqual(failed.call_count, 1)
+
+    def test_reset_app_clears_the_data_then_grants_back(self):
+        run = Mock(return_value=subprocess.CompletedProcess([], 0))
+        with patch.object(gate.subprocess, "run", run):
+            self.assertTrue(gate.reset_app({"ANDROID_HOME": "/sdk"}, "emulator-5600", ["p.A", "p.B"]))
+        adb = ["/sdk/platform-tools/adb", "-s", "emulator-5600", "shell", "pm"]
+        self.assertEqual([call.args[0] for call in run.call_args_list],
+                         [adb + ["clear", "de.pyryco.mobile"], adb + ["grant", "de.pyryco.mobile", "p.A"],
+                          adb + ["grant", "de.pyryco.mobile", "p.B"]])
+        run = Mock(side_effect=subprocess.TimeoutExpired("adb", 300))
+        with patch.object(gate.subprocess, "run", run), contextlib.redirect_stderr(io.StringIO()):
+            self.assertFalse(gate.reset_app({"ANDROID_HOME": "/sdk"}, "emulator-5600", ["p.A"]))
+
     def test_changed_paths_lists_branch_uncommitted_and_untracked_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
