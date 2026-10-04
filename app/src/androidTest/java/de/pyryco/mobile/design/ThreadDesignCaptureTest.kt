@@ -179,7 +179,12 @@ class ThreadDesignCaptureTest {
             rule.onNodeWithText("Background tasks", substring = true).getUnclippedBoundsInRoot().bottom < actionsTop,
         )
         design.capture("chrome-1646", "keyboard-actions", "675:6160")
-        Espresso.pressBack()
+        // Back can be consumed by the IME instead of the footer overlay. Close that overlay explicitly
+        // before editing: suggestions intentionally stay hidden while a footer menu is open.
+        rule.onNodeWithContentDescription("Close options").performClick()
+        rule.waitUntil(5_000) {
+            rule.onAllNodesWithText("Background tasks", substring = true).fetchSemanticsNodes().isEmpty()
+        }
         fake().setSlashCommandMenu(
             CONVERSATION,
             SlashCommandMenu(listOf(SlashCommandMenuRow("clear", "", "Start a new session", emptyList(), null)), 0),
