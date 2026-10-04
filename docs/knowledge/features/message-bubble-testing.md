@@ -10,6 +10,14 @@ Test coverage and fixture guidance for [MessageBubble](message-bubble.md).
 `LocalTextToolbar`. Use native graphics for handles and a no-op `Magnifier` shadow
 for Robolectric dismissal, in a separate class. Devices ignore them.
 
+The recording system-menu provider presents its toolbar asynchronously: `waitForIdle()`
+does not guarantee that Copy is offered (#1695). `longPressAndCopy` waits for the observed
+`copyAction()` within the existing five-second bound before invoking it, then reads the
+selected text from the platform clipboard. `longPress_waitsForTheAsynchronousCopyMenu`
+delays provider presentation by 500 ms and still requires the pressed word on that
+clipboard, exposing the race even when repeated ordinary gestures pass. Keep the
+prose, fenced-code, user, streaming and meta-row assertions alongside this regression.
+
 `MessageMetaRowToggleTest` mounts the real `ThreadScreen` to cover show/hide and single selection, streaming-to-finished taps, links and independently visible code copy, inert attachment states, and the screen-reader toggle and hidden-row timestamp/copy semantics. Standalone `MessageBubbleTest` and palette fixtures retain the visible-row default, so their streaming copy test does not describe thread behavior. `ThreadFrameCaptureTest.compactWidthAndEnlargedText_keepFrameControlsReachable` reveals the row before testing its copy pointer target. Compose semantics assertions do not establish TalkBack's spoken order on a device.
 
 `app/src/sharedTest/.../components/MessageBubblePaletteTest.kt` uses native Canvas

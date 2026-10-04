@@ -1110,6 +1110,26 @@ calls, one per message, on missing files inside the chat's working directory —
 `Glob` tool, found when the first live attempt asked for it and the subagent made no call at all. One real
 claude turn: the prompt that starts the subagent.
 
+Setup diagnostics (#1695) distinguish `phone connection readiness` (`awaitConnected`),
+`chat creation` (`answerChat`) and `peer opening` (`SecondClientPeer.open`). `liveSetupStep`
+in `PeerWait.kt` names the stage on a coroutine timeout and retains its cause; peer opening
+also reports content-free link state. It adds no deadline or retry, and ordinary cancellation
+and other failures propagate unchanged. `answerChat` already follows repository replacement
+through `callOnLive`. Progress arrival retains its separate 180-second wait with started-task
+and progress-frame counts; card rendering retains its Compose assertion. A bare historical
+30-second timeout alone cannot identify which setup operation expired.
+
+The shared opening defect was repaired by #1698's process-scoped host/token peer identity:
+reusing a token with a freshly generated static key prevented authentication and settling.
+Reuse that store rather than rotating the key or weakening daemon binding; see the
+[peer identity contract](#what-rung-3-is-made-of) above. `LiveSetupStepTest` exercises the
+actual `RedialingLink` retry loop and checks that failed opening precedes any progress or
+rendering work, preserving the deadline and cause. The enabled live method still requires
+the recorded activity prefix and tools-count segment on the same running card, the
+one-turn work hold and `UnrecognizedRowSentinel`. See
+[Verification status](#verification-status) for fresh #1695 evidence and its remaining
+daemon-diagnostic evidence gap.
+
 The scenario joined the `LIVE=1` list un-ignored under #1107, once
 [pyrycode/pyrycode#2661](https://github.com/pyrycode/pyrycode/pull/2661) (merge `b733a68`) closed the
 daemon parser gap filed as [pyrycode/pyrycode#2658](https://github.com/pyrycode/pyrycode/issues/2658): a
@@ -2335,7 +2355,32 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-04 (#1696).** The dispatcher ran the full
+**Current live verification — 2026-10-04 (#1695).** The dispatcher ran the full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1695`
+at `cb14bb888a`, merged with `origin/main` at `ad547c6425` (0 commits behind before merge):
+**53 executed, 53 passed, 0 failed, 0 skipped**, exit 0. The fresh XML contains
+`de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_backgroundAgentProgress_showsOnRunningCard`
+with no failure, error or skip: the method ran and passed in this full suite, with its
+same-card recorded-activity/tools-count assertion and sentinel enabled. This was not a
+separate focused run. The matching stderr records daemon `dcaecd416535250b48a444eda887edc48f76913a`,
+Claude 2.1.280 and the live TLS relay. See the
+[dispatcher gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1695#issuecomment-5975638550).
+Retained reports under the dispatcher repository's `logs/` are
+`2026-10-04T01-53-56-936Z_real-claude-gate_#1695.log` and its matching `.stderr.log`.
+
+**Binding comparison evidence remains pending for #1695.** The fresh report includes no
+daemon rejection counts or retained daemon-log path; `e2e-emulator.sh` removes its working
+directory on success. Do not infer zero `static_key_mismatch` or `bound_to_other_key`
+occurrences from a passing test. Historical verifier evidence records 102/84/102/90
+rejections, all `bound_to_other_key`, in the #1631 branch/base and #1637 branch/base logs.
+The #1631 base executed 19 tests with 17 failures; the #1637 base executed 19 with 18
+failures, while each branch executed 53 with 20 failures; all had 0 skips and the target
+failed. The #1698 full suite executed 53 with 1 unrelated failure and 0 skips; this target
+passed and its retained daemon log had zero binding rejections, as detailed below.
+That supports the shared key-binding diagnosis but does not supply fresh #1695 daemon
+diagnostics. Verification must supply the missing fresh comparison to finish this handoff.
+
+**Previous live verification — 2026-10-04 (#1696).** The dispatcher ran the full
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1696`
 at `1ce59c32dc`, merged with `origin/main` at `d63e304b8e` (0 commits behind before merge):
 **53 executed, 52 passed, 1 failed, 0 skipped**, exit 1. The fresh full-suite XML contains
@@ -3190,6 +3235,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — hardened:** [#1695](https://github.com/pyrycode/pyrycode-mobile/issues/1695) classifies
+  connection readiness, chat creation and peer opening in
+  `InteractiveStreamE2ETest#interactiveTurn_backgroundAgentProgress_showsOnRunningCard`, reusing
+  #1698's shared identity repair. Progress arrival and card rendering remain separately diagnosed;
+  the one-turn hold, sentinel and same-card matcher remain intact. The named method passed in the
+  fresh full live suite; [Verification status](#verification-status) records counts and the missing
+  fresh daemon binding comparison routed to verification. No rung-4 twin was added: scripted
+  `fakeclaude` still emits no `background_task_*` frames.
 
 - **Coverage — hardened:** [#1696](https://github.com/pyrycode/pyrycode-mobile/issues/1696) makes
   `InteractiveStreamE2ETest#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`
