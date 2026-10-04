@@ -857,6 +857,7 @@ class ThreadScreenModalTest {
 
     @Test
     fun status_band_reads_waiting_for_permission_while_a_request_is_open_and_connected() {
+        var stage by mutableStateOf(LocalSendStage.Sending)
         var connection by mutableStateOf<ConnectionState>(ConnectionState.Connected)
         composeTestRule.setContent {
             PyrycodeMobileTheme {
@@ -867,6 +868,7 @@ class ThreadScreenModalTest {
                     connectionState = connection,
                     onRetry = {},
                     modalState = openModal(),
+                    localSendStage = stage,
                 )
             }
         }
@@ -875,6 +877,11 @@ class ThreadScreenModalTest {
         composeTestRule.onNodeWithText(waiting).assertIsDisplayed()
         composeTestRule.onNodeWithTag(STATUS_GLYPH_TEST_TAG, useUnmergedTree = true).assertExists()
         composeTestRule.onNodeWithText(string(R.string.question_waiting_for_answers)).assertDoesNotExist()
+
+        composeTestRule.onNodeWithText(string(R.string.thread_sending_label)).assertDoesNotExist()
+        composeTestRule.runOnIdle { stage = LocalSendStage.Waiting }
+        composeTestRule.onNodeWithText(waiting).assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.thread_waiting_label)).assertDoesNotExist()
 
         composeTestRule.runOnIdle { connection = ConnectionState.Connecting }
         composeTestRule.onNodeWithText(waiting).assertDoesNotExist()

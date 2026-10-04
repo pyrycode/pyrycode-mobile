@@ -187,7 +187,7 @@ fun ThreadScreen(
     thinkingProgress: ThinkingProgress? = null, // #803: claude's live token reading, decorates the thinking arm
     isBusy: Boolean = false, // #459: a turn is in flight (thinking OR responding) → show the interrupt affordance
     isStalled: Boolean = false, // #1311: the daemon reported a stall; the band's stall arm
-    localSendPending: Boolean = false, // #1311: a send is with the daemon, which has not spoken yet → "Thinking…"
+    localSendStage: LocalSendStage = LocalSendStage.None,
     onInterrupt: () -> Unit = {}, // #459: wired by MainActivity → vm::onInterrupt (the #458 send path)
     onTitleClick: () -> Unit = {},
     onOverflowEvent: (ThreadEvent) -> Unit = {},
@@ -474,7 +474,7 @@ fun ThreadScreen(
                         onCompact = onCompact,
                         isThinking = isThinking,
                         isBusy = isBusy,
-                        localSendPending = localSendPending,
+                        localSendStage = localSendStage,
                         thinkingProgress = thinkingProgress,
                         runningTool = if (isBusy) openTool else null,
                         waitingForAnswers = shownQuestion != null && connectionState == ConnectionState.Connected,
@@ -1039,7 +1039,7 @@ fun ThreadScreen(
  * **The snowflake (#1312).** The band, not an arm, draws one [ThreadStatusGlyph] at its leading edge in
  * every state, as desktop's `ComposerStatusArea` draws `PyryMark`; only waiting for answers puts its own
  * question glyph there instead. Waiting for permission (#1483) keeps the snowflake and reads "Waiting for
- * permission" in place of the arms, as Figma `639:2242` draws it. It turns while [isBusy] or [localSendPending] holds, desktop's
+ * permission" in place of the arms, as Figma `639:2242` draws it. It turns while [isBusy] or [localSendStage] is open, desktop's
  * `isStatusIconTurning`, and is still otherwise, including an api-retry, compaction or stall while idle.
  *
  * [thinkingProgress] (#803) adds **no arm**: it decorates the daemon's thinking phase only, so every arm
@@ -1061,7 +1061,7 @@ private fun ThreadStatusArea(
     onCompact: (() -> Unit)?,
     isThinking: Boolean,
     isBusy: Boolean,
-    localSendPending: Boolean,
+    localSendStage: LocalSendStage,
     thinkingProgress: ThinkingProgress?,
     runningTool: ToolCall?,
     waitingForAnswers: Boolean,
@@ -1086,7 +1086,7 @@ private fun ThreadStatusArea(
                 modifier = Modifier.size(14.dp, 16.dp),
             )
         } else {
-            ThreadStatusGlyph(turning = isBusy || localSendPending)
+            ThreadStatusGlyph(turning = isBusy || localSendStage != LocalSendStage.None)
         }
         // Always present, so the pill keeps the band's right end while no reading shows.
         Box(Modifier.weight(1f).testTag(STATUS_READING_TEST_TAG)) {
@@ -1111,7 +1111,7 @@ private fun ThreadStatusArea(
                             hasTurnOutcome = turnOutcome != null,
                             isThinking = isThinking,
                             isBusy = isBusy,
-                            localSendPending = localSendPending,
+                            localSendStage = localSendStage,
                             hasOpenTool = runningTool != null,
                         ),
                     apiRetry = apiRetry,
@@ -1146,15 +1146,28 @@ private fun ThreadStatusArea(
 }
 
 /** Which one reading the status band shows (#1311); see [statusArm]. */
-internal enum class StatusArm { None, Connection, Resetting, ApiRetry, Compacting, Stalled, TurnOutcome, Thinking, Working, RunningTool }
+internal enum class StatusArm {
+    None,
+    Connection,
+    Resetting,
+    ApiRetry,
+    Compacting,
+    Stalled,
+    TurnOutcome,
+    Thinking,
+    Working,
+    RunningTool,
+    Sending,
+    Waiting,
+}
 
 /**
  * The status band's one arm order (#1311), desktop's `workingIndicatorState` and
  * `workingIndicatorStateWithLocalSend` with Mobile's connection arm at the top and its turn-outcome arm
  * above the turn's own readings. Top wins: connection, Reset session, api-retry, compaction, stall, turn
  * outcome, then the running turn — an open tool while busy, else thinking, else working — and last the
- * local-send window, which reads as thinking. Offline returns [StatusArm.None]: the Top overlay's retry
- * pill owns it.
+ * local-send window, which reads Sending or Waiting for the conversation's agent. Offline
+ * returns [StatusArm.None]: the Top overlay's retry pill owns it.
  *
  * A pending local send hides a turn outcome: that outcome belongs to the turn before the send, and the new
  * turn's first `thinking` / `responding` would clear it anyway. Since #1357 the send itself clears it too.
@@ -1168,7 +1181,7 @@ internal fun statusArm(
     hasTurnOutcome: Boolean,
     isThinking: Boolean,
     isBusy: Boolean,
-    localSendPending: Boolean,
+    localSendStage: LocalSendStage,
     hasOpenTool: Boolean,
 ): StatusArm =
     when {
@@ -1178,11 +1191,12 @@ internal fun statusArm(
         apiRetrying -> StatusArm.ApiRetry
         isCompacting -> StatusArm.Compacting
         isStalled -> StatusArm.Stalled
-        hasTurnOutcome && !localSendPending -> StatusArm.TurnOutcome
+        hasTurnOutcome && localSendStage == LocalSendStage.None -> StatusArm.TurnOutcome
         isBusy && hasOpenTool -> StatusArm.RunningTool
         isThinking -> StatusArm.Thinking
         isBusy -> StatusArm.Working
-        localSendPending -> StatusArm.Thinking
+        localSendStage == LocalSendStage.Sending -> StatusArm.Sending
+        localSendStage == LocalSendStage.Waiting -> StatusArm.Waiting
         else -> StatusArm.None
     }
 
@@ -1203,6 +1217,19 @@ private fun StatusReading(
 ) {
     when (arm) {
         StatusArm.None -> Unit
+        StatusArm.Sending, StatusArm.Waiting ->
+            Text(
+                stringResource(
+                    when {
+                        arm == StatusArm.Sending -> R.string.thread_sending_label
+                        agent == ConversationAgent.Codex -> R.string.thread_waiting_label_codex
+                        else -> R.string.thread_waiting_label
+                    },
+                ),
+                modifier = modifier.padding(vertical = 4.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
         StatusArm.Connection -> ConnectionStatusIndicator(state = connectionState, modifier = modifier)
         StatusArm.Resetting -> ResettingIndicator(status = resetting, modifier = modifier, agent = agent)
         StatusArm.ApiRetry -> ApiRetryIndicator(status = apiRetry, modifier = modifier, agent = agent)
