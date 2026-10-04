@@ -3644,7 +3644,7 @@ class InteractiveStreamE2ETest {
             pairAnswerHost()
             val (chatA, nameA) = answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "a-")
             val (chatB, nameB) = answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "b-")
-            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            peerStep(peer, "open answer peer") { peer.open(CONNECT_TIMEOUT_MS) }
 
             // 1. AC-1: A's command raises a prompt in A that carries claude's context and a don't-ask-again offer.
             openChatRow(nameA)
