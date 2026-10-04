@@ -21,6 +21,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -125,9 +126,13 @@ class CreateChatFailureNoticeTest {
         assertEquals(treeBefore, rule.onNodeWithContentDescription("New chat on Host").getUnclippedBoundsInRoot())
         rule.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsActions.Dismiss)).assertCountEquals(0)
         rule.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.LiveRegion)).assertCountEquals(0)
-        listOf("Open settings", "Open archive", "Pair another host").forEach {
-            rule.onNodeWithContentDescription(it).performTouchInput { click() }
+        listOf("Settings", "Archive").forEach { label ->
+            rule.onNodeWithContentDescription("Open menu").performClick()
+            advance(64)
+            rule.onNode(hasText(label)).performClick()
+            advance(64)
         }
+        rule.onNodeWithContentDescription("Pair another host").performTouchInput { click() }
         assertEquals(listOf(ChannelListEvent.SettingsTapped, ChannelListEvent.ArchiveTapped, ChannelListEvent.PairHostTapped), events)
     }
 

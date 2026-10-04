@@ -185,6 +185,8 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 
 | Surface or state | Node | Status | Audit row | Owner | Linked issues |
 |---|---|---|---|---|---|
+| Closed channel-list header: menu, add-host and rule | [`133:259`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=133-259), top bar `I133:259;115:3693` | header reviewed on #1665 | #1665 / PR #1743 | #1665 | #1665 |
+| Open header menu: Settings then Archive | Reuses Options overlay [`533:1958`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=533-1958) in Actions mode with client-owned labels | no separate frame (reuse decision on #1665, under the 2026-10-03 rule) | component reuse; exact open-dropdown pixel match unverified | #1665 | #1665 |
 | Channel List, connected host, expanded tree | `15:8` | audited, mismatch | `list/index.md` › Channel List | #737, #738 | #1486 (family root), #1521, #1522, #1523, #1525 |
 | Selected and pressed (darker-filled) conversation rows, edit pen on the selected row | `15:8` | audited, mismatch (fixed and verified against `15:8` by #1523) | › Channel List | #737, #738 | #1486, #1523 |
 | Host-row edit pen | `15:8` draws none | audited, mismatch | › Channel List (Icon paths) | #744 | #1525 |
