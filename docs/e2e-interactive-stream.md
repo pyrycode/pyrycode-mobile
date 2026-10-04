@@ -818,6 +818,13 @@ the ping prompt, its reply, the held prompt, and its reply — exactly once each
 order. Without #1572, an open thread only ever asked for the newest page on a never-loaded thread, so A's
 cached-but-stale reopen would show just the first two rows and the final wait would time out.
 
+Before any prompt, the scenario opens and closes a prior `runningToolPeer` with the same pairing
+(#1692). The observing peer must then complete its own handshake and correlated readiness probe,
+with the existing deadline. This exposes token-bound static identity rotation even when the method
+runs alone, without adding Claude turns. See [Coverage — hardened](#follow-ups-to-ticket) for the
+authentication diagnosis and [Verification status](#verification-status) for the repaired full-suite
+pass; the offscreen, unread, cache and four-row recovery assertions remain unchanged.
+
 Two real claude turns: A's ping and A's permission-held command. Folded into the pre-ship `LIVE=1` gate
 on the curated list in `scripts/e2e-emulator.sh`, taking `LIVE_MINIMUM` from 51 to 52. The live run that
 closed #1581 (dispatcher real-claude gate, 2026-10-03; branch `feature/1581` at `70aee9838d` merged with
@@ -1653,7 +1660,7 @@ python3 scripts/android-test-gate.py live
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the current selector has 44 runnable `@Test` methods. The historical
+incantation to remember — the current selector has 53 runnable `@Test` methods. The historical
 inventory below describes the pre-#1193 forty-four-method set; ignored methods are excluded from
 the current selector as described under the model and effort settings round trip. It covered ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
@@ -2335,7 +2342,21 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-04 (#1696).** The dispatcher ran the full
+**Current live verification — 2026-10-04 (#1692).** The dispatcher ran the full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1692`
+at `b5e8174949c9cb3c652c0f6cc84301fa31075db5`, merged with `origin/main` at `ad547c6425`
+in a detached worktree (0 commits behind before merge): **53 executed, 53 passed, 0 failed,
+0 skipped**, exit 0. The fresh XML explicitly includes
+`de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk`
+with no failure, error or skip: the named method ran and passed in this full suite. Both same-token
+peer opens and the unchanged ping-cache, permission-held completion with B open, phone-recorded unread
+completion before reconnect, absent held reply in A's cache after reconnect, and four exactly-once
+chronological recovered rows passed. This was full-suite evidence, not a separate focused run.
+See the [gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1692#issuecomment-5975965445).
+The retained XML report is `2026-10-04T02-43-28-151Z_real-claude-gate_#1692.log` under the
+dispatcher repository's `logs/`, with diagnostics in the adjacent `.stderr.log`.
+
+**Previous live verification — 2026-10-04 (#1696).** The dispatcher ran the full
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1696`
 at `1ce59c32dc`, merged with `origin/main` at `d63e304b8e` (0 commits behind before merge):
 **53 executed, 52 passed, 1 failed, 0 skipped**, exit 1. The fresh full-suite XML contains
@@ -3190,6 +3211,20 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — hardened:** [#1692](https://github.com/pyrycode/pyrycode-mobile/issues/1692) protects
+  `InteractiveStreamE2ETest#interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk`
+  with a same-token prior-peer open/close before the observing peer. The four #1631/#1637 branch/base
+  failures occurred at initial authentication before any prompt: retained daemon logs `AOLbIc`,
+  `JKsJv3`, `Cf5gl9` and `tWgsL4` contained respectively 102/84/102/90 `static_key_mismatch`
+  rejections with `bound_to_other_key`. Sequential peers rotated the static key for an already-bound
+  token; the repair reuses #1698's identity custody. An unsettled/redialing status alone cannot
+  distinguish dial, handshake and probe failures, and these runs do not establish a newest-page defect
+  or the historical #1036 outbox cause. The JVM regression completes fresh authenticated handshakes
+  and encrypted correlated readiness probes across closed sessions; see
+  [Test scheduling and harnesses](knowledge/features/development-verification-test-scheduling.md#test-scheduling-and-harnesses).
+  The named live method remains enabled and curated with unchanged recovery assertions and deadlines,
+  and passed in the fresh full suite recorded in [Verification status](#verification-status).
 
 - **Coverage — hardened:** [#1696](https://github.com/pyrycode/pyrycode-mobile/issues/1696) makes
   `InteractiveStreamE2ETest#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`
