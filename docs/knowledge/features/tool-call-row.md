@@ -186,21 +186,30 @@ toolRowSubject(...))`.
 
 **`toolRowSubject`.** For `toolName == "Bash"` (exact match — `BashOutput` does not qualify), the first
 non-empty of `description`, `command`; otherwise the first non-empty of `TOOL_SUBJECT_FIELDS =
-file_path, path, notebook_path, command, pattern, url, query, description`; otherwise the `input`
-précis verbatim. **"Non-empty" is `value != ""`, not `isNotBlank()`** — a whitespace-only field wins
+file_path, path, notebook_path, command, pattern, url, query, description, skill`; otherwise the `input`
+précis verbatim for a nonempty map. An empty `inputFields` map yields no subject (#1575).
+**"Non-empty" is `value != ""`, not `isNotBlank()`** — a whitespace-only field wins
 over a lower-priority field, matching desktop's decision, not a Kotlin-idiomatic default. A field
 picked from `TOOL_PATH_FIELDS = file_path, path, notebook_path` is shortened through
 `shortenToolPath`; nothing else is. **Since #1575, `inputFields` is persisted in the disk cache**
 (`CachedToolCall.inputFields`, defaulted `emptyMap()` so a pre-#1575 cache file still reads back), so a
-restored row keeps the same headline and subject it had live. The précis fallback's production trigger
-is now a row with no fields at all — a pre-#1575 cache file, or a daemon that sent no `input` — not
-cache restoration itself. Desktop's third rule (fall back to any single-line
-field before the précis) is **not** ported; this ticket's contract stops at the four listed above.
+restored row keeps the same headline and subject it had live. A pre-#1575 cache file, or a daemon that
+sent no `input`, leaves no fields and therefore no collapsed subject. The précis fallback applies
+only when the map is nonempty but none of the preferred fields has a nonempty value. Desktop's third
+rule (fall back to any single-line field before the précis) is **not** ported.
 **Since #1315, `toolHeadline` only reaches this function's `Bash` branch when both `description` and
 `command` are empty** — `toolHeadline` itself already handles the two `Bash`-with-a-field cases, so
-in production this function's own `Bash`-specific lookup is effectively dead code, reachable only
-through the précis fallback. It is left as-is (the plan scoped this ticket to `toolHeadline`, not a
+in production this function's own `Bash`-specific lookup finds neither value, so the general field
+lookup and fallback rules apply. It is left as-is (the plan scoped this ticket to `toolHeadline`, not a
 `toolRowSubject` rewrite).
+
+**Skill subjects (#1726).** A call with `skill = "file-pyrycode-ticket"` and `args` uses the simple
+headline `Skill file-pyrycode-ticket`. `skill` follows `description`, preserving every earlier field's
+precedence, and is displayed verbatim rather than shortened as a path. An empty `skill` retains the
+existing fallback rules. Expanded input still renders the supplied `skill` and `args` fields using
+the [expanded-body rules](#expanded-body); collapsed subject selection does not alter that content.
+`ToolRowFormatTest` uses a JSON-shaped précis for the Skill regression and asserts both the subject
+and simple headline, alongside description-before-skill precedence and empty-skill fallback coverage.
 
 **`shortenToolPath`.** Splits on `/`, drops empty segments (so a leading `/` does not count as one);
 `≤ 4` segments left unchanged, otherwise `.../` + the last four joined by `/`. The shortened string is

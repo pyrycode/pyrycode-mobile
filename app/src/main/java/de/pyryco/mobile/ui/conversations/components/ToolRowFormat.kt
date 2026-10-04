@@ -10,7 +10,7 @@ import kotlin.math.absoluteValue
 
 /** The subject's probe order; the first field present with a non-empty value wins. */
 private val TOOL_SUBJECT_FIELDS: List<String> =
-    listOf("file_path", "path", "notebook_path", "command", "pattern", "url", "query", "description")
+    listOf("file_path", "path", "notebook_path", "command", "pattern", "url", "query", "description", "skill")
 
 /** Fields whose value is a path and is shortened for display. Membership is the shortening decision. */
 private val TOOL_PATH_FIELDS: Set<String> = setOf("file_path", "path", "notebook_path")
