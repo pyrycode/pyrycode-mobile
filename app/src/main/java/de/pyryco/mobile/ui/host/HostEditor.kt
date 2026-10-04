@@ -1,12 +1,50 @@
 package de.pyryco.mobile.ui.host
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.HostSystemPromptReading
+import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.ui.components.EditHostModal
+import de.pyryco.mobile.ui.components.MobileModal
+import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.modalControl
+import de.pyryco.mobile.ui.theme.modalFieldContainer
+import de.pyryco.mobile.ui.theme.modalFieldText
 import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -18,6 +56,43 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+
+/** An unread value is never equivalent to an explicitly empty prompt. */
+sealed interface HostPromptState {
+    data object Loading : HostPromptState
+
+    data object Unavailable : HostPromptState
+
+    data class Loaded(
+        val confirmed: String,
+        val defaultPrompt: String,
+        val draft: String,
+        val saving: Boolean = false,
+        val failed: Boolean = false,
+    ) : HostPromptState {
+        val overLimit: Boolean get() = !SystemPromptLimit.fits(draft)
+        val canSave: Boolean get() = !saving && !overLimit
+        val showReset: Boolean get() = draft != defaultPrompt
+
+        override fun toString(): String = "Loaded(text=<redacted>, saving=$saving, failed=$failed)"
+    }
+}
+
+sealed interface HostPromptEvent {
+    data object Open : HostPromptEvent
+
+    data class Edit(
+        val text: String,
+    ) : HostPromptEvent {
+        override fun toString(): String = "Edit(text=<redacted>)"
+    }
+
+    data object Reset : HostPromptEvent
+
+    data object Save : HostPromptEvent
+
+    data object Discard : HostPromptEvent
+}
 
 /**
  * The Edit host modal's target and the caller-owned flags that component requires (#744).
@@ -67,6 +142,8 @@ data class HostEditorState(
     val failed: Boolean = false,
     val confirmingUnpair: Boolean = false,
     val unpairFailed: Boolean = false,
+    val prompt: HostPromptState = HostPromptState.Loading,
+    val editingPrompt: Boolean = false,
 )
 
 /**
@@ -90,6 +167,7 @@ class HostEditorController(
     private val scope: CoroutineScope,
     private val pairedServers: PairedServerCollectionStore,
     private val appPreferences: AppPreferences,
+    private val repositoryFor: (String) -> ConversationRepository? = { null },
 ) {
     private val editor = MutableStateFlow<HostEditorState?>(null)
 
@@ -108,6 +186,7 @@ class HostEditorController(
 
     // Read and written only from a tap dispatch on the main dispatcher, so it needs no synchronisation.
     private var openJob: Job? = null
+    private var openToken = Any()
 
     /**
      * Opens the Edit host modal on [serverId]'s own stored record (#744).
@@ -121,6 +200,8 @@ class HostEditorController(
      */
     fun open(serverId: String) {
         openJob?.cancel()
+        val token = Any().also { openToken = it }
+        editor.value = null
         openJob =
             scope.launch {
                 val entry =
@@ -138,6 +219,7 @@ class HostEditorController(
                     RelayLog.d { "event=host_editor_open_rejected code=unknown_host" }
                     return@launch
                 }
+                if (openToken !== token) return@launch
                 editor.value =
                     HostEditorState(
                         serverId = serverId,
@@ -148,8 +230,75 @@ class HostEditorController(
                         initialName = entry.displayName?.takeIf { it.isNotBlank() }.orEmpty(),
                     )
                 RelayLog.d { "event=host_editor_opened" }
+                val reading = promptResult { repositoryFor(serverId)?.requestHostSystemPrompt()?.getOrThrow() }
+                val current = editor.value
+                if (openToken === token && current != null && !current.saving) {
+                    editor.value = current.copy(prompt = reading?.loaded() ?: HostPromptState.Unavailable)
+                    RelayLog.d { "event=host_prompt_read outcome=${if (reading == null) "unavailable" else "loaded"}" }
+                }
             }
     }
+
+    /** Events carry no target: the captured open host owns every read and write. */
+    fun onPromptEvent(event: HostPromptEvent) {
+        val target = editor.value ?: return
+        if (target.saving || target.confirmingUnpair) return
+        val loaded = target.prompt as? HostPromptState.Loaded
+        when (event) {
+            HostPromptEvent.Open -> {
+                if (loaded?.saving == true) return
+                editor.value =
+                    target.copy(editingPrompt = true, prompt = loaded?.copy(draft = loaded.confirmed, failed = false) ?: target.prompt)
+            }
+            HostPromptEvent.Discard -> {
+                editor.value =
+                    target.copy(
+                        editingPrompt = false,
+                        prompt =
+                            loaded?.copy(draft = loaded.confirmed, saving = false, failed = false) ?: target.prompt,
+                    )
+                RelayLog.d { "event=host_prompt_discarded" }
+            }
+            is HostPromptEvent.Edit -> {
+                if (!target.editingPrompt || loaded == null || loaded.saving) return
+                editor.value = target.copy(prompt = loaded.copy(draft = event.text, failed = false))
+            }
+            HostPromptEvent.Reset -> {
+                if (!target.editingPrompt || loaded == null || loaded.saving) return
+                editor.value = target.copy(prompt = loaded.copy(draft = loaded.defaultPrompt, failed = false))
+                RelayLog.d { "event=host_prompt_reset_draft" }
+            }
+            HostPromptEvent.Save -> {
+                if (!target.editingPrompt || loaded == null || !loaded.canSave) return
+                val pending = target.copy(prompt = loaded.copy(saving = true, failed = false))
+                val token = openToken
+                editor.value = pending
+                scope.launch {
+                    RelayLog.d { "event=host_prompt_save_started" }
+                    val ack = promptResult { repositoryFor(target.serverId)?.setHostSystemPrompt(loaded.draft)?.getOrThrow() }
+                    if (openToken === token && editor.value === pending) {
+                        editor.value =
+                            if (ack == null) {
+                                pending.copy(prompt = loaded.copy(failed = true))
+                            } else {
+                                pending.copy(prompt = ack.loaded(), editingPrompt = false)
+                            }
+                    }
+                    RelayLog.d { "event=host_prompt_save outcome=${if (ack == null) "failed" else "acknowledged"}" }
+                }
+            }
+        }
+    }
+
+    private suspend fun promptResult(read: suspend () -> HostSystemPromptReading?): HostSystemPromptReading? =
+        try {
+            read()?.takeIf { SystemPromptLimit.fits(it.systemPrompt) && SystemPromptLimit.fits(it.defaultSystemPrompt) }
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            null
+        }
+
+    private fun HostSystemPromptReading.loaded() = HostPromptState.Loaded(systemPrompt, defaultSystemPrompt, systemPrompt)
 
     /**
      * Saves the entered name as the open host's local display name, clearing it when blank.
@@ -167,7 +316,7 @@ class HostEditorController(
      */
     fun submitName(name: String) {
         val target = editor.value ?: return
-        if (target.saving) return
+        if (target.saving || target.editingPrompt) return
         val pending = target.copy(saving = true, failed = false)
         editor.value = pending
         scope.launch {
@@ -198,7 +347,7 @@ class HostEditorController(
      */
     fun requestUnpair() {
         val target = editor.value ?: return
-        if (target.saving) return
+        if (target.saving || target.editingPrompt) return
         editor.value = target.copy(confirmingUnpair = true, failed = false, unpairFailed = false)
         RelayLog.d { "event=host_unpair_requested" }
     }
@@ -274,6 +423,8 @@ class HostEditorController(
      * on anyway, so there is no pending transition for it to strand.
      */
     fun dismiss() {
+        openToken = Any()
+        openJob?.cancel()
         editor.value = null
         RelayLog.d { "event=host_editor_dismissed" }
     }
@@ -302,6 +453,7 @@ internal fun HostEditorModal(
     onUnpairConfirmed: () -> Unit,
     onUnpairDeclined: () -> Unit,
     onDismissRequest: () -> Unit,
+    onPromptEvent: (HostPromptEvent) -> Unit = {},
 ) {
     if (state == null) return
     EditHostModal(
@@ -321,5 +473,141 @@ internal fun HostEditorModal(
                 else -> null
             },
         confirmingUnpair = state.confirmingUnpair,
+        promptRow = { HostPromptRow(state.prompt, state.saving) { onPromptEvent(HostPromptEvent.Open) } },
+        promptEditor = if (state.editingPrompt) ({ HostPromptEditor(state.prompt, onPromptEvent) }) else null,
     )
+}
+
+private val HostPromptLineBox = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
+
+internal const val HOST_PROMPT_FIELD_TAG = "host_prompt_field"
+internal const val HOST_PROMPT_PREVIEW_TAG = "host_prompt_preview"
+
+@Composable
+private fun HostPromptRow(
+    state: HostPromptState,
+    disabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val subtitle =
+        when (state) {
+            HostPromptState.Loading -> stringResource(R.string.host_prompt_loading)
+            HostPromptState.Unavailable -> stringResource(R.string.host_prompt_unavailable)
+            is HostPromptState.Loaded -> state.confirmed.ifEmpty { stringResource(R.string.host_prompt_empty) }
+        }
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable(enabled = !disabled, onClick = onClick).padding(vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                stringResource(R.string.host_prompt_title),
+                style = MaterialTheme.typography.bodyLarge.copy(lineHeightStyle = HostPromptLineBox),
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                subtitle,
+                Modifier.fillMaxWidth().testTag(HOST_PROMPT_PREVIEW_TAG),
+                style = MaterialTheme.typography.bodySmall.copy(lineHeightStyle = HostPromptLineBox),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Icon(painterResource(R.drawable.ic_settings_chevron), null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun HostPromptEditor(
+    state: HostPromptState,
+    onEvent: (HostPromptEvent) -> Unit,
+) {
+    val loaded = state as? HostPromptState.Loaded
+    val error = if (loaded?.overLimit == true || loaded?.failed == true) stringResource(R.string.host_prompt_failed) else null
+    val title = stringResource(R.string.host_prompt_title)
+    MobileModal(
+        title = title,
+        onDismissRequest = { onEvent(HostPromptEvent.Discard) },
+        onSubmit = { onEvent(HostPromptEvent.Save) },
+        submissionEnabled = loaded?.canSave == true,
+        loading = loaded?.saving == true,
+        error = error,
+    ) {
+        if (loaded == null) {
+            Text(
+                stringResource(if (state == HostPromptState.Loading) R.string.host_prompt_loading else R.string.host_prompt_unavailable),
+                style = MaterialTheme.typography.bodySmall.copy(lineHeightStyle = HostPromptLineBox),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                BasicTextField(
+                    value = loaded.draft,
+                    onValueChange = { onEvent(HostPromptEvent.Edit(it)) },
+                    enabled = !loaded.saving,
+                    maxLines = 24,
+                    modifier = Modifier.fillMaxWidth().testTag(HOST_PROMPT_FIELD_TAG).semantics { contentDescription = title },
+                    textStyle =
+                        MaterialTheme.typography.bodyMedium.copy(
+                            color = MaterialTheme.colorScheme.modalFieldText,
+                            lineHeightStyle = HostPromptLineBox,
+                        ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    decorationBox = { field ->
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 280.dp)
+                                .background(MaterialTheme.colorScheme.modalFieldContainer, MaterialTheme.shapes.modalControl)
+                                .padding(16.dp),
+                        ) { field() }
+                    },
+                )
+                Text(
+                    stringResource(R.string.host_prompt_helper),
+                    style = MaterialTheme.typography.bodySmall.copy(lineHeightStyle = HostPromptLineBox),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (loaded.showReset) {
+                    // Same outlined secondary geometry as UnpairAction, with Figma's 4 dp reset inset.
+                    Surface(
+                        onClick = { onEvent(HostPromptEvent.Reset) },
+                        enabled = !loaded.saving,
+                        modifier = Modifier.heightIn(min = 48.dp),
+                        color = Color.Transparent,
+                        contentColor = MaterialTheme.colorScheme.primary,
+                    ) {
+                        Box(Modifier.padding(top = 4.dp), contentAlignment = Alignment.TopCenter) {
+                            Box(
+                                Modifier
+                                    .heightIn(
+                                        min = 40.dp,
+                                    ).border(BorderStroke(1.dp, MaterialTheme.colorScheme.primary), MaterialTheme.shapes.modalControl)
+                                    .padding(horizontal = 20.dp, vertical = 7.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    stringResource(R.string.host_prompt_reset),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Preview @Composable
+private fun HostPromptDarkPreview() {
+    PyrycodeMobileTheme(darkTheme = true) { HostPromptEditor(HostPromptState.Loaded("", "", ""), {}) }
+}
+
+@Preview @Composable
+private fun HostPromptLightPreview() {
+    PyrycodeMobileTheme(darkTheme = false) { HostPromptEditor(HostPromptState.Loaded("", "", ""), {}) }
 }

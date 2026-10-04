@@ -139,6 +139,8 @@ internal fun EditHostModal(
     loading: Boolean = false,
     error: String? = null,
     confirmingUnpair: Boolean = false,
+    promptRow: @Composable () -> Unit = {},
+    promptEditor: (@Composable () -> Unit)? = null,
 ) {
     // Clamped once at the boundary, before any of the three reaches text layout or a merged
     // semantics node, and reused everywhere below.
@@ -153,6 +155,12 @@ internal fun EditHostModal(
         mutableStateOf(TextFieldValue(text = boundedName, selection = TextRange(boundedName.length)))
     }
     val submit = { onSubmit(fieldValue.text.trim()) }
+
+    // Keep this composable (and its name buffer) mounted across the dedicated prompt editor.
+    if (promptEditor != null) {
+        promptEditor()
+        return
+    }
 
     MobileModal(
         title = stringResource(if (confirmingUnpair) R.string.edit_host_unpair_confirm_title else R.string.edit_host_title),
@@ -176,6 +184,7 @@ internal fun EditHostModal(
                 onValueChange = { fieldValue = it },
                 onDone = { if (submissionEnabled && !loading) submit() },
             )
+            promptRow()
             UnpairAction(
                 onClick = {
                     logEditHostEvent("unpair_requested")

@@ -51,7 +51,9 @@ Repository Results stay at the controller boundary; thrown non-cancellation exce
 
 Tests first: new controller tests fail before implementation. Cover unread gating, empty/default/filled, UTF-8 inclusive bound, verbatim/empty save, reset/discard, retry, null/replaced repositories, distinct captured hosts, read/write dismissal and newer-host races, duplicate save, cancellation and redacted logs/state. Use a repository fake with controlled reads/writes and in-memory store/preferences.
 
-Shared `HostPromptEditorTest` under `app/src/sharedTest` checks loading/unavailable/empty/filled/default controls, helper, reset visibility, generic validation/save errors, one-line preview, multiline text, name retention on save/discard, close/Back routing and field/action pointer taps. Run it together with existing `EditHostModalTest`, list host/reconnect tests and relevant Settings tests. Run lint, assembleDebug, compileDebugAndroidTestKotlin and forced spotlessCheck after formatting.
+Shared `HostPromptEditorTest` under `app/src/sharedTest` checks loading/unavailable/empty/filled/default controls, helper, reset visibility, generic validation/save errors, one-line preview, multiline text, name retention on save/discard, close/Back routing and field/action pointer taps. Add device-only `HostPromptCaptureTest` for five dark states: it needs real dialog pixels. Run the existing focused keyboard host-modal method as well. Run shared coverage together with existing `EditHostModalTest`, list host/reconnect tests and relevant Settings tests. Run lint, assembleDebug, compileDebugAndroidTestKotlin and forced spotlessCheck after formatting.
+
+Retain the five synthetic dark-state PNGs, capture context and focused device XML under `app/src/androidTest/assets/host-prompt-1775/`. Capture the focused modal's semantics root, with a fresh dialog for each state and pixel assertions for close/OK; a global window inventory can select a retiring dialog. These software decor captures establish geometry/content, not hardware blur or real system bars.
 
 Add `InteractiveStreamE2ETest.interactiveTurn_hostSystemPrompt_editsResetsAndCancels` and its curated live entry. Use real Edit host controls; independently fresh-read custom/reset/discard values and reopen previews; restore original in finally. Device-only reason: real daemon/relay and instrumented app graph. This storage/editor flow has no scripted Claude turn to hold; controller/component fakes provide its deterministic twin. The dispatcher owns the fresh full-suite live execution on a daemon containing pyrycode#2768. PR Live tests requests `all`; passing live evidence is pending, never inferred from routine checks.
 
@@ -80,3 +82,7 @@ None. No prompt persistence on phone; no extra reset wire verb or session actuat
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-05
+
+## Revisions
+
+- 2026-10-05: Component verification showed a long over-limit draft could grow the well beyond the viewport and hide surrounding controls. Keep the 280 dp minimum and cap visible field content at 24 lines, using BasicTextField's internal multiline scrolling; returned defaults still grow within that bound. The generic validation line remains reachable in the shell content scroll area.

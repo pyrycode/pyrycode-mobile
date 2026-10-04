@@ -1270,6 +1270,7 @@ elif [ -n "${LIVE}" ]; then
   # #1085: the second host's rename and unpair from its Edit host modal joins at no turn cost (pairing,
   # rename and a phone-local unpair), so the list holds 38 methods and 39 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_hostSystemPrompt_editsResetsAndCancels"
   # #1252: registry requests complete diagnostic archives for both paired hosts; only A's contains A's
   # daemon-log marker. No Settings export or picker is involved, and it spends no Claude turn.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_diagnosticBundles_stayOnTheirOwningHosts"
