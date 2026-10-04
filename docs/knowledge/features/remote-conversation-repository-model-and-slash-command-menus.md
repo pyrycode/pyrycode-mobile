@@ -63,7 +63,7 @@ needs its own tag to say which agent it belongs to. `toMenu` maps `agent` throug
 or `"claude"` reads `Claude`, `"codex"` reads `Codex`, anything else — including a case variant — is `null`,
 a row that belongs to no conversation. `family` is copied verbatim and stays unparsed. Retention and routing
 are unchanged: the filter to one conversation's own agent runs downstream, in `ThreadViewModel`, not here —
-see [Conversation repository § `ModelMenu`/`ModelMenuRow`](conversation-repository.md#shape) for the field
+see [Conversation repository § `ModelMenu`/`ModelMenuRow`](conversation-repository-shape.md#shape) for the field
 KDoc and [Thread screen § the model-menu agent filter](thread-screen-how-it-works-state.md#the-model-menu-agent-filter-1110)
 for where a merged menu becomes one conversation's.
 
@@ -193,7 +193,7 @@ Two departures from the `model_list` sibling, both deliberate:
 **SECURITY.** Every row string (`name`, `argumentHint`, `description`, each alias) is
 **workspace-authored** — a lower-trust origin than `model_list`'s claude-authored text, since it crossed the
 subprocess trust boundary one hop earlier (whoever wrote the repository the session runs in, not claude
-itself). See [`SlashCommandMenuRow`](conversation-repository.md#shape) for the inert-text obligation this
+itself). See [`SlashCommandMenuRow`](conversation-repository-shape.md#shape) for the inert-text obligation this
 carries into any future render consumer. `name` is not an identifier — the real fixture carries
 `__remote-workflow` — and the decode neither trims, folds nor validates it; a test pins that padding and an
 embedded escape sequence also survive unchanged, so a later "cleanup" cannot quietly start rejecting or

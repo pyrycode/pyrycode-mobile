@@ -18,7 +18,7 @@ percent and clamps to 0–100, matching desktop's `contextTokenSource` + `contex
 unavailable state: neither source, or a window `<= 0` in the one source used. `runConfigFlow` threads
 `SessionSettings` through its chained combines as a pair so this fallback is available without subscribing to
 `sessionSettings` a second time (its `onEach` has side effects on pending state). See [Conversation repository
-§ `observeContextUsage`](conversation-repository.md#shape) for the reading's own contract, now preferred over
+§ `observeContextUsage`](conversation-repository-shape.md#shape) for the reading's own contract, now preferred over
 the settings pair rather than mutually exclusive with it.
 
 **Known gap: a stale figure survives a session transition.** The repository clears the `context_usage`
