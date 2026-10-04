@@ -894,11 +894,28 @@ class ThreadViewModel(
 
     /**
      * Sending until the repository's correlated acknowledgement, then Waiting until this conversation's
-     * first turn_state (#1641). Closed by any phase, a failed send or availability change. A completion
+     * first turn_state (#1641). Closed by any phase, a session error, a failed send or availability change. A completion
      * cannot reopen a closed window or alter a newer send's window. Blank/refused/upload-failed sends
      * never open it. This is independent of [isBusy] and must never arm Stop on its own.
      */
     val localSendStage: StateFlow<LocalSendStage> = _localSendStage.asStateFlow()
+
+    /** Latest error for this destination. Eager observation settles sends even while the screen is stopped. */
+    val sessionError: StateFlow<String?> =
+        repository
+            .observeSessionError(conversationId)
+            .onEach { code ->
+                if (code != null) {
+                    closeLocalSendWindow("session_error")
+                    val classification =
+                        when (code) {
+                            "session.blocked" -> "blocked"
+                            "session.child_crashing" -> "child_crashing"
+                            else -> "unknown"
+                        }
+                    RelayLog.d { "event=thread_session_error state=present classification=$classification" }
+                }
+            }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /**
      * Whether this conversation's remote claude is stuck retrying an API error, and at which attempt

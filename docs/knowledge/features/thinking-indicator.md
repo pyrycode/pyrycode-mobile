@@ -269,10 +269,12 @@ parameters; neither carries tokens nor sets `isBusy` or enables Stop. Thinking c
 conversation's daemon `thinking` phase. Both local arms lose to the existing running-tool, thinking and
 working readings and higher-priority arms, and suppress a previous turn outcome.
 
-Any first `turn_state` phase for this conversation, a failed current send or an availability change
-closes the window; another conversation's event does not. Each opening has a generation, invalidated
+Any first `turn_state` phase or session error for this conversation, a failed current send or an
+availability change closes the window; another conversation's event does not. Each opening has a generation, invalidated
 on closure: a late acknowledgement cannot restore Waiting, and an older completion or failure cannot
-mutate a replacement window. Blank, refused and upload-failed sends never open it. See [Thread screen
+mutate a replacement window. [Session-error observation](thread-screen-how-it-works-state.md#session-errors-and-local-send-settlement-1678)
+closes eagerly before publishing the pill, even without screen subscribers. Blank, refused and
+upload-failed sends never open it. See [Thread screen
 § The arm order](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311) for selection.
 
 **The band is always composed, and the glyph always turns with it (#1312).** Before #1312, `StatusArm.None`

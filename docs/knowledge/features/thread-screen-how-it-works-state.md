@@ -190,3 +190,24 @@ reaches `MainActivity` regardless of which one wins the race. Delete is unaffect
 disappears from the list rather than showing archived, so `DeleteConfirm` keeps its own unconditional
 `PopBack` send outside `leaveForList()`. The list-driven exit logs one content-free `RelayLog.d` line,
 `event=thread_left_archived`.
+
+### Session errors and local-send settlement (#1678)
+
+`ThreadViewModel.sessionError` observes only `observeSessionError(conversationId)`
+and uses `stateIn(viewModelScope, SharingStarted.Eagerly, null)`. Its `onEach` closes
+`localSendStage` with `closeLocalSendWindow("session_error")` before publishing any
+non-null code. Lifecycle-bound screen collection cannot own this side effect:
+a stopped screen still needs its Sending/Waiting window settled without subscribers.
+
+Closure increments `localSendGeneration`. A successful acknowledgement for the
+closed generation cannot restore Waiting or advance a newer send's window; only
+that newer send's own acknowledgement may advance it. A later send opens a fresh
+window. Existing own turn-state, failed-send and availability/reconnect closure
+rules remain, and another conversation's error affects neither this signal nor
+this window. Logs classify errors as static blocked/child_crashing/unknown values,
+never interpolate raw codes or daemon prose.
+
+`PyryNavHost` collects `sessionError` with `collectAsStateWithLifecycle` and passes
+it to the stateless `ThreadScreen`'s defaulted nullable parameter. The screen forwards
+it and `state.agent` to [ThreadTopOverlay](thread-top-overlay.md#the-session-error-pill-1678).
+The repository owns clearing; rendering adds no dismissal, resend or retry rule.
