@@ -38,8 +38,14 @@ Two ids added to `strings.xml` in #271: `about_title` = "About" (TopAppBar) and 
 
 ## Versioning
 
-`versionName` (`app/build.gradle.kts`) is `MAJOR.MINOR.PATCH` — exactly three
-decimal parts, no leading zeros, no suffix — and is bumped on each release
+`versionName` (`app/build.gradle.kts`) is `1.0.<resolved versionCode>`
+([#1722](../../specs/architecture/1722-version-name-build-number.md)). The default
+code is the Git commit count (`git rev-list --count HEAD`, requiring a full
+clone), falling back to 1 when Git cannot supply it. `-PversionCode=N` overrides
+that code and produces `1.0.N`; for example, code 3901 yields `1.0.3901`.
+Read the already resolved code rather than resolving the count again, so the
+name and code stay paired under overrides. The version still has exactly three
+decimal parts, no leading zeros and no suffix
 ([#1007](../../specs/architecture/1007-client-version-format.md)). The format
 matters beyond this screen: `AppModule.mobileClientVersion()` sends
 `pyrycode-mobile/$versionName` as both the [Noise `hello`'s
@@ -51,7 +57,18 @@ which is why the format is strict rather than free text. This screen keeps
 showing the bare `versionName` with no prefix; only the wire value carries
 `pyrycode-mobile/`. `ClientVersionTest` (`di/`) checks the bound value against
 the spec's format rules directly, rather than trusting `versionName`'s literal
-by inspection.
+by inspection. The About row's generated-value assertion checks consumption;
+it cannot catch a fixed version name that still satisfies the format. Inspect
+release manifest or APK metadata for both the default and an override to check
+the code/name pair.
+
+For #1722, the verifier's fresh release APK checks confirm default
+`4004 / 1.0.4004` and override `3901 / 1.0.3901`. Android 15 Settings' App info
+page visibly shows `version 1.0.3901` for the installed override release APK;
+installed-package evidence also confirms that code/name pair and absence of
+`DEBUGGABLE`. Both packaged metadata and the actual Settings display are
+verified. See the [passing verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/1736#issuecomment-5979213734)
+for the preserved metadata, Settings XML and screenshot evidence.
 
 ## Configuration / usage
 
@@ -83,7 +100,7 @@ Two `@Preview`s, both `private`, both `widthDp = 412`, mirroring the `SettingsSc
 
 ## Testing
 
-Instrumented (`./gradlew connectedAndroidTest`) — `app/src/androidTest/java/de/pyryco/mobile/ui/settings/AboutScreenTest.kt`, 5 methods with the trivial harness `setContent { PyrycodeMobileTheme { AboutScreen(onBack = {}) } }` (each asserts after a `performScrollTo()` to stay robust):
+Shared screen test (`./gradlew test`, Robolectric; also compiled for device runs) — `app/src/sharedTest/java/de/pyryco/mobile/ui/settings/AboutScreenTest.kt`, 5 methods with the trivial harness `setContent { PyrycodeMobileTheme { AboutScreen(onBack = {}) } }` (each asserts after a `performScrollTo()` to stay robust):
 
 - `versionRow_rendersBuildConfigVersionName` — node `hasText("Version ${BuildConfig.VERSION_NAME}", substring = true)` exists.
 - `versionRow_rendersSupportingTextWithGitSha` — node `hasText("build ${BuildConfig.GIT_SHA}", substring = true)` exists (matcher reads the live constant, so it's correct on both dev builds with a real SHA and CI builds where `GIT_SHA == "unknown"`).
