@@ -4166,15 +4166,44 @@ class RemoteConversationRepositoryTest {
             assertEquals(listOf(own), messageIds(thread.last()))
             pump.push(toolUseEnvelope("c-1", "next", "intervening", "Bash", "held command"))
             pump.push(toolResultEnvelope("c-1", "next", "intervening", isError = false, resultSummary = "done"))
-            pump.push(messageEnvelope("c-1", own, "user", "marker request", TS))
+            pump.push(messageEnvelope("c-1", own, "user", "marker request", TS, sentNow = true))
             pump.push(messageEnvelope("c-1", "peer", "user", "peer marker", TS))
             runCurrent()
             assertEquals(listOf("intervening", own, "peer"), messageIds(thread.last()))
-            pump.push(messageEnvelope("c-1", own, "user", "marker request", TS))
+            pump.push(messageEnvelope("c-1", own, "user", "marker request", TS, sentNow = true))
             pump.push(messageEnvelope("c-1", "peer", "user", "peer marker", TS))
             runCurrent()
             assertEquals(listOf("intervening", own, "peer"), messageIds(thread.last()))
             assertEquals(emptyList<ThreadItem>(), other.last())
+        }
+
+    @Test
+    fun ordinaryDrain_delayedConfirmationPreservesReplyWhileSendNowUsesPushPosition() =
+        runTest {
+            for (sentNow in listOf(false, true)) {
+                val pump = FakeSessionPump()
+                val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+                val thread = collectMessages(repo, "c-1")
+                runCurrent()
+                val own = sendAndAck(repo, pump, "c-1", "marker request")
+                pump.push(turnStateEnvelope("c-1", "thinking"))
+                pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "marker request", TS, messageId = own))))
+                runCurrent()
+                pump.push(turnEndEnvelope("c-1", "running", "end_turn"))
+                pump.push(queueStateEnvelope("c-1", emptyList()))
+                pump.push(assistantDeltaEnvelope("c-1", "next", 0, "Reply"))
+                pump.push(messageEnvelope("c-1", own, "user", "marker request", TS, sentNow = sentNow))
+                pump.push(assistantDeltaEnvelope("c-1", "next", 1, " continues"))
+                pump.push(messageEnvelope("c-1", own, "user", "marker request", TS, sentNow = sentNow))
+                runCurrent()
+                assertEquals(
+                    if (sentNow) listOf("next", own, "next#1") else listOf(own, "next"),
+                    messageIds(thread.last()),
+                )
+                if (!sentNow) {
+                    assertEquals("Reply continues", (thread.last().last() as ThreadItem.MessageItem).message.content)
+                }
+            }
         }
 
     @Test
@@ -10470,6 +10499,7 @@ class RemoteConversationRepositoryTest {
         id: Long = 1L,
         eventId: Long? = null,
         attachmentIds: List<String>? = null,
+        sentNow: Boolean = false,
     ): Envelope {
         val attachments = attachmentIds?.joinToString(",", ""","attachment_ids":[""", "]") { "\"$it\"" }.orEmpty()
         return Envelope(
@@ -10478,7 +10508,7 @@ class RemoteConversationRepositoryTest {
             ts = ts,
             payload =
                 MobileJson.parseToJsonElement(
-                    """{"conversation_id":"$conversationId","message_id":"$messageId","role":"$role","text":"$text"$attachments}""",
+                    """{"conversation_id":"$conversationId","message_id":"$messageId","role":"$role","text":"$text"$attachments,"sent_now":$sentNow}""",
                 ),
             eventId = eventId,
         )

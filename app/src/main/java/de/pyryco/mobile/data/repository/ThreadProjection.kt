@@ -141,8 +141,8 @@ internal class ThreadProjection(
      * A parked echo removed while a turn is open waits hidden in [OwnEchoQueue.awaitingPush] until
      * the delivered push establishes placement, including a Send now from another paired client.
      * Local send-now intent, recorded before enqueue, also defers a busy echo across a turn ending.
-     * Closed-turn removal retains ordinary settlement but keeps [OwnEchoQueue.placementPending]:
-     * a peer's late Send now is indistinguishable until the delivered push establishes its position.
+     * Closed-turn removal retains ordinary settlement but keeps [OwnEchoQueue.placementPending]
+     * until the delivered push identifies Send now. An ordinary confirmation preserves that slot.
      * Written atomically by the inbound collector and [recordSendNow] / [withdrawSendNow].
      * Connection-scoped and in-memory like [mintedMessageIds], and observed only through [observe].
      */
@@ -249,13 +249,14 @@ internal class ThreadProjection(
      * The one exception is position (#1558): the push of an echo still [OwnEchoQueue.queued] is its delivery,
      * so a [OwnEchoQueue.parked] one, unchanged, first moves to the end of the thread, after the turn it
      * waited behind. One queued while idle stays where it was drawn (#1636).
-     * A busy echo provisionally settled by closed-turn queue removal also moves on its first push:
-     * removal cannot distinguish ordinary drain from a peer's late Send now. [OwnEchoQueue.placementPending]
-     * retains that eligibility until this push consumes it, independently of duplicate suppression.
+     * A busy echo settled by closed-turn queue removal moves again only when [sentNow] identifies
+     * Send now. Normal delivery keeps its settled slot even when the reply started before its push.
+     * [OwnEchoQueue.placementPending] retains eligibility until either kind of push consumes it.
      */
     fun appendLiveMessage(
         conversationId: String,
         message: Message,
+        sentNow: Boolean = false,
     ) {
         if (message.id in mintedMessageIds.value[conversationId].orEmpty()) trail.delivered(message.id)
         state.update { current ->
@@ -264,7 +265,11 @@ internal class ThreadProjection(
             var queues = current.echoQueues
             val pendingPlacement = echoes != null && (message.id in echoes.awaitingPush || message.id in echoes.placementPending)
             if (echoes != null && (message.id in echoes.queued || pendingPlacement)) {
-                if (message.id in echoes.parked || pendingPlacement) {
+                val needsPlacement =
+                    message.id in echoes.parked ||
+                        message.id in echoes.awaitingPush ||
+                        (sentNow && message.id in echoes.placementPending)
+                if (needsPlacement) {
                     rows = rows.moveOwnEchoToEnd(conversationId, message.id)
                 }
                 queues = queues + (
@@ -626,7 +631,7 @@ internal class ThreadProjection(
      * snapshot holds is [OwnEchoQueue.queued]. A busy echo leaving an open turn's backlog waits for its
      * delivered message in [OwnEchoQueue.awaitingPush], since the control may have come from a peer.
      * Closed-turn removal moves the echo before it stops reading as queued, retaining ordinary drain's
-     * immediate settlement, but the first delivered push still owns its final position. A dropped echo has
+     * immediate settlement. Only a delivered Send now push corrects that position. A dropped echo has
      * already been removed and its id spent, so the move finds nothing.
      *
      * Only an echo first reported while [turnOpen] held for its conversation waits behind a turn (#1636): it
@@ -925,8 +930,8 @@ internal class ThreadProjection(
      * they are not yet reported delivered, and remain in the store
      * for identity and attachment metadata, hidden from the read and skipped by assistant deltas.
      * [placementPending] retains every busy echo removed before its delivered push, including a
-     * provisionally settled closed-turn drain. The first push corrects placement and consumes this
-     * membership; duplicate pushes cannot move it again. Idle echoes never join it.
+     * settled closed-turn drain. The first push consumes this membership and corrects placement only
+     * when it reports Send now. Ordinary and duplicate pushes cannot move it. Idle echoes never join it.
      *
      * [behindTurn] is the [queued] ids first reported while a turn was open (#1636), and only those, the
      * [parked] ones, read last and move on delivery. One queued while idle waits behind nothing: the daemon

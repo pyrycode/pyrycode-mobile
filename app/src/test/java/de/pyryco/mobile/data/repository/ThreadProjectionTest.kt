@@ -124,12 +124,12 @@ class ThreadProjectionTest {
             // Closed-turn removal retains ordinary drain's immediate settlement until delivery is reported.
             assertEquals(listOf("turn-1", "tool-1", "mine"), ids(thread.last()))
             projection.applyToolUse(toolUse("turn-2", "tool-2"))
-            projection.appendLiveMessage("c1", userMessage("mine", "hello", PUSHED_AT))
+            projection.appendLiveMessage("c1", userMessage("mine", "hello", PUSHED_AT), sentNow = true)
             runCurrent()
             assertEquals(listOf("turn-1", "tool-1", "tool-2", "mine"), ids(thread.last()))
             assertEquals(ThreadItem.MessageItem(sent), thread.last().last())
             projection.applyToolUse(toolUse("turn-2", "tool-3"))
-            projection.appendLiveMessage("c1", userMessage("mine", "hello", PUSHED_AT))
+            projection.appendLiveMessage("c1", userMessage("mine", "hello", PUSHED_AT), sentNow = true)
             projection.onQueueState(queue, 43L to "mine")
             projection.onQueueState(queue)
             runCurrent()
@@ -218,6 +218,47 @@ class ThreadProjectionTest {
 
             assertEquals(listOf("turn-1", "tool-1", "turn-1#2", "mine"), ids(thread.last()))
             assertEquals(true, (thread.last()[2] as ThreadItem.MessageItem).message.isStreaming)
+        }
+
+    @Test
+    fun ordinaryDrain_delayedUserPushAfterReplyStarts_doesNotRelocateOrSplitReply() =
+        runTest {
+            val projection = ThreadProjection()
+            val queue = QueueProjection()
+            val thread = collect(projection, "c1")
+            val sent = startQueuedTurn(projection, queue)
+
+            projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-1", "end_turn"))
+            projection.onQueueState(queue, turnOpen = false)
+            runCurrent()
+            assertEquals(listOf("turn-1", "tool-1", "mine"), ids(thread.last()))
+            projection.applyAssistantDelta(delta("turn-2", 0, "Reply"))
+            runCurrent()
+            assertEquals(listOf("turn-1", "tool-1", "mine", "turn-2"), ids(thread.last()))
+            projection.appendLiveMessage("c1", userMessage("mine", "hello", PUSHED_AT))
+            projection.applyAssistantDelta(delta("turn-2", 1, " continues"))
+            runCurrent()
+
+            assertEquals(listOf("turn-1", "tool-1", "mine", "turn-2"), ids(thread.last()))
+            assertEquals(ThreadItem.MessageItem(sent), thread.last()[2])
+            assertNeverAboveTheTool(thread)
+        }
+
+    @Test
+    fun peerSendNow_delayedUserPushAfterReplyStarts_usesReportedPosition() =
+        runTest {
+            val projection = ThreadProjection()
+            val queue = QueueProjection()
+            val thread = collect(projection, "c1")
+            startQueuedTurn(projection, queue)
+            projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-1", "end_turn"))
+            projection.onQueueState(queue, turnOpen = false)
+            projection.applyAssistantDelta(delta("turn-2", 0, "Before input"))
+            projection.appendLiveMessage("c1", userMessage("mine", "hello", PUSHED_AT), sentNow = true)
+            projection.applyAssistantDelta(delta("turn-2", 1, "After input"))
+            projection.appendLiveMessage("c1", userMessage("mine", "hello", PUSHED_AT), sentNow = true)
+            runCurrent()
+            assertEquals(listOf("turn-1", "tool-1", "turn-2", "mine", "turn-2#1"), ids(thread.last()))
         }
 
     // AC 2: the drain's queue_state first, then the pushed message: the echo settles after the turn's last

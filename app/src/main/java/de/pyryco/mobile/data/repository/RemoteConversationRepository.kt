@@ -454,16 +454,19 @@ class RemoteConversationRepository(
                 // survives. `sessionId = ""` — the payload carries none and the last-message preview
                 // never reads it (list-tier placeholder, as #312 uses for currentSessionId). Drop
                 // silently: message content may be sensitive, so nothing here logs the payload.
-                val (conversationId, message) =
+                val (conversationId, message, sentNow) =
                     try {
                         val dto = MobileJson.decodeFromJsonElement<MessagePayloadDto>(envelope.payload)
                         val message = dto.toMessage(envelope, sessionId = "")
-                        dto.conversationId to
+                        Triple(
+                            dto.conversationId,
                             if (message.role == Role.User) {
                                 message.copy(attachments = storedAttachmentReferences(dto.attachmentIds))
                             } else {
                                 message
-                            }
+                            },
+                            dto.sentNow,
+                        )
                     } catch (e: IllegalArgumentException) {
                         return
                     }
@@ -472,7 +475,7 @@ class RemoteConversationRepository(
                 // operator's delivered turn alone, and assistant output arrives as structured events.
                 // A held id — the phone's own confirmed send among them — is kept, not replaced.
                 conversationListProjection.recordLastMessage(conversationId, message)
-                if (message.role == Role.User) threadProjection.appendLiveMessage(conversationId, message)
+                if (message.role == Role.User) threadProjection.appendLiveMessage(conversationId, message, sentNow)
             }
             TYPE_MESSAGE_CHUNK -> {
                 // The `backfill_since` response (#313): a batch of finished messages, each carrying
