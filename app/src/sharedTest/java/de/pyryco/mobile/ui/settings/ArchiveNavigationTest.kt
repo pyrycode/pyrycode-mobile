@@ -185,7 +185,8 @@ class ArchiveNavigationTest {
 
     /** The archive entry on the channel list's own bar, beside the settings gear. */
     private fun openArchiveFromTheList() {
-        compose.onNodeWithContentDescription("Open archive").performClick()
+        compose.onNodeWithContentDescription("Open menu").performClick()
+        compose.onNodeWithText("Archive").performClick()
         compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.ARCHIVED_DISCUSSIONS }
         compose.waitForIdle()
         // Archive opens on Channels (#1487); these archived rows are discussions.

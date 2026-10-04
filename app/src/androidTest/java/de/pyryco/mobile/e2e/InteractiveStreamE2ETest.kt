@@ -1191,7 +1191,7 @@ class InteractiveStreamE2ETest {
      * wire, the #556 archive-from-thread surfacing, and the #557 restore-from-Archive-screen surfacing. Give
      * a scratch discussion a runtime-unique, list-visible identity via **Rename**, confirm it is **present**
      * on the channel list, archive it from the thread (overflow → "Archive", **immediate — no confirm**) and
-     * assert it is **gone** from the list, then restore it (list toolbar → Archived
+     * assert it is **gone** from the list, then restore it (list header menu → Archive → Archived
      * screen's restore affordance) and assert it is **back** in the list. The same unique token flips **out
      * of** and then **back into** the same surface, so each list assertion is a genuine inversion of the other.
      *
@@ -1306,8 +1306,8 @@ class InteractiveStreamE2ETest {
             awaitChannelList()
             composeTestRule.onAllNodesWithText(uniqueName, substring = true).assertCountEquals(0)
 
-            // 9. The list toolbar opens Archive for the selected host. Its Discussions tab shows the chat.
-            composeTestRule.onNode(hasContentDescription(CD_OPEN_ARCHIVE)).performClick()
+            // 9. The list header menu opens Archive for the selected host. Its Discussions tab shows the chat.
+            openListMenuEntry(R.string.thread_overflow_archive)
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
             }
@@ -1347,8 +1347,8 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * The list's own archive entry reaches the Archived screen (#740). #737 put two entries on the channel
-     * list's bar; [interactiveTurn_archiveRestore_roundTripsListMembership] now uses the same Archive entry
+     * The list header's menu → Archive reaches the Archived screen (#740, #1665).
+     * [interactiveTurn_archiveRestore_roundTripsListMembership] uses the same Archive entry
      * for a complete round trip, while this method checks the entry without creating a conversation.
      *
      * The bar is drawn on every state of the list, so the scenario needs no connection wait, no seeded
@@ -1360,7 +1360,7 @@ class InteractiveStreamE2ETest {
         awaitChannelList()
         composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).assertCountEquals(0)
 
-        composeTestRule.onNode(hasContentDescription(CD_OPEN_ARCHIVE)).performClick()
+        openListMenuEntry(R.string.thread_overflow_archive)
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
         }
@@ -1410,7 +1410,7 @@ class InteractiveStreamE2ETest {
             archivedIds(serverId) { idA in it }
 
             // 3. Open Archive on its Discussions tab: A, archived last, is the first row.
-            composeTestRule.onNode(hasContentDescription(CD_OPEN_ARCHIVE)).performClick()
+            openListMenuEntry(R.string.thread_overflow_archive)
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
             }
@@ -2276,7 +2276,7 @@ class InteractiveStreamE2ETest {
      * Each host's Archive stays its own with two live hosts paired (#1086, rung 3).
      *
      * **Archive.** One of host A's chats is archived from its thread and restored from A's Archive, reached
-     * through A's list toolbar. B's full list and B's archived list are read before and compared after each step.
+     * through A's list header menu. B's full list and B's archived list are read before and compared after each step.
      *
      * **Cleanup.** Both created chats are deleted and B's pairing is removed in `finally`.
      *
@@ -2337,10 +2337,10 @@ class InteractiveStreamE2ETest {
             assertEquals("archiving A's chat changed B's archive", archivedB, archivedBAfterArchive)
             assertEquals("archiving A's chat changed B's active list", activeB, hostConversationIds(serverIdB) - archivedBAfterArchive)
 
-            // 5. Select A for the list toolbar's host-scoped Archive, then restore after observing the row.
+            // 5. Select A for the list header menu's host-scoped Archive, then restore after observing the row.
             val koin = GlobalContext.get()
             selectHost(koin.get(), koin.get(), serverIdA)
-            composeTestRule.onNode(hasContentDescription(CD_OPEN_ARCHIVE)).performClick()
+            openListMenuEntry(R.string.thread_overflow_archive)
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
             }
@@ -2553,11 +2553,11 @@ class InteractiveStreamE2ETest {
             }
             archivedIds(serverId) { id in it }
 
-            // 8. Restore it from the selected host's Archive through the list toolbar. The snackbar wait
+            // 8. Restore it from the selected host's Archive through the list header menu. The snackbar wait
             //    keeps the restore coroutine from being cancelled by the Back that follows (#551).
             val koin = GlobalContext.get()
             selectHost(koin.get(), koin.get(), serverId)
-            composeTestRule.onNode(hasContentDescription(CD_OPEN_ARCHIVE)).performClick()
+            openListMenuEntry(R.string.thread_overflow_archive)
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
             }
@@ -7138,9 +7138,14 @@ class InteractiveStreamE2ETest {
         }
     }
 
-    /** Tap the channel list's gear, which opens the selected host's Settings. */
+    /** Open Settings through the channel list header menu. */
     private fun openSettings() {
-        composeTestRule.onNode(hasContentDescription(CD_OPEN_SETTINGS)).performClick()
+        openListMenuEntry(R.string.settings_title)
+    }
+
+    private fun openListMenuEntry(label: Int) {
+        composeTestRule.onNode(hasContentDescription(string(R.string.cd_open_menu))).performClick()
+        composeTestRule.onNodeWithText(string(label)).performClick()
     }
 
     /**
@@ -7584,7 +7589,7 @@ class InteractiveStreamE2ETest {
 
         // #551 archive/restore round-trip scenario. Archive from the thread overflow (ARCHIVE_ITEM,
         // mutationsSupported-gated) is IMMEDIATE — no confirm dialog, unlike #554's DELETE_ACTION. Restore
-        // opens Archive from the list toolbar; ARCHIVED_TITLE is its top-bar arrival anchor; RESTORED_SNACKBAR
+        // opens Archive from the list header menu; ARCHIVED_TITLE is its top-bar arrival anchor; RESTORED_SNACKBAR
         // is the restore-completion guard (a prefix of "Restored %1$s", appearing in no other on-screen
         // string). The restore affordance is keyed on the unique name via its content-description ("Restore
         // <name>"), so it needs no constant. Keep in sync with res/values/strings.xml:
@@ -7593,14 +7598,9 @@ class InteractiveStreamE2ETest {
         const val ARCHIVE_ITEM = "Archive"
 
         // Other scenarios still reference the retired Settings row while their #1245 ignores remain.
-        const val CD_OPEN_SETTINGS = "Open settings"
         const val ARCHIVED_ROW = "Archived discussions"
         const val ARCHIVED_TITLE = "Archived"
         const val RESTORED_SNACKBAR = "Restored"
-
-        // #740 list-archive-entry scenario: the archive entry on the list's own bar (#737), the sibling of
-        // CD_OPEN_SETTINGS. Keep in sync with res/values/strings.xml: cd_open_archive = "Open archive".
-        const val CD_OPEN_ARCHIVE = "Open archive"
 
         // Runtime-unique rename target: "e2e551-" + System.currentTimeMillis(). Distinct from #554's
         // CONVERSATION_NAME_PREFIX (the shared companion forbids redeclaration). Unique so a substring match
