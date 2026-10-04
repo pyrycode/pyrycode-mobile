@@ -52,7 +52,7 @@ Declared in `ThreadUiState.kt` with the other thread state types; until the 2026
 
 ## What it does
 
-Renders one M3 `DropdownMenu` containing the common `DropdownMenuItem`s, wrapped by two mutually-exclusive context-aware items ([#204](../codebase/204.md)). Each item's `onClick` calls `onDismiss()` **before** its action — `onEvent(ThreadEvent.X)`, `onBackgroundTasks()` (Background tasks), or `uriHandler.openUri(MEMORY_PLUGIN_DOCS_URL)` (install-memory-plugin):
+Renders one `OptionsOverlay` in Actions mode containing client-owned button rows, wrapped by two mutually-exclusive context-aware items ([#204](../codebase/204.md)). Each item's `onClick` calls `onDismiss()` **before** its action — `onEvent(ThreadEvent.X)`, `onBackgroundTasks()` (Background tasks), or `uriHandler.openUri(MEMORY_PLUGIN_DOCS_URL)` (install-memory-plugin):
 
 | Order             | When                | String resource                            | Label              | Side effect                                                |
 | ----------------- | ------------------- | ------------------------------------------ | ------------------ | ---------------------------------------------------------- |
@@ -94,6 +94,6 @@ Dismiss-before-handler ordering is load-bearing for two reasons:
 1. The Compose-test combined-log assertion (`log == listOf("dismiss", "event:NewSession")`) pins it explicitly — see [Tests](thread-overflow-menu-wiring-tests-and-edge-cases.md#tests).
 2. Downstream host wiring opens dialogs / sheets / nav transitions from these events; the menu must be closed before the new surface mounts to avoid Compose layout layering issues. Inverting the order ("emit the event, let the host close the menu") would push close-coordination into every event handler.
 
-`DropdownMenu`'s built-in `onDismissRequest = onDismiss` covers the outside-tap / back-press / scrim-tap paths; explicit item taps are the only path that calls dismiss themselves.
+The shared overlay scrim consumes outside taps and dismisses without an action. Header-priority platform Back closes the menu before the IME; see [wiring](thread-overflow-menu-wiring-tests-and-edge-cases.md#configuration--wiring).
 
-Same dismiss-before-handler pattern as `DiscussionListScreen.kt:209-212` (`onClick = { menuExpanded = false; onSaveAsChannel() }` from [#25](../codebase/25.md)) — that's the only other production `DropdownMenu` call site in the codebase.
+Same dismiss-before-handler pattern as `DiscussionListScreen.kt:209-212` (`onClick = { menuExpanded = false; onSaveAsChannel() }` from [#25](../codebase/25.md)).

@@ -1,7 +1,6 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,6 +15,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -25,7 +27,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
-import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.ui.components.defaultChromeShadow
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.theme.threadColors
@@ -62,8 +63,8 @@ internal const val BAR_RULE_ALPHA = 0.60f
  *
  * The title takes the slot between the two controls and truncates inside it, so an over-long display
  * name can never overlap or cover either control. Its `clickable` + `Role.Button` semantics ride on
- * the `Text` so the ripple tracks the visible text rather than the whole slot, and the overflow keeps
- * its `Box` wrap — that is what anchors the menu beneath its own glyph rather than against the row.
+ * the `Text` so the ripple tracks the visible text rather than the whole slot, and the overflow reports
+ * its live button bounds to the screen-owned overlay.
  */
 @Composable
 fun ThreadTopAppBar(
@@ -71,14 +72,8 @@ fun ThreadTopAppBar(
     onBack: () -> Unit,
     onTitleClick: () -> Unit,
     onOverflowClick: () -> Unit,
-    overflowExpanded: Boolean,
-    onOverflowDismiss: () -> Unit,
-    onOverflowEvent: (ThreadEvent) -> Unit,
-    isPromoted: Boolean,
     modifier: Modifier = Modifier,
-    mutationsSupported: Boolean = true,
-    memorySearch: MemorySearchReport = MemorySearchReport.Unknown,
-    onBackgroundTasks: () -> Unit = {},
+    onOverflowAnchorChanged: (Rect) -> Unit = {},
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
@@ -112,23 +107,15 @@ fun ThreadTopAppBar(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Box {
-                IconButton(onClick = onOverflowClick, modifier = Modifier.size(BarTouchSize)) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_thread_overflow),
-                        contentDescription = stringResource(R.string.cd_more_actions),
-                        modifier = Modifier.size(width = 6.dp, height = BarGlyphSize).offset(y = (-2).dp),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-                ThreadOverflowMenu(
-                    expanded = overflowExpanded,
-                    isPromoted = isPromoted,
-                    mutationsSupported = mutationsSupported,
-                    memorySearch = memorySearch,
-                    onDismiss = onOverflowDismiss,
-                    onEvent = onOverflowEvent,
-                    onBackgroundTasks = onBackgroundTasks,
+            IconButton(
+                onClick = onOverflowClick,
+                modifier = Modifier.size(BarTouchSize).onGloballyPositioned { onOverflowAnchorChanged(it.boundsInWindow()) },
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_thread_overflow),
+                    contentDescription = stringResource(R.string.cd_more_actions),
+                    modifier = Modifier.size(width = 6.dp, height = BarGlyphSize).offset(y = (-2).dp),
+                    tint = MaterialTheme.colorScheme.primary,
                 )
             }
         }
@@ -155,10 +142,6 @@ private fun ThreadTopAppBarLightPreview() {
             onBack = {},
             onTitleClick = {},
             onOverflowClick = {},
-            overflowExpanded = false,
-            onOverflowDismiss = {},
-            onOverflowEvent = {},
-            isPromoted = true,
         )
     }
 }
@@ -172,10 +155,6 @@ private fun ThreadTopAppBarDarkPreview() {
             onBack = {},
             onTitleClick = {},
             onOverflowClick = {},
-            overflowExpanded = false,
-            onOverflowDismiss = {},
-            onOverflowEvent = {},
-            isPromoted = true,
         )
     }
 }

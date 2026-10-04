@@ -1,0 +1,42 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="11" failures="0" errors="0" skipped="0" time="119.875" timestamp="2026-10-04T20:59:38" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.design.ThreadDesignCaptureTest" tests="2" failures="0" errors="0" skipped="0" time="23.559" timestamp="2026-10-04T20:59:38" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="menusAndKeyboardAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="13.789" />
+    <testcase name="compactAt320By700" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="9.77" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.design.ListDesignCaptureTest" tests="4" failures="0" errors="0" skipped="0" time="75.392" timestamp="2026-10-04T20:59:38" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="failedCreateChatNoticeAt412By892" classname="de.pyryco.mobile.design.ListDesignCaptureTest" time="3.746" />
+    <testcase name="listFramesAt320By700LargeText" classname="de.pyryco.mobile.design.ListDesignCaptureTest" time="34.891" />
+    <testcase name="failedRestoreNoticeAt412By892" classname="de.pyryco.mobile.design.ListDesignCaptureTest" time="4.632" />
+    <testcase name="listFramesAt412By892" classname="de.pyryco.mobile.design.ListDesignCaptureTest" time="32.123" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.TaskCountPillKeyboardDeviceTest" tests="3" failures="0" errors="0" skipped="0" time="8.54" timestamp="2026-10-04T20:59:38" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="keyboardAndActionsMenu_keepRunningPillReachable" classname="de.pyryco.mobile.ui.conversations.thread.TaskCountPillKeyboardDeviceTest" time="2.688" />
+    <testcase name="headerMenu_openOutsideDismissAndBack_preserveFocusedComposerAndKeyboard" classname="de.pyryco.mobile.ui.conversations.thread.TaskCountPillKeyboardDeviceTest" time="2.802" />
+    <testcase name="compactHeaderMenu_lastRowScrollsAboveKeyboardAndAcceptsPointerTap" classname="de.pyryco.mobile.ui.conversations.thread.TaskCountPillKeyboardDeviceTest" time="3.05" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.design.DesignHarnessSmokeTest" tests="2" failures="0" errors="0" skipped="0" time="5.741" timestamp="2026-10-04T20:59:38" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="compactLargeTextLaunchCapturesRealFrame" classname="de.pyryco.mobile.design.DesignHarnessSmokeTest" time="2.716" />
+    <testcase name="everyThreadInputReachesTheThreadViewModel" classname="de.pyryco.mobile.design.DesignHarnessSmokeTest" time="3.025" />
+  </testsuite>
+</testsuites>

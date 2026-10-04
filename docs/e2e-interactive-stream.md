@@ -35,7 +35,7 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    the thread renders the session-boundary delimiter (exercises the #540 fire-and-forget wire and the
    #336 fold end to end against real claude). In `InteractiveStreamE2ETest`,
    `interactiveTurn_newSession_rendersSessionBoundaryDelimiter` selects “Reset session”
-   with explicit conversation targeting (#625). The **delete-conversation** scenario (#554) renames a
+   with explicit conversation targeting (#625), through the screen-owned header Actions overlay since #1666. The **delete-conversation** scenario (#554) renames a
    discussion to a runtime-unique name, confirms it is present on the channel list, then deletes it from the
    thread (overflow → "Channel info" → "Delete" → the "Delete conversation?" dialog → confirm) and asserts
    it is gone from the list and the thread has popped back (exercises the #532 delete wire against a real
@@ -2412,7 +2412,21 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-04 (#1637).** The dispatcher ran the full
+**Current live verification — 2026-10-04 (#1666).** The dispatcher ran the fresh full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1666`
+at `1628e840ea`, merged with `origin/main` at `6bd48bc3cb` in a detached worktree:
+**53 executed, 52 passed, 1 failed, 0 skipped**, exit 1. The fresh full-suite XML explicitly
+contains `InteractiveStreamE2ETest.interactiveTurn_newSession_rendersSessionBoundaryDelimiter`
+with no failure, error or skip: the named #541 method ran and passed, reaching Reset session
+through the new header Actions menu. No separate focused new-session run was required or performed.
+The sole failure, `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`, passed on a
+same-tree rerun: **1 executed, 1 passed, 0 failed, 0 skipped**. The dispatcher accepted PASS after
+rerun; this is not a second full-suite pass. See the
+[dispatcher gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1666#issuecomment-5985428700).
+The inspected reports are `2026-10-04T22-27-14-344Z_real-claude-gate_#1666.log` and
+`2026-10-04T22-27-14-344Z_real-claude-gate-rerun_#1666.log` under the dispatcher repository’s `logs/`.
+
+**Previous live verification — 2026-10-04 (#1637).** The dispatcher ran the full
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against
 `feature/1637` at `6b6d9fa51c`, merged with `origin/main` at `5efa2a90d4` in a detached
 worktree (19 commits behind before merge): **53 executed, 53 passed, 0 failed,
@@ -3449,6 +3463,11 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- #1666 retains `InteractiveStreamE2ETest.interactiveTurn_newSession_rendersSessionBoundaryDelimiter`
+  (#541) and its `CD_MORE_ACTIONS` selector, now reaching Reset session through the shared header
+  Actions overlay. The fresh full-suite named pass and the unrelated failure/rerun are recorded above.
+  Existing header E2E callers remain intact; no new rung-3 scenario or rung-4 deterministic twin was added.
 
 - #1668 revises `InteractiveStreamE2ETest.interactiveTurn_backgroundTask_countsInActionsMenuAndPanel`
   in place: its historical name stays for acceptance tracking, while entry coverage uses the pill and
