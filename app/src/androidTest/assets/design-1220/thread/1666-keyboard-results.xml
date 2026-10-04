@@ -1,0 +1,12 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="2" failures="0" errors="0" skipped="0" time="24.035" timestamp="2026-10-04T19:15:08" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.TaskCountPillKeyboardDeviceTest" tests="2" failures="0" errors="0" skipped="0" time="22.488" timestamp="2026-10-04T19:15:08" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="keyboardAndActionsMenu_keepRunningPillReachable" classname="de.pyryco.mobile.ui.conversations.thread.TaskCountPillKeyboardDeviceTest" time="14.7" />
+    <testcase name="headerMenu_openOutsideDismissAndBack_preserveFocusedComposerAndKeyboard" classname="de.pyryco.mobile.ui.conversations.thread.TaskCountPillKeyboardDeviceTest" time="7.788" />
+  </testsuite>
+</testsuites>

@@ -650,6 +650,23 @@ interface ConversationRepository {
     ) {}
 
     /**
+     * Read this repository's host instructions and daemon-supplied reset text without a conversation.
+     * Both strings are required and preserved verbatim; no interactive capability is needed.
+     * Failures are explicit and content-free; caller cancellation still propagates.
+     * The default failure keeps implementations without host settings source-compatible.
+     */
+    suspend fun requestHostSystemPrompt(): Result<HostSystemPromptReading> =
+        Result.failure(UnsupportedOperationException("Host system prompt read is not supported"))
+
+    /**
+     * Durably store [systemPrompt] verbatim on this host and return the acknowledged current/default
+     * pair. Empty clears; reset is an ordinary write of the returned default. Rejects values above
+     * [SystemPromptLimit.MAX_BYTES] UTF-8 bytes before sending. No session is reset or restarted.
+     */
+    suspend fun setHostSystemPrompt(systemPrompt: String): Result<HostSystemPromptReading> =
+        Result.failure(UnsupportedOperationException("Host system prompt write is not supported"))
+
+    /**
      * Read the system prompt stored for [conversationId] (#823), one `request_system_prompt` per call.
      * Keyed by **conversation**, never by session: a conversation with nothing running reads normally,
      * and the read changes nothing on the daemon. The stored value keeps its three states apart (see
@@ -1279,6 +1296,18 @@ data class SystemPromptReading(
     val systemPrompt: String?,
     val sessionPromptStatus: SessionPromptStatus,
 )
+
+/**
+ * A validated host read or durable-write acknowledgement. Both strings are untrusted instructions:
+ * render as plain text only; never use them as paths, URLs, log fields or exception text.
+ * The daemon owns the default. This reading is never persisted in the conversation cache.
+ */
+data class HostSystemPromptReading(
+    val systemPrompt: String,
+    val defaultSystemPrompt: String,
+) {
+    override fun toString(): String = "HostSystemPromptReading(systemPrompt=<redacted>, defaultSystemPrompt=<redacted>)"
+}
 
 /** The daemon's three-value verdict on the running session's prompt (#823); nothing else decodes. */
 enum class SessionPromptStatus {

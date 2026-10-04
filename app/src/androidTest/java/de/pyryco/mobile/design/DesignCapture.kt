@@ -9,8 +9,9 @@ import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.ui.test.SemanticsNodeInteraction
-import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.junit4.ComposeTestRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
@@ -171,11 +172,10 @@ class DesignCapture(
         awaitKeyboard(false)
     }
 
-    /** Clicks [anchor] and waits for the menu's popup window to compose. */
-    fun openMenu(anchor: SemanticsNodeInteraction) {
-        val roots = rule.onAllNodes(isRoot()).fetchSemanticsNodes().size
-        anchor.performClick()
-        rule.waitUntil(5_000) { rule.onAllNodes(isRoot()).fetchSemanticsNodes().size > roots }
+    /** Header actions share the activity window, so await an unconditional row rather than a popup root. */
+    fun openHeaderMenu() {
+        rule.onNodeWithContentDescription("More actions").performClick()
+        rule.waitUntil(5_000) { rule.onAllNodesWithText("Channel info").fetchSemanticsNodes().isNotEmpty() }
         instrumentation.uiAutomation.waitForIdle(500, 5_000)
         rule.waitForIdle()
     }

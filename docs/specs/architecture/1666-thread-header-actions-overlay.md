@@ -1,0 +1,59 @@
+# Thread header Actions overlay (#1666)
+
+## Files read
+
+- `ThreadOverflowMenu.kt`: `ThreadOverflowMenu` owns the ordered, client-owned rows, mutation/promotion/memory gates and dismiss-before-action routing.
+- `app/src/main/AndroidManifest.xml`: application Back opt-in is required for header-priority callbacks on Android 13.
+- `ThreadTopAppBar.kt`: `ThreadTopAppBar` owns the accessible three-dot control; its only production caller is `ThreadScreen`.
+- `ThreadScreen.kt`: `openControl`, `footerAnchors` and `layerOrigin` demonstrate same-window overlay hosting and live window-to-layer conversion.
+- `OptionsOverlay.kt`: `OptionsOverlay` already supplies Actions semantics, focus-preserving scrim, Back handling and Below placement.
+- `docs/knowledge/features/thread-screen.md`, `thread-overflow-menu.md`, `options-overlay.md`: current memory report must be read on every recomposition; same-window overlays consume outside taps without taking composer focus.
+- `ThreadOverflowMenuTest`, `ThreadScreenOverflowTest`, `ThreadFrameTest`, `ThreadComposerFooterTest`: existing routing, gates and frame/overlay regression coverage.
+- `ThreadDesignCaptureTest`: retained overflow-menu and compact-overflow-menu device captures; its popup-root wait must become a visible header-row wait.
+- `TaskCountPillKeyboardDeviceTest`: existing test-IME setup reused for a focused header open/outside/Back preservation case (real IME requires a device).
+
+## Design source
+
+Style: https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=533-1958
+
+Read through Figma MCP. The direct render is 1 × 1, as recorded in the ticket. Reuse the existing composer Actions component: bodySmall text, 12/6 dp row insets, 2 dp column inset, 6 dp corners and the existing theme roles. Actions mode has neither radio selection nor subset caption. The old shadowed Material menu in https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=675-5883 is deliberately superseded by Juhana's #1666 decision; the existing composer component is the appearance reference.
+
+## Context
+
+The header and composer dropdowns should share their style. No transport or product action contract changes. Overlaps #1642, #1747 and #1753 touch separate screen blocks; keep this change local.
+
+## Design
+
+Keep the ordered action construction and routing in `ThreadOverflowMenu`, replacing DropdownMenu with OptionsOverlay in Actions mode and Below placement. An optional anchor after modifier keeps isolated test hosts source-compatible; production supplies live bounds. `ThreadTopAppBar` becomes chrome only and reports the overflow IconButton bounds through a callback. `ThreadScreen` hosts the menu beside its footer overlay over the full Scaffold, translating window bounds by layerOrigin. Opening the header clears the footer control; opening a footer clears the header. Slash suggestions are suppressed while either menu is open. Preserve cd_more_actions, labels, events, background panel callback and memory URL.
+
+## State and concurrency model
+
+Header visibility stays UI-local in the screen. Rows are derived from current state on every recomposition, including conversation changes. Bounds update through onGloballyPositioned; no new jobs, flows or dispatcher. Same-window overlay leaves composer focus and keyboard ownership alone. Selection calls dismissal before its existing action; the shared scrim and BackHandler dismiss without routing.
+
+## Error handling
+
+No new failure modes; existing action handlers and memory URI behavior remain unchanged.
+
+## Testing strategy
+
+Add a red presentation assertion before implementation. Extend shared tests for button roles without selection, complete order/gating, live anchor movement and gap, outside pointer dismissal with no tap-through, Back, focused composer preservation and menu exclusivity. Run the three affected classes plus footer, slash and shared overlay regressions. Retain both existing ThreadDesignCaptureTest captures; run the affected device capture methods because pixels and real IME cannot be proved by Robolectric. Compile shared/device tests, lint, assemble and forced spotless check. Dispatcher owns fresh full live suite: all methods, explicitly including InteractiveStreamE2ETest.interactiveTurn_newSession_rendersSessionBoundaryDelimiter; executed/failed/skipped counts and named pass remain pending.
+
+## Open Questions
+
+None.
+
+## Documentation handoff
+
+Pending documentation stage:
+
+- `app/src/androidTest/assets/design-1220/README.md`, Overflow menu row: replace audited 675:5883 match with 533:1958 Actions style by Juhana's decision on #1666; retain both captures and #1631 approved addition.
+- `docs/knowledge/features/thread-overflow-menu.md` and linked wiring topic; `thread-screen.md` and overlay topic; `options-overlay.md`: update hosting and presentation consistently.
+- Record dispatcher-produced fresh full live evidence, counts and named #541 method pass; documentation does not produce evidence.
+
+Sizing: approximately 600 written lines, no new exported types, one production consumer for each changed host, five acceptance criteria, no new reject branches; below all ticket limits.
+
+## Revisions
+
+- 2026-10-04: The new real-IME test demonstrated that ordinary Compose BackHandler lets the IME consume Back first, leaving the header menu open. Register a header-only platform OnBackInvokedCallback at PRIORITY_OVERLAY while mounted, with DisposableEffect cleanup and rememberUpdatedState dismissal. The shared OptionsOverlay BackHandler remains the activity-dispatch fallback; composer and reader behavior stays unchanged. The application explicitly opts into platform Back callbacks, covering MainActivity and isolated ComponentActivity test hosts on Android 13; activity-only opt-in left callback registration disabled there. Android's overlay priority is intended for menus: https://developer.android.com/reference/android/window/OnBackInvokedDispatcher#PRIORITY_OVERLAY. The revised contract is that system Back closes the header before hiding an already-visible keyboard.
+
+- 2026-10-04 (verifier rework): `DesignCapture.openMenu` still waited for a popup root in the list captures and harness smoke test. Replace it with shared `openHeaderMenu`, awaiting the always-present Channel info row, and use it from all three capture classes. The new 320×480, 1.5× real-IME test reproduced the second finding: Background tasks ended at 266dp while the keyboard began at 240dp. Apply `imePadding` to the screen's header-overlay host so Below placement measures only the remaining room above the keyboard; anchor conversion and the 4dp gap stay unchanged. The scrim covers all app controls above the IME, consuming outside taps without changing composer focus. The device regression scrolls to the final discussion row, checks its physical bounds above the keyboard, and pointer-taps it to open the panel. Device-only coverage is required for the real IME inset and hit testing.
