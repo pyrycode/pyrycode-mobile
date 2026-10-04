@@ -5059,25 +5059,38 @@ class InteractiveStreamE2ETest {
         instrumentation.addMonitor(stub)
         var relaunched: ActivityScenario<MainActivity>? = null
         var cut: LinkCut? = null
+        var step = "prepare fixtures"
         try {
             val stamp = System.currentTimeMillis()
             val document = documentFixture("retrieval-$stamp")
             val documentName = INTERRUPT_FILE_PREFIX + "retrieval-$stamp.txt"
 
             // 1. X is a fresh named chat the phone does not open; the peer uploads into it and names the file.
+            // Bind the shared token first, so identity rotation fails even when selected alone (#1690, #1698).
+            step = "open prior retrieval peer"
+            runningToolPeer().use { prior ->
+                peerStep(prior, step) { prior.open(CONNECT_TIMEOUT_MS) }
+            }
+            step = "open uploading peer"
             runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            step = "initial phone readiness"
             awaitChannelList()
             awaitConnected()
+            step = "create attachment chat"
             val (chatX, nameX) = answerChat(serverId, INTERRUPT_CHAT_NAME_PREFIX)
             val id =
                 runBlocking {
+                    step = "upload peer attachment"
                     val id = peer.uploadAttachment(chatX, documentName, TEXT_MIME, document, REPLY_TIMEOUT_MS)
+                    step = "send attachment message and await ack"
                     peer.sendMessage(chatX, PING_PROMPT, THREAD_TIMEOUT_MS, attachmentIds = listOf(id))
                     id
                 }
+            step = "await peer attachment turn_end"
             allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the peer's attachment turn in X did not end") { it.type == "turn_end" }
 
             // 2. Restart with X's thread cache cleared, then open X with the cut armed for that id's request.
+            step = "restart with cleared thread cache"
             relaunched =
                 restartApp {
                     val cache = GlobalContext.get().get<ConversationCache>()
@@ -5086,8 +5099,10 @@ class InteractiveStreamE2ETest {
                         assertTrue("X's thread cache was not cleared", cache.readThread(serverId, chatX).isEmpty())
                     }
                 }
+            step = "restarted phone readiness"
             awaitChannelList()
             awaitConnected()
+            step = "history replay and retrieval request cut"
             cut = cutLinkOn(serverId) { it.startsWith(RETRIEVAL_REQUEST_EVENT + "id=$id") }
             openChatRow(nameX)
             // Pull for X's history until its row is drawn. The row loads once it is drawn, so keep it on screen
@@ -5101,6 +5116,7 @@ class InteractiveStreamE2ETest {
             cut.close()
 
             // 3. AC-2: the row, still unnamed, shows the failed state with its Retry.
+            step = "failed unnamed row with Retry"
             val unnamed = string(R.string.thread_attachment_unnamed)
             val retry = attachmentRetry(unnamed)
             try {
@@ -5116,12 +5132,17 @@ class InteractiveStreamE2ETest {
             }
 
             // 4. AC-2: with the link back, Retry brings the row to ready, and it opens with the fixture's bytes.
+            step = "reconnect before Retry"
             setHostLink(serverId, up = true)
             awaitConnected()
+            step = "single Retry retrieves ready row"
             composeTestRule.onAllNodes(retry, useUnmergedTree = true).onFirst().performClick()
             awaitReadyAttachmentRow(documentName, REPLY_TIMEOUT_MS)
             composeTestRule.onAllNodes(readyAttachmentRow(documentName)).assertCountEquals(1)
+            step = "open and save fixture digests"
             assertOpensAndSaves(stub, documentName, sha256(document), inserted)
+        } catch (e: TimeoutCancellationException) {
+            throw AssertionError("interrupted retrieval step '$step' timed out; ${peer.linkState()}", e)
         } finally {
             cut?.close()
             runCatching { setHostLink(serverId, up = true) }
