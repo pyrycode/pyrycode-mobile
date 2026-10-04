@@ -16,6 +16,21 @@ The matching Settings row gained a live "N archived" supporting line in #164 —
 
 The two consumers of the same `observeConversations(ConversationFilter.Archived)` flow now demonstrate a split that goes back to #164: this screen surfaces `Error(message)` because the list IS the screen's primary content; the Settings row's projection swallows the same upstream's errors via `.catch { emit(0) }` because it's supportive metadata about *this* screen.
 
+Restore failures (#1749) show the unchanged “Couldn't restore this conversation. Try again.”
+copy in the shared [Error NoticePill](notice-pill.md), with no X or tap action and a
+polite live region. The notice overlays the body within 20dp side gutters, right-aligned
+28dp below the complete measured header: title, optional host label and tab strip.
+Measuring only Scaffold's title bar would cover the tabs. Host, tabs and rows keep
+their existing layout. Figma `685:4337` authorises notice styling and placement reuse
+under #1604; its thread content does not replace Archive's design.
+
+The screen collects restore effects sequentially. Failure lasts Material Short's
+4000ms, adjusted by the accessibility manager with icons/text/controls flags
+`true/true/false`; success still awaits the existing confirmation snackbar. Each
+failure has a distinct composition identity, and a frame boundary after clearing
+keeps queued identical failures individually observable. Clearing in `finally` and
+composition cancellation prevent a departed screen's timer from leaving a notice.
+
 ## How it works
 
 Split into [Archived Discussions screen — how it works](archived-discussions-screen-how-it-works.md) on 2026-09-22 to keep this document under the 50000-byte cap the docs guard enforces. That section, How it works, moved there verbatim, headings and anchors intact.
@@ -38,7 +53,7 @@ Tab selection survives recomposition / rotation (`MutableStateFlow` in the VM, V
 ## Edge cases / limitations
 
 - **A row archived from this phone needs a scroll nudge to land visibly on top (#1332).** `conversation_updated` carries no `archived_at`, so a row archived here is held with `archivedAt = null` and sorts by `lastUsedAt` until the screen's own `list_conversations` reply brings the daemon's stamp — by which point the keyed `LazyColumn` is already anchored on whatever row drew first in that slot, and a row that then moves in front of it opens above the viewport instead of visibly on top. `LoadedBody`'s private `KeepNewTopRowInView` composable (`ArchivedDiscussionsScreen.kt`) watches the first row's id and calls `requestScrollToItem(0)` when it changes while the list was at the top; a list the user had scrolled keeps its place. Caught by the verifier on PR #1398, not by `ArchivedDiscussionsViewModelTest` (which has no `LazyColumn`) — a keyed-list reorder that depends on a second network round trip needs a layout-level test (`ArchivedDiscussionsLayoutTest`) or the live e2e scenario, not a view-model one.
-- **Restore failure surfaces since #557** — a fixed-string `restore_failed` snackbar covers both the server-`error` (`RelayErrorException`) and disconnected (`IllegalStateException`) cases; the server-supplied message is never shown. Resolves the gap this bullet used to describe (pre-#557 silent `runCatching` no-op). See [`codebase/557.md`](../codebase/557.md).
+- **Restore failure surfaces since #557** — a fixed-string `restore_failed` top Error pill (#1749; previously a snackbar) covers both the server-`error` (`RelayErrorException`) and disconnected (`IllegalStateException`) cases; the server-supplied message is never shown. Resolves the gap this bullet used to describe (pre-#557 silent `runCatching` no-op). See [`codebase/557.md`](../codebase/557.md).
 - **Restore against the real relay is reachable — this overview previously said otherwise.** `RemoteConversationRepository.mutationsSupported` was flipped from `false` to `true` in #572, before this ticket; the pre-#572 statement here (that `unarchive` sat behind a disabled family gate) was already stale by the time #715 landed and is corrected as part of #715's documentation handoff. What #715 fixes is *which* host's relay a restore reaches — see [`ArchivedDiscussionsViewModel`](archived-discussions-screen-how-it-works.md#archiveddiscussionsviewmodel) above. The rung-3 two-host archive/restore e2e shipped as #1086's `interactiveTurn_twoHostsDefaultsAndArchive_stayPerHost`, tracked separately from this correction.
 - **Settings entry-row count counts only archived discussions, not archived channels.** Since #164 the Settings row reads `"N archived"` where N = `count { !it.isPromoted }` on the same `Archived` upstream — the pre-#176 screen-side filter that #176 walked back. Archived channels are now first-class in this screen but invisible on the Settings entry. A follow-up could promote the Settings projection to `count { archived = true }` for parity; not done here because (a) the Settings copy literal is still "Archived discussions" and (b) the count number's contract with users hasn't changed yet. Documented divergence — preserved by #715, which moved *which host's* repository the count reads from without touching the projection itself.
 - **Figma node `18:2` covers only populated Channels at 412 × 892.** Since the 2026-10-02 design decision (#1487) the frame also draws the 24dp host label above the tabs, 24dp below the header, with the tabs and rows shifted down to match; it still has no Discussions body, empty state or enlarged-text state. The labelled comparison uses a no-host device capture for the sole reference state; populated Discussions, both empty tabs, and compact enlarged text have device layout and behavior evidence only. The reference also has rounded presentation-frame corners while the device-root capture has rectangular edges. Do not treat those differences, or unprovided states, as pixel parity claims.
@@ -47,6 +62,18 @@ Tab selection survives recomposition / rotation (`MutableStateFlow` in the VM, V
 - **A device `input tap` can be sampled mid-ripple if the next check runs right after it.** `adb shell input tap` (and the `ListDesignCaptureTest.tap` helper that wraps it) returns before the app has dispatched the touch event, so a `waitForIdle()` immediately afterward can land while the default press ripple is still fading — a throwaway #1487 probe sampled a tapped tab at 27,45,59 at +200ms and 15,34,48 at +400ms before it settled back to its base color around +800ms. The bounded ripple is a platform `RippleDrawable` animating on the RenderThread, which Compose's own idle does not track, so `rule.waitForIdle()` does not bound it either — wait for the state the tap is supposed to cause (here, the tab reporting `Selected == true`) before any later `uiAutomation.waitForIdle` margin, rather than trusting idle alone to outlast an animation Compose doesn't own.
 
 ## Testing
+
+`ArchiveRestoreNoticeTest` uses buffered deterministic effects and a controlled Compose
+clock to cover failure/success presentation, unchanged host/tab/row geometry, physical
+header-control taps, host-label removal, expiry without recomposition replay,
+accessibility timeout flags, sequential identical failures followed by success, and
+screen-exit cancellation. The [restore-failure capture and verdict](../../../app/src/androidTest/assets/design-1220/list/index.md#restore-failure--error-pill-reuse-6854337)
+retain real-bar hardware evidence; the capture holds the clock and proves no lifetime.
+Archive's demo repository is resolved directly by `ThreadDestinationFactory.repository`:
+overriding the list's `HostConversationSource` cannot induce an Archive restore failure.
+The capture scopes a failing Archive ViewModel binding and restores the production
+binding afterward. The shared pill's 22px line box versus the reference's 24px remains
+tracked by [#1757](https://github.com/pyrycode/pyrycode-mobile/issues/1757).
 
 `ArchivedDiscussionsViewModelTest` (unit) at `app/src/test/java/de/pyryco/mobile/ui/settings/ArchivedDiscussionsViewModelTest.kt` — 15 `@Test` methods (post-#177; #176 grew it from #94's 9 to 13, #177 added 2 more), mirroring `DiscussionListViewModelTest`'s idiom (`Dispatchers.setMain(UnconfinedTestDispatcher())` + `runTest` + `advanceUntilIdle`; anonymous `ConversationRepository` stub with `TODO("not used")` on unused methods; `RecordingRepo` capturing `unarchiveCalls: List<String>` for the restore-action path; new `throwingUnarchiveRepo` since #177 whose `unarchive` throws `RuntimeException("boom")`):
 
