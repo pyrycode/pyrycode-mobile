@@ -119,6 +119,11 @@ private fun <T> switchToLive(whenAbsent: T, select: (ConversationRepository) -> 
 
 - `observeConversations(filter)` / `observeMessages(id)` / `recentWorkspaces()` → `switchToLive(emptyList()) { … }`
 - `observeLastMessage(id)` → `switchToLive<Message?>(null) { … }`
+- `observeSessionError(id)` (#1677) → `switchToLive<String?>(null) { … }` — forwards
+  the live current code and emits null while disconnected, even with `heldReadings`
+  supplied. Errors never enter that holder. Switching cancels the old observation;
+  detached old-repository updates cannot leak into the facade and a fresh remote
+  starts empty without resending. See [session-error clearing rules](remote-conversation-repository-state-errors-and-handoff.md#conversation-session-errors-1677).
 - `observeStall(id)` (#395) → `switchToLive(false) { … }` — no live connection reports "not stalled";
   `flatMapLatest` cancel-old-on-switch means a stall from a prior connection never leaks across a
   reconnect (each connection's remote repo starts with an empty stall set, #351). See

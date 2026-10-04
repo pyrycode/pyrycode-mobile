@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -29,14 +30,13 @@ import kotlinx.coroutines.test.setMain
 import kotlinx.datetime.Instant
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
 /**
- * #1311: the local-send window — "Thinking…" from the moment a send is handed to the daemon until the
- * first `turn_state` for this conversation, as desktop's `localSendPending` does.
+ * #1641: Sending until acknowledgement, Waiting until this conversation's first turn_state.
+ * A completion cannot revive a closed or replaced window.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ThreadViewModelLocalSendTest {
@@ -70,6 +70,7 @@ class ThreadViewModelLocalSendTest {
     private class GatedRepository(
         private val gate: CompletableDeferred<Unit> = CompletableDeferred(Unit),
         private val failure: Throwable? = null,
+        private val gates: List<CompletableDeferred<Unit>> = emptyList(),
         private val uploadOutcome: AttachmentUploadResult = AttachmentUploadResult.Stored("att-1"),
     ) : ConversationRepository by FakeConversationRepository() {
         var sends = 0
@@ -99,7 +100,8 @@ class ThreadViewModelLocalSendTest {
 
         private suspend fun send(text: String): Message {
             sends++
-            gate.await()
+            val attempt = sends
+            gates.getOrElse(attempt - 1) { gate }.await()
             failure?.let { throw it }
             return Message(
                 id = "m$sends",
@@ -141,15 +143,18 @@ class ThreadViewModelLocalSendTest {
         runTest {
             val gate = CompletableDeferred<Unit>()
             val vm = vm(GatedRepository(gate))
-            assertFalse(vm.localSendPending.value)
+            assertEquals(LocalSendStage.None, vm.localSendStage.value)
 
             vm.sendMessage("hello")
             advanceUntilIdle()
-            assertTrue("open while the send is in flight", vm.localSendPending.value)
+            assertEquals("open while the send is in flight", LocalSendStage.Sending, vm.localSendStage.value)
 
             gate.complete(Unit)
             advanceUntilIdle()
-            assertTrue("still open until the daemon's first turn_state", vm.localSendPending.value)
+            assertEquals("still open until the daemon's first turn_state", LocalSendStage.Waiting, vm.localSendStage.value)
+            advanceTimeBy(300_000)
+            advanceUntilIdle()
+            assertEquals("no local timeout invents a started turn", LocalSendStage.Waiting, vm.localSendStage.value)
         }
 
     @Test
@@ -160,12 +165,12 @@ class ThreadViewModelLocalSendTest {
                 val vm = vm(GatedRepository(), events)
                 vm.sendMessage("hello")
                 advanceUntilIdle()
-                assertTrue(vm.localSendPending.value)
+                assertEquals(LocalSendStage.Waiting, vm.localSendStage.value)
 
                 events.emit(turnState(phase))
                 advanceUntilIdle()
 
-                assertFalse("turn_state $phase must close the window", vm.localSendPending.value)
+                assertEquals("turn_state $phase must close the window", LocalSendStage.None, vm.localSendStage.value)
             }
             // Static codes only: the message text never reaches the log.
             assertTrue(logs.contains("event=local_send_window state=open"))
@@ -185,7 +190,7 @@ class ThreadViewModelLocalSendTest {
             events.emit(LiveSessionEvent.AssistantDelta(CONV, "t1", 0, "hi"))
             advanceUntilIdle()
 
-            assertTrue(vm.localSendPending.value)
+            assertEquals(LocalSendStage.Waiting, vm.localSendStage.value)
         }
 
     @Test
@@ -202,12 +207,12 @@ class ThreadViewModelLocalSendTest {
                 val vm = vm(GatedRepository(gate, failure))
                 vm.sendMessage("hello")
                 advanceUntilIdle()
-                assertTrue(vm.localSendPending.value)
+                assertEquals(LocalSendStage.Sending, vm.localSendStage.value)
 
                 gate.complete(Unit)
                 advanceUntilIdle()
 
-                assertFalse("a send refused by $failure must close the window", vm.localSendPending.value)
+                assertEquals("a send refused by $failure must close the window", LocalSendStage.None, vm.localSendStage.value)
             }
         }
 
@@ -218,13 +223,13 @@ class ThreadViewModelLocalSendTest {
             val vm = vm(GatedRepository(), repositoryAvailable = available)
             vm.sendMessage("hello")
             advanceUntilIdle()
-            assertTrue(vm.localSendPending.value)
+            assertEquals(LocalSendStage.Waiting, vm.localSendStage.value)
 
             available.value = false
             available.value = true
             advanceUntilIdle()
 
-            assertFalse(vm.localSendPending.value)
+            assertEquals(LocalSendStage.None, vm.localSendStage.value)
         }
 
     @Test
@@ -237,7 +242,7 @@ class ThreadViewModelLocalSendTest {
             vm.sendMessage("hello")
             advanceUntilIdle()
 
-            assertTrue(vm.localSendPending.value)
+            assertEquals(LocalSendStage.Waiting, vm.localSendStage.value)
         }
 
     @Test
@@ -250,7 +255,7 @@ class ThreadViewModelLocalSendTest {
             advanceUntilIdle()
 
             assertEquals(0, repo.sends)
-            assertFalse(vm.localSendPending.value)
+            assertEquals(LocalSendStage.None, vm.localSendStage.value)
         }
 
     @Test
@@ -267,25 +272,112 @@ class ThreadViewModelLocalSendTest {
             // Close the window the first send opened, so only the refused second send could reopen it.
             events.emit(turnState(LiveSessionEvent.TurnState.Phase.Idle))
             advanceUntilIdle()
-            assertFalse(vm.localSendPending.value)
+            assertEquals(LocalSendStage.None, vm.localSendStage.value)
 
             vm.sendMessage("again")
             advanceUntilIdle()
 
             assertEquals(1, repo.sends)
-            assertFalse(vm.localSendPending.value)
+            assertEquals(LocalSendStage.None, vm.localSendStage.value)
         }
 
     @Test
-    fun anAttachmentSend_opensIt() =
+    fun anAttachmentSend_transitionsFromSendingToWaiting() =
         runTest {
-            val vm = vm(GatedRepository())
+            val gate = CompletableDeferred<Unit>()
+            val vm = vm(GatedRepository(gate))
             vm.addAttachment("content://docs/a", "a.txt", "text/plain", 5L)
-
             vm.sendMessage("with a file")
             advanceUntilIdle()
+            assertEquals(LocalSendStage.Sending, vm.localSendStage.value)
 
-            assertTrue(vm.localSendPending.value)
+            gate.complete(Unit)
+            advanceUntilIdle()
+            assertEquals(LocalSendStage.Waiting, vm.localSendStage.value)
+        }
+
+    @Test
+    fun turnStateBeforeAcknowledgement_cannotRestoreWaiting_forAnyPhase() =
+        runTest {
+            for (phase in LiveSessionEvent.TurnState.Phase.entries) {
+                val gate = CompletableDeferred<Unit>()
+                val events = MutableSharedFlow<LiveSessionEvent>()
+                val vm = vm(GatedRepository(gate), events)
+                vm.sendMessage("hello")
+                advanceUntilIdle()
+                assertEquals(LocalSendStage.Sending, vm.localSendStage.value)
+
+                events.emit(turnState(phase))
+                advanceUntilIdle()
+                assertEquals(LocalSendStage.None, vm.localSendStage.value)
+                gate.complete(Unit)
+                advanceUntilIdle()
+                assertEquals("late ack after $phase", LocalSendStage.None, vm.localSendStage.value)
+            }
+        }
+
+    @Test
+    fun availabilityChangesBeforeAcknowledgement_cannotRestoreWaiting() =
+        runTest {
+            for (initial in listOf(true, false)) {
+                val gate = CompletableDeferred<Unit>()
+                val available = MutableStateFlow(initial)
+                val vm = vm(GatedRepository(gate), repositoryAvailable = available)
+                advanceUntilIdle()
+                vm.sendMessage("hello")
+                advanceUntilIdle()
+                assertEquals(LocalSendStage.Sending, vm.localSendStage.value)
+
+                available.value = !initial
+                advanceUntilIdle()
+                assertEquals(LocalSendStage.None, vm.localSendStage.value)
+                gate.complete(Unit)
+                advanceUntilIdle()
+                assertEquals(LocalSendStage.None, vm.localSendStage.value)
+            }
+        }
+
+    @Test
+    fun anotherConversationsTurnState_doesNotCloseSendingOrWaiting() =
+        runTest {
+            val gate = CompletableDeferred<Unit>()
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = vm(GatedRepository(gate), events)
+            vm.sendMessage("hello")
+            advanceUntilIdle()
+            events.emit(turnState(LiveSessionEvent.TurnState.Phase.Idle, "other"))
+            advanceUntilIdle()
+            assertEquals(LocalSendStage.Sending, vm.localSendStage.value)
+            gate.complete(Unit)
+            advanceUntilIdle()
+            events.emit(turnState(LiveSessionEvent.TurnState.Phase.Thinking, "other"))
+            advanceUntilIdle()
+            assertEquals(LocalSendStage.Waiting, vm.localSendStage.value)
+        }
+
+    @Test
+    fun olderSendCompletion_cannotMutateAReplacementWindow() =
+        runTest {
+            for (failure in listOf(null, IllegalStateException("not connected"))) {
+                val first = CompletableDeferred<Unit>()
+                val second = CompletableDeferred<Unit>()
+                val events = MutableSharedFlow<LiveSessionEvent>()
+                val vm = vm(GatedRepository(failure = failure, gates = listOf(first, second)), events)
+                vm.sendMessage("first")
+                advanceUntilIdle()
+                events.emit(turnState(LiveSessionEvent.TurnState.Phase.Idle))
+                advanceUntilIdle()
+                vm.sendMessage("second")
+                advanceUntilIdle()
+                assertEquals(LocalSendStage.Sending, vm.localSendStage.value)
+
+                first.complete(Unit)
+                advanceUntilIdle()
+                assertEquals("old completion must leave the new send alone", LocalSendStage.Sending, vm.localSendStage.value)
+                second.complete(Unit)
+                advanceUntilIdle()
+                assertEquals(if (failure == null) LocalSendStage.Waiting else LocalSendStage.None, vm.localSendStage.value)
+            }
         }
 
     @Test
@@ -299,7 +391,7 @@ class ThreadViewModelLocalSendTest {
             advanceUntilIdle()
 
             assertEquals(0, repo.sends)
-            assertFalse(vm.localSendPending.value)
+            assertEquals(LocalSendStage.None, vm.localSendStage.value)
         }
 
     /** #1314: [ThreadViewModel.sentMessages] fires once per send the daemon accepted, and for nothing else. */

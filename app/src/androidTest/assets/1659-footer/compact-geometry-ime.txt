@@ -1,0 +1,2 @@
+attach=DpRect(left=224.0.dp, top=403.0.dp, right=248.0.dp, bottom=419.0.dp) tune=DpRect(left=260.0.dp, top=403.0.dp, right=284.0.dp, bottom=419.0.dp) actions=DpRect(left=32.0.dp, top=398.0.dp, right=97.0.dp, bottom=419.0.dp) context=DpRect(left=32.0.dp, top=423.0.dp, right=147.0.dp, bottom=444.0.dp) imeVisible=true imePx=240
+footerCropPx=20,399,300,444

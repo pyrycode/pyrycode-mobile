@@ -260,14 +260,20 @@ daemon string. It draws in `colorScheme.error`, the color [`TurnOutcomeIndicator
 text already uses for a failed turn, rather than a new color token. It clears the instant `StallProjection`
 clears — any further live session event for the conversation — with no new clearing rule introduced here.
 
-**The local-send window is not a `ThinkingIndicator` parameter.** From the moment a send reaches the
-daemon until its first `turn_state` for this conversation, `ThreadViewModel.localSendPending` holds and
-`statusArm` reads it as `StatusArm.Thinking` — so the caller passes `isThinking = true` for that window, and
-this component cannot tell a local-send "Thinking…" from a daemon-confirmed one. That is deliberate:
-`progress` is still gated on the real `isThinking` flag (`ThreadScreen`'s own `isThinking`, not the arm), so
-the local window never decorates itself with a leftover token reading from the previous turn. See [Thread
-screen § The arm order](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311) for where the
-window opens and closes.
+**Acceptance is not a started turn (#1641).** `ThreadViewModel.localSendStage` opens `Sending`
+immediately before handing text or an attachment-bearing message to the repository. Its correlated
+acknowledgement advances the current window to `Waiting`: “Waiting for Claude” or “Waiting for Codex”.
+A daemon can accept a message while its agent child never starts, so Waiting has no timeout and must
+never imply Thinking. These are separate plain-text `StatusReading` arms, not `ThinkingIndicator`
+parameters; neither carries tokens nor sets `isBusy` or enables Stop. Thinking comes only from this
+conversation's daemon `thinking` phase. Both local arms lose to the existing running-tool, thinking and
+working readings and higher-priority arms, and suppress a previous turn outcome.
+
+Any first `turn_state` phase for this conversation, a failed current send or an availability change
+closes the window; another conversation's event does not. Each opening has a generation, invalidated
+on closure: a late acknowledgement cannot restore Waiting, and an older completion or failure cannot
+mutate a replacement window. Blank, refused and upload-failed sends never open it. See [Thread screen
+§ The arm order](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311) for selection.
 
 **The band is always composed, and the glyph always turns with it (#1312).** Before #1312, `StatusArm.None`
 made `StatusReading` emit nothing, so `ThreadStatusArea` contributed no node at all and the composer's input
@@ -275,9 +281,9 @@ field jumped between idle and busy. The band is now an always-present `Row` with
 (`ThreadStatusGlyph`) as its first child in every state — idle included — a weighted reading box second (so
 a `StatusArm.None` reading that emits nothing doesn't drop the weight with it and pull a lone task pill up
 against the glyph), and the task-count pill last when present. `ThreadStatusGlyph(turning: Boolean)` is the
-only rotation gate: `turning = ThreadViewModel.isBusy || localSendPending`, independent of which arm is
-showing, so a label change — Thinking → Working → api-retry, say — never restarts the turn, because the
-glyph is one stable composition node across arm changes, not a per-arm one. While `turning` and
+only rotation gate: `turning = ThreadViewModel.isBusy || localSendStage != LocalSendStage.None`,
+independent of which arm is showing. Sending → Waiting → Thinking → Working never restarts the
+rotation, because the glyph is one stable composition node across arm changes, not a per-arm one. While `turning` and
 `ValueAnimator.areAnimatorsEnabled()` (false at system animator scale 0, "Remove animations") it runs a
 `rememberInfiniteTransition` from 0° to 360° over 1600 ms, linear, restarting; otherwise the angle holds at
 0°, and it is disposed and restarts from 0° on the next rising edge rather than resuming mid-turn.
@@ -315,7 +321,8 @@ name](resetting-indicator.md#the-agent-name-1112). `turnOutcome` still has not.)
 
 **Exactly one affordance renders; the arms never stack.** The full order, top wins: connection, Reset
 session, api-retry, compaction, stall, turn outcome, then the turn-level tail above (an open tool while
-busy, else thinking, else working, else the local-send window reading as thinking). Reset session moved
+busy, else daemon thinking, else working, else Sending or Waiting). The turn-outcome arm is eligible
+only while `localSendStage == LocalSendStage.None`. Reset session moved
 above api-retry in #1311, matching desktop — see [Thread screen § The arm
 order](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311) for the full rationale and
 [Compacting indicator § Placement](compacting-indicator.md#placement-in-the-thread) for the pre-#1311
@@ -522,6 +529,14 @@ ToolCall(toolName = "Bash", status = ToolCallStatus.Running, elapsedSeconds = 65
   lands at ~30s on the one committed capture and cannot be held reliably, so only that half remains
   manual. See `docs/e2e-interactive-stream.md` § "What rung 3 is made of" and § "Scenarios (#454)" for
   both scenarios' mechanics.
+- **Local stages need independently held acknowledgements and phases (#1641).** `ScriptedLocalSendTest`
+  taps the real composer through `ScriptedThreadHarness`'s repository → ViewModel → screen graph.
+  Its five rung-2 cases prove both agents' waiting copy, wrong-ack and other-conversation isolation,
+  absence of thinking/tokens/Stop, and thinking/responding/idle arriving before acknowledgement without
+  reopening Waiting. Unit tests also cover availability closure, overlapping completions, attachments
+  and Waiting after five virtual minutes. Glyph tests cover both stages and uninterrupted rotation
+  across Sending → Waiting. A live label race cannot prove these controlled boundaries; the retained
+  rung-3 running-turn guard below serves a different purpose.
 - **The band now never empties during a running turn, proved at three levels (#1311).** `StatusArmTest`
   (pure, no Compose) drives the full precedence table behind `statusArm`, including Reset session now
   outranking api-retry. `ScriptedStatusLineTest` (`app/src/sharedTest/`, Robolectric, real repository fold

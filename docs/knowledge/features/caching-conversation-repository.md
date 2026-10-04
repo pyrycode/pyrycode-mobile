@@ -57,6 +57,12 @@ stay delegation: they are not removals, so neither can reach a cache-clearing pa
 cache § Removal on unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost) for the
 wording this mirrors).
 
+`observeSessionError` (#1677) is also plain delegation: current and changing codes
+pass through without a cache read or write. It retains no code or daemon prose and
+cannot restore an error from history. With the stable delegate, disconnect emits
+null and reconnect starts fresh, even while cached thread rows remain readable.
+See [the session-error contract](remote-conversation-repository-state-errors-and-handoff.md#conversation-session-errors-1677).
+
 ## Retrieving an attachment for this host (#899)
 
 ```kotlin

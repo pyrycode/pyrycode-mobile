@@ -19,7 +19,6 @@ import de.pyryco.mobile.ui.conversations.components.StatusGlyphRotation
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -39,7 +38,7 @@ class ThreadStatusGlyphRotationTest {
 
     private var isBusy by mutableStateOf(false)
     private var isThinking by mutableStateOf(false)
-    private var localSendPending by mutableStateOf(false)
+    private var localSendStage by mutableStateOf(LocalSendStage.None)
     private var apiRetry by mutableStateOf<ApiRetryStatus>(ApiRetryStatus.NotRetrying)
 
     /** What "Remove animations" sets: `ValueAnimator.areAnimatorsEnabled()` reads false at scale 0. */
@@ -73,7 +72,7 @@ class ThreadStatusGlyphRotationTest {
                     onRetry = {},
                     isThinking = isThinking,
                     isBusy = isBusy,
-                    localSendPending = localSendPending,
+                    localSendStage = localSendStage,
                     apiRetry = apiRetry,
                 )
             }
@@ -132,12 +131,41 @@ class ThreadStatusGlyphRotationTest {
     }
 
     @Test
-    fun localSendPending_alone_turnsTheGlyph() {
-        localSendPending = true
+    fun localStages_turnTheGlyph_withoutRestartingOnAcknowledgement_thenStopOnClosure() {
+        localSendStage = LocalSendStage.Sending
         setThread()
+        composeTestRule.onNodeWithText(label(R.string.thread_sending_label)).assertIsDisplayed()
+        advance(200)
         val first = angle()
         advance(400)
-        assertNotEquals(first, angle())
+        val sending = angle()
+        assertEquals(90f, turned(first, sending), 4f)
+
+        localSendStage = LocalSendStage.Waiting
+        advance(400)
+        composeTestRule.onNodeWithText(label(R.string.thread_waiting_label)).assertIsDisplayed()
+        assertEquals(90f, turned(sending, angle()), 4f)
+
+        localSendStage = LocalSendStage.None
+        advance(100)
+        val stopped = angle()
+        advance(700)
+        assertEquals(stopped, angle())
+    }
+
+    @Test
+    fun removeAnimations_keepsBothLocalLabels_andTheGlyphStill() {
+        setAnimatorDurationScale(0f)
+        localSendStage = LocalSendStage.Sending
+        setThread()
+        advance(700)
+        composeTestRule.onNodeWithText(label(R.string.thread_sending_label)).assertIsDisplayed()
+        assertEquals(0f, angle())
+
+        localSendStage = LocalSendStage.Waiting
+        advance(700)
+        composeTestRule.onNodeWithText(label(R.string.thread_waiting_label)).assertIsDisplayed()
+        assertEquals(0f, angle())
     }
 
     @Test

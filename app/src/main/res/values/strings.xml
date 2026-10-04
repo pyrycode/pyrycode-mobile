@@ -145,6 +145,9 @@
     <string name="thread_options_not_listed">+%1$d not listed</string>
     <string name="cd_options_overlay_dismiss">Close options</string>
     <string name="thread_thinking_label">Thinking…</string>
+    <string name="thread_sending_label">Sending…</string>
+    <string name="thread_waiting_label">Waiting for Claude</string>
+    <string name="thread_waiting_label_codex">Waiting for Codex</string>
     <string name="cd_thread_thinking">Agent is thinking</string>
     <string name="thread_thinking_progress_label">Thinking… ~%1$d tokens this step</string>
     <string name="cd_thread_thinking_progress">Claude is thinking, about %1$d tokens into its current reasoning step</string>
