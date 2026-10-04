@@ -461,9 +461,11 @@ def main():
         shards = os.environ.get("UI_SHARDS", "2" if full else "1")
         if not shards.isdigit() or int(shards) < 1:
             parser.error("UI_SHARDS must be a positive integer")
+        # Animations off on the managed emulator for the run (E2eInstrumentationRunner), as for the scripted runs.
         command = [str(ROOT / "gradlew"), f":app:{device}DebugAndroidTest", "--rerun",
                    f"-Pandroid.testInstrumentationRunnerArguments.notPackage={E2E_PACKAGE}",
-                   f"-Pandroid.experimental.androidTest.numManagedDeviceShards={shards}", "--console=plain"]
+                   f"-Pandroid.experimental.androidTest.numManagedDeviceShards={shards}",
+                   "-Pandroid.testInstrumentationRunnerArguments.disableAnimations=true", "--console=plain"]
         if not full:
             classes = device_only_classes()
             if not classes:
@@ -474,7 +476,11 @@ def main():
         env.pop("LIVE", None)
         env.pop("LIVE_TESTS", None)
         env.pop("DETERMINISTIC", None)
+        env.pop("E2E_DISABLE_ANIMATIONS", None)
         command = ["bash", str(ROOT / "scripts" / "e2e-emulator.sh")]
+        if args.mode in ("scripted", "scripted-all"):
+            # Animations off on the emulator for each scenario (E2eInstrumentationRunner). The live run keeps them.
+            env["E2E_DISABLE_ANIMATIONS"] = "1"
         if args.mode == "scripted":
             env.update(DETERMINISTIC="1", SCENARIO=args.scenario)
             expected_class = E2E_PACKAGE + ".DeterministicInteractiveStreamE2ETest"

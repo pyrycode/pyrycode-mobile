@@ -1378,6 +1378,10 @@ fi
 if [ -n "${FAULT_PORT:-}" ]; then
   GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.daemonFaultPort="${FAULT_PORT}")
 fi
+# Animations off on the emulator for the run; scripts/android-test-gate.py sets this for scripted scenarios only.
+if [ "${E2E_DISABLE_ANIMATIONS:-}" = "1" ]; then
+  GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.disableAnimations=true)
+fi
 TEST_STATUS=0
 "${GRADLEW}" -p "${REPO_ROOT}" "${DEVICE}DebugAndroidTest" \
   "${GRADLE_TEST_ARGS[@]}" \

@@ -303,6 +303,7 @@ class AndroidGateTest(unittest.TestCase):
             self.assertIn("-Pandroid.testInstrumentationRunnerArguments.class="
                           "de.pyryco.mobile.data.StoreTest,de.pyryco.mobile.ui.KeyboardTest", command)
             self.assertIn("-Pandroid.experimental.androidTest.numManagedDeviceShards=1", command)
+            self.assertIn("-Pandroid.testInstrumentationRunnerArguments.disableAnimations=true", command)
             _, command = self.ui_command(root, {"UI_DEVICE_ALL": "1"})
             self.assertFalse(any("testInstrumentationRunnerArguments.class=" in part for part in command))
             self.assertIn("-Pandroid.experimental.androidTest.numManagedDeviceShards=2", command)
@@ -640,9 +641,12 @@ class DeviceHoldTest(unittest.TestCase):
     def run_main(self, argv, environment=None):
         seen = []
 
+        self.envs = []
+
         def run(command, **kwargs):
             seen.append(self.held_elsewhere())
             self.assertEqual(kwargs["env"].get("E2E_APKS_BUILT"), "1")
+            self.envs.append(kwargs["env"])
             return subprocess.CompletedProcess(command, 0)
 
         root = self.home / "tree"
@@ -677,6 +681,13 @@ class DeviceHoldTest(unittest.TestCase):
                 _, seen, _, _ = self.run_main(argv)
                 self.assertEqual(held, [(argv[0], False)])
                 self.assertTrue(seen)
+
+    def test_animations_are_off_for_the_scripted_scenarios_but_not_the_live_run(self):
+        for argv, expected in ((["scripted", "ping"], "1"), (["scripted-all"], "1"), (["live"], None)):
+            with self.subTest(argv=argv):
+                self.run_main(argv, {"E2E_DISABLE_ANIMATIONS": "stale"})
+                self.assertTrue(self.envs)
+                self.assertTrue(all(env.get("E2E_DISABLE_ANIMATIONS") == expected for env in self.envs))
 
     def test_a_failed_apk_build_never_takes_the_device(self):
         self.build.return_value = 3

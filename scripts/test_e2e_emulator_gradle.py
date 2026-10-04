@@ -65,6 +65,26 @@ class EmulatorGradleTest(unittest.TestCase):
                           prefix + "collisionNameB=e2e847-b-1", prefix + "class=fixture.Class#method"],
                          lines[lines.index("--rerun"):lines.index("--rerun") + 7])
 
+    def test_animations_argument_is_passed_only_when_the_gate_asks(self):
+        root = Path(__file__).resolve().parent.parent
+        script = (root / "scripts/e2e-emulator.sh").read_text()
+        start = script.index("GRADLE_TEST_ARGS=(")
+        invocation = script[start:script.index("  --console=plain", start) + len("  --console=plain")]
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp) / "gradlew"
+            stub.write_text('#!/bin/bash\nprintf "%s\\n" "$@"\n')
+            stub.chmod(0o700)
+            base = dict(os.environ, GRADLEW=str(stub), REPO_ROOT=str(root), DEVICE="pixel2Api33Atd",
+                        TEST_TARGET="fixture.Class#method", PHONE_RELAY_URL="ws://10.0.2.2:8888",
+                        TOKEN="stub-token", SERVER_ID="stub-server", SERVER_STATIC_PUBKEY="stub-key")
+            arg = "-Pandroid.testInstrumentationRunnerArguments.disableAnimations=true"
+            for value, expected in (("", False), ("1", True)):
+                with self.subTest(value=value):
+                    result = subprocess.run(["bash", "-c", "set -euo pipefail\n" + invocation],
+                                            env=dict(base, E2E_DISABLE_ANIMATIONS=value),
+                                            capture_output=True, text=True, check=True)
+                    self.assertEqual(expected, arg in result.stdout.splitlines())
+
     def test_peer_token_is_passed_only_when_minted(self):
         # #848: the second-client peer's token rides its own block, after the two-host arguments.
         root = Path(__file__).resolve().parent.parent
