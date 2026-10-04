@@ -4450,7 +4450,11 @@ class InteractiveStreamE2ETest {
             awaitConnected()
             val connectedAt = SystemClock.elapsedRealtime()
             val (chatId, name) = answerChat(serverId, PUSH_TURN_NAME_PREFIX)
-            peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
+            // Bind the shared token first, so this regression also runs when the scenario is selected alone (#1693).
+            runningToolPeer().use { prior ->
+                peerStep(prior, "open prior completion peer") { prior.open(CONNECT_TIMEOUT_MS) }
+            }
+            peerStep(peer, "open completion peer") { peer.open(CONNECT_TIMEOUT_MS) }
             openChatRow(name)
             sendFromPhone(RUNNING_TOOL_PROMPT)
             val modalId =
