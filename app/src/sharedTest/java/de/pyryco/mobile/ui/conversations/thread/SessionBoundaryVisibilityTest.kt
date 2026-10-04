@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -19,6 +20,7 @@ import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.components.SESSION_BOUNDARY_TEST_TAG
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -84,11 +86,25 @@ class SessionBoundaryVisibilityTest {
         }
 
         // Pin the viewport to the wrap-up row, now at index 1 in ThreadScreen's reversed list.
-        // Off-screen lazy content may still exist in semantics; the precondition is non-display.
+        // The expanded viewport draws under chrome. Semantic display can include an obscured boundary.
         composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(1)
         composeRule.onNodeWithText("Wrap-up detail 80.").assertIsDisplayed()
-        boundary.assertIsNotDisplayed()
+        assertBoundaryInReadingArea(expected = false)
         composeRule.awaitDisplayedSessionBoundary(timeoutMillis = 5_000)
         boundary.assertIsDisplayed()
+        assertBoundaryInReadingArea(expected = true)
+    }
+
+    private fun assertBoundaryInReadingArea(expected: Boolean) {
+        // The tagged row includes its trailing space; the rule shares the label's centre, so the
+        // label's full bounds establish that the rendered delimiter is readable, without counting padding.
+        val boundary = composeRule.onNodeWithText("New session", substring = true, useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val header = composeRule.onNodeWithTag("thread-top-bar").getUnclippedBoundsInRoot()
+        val composer = composeRule.onNodeWithTag("thread-composer").getUnclippedBoundsInRoot()
+        assertEquals(
+            "boundary $boundary must be readable between ${header.bottom} and ${composer.top}",
+            expected,
+            boundary.top >= header.bottom && boundary.bottom <= composer.top,
+        )
     }
 }

@@ -24,17 +24,13 @@ import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.GraphicsMode
 
-/**
- * #1562: the message area starts at the header's rule (Figma `16:8`, `685:4337`). Scrolled rows draw up to
- * the rule, while a short or empty thread, the top pills and the input area keep their earlier positions.
- * The expected y values are the 412 × 892 reference frame's: [RULE_BOTTOM] is the Figma anchor the region now
- * starts at, and the others were measured on the layout before the change.
- */
+/** #1646: full-screen drawing, unchanged empty/input alignment, and pills pinned below measured chrome. */
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @OptIn(ExperimentalTestApi::class)
@@ -43,7 +39,7 @@ class ThreadMessageAreaTopTest {
     val rule = createComposeRule()
 
     @Test
-    fun scrolled_rows_are_drawn_up_to_the_header_rule() {
+    fun scrolled_rows_are_drawn_behind_the_header() {
         val items =
             (1..12).map { n ->
                 ThreadItem.MessageItem(
@@ -53,7 +49,7 @@ class ThreadMessageAreaTopTest {
         setScreen(state(hasMessages = true, items = items))
 
         val region = rule.onNodeWithTag(MESSAGE_REGION)
-        assertEquals("the message area starts at the rule's bottom edge", RULE_BOTTOM, region.getUnclippedBoundsInRoot().top.value, 1f)
+        assertEquals("the message viewport reaches the screen area top", 0f, region.getUnclippedBoundsInRoot().top.value, 1f)
         // Clipped bounds, in the forced frame's pixels: the list clips what scrolls past its top edge, so the
         // highest drawn message text shows where rows stop. Only text nodes count, so the list's own
         // full-region node cannot stand in for a row. Top content padding must not hold them below it.
@@ -66,7 +62,7 @@ class ThreadMessageAreaTopTest {
                 .map { it.boundsInRoot }
                 .filter { it.height > 0f }
                 .minOfOrNull { it.top } ?: error("no message rows drawn")
-        assertEquals("rows are drawn up to the rule", region.fetchSemanticsNode().boundsInRoot.top, highestDrawn, 1f)
+        assertTrue("scrolling text reaches behind the header", highestDrawn < with(rule.density) { RULE_BOTTOM.dp.toPx() })
     }
 
     @Test
@@ -132,7 +128,7 @@ class ThreadMessageAreaTopTest {
         // Pre-change positions in the reference frame. The pill's dp-exact top is 97, one frame pixel lower.
         const val EMPTY_TEXT_CENTRE = 423.9f
         const val INPUT_FIELD_TOP = 814.2f
-        const val TOP_PILL_TOP = 95.5f
+        const val TOP_PILL_TOP = 97f
 
         // The forced frame scales density to about 0.774, where the old 16dp and 12dp gaps round to one pixel
         // fewer than the single 28dp inset. One such pixel is 1.29dp; at real densities the two agree.

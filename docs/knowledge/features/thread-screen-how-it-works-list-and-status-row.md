@@ -4,6 +4,31 @@ Split out of [Thread screen](thread-screen.md) on 2026-09-05 to keep that docume
 
 ### `LazyColumn(reverseLayout = true)` — established in #126, populated in #246, dimmed in #136, nested in a `Column` since #201, rows folded with the queued backlog since #782
 
+Since [#1646](https://github.com/pyrycode/pyrycode-mobile/issues/1646), the list's drawing
+viewport spans the screen area above the IME, beneath both chrome layers. Scaffold
+bar slots still host controls, but their padding is used as a reservation rather
+than applied to the list's drawing bounds. In the reversed list, top content padding
+is the oldest end: measured header height + 28dp. `Arrangement.Top` preserves short
+threads' top alignment; the 69dp header places the oldest row and pinned overlay
+28dp below its rule.
+
+Newest-end padding is `composerHeight - ComposerTopGap - restAdjustment`, clamped
+at zero. Composer height is measured inside its IME padding; `ComposerTopGap` is
+16dp. For a delivered message without tools or attachments, and with no prompt
+rows, `restAdjustment` is 4dp: its existing 16dp `BubbleFrame` trailing space then
+leaves the visible surface 12dp above the status band. Other row kinds get no such
+adjustment or additional list gap. Non-rendering Info banners keep their stable
+rows and keys but are skipped when finding the newest rendered row; otherwise
+appending an invisible banner would change the ordinary-message resting gap.
+Internal row spacing belongs to [#1630](https://github.com/pyrycode/pyrycode-mobile/issues/1630).
+Recheck the combined ordinary-row gap when the second ticket integrates.
+
+Reservations follow actual attachment and draft height changes. When a prompt or
+row-kind change changes the rest adjustment, an idle history reader's keyed anchor
+and physical offset are preserved with `requestScrollToItem`; active drags are not
+cancelled. `FollowNewestEnd` retains its existing rules. The empty state is centered
+within measured chrome reservations rather than behind the bars.
+
 The body shape since [#246](../codebase/246.md) iterated `state.items.asReversed()` with stable composite keys and dispatched at the `ThreadItem` sealed-interface level. **Since [#782](../codebase/782.md) the list walks `ThreadRow`s, not `ThreadItem`s directly:** `val rows = remember(state.items, state.queuedMessages) { foldQueuedRows(state.items, state.queuedMessages) }` joins the thread's items against the daemon's queued backlog (see
 [Queued backlog rendering § The render-time join](queued-backlog-section.md#the-render-time-join-782)),
 and `itemsIndexed(items = rows.asReversed(), ...)` dispatches at the `ThreadRow` sealed-interface level
@@ -72,6 +97,17 @@ branch* below) also gates on `questionState == null`, so a thread whose only con
 renders the `LazyColumn` with the prompt rows, not `EmptyThreadState`. [#1306](permission-modal-overlay.md)
 adds the same `openRequest == null` gate beside it for a pending permission or trust request — see §
 *Inline permission rows and the shared reveal* below, which reuses every mechanism this section describes.
+
+**Focus relocation uses the clear area, not the drawing viewport (#1646).** Content
+padding only reserves resting space; Compose otherwise treats an Other field behind
+chrome as already visible. `ThreadMessageList` supplies a `BringIntoViewSpec` that
+uses the default minimal-distance relocation within measured header/composer bounds.
+`QuestionBlock` retries the focused field's reveal on IME inset or relocation-spec
+changes, including attachment and multiline composer resizing, while retaining the
+last-field action reveal. Limit this spec to the list: `ThreadRowContent` restores
+the inherited spec for nested message scrollables, and the Other field restores
+default relocation within its own well. Without that isolation, a field-local
+scroller incorrectly subtracts the thread's chrome from its own small viewport.
 
 **Prompt rows count as a fixed prefix in the oldest-end history predicate (§ below), never as loaded
 history.** `val promptRowCount = questionState?.let { it.batch.questions.size + 2 } ?: 0` (`+2` for the
@@ -287,6 +323,14 @@ Through [#807](../codebase/807.md) the row read the typed enums as `state.select
 Post-[#254](../codebase/254.md) the `onExpandClick` parameter on `ThreadScreen` is **deleted** — the screen owns the trigger via an internal `{ sheetVisible = true }` lambda passed straight to the row. A new `onModelSelected: (Model) -> Unit = {}` parameter took its slot on the signature, bound to `vm::onModelSelected` ([#253](../codebase/253.md)) at the `MainActivity` destination; [#229](../codebase/229.md) appended `onEffortSelected: (Effort) -> Unit = {}` and `onYoloToggled: (Boolean) -> Unit = {}`. **[#807](../codebase/807.md) retyped the first two to `(String) -> Unit`**, matching the write arguments above; `onYoloToggled`'s signature is unchanged, but it now shares the same session-id routing and read-only gate as the other two (see [thread-composer-footer.md](thread-composer-footer.md) / [`ThreadViewModel`](thread-screen-how-it-works-state.md)). Tapping the row opens the [`StatusSheet`](status-sheet.md); model/effort selections forward to the VM and auto-close the sheet; YOLO toggles forward to the VM but **keep the sheet open** (a Switch is a state-change the user may want to immediately reverse). See the [Status Sheet hosting](thread-screen-how-it-works-sheets.md#status-sheet-hosting-post-254) section below for the host wiring.
 
 ### The arm order (#1311)
+
+The band is the first content in the measured composer, after its 16dp top padding.
+The full-width composer owns its translucent background and blur; list reservations
+follow its measured height without counting IME padding. Ordinary messages rest
+12dp above the band at the newest end, as described in the reverse-list section.
+One shape-following Default shadow wraps the status band; in-band `NoticePill` and
+outcome-pill shadows stay disabled to avoid stacking. See
+[chrome treatment](thread-screen-how-it-works-overlays-and-app-bar.md#threadtopappbar--figma-168-chrome).
 
 Not to be confused with the retired `ThreadStatusRow` above (`model · effort`) — this is `ThreadStatusArea`,
 the composer's turn-status band (§ "fourth, static reading" above covers its `waitingForAnswers` arm, above

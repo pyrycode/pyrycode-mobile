@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
@@ -27,6 +28,7 @@ import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasScrollToNodeAction
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
@@ -38,6 +40,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.DpRect
@@ -386,7 +389,11 @@ class ThreadInlineQuestionTest {
         rule.onNode(hasScrollToIndexAction()).performScrollToIndex(1)
         val stream = rule.onNodeWithTag("thread-message-region").getUnclippedBoundsInRoot()
         assertTrue("the field starts in view", stream.contains(rule.onNodeWithTag("question_other_1").getUnclippedBoundsInRoot()))
-        rule.onNodeWithText("Continue").assertDoesNotExist()
+        assertTrue(
+            "Continue is below the clear reading area",
+            rule.onNodeWithText("Continue").getUnclippedBoundsInRoot().top >=
+                rule.onNodeWithTag("thread-composer").getUnclippedBoundsInRoot().top,
+        )
 
         rule.onNodeWithTag("question_other_1").performClick()
         rule.waitForIdle()
@@ -395,6 +402,10 @@ class ThreadInlineQuestionTest {
             rule.onNodeWithText("Cancel").getUnclippedBoundsInRoot(),
             rule.onNodeWithText("Continue").getUnclippedBoundsInRoot(),
         )) {
+            assertTrue(
+                "$bounds lies above the composer",
+                bounds.bottom <= rule.onNodeWithTag("thread-status-band").getUnclippedBoundsInRoot().top,
+            )
             assertTrue("$bounds lies inside the stream $stream", stream.contains(bounds))
         }
     }
@@ -419,17 +430,126 @@ class ThreadInlineQuestionTest {
         // Index 2 is the first question: its bottom meets the stream's bottom edge, the second question and the
         // actions below it, out of view.
         rule.onNode(hasScrollToIndexAction()).performScrollToIndex(2)
-        val stream = rule.onNodeWithTag("thread-message-region").getUnclippedBoundsInRoot()
-        assertTrue("the field starts in view", stream.contains(rule.onNodeWithTag("question_other_0").getUnclippedBoundsInRoot()))
+        val field = rule.onNodeWithTag("question_other_0")
+        moveEarlierFieldTo(clearReadingArea().top + 80.dp)
+        val before = field.getUnclippedBoundsInRoot()
+        assertTrue("the field starts clear of chrome", clearReadingArea().contains(before))
 
         rule.mainClock.autoAdvance = false
         rule.onNodeWithTag("question_other_0").performClick()
         repeat(30) { frame ->
             rule.mainClock.advanceTimeByFrame()
-            val field = rule.onNodeWithTag("question_other_0").getUnclippedBoundsInRoot()
-            assertTrue("frame $frame: $field lies inside the stream $stream", stream.contains(field))
+            val bounds = field.getUnclippedBoundsInRoot()
+            assertTrue("frame $frame: $bounds clears chrome", clearReadingArea().contains(bounds))
+            assertEquals("an already-readable earlier field stays anchored", before.top.value, bounds.top.value, 0.5f)
         }
         rule.mainClock.autoAdvance = true
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @OptIn(ExperimentalTestApi::class)
+    fun earlier_other_focus_clears_both_bars_and_tracks_viewport_and_composer_changes() {
+        var viewportHeight by mutableStateOf(892.dp)
+        var draft by mutableStateOf("")
+        var attachments by mutableStateOf(emptyList<PendingAttachment>())
+        val pending =
+            twoQuestions.copy(
+                batch = twoQuestions.batch.copy(questions = List(4) { twoQuestions.batch.questions[it % 2] }),
+                selections = List(4) { QuestionSelection() },
+            )
+        rule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, viewportHeight))) {
+                CompositionLocalProvider(LocalOverscrollFactory provides null) {
+                    PyrycodeMobileTheme {
+                        ThreadScreen(
+                            ThreadUiState("chat", "Client planning", isPromoted = false, hasMessages = true, items = historyItems()),
+                            {},
+                            {},
+                            ConnectionState.Connected,
+                            {},
+                            questionState = pending,
+                            draft = draft,
+                            attachments = attachments,
+                        )
+                    }
+                }
+            }
+        }
+        rule.onNode(hasScrollToIndexAction()).performScrollToIndex(4)
+        val field = rule.onNodeWithTag("question_other_0")
+        val header = rule.onNodeWithTag("thread-top-bar").getUnclippedBoundsInRoot()
+        moveEarlierFieldTo(header.bottom - 40.dp)
+        val obscured = field.getUnclippedBoundsInRoot()
+        assertTrue("setup: field wholly under header: $obscured", obscured.top >= header.top && obscured.bottom < header.bottom)
+        field.performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+        field.assertIsFocused()
+        assertEarlierFieldReadable()
+
+        // Keyboard/accessibility focus does not inject a pointer through the chrome hit-test barrier.
+        rule
+            .onNode(
+                hasSetTextAction() and hasAnyAncestor(hasTestTag("thread-composer")),
+            ).performSemanticsAction(SemanticsActions.RequestFocus) {
+                it()
+            }
+        val composer = rule.onNodeWithTag("thread-composer").getUnclippedBoundsInRoot()
+        moveEarlierFieldTo(composer.top + 8.dp)
+        assertTrue("setup: field beneath composer", field.getUnclippedBoundsInRoot().top > composer.top)
+        field.performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+        field.assertIsFocused()
+        assertEarlierFieldReadable()
+
+        // A shrinking drawing viewport models the layout part of IME open/close/reopen; real IME is covered on device.
+        for (height in listOf(600.dp, 892.dp, 600.dp)) {
+            rule.runOnIdle { viewportHeight = height }
+            assertEarlierFieldReadable()
+            field.assertIsFocused()
+        }
+        val initialComposer = clearReadingArea().bottom
+        rule.runOnIdle { attachments = listOf(PendingAttachment(1, "content://test/file", "file.pdf", "application/pdf", 10)) }
+        assertEarlierFieldReadable()
+        assertTrue("attachments raise the measured composer", clearReadingArea().bottom < initialComposer)
+        val attachmentComposer = clearReadingArea().bottom
+        rule.runOnIdle { draft = "line 1\nline 2\nline 3\nline 4" }
+        assertEarlierFieldReadable()
+        assertTrue("multiline draft raises the measured composer", clearReadingArea().bottom < attachmentComposer)
+        rule.runOnIdle {
+            draft = ""
+            attachments = emptyList()
+        }
+        assertEarlierFieldReadable()
+        assertEquals("composer returns to its initial height", initialComposer.value, clearReadingArea().bottom.value, 0.5f)
+    }
+
+    private fun clearReadingArea(): DpRect {
+        val stream = rule.onNodeWithTag("thread-message-region").getUnclippedBoundsInRoot()
+        return DpRect(
+            stream.left,
+            rule.onNodeWithTag("thread-top-bar").getUnclippedBoundsInRoot().bottom,
+            stream.right,
+            rule.onNodeWithTag("thread-composer").getUnclippedBoundsInRoot().top,
+        )
+    }
+
+    private fun assertEarlierFieldReadable() {
+        rule.waitForIdle()
+        val field = rule.onNodeWithTag("question_other_0").getUnclippedBoundsInRoot()
+        assertTrue("focused field $field clears both bars ${clearReadingArea()}", clearReadingArea().contains(field))
+    }
+
+    private fun moveEarlierFieldTo(top: androidx.compose.ui.unit.Dp) {
+        val field = rule.onNodeWithTag("question_other_0")
+        val list = rule.onNode(hasScrollToIndexAction())
+        val before = field.getUnclippedBoundsInRoot()
+        list.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 10f) }
+        rule.waitForIdle()
+        val moved = field.getUnclippedBoundsInRoot()
+        val direction = with(rule.density) { (moved.top - before.top).toPx() } / 10f
+        assertTrue("setup scroll must move the field", kotlin.math.abs(direction) > 0.5f)
+        val shift = with(rule.density) { (top - moved.top).toPx() } / direction
+        list.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, shift) }
+        rule.waitForIdle()
     }
 
     // #1484, Figma 636:4325: stacked at 150 %, the pair sits at the card's start with Cancel centred over Continue.
