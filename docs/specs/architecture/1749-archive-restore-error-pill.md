@@ -52,3 +52,11 @@ Pending for the documentation stage:
 ## Open Questions
 
 None. Forecast: about 400 written lines including plan, tests and capture; no new exported types or changed consumer call sites, three acceptance criteria and no added error-classification branches. The sizing limits hold.
+
+## Revisions
+
+### 2026-10-04 — measure all Archive header controls
+
+The first placement treated Scaffold's title bar alone as the screen header. Inspection showed that its 28dp offset overlaps Archive's tab controls; the strengthened geometry test failed against that placement. The header contract now includes the existing host label and tab strip, measured without moving them. The overlay sits 28dp below the complete measured header, clears both tabs and still leaves every row in its original position. `LoadedBody` reports only its tab height to the screen; this is one private call site, with no public API change.
+
+The first full-image capture timed out after its restore tap: the test initially replaced the list's host source, but `ThreadDestinationFactory.repository` resolves Archive's demo repository directly. The capture now overrides only the Archive ViewModel binding with the failing repository and restores the production binding afterwards. The capture now pauses Compose's auto-advancing clock before that tap and advances frames only until the pill appears, retaining it while hardware pixels settle. Screen tests continue to prove the real Short expiry and accessibility adjustment; the capture makes no timing claim.
