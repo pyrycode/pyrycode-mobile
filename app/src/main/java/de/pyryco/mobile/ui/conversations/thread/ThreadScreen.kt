@@ -298,6 +298,7 @@ fun ThreadScreen(
     // #1050: a tapped link to a workspace markdown note in an assistant reply, by its path. Bound by
     // MainActivity → vm::onOpenMarkdownLink; a failed read reuses [markdownOpenFailures].
     onOpenMarkdownLink: (String) -> Unit = {},
+    attentionPill: (@Composable () -> Unit)? = null,
 ) {
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
@@ -852,6 +853,7 @@ fun ThreadScreen(
                         }
                     }
                     ThreadTopOverlay(
+                        attentionPill = attentionPill,
                         usageLimit = usageLimit,
                         usageLimitDismissed = usageLimit?.dismissalKey() in dismissedUsageLimits,
                         onDismissUsageLimit = { usageLimit?.let(onDismissUsageLimit) },

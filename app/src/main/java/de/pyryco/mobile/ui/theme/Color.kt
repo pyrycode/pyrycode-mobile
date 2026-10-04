@@ -227,3 +227,7 @@ val surfaceContainerLowDarkHighContrast = Color(0xFF1D2024)
 val surfaceContainerDarkHighContrast = Color(0xFF2D3135)
 val surfaceContainerHighDarkHighContrast = Color(0xFF383C40)
 val surfaceContainerHighestDarkHighContrast = Color(0xFF44474C)
+
+// Figma Waiting/Finished attention pill containers, screen instances 779:10468 and 779:10680.
+internal val attentionWaitingContainerDark = Color(0xFF3D3215)
+internal val attentionFinishedContainerDark = Color(0xFF0F3313)

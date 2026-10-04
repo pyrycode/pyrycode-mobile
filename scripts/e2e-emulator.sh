@@ -1280,6 +1280,8 @@ elif [ -n "${LIVE}" ]; then
   # #1090: a conversation's attention dot follows a real turn on the answer daemon: Unread after the peer's
   # ping, Idle once opened, Waiting while the peer holds a prompt. It adds one method and two turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_attentionDot_followsARealTurn"
+  # #1735: foreground attention pills on A track B's held permission and completed turn (one turn).
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_otherConversationAttentionPills_waitingAndFinished"
   # #1107: #1076's background-task progress method joins now that the daemon drops a subagent's prompt echo
   # (pyrycode/pyrycode#2658). One turn, so the list holds 44 methods and 44 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundAgentProgress_showsOnRunningCard"
