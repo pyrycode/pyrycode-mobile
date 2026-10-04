@@ -1,0 +1,20 @@
+Ticket: #1732
+Figma: https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=6-32
+Design inspection and device capture date: 2026-10-04 UTC.
+Production MainActivity, unpaired startup, static dark theme, wallpaper colors disabled.
+Full Gradle-managed pixel8Api35 image, API 35, density 1.0. Reference: 412x892 dp; compact: 360x800 dp; font scales 1.0 and 1.5. Passing capture sidecars report real system bars of 24 px top and bottom.
+
+Initial command (exit 1; 8 executed, 2 failed, 0 skipped):
+./gradlew :app:pixel8Api35DebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.onboarding.WelcomeAppearanceDeviceTest,de.pyryco.mobile.design.DesignHarnessSmokeTest#compactLargeTextLaunchCapturesRealFrame,de.pyryco.mobile.design.OnboardingDesignCaptureTest#scannerFramesAt412By892,de.pyryco.mobile.MainActivityInsetsDeviceTest#activityAt412By892,de.pyryco.mobile.MainActivityInsetsDeviceTest#activityAt360By800,de.pyryco.mobile.MainActivityInsetsDeviceTest#lightAndroidModeKeepsLightSystemBarIcons' -Pandroid.testInstrumentationRunnerArguments.requireRealSystemBars=true -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain
+
+Focused rerun (exit 0; 2 executed, 0 failed/errors/skipped; no code or assertion changes):
+./gradlew :app:pixel8Api35DebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.MainActivityInsetsDeviceTest#activityAt360By800,de.pyryco.mobile.ui.onboarding.WelcomeAppearanceDeviceTest#darkAt360By800LargeText' -Pandroid.testInstrumentationRunnerArguments.requireRealSystemBars=true -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain
+
+Initial failures: activityAt360By800 expected scanner-header top 87 px but measured 48 px; darkAt360By800LargeText reported footer outside the sampled bars. The failed large-text sidecar sampled a 63 px navigation inset, while the passing rerun sampled 24 px. This suggests a display-resize/inset transition, not a proven production cause. Both selected methods passed unchanged on the focused rerun. device-initial-results.xml retains all 8 initial outcomes; device-rerun-results.xml retains both passing reruns. All 8 selected methods have passing executions across these runs; no assertions were ignored or loosened.
+
+Original XML: app/build/outputs/androidTest-results/managedDevice/debug/pixel8Api35/TEST-pixel8Api35-_app-.xml
+Original captures: app/build/intermediates/managed_device_android_test_additional_output/debugAndroidTest/pixel8Api35DebugAndroidTest/welcome-1212/
+Normal-text captures come from passing initial methods; enlarged-text initial/scrolled captures come from the passing focused rerun. Each capture asserts a settled surface pixel and rendered content.
+
+reference-side-by-side.png and reference-overlay.png compare the reference Android capture with current Figma at 1:1. The Pyrycode title matches the reference position and typography; normal and enlarged text retain reachable actions and footer. Existing platform chrome/corner differences and pre-existing text/gradient rendering differences remain outside this naming change.
+Historical captures in earlier ticket folders remain historical evidence; there is no executable screenshot baseline asserting the old title.

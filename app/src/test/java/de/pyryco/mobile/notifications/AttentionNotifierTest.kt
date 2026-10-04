@@ -72,7 +72,7 @@ class AttentionNotifierTest {
 
             val notification = posted().single()
             assertEquals(app.getString(R.string.notification_turn_completed), notification.extras.getString(Notification.EXTRA_TEXT))
-            assertEquals(app.getString(R.string.app_name), notification.extras.getString(Notification.EXTRA_TITLE))
+            assertEquals("Pyrycode", notification.extras.getString(Notification.EXTRA_TITLE))
             assertEquals(ATTENTION_CHANNEL_ID, notification.channelId)
             assertNotNull(manager.getNotificationChannel(ATTENTION_CHANNEL_ID))
             val tap = notification.contentIntent

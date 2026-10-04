@@ -1,0 +1,19 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="2" failures="0" errors="0" skipped="0" time="103.275" timestamp="2026-10-04T10:23:43" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.MainActivityInsetsDeviceTest" tests="1" failures="0" errors="0" skipped="0" time="74.693" timestamp="2026-10-04T10:23:43" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="activityAt360By800" classname="de.pyryco.mobile.MainActivityInsetsDeviceTest" time="74.693" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.onboarding.WelcomeAppearanceDeviceTest" tests="1" failures="0" errors="0" skipped="0" time="16.648" timestamp="2026-10-04T10:23:43" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="darkAt360By800LargeText" classname="de.pyryco.mobile.ui.onboarding.WelcomeAppearanceDeviceTest" time="16.648" />
+  </testsuite>
+</testsuites>
