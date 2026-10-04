@@ -74,3 +74,9 @@ None. The bare historical stack's exact call site is unrecoverable; the shared b
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-04
+
+## Revisions
+
+### 2026-10-04 — opening diagnostic boundary
+
+The opening boundary calls `peer.open` directly and reads `peer.linkState` only on timeout, mirroring `peerStep` without nesting its assertion conversion inside `liveSetupStep`. Nesting would hide the fixed peer-opening label because non-timeout assertions deliberately pass through. The new regression uses the real `RedialingLink` retry loop with rejected/unsettled dials and proves that no progress/rendering work follows, while preserving the existing 30-second deadline and content-free link status. The first run executed 6 tests with 3 failures and no skips: all three setup stages lacked the required diagnostic; successful results, refusals and ordinary cancellation already passed.

@@ -4359,9 +4359,9 @@ class InteractiveStreamE2ETest {
         try {
             // 1. Claude starts a background subagent in a fresh chat.
             awaitChannelList()
-            awaitConnected()
-            val (chatId, name) = answerChat(serverId, BACKGROUND_PROGRESS_NAME_PREFIX)
-            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            liveSetupStep(LiveSetupStage.ConnectionReadiness) { awaitConnected() }
+            val (chatId, name) = liveSetupStep(LiveSetupStage.ChatCreation) { answerChat(serverId, BACKGROUND_PROGRESS_NAME_PREFIX) }
+            liveSetupStep(LiveSetupStage.PeerOpening, peer::linkState) { runBlocking { peer.open(CONNECT_TIMEOUT_MS) } }
             openChatRow(name)
             sendFromPhone(BACKGROUND_PROGRESS_PROMPT)
 

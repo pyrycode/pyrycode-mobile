@@ -54,3 +54,29 @@ internal suspend fun <T> requirePeerAnswer(
     } catch (e: TimeoutCancellationException) {
         throw AssertionError("the peer's open session answered no request within $timeoutMs ms: a relay or daemon fault", e)
     }
+
+/** Fixed labels for the background-progress scenario's setup operations; never daemon-authored text. */
+internal enum class LiveSetupStage(
+    val label: String,
+) {
+    ConnectionReadiness("phone connection readiness"),
+    ChatCreation("chat creation"),
+    PeerOpening("peer opening"),
+}
+
+/**
+ * Name a background-progress setup timeout without changing the blocking operation's own deadline.
+ * [linkState] is the peer's content-free status, read only on failure. Other failures pass through.
+ */
+internal inline fun <T> liveSetupStep(
+    stage: LiveSetupStage,
+    linkState: () -> String = { "" },
+    block: () -> T,
+): T =
+    try {
+        block()
+    } catch (e: TimeoutCancellationException) {
+        val state = linkState()
+        val detail = if (state.isEmpty()) "" else "; $state"
+        throw AssertionError("background progress setup '${stage.label}' timed out$detail", e)
+    }
