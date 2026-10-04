@@ -55,6 +55,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeSource
 
 @Composable
 internal fun PairCodeScreen(
@@ -88,11 +90,17 @@ internal fun PairCodeScreen(
         val colors = MaterialTheme.colorScheme
         val uriHandler = LocalUriHandler.current
         val codeError = state.error?.takeIf { it == INVALID_CODE_ERROR || it == WRONG_HOST_ERROR }
+        val backdropSource = remember { HazeState() }
+        Box(
+            Modifier
+                .matchParentSize()
+                .hazeSource(backdropSource)
+                .background(colors.surface)
+                .onboardingGlow(),
+        )
         Column(
             Modifier
                 .fillMaxSize()
-                .background(colors.surface)
-                .onboardingGlow()
                 .systemBarsPadding()
                 .imePadding(),
         ) {
@@ -101,6 +109,7 @@ internal fun PairCodeScreen(
                 titleColor = colors.onPrimaryContainer,
                 onBack = { onEvent(PairCodeEvent.Back) },
                 backIcon = painterResource(R.drawable.ic_pair_back),
+                backdropSource = backdropSource,
                 backEnabled = !saving,
             )
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {

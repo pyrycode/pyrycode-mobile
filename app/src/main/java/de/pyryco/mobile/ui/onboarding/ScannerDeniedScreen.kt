@@ -21,6 +21,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
@@ -31,6 +32,8 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.BuildConfig
 import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeSource
 
 @Composable
 fun ScannerDeniedScreen(
@@ -43,63 +46,70 @@ fun ScannerDeniedScreen(
         color = MaterialTheme.colorScheme.surface,
         modifier = modifier.fillMaxSize(),
     ) {
-        Column(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .scannerAtmosphere(
-                        MaterialTheme.colorScheme.primaryContainer,
-                        MaterialTheme.colorScheme.surfaceContainerLowest,
-                        MaterialTheme.colorScheme.surface,
-                    ).systemBarsPadding(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            PairingHeader(
-                title = "Pair with pyrycode",
-                titleColor = MaterialTheme.colorScheme.onSurface,
-                onBack = { deniedAction("back", onNavigateBack) },
-                backIcon = rememberVectorPainter(Icons.AutoMirrored.Filled.ArrowBack),
-                startPadding = 4.dp,
-                divider = false,
+        val backdropSource = remember { HazeState() }
+        Box(Modifier.fillMaxSize()) {
+            Box(
+                Modifier.matchParentSize().hazeSource(backdropSource).scannerAtmosphere(
+                    MaterialTheme.colorScheme.primaryContainer,
+                    MaterialTheme.colorScheme.surfaceContainerLowest,
+                    MaterialTheme.colorScheme.surface,
+                ),
             )
             Column(
-                modifier = Modifier.fillMaxSize().padding(start = 32.dp, end = 32.dp, bottom = 80.dp),
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .systemBarsPadding(),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                // The frame's illustration sits 132 dp below the bar; the header is 62 dp tall.
-                Spacer(modifier = Modifier.height(70.dp))
-                DeniedCameraIllustration(modifier = Modifier.size(120.dp))
-                Spacer(modifier = Modifier.height(32.dp))
-                Text(
-                    text = "Camera permission required",
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = TextAlign.Center,
+                PairingHeader(
+                    title = "Pair with pyrycode",
+                    titleColor = MaterialTheme.colorScheme.onSurface,
+                    onBack = { deniedAction("back", onNavigateBack) },
+                    backIcon = rememberVectorPainter(Icons.AutoMirrored.Filled.ArrowBack),
+                    backdropSource = backdropSource,
+                    startPadding = 4.dp,
+                    divider = false,
                 )
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text =
-                        "Pyrycode needs the camera to read the QR code from your server. " +
-                            "You can also paste the pairing code instead.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.widthIn(max = 300.dp),
-                )
-                Spacer(modifier = Modifier.weight(1f))
-                Button(
-                    onClick = { deniedAction("settings", onOpenSettings) },
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(start = 32.dp, end = 32.dp, bottom = 80.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Text(text = "Open settings")
-                }
-                Spacer(modifier = Modifier.height(4.dp))
-                Box(Modifier.fillMaxWidth().height(48.dp), contentAlignment = Alignment.Center) {
-                    TextButton(
-                        onClick = { deniedAction("paste", onPasteCode) },
-                        modifier = Modifier.fillMaxWidth().height(40.dp),
+                    // The frame's illustration sits 132 dp below the bar; the header is 62 dp tall.
+                    Spacer(modifier = Modifier.height(70.dp))
+                    DeniedCameraIllustration(modifier = Modifier.size(120.dp))
+                    Spacer(modifier = Modifier.height(32.dp))
+                    Text(
+                        text = "Camera permission required",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center,
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text =
+                            "Pyrycode needs the camera to read the QR code from your server. " +
+                                "You can also paste the pairing code instead.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.widthIn(max = 300.dp),
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Button(
+                        onClick = { deniedAction("settings", onOpenSettings) },
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
                     ) {
-                        Text(text = "Paste code instead")
+                        Text(text = "Open settings")
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Box(Modifier.fillMaxWidth().height(48.dp), contentAlignment = Alignment.Center) {
+                        TextButton(
+                            onClick = { deniedAction("paste", onPasteCode) },
+                            modifier = Modifier.fillMaxWidth().height(40.dp),
+                        ) {
+                            Text(text = "Paste code instead")
+                        }
                     }
                 }
             }
