@@ -1,8 +1,7 @@
 # Thread composer footer — context usage segment
 
 Split out of [Thread composer footer](thread-composer-footer.md) on 2026-09-25 to keep that document
-under the 50000-byte size cap the docs guard enforces. This section moved here verbatim, except for the
-`ContextSegment` layout paragraph corrected below, and kept its heading, so its anchor is unchanged.
+under the 50000-byte size cap the docs guard enforces. The computed-source section retains its heading and anchor; rendering now follows the #1660 circle.
 
 ## Context usage segment (#946, computed since #1411)
 
@@ -25,8 +24,8 @@ the settings pair rather than mutually exclusive with it.
 **Known gap: a stale figure survives a session transition.** The repository clears the `context_usage`
 reading on a `session_transition`, but the replaced session's `SessionSettings` stays current until the
 re-requested reply lands, so `contextPercent` falls back to the *old* session's token pair for that gap —
-after `/clear` the footer and Status sheet can briefly show a non-`n/a` percentage for a session that no
-longer exists, where before #1411 they showed `n/a`. `ThreadRunConfig.forLiveSession` exists to hide exactly
+after `/clear` the footer and Status sheet can briefly show a available percentage for a session that no
+longer exists, where before #1411 they showed unavailable. `ThreadRunConfig.forLiveSession` exists to hide exactly
 this kind of stale-settings window for session-scoped facets (it already blanks `permissionMode`,
 `appliedEffort` and `memorySearch`), but `contextPercent` was not added to it — desktop's own
 `runConfigStore.clearSnapshot` only fires on a conversation switch, delete or archive, never on a transition,
@@ -34,57 +33,31 @@ so this matches desktop but diverges from mobile's own stricter rule. Unresolved
 should either null the settings fallback when `settings.sessionId` differs from the live `currentSessionId`,
 or record a deliberate decision to accept the gap.
 
-A private `ContextSegment(percent: Int?)` renders Figma's `Cxt: 84%` text node (`110:3497`) — it is
-**plain text, not a `FooterControl`**: it opens no overlay and carries no click action. It is the last
-child inside `FooterTextRow` (see [Thread composer footer § Trailing icons stay outside the weighted text
-region](thread-composer-footer.md#trailing-icons-stay-outside-the-weighted-text-region-1032)), which
-gives it whatever width the buttons ahead of it leave, possibly none — it still ellipsizes (`maxLines =
-1`, `TextOverflow.Ellipsis`) rather than push anything else off the row. Before
-[#1032](https://github.com/pyrycode/pyrycode-mobile/issues/1032) it carried its own `Modifier.weight(1f)`
-in the (then flat) outer `Row`, in place of the `Spacer` that used to fill it, with the paperclip and the
-Status opener placed after it in source order. That placement did not actually protect the two icons: a
-`Row` measures its non-weighted children in source order regardless of what a sibling's weight claims, so
-a wide enough set of button labels could still starve them to nothing — [#1032](https://github.com/pyrycode/pyrycode-mobile/issues/1032) fixed this by moving the weight one level up, onto
-`FooterTextRow` itself, so the two trailing icons are always measured before any text control.
+A private `ContextSegment(percent: Int?)` renders an inert context circle before Actions
+since [#1660](https://github.com/pyrycode/pyrycode-mobile/issues/1660). It has no click action or overlay.
+The 15 × 15 dp circle is top-aligned inside a 15 × 16 dp slot, with a 2 dp stroke. The
+`primaryContainer` track is drawn first and stays dark at every reading. The used arc starts at the top
+(-90 degrees) and grows counterclockwise with a negative sweep proportional to the computed percentage.
+Zero and unavailable readings draw no used arc; 100% draws a complete used ring. See
+[footer geometry](thread-composer-footer.md#trailing-icons-stay-outside-the-weighted-text-region-1032-wrap-shape-1549)
+for the fixed slot and reserved trailing controls.
 
-### Colour steps at 50 and 70 percent (#1412, after desktop #1062)
+### Colour steps at 70 and 85 percent (#1660)
 
-`contextUsageStep(percent: Int)` mirrors desktop's `contextUsageStep`: below 50 is `Normal`, 50 to 69 is
-`Warning`, 70 and above is `High`. As on desktop, the thresholds and colours are the operator's ruling, not
-a design state — Figma `110:3497` shows only the ordinary 42% reading. `ContextSegment` picks text,
-description and colour in one `when` over the step: `Normal` and `Warning` both read `"Cxt: N%"` (`primary`
-or `ColorScheme.warning`, from `ui/theme/WarningColors.kt`), and `High` reads `"Cxt high: N%"`
-(`colorScheme.error`) with the content description "Context usage high, N%". The text style
-(`bodySmall`) does not change at any step. The unavailable state (`"Cxt: n/a"`, `onSurfaceVariant`) is a
-separate branch, untouched by the step.
+`contextUsageStep` now classifies below 70 as `Normal`, 70–84 as `Warning`, and 85–100 as `High`,
+replacing #1412's 50/70 thresholds. The used arc is `primary`, `ColorScheme.warning` (yellow), or
+`colorScheme.error` (red), respectively. There is no visible percentage text. The
+`CONTEXT_USAGE_TEST_TAG` node's content description is “Context usage N%” for normal,
+“Context usage warning, N%” for warning, and “Context usage high, N%” for high. A missing reading is
+“Context usage unavailable”, never 0%; both arc and description derive from the same reading.
+Run configuration retains its numeric detail.
 
-**The high text no longer ellipsizes at 320dp and 1.5× — it wraps under Actions instead ([#1549](https://github.com/pyrycode/pyrycode-mobile/issues/1549)).**
-Before #1549, `"Cxt high: N%"` was long enough that at a 320dp-wide footer with 1.5× font scale it
-ellipsized, relying on the content description (`"Context usage high, 84%"`) to carry the full figure. The
-design decision on [#1485](https://github.com/pyrycode/pyrycode-mobile/issues/1485) (2026-10-02) replaced
-that trade-off: when Actions, the label and the trailing paperclip/tune icons do not fit one row at their
-natural widths, `FooterTextRow` moves the label whole to its own line under Actions instead of shrinking or
-ellipsizing it — see [Thread composer footer § Trailing icons stay outside the weighted text
-region](thread-composer-footer.md#trailing-icons-stay-outside-the-weighted-text-region-1032) for the wrap
-shape, the `FooterFirstRowBottom` alignment line and `FooterLineGap`. The label keeps `maxLines = 1` and
-`TextOverflow.Ellipsis` for widths narrower than its own wrapped line can hold; #1549's acceptance scope is
-150% text, where "Cxt high: 84%" fits in full, so this remains unmeasured rather than a known gap.
-`ThreadComposerFooterTest` cannot catch wrapping either: it is a semantics-level test, and semantics always
-hold the untruncated description regardless of what the rendered line shows. The layout claim lives in
-`ThreadComposerFooterWidthTest` (a NATIVE-graphics test class): `compactWidth_highReadingFitsOnOneLine`
-(320dp, default font) asserts the high text stays on one unellipsized line on the Actions row, and
-`compactWidthAndEnlargedText_highReadingWrapsUnderActions` (320dp, 1.5× font, replacing the old
-`…highReadingKeepsTheFigureInItsDescription`) asserts the label is not ellipsized, sits `FooterLineGap`
-under Actions' visible text (measured above `contentBottomPadding`) and starts at Actions' left edge, with
-the paperclip and tune bottoms still level with Actions. `pixel8_highReadingStaysOnActionsRow` (411dp, 1.0×)
-covers the still-one-row shape at a realistic phone width. A reading at or above 70% also changed two older
-fixed-percentage tests: the #1032 compact-width layout test `compactWidthAndEnlargedText_keepThreeActionsSeparate`
-moved its reading from 84% to 37% because it is about the *ordinary* reading's layout, not the high one, and
-`contextSegment_showsTheReportedPercentage_andTheSheetAgrees` now expects `"Cxt high: 84%"` since 84 is
-itself a high reading. The real-Claude regexes in `InteractiveStreamE2ETest` (`CONTEXT_REPORTED` and its
-users) accept `Cxt high:` too, so a live reading of 70 or more does not fail them; there is no new rung-3
-scenario for the colour step or the wrap itself, since neither is a new operator flow and a live session
-cannot be pushed to a specific percentage on demand.
+`ContextUsageCircleTest` uses NATIVE graphics to sample null, 0, 69, 70, 84, 85 and 100, including
+updates, top origin, counterclockwise fill, constant track and stroke geometry. Semantics alone cannot
+prove rendering: an available description can precede the hardware frame. Full-image footer captures
+wait for the 84% warning description **and yellow pixels inside the circle**. ATD geometry remains
+geometry evidence when its framebuffer is blank. Compact-width tests replace the retired percentage
+wrapping checks; see [footer testing](thread-composer-footer-testing.md#testing).
 
 **The open thread asks again, since [#1410](https://github.com/pyrycode/pyrycode-mobile/issues/1410).**
 \#945 originally had `ContextUsageProjection` ask (`request_context_usage`) on the 0→1 subscriber edge, but
@@ -110,7 +83,7 @@ stubbing `RelayLog.sink`. A refusal (`conversation.not_found` or `context_usage.
 `error` whose `in_reply_to` matches no waiter, so it is a no-op in the existing arm — the reading stays as
 it was and nothing surfaces. The successful answer is just another `context_usage` frame, routed and
 applied the same way the post-turn push always was; asking adds no new decode path. A conversation still
-shows `Cxt: n/a` only until the open thread's first ask or the next turn end resolves it, whichever comes
+announces unavailable only until the open thread's first ask or the next turn end resolves it, whichever comes
 first — no longer only the latter. See [Relay repository coordinator § `HostReadings`](relay-repository-coordinator.md)
 and [Remote conversation repository — live stream, modal seams and the replay cursor §
 `context_usage`](remote-conversation-repository-live-stream-and-modals.md#context_usage--the-context-usage-reading-945)
@@ -118,9 +91,9 @@ for the wire contract.
 
 **Live-test trap: the #1411 fallback can satisfy a check meant to prove the ask fired.** Since #1411 the
 footer shows a percentage computed from `session_settings` alone whenever no `context_usage` reading
-exists, so a live assertion that only waits for `Cxt: \d+%` in the footer proves nothing about whether
+exists, so a live assertion that only waits for an accessible percentage in the footer proves nothing about whether
 `request_context_usage` was ever sent — a fresh live session reads `0/200000` from the daemon's
-`contextwindow.Read` and renders `Cxt: 0%`, matching that pattern with no reading at all. #1410's own live
+`contextwindow.Read` and announces “Context usage 0%”, matching that pattern with no reading at all. #1410's own live
 proof,
 `InteractiveStreamE2ETest#interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn`
 (see [e2e coverage](../../e2e-interactive-stream.md)), asserts the host's held reading is `null` before
