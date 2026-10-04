@@ -60,6 +60,45 @@ No audit declares app-wide parity; #1434 owns that verdict.
 - **Menu-open:** the list has no row or folder menu at this commit (`ChannelListScreen` and `ConversationTreeRows` hold no `DropdownMenu`; rows open editors through pens). The only menu on a list-side path is the thread overflow menu (`thread-menu.png`, `thread-menu-compact.png`), which opens fully inside the window with every entry reachable.
 - **Routed:** #1486
 
+### Create chat failure — Error-pill reuse `685:4337`
+
+- **Owning ticket:** [#1748](https://github.com/pyrycode/pyrycode-mobile/issues/1748).
+- **Reference:** [thread notice `685:4337`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=685-4337),
+  reusing [Error component `347:6619`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=347-6619)
+  with X hidden and list placement authorised by #1604. No new list frame exists;
+  only notice styling and measured-header-relative placement are judged.
+- **Capture:** [create-chat-failed.png](create-chat-failed.png),
+  [metadata](create-chat-failed.txt), [Figma export](figma-685-4337.png),
+  [side-by-side](create-chat-failed-side-by-side.png), [overlay](create-chat-failed-overlay.png).
+  `ListDesignCaptureTest.failedCreateChatNoticeAt412By892` drives the real Chats plus
+  through a failing repository in `MainActivity`. API 35 metadata records 412×892px,
+  density/font scale 1, fixed dark theme, hardware rendering, `syntheticBars=false`,
+  real 24px status/navigation insets and zero IME insets; real bars were required.
+- **Execution:** retained builder [API 35 XML](create-chat-failed-api35-results.xml),
+  2026-10-04 14:28:27: 1 executed, 0 failed/errors/skipped, with the named capture method
+  present and passed. Repaired-caller [API 33 XML](create-chat-failed-api33-results.xml),
+  15:59:14: 5 executed, 0 failed/errors/skipped; the same capture method and all four
+  `CreateChatFailureNoticeTest` methods are present and passed. These are focused builder
+  runs, not documentation or verifier reruns.
+- **Inspection/provenance:** the final verifier freshly inspected Figma frame/component
+  screenshots on 2026-10-04 and passed PR #1758 at `1bd8e11c`. The retained API 35 PNG
+  predates the toolbar-menu merge and polite-semantics repair: it proves notice appearance,
+  not the final toolbar glyph. Fresh API 33 execution and final JVM tests verify the
+  repaired caller, header-relative geometry and Settings/Archive menu actions. TalkBack
+  audio was not exercised; polite announcement is covered by semantics assertions.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry / spacing | match: background x=173..392, y=149..171; 20px right gutter, 28px below the measured header, within 20px side gutters; tree layout unchanged |
+| Padding | match: reused shared component's 8dp horizontal / 4dp vertical padding |
+| Typography | right-aligned body-small label and unchanged failure text; inherited trimmed line box yields a 22px background versus Figma's 24px |
+| Colour / radii / shadow | match: errorContainer/error, 6dp corners and overlay shadow through the shared Error pill |
+| Component state | match: no X, tap or dismissal action and no error snackbar; repaired caller has polite live-region semantics and accessibility-adjusted Short expiry |
+
+**Verdict:** authorised notice reuse and placement match, with the inherited single-line
+height mismatch deferred to [#1757](https://github.com/pyrycode/pyrycode-mobile/issues/1757).
+This is not a list-frame or app-wide parity verdict.
+
 ### Archive — `18:2`
 
 - **Owning ticket:** #1265; re-audited by #1487
