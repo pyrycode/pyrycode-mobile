@@ -69,3 +69,8 @@ None for implementation. A fresh live failure requiring product changes outside 
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-04
+
+## Revisions
+
+- 2026-10-04: The new actual-store regression failed under temporary per-instance identity ownership at the token-binding assertion (1 executed, 1 failed, 0 skipped); the landed store was restored before scenario edits. Directly inspected main-daemon logs from the original/repeated branch/base harnesses: `AOLbIc`, `JKsJv3`, `Cf5gl9`, `tWgsL4` contain 102, 84, 102, 90 `static_key_mismatch` / `bound_to_other_key` events respectively. This supports the shared authentication diagnosis; the original anonymous scenario stacks still cannot identify an individual wait.
+- 2026-10-04: The footer matcher now accepts the existing `Cxt high:` percentage label as the nearby ping scenario does. This corrects the stale normal-only matcher without changing the null-before-open or non-null-after-open proof, the UI, or any timeout.

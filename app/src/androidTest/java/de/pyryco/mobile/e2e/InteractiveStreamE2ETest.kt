@@ -465,20 +465,26 @@ class InteractiveStreamE2ETest {
     fun interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn() {
         val args = InstrumentationRegistry.getArguments()
         val serverId = twoHostArg(ARG_SERVER_ID)
-        val peer =
-            SecondClientPeer(
-                PairedServer(
-                    serverId = serverId,
-                    token = twoHostArg(ARG_PEER_TOKEN),
-                    relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
-                    serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
-                ),
+        val pairing =
+            PairedServer(
+                serverId = serverId,
+                token = twoHostArg(ARG_PEER_TOKEN),
+                relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
             )
+        val peer = SecondClientPeer(pairing)
+        var step = "initial phone readiness"
+        var phoneLinkCut = false
         try {
             // 1. The phone creates and names a chat, then leaves it without sending anything.
-            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            // Bind the shared token even when selected alone; both opens must answer the readiness probe (#1682).
+            SecondClientPeer(pairing).use { prior ->
+                peerStep(prior, "open prior context-ask peer") { prior.open(CONNECT_TIMEOUT_MS) }
+            }
+            peerStep(peer, "open context-ask peer after prior close") { peer.open(CONNECT_TIMEOUT_MS) }
             awaitChannelList()
             awaitConnected()
+            step = "create and leave phone chat without a turn"
             val before = hostConversationIds(serverId)
             createChat()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
@@ -490,16 +496,22 @@ class InteractiveStreamE2ETest {
             leaveThread()
 
             // 2. With the phone's link cut, the peer's turn runs to its end and the daemon publishes its reading.
+            step = "disconnect phone before peer turn"
+            phoneLinkCut = true
             setHostLink(serverId, up = false)
-            runBlocking {
-                peer.sendMessage(conversationId, PING_PROMPT, THREAD_TIMEOUT_MS)
-                peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS)
-                peer.awaitFrame(conversationId, "context_usage", THREAD_TIMEOUT_MS)
-            }
+            peerStep(
+                peer,
+                "send offline context-ask ping and await ack",
+            ) { peer.sendMessage(conversationId, PING_PROMPT, THREAD_TIMEOUT_MS) }
+            peerStep(peer, "await offline context-ask turn_end") { peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS) }
+            peerStep(peer, "await offline peer context_usage") { peer.awaitFrame(conversationId, "context_usage", THREAD_TIMEOUT_MS) }
 
             // 3. A fresh connection: the phone holds no reading for the chat, so only the open's ask can fill it.
+            step = "reconnect phone after peer reading"
             setHostLink(serverId, up = true)
+            phoneLinkCut = false
             awaitChannelList()
+            step = "read phone context before reopening"
             assertNull(
                 "the reconnect alone delivered the chat's reading; the open's ask would prove nothing",
                 runBlocking { hostRepository(serverId).observeContextUsage(conversationId).first() },
@@ -507,20 +519,28 @@ class InteractiveStreamE2ETest {
 
             // 4. Open the chat and send nothing: the open's ask fills the reading. Waiting on the reading itself,
             // not only the footer, because the footer also renders a percentage from session_settings alone.
+            step = "reopen phone thread"
             openChatRow(chatName)
+            step = "await reopened thread context_usage reading"
             runBlocking {
                 withTimeout(THREAD_TIMEOUT_MS) {
                     hostRepository(serverId).observeContextUsage(conversationId).filterNotNull().first()
                 }
             }
-            val reported = Regex("Cxt: \\d+%")
+            step = "display reopened context percentage"
+            val reported = Regex("Cxt(?: high)?: \\d+%")
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasTestTag(CONTEXT_USAGE_TEST_TAG)).fetchSemanticsNodes().any { node ->
                     reported.matches(node.config[SemanticsProperties.Text].joinToString("") { it.text })
                 }
             }
+        } catch (e: TimeoutCancellationException) {
+            throw AssertionError("context-ask phone step '$step' timed out; ${peer.linkState()}", e)
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("context-ask phone step '$step' timed out; ${peer.linkState()}", e)
         } finally {
             peer.close()
+            if (phoneLinkCut) runCatching { setHostLink(serverId, up = true) }
         }
     }
 

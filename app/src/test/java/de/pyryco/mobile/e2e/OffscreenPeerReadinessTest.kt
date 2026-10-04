@@ -2,6 +2,7 @@ package de.pyryco.mobile.e2e
 
 import com.southernstorm.noise.protocol.HandshakeState
 import com.southernstorm.noise.protocol.Noise
+import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.network.Envelope
@@ -26,7 +27,13 @@ import java.util.UUID
 /** #1692: the observing peer can authenticate and answer a probe after a prior peer closed. */
 class OffscreenPeerReadinessTest {
     @Test
-    fun sequentialClosedPeersCompleteBoundHandshakeAndEncryptedReadinessProbe() =
+    fun sequentialClosedPeersCompleteBoundHandshakeAndEncryptedReadinessProbe() = assertSequentialReadiness(::PeerDeviceStaticKeyStore)
+
+    /** #1682: exercise the actual live peer store, independently of the older store's registry. */
+    @Test
+    fun contextAskPeersCompleteBoundHandshakeAndEncryptedReadinessProbe() = assertSequentialReadiness(::PeerDeviceKeyStore)
+
+    private fun assertSequentialReadiness(keyStore: (PairedServer) -> DeviceStaticKeyStore) =
         runTest {
             val responderKey = Noise.createDH("25519")
             val responderPrivate = ByteArray(32)
@@ -51,7 +58,7 @@ class OffscreenPeerReadinessTest {
                         }
                     val session =
                         NoiseSessionFactory(
-                            PeerDeviceStaticKeyStore(pairing.copy()),
+                            keyStore(pairing.copy()),
                             store,
                             NoiseClientInfo("test-peer", "test"),
                             StandardTestDispatcher(testScheduler),
