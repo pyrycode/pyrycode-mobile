@@ -1236,15 +1236,29 @@ control present and the channel-list marker absent. One real claude turn.
 guarantee across a second reconnect inside the same wake window: with the phone already absent, the
 peer's turn raises a permission prompt, the push wakes the app, and exactly one prompt alert shows. The
 test then cuts and restores the host link a second time, and the daemon shows the still-outstanding
-prompt again. A retained permission modal does **not** re-emit on `HostConversationSource.alerts` across
-a reconnect ([Dependency injection — host conversation source § Attention alerts](knowledge/features/dependency-injection-host-conversation-source.md#attention-alerts-685)) —
-unlike a question batch, which is actually cleared and re-shown — so there is no second-alert signal to
-wait on; the scenario instead sleeps a bounded settle after the reconnect, then asserts there is still
+prompt again. Since #1337, the new connection clears held prompts and the source re-emits the
+re-shown prompt's alert; the notifier's `AlertLedger` drops the repeat
+([Dependency injection — host conversation source § Attention alerts](knowledge/features/dependency-injection-host-conversation-source.md#attention-alerts-685)).
+There is no observable second notification to await; the scenario sleeps a bounded settle after the
+reconnect, then asserts there is still
 exactly one notification and that its `postTime` is **unchanged**. A second `notify` for the same tag
 would replace the notification and change its `postTime`, which a bare count cannot see. What this proves
-is the operator-visible outcome — one notification, never re-posted — not which of the two guards behind
-it (the source's per-generation prompt-key set, or the notifier's own `AlertLedger`) did the suppressing.
-One real claude turn: the peer's held command.
+is the operator-visible outcome — one notification, never re-posted.
+One real claude turn: the peer's held command. Cleanup cancels the wake watcher, releases the held
+permission and awaits turn completion when available, closes the peer and cancels notifications.
+
+The #1694 shared failure occurred before push registration or backgrounding: the uniquely named
+conversation's creation/rename was followed by `static_key_mismatch` / `bound_to_other_key`
+rejections throughout `SecondClientPeer.open`'s 30-second window. This localization comes from retained
+conversation/daemon timestamps and source ordering, not the unlocalized coroutine stack. The peer
+must retain the static identity bound to its shared host/token (#1698/#1686). The scenario now opens
+and closes a prior same-pairing peer through `use` before opening its prompt peer; both must complete
+the handshake and readiness probe, even in a focused run. This guard spends no Claude turn.
+`peerStep` names prior/current opening, message acknowledgement and permission arrival; the shared
+`withTimeoutDiagnostic` evaluates content-free state only on timeout and preserves its cause.
+`setHostLink` similarly distinguishes close from reconnect and reports repository presence. Existing
+deadlines and alert assertions remain unchanged. See
+[test scheduling and harnesses](knowledge/features/development-verification-test-scheduling.md#test-scheduling-and-harnesses).
 
 No rung-4 twin: the loopback relay the scripted harness dials cannot send FCM, and
 [#685](https://github.com/pyrycode/pyrycode-mobile/issues/685) already covers synthetic delivery
@@ -1834,8 +1848,16 @@ zero-count or failed reports and nonzero process exits fail it. Sanitized output
 is saved as `build/dispatcher-tests/live-*/dispatcher.xml` and printed to stdout.
 Connected-path regression coverage does not establish a live result on a connected
 device. The [recorded baseline](#verification-status) proves only managed
-`pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD arm64. API 33 is the sole required
+`pixel2Api33Atd`, Pixel 2 / API 33 / `google-atd` arm64 with Play services/FCM. API 33 is the sole required
 version for now; API 35 is deferred.
+
+For the background-push proof, keep the production relay, real Claude, push-capable daemon and
+FCM-configured `google-atd` device. #1694 changes shared peer/host-link diagnostics, so its acceptance
+uses the full live suite. Require the named background-prompt testcase to be present without
+failure/error/skip alongside the tested commit and executed/failed/skipped counts. A focused
+identity test or scripted reconnect cannot prove FCM delivery; #1698's repaired-baseline pass is
+also separate from candidate acceptance. See [Verification status](#verification-status) for the
+candidate result and its unrelated focused rerun.
 
 **What it runs.** The current curated selector passes 44 runnable methods as a comma-separated
 `class#method` list. Its source of truth is `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET`, checked
@@ -2375,7 +2397,25 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-04 (#1697).** The dispatcher ran the full
+**Current live verification — 2026-10-04 (#1694).** The dispatcher ran the full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1694`
+at `6edcce71cef99c2ce7e24c3cff56bbf9cd9dfc27`, merged with `origin/main` at `fb2ca8f1a3`
+in a detached worktree (0 commits behind before merge): **53 executed, 52 passed, 1 failed,
+0 errors, 0 skipped**, exit 1. The fresh XML explicitly contains
+`de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect`
+with no failure, error or skip: this method ran and passed in the full suite, including both peer
+opens, real background FCM wake, exactly one alert and unchanged `postTime` after the second reconnect.
+The sole failure, `interactiveTurn_questionAnswer_reachesTheAskingConversation`, passed on a same-tree
+focused rerun (**1 executed, 1 passed, 0 failed/errors/skipped**). The dispatcher accepted PASS after
+rerun; this is full-suite proof of the background-prompt scenario, not a separate focused run of it
+or a second passing full suite. See the
+[gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1694#issuecomment-5976866278).
+The retained reports are `2026-10-04T05-01-10-594Z_real-claude-gate_#1694.log` and
+`2026-10-04T05-01-10-594Z_real-claude-gate-rerun_#1694.log` under the dispatcher repository's `logs/`.
+The earlier #1698 repaired-baseline full suite (53 executed, 1 unrelated failure, 0 skipped, this
+method passed) supported the identity diagnosis; it did not establish this candidate's acceptance.
+
+**Previous live verification — 2026-10-04 (#1697).** The dispatcher ran the full
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1697`
 at `b1a11e755f`, merged with `origin/main` at `d54d7d9cad` in a detached worktree (0 commits
 behind before merge): **53 executed, 53 passed, 0 failed, 0 errors, 0 skipped**, exit 0.
@@ -3304,6 +3344,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — hardened:** [#1694](https://github.com/pyrycode/pyrycode-mobile/issues/1694) makes
+  `InteractiveStreamE2ETest#interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect`
+  exercise a prior same-pairing peer before its prompt peer, protecting token-bound identity in a
+  focused run as well as the full suite. Named timeout diagnostics distinguish peer operations and
+  host-link close/reconnect without longer deadlines. Background-before-message ordering, real FCM,
+  exactly-one alert, original `postTime` and cleanup remain intact. The named method passed in the
+  fresh full candidate suite; see [Verification status](#verification-status) for counts and the
+  unrelated question-answer rerun. No scenario or deterministic FCM twin was added.
 
 - **Coverage — confirmed:** [#1697](https://github.com/pyrycode/pyrycode-mobile/issues/1697) records
   the no-code resolution of
