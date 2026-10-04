@@ -69,3 +69,7 @@ None. The shared repair has landed and the retained rejection evidence identifie
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-04
+
+## Revisions
+
+- 2026-10-04: Protocol fixture correction during implementation: `RemoteConversationRepository.TYPE_CONVERSATIONS` names the readiness response `conversations`, not the proposed `conversation_list`. Use the existing wire verb in the encrypted regression; the handshake, binding and correlation contracts are unchanged.
