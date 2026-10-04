@@ -20,8 +20,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -45,10 +43,14 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalAccessibilityManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -64,6 +66,7 @@ import de.pyryco.mobile.ui.components.CreateChannelModal
 import de.pyryco.mobile.ui.components.EditChannelModal
 import de.pyryco.mobile.ui.components.EditChatModal
 import de.pyryco.mobile.ui.components.EditWorkspaceModal
+import de.pyryco.mobile.ui.conversations.components.NoticePill
 import de.pyryco.mobile.ui.conversations.components.OptionsOverlay
 import de.pyryco.mobile.ui.conversations.components.OptionsOverlayOption
 import de.pyryco.mobile.ui.conversations.components.OptionsOverlayPlacement
@@ -74,6 +77,7 @@ import de.pyryco.mobile.ui.host.HostEditorModal
 import de.pyryco.mobile.ui.theme.LocalStaticDarkPalette
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
+import kotlinx.coroutines.delay
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlin.time.Duration.Companion.days
@@ -371,11 +375,24 @@ fun ChannelListScreen(
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
-    val snackbarHostState = remember { SnackbarHostState() }
+    var createChatFailureVisible by remember { mutableStateOf(false) }
+    val accessibilityManager = LocalAccessibilityManager.current
     val createChat = hostState.createChat
     val createChatFailure = stringResource(R.string.create_chat_failed)
     LaunchedEffect(createChat?.requestId, createChat?.failed) {
-        if (createChat?.failed == true) snackbarHostState.showSnackbar(createChatFailure)
+        createChatFailureVisible = createChat?.failed == true
+        if (createChatFailureVisible) {
+            // Match Material's Short snackbar timeout and accessibility adjustment, without an action.
+            val timeout =
+                accessibilityManager?.calculateRecommendedTimeoutMillis(
+                    originalTimeoutMillis = 4_000L,
+                    containsIcons = true,
+                    containsText = true,
+                    containsControls = false,
+                ) ?: 4_000L
+            delay(timeout)
+            createChatFailureVisible = false
+        }
     }
     val staticDark = LocalStaticDarkPalette.current
     var menuOpen by remember { mutableStateOf(false) }
@@ -397,15 +414,37 @@ fun ChannelListScreen(
                     onMenuBounds = { menuAnchor = it },
                 )
             },
-            snackbarHost = { SnackbarHost(snackbarHostState) },
         ) { inner ->
-            val bodyModifier = Modifier.padding(inner)
-            if (hostState.hosts.isEmpty()) {
-                // No host at all is the only blank tree: a paired host with no conversations still draws its
-                // own rows, which is content rather than an empty screen.
-                CenteredText(stringResource(R.string.channel_list_empty), bodyModifier)
-            } else {
-                ConversationTree(hostState = hostState, onEvent = onEvent, modifier = bodyModifier)
+            Box(Modifier.fillMaxSize()) {
+                val bodyModifier = Modifier.padding(inner)
+                if (hostState.hosts.isEmpty()) {
+                    // No host at all is the only blank tree: a paired host with no conversations still draws its
+                    // own rows, which is content rather than an empty screen.
+                    CenteredText(stringResource(R.string.channel_list_empty), bodyModifier)
+                } else {
+                    ConversationTree(hostState = hostState, onEvent = onEvent, modifier = bodyModifier)
+                }
+                if (createChatFailureVisible) {
+                    // #1604 authorises reuse of Figma 685:4337 below this screen's measured header.
+                    Box(
+                        Modifier.fillMaxWidth().padding(
+                            start = TreeGutter,
+                            end = TreeGutter,
+                            top = inner.calculateTopPadding() + 28.dp,
+                        ),
+                        contentAlignment = Alignment.TopEnd,
+                    ) {
+                        // The shared pill's trimmed line box is 22dp versus Figma's 24dp at 1x (#1757).
+                        NoticePill(
+                            text = createChatFailure,
+                            isError = true,
+                            modifier =
+                                Modifier.testTag("channel-list-create-chat-error").semantics {
+                                    liveRegion = LiveRegionMode.Polite
+                                },
+                        )
+                    }
+                }
             }
         }
         val anchor = menuAnchor
@@ -673,7 +712,7 @@ private fun ChannelListTopBar(
     onMenuOpen: () -> Unit,
     onMenuBounds: (Rect) -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = Modifier.fillMaxWidth().testTag("channel-list-header")) {
         Row(
             modifier =
                 Modifier.fillMaxWidth().padding(
