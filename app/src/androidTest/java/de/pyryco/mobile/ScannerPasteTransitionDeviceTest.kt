@@ -54,33 +54,44 @@ class ScannerPasteTransitionDeviceTest {
         grantNotificationPermission()
         val store = GlobalContext.get().get<PairedServerCollectionStore>()
         val serverId = "scanner-transition-1637"
-        runBlocking {
-            store.save(
-                PairedServer(
-                    serverId = serverId,
-                    token = "test-only-token",
-                    relayUrl = "wss://example.invalid/v1/client",
-                    serverStaticPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-                ),
+        ScannerTransitionCleanup().use { cleanup ->
+            cleanup.onClose { runBlocking { store.remove(serverId) } }
+            runBlocking {
+                store.save(
+                    PairedServer(
+                        serverId = serverId,
+                        token = "test-only-token",
+                        relayUrl = "wss://example.invalid/v1/client",
+                        serverStaticPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                    ),
+                )
+            }
+            instrumentation.uiAutomation.grantRuntimePermission(context.packageName, Manifest.permission.CAMERA)
+            // Reset CameraX so this remains a cold-start test even when another device class used it.
+            ProcessCameraProvider
+                .getInstance(context)
+                .get(30, TimeUnit.SECONDS)
+                .shutdownAsync()
+                .get(30, TimeUnit.SECONDS)
+            val cameraExecutor = HeldCameraExecutor()
+            cleanup.onClose { cameraExecutor.close() }
+            cleanup.onClose {
+                cameraExecutor.release()
+                ProcessCameraProvider
+                    .getInstance(context)
+                    .get(30, TimeUnit.SECONDS)
+                    .shutdownAsync()
+                    .get(30, TimeUnit.SECONDS)
+            }
+            ProcessCameraProvider.configureInstance(
+                CameraXConfig.Builder
+                    .fromConfig(Camera2Config.defaultConfig())
+                    .setCameraExecutor(cameraExecutor)
+                    .build(),
             )
-        }
-        instrumentation.uiAutomation.grantRuntimePermission(context.packageName, Manifest.permission.CAMERA)
-        // Reset CameraX so this remains a cold-start test even when another device class used it.
-        ProcessCameraProvider
-            .getInstance(context)
-            .get(30, TimeUnit.SECONDS)
-            .shutdownAsync()
-            .get(30, TimeUnit.SECONDS)
-        val cameraExecutor = HeldCameraExecutor()
-        ProcessCameraProvider.configureInstance(
-            CameraXConfig.Builder
-                .fromConfig(Camera2Config.defaultConfig())
-                .setCameraExecutor(cameraExecutor)
-                .build(),
-        )
-        val providerFuture = ProcessCameraProvider.getInstance(context)
-        val safetyScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        try {
+            val providerFuture = ProcessCameraProvider.getInstance(context)
+            val safetyScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            cleanup.onClose { safetyScope.cancel() }
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 rule.waitUntil(15_000) {
                     rule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isNotEmpty()
@@ -148,13 +159,8 @@ class ScannerPasteTransitionDeviceTest {
                     rule.onNodeWithContentDescription("Back").performClick()
                 }
             }
-        } finally {
-            safetyScope.cancel()
-            cameraExecutor.release()
-            providerFuture.get(30, TimeUnit.SECONDS).shutdownAsync().get(30, TimeUnit.SECONDS)
-            cameraExecutor.close()
-            runBlocking { store.remove(serverId) }
         }
+        assertTrue("scanner fixture host removed", runBlocking { store.loadById(serverId) == null })
     }
 
     private class HeldCameraExecutor : Executor {
