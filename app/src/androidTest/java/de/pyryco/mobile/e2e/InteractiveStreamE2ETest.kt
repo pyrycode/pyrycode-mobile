@@ -6,6 +6,7 @@ import android.app.Instrumentation
 import android.app.Notification
 import android.app.NotificationManager
 import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
@@ -57,6 +58,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performFirstLinkClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
@@ -148,10 +150,13 @@ import de.pyryco.mobile.ui.onboarding.ScannerEvent
 import de.pyryco.mobile.ui.onboarding.ScannerUiState
 import de.pyryco.mobile.ui.onboarding.ScannerViewModel
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.dropWhile
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -992,10 +997,15 @@ class InteractiveStreamE2ETest {
 
         // 3. Create a fresh discussion → the app navigates into its thread; the send button marks arrival. A
         //    plain discussion suffices — the "Reset session" item is gated on mutationsSupported only, not promotion.
+        val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
+        val before = hostConversationIds(serverId)
         createChat()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
+
+        val conversationId = newHostConversationId(serverId, before)
+        val repository = hostRepository(serverId)
 
         // 4. Prove the session is live (AC-3): send the constrained ping and wait for the streamed reply, so the
         //    session is genuinely exercised and there is above-delimiter content once it clears.
@@ -1004,48 +1014,83 @@ class InteractiveStreamE2ETest {
         composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
         composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
 
+        runBlocking {
+            withTimeout(THREAD_TIMEOUT_MS) { repository.observeContextUsage(conversationId).filterNotNull().first() }
+        }
+
         // 5. Absence guard (AC-2, deterministic — no extra turn): no delimiter may be on screen yet, so its
         //    later appearance is attributable to the New-session tap.
         composeTestRule
             .onAllNodesWithTag(SESSION_BOUNDARY_TEST_TAG)
             .assertCountEquals(0)
 
-        // 6. Open the real overflow menu and tap Reset session. The durable assertion uses
-        //    SESSION_BOUNDARY_TEST_TAG, independently of the action label.
-        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).onFirst().performClick()
+        runBlocking {
+            // Observe before tapping: session_transition clears the old reading, and only a later
+            // context_usage reply can fill it. Settings fallback cannot satisfy this wait (#1761).
+            val freshReading =
+                async(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
+                    withTimeout(REPLY_TIMEOUT_MS) {
+                        repository
+                            .observeContextUsage(conversationId)
+                            .dropWhile { it != null }
+                            .filterNotNull()
+                            .first()
+                    }
+                }
 
-        // 7. #965: the status area names the wrapping-up phase before any delimiter. The daemon lowers it only
-        //    once its wrap-up turn — a real claude turn writing the handoff note — has ended, so the phase is
-        //    held by that turn, not caught on timing. Restarting spans only the respawn and nothing holds it,
-        //    so it is left to ScriptedResettingTest.
-        val wrappingUp = string(R.string.thread_resetting_wrapping_up)
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(wrappingUp)).fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule
-            .onAllNodesWithTag(SESSION_BOUNDARY_TEST_TAG)
-            .assertCountEquals(0)
+            // 6. Open the real overflow menu and tap Reset session. The durable assertion uses
+            //    SESSION_BOUNDARY_TEST_TAG, independently of the action label.
+            composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).onFirst().performClick()
 
-        // 8. The phase clears: no resetting label of either phase is left in the status area.
-        val resettingLabels =
-            listOf(
-                R.string.thread_resetting_wrapping_up,
-                R.string.thread_resetting_restarting,
-                R.string.thread_resetting_restarting_written,
-                R.string.thread_resetting_restarting_skipped,
-            ).map(::string)
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-            resettingLabels.all { label -> composeTestRule.onAllNodes(hasContentDescription(label)).fetchSemanticsNodes().isEmpty() }
-        }
+            // 7. #965: the status area names the wrapping-up phase before any delimiter. The daemon lowers it only
+            //    once its wrap-up turn — a real claude turn writing the handoff note — has ended, so the phase is
+            //    held by that turn, not caught on timing. Restarting spans only the respawn and nothing holds it,
+            //    so it is left to ScriptedResettingTest.
+            val wrappingUp = string(R.string.thread_resetting_wrapping_up)
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(wrappingUp)).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule
+                .onAllNodesWithTag(SESSION_BOUNDARY_TEST_TAG)
+                .assertCountEquals(0)
 
-        // 9. Reveal the newest row while waiting: the daemon's wrap-up reply can fill the viewport
-        //    before session_transition appends the delimiter. The delimiter must still be displayed, with no
-        //    explanation line under it (#1578).
-        composeTestRule.awaitDisplayedSessionBoundary(REPLY_TIMEOUT_MS)
+            // 8. The phase clears: no resetting label of either phase is left in the status area.
+            val resettingLabels =
+                listOf(
+                    R.string.thread_resetting_wrapping_up,
+                    R.string.thread_resetting_restarting,
+                    R.string.thread_resetting_restarting_written,
+                    R.string.thread_resetting_restarting_skipped,
+                ).map(::string)
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                resettingLabels.all { label -> composeTestRule.onAllNodes(hasContentDescription(label)).fetchSemanticsNodes().isEmpty() }
+            }
+
+            // 9. Reveal the newest row while waiting: the daemon's wrap-up reply can fill the viewport
+            //    before session_transition appends the delimiter. The delimiter must still be displayed, with no
+            //    explanation line under it (#1578).
+            composeTestRule.awaitDisplayedSessionBoundary(REPLY_TIMEOUT_MS)
+
+            val usage = freshReading.await()
+            assertTrue("post-reset context reading must have a usable token window", usage.maxTokens > 0)
+            val percent =
+                kotlin.math
+                    .floor(usage.totalTokens.toDouble() / usage.maxTokens * 100 + 0.5)
+                    .toInt()
+                    .coerceIn(0, 100)
+            val descriptionResource =
+                when {
+                    percent >= 85 -> R.string.cd_context_usage_high
+                    percent >= 70 -> R.string.cd_context_usage_warning
+                    else -> R.string.cd_context_usage
+                }
+            val expected = InstrumentationRegistry.getInstrumentation().targetContext.getString(descriptionResource, percent)
+            awaitContextSegment(THREAD_TIMEOUT_MS, "the fresh post-reset reading ($percent%)") { it == expected }
+        }
     }
 
     /**
@@ -4950,7 +4995,7 @@ class InteractiveStreamE2ETest {
 
     /**
      * Files the phone attaches reach another client with their exact bytes (#1016, rung 3). In chat X the
-     * phone picks a small PNG and a ~100 KB document through the composer's **Attach files** action — the
+     * phone pastes a small PNG, replaces the clipboard, then picks a ~100 KB document through **Attach files** — the
      * system picker answered by an [ActivityIntentStub] with `MediaStore` URIs, since the app refuses any
      * authority of its own, the test APK's included — and sends one message. Then the [SecondClientPeer], the
      * desktop stand-in, sees exactly what the desktop would:
@@ -4985,8 +5030,7 @@ class InteractiveStreamE2ETest {
             val picked =
                 listOf(insertDownload(pngName, "image/png", png, inserted), insertDownload(documentName, TEXT_MIME, document, inserted))
             stub.answer(Intent.ACTION_OPEN_DOCUMENT) {
-                val clip = ClipData.newRawUri(null, picked.first()).apply { picked.drop(1).forEach { addItem(ClipData.Item(it)) } }
-                Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().apply { clipData = clip })
+                Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().apply { clipData = ClipData.newRawUri(null, picked.last()) })
             }
 
             // 1. The peer records from here on; X and Y are fresh named chats, and the phone opens X.
@@ -4998,7 +5042,16 @@ class InteractiveStreamE2ETest {
             assertPeerAnswers(peer, chatX)
             openChatRow(nameX)
 
-            // 2. Pick both fixtures through the composer's attach action, and send them with one message.
+            // 2. Paste the PNG while its clipboard grant is valid; only the document uses the picker.
+            val clipboard = instrumentation.targetContext.getSystemService(ClipboardManager::class.java)
+            composeTestRule.runOnUiThread {
+                clipboard.setPrimaryClip(ClipData.newUri(instrumentation.targetContext.contentResolver, "image", picked.first()))
+            }
+            composeTestRule.onNode(hasSetTextAction()).performSemanticsAction(SemanticsActions.PasteText)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(pngName)).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.runOnUiThread { clipboard.setPrimaryClip(ClipData.newPlainText("replacement", "copied after paste")) }
             composeTestRule.onNode(hasContentDescription(attachFilesLabel)).performClick()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 listOf(pngName, documentName).all {

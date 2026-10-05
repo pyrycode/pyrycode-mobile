@@ -1,7 +1,6 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
-import androidx.annotation.StringRes
 import androidx.compose.animation.core.EaseInOut
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -422,11 +421,6 @@ fun TreeWorkspaceRow(
  * The leading status dot draws [attention], the row's one state that #877 resolves by precedence (#878).
  * Under the static dark palette, [selected] draws 15:8's `Hover` fill (`primary-container`) and a pressed
  * row its darker `on-primary` fill (#1523).
- *
- * A non-null [onEditTapped] draws the design's hover pencil at the trailing edge, named through
- * [editDescription]: Edit chat on Chats rows, Edit channel on Channels rows (#667). It is a
- * [TreeRowControl], so a tap on it edits the row without opening it or moving the highlight. No caller
- * passes it since #1563, which matches 15:8's pen-free rows; #1582 removes it.
  */
 @Composable
 fun TreeConversationRow(
@@ -434,11 +428,9 @@ fun TreeConversationRow(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    onEditTapped: (() -> Unit)? = null,
-    @StringRes editDescription: Int = R.string.cd_tree_chat_edit,
     attention: ConversationAttention = ConversationAttention.Idle,
 ) {
-    // Clamped once and reused for the name and the pencil's label, as the host row does.
+    // Clamp daemon-authored text before layout, as the host row does.
     val bounded = boundedRowText(conversationName)
     val interactionSource = remember { MutableInteractionSource() }
     val pressed = interactionSource.collectIsPressedAsState().value
@@ -489,14 +481,6 @@ fun TreeConversationRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
-            )
-        }
-        if (onEditTapped != null) {
-            TreeRowControl(
-                painter = painterResource(R.drawable.ic_tree_edit),
-                contentDescription = stringResource(editDescription, bounded),
-                onClick = onEditTapped,
-                height = ConversationBandHeight,
             )
         }
     }
@@ -711,7 +695,6 @@ private fun TreeRowsPreviewMatrix() {
                 conversationName = "pyrycode discord integration",
                 selected = true,
                 onClick = {},
-                onEditTapped = {},
             )
             TreeConversationRow(conversationName = "rocd-thinking", selected = false, onClick = {})
             ConversationAttention.entries.forEach { state ->
