@@ -170,6 +170,31 @@ class DeterministicInteractiveStreamE2ETest {
             .targetContext
             .getString(R.string.cd_thread_tool_running_elapsed, TOOL_NAME, HEARTBEAT_ELAPSED)
 
+    /** #1674: selection-copy runs the live selection assertion on a fixed finished multi-word reply. */
+    @Test
+    fun interactiveTurn_seededChannel_systemCopyCopiesSelectedWord() {
+        arriveInSeededThread()
+        val repository =
+            requireNotNull(
+                GlobalContext
+                    .get()
+                    .get<RelayRepositoryCoordinator>()
+                    .currentRepository.value,
+            )
+        val conversationId =
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    repository
+                        .observeConversations(ConversationFilter.All)
+                        .first { rows -> rows.any { it.name == SEED_CHANNEL_NAME } }
+                        .single { it.name == SEED_CHANNEL_NAME }
+                        .id
+                }
+            }
+        typeAndSend(SELECTION_PROMPT)
+        composeTestRule.assertFinishedReplySystemCopy(repository, conversationId, REPLY_TIMEOUT_MS)
+    }
+
     @Test
     fun interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread() {
         arriveInSeededThread()
