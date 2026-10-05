@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.repository.BackgroundTaskProjection
 import de.pyryco.mobile.data.repository.BackgroundTaskProjectionTest
 import de.pyryco.mobile.data.repository.FinishedBackgroundTasks
@@ -294,6 +295,62 @@ class BackgroundAgentBlocksTest {
     @Test fun emptyRosterKeepsFinishedBlockWithoutStartHistory() = finishedRosterReplacement(false, false)
 
     @Test fun unrelatedRosterKeepsFinishedBlockWithoutStartHistory() = finishedRosterReplacement(false, true)
+
+    @Test fun emptyReplacementRetainsLateJoinWithoutLifecycleHistory() = lateFinishedJoinReplacement(false)
+
+    @Test fun unrelatedReplacementRetainsLateJoinWithoutLifecycleHistory() = lateFinishedJoinReplacement(true)
+
+    private fun lateFinishedJoinReplacement(unrelated: Boolean) =
+        runTest {
+            val finished = FinishedBackgroundTasks().apply { mark("c1", "task-a") }
+            val tasks = BackgroundTaskProjection(finished)
+            val thread = ThreadProjection()
+            val loaded = listOf(row("a", "Agent"), row("child", "Read", "a"), row("later"))
+            thread.appendMessages(loaded.map { "c1" to it.message })
+            val unknownJoin =
+                """{"task_id":"task-a","task_type":"local_agent","description":"Roster description","truncated_fields":null}"""
+            val replacement =
+                BackgroundTaskProjectionTest.rosterFrame(
+                    if (unrelated) listOf(BackgroundTaskProjectionTest.row("other")) else emptyList(),
+                )
+
+            fun apply(frame: Envelope) {
+                tasks.apply(frame)
+                thread.applyBackgroundTaskLifecycle(frame)
+            }
+
+            suspend fun display() = project(thread.observe("c1").first(), tasks.rosters.value["c1"])
+
+            apply(BackgroundTaskProjectionTest.rosterFrame(listOf(unknownJoin)))
+            apply(replacement)
+            assertTrue(!finished.contains("c1", "task-a"))
+            val joined = unknownJoin.replace("\"task_type\"", "\"tool_call_id\":\"a\",\"task_type\"")
+            apply(BackgroundTaskProjectionTest.rosterFrame(listOf(joined)))
+            assertTrue(!checkNotNull(tasks.rosters.value["c1"]).tasks.single().isFinished)
+            val fallback = listOf("agent-start:a", "msg:a", "msg:child", "msg:later")
+            assertEquals(fallback, keys(display()))
+            assertTrue(display().filterIsInstance<ThreadRow.AgentStartMarker>().single().finished)
+
+            // No terminal/start frame can rescue the late join when the panel replaces it again.
+            apply(replacement)
+            val retained = display()
+            assertEquals(fallback, keys(retained))
+            assertTrue(retained.filterIsInstance<ThreadRow.AgentStartMarker>().single().finished)
+            assertEquals(ToolCallStatus.Done, message(retained, "a").toolCall?.status)
+            assertEquals(
+                listOf("a", "a"),
+                retained.filterIsInstance<ThreadRow.Delivered>().filter { it.isToolRow() }.map { it.agentBlockId },
+            )
+            assertEquals(listOf("agent-start:a", "tool-run:a", "msg:later"), keys(foldToolRuns(retained, emptySet())))
+            assertEquals(loaded, thread.observe("c1").first())
+            assertEquals(
+                if (unrelated) listOf("other") else emptyList<String>(),
+                tasks.rosters.value["c1"]
+                    ?.tasks
+                    ?.map { it.taskId },
+            )
+            assertEquals(if (unrelated) 1 else 0, tasks.rosters.value["c1"]?.liveCount)
+        }
 
     private fun finishedRosterReplacement(
         startLoaded: Boolean,

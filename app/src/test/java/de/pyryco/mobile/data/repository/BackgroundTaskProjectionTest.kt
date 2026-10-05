@@ -185,14 +185,17 @@ class BackgroundTaskProjectionTest {
         assertEquals(listOf(known), roster()?.settledTasks)
         assertEquals(0, roster()?.liveCount)
 
-        projection.apply(terminal("t1", "completed"))
         val joined = row("t1").replace("\"task_type\"", "\"tool_call_id\":\"a\",\"task_type\"")
         projection.apply(rosterFrame(listOf(joined)))
+        assertFalse(task("t1").isFinished)
+        assertEquals(1, roster()?.liveCount)
         assertEquals("a", checkNotNull(roster()).settledTasks.single().toolCallId)
+        assertEquals(known.copy(toolCallId = "a"), checkNotNull(roster()).settledTasks.single())
         projection.apply(rosterFrame(listOf(row("t2")), droppedTasks = 2))
         assertEquals(listOf("t2"), roster()?.tasks?.map { it.taskId })
         assertEquals(3, roster()?.liveCount)
         assertEquals(listOf("t1"), roster()?.settledTasks?.map { it.taskId })
+        assertEquals(known.copy(toolCallId = "a"), checkNotNull(roster()).settledTasks.single())
         projection.apply(rosterFrame(emptyList(), conversationId = "c2"))
         assertTrue(checkNotNull(roster("c2")).settledTasks.isEmpty())
     }

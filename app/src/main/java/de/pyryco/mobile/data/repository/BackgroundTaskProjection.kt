@@ -279,9 +279,13 @@ internal class BackgroundTaskProjection(
     ) {
         mutableRosters.update { current ->
             val settled = current[conversationId]?.settledTasks.orEmpty().associateByTo(linkedMapOf()) { it.taskId }
-            roster.tasks.filter { it.isFinished }.forEach { task ->
+            roster.tasks.forEach { task ->
                 val held = settled[task.taskId]
-                settled[task.taskId] = held?.copy(toolCallId = held.toolCallId ?: task.toolCallId) ?: task
+                // Replacement can forget the panel's finish flag before a later roster supplies the join.
+                when {
+                    held != null -> settled[task.taskId] = held.copy(toolCallId = held.toolCallId ?: task.toolCallId)
+                    task.isFinished -> settled[task.taskId] = task
+                }
             }
             current + (conversationId to roster.copy(settledTasks = settled.values.toList()))
         }
