@@ -817,6 +817,7 @@ fun ThreadScreen(
                                                         // #1494: a model the menu knows reads as its menu label.
                                                         knownModelLabel = state.runConfig::knownModelLabel,
                                                     )
+                                                is ThreadItem.BackgroundTaskLifecycle -> Unit
                                                 is ThreadItem.StoppedTurn -> StoppedTurnRow(item = item, agent = state.agent)
                                             }
                                         // One render path for both kinds of queued row — the one the echo
@@ -1418,6 +1419,7 @@ private fun ThreadItem.timestamp(): Instant =
         is ThreadItem.Banner -> occurredAt
         is ThreadItem.CompactionBoundary -> occurredAt
         is ThreadItem.ModelRefusal -> occurredAt
+        is ThreadItem.BackgroundTaskLifecycle -> occurredAt
         is ThreadItem.StoppedTurn -> occurredAt
     }
 
@@ -1425,7 +1427,8 @@ internal fun ThreadUiState.toChannelInfoUiModel(now: Instant = Clock.System.now(
     ChannelInfoUiModel(
         conversationName = displayName,
         workspacePath = workspacePath,
-        createdLabel = items.firstOrNull()?.let { formatRelativeTime(it.timestamp(), now) } ?: "—",
+        createdLabel =
+            items.firstOrNull { it !is ThreadItem.BackgroundTaskLifecycle }?.let { formatRelativeTime(it.timestamp(), now) } ?: "—",
         lastActivityLabel = lastUsedAt?.let { formatRelativeTime(it, now) } ?: "—",
         sessionCount = sessionCount,
         messageCount = items.count { it is ThreadItem.MessageItem },

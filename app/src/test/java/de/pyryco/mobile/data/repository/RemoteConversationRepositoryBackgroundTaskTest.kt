@@ -4,6 +4,7 @@ import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.Envelope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
@@ -18,6 +19,44 @@ import org.junit.Test
  * leaves the single inbound collector running. The merge rules are [BackgroundTaskProjectionTest]'s.
  */
 class RemoteConversationRepositoryBackgroundTaskTest {
+    @Test
+    fun interactiveLifecycle_retainsEvidenceAfterEmptyAndReplacingRosters() =
+        runTest {
+            val (pump, repo) = newRepo(setOf(CAPABILITY_INTERACTIVE))
+            pump.push(BackgroundTaskProjectionTest.terminal("t1", "completed"))
+            pump.push(BackgroundTaskProjectionTest.rosterFrame(emptyList()))
+            runCurrent()
+            val terminal =
+                repo
+                    .observeMessages("c1")
+                    .first()
+                    .filterIsInstance<ThreadItem.BackgroundTaskLifecycle>()
+                    .single()
+            assertEquals(null, terminal.toolCallId)
+            assertTrue(
+                repo.backgroundTasks.value
+                    .getValue("c1")
+                    .tasks
+                    .isEmpty(),
+            )
+
+            pump.push(BackgroundTaskProjectionTest.started("t1"))
+            pump.push(BackgroundTaskProjectionTest.rosterFrame(listOf(BackgroundTaskProjectionTest.row("t2"))))
+            runCurrent()
+            val markers = repo.observeMessages("c1").first().filterIsInstance<ThreadItem.BackgroundTaskLifecycle>()
+            assertEquals(2, markers.size)
+            assertEquals(terminal.occurredAt, markers.first().occurredAt)
+            assertEquals("toolu_t1", markers.first().toolCallId)
+            assertEquals(
+                listOf("t2"),
+                repo.backgroundTasks.value
+                    .getValue("c1")
+                    .tasks
+                    .map { it.taskId },
+            )
+            assertTrue(repo.observeMessages("c2").first().isEmpty())
+        }
+
     @Test
     fun interactiveConnection_foldsAllFourFrames() =
         runTest {
@@ -52,10 +91,12 @@ class RemoteConversationRepositoryBackgroundTaskTest {
 
             pump.push(BackgroundTaskProjectionTest.started("t1"))
             pump.push(BackgroundTaskProjectionTest.progress("t1"))
+            pump.push(BackgroundTaskProjectionTest.terminal("t1", "completed"))
             pump.push(BackgroundTaskProjectionTest.rosterFrame(rows = emptyList()))
             runCurrent()
 
             assertTrue(repo.backgroundTasks.value.isEmpty())
+            assertTrue(repo.observeMessages("c1").first().isEmpty())
         }
 
     @Test
