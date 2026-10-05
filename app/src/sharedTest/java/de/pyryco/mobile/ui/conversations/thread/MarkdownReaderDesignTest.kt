@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.width
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import de.pyryco.mobile.ui.assertDpEquals
 import de.pyryco.mobile.ui.pixelDp
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
@@ -124,18 +125,26 @@ class MarkdownReaderDesignTest {
                 .bottom.value,
             1f,
         )
-        // Each text block rounds its height up to a whole pixel at the emulator's density, so a block lower in
-        // the body may sit a few pixels below its Figma position. Robolectric's density 1 adds nothing.
-        val stacked = 1f + 4 * pixelDp()
-        assertEquals(141f, paragraph.top.value, stacked)
-        assertEquals(225f, subheading.top.value, stacked)
-        assertEquals(265f, firstItem.top.value, stacked)
+        // Each block is checked against the one above it, so the pixel every block rounds by at the emulator's
+        // density does not add up down the body. Robolectric's density 1 rounds nothing.
+        val body =
+            listOf(
+                "heading" to (heading.top to 97f),
+                "paragraph" to (paragraph.top to 141f),
+                "subheading" to (subheading.top to 225f),
+                "first item" to (firstItem.top to 265f),
+                "code" to (code.top to 385f),
+                "quote" to (quote.top to 461f),
+            )
+        for (index in 1 until body.size) {
+            val (name, block) = body[index]
+            val (above, previous) = body[index - 1]
+            assertDpEquals((block.second - previous.second).dp, block.first - previous.first, "$name below $above")
+        }
         assertEquals(20f, code.left.value, 1f)
-        assertEquals(385f, code.top.value, stacked)
         assertEquals(372f, code.width.value, 1f)
         assertEquals(64f, code.height.value, 1f)
         assertEquals(35f, quote.left.value, 1f)
-        assertEquals(461f, quote.top.value, 2f + 4 * pixelDp())
     }
 
     private fun body() = rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
