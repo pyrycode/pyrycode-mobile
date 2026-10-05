@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.thread.TaskCountPillTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-10-05T08:12:14.779Z" hostname="Juhanas-MacBook-Air.local" time="1.065">
+  <properties/>
+  <testcase name="figmaVariant_anchorsTaskPillAtTheInputAreasTopRight" classname="de.pyryco.mobile.ui.conversations.thread.TaskCountPillTest" time="0.417"/>
+  <testcase name="compactWidthAndLargeText_keepPillClearOfReadingAndOpeningPanel" classname="de.pyryco.mobile.ui.conversations.thread.TaskCountPillTest" time="0.152"/>
+  <testcase name="oneTask_readsSingular" classname="de.pyryco.mobile.ui.conversations.thread.TaskCountPillTest" time="0.052"/>
+  <testcase name="pill_showsBesideALiveReading_atTheRightOfIt" classname="de.pyryco.mobile.ui.conversations.thread.TaskCountPillTest" time="0.045"/>
+  <testcase name="pill_showsAlone_atTheBandsRightEnd" classname="de.pyryco.mobile.ui.conversations.thread.TaskCountPillTest" time="0.043"/>
+  <testcase name="zeroCount_showsNoPill_andThePillDoesNotMoveTheBand" classname="de.pyryco.mobile.ui.conversations.thread.TaskCountPillTest" time="0.057"/>
+  <testcase name="tappingThePill_opensTheBackgroundTaskPanel" classname="de.pyryco.mobile.ui.conversations.thread.TaskCountPillTest" time="0.059"/>
+  <testcase name="oneTaskPill_alone_hugsItsLabel_atTheBandsRightEnd" classname="de.pyryco.mobile.ui.conversations.thread.TaskCountPillTest" time="0.041"/>
+  <testcase name="taskPill_pointerAndAdjacentComposerTargetsKeepTheirActions" classname="de.pyryco.mobile.ui.conversations.thread.TaskCountPillTest" time="0.146"/>
+  <testcase name="oneTaskPill_besideAReading_hugsItsLabel_atTheBandsRightEnd" classname="de.pyryco.mobile.ui.conversations.thread.TaskCountPillTest" time="0.05"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
