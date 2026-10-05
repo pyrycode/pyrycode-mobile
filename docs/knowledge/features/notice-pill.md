@@ -33,10 +33,17 @@ task-count caller that overrides it to `0.dp`.
 A `Surface` (6dp `RoundedCornerShape`, `shadowElevation` for the overlay's drop shadow) holding a `Row`
 (8dp horizontal / 4dp vertical padding, 8dp gap, centre-aligned): a `bodySmall`, right-aligned `Text` in
 `Modifier.weight(1f, fill = false)` — so the pill hugs short text and wraps long text while a trailing X
-stays visible — and, when `onDismiss != null`, a 14dp `Icons.Filled.Close` glyph as its own clickable node
+stays visible — and, when `onDismiss != null`, an 8dp exported close image as its own clickable node
 (`Role.Button`, `contentDescription = R.string.thread_notice_dismiss`, "Dismiss notice"). Compose's minimum
 touch-target expansion gives the X a 48dp tap area without growing the pill's drawn size — a deliberate
 divergence from the usual 48dp `IconButton` wrapper, kept to match Figma's compact pill height.
+
+The themed `bodySmall` (12/16sp) style uses `LineHeightStyle.Alignment.Center`
+and `LineHeightStyle.Trim.None`, retaining the full top and bottom line-height space.
+At font scale 1, both variants have a 16dp single-line text box centred within a
+24dp visible background, with 4dp padding above and below. There is no fixed pill
+height: wrapping and font scaling grow the line box naturally, subject to the
+caller's `maxLines` and ellipsis. See [shared typography](shared-typography.md).
 
 **Two variants, colours from `MaterialTheme.colorScheme`:** Default is `primaryContainer` /
 `onPrimaryContainer`; Error is `errorContainer` / `error`, as Figma paints it. `isError` selects between
@@ -78,16 +85,44 @@ shadow, optional leading icon and line limit let the outcome reuse the same shap
 
 ## Testing
 
-The [`ThreadTopOverlay`](thread-top-overlay.md) callers are covered indirectly through
-[`ThreadTopOverlayTest`](thread-top-overlay.md#testing) (Robolectric, `app/src/sharedTest/.../thread/`)
-rather than a standalone Compose test of `NoticePill` in isolation — the component has no behaviour worth
-pinning apart from how each caller drives it (variant selection, dismiss wiring, wrap, shadow). Two
-`@Preview`s (light/dark, `widthDp = 412`) stack a long usage-style label with a dismiss X above a short
-error-style pairing label with `onClick`, matching the dark-theme Robolectric render the plan's Phase B
-recorded against Figma `533:1956`. The task-count caller is covered by `TaskCountPillTest`
-(`app/src/sharedTest/.../thread/`, `@GraphicsMode(NATIVE)`) — see [Thread screen § Thinking-indicator
-placement](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643)
-for what it pins.
+[`NoticePillTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/NoticePillTest.kt)
+uses native graphics to measure both text-only variants: 16dp text, 24dp background
+and centred 4dp insets at density/font scale 1. Its second test checks 1.5× font
+scaling, wrapping to a two-line cap (48dp text / 56dp background), and click/dismiss
+routing. The [retained component XML](../../../app/src/androidTest/assets/pill-1757/jvm/TEST-de.pyryco.mobile.ui.conversations.components.NoticePillTest.xml)
+records 2 executed/passed, 0 failed and 0 skipped on 2026-10-05; the
+[focused caller reports](../../../app/src/androidTest/assets/pill-1757/jvm/)
+record 31 executed/passed in total, 0 failed and 0 skipped, including
+`ThreadTopOverlayTest`, `TaskCountPillTest`, `ThreadActivityIndicatorVisualTest`
+and `ScriptedTurnOutcomeTest`.
+
+A 16dp leading icon can hold the row at the intended height even when Compose
+trims the text box. Measure text-only variants and scaled wrapping independently;
+a caller's correct overall height alone cannot catch this defect. Also distinguish
+the painted background from expanded touch targets, especially for a clickable
+Surface or the dismiss action.
+
+[`NoticePillCaptureTest.bothVariantsAt412By892`](../../../app/src/androidTest/java/de/pyryco/mobile/design/NoticePillCaptureTest.kt)
+hosts both production variants in MainActivity through the design harness. The
+[retained nonblank real-bar PNG](../../../app/src/androidTest/assets/pill-1757/both-variants.png)
+and [configuration sidecar](../../../app/src/androidTest/assets/pill-1757/both-variants.txt)
+record a 412×892 viewport, density/font scale 1, hardware acceleration,
+`syntheticBars=false` and 24px top/bottom system bars. The
+[measurements](../../../app/src/androidTest/assets/pill-1757/measurements.txt)
+exclude shadows and touch targets: Default `(16,80)-(183,104)` and Error
+`(16,128)-(167,152)` each have a 24px painted height, matching the retained
+[Figma Default](../../../app/src/androidTest/assets/pill-1757/figma-default.png) and
+[Error](../../../app/src/androidTest/assets/pill-1757/figma-error.png) exports.
+The [capture XML](../../../app/src/androidTest/assets/pill-1757/capture-results.xml)
+records that method executed/passed in the focused API 35 real-bar run
+(`requireRealSystemBars=true`): 1 executed, 0 failed, 0 skipped. The verifier
+compared retained exports; fresh remote Figma revisions were unavailable.
+See [Compose evidence](development-verification-compose-evidence.md) for why a
+passing synthetic-bar capture does not establish fresh pixel evidence.
+
+The light/dark previews (`widthDp = 412`) stack a long dismissible usage-style
+label above a short clickable error-style pairing label. Task-count placement
+coverage remains described in [Thread screen § Thinking-indicator placement](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643).
 
 ## Security
 
