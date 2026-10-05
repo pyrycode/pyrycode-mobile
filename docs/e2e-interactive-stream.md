@@ -277,6 +277,17 @@ delimiter positioned between the two cross-session messages, driven through the 
 
 ## What rung 3 is made of
 
+**Host system prompt (#1775).**
+`InteractiveStreamE2ETest.interactiveTurn_hostSystemPrompt_editsResetsAndCancels` uses the real Edit
+host controls to save custom text, confirm it with a fresh daemon read and reopened preview, reset then
+Cancel without changing storage, and reset then OK so current equals the daemon-returned default.
+Cleanup restores the harness host's original value; fresh reads and restoration are bounded by
+`THREAD_TIMEOUT_MS`. The method is in the full curated live selector and spends no Claude turn.
+Controller/component fakes cover deterministic transitions; no new
+`DeterministicInteractiveStreamE2ETest` twin was added for this storage/editor flow. See
+[Host editor](knowledge/features/host-editor.md#testing) for control coverage and the unmerged subtitle
+lookup used by both component and live waits.
+
 | Piece | File |
 | --- | --- |
 | Render fix (#337): fold `assistant_delta` into a streaming assistant row, finalize on `turn_end` | `app/.../data/repository/RemoteConversationRepository.kt` (`applyAssistantDelta`, `finalizeAssistantTurn`) + unit tests in `RemoteConversationRepositoryTest.kt` |
@@ -1720,6 +1731,15 @@ went stale — a daemon rejected a handshake because its pairing code outlived t
 window before the test redeemed it — instead of leaving the cause to the anonymous timeout. No pairing
 code, token or key appears in that message; a clean log leaves the failure output unchanged.
 
+Since 2026-10-05 the script then retries once. A full live run can reach the method that pairs a host after
+the window has passed even with minting after the build, as on #1668's gate, where the operator-bypass test
+ran 20 minutes in. `retry_with_fresh_codes` reads the failed methods from the Gradle report, mints every
+pairing again, because the reinstalled app holds a new key, and reruns only those methods with the fresh
+codes. `scripts/e2e-rerun-report.py` folds the rerun's results into the first run's report, so the gate
+still counts every method. The run passes only when every retried method passes. A second expired code
+is reported again and fails the run, and there is never a second retry. The installed-app path of
+`scripted-all` never retries.
+
 On the same failed-test path, the script also scans those logs for `msg="transport: disconnected"`
 (`WSSClient`'s reconnect loop in pyrycode's `internal/transport/wssclient.go`) and prints
 `relay_link_dropped` naming each daemon whose relay link ended some way other than the teardown's own kill
@@ -1746,9 +1766,16 @@ mobile parallel of the daemon's `make e2e-realclaude`. The dispatcher command is
 python3 scripts/android-test-gate.py live
 ```
 
+Full live runs and subsets selecting the host-prompt method require a daemon containing merged
+pyrycode#2768 handler commit `b3daa0432528188f2829b235877c60627afb8e43` or a descendant.
+`require_host_prompt_daemon` checks the binary's recorded revision against Git ancestry before startup;
+`PYRYCODE_SRC` must hold both revisions. Outdated or unverifiable binaries fail explicitly rather than
+skip the scenario. A daemon with the durable instructions store can still lack the paired-client
+host-prompt handlers. Scripted runs and unrelated live subsets retain their existing prerequisites.
+
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the current selector has 54 runnable `@Test` methods. The historical
+incantation to remember — the current selector has 55 runnable `@Test` methods. The historical
 inventory below describes the pre-#1193 forty-four-method set; ignored methods are excluded from
 the current selector as described under the model and effort settings round trip. It covered ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
@@ -2087,7 +2114,11 @@ above. `LIVE=1` is
 Prerequisites (on top of the "How to run" list):
 
 - The runner host's Claude authenticated (as default rung 3) — Max-subscription covered, so it
-  does **not** meter tokens.
+  does **not** meter tokens. A LIVE run started by hand with no `CLAUDE_CODE_OAUTH_TOKEN` fetches the
+  long-term login through `scripts/with-claude-login.sh` (2026-10-05), the same 1Password item the
+  dispatcher's launcher uses, and falls back to the host's own login only when that fetch is unavailable.
+  `python3 scripts/android-test-gate.py live` does the same when started by hand. A throwaway test daemon
+  started by hand can borrow it too: `scripts/with-claude-login.sh pyry -pyry-name=<name> ...`.
 - The live daemon is started with `-pyry-workdir=$HOME`. The current daemon confines the supervised
   Claude workdir to the runner's home for trust handling, so a temporary checkout outside that boundary
   is rejected before the live suite can start.
@@ -2471,7 +2502,26 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-05 (#1703).** After verification, the dispatcher ran the fresh full
+**Current live verification — 2026-10-05 (#1775).** The dispatcher ran the fresh full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on branch `feature/1775`
+at `b496a99e6f`, merged with `origin/main` at `9563beab61` (tested mobile revision
+`80c40ae883b081abd46afd2c818e0d350d26b7f0`): **55 executed, 54 passed, 1 failed, 0 errors,
+0 skipped**, exit 1. The inspected full-suite XML contains exactly one
+`InteractiveStreamE2ETest.interactiveTurn_hostSystemPrompt_editsResetsAndCancels` testcase with
+no failure, error or skip: the method ran and passed in the full suite. Daemon revision was
+`a438db4b9146620b74b0f2a305c3e23a2d144d6a`, with the pyrycode#2768 handler prerequisite satisfied;
+Claude Code was 2.1.280.
+
+The sole failure, `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`, passed on the
+same merged tree's focused rerun: **1 executed, 1 passed, 0 failed, 0 errors, 0 skipped**. The dispatcher
+accepted PASS after rerun; this is not a second passing full-suite run. See the
+[dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1775#issuecomment-5989909305).
+The inspected reports are `2026-10-05T06-56-43-612Z_real-claude-gate_#1775.log` and
+`2026-10-05T06-56-43-612Z_real-claude-gate-rerun_#1775.log` under the dispatcher repository's `logs/`,
+with revisions in the adjacent `.stderr.log`. The builder's earlier focused host-prompt pass is
+separate repair evidence (1 executed/passed, 0 failed/skipped), not the source of these full-suite counts.
+
+**Previous live verification — 2026-10-05 (#1703).** After verification, the dispatcher ran the fresh full
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1703`
 at `930be240bcd64759a9462722e3cc9a757946e29c`, merged with `origin/main` at `0d2aecc85c`:
 **53 executed, 53 passed, 0 failed, 0 errors, 0 skipped**, exit 0. The inspected XML contains exactly
@@ -3557,6 +3607,13 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Host system prompt — shipped coverage (#1775):**
+  `InteractiveStreamE2ETest.interactiveTurn_hostSystemPrompt_editsResetsAndCancels` covers custom
+  save/read/reopen, reset/discard, reset/save to the returned default and original-value cleanup.
+  Its explicit full-suite pass and counts, plus the unrelated Stop rerun, are recorded under
+  [Verification status](#verification-status). Controller/component fakes cover deterministic
+  transitions; no new `DeterministicInteractiveStreamE2ETest` twin was added.
 
 - **Send now — shipped coverage (#1642):**
   `InteractiveStreamE2ETest.interactiveTurn_sendQueuedNow_reachesRunningTurn` and
