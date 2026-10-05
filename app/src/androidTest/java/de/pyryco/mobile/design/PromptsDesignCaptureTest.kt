@@ -8,6 +8,7 @@ import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.TypedValue
 import android.view.View
+import android.view.WindowInsets
 import android.view.WindowManager
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
@@ -400,22 +401,35 @@ class PromptsDesignCaptureTest {
         // Setting FLAG_SECURE relays out the window, so they can read empty for a moment after a prompt arrives.
         fun platformBars() = rule.runOnIdle { ViewCompat.getRootWindowInsets(root) }?.getInsets(WindowInsetsCompat.Type.systemBars())
         // Right after launch the navigation bar can also report a taller inset for over a second before it settles,
-        // so wait until the real bars have held for 1.5 s.
-        var steady: Insets? = null
-        var since = 0L
-        runCatching {
-            rule.waitUntil(10_000) {
-                val now = platformBars()?.takeIf { it.top > 0 && it.bottom > 0 }
-                if (now != steady) {
-                    steady = now
-                    since = SystemClock.uptimeMillis()
+        // so wait until the real bars have held for 1.5 s. The headless test emulator draws no bars at all, where
+        // the wait could only sit out its timeout. The window manager's metrics say whether the device draws bars,
+        // whatever this window reads mid-relayout, so the wait runs wherever bars exist, and always under
+        // requireRealSystemBars=true.
+        val requireRealBars = InstrumentationRegistry.getArguments().getString("requireRealSystemBars") == "true"
+        val deviceBars =
+            rule.runOnIdle {
+                root.context
+                    .getSystemService(WindowManager::class.java)
+                    .currentWindowMetrics.windowInsets
+                    .getInsetsIgnoringVisibility(WindowInsets.Type.systemBars())
+            }
+        if (requireRealBars || (deviceBars.top > 0 && deviceBars.bottom > 0)) {
+            var steady: Insets? = null
+            var since = 0L
+            runCatching {
+                rule.waitUntil(10_000) {
+                    val now = platformBars()?.takeIf { it.top > 0 && it.bottom > 0 }
+                    if (now != steady) {
+                        steady = now
+                        since = SystemClock.uptimeMillis()
+                    }
+                    steady != null && SystemClock.uptimeMillis() - since >= 1_500
                 }
-                steady != null && SystemClock.uptimeMillis() - since >= 1_500
             }
         }
         val real = platformBars()
         val syntheticBars = real == null || (real.top == 0 && real.bottom == 0)
-        if (InstrumentationRegistry.getArguments().getString("requireRealSystemBars") == "true") {
+        if (requireRealBars) {
             assertTrue("real system bars required for design evidence", real != null && real.top > 0 && real.bottom > 0)
         }
         var secure = false
