@@ -59,6 +59,8 @@ import org.robolectric.annotation.GraphicsMode
 import java.io.File
 
 /**
+ * The native usage/Re-pair regression must stay runnable without [Ignore] (#1760).
+ *
  * #1002: notices draw as pills in the thread's Top overlay, and the status row keeps only live turn status.
  */
 @RunWith(AndroidJUnit4::class)
