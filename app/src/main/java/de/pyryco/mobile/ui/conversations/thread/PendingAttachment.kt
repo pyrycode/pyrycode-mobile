@@ -4,10 +4,10 @@ package de.pyryco.mobile.ui.conversations.thread
  * One file chosen for a chat's unsent message (#932), held in [ComposerDraftStore] beside the draft
  * text until a send delivers it.
  *
- * **Metadata only, never bytes.** [uri] is the content URI the picker handed back, kept as a string so
- * this type stays free of `android.net.Uri`; the bytes are read through [AttachmentReader] at send time,
- * one file at a time, so a full draft of large files is never held at once. The URI is never turned
- * into a filesystem path.
+ * **Metadata and an optional owned-paste capability, never in-memory bytes.** [uri] is the external
+ * content URI, kept as a string so this type stays free of `android.net.Uri`. Picker entries are read
+ * through [AttachmentReader] at send time; pasted images use [ownedPaste] for both preview and upload.
+ * One file's bytes are read at a time, and no external URI is ever turned into a filesystem path.
  *
  * [displayName], [mimeType] and [size] come from another app's content provider and are untrusted: the
  * two strings are clamped where they enter (see [clampProviderText]) and bounded again on the wire by
@@ -26,6 +26,7 @@ data class PendingAttachment(
     val mimeType: String,
     val size: Long?,
     val attachmentId: String? = null,
+    val ownedPaste: OwnedPasteCopy? = null,
 ) {
     override fun toString(): String = "PendingAttachment(key=$key, size=$size, uploaded=${attachmentId != null})"
 }
