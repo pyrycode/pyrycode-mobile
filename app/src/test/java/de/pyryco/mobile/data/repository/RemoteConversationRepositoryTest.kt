@@ -4178,6 +4178,53 @@ class RemoteConversationRepositoryTest {
         }
 
     @Test
+    fun parkedOwnEcho_confirmationDuringNextOpenTurn_preservesItsSlotAndReply() =
+        runTest {
+            for (drainFirst in listOf(false, true)) {
+                val pump = FakeSessionPump()
+                val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+                val thread = collectMessages(repo, "c-1")
+                val other = collectMessages(repo, "c-other")
+                runCurrent()
+                pump.push(turnStateEnvelope("c-1", "thinking"))
+                pump.push(assistantDeltaEnvelope("c-1", "turn-1", 0, "Waiting"))
+                runCurrent()
+                val own = sendAndAck(repo, pump, "c-1", "marker request")
+                val original = thread.last().filterIsInstance<ThreadItem.MessageItem>().single { it.message.id == own }
+                pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "marker request", TS, messageId = own))))
+                pump.push(toolUseEnvelope("c-1", "turn-1", "tool-1", "Bash", "held command"))
+                pump.push(toolResultEnvelope("c-1", "turn-1", "tool-1", isError = false, resultSummary = "done"))
+                pump.push(assistantDeltaEnvelope("c-1", "turn-1", 1, "Done"))
+                pump.push(turnEndEnvelope("c-1", "turn-1", "end_turn"))
+                pump.push(turnStateEnvelope("c-1", "responding"))
+                pump.push(assistantDeltaEnvelope("c-1", "turn-2", 0, "Hello, "))
+                pump.push(assistantDeltaEnvelope("c-1", "turn-2", 1, "streamed "))
+                runCurrent()
+                assertEquals(listOf("turn-1", "tool-1", "turn-1#1", "turn-2", own), messageIds(thread.last()))
+
+                val drain = queueStateEnvelope("c-1", emptyList())
+                val pushed = messageEnvelope("c-1", own, "user", "daemon copy", TS)
+                pump.push(if (drainFirst) drain else pushed)
+                runCurrent()
+                val expected = listOf("turn-1", "tool-1", "turn-1#1", own, "turn-2")
+                assertEquals(expected, messageIds(thread.last()))
+                pump.push(assistantDeltaEnvelope("c-1", "turn-2", 2, "world"))
+                runCurrent()
+                val delivered = thread.last()
+                assertEquals(expected, messageIds(delivered))
+                assertEquals(original, delivered[3])
+                val reply = (delivered.last() as ThreadItem.MessageItem).message
+                assertEquals("Hello, streamed world", reply.content)
+                assertEquals(listOf(0, 1, 2), reply.segment?.deltas?.map { it.seq })
+                pump.push(if (drainFirst) pushed else drain)
+                pump.push(pushed)
+                runCurrent()
+                assertEquals(delivered, thread.last())
+                assertEquals(emptyList<ThreadItem>(), other.last())
+            }
+        }
+
+    @Test
     fun ordinaryDrain_delayedConfirmationPreservesReplyWhileSendNowUsesPushPosition() =
         runTest {
             for (sentNow in listOf(false, true)) {

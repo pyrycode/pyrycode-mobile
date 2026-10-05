@@ -221,6 +221,184 @@ class ThreadProjectionTest {
         }
 
     @Test
+    fun parkedOwnEcho_drainFirstMidNextReply_preservesOneSegmentAndOriginalEcho() =
+        runTest { assertParkedEchoConfirmedMidReply(drainFirst = true) }
+
+    @Test
+    fun parkedOwnEcho_pushFirstMidNextReply_preservesOneSegmentAndOriginalEcho() =
+        runTest { assertParkedEchoConfirmedMidReply(drainFirst = false) }
+
+    private fun TestScope.assertParkedEchoConfirmedMidReply(drainFirst: Boolean) {
+        val projection = ThreadProjection()
+        val queue = QueueProjection()
+        val thread = collect(projection, "c1")
+        val sent = startQueuedTurn(projection, queue)
+        projection.applyAssistantDelta(delta("turn-1", 1, "Done"))
+        projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-1", "end_turn"))
+        runCurrent()
+        val firstTurn = thread.last().filterNot { it is ThreadItem.MessageItem && it.message.id == "mine" }
+        assertEquals(listOf("turn-1", "tool-1", "turn-1#1", "mine"), ids(thread.last()))
+
+        projection.applyAssistantDelta(delta("turn-2", 0, "Hello, "))
+        projection.applyAssistantDelta(delta("turn-2", 1, "streamed "))
+        runCurrent()
+        // Until delivery the queued treatment remains below the running reply.
+        assertEquals(listOf("turn-1", "tool-1", "turn-1#1", "turn-2", "mine"), ids(thread.last()))
+        val pushed = userMessage("mine", "daemon copy", PUSHED_AT).copy(attachments = listOf(MessageAttachment(ATTACHMENT_ID)))
+        if (drainFirst) projection.onQueueState(queue) else projection.appendLiveMessage("c1", pushed)
+        runCurrent()
+        val expectedIds = listOf("turn-1", "tool-1", "turn-1#1", "mine", "turn-2")
+        assertEquals(expectedIds, ids(thread.last()))
+        assertEquals(ThreadItem.MessageItem(sent), thread.last()[3])
+
+        projection.applyAssistantDelta(delta("turn-2", 2, "world"))
+        runCurrent()
+        val delivered = thread.last()
+        assertEquals(expectedIds, ids(delivered))
+        assertEquals(firstTurn, delivered.take(3))
+        assertEquals(ThreadItem.MessageItem(sent), delivered[3])
+        val reply = (delivered.last() as ThreadItem.MessageItem).message
+        assertEquals("Hello, streamed world", reply.content)
+        assertEquals(listOf(0, 1, 2), reply.segment?.deltas?.map { it.seq })
+        assertTrue(reply.isStreaming)
+
+        if (drainFirst) projection.appendLiveMessage("c1", pushed) else projection.onQueueState(queue)
+        projection.appendLiveMessage("c1", pushed)
+        projection.onQueueState(queue, 43L to "mine")
+        projection.onQueueState(queue)
+        runCurrent()
+        assertEquals(delivered, thread.last())
+        assertNeverAboveTheTool(thread)
+    }
+
+    @Test
+    fun parkedOwnEcho_historyEndBeforeLiveEndDoesNotConsumeTheReservationBoundary() =
+        runTest {
+            val projection = ThreadProjection()
+            val queue = QueueProjection()
+            val thread = collect(projection, "c1")
+            startQueuedTurn(projection, queue)
+            projection.mergeHistoryPage(
+                "c1",
+                HistoryPage(
+                    entries =
+                        listOf(
+                            HistoryEntry(
+                                1L,
+                                "turn_end",
+                                MobileJson.parseToJsonElement("""{"conversation_id":"c1","turn_id":"turn-1","stop_reason":"end_turn"}"""),
+                                PUSHED_AT,
+                            ),
+                        ),
+                    cursor = "",
+                    atStart = true,
+                ),
+                interactive = true,
+            )
+            projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-1", "end_turn"))
+            projection.applyAssistantDelta(delta("turn-2", 0, "Reply"))
+            projection.appendLiveMessage("c1", userMessage("mine", "hello", PUSHED_AT))
+            runCurrent()
+            assertEquals(listOf("turn-1", "tool-1", "mine", "turn-2"), ids(thread.last()))
+        }
+
+    @Test
+    fun parkedOwnEcho_repeatedEndDoesNotReserveAnEchoBehindANewerTurn() =
+        runTest {
+            val projection = ThreadProjection()
+            val queue = QueueProjection()
+            val thread = collect(projection, "c1")
+            val oldEnd = LiveSessionEvent.TurnEnd("c1", "turn-0", "end_turn")
+            projection.finalizeAssistantTurn(oldEnd)
+            startQueuedTurn(projection, queue)
+            projection.finalizeAssistantTurn(oldEnd)
+            projection.applyToolUse(toolUse("turn-1", "tool-2"))
+            projection.appendLiveMessage("c1", userMessage("mine", "hello", PUSHED_AT))
+            runCurrent()
+            assertEquals(listOf("turn-1", "tool-1", "tool-2", "mine"), ids(thread.last()))
+        }
+
+    @Test
+    fun parkedOwnEcho_anotherConversationsEndDoesNotReserveItsSlot() =
+        runTest {
+            val projection = ThreadProjection()
+            val queue = QueueProjection()
+            val thread = collect(projection, "c1")
+            startQueuedTurn(projection, queue)
+            projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c-other", "turn-1", "end_turn"))
+            projection.applyToolUse(toolUse("turn-1", "tool-2"))
+            projection.appendLiveMessage("c1", userMessage("mine", "hello", PUSHED_AT))
+            runCurrent()
+            assertEquals(listOf("turn-1", "tool-1", "tool-2", "mine"), ids(thread.last()))
+        }
+
+    @Test
+    fun parkedOwnEcho_fifoReservesEachEchoAfterItsOwnWaitingTurn() =
+        runTest {
+            val projection = ThreadProjection()
+            val queue = QueueProjection()
+            val thread = collect(projection, "c1")
+            projection.applyAssistantDelta(delta("turn-1", 0, "Waiting"))
+            val first = sendOwn(projection, "mine-1", "first")
+            val second = sendOwn(projection, "mine-2", "second")
+            projection.onQueueState(queue, 42L to "mine-1", 43L to "mine-2")
+            projection.applyToolUse(toolUse("turn-1", "tool-1"))
+            projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-1", "end_turn"))
+            projection.applyAssistantDelta(delta("turn-2", 0, "Reply"))
+            projection.appendLiveMessage("c1", userMessage("mine-1", "first", PUSHED_AT))
+            projection.onQueueState(queue, 43L to "mine-2")
+            projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-2", "end_turn"))
+            projection.applyAssistantDelta(delta("turn-3", 0, "Second reply"))
+            projection.onQueueState(queue)
+            runCurrent()
+            assertEquals(listOf("turn-1", "tool-1", "mine-1", "turn-2", "mine-2", "turn-3"), ids(thread.last()))
+            assertEquals(ThreadItem.MessageItem(first), thread.last()[2])
+            assertEquals(ThreadItem.MessageItem(second), thread.last()[4])
+        }
+
+    @Test
+    fun parkedOwnEcho_foreignQueueHeadKeepsOwnEchoWaitingForTheFollowingTurn() =
+        runTest {
+            val projection = ThreadProjection()
+            val queue = QueueProjection()
+            val thread = collect(projection, "c1")
+            startQueuedTurn(projection, queue)
+            projection.onQueueState(queue, 41L to "peer", 42L to "mine")
+            projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-1", "end_turn"))
+            projection.appendLiveMessage("c1", userMessage("peer", "from desktop", PUSHED_AT))
+            projection.applyAssistantDelta(delta("turn-2", 0, "Peer reply"))
+            projection.onQueueState(queue, 42L to "mine")
+            projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-2", "end_turn"))
+            projection.applyAssistantDelta(delta("turn-3", 0, "Own reply"))
+            projection.appendLiveMessage("c1", userMessage("mine", "hello", PUSHED_AT))
+            runCurrent()
+            assertEquals(listOf("turn-1", "tool-1", "peer", "turn-2", "mine", "turn-3"), ids(thread.last()))
+        }
+
+    @Test
+    fun parkedOwnEcho_toolOnlyOrFailedTurn_reservesAfterAllEndingRows() =
+        runTest {
+            for (failed in listOf(false, true)) {
+                val projection = ThreadProjection()
+                val queue = QueueProjection()
+                val thread = collect(projection, "c1")
+                val sent = sendOwn(projection, "mine", "hello")
+                projection.onQueueState(queue, 42L to "mine")
+                projection.applyToolUse(toolUse("turn-1", "tool-1"))
+                projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-1", "end_turn", isError = failed))
+                projection.applyAssistantDelta(delta("turn-2", 0, "Reply"))
+                projection.appendLiveMessage("c1", userMessage("mine", "daemon copy", PUSHED_AT))
+                runCurrent()
+                val rows = thread.last()
+                assertEquals("tool-1", (rows.first() as ThreadItem.MessageItem).message.id)
+                if (failed) assertTrue(rows[1] is ThreadItem.StoppedTurn)
+                assertEquals(ThreadItem.MessageItem(sent), rows[rows.lastIndex - 1])
+                assertEquals("turn-2", (rows.last() as ThreadItem.MessageItem).message.id)
+                assertEquals(if (failed) 4 else 3, rows.size)
+            }
+        }
+
+    @Test
     fun ordinaryDrain_delayedUserPushAfterReplyStarts_doesNotRelocateOrSplitReply() =
         runTest {
             val projection = ThreadProjection()
@@ -408,6 +586,7 @@ class ThreadProjectionTest {
             runCurrent()
             assertEquals(listOf("peer-1", "tool-1"), ids(thread.last()))
 
+            projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-1", "end_turn"))
             projection.onQueueState(queue)
             projection.appendLiveMessage("c1", userMessage("peer-1", "from desktop", PUSHED_AT))
             runCurrent()
@@ -432,6 +611,7 @@ class ThreadProjectionTest {
             runCurrent()
             assertEquals(before, thread.last())
 
+            projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-1", "end_turn"))
             projection.appendLiveMessage("c1", userMessage("tool-1", "collides", PUSHED_AT))
             projection.onQueueState(queue)
             runCurrent()
@@ -447,6 +627,7 @@ class ThreadProjectionTest {
             val thread = collect(projection, "c1")
             startQueuedTurn(projection, queue)
 
+            projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-1", "end_turn"))
             projection.recordDrop("c1", 42L, "mine")
             projection.onQueueState(queue)
             runCurrent()

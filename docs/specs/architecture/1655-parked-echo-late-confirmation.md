@@ -57,6 +57,11 @@ No new error or result type. If no live turn end was observed, retain current co
 
 None. The missing turn identity is resolved by reserving row positions at the live turn-end boundary; Send now retains its explicit push-position override.
 
+## Revisions
+
+- 2026-10-05: FIFO boundary guards showed that reserving every parked echo at one end places a second queued message before the first message's reply, even though the daemon delivers one entry per turn. Reserve only the pending FIFO head at a first live end. `OwnEchoQueue.backlog` retains snapshot message-id order, including foreign ids, minus confirmed deliveries; user pushes consume the corresponding entry. An own echo behind a peer or another own echo is reserved at its later waiting turn's end. The original two interleaving regressions remain unchanged. The two new FIFO guards failed before this refinement and constrain the revised design. No signature or wire change; estimated written work remains below 500 lines.
+- 2026-10-05: the history-before-live-end regression failed when first-end detection used `endedTurns`, because a history page could consume that marker without reserving the echo. `ProjectionState.liveEndedTurns` now records live-end membership atomically with rows and reservations. History still settles text through `endedTurns` but cannot consume a live reservation boundary. The live set is a subset of the existing connection-owned ended-turn ledger, is preserved by row-only folds, and is cleared by `remove` with the conversation. Duplicate live ends still cannot reserve an echo behind a newer turn. The new guard was red before this change.
+
 ## Security review
 
 **Verdict:** PASS
@@ -68,9 +73,9 @@ None. The missing turn identity is resolved by reserving row positions at the li
 - [Files and storage] No findings. Metadata stays in memory for one connection and is removed with its conversation. No filename, cache key, storage format or backup rule changes.
 - [Android attack surface] No findings. No component, intent, deep link, push handler, WebView or Android dependency changes.
 - [Cryptography] No findings. Noise, authenticated transport, key storage and wire decoding are unchanged.
-- [Network and I/O] No findings. The new set is limited to already parked minted echoes and is consumed on push. Hostile snapshots cannot grow it with arbitrary foreign ids. No network call, timeout or frame cap changes.
+- [Network and I/O] No findings. The new reservation set is limited to already parked minted echoes and is consumed on push. Hostile snapshots cannot grow it with arbitrary foreign ids. The revised `backlog` list contains only ids from the already-decoded current snapshot, is replaced on each snapshot and shrinks on user delivery; it cannot accumulate foreign ids across snapshots. A foreign head can delay a reservation but cannot authorize moving a foreign row. No network call, timeout or frame cap changes.
 - [Errors, logs and telemetry] No findings. Keep the existing content-free `MessageTrail` queued/delivered/drop events; reservation is not delivery. Never log message content, attachments, decrypted payloads or credentials.
-- [Concurrency] No findings. Rows and reservation metadata fold atomically. First-end detection uses connection-owned ended-turn membership without suspension; repeated ends do not reserve a newer echo. Deferred Send now and drop guards remain covered by tests.
+- [Concurrency] No findings. Rows, reservation metadata and the revised `liveEndedTurns` membership fold atomically. History ends cannot consume a live boundary, and repeated live ends do not reserve a newer echo. The live set is a subset of already retained ended ids and is cleared by `remove`. Deferred Send now and drop guards remain covered by tests.
 - [Threat model] A malicious relay can delay/drop ciphertext but gains no plaintext path. A hostile daemon can alter the order of this device's own rows through frames, but cannot move foreign/non-user rows through reservation. Rooted-device token theft and screenshots/accessibility/keyboard leakage remain under their existing storage and UI controls, which this in-memory ordering fix does not change.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
