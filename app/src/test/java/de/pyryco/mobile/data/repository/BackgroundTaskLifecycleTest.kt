@@ -127,6 +127,69 @@ class BackgroundTaskLifecycleTest {
     }
 
     @Test
+    fun reconnectLeadingLifecycle_waitsForFollowingOverlapAfterOlderBackfill() {
+        val launch = emptyList<ThreadItem>().withBackgroundTaskStarted(startedDto(), first).single()
+        val finish = emptyList<ThreadItem>().withBackgroundTaskUpdated(updatedDto(), last).single()
+        val live = listOf<ThreadItem>(message("older"), message("m1"))
+        val cached = listOf(launch, message("m1"), finish)
+        val merged = live.mergeCachedRows(cached)
+        assertEquals(listOf("older", "t1:false", "m1", "t1:true"), merged.keys())
+        assertEquals(live, merged.filterIsInstance<ThreadItem.MessageItem>())
+        assertEquals(merged, merged.mergeCachedRows(cached))
+        val prepended = merged.mergeHistoryRows(listOf(message("oldest"), message("older")))
+        assertEquals(listOf("oldest") + merged.keys(), prepended.keys())
+        assertEquals(prepended, prepended.mergeCachedRows(cached))
+        assertEquals(merged.markers(), prepended.markers())
+    }
+
+    @Test
+    fun reconnectRetainedLaunch_preventsEarlierOrdinaryAnchorFromMovingFinishBackward() {
+        val launch = emptyList<ThreadItem>().withBackgroundTaskStarted(startedDto(), first).single()
+        val finish = emptyList<ThreadItem>().withBackgroundTaskUpdated(updatedDto(), last).single()
+        val live = listOf(message("m1"), launch)
+        val cached = listOf(launch, message("m1"), finish)
+        val merged = live.mergeCachedRows(cached)
+        assertEquals(listOf("m1", "t1:false", "t1:true"), merged.keys())
+        assertEquals(listOf(message("m1")), merged.filterIsInstance<ThreadItem.MessageItem>())
+        assertEquals(launch, merged.markers().first())
+        assertEquals(merged, merged.mergeCachedRows(cached))
+        assertEquals(merged, merged.withBackgroundTaskStarted(startedDto(), last).withBackgroundTaskUpdated(updatedDto(), first))
+        val prepended = merged.mergeHistoryRows(listOf(message("older")))
+        assertEquals(listOf("older") + merged.keys(), prepended.keys())
+        assertEquals(prepended, prepended.mergeCachedRows(cached))
+    }
+
+    @Test
+    fun leadingCachedLifecycle_anchorsBeforeFirstOverlappingAssistantSegment() {
+        val delta = LiveSessionEvent.AssistantDelta("c1", "turn", 0, "hello")
+        val text = emptyList<ThreadItem>().withAssistantDelta(delta, first).withAssistantDelta(delta.copy(seq = 1, text = " world"), last)
+        val live = listOf(message("older")) + text
+        val cached =
+            emptyList<ThreadItem>()
+                .withBackgroundTaskStarted(startedDto(), first)
+                .withAssistantDelta(delta.copy(seq = 1, text = " world"), last)
+                .withBackgroundTaskUpdated(updatedDto(), last)
+        val merged = live.mergeCachedRows(cached)
+        assertEquals(listOf("older", "t1:false", "turn", "t1:true"), merged.keys())
+        assertEquals(live, merged.filterIsInstance<ThreadItem.MessageItem>())
+        assertEquals(merged, merged.mergeCachedRows(cached))
+    }
+
+    @Test
+    fun reconnectTerminalBeforeStart_keepsRetainedLifecycleOrder() {
+        val launch = emptyList<ThreadItem>().withBackgroundTaskStarted(startedDto(), first).single()
+        val finish = emptyList<ThreadItem>().withBackgroundTaskUpdated(updatedDto(), last).single()
+        val live = listOf<ThreadItem>(message("older"), message("m1"))
+        val cached = listOf(finish, message("m1"), launch)
+        val merged = live.mergeCachedRows(cached)
+        assertEquals(listOf("older", "t1:true", "m1", "t1:false"), merged.keys())
+        assertEquals(live, merged.filterIsInstance<ThreadItem.MessageItem>())
+        assertEquals(merged, merged.mergeCachedRows(cached))
+        assertEquals(last, merged.markers().first().occurredAt)
+        assertEquals("toolu_t1", merged.markers().first().toolCallId)
+    }
+
+    @Test
     fun freshMessageBetweenRetainedAnchors_cannotMoveFinishBeforeLaunch() {
         val launch = emptyList<ThreadItem>().withBackgroundTaskStarted(startedDto(), first).single()
         val finish = emptyList<ThreadItem>().withBackgroundTaskUpdated(updatedDto(), last).single()

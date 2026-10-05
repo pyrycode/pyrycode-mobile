@@ -787,7 +787,7 @@ internal fun List<ThreadItem>.mergeHistoryRows(rows: List<ThreadItem>): List<Thr
         .withBackgroundTaskLaunches()
 }
 
-/** Insert fresh evidence beside its retained page neighbours; held markers never move on replay. */
+/** Insert fresh history or reconnect evidence beside its neighbours; held markers never move on replay. */
 private fun List<ThreadItem>.withHistoryLifecyclePositions(
     page: List<ThreadItem>,
     fresh: List<ThreadItem.BackgroundTaskLifecycle>,
@@ -855,11 +855,16 @@ internal fun List<ThreadItem>.mergeCachedRows(cached: List<ThreadItem>): List<Th
     val anchors = ThreadRowAnchors(this)
     // Slot i is in front of this thread's row i; slot size is after its last row.
     val slots = mutableMapOf<Int, MutableList<ThreadItem>>()
+    val lifecycle = mutableListOf<ThreadItem.BackgroundTaskLifecycle>()
     var slot = 0
     for (row in cached) {
         val position = anchors.position(row)
         if (anchors.holdsIdentity(row)) {
             if (position != null) slot = position.last + 1
+            continue
+        }
+        if (row is ThreadItem.BackgroundTaskLifecycle) {
+            lifecycle += row
             continue
         }
         val older = row.olderThan(heads)
@@ -870,14 +875,20 @@ internal fun List<ThreadItem>.mergeCachedRows(cached: List<ThreadItem>): List<Th
         // Even discarded text anchors following evidence when the lanes split segments differently.
         if (position != null) slot = position.last + 1
     }
-    if (slots.isEmpty()) return kept.withBackgroundTaskLaunches()
-    return buildList {
-        kept.forEachIndexed { index, row ->
-            slots[index]?.let(::addAll)
-            add(row)
+    if (slots.isEmpty() && lifecycle.isEmpty()) return kept.withBackgroundTaskLaunches()
+    val ordinary =
+        buildList {
+            kept.forEachIndexed { index, row ->
+                slots[index]?.let(::addAll)
+                add(row)
+            }
+            slots[kept.size]?.let(::addAll)
         }
-        slots[kept.size]?.let(::addAll)
-    }.withoutSegmentsOfWholeTurns().withJoinedSegments().withBackgroundTaskLaunches()
+    return ordinary
+        .withHistoryLifecyclePositions(cached, lifecycle)
+        .withoutSegmentsOfWholeTurns()
+        .withJoinedSegments()
+        .withBackgroundTaskLaunches()
 }
 
 /** Row anchors shared by history and reconnect, including assistant overlap with different segment ids. */
