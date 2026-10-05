@@ -5,7 +5,7 @@
 - `ModelRefusalRow.kt`: `ModelRefusalRowContent`, `SwitchBackAction`, `appendModel`; preserve the inert model-text boundary and row-local expansion.
 - `ThreadViewModel.kt`: `onSwitchBack`, `sendSessionSettings`, `switchBackOffer`; shared pending-model ownership and identity-checked acknowledgement/failure.
 - `ThreadViewModelRefusalOfferTest.kt`: `RecordingRepo` and retry coverage.
-- `ThreadRunConfigModelSelectionTest.kt`: ordinary edit feedback and cancellation coverage.
+- `ThreadRunConfigModelSelectionTest.kt`: selection projection; `ThreadViewModelTest.kt`: ordinary write feedback and scope-cancellation coverage.
 - `ModelRefusalSwitchBackTest.kt`: independent button and details actions.
 - `ThreadDesignCaptureTest.kt`: `refusalStateFramesAt412By892`, `threadNoticeFramesAt412By892`; immediate failure evidence currently waits out a duplicate snackbar.
 - `DesignCapture.kt`, `ViewportRule.kt`: real-system-bar screenshots and density/font-scale setup.
@@ -71,3 +71,11 @@ Pending for the documentation stage: update `app/src/androidTest/assets/design-1
 **Date:** 2026-10-05
 
 Sizing: approximately 350 written lines across plan, two production files and existing test files; zero new exported declarations, four existing shared-path callers, three acceptance criteria and two unchanged error branches. Within all ticket boundaries.
+
+## Revisions
+
+- 2026-10-05: The action uses an explicit 48 dp clickable Box whose layout reports the outline's 32 dp and centres the input node across surrounding padding. Its non-clickable Surface carries the visible outline; zIndex gives the upper extension priority over details. Fixed visible height accounts for the outline independently of font glyph bounds. Shared geometry tests pin 412 dp and use Robolectric native fonts, following the verification topic, after legacy font metrics measured an 83 px title-to-outline offset. No change to the offer or error contract.
+
+- 2026-10-05: Simplified the touch implementation before commit: use Foundation clickable's existing 48 dp input expansion on a 32 dp non-clickable Material Surface, with the details block's bottom padding moved outside its click boundary. This removes custom layout/priority handling while reserving the same visible spacing. Pointer tests prove both extensions; `touchBoundsInRoot` proves target size independently of visible bounds. Shared row tests use native font measurement at density 1; the full device captures establish the 412×892 screen contract.
+
+- 2026-10-05: Native-font measurement exposed Compose's default first/last-line trimming: the offered title/details occupied 18/14 dp instead of Figma's 20/16 dp, putting the outline at y=52. Follow existing `PairingHeader`/`BackgroundTaskPanel` practice with centred, untrimmed line boxes for the offered title/details and the failed line. Offer-free rows retain their current text layout. The offer's outline now has a stable y=56 from the row top without adding arbitrary gap compensation.

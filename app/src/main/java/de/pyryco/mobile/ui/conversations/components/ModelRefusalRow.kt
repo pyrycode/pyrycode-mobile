@@ -4,8 +4,10 @@ import android.content.res.Configuration
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -16,15 +18,19 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -41,7 +47,8 @@ private val RefusalCollapsedGap = 4.dp
 private val RefusalExpandedGap = 8.dp
 private val SwitchBackBorderWidth = 1.dp
 private val SwitchBackHorizontalPadding = 16.dp
-private val SwitchBackVerticalPadding = 7.dp
+private val SwitchBackVisibleHeight = 32.dp
+private val SwitchBackLineBox = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
 private const val SWITCH_BACK_PENDING_ALPHA = 0.38f
 
 /**
@@ -137,13 +144,23 @@ private fun ModelRefusalRowContent(
             modifier =
                 Modifier
                     .fillMaxWidth()
+                    .padding(bottom = RefusalVerticalPadding)
                     .then(if (expandable) Modifier.clickable(onClickLabel = clickLabel, onClick = onToggle) else Modifier)
-                    .padding(vertical = RefusalVerticalPadding),
+                    .padding(top = RefusalVerticalPadding),
             verticalArrangement = Arrangement.spacedBy(if (expanded) RefusalExpandedGap else RefusalCollapsedGap),
         ) {
             Text(
                 text = refusalTitle(item, knownModelLabel),
-                style = MaterialTheme.typography.bodyMedium,
+                style =
+                    MaterialTheme.typography.bodyMedium.let {
+                        if (switchBack !=
+                            null
+                        ) {
+                            it.copy(lineHeightStyle = SwitchBackLineBox)
+                        } else {
+                            it
+                        }
+                    },
             )
             if (expandable && expanded) {
                 Text(
@@ -155,7 +172,16 @@ private fun ModelRefusalRowContent(
             if (expandable) {
                 Text(
                     text = stringResource(if (expanded) R.string.thread_refusal_hide_details else R.string.thread_refusal_show_details),
-                    style = MaterialTheme.typography.labelMedium,
+                    style =
+                        MaterialTheme.typography.labelMedium.let {
+                            if (switchBack !=
+                                null
+                            ) {
+                                it.copy(lineHeightStyle = SwitchBackLineBox)
+                            } else {
+                                it
+                            }
+                        },
                     color = MaterialTheme.colorScheme.primary,
                 )
             }
@@ -185,26 +211,31 @@ private fun SwitchBackAction(
 ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(RefusalCollapsedGap)) {
         Surface(
-            onClick = onSwitchBack,
-            enabled = !offer.pending,
             shape = MaterialTheme.shapes.modalControl,
             color = MaterialTheme.colorScheme.background,
             contentColor = MaterialTheme.colorScheme.primary,
             border = BorderStroke(SwitchBackBorderWidth, MaterialTheme.colorScheme.primary),
-            // A clickable Surface reserves Material's 48 dp touch target around the 30 dp button.
-            modifier = Modifier.alpha(if (offer.pending) SWITCH_BACK_PENDING_ALPHA else 1f),
+            // Foundation expands input to 48dp without reserving layout space. The details block's
+            // bottom padding is outside its click area, leaving this extension exclusive to switch-back.
+            modifier =
+                Modifier
+                    .height(SwitchBackVisibleHeight)
+                    .testTag("refusal-switch-back-outline")
+                    .clickable(enabled = !offer.pending, role = Role.Button, onClick = onSwitchBack)
+                    .alpha(if (offer.pending) SWITCH_BACK_PENDING_ALPHA else 1f),
         ) {
-            Text(
-                text = switchBackLabel(offer.originalModel, knownModelLabel),
-                style = MaterialTheme.typography.bodySmall,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(horizontal = SwitchBackHorizontalPadding, vertical = SwitchBackVerticalPadding),
-            )
+            Box(modifier = Modifier.padding(horizontal = SwitchBackHorizontalPadding), contentAlignment = Alignment.Center) {
+                Text(
+                    text = switchBackLabel(offer.originalModel, knownModelLabel),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
         }
         if (offer.failed) {
             Text(
                 text = stringResource(R.string.thread_refusal_switch_back_failed),
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.copy(lineHeightStyle = SwitchBackLineBox),
                 color = MaterialTheme.colorScheme.error,
             )
         }
