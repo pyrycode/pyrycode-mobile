@@ -98,8 +98,8 @@ The `floatingActionButton` slot and the file-private `ChannelListFab` it hosted 
 
 After the `Scaffold { ... }` block closes, the screen composes `AddWorkspaceModalBinding(hostState, onEvent)`
 as a sibling of the Scaffold, not inside its content lambda — matching #78's `SaveAsChannelDialog` placement
-and, since [`MobileModal`](mobile-modal.md) is itself a `Dialog`, the same placement `HostEditorModal` and
-`ChatEditorModal` use below it. The private binding returns early when `hostState.addWorkspace` is `null`,
+and the placement used by `HostEditorModal` and the retained workspace and creation bindings.
+[`MobileModal`](mobile-modal.md) is itself a `Dialog`. The private binding returns early when `hostState.addWorkspace` is `null`,
 so the modal draws exactly while a target is open; `hostAvailable = hostState.isHostConnected(state.serverId)`
 is read fresh on every draw from the same host-snapshot flow the rows render from, `loading = state.busy`,
 and `error` resolves `createFailed` / `startFailed` to one of two static strings. `onSelect` dispatches
@@ -171,11 +171,7 @@ ChannelListEvent.TreeHostEditTapped -> vm.openHostEditor(event.serverId)`,
 `serverId` because the target is the open editor's, held in the view model:
 `ChannelListEvent.HostUnpairRequested -> vm.requestHostUnpair()`,
 `ChannelListEvent.HostUnpairConfirmed -> vm.confirmHostUnpair()` and
-`ChannelListEvent.HostUnpairDeclined -> vm.declineHostUnpair()`. #827 carries the same discipline into a
-Chats row's own pencil, resolving from the row's own target rather than the selected host a fourth time:
-`is ChannelListEvent.TreeChatEditTapped -> vm.openChatEditor(event.target)`,
-`is ChannelListEvent.ChatEditNameSubmitted -> vm.submitChatName(event.name)` and
-`ChannelListEvent.ChatEditDismissed -> vm.dismissChatEditor()`. `ChannelListEvent.SettingsTapped` still
+`ChannelListEvent.HostUnpairDeclined -> vm.declineHostUnpair()`. `ChannelListEvent.SettingsTapped` still
 navigates to `Routes.SETTINGS`;
 `ChannelListEvent.ArchiveTapped` reads the current selection and navigates to that host's archive since
 \#715 (`destinations.selectedServerId()?.let { navController.navigate(Routes.archive(it)) }`; a null
@@ -222,23 +218,10 @@ the removal itself (`confirmHostUnpair`) — see [ChannelListViewModel](channel-
 editor state's shape, its concurrency guard against two rows' pencils racing on the same publish, and the
 removal's ordering and `saving` guard.
 
-**A Chats row's own pencil follows that chat's own host, live (#827).** `ChannelListScreen` composes a
-private `ChatEditorModal(hostState, onEvent)` as a third `Scaffold` sibling, after `HostEditorModal`,
-drawn only while `hostState.chatEditor != null`. It passes
-[`EditChatModal`](mobile-modal-callers.md#callers) `conversationId`, `initialName`, `saving` and `failed` straight
-off that state, and `hostAvailable = hostState.isHostConnected(editor.serverId)` — read fresh on every
-draw from the same host-snapshot flow the rows themselves render from, so OK stays disabled while the row's
-own host is not connected. Since #1336 that disconnect also closes this modal outright, rather than
-leaving it open with OK disabled: the view model's own snapshot watcher clears `chatEditor` for a host that
-drops, so `hostAvailable` now only covers the brief window between a disconnect snapshot landing and the
-watcher's own clear — see [ChannelListViewModel](channel-list-viewmodel.md#wiring). The error slot
-resolves the one generic string, `R.string.edit_chat_save_failed`, the same way the host editor's does.
-`onArchiveRequested = {}` stays unwired until #828. `ChannelListViewModel` owns the open
-(`openChatEditor`, reading the name from the target host's own snapshot, never from row text or another
-host's list), the write (`submitChatName`, resolving `ConversationRepository.rename` from the target's
-own `serverId` at the press, never the selected host) and the close (`dismissChatEditor`) — see
-[ChannelListViewModel](channel-list-viewmodel.md#wiring) for the state's shape and its
-`compareAndSet` terminal-transition discipline against a write finishing after a dismissal.
+The list has no conversation editor binding or dispatch arm since #1582. Its former
+chat and channel open/submit/archive/dismiss events and `MainActivity` routes are removed.
+Channels use the thread's Edit item; chats use Rename. The standalone modal components
+and their isolated captures remain available.
 
 ## Configuration
 

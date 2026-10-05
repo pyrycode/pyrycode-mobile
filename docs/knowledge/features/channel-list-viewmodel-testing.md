@@ -95,26 +95,8 @@ removal: a decline and a second unpair request arriving mid-write are both ignor
 `compareAndSet` still closes the modal rather than stranding it on a step the store never took — and,
 separately, that a failure landing after a `dismissHostEditor()` call does not resurrect the modal either.
 
-**Chat editor coverage (#827, same `fixture()`).** Both fixture hosts, `"Host"` and `"host"`, get a chat
-sharing the same id, `"same"`, under different names — deliberately colliding rather than globally unique,
-because a conversation id is host-local and a rename sent to the wrong host would still pass a suite that
-gave every fixture chat its own id. Opening `("Host","same")` pre-fills Host's own name, opening
-`("host","same")` pre-fills host's, a nameless chat pre-fills `""`, an unknown id opens nothing, and
-opening changes neither `selected` nor the navigation channel. Submitting `"  New  "` renames only on
-`"Host"`'s repo with `"New"` and closes the editor; `"host"`'s same-id chat is asserted unrenamed, and the
-projected row picks up `"New"` once the repo's own stream re-emits. Since #1336 the editor closes, rather
-than stay open, when the target host's status goes disconnected — the snapshot watcher's own coverage, not
-this suite's — reversing #1190's keep-open rule; submitting while `repositoryFor` returns null sets
-`failed` and sends nothing. A
-throwing `rename` leaves the editor open with `failed = true, saving = false`, the stored name unchanged,
-and asserts no captured log line carries the name, either id or the exception's message; a retry succeeds
-and closes. A gated write completing after `dismissChatEditor()` does not reopen the editor — the same
-`compareAndSet`-survives-a-dismissal proof the host editor's suite already established. Dismiss sends
-nothing.
-
 **Workspace editor and archive coverage (#905, same `fixture()`).** Both fixture hosts get a workspace
-row at the same `cwd`, colliding rather than globally unique, for the same reason the chat editor's
-fixture collides on id: a rename or archive sent to the wrong host would still pass a suite that gave
+row at the same `cwd`, colliding rather than globally unique, because targets are host-local: a rename or archive sent to the wrong host would still pass a suite that gave
 every fixture workspace its own path. `openSeedsTheShownNameAndRejectsAnUnknownHostOrCwd` covers a
 labelled and an unlabelled workspace each opening with the row's own displayed name, and an unknown host
 or `cwd` opening nothing. `submitRenamesOnlyTheEditorsHostAndCwdByTheLabelRuleAndCloses` covers a blank
@@ -127,37 +109,20 @@ the removal suite's shape: confirm archives only the editor's host and `cwd` and
 confirming with `archiveFailed` for a retry, and a late completion after dismissal cannot reopen the
 editor.
 
-**Archive coverage (#828, same `fixture()` and colliding `"same"` id).** `Repo` needed a recording
-`archive` that flips `archived = true` on its own rows and records the call, plus overridden `delete`
-and `unarchive` that only record — the fixture's `Repo.archive` had been a plain delegation to
-`FakeConversationRepository`, which throws on an id it was never seeded with, so a test calling
-`archive` on the fixture's synthetic rows would have gone green by silently exercising the failure path
-instead of the success one. Archiving `("Host","same")` archives only on Host's repo, sends no rename
-and no delete, closes the editor, and — once the stream re-emits — the chat is gone from Host's `chats`
-and present under Host's own `Archived` filter, while `host`'s same-id chat stays unarchived. The
-unavailable host sets `archiveFailed` and sends nothing. `RelayErrorException` and `IllegalStateException`
-both leave the editor open with `archiveFailed`, `!saving`, `!failed`, the row still active, and no
-captured log line carrying the message, an id or a name; a retry succeeds and closes the editor. A gated
-archive completing after a dismissal leaves the editor closed, and a second archive or a rename arriving
-mid-gate are both ignored — the same `saving`-guard-plus-`compareAndSet` proof #827's rename suite
-already established, reused rather than re-derived.
+**Channel editor coverage (#667 / #1582, same `fixture()`).** Tests construct
+`ChannelEditorController` directly over `vm.viewModelScope`, the colliding-host source's
+liveness and fresh repository lookup, and a repository-wait lambda. They eagerly collect
+its `state`; fixture `openChannelEditor` seeds the name and mute flag from the requested
+host's own channel. This helper is test-only: no production list wrapper or
+`hostState.channelEditor` remains. The thread owns production Edit channel hosting.
 
-**Channel editor coverage (#667, same `fixture()`).** Every test below still exercises this view model's own
-`openChannelEditor` / `submitChannelEdit` / `archiveChannel` / `dismissChannelEditor` methods and
-`hostState.channelEditor`, unchanged in name, signature and behaviour; since
-[#1561](https://github.com/pyrycode/pyrycode-mobile/issues/1561) those methods are one-line delegations to
-a [`ChannelEditorController`](channel-list-viewmodel.md#channeleditorcontroller-667--1561) instance rather
-than the machine itself, so this suite passing unchanged is the regression proof that the #1561 extraction
-moved the machine without altering it — the #1561 verifier compared the controller's body against what was
-removed from this class line by line and found only the renamed fields and injected lambdas. Both fixture
-hosts get a channel sharing the same
-id, `"same"`, under different names and prompts — the chat editor's colliding-id fixture, repeated here for
-the same reason: a conversation id is host-local, and a rename or prompt write sent to the wrong host
+Both fixture hosts get a channel sharing the same id, `"same"`, under different names
+and prompts. A conversation id is host-local, and a rename or prompt write sent to the wrong host
 would still pass a suite that gave every fixture channel its own id. `Repo` gains a scripted
 `requestSystemPrompt` (a stored map, a gate to hold a read open, a failure count and a `SessionPromptStatus`).
 `channelEditorOpensOnTheRowsOwnHostAndReadsItsOwnPromptWithoutSelectingOrWriting` covers opening
 `("Host","same")` and `("host","same")` each pre-filling that host's own name and reading that host's own
-prompt to `Read` with `Differs`, a chat target and an unknown host opening nothing, and asserts `selected`,
+prompt to `Read` with `Differs`, and asserts `selected`,
 the navigation channel and every write method stay untouched. `channelPromptIsReadOnceItsHostConnectsAndAFailedOrOversizeReadIsUnavailable`
 opens the editor on a connected host whose repository has not resolved yet — since #1336 a disconnected
 host refuses the open outright, so this case is no longer about connection — covers the field staying
@@ -174,9 +139,11 @@ a `Reading` or `Unavailable` prompt letting a name-only submit and Archive throu
 silently dropped rather than written. `channelArchiveArchivesOnlyItsOwnHostAndFailuresStayOpen` covers
 archiving `("Host","same")` closing the editor and leaving `"host"`'s same-id channel active, working with
 a blank name field and an unread prompt alike, and a throwing `archive` leaving `archiveFailed` set for a
-retry. `channelEditorSendsNothingWhenUnavailableInvalidInFlightOrDismissed` covers the reject list: no open
+retry. The fixture's recording `archive` updates its synthetic rows; delegating to an unseeded
+`FakeConversationRepository` would throw and could silently exercise only the failure path.
+`channelEditorSendsNothingWhenUnavailableInvalidInFlightOrDismissed` covers the reject list: no open
 editor, a blank or over-limit draft, a disconnected host, a second submit while one is already `saving`, and
-a read or a write landing after `dismissChannelEditor()` neither reopening the modal nor overwriting a
+a read or a write landing after `channelController.dismiss()` neither reopening the modal nor overwriting a
 fresher one.
 
 **Mute notifications checkbox coverage (#1021, same colliding-id fixture).** `Repo` gains `setMuted`,
@@ -193,21 +160,24 @@ prompt, and the totals show exactly one rename, one mute and one prompt reaching
 reaching the colliding id's other host. Both tests assert no captured log line carries the name, the prompt,
 either id or an exception message; the failure log is the static `channel_mute_write_failed` event.
 
-**Disconnected-host coverage (#1336, same colliding-id fixture).** `disconnectClosesThatHostsCreateAndEditModalsAndKeepsAnotherHostsOpen`
-opens Host's Edit chat and Create channel, host's Edit channel and a failed Chats create on host, then flips
-Host offline: Host's Edit chat and Create channel close, host's Edit channel and failed create are
-untouched, and a half-up host (`Connected`/`Handshaking`) counts as not connected too — a reconnect brings
-back no modal. `aDisconnectedHostRefusesEveryCreateAndEditOpen` flips Host offline first, then calls
-`createChat`, `openCreateChannel`, `openChatEditor` and `openChannelEditor` on it: every one publishes
-nothing, reads or creates nothing, and logs its own `*_rejected code=disconnected` line.
-`aSubmitRacingADisconnectSendsNothingAndClosesItsModal` and `aChatsCreateRacingADisconnectSendsNothing`
-set `Main` to a `StandardTestDispatcher` on the test scheduler so the snapshot watcher is still queued when
-the submit runs — `Dispatchers.setMain(StandardTestDispatcher(testScheduler))`, not the suite's shared
-`UnconfinedTestDispatcher`, which would let the watcher close the modal before the submit's own check ran
-and prove nothing about that check. Each of `submitCreateChannel`, `submitChatName`, `archiveChat`,
-`submitChannelEdit` and `archiveChannel` is opened connected, raced against an offline flip, and asserted
-to send no write and to close its own modal, with its `code=disconnected` log line as the proof that the
-submit's own re-check (not the watcher) refused it; a Chats-section `createChat` is raced the same way.
+**Disconnected-host coverage (#1336 / #1582).** List tests now cover only surviving
+creation paths: `disconnectClosesThatHostsCreateModalAndKeepsAnotherHostsFailedCreate`,
+`aDisconnectedHostRefusesEveryCreateOpen`, `aCreateSubmitRacingADisconnectSendsNothingAndClosesItsModal`
+and `aChatsCreateRacingADisconnectSendsNothing`. Use
+`Dispatchers.setMain(StandardTestDispatcher(testScheduler))` to queue the watcher so a
+press's own liveness check must refuse the write; unconfined dispatch could close the
+state first and let a broken press guard pass.
+
+The direct controller lifecycle tests are
+`channelDisconnectClosesOnlyItsOwnHostCancelsTheReadAndReopensNothing`,
+`channelSubmitAndArchiveRacingADisconnectSendNothingAndClose`, and
+`channelDismissedReadCannotReplaceAFresherHostAndLateArchiveCannotReopen`.
+They exercise `closeUnless` explicitly, preserve another host's editor, cancel an awaiting
+prompt read, reject stale submit/archive without calling the close hook first, and prevent
+late read/archive completions from reopening or replacing a newer target. This keeps the
+lifecycle contract covered after retiring list-only chat tests and trimming mixed
+create/edit cases. Thread Edit channel and chat Rename tests retain production coverage;
+standalone modal tests and isolated design captures remain.
 
 Unavailable-target coverage denies lookup even with cached rows and connected
 indicators. Failure tests inspect the action job's cancellation state as well as
