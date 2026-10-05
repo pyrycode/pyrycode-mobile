@@ -1,0 +1,80 @@
+# History page reconciliation (#1786)
+
+## Files read
+
+- `app/src/main/java/de/pyryco/mobile/data/repository/HistoryPageReducer.kt`: `mergeHistoryRows`, `mergeCachedRows`, `ThreadRowAnchors`, segment folds and hint fills define reconciliation.
+- `app/src/main/java/de/pyryco/mobile/data/repository/ThreadProjection.kt`: `mergeHistoryPage`, `ProjectionState`, `endedTurns` and `remove` own the atomic history/live fold.
+- `app/src/main/java/de/pyryco/mobile/data/repository/CachingConversationRepository.kt`: `observeMessages` retains a fixed connection merge base and rebases only at disconnect.
+- `app/src/main/java/de/pyryco/mobile/data/model/Message.kt`: `AssistantSegment` records delta sequence and text length.
+- `app/src/test/java/de/pyryco/mobile/data/repository/AssistantSegmentTest.kt`: split-page, live echo, legacy and ended-turn regressions.
+- `app/src/test/java/de/pyryco/mobile/data/repository/HistoryPageReducerTest.kt`: decoded entries, row identities and attachment hints.
+- `app/src/test/java/de/pyryco/mobile/data/repository/CachingConversationRepositoryTest.kt`: real wrapper restore/reconnect and deliberate-removal assertions.
+- `app/src/test/java/de/pyryco/mobile/data/repository/BackgroundTaskLifecycleTest.kt`: invisible evidence must retain neighbour positions and not split text.
+- `docs/knowledge/features/remote-conversation-repository-reads-and-thread-store-history-paging.md`: preserve capability gates, malformed-entry isolation, lifecycle hints and atomic folds.
+- `docs/knowledge/features/remote-conversation-repository-assistant-reply-segments.md`: live echoes can split turns differently from daemon pages; ended turns need the post-merge settle pass.
+- `docs/knowledge/features/caching-conversation-repository.md`: cache lookup must remain indexed; moving the base on every emission resurrects deliberately removed echoes.
+- `/Users/juhanailmoniemi/Workspace/Projects/pyrycode/docs/protocol-mobile.md`: Conversation history (v2), Joining a page to the live stream, and Security model are the wire SSOT.
+
+## Design source
+
+**Figma:** https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8
+
+Read node `16:8` and its screenshot. The existing thread uses left assistant/right user bubbles, body-medium text, small timestamp/copy metadata and rule/label/rule session delimiters over the dark blue backdrop. Existing Material theme roles and all UI geometry/assets remain unchanged; reconciliation supplies the same renderer with corrected content and order.
+
+## Context
+
+An open or reconnect already asks for the newest page. Treating every incoming row as older moves newer content to the front, while the lowest-sequence cutoff loses missing middle/suffix text. This ticket repairs that one reconciliation contract; durable coverage, gap demand, persistence ordering and the real-Claude extension belong to #1787. No decision record is needed.
+
+The sketch and final plan forecast approximately 1100 total written lines including replaced code, tests and this plan, no exported types, two production consumers and four criteria. This remains below all builder limits. In-flight #1655 touches `ThreadProjection` queue reservation and adds a separate state field; our ordering field and history fold are local/additive and do not depend on it. #1782 is already present; retain its lifecycle positioning.
+
+## Design
+
+Use one indexed ordinary-row reconciliation for history and cache. Expand assistant segments into temporary single-delta rows using their recorded lengths, clamped to content, then join adjacent same-turn text again. Ordinary identities retain the existing renderer key; assistant identity is `(turnId, seq)`, independent of the segment opener. Held content wins overlap. Only missing deltas enter the merge, including sequences before, between and after held sequences. Rebuilding keys uses segment openers and checks collisions against ordinary message keys.
+
+Place incoming runs in slots between held rows using preceding/following shared identities and per-turn sequence neighbours. Slots advance through the incoming lane without rearranging held rows; a held user echo keeps its arrival position even when the daemon placed its twin elsewhere. Without shared neighbours, use ordering evidence to choose an insertion slot rather than sort the result. Cache-only offers retain their preceding cached neighbour. Lifecycle markers keep the existing separate neighbour-position pass and hint fill, remaining transparent to visible segment joining.
+
+`ProjectionState` retains a connection-local map from logical merge identity to daemon log id. Derive these keys with the existing per-entry reducer (assistant deltas contribute sequence keys), respecting negotiated gates and malformed-entry isolation. Merge this order evidence and rows in one `state.update` and use daemon ids for disjoint history pages, including equal or inverted timestamps. Live frames never receive or compare ring ids with these log ids. Cache and live-only rows fall back to timestamps solely to select insertion slots; held rows are never timestamp-sorted. This metadata is neither coverage nor persisted schema, and `remove` clears it.
+
+Legacy whole-turn rows have no sequence record. Match only same-turn text demonstrably contained in their content, in sequence order; suppress matched deltas, retaining distinct text that the legacy row does not contain. Keep legacy layout and text. Where a distinct delta opener conflicts with the legacy bare-turn key, use the explicit sequence-zero segment key and keep renderer identities unique. Do not let a whole-turn row blindly delete every segmented row of its turn.
+
+## State and concurrency model
+
+All reconciliation is pure and synchronous. No scope, dispatcher, job or flow is added. Projection order evidence lives in the same CAS state as rows; retries read current live rows and preserve echo queues. Keep `recordEnded` and the second `settleEndedTurns` pass unchanged. The cache wrapper remains a cold collector-owned flow with its existing connection-boundary merge base and suppression contract; lifecycle socket shutdown is unchanged.
+
+## Error handling
+
+Keep the existing per-entry decoding catches and capability gates. Missing neighbours fall back to insertion evidence, not an exception. Clamp delta text slicing. Malformed or hostile key collisions retain the held row and cannot produce duplicate renderer keys. No cursor, entry, delta, attachment hint or daemon text is logged. Existing I/O outcomes and UI errors remain unchanged.
+
+## Testing strategy
+
+Add decoded-page tests through `ThreadProjection.mergeHistoryPage` for disjoint older/newer/middle pages, newest-after-older, daemon id ordering with equal/inverted timestamps, overlap/repeats, sparse assistant sequences, tool/user separators and both page arrival orders. Assert content, sequence uniqueness, message-key uniqueness and settled ended turns. Add reducer tests for partial legacy matches, distinct text and collisions.
+
+Exercise `CachingConversationRepository.observeMessages` using actual reduced page rows for middle/suffix sequence gaps, attachment hints/offers, disconnect/reconnect and deliberate removal. Run existing `HistoryPageReducerTest`, `AssistantSegmentTest`, `ThreadProjectionTest`, `CachingConversationRepositoryTest`, `BackgroundTaskLifecycleTest` and affected remote repository history tests. Run lint, assembleDebug, spotlessApply and forced spotlessCheck. No visual geometry or interaction changes, shared/device test changes or new live scenario: AC explicitly delegates rung-3 extension to #1787.
+
+## Open Questions
+
+None; legacy matching is deliberately limited to observable same-turn text rather than assuming all sequences are present.
+
+## Documentation handoff
+
+Pending for the documentation stage:
+
+- `docs/knowledge/features/remote-conversation-repository-reads-and-thread-store-history-paging.md`, History pages fold into the same thread: older/newer/middle insertion and assistant sequence overlap.
+- `docs/knowledge/features/caching-conversation-repository.md`, How the restore merges with live rows: order, middle insertion, assistant overlap and legacy matching. Retain the connection-boundary merge-base and deliberate-removal contract.
+
+## Security review
+
+**Verdict:** PASS
+
+- Trust boundaries: `reduceHistoryPage` remains the sole existing typed row decode boundary, including capability gates and per-entry rejection. Temporary delta splitting uses clamped lengths; malformed content cannot throw substring bounds errors.
+- Tokens/secrets: no credentials enter the merge keys or new metadata; no credential storage/lifecycle changes.
+- Files/storage: no path, filename, disk format or I/O changes. Attachment hints remain inert display data. Existing app-private cache storage is outside this reconciliation change; persistence ordering is #1787.
+- Android attack surface: no component, intent, provider or WebView changes; existing row renderers consume the same typed values.
+- Cryptography: transport and vendored Noise handshake/key/nonce handling remain unchanged.
+- Network/I/O: existing envelope/page bounds and backoff remain; only decoded logical identities and numeric log ids are retained, not raw payloads. Indexed lookups avoid a cache-by-live nested scan.
+- Errors/logs: helpers remain silent; no cursor, message, identifier, payload or attachment hint reaches logs/errors/telemetry.
+- Concurrency: ordering evidence and rows share `ProjectionState.update`; no independent read/write pair, coroutine or new lock. Keep the ended-turn post-fold settle pass.
+- Threat model: malicious relay delay cannot rearrange held live rows and remains limited by Noise authentication. Hostile decoded frames face identity collision checks and bounded slicing. Rooted-phone credential extraction and screenshot/accessibility/keyboard leakage are unchanged, outside this data-only fix and owned by existing key storage and UI policies.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-10-05
