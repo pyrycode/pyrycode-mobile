@@ -45,8 +45,7 @@ private val PillShadow = 4.dp
 
 /**
  * Shared thread pill, Figma `347:6617`: hugs its right-aligned label and wraps it when it would be wider
- * than the space it is given. The Top overlay uses it for notices; turn outcomes use its error treatment
- * inside the input status area with a leading icon and a two-line limit.
+ * than the space it is given. The Top overlay uses it for notices, including stopped-turn recovery advice.
  *
  * The **Default** variant (`primaryContainer` / `onPrimaryContainer`) is a notice the operator may hide
  * and carries a trailing X when [onDismiss] is set. The **Error** variant ([isError], `errorContainer` /

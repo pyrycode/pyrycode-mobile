@@ -183,14 +183,6 @@ class ThreadStatusBandTest {
             composeTestRule.waitForIdle()
             glyphs.assertCountEquals(1)
             val bounds = glyphs[0].getUnclippedBoundsInRoot()
-            if (state.turnOutcome != null) {
-                // #1357: every recovery notice wraps to two lines even at 412dp, raising the band, and the glyph
-                // stays centred on it; its leading edge must not move.
-                val reference = expected ?: bounds
-                assertEquals("glyph left in ${state.name}", reference.left, bounds.left)
-                assertEquals("glyph right in ${state.name}", reference.right, bounds.right)
-                return@forEach
-            }
             assertEquals("glyph bounds in ${state.name}", expected ?: bounds, bounds)
             expected = bounds
         }

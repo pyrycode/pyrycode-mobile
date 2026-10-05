@@ -118,6 +118,58 @@ class ThreadTopOverlayTest {
         }
     }
 
+    @Test
+    fun recoveryNotice_sitsBelowOtherNotices_withTheSameGapAndRightEdge() {
+        usageLimit = warning
+        mcpFailure = "github"
+        sessionError = "session.blocked"
+        turnOutcome = TurnRecoveryNotice.ContextTooLong
+        setScreen()
+
+        val outcome = composeRule.onNodeWithContentDescription("Context too long - Compact")
+        outcome.assertIsDisplayed()
+        val previous = composeRule.onNodeWithContentDescription(context.getString(R.string.thread_session_blocked))
+        val before = previous.getUnclippedBoundsInRoot()
+        val after = outcome.getUnclippedBoundsInRoot()
+        assertEquals(12f, (after.top - before.bottom).value, 0.5f)
+        assertEquals(before.right.value, after.right.value, 0.5f)
+        composeRule.onNodeWithText("Compact").assertDoesNotExist()
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun recoveryNotice_usesTheHeaderClearance_withoutMovingTheComposer() {
+        setScreen()
+        val composer = composeRule.onNodeWithTag("thread-composer").getUnclippedBoundsInRoot()
+        val header = composeRule.onNodeWithTag("thread-top-bar").getUnclippedBoundsInRoot()
+        turnOutcome = TurnRecoveryNotice.ContextTooLong
+        val bounds = composeRule.onNodeWithContentDescription("Context too long - Compact").getUnclippedBoundsInRoot()
+        assertEquals(28f, (bounds.top - header.bottom).value, 0.5f)
+        assertEquals(20f, (header.right - bounds.right).value, 0.5f)
+        assertEquals(24f, bounds.height.value, 0.5f)
+        assertEquals(composer, composeRule.onNodeWithTag("thread-composer").getUnclippedBoundsInRoot())
+        composeRule.onNodeWithContentDescription(dismissDescription).assertDoesNotExist()
+    }
+
+    @Test
+    fun recoveryNotice_doesNotPreemptActiveOrConnectionReadings() {
+        turnOutcome = TurnRecoveryNotice.ContextTooLong
+        isBusy = true
+        state = state.copy(hasMessages = true, items = listOf(runningTool("Bash")))
+        setScreen()
+        val pill = composeRule.onNodeWithContentDescription("Context too long - Compact")
+        pill.assertIsDisplayed()
+        composeRule.onNodeWithText("Running Bash…").assertIsDisplayed()
+
+        resetting = ResetStatus(ResetStatus.Phase.WrappingUp, ResetStatus.Handoff.Pending)
+        composeRule.onNodeWithContentDescription(context.getString(R.string.thread_resetting_wrapping_up)).assertIsDisplayed()
+        pill.assertIsDisplayed()
+
+        connectionState = ConnectionState.Connecting
+        composeRule.onNodeWithText("Connecting…").assertIsDisplayed()
+        pill.assertIsDisplayed()
+    }
+
     // #1519: client-owned copy; the status picks the lead and is never drawn.
     private fun label(status: String): String = if (status == "rejected") REACHED_LABEL else NEARLY_LABEL
 

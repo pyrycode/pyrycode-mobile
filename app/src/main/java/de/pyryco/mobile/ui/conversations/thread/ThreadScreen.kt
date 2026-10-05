@@ -114,7 +114,6 @@ import de.pyryco.mobile.ui.conversations.components.SystemPromptEditorState
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
 import de.pyryco.mobile.ui.conversations.components.ThreadStatusGlyph
 import de.pyryco.mobile.ui.conversations.components.ToolRunRow
-import de.pyryco.mobile.ui.conversations.components.TurnOutcomeIndicator
 import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
 import de.pyryco.mobile.ui.conversations.components.UnrecognizedMessageRow
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
@@ -192,7 +191,7 @@ fun ThreadScreen(
     usageLimit: UsageLimitReading? = null, // #804: claude's usage-limit report; #1002 draws it in the Top overlay
     resetting: ResetStatus? = null, // #872: Reset session's phase, below usage limit and above compaction
     isCompacting: Boolean = false, // #597: claude is auto-compacting its context, replaces the spinner
-    turnOutcome: TurnRecoveryNotice? = null, // #1357: recovery advice after a stopped turn, above thinking
+    turnOutcome: TurnRecoveryNotice? = null, // #1603: recovery advice after a stopped turn in the top overlay
     thinkingProgress: ThinkingProgress? = null, // #803: claude's live token reading, decorates the thinking arm
     isBusy: Boolean = false, // #459: a turn is in flight (thinking OR responding) → show the interrupt affordance
     isStalled: Boolean = false, // #1311: the daemon reported a stall; the band's stall arm
@@ -299,6 +298,16 @@ fun ThreadScreen(
     // MainActivity → vm::onOpenMarkdownLink; a failed read reuses [markdownOpenFailures].
     onOpenMarkdownLink: (String) -> Unit = {},
 ) {
+    // #1357: the context notice's Compact pill takes the Actions menu's path, and no tap while
+    // the published menu proves the command absent.
+    val onCompact =
+        remember(state.absentActions, onComposerCommand) {
+            if (ComposerAction.CompactSession in state.absentActions) {
+                null
+            } else {
+                { onComposerCommand(ComposerAction.CompactSession) }
+            }
+        }
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
     val openRequest = modalState as? ModalUiState.Open
@@ -466,23 +475,11 @@ fun ThreadScreen(
                 ) {
                     // #897: the open tool call names itself in the thinking arm's slot, only while a turn runs.
                     val openTool = remember(state.items) { openToolCall(state.items) }
-                    // #1357: the context notice's Compact pill takes the Actions menu's path, and no tap while
-                    // the published menu proves the command absent.
-                    val onCompact =
-                        remember(state.absentActions, onComposerCommand) {
-                            if (ComposerAction.CompactSession in state.absentActions) {
-                                null
-                            } else {
-                                { onComposerCommand(ComposerAction.CompactSession) }
-                            }
-                        }
                     ThreadStatusArea(
                         apiRetry = apiRetry,
                         resetting = resetting,
                         isCompacting = isCompacting,
                         isStalled = isStalled,
-                        turnOutcome = turnOutcome,
-                        onCompact = onCompact,
                         isThinking = isThinking,
                         isBusy = isBusy,
                         localSendStage = localSendStage,
@@ -867,6 +864,8 @@ fun ThreadScreen(
                         onOpenMcpFailure = onOpenMcpFailure,
                         sessionError = sessionError,
                         agent = state.agent,
+                        turnOutcome = turnOutcome,
+                        onCompact = onCompact,
                     )
                 }
             }
@@ -1126,7 +1125,7 @@ private fun ThreadMessageList(
  * signal is current (#643 moved this block here from the foot of the content `Column`).
  *
  * One status slot, top wins, decided by [statusArm] (#1311): connecting / reconnecting → resetting →
- * api-retry → compaction → stall → turn outcome → thinking / working / running tool. While a turn runs the
+ * api-retry → compaction → stall → thinking / working / running tool. While a turn runs the
  * band always has a reading, as desktop's `workingIndicatorState` keeps one up. While the link is
  * unavailable, turn readings cannot be refreshed; Offline is instead shown in the Top overlay as a retry
  * pill.
@@ -1136,8 +1135,7 @@ private fun ThreadMessageList(
  *
  * A running Reset session's phase (#872) is the top turn arm, above api-retry since #1311 as on desktop:
  * the wrap-up is itself a claude turn, so without this ordering the reset the user started would read as
- * generic thinking or as a compaction inside it, and it outranks a turn outcome lingering from before the
- * reset. api-retry (#594) is the "something is going wrong" signal, and the benign affordances below must
+ * generic thinking or as a compaction inside it. api-retry (#594) is the "something is going wrong" signal, and the benign affordances below must
  * never mask it. A stall (#395, #1311) is client-owned copy in the error colour; it clears on the next live
  * event through `StallProjection`, and outranks every reading of the running turn. A phase
  * change replaces the reading in this one arm; the falling edge and the session transition clear it
@@ -1170,8 +1168,6 @@ private fun ThreadStatusArea(
     resetting: ResetStatus?,
     isCompacting: Boolean,
     isStalled: Boolean,
-    turnOutcome: TurnRecoveryNotice?,
-    onCompact: (() -> Unit)?,
     isThinking: Boolean,
     isBusy: Boolean,
     localSendStage: LocalSendStage,
@@ -1226,7 +1222,6 @@ private fun ThreadStatusArea(
                             apiRetrying = apiRetry != ApiRetryStatus.NotRetrying,
                             isCompacting = isCompacting,
                             isStalled = isStalled,
-                            hasTurnOutcome = turnOutcome != null,
                             isThinking = isThinking,
                             isBusy = isBusy,
                             localSendStage = localSendStage,
@@ -1234,8 +1229,6 @@ private fun ThreadStatusArea(
                         ),
                     apiRetry = apiRetry,
                     resetting = resetting,
-                    turnOutcome = turnOutcome,
-                    onCompact = onCompact,
                     isThinking = isThinking,
                     thinkingProgress = thinkingProgress,
                     runningTool = runningTool,
@@ -1280,7 +1273,6 @@ internal enum class StatusArm {
     ApiRetry,
     Compacting,
     Stalled,
-    TurnOutcome,
     Thinking,
     Working,
     RunningTool,
@@ -1290,14 +1282,12 @@ internal enum class StatusArm {
 
 /**
  * The status band's one arm order (#1311), desktop's `workingIndicatorState` and
- * `workingIndicatorStateWithLocalSend` with Mobile's connection arm at the top and its turn-outcome arm
- * above the turn's own readings. Top wins: connection, Reset session, api-retry, compaction, stall, turn
- * outcome, then the running turn — an open tool while busy, else thinking, else working — and last the
+ * `workingIndicatorStateWithLocalSend` with Mobile's connection arm at the top. Top wins: connection,
+ * Reset session, api-retry, compaction, stall, then the running turn — an open tool while busy, else thinking, else working — and last the
  * local-send window, which reads Sending or Waiting for the conversation's agent. Offline
  * returns [StatusArm.None]: the Top overlay's retry pill owns it.
  *
- * A pending local send hides a turn outcome: that outcome belongs to the turn before the send, and the new
- * turn's first `thinking` / `responding` would clear it anyway. Since #1357 the send itself clears it too.
+ * Turn outcomes live in the top overlay and do not take part in status selection (#1603).
  */
 internal fun statusArm(
     connectionState: ConnectionState,
@@ -1305,7 +1295,6 @@ internal fun statusArm(
     apiRetrying: Boolean,
     isCompacting: Boolean,
     isStalled: Boolean,
-    hasTurnOutcome: Boolean,
     isThinking: Boolean,
     isBusy: Boolean,
     localSendStage: LocalSendStage,
@@ -1318,7 +1307,6 @@ internal fun statusArm(
         apiRetrying -> StatusArm.ApiRetry
         isCompacting -> StatusArm.Compacting
         isStalled -> StatusArm.Stalled
-        hasTurnOutcome && localSendStage == LocalSendStage.None -> StatusArm.TurnOutcome
         isBusy && hasOpenTool -> StatusArm.RunningTool
         isThinking -> StatusArm.Thinking
         isBusy -> StatusArm.Working
@@ -1333,8 +1321,6 @@ private fun StatusReading(
     arm: StatusArm,
     apiRetry: ApiRetryStatus,
     resetting: ResetStatus?,
-    turnOutcome: TurnRecoveryNotice?,
-    onCompact: (() -> Unit)?,
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
     runningTool: ToolCall?,
@@ -1361,7 +1347,6 @@ private fun StatusReading(
         StatusArm.Resetting -> ResettingIndicator(status = resetting, modifier = modifier, agent = agent)
         StatusArm.ApiRetry -> ApiRetryIndicator(status = apiRetry, modifier = modifier, agent = agent)
         StatusArm.Compacting -> CompactingIndicator(isCompacting = true, modifier = modifier, agent = agent)
-        StatusArm.TurnOutcome -> TurnOutcomeIndicator(notice = turnOutcome, agent = agent, onCompact = onCompact, modifier = modifier)
         StatusArm.Stalled, StatusArm.Thinking, StatusArm.Working, StatusArm.RunningTool ->
             ThinkingIndicator(
                 isThinking = arm == StatusArm.Thinking,

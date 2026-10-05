@@ -1,0 +1,20 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="3" failures="0" errors="0" skipped="0" time="63.767" timestamp="2026-10-05T03:27:56" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadActivityIndicatorCaptureTest" tests="2" failures="0" errors="0" skipped="0" time="37.398" timestamp="2026-10-05T03:27:56" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="compactLargeTextKeepsOutcomeVisibleAboveTheThread" classname="de.pyryco.mobile.ui.conversations.thread.ThreadActivityIndicatorCaptureTest" time="22.269" />
+    <testcase name="fiveReadingsAndMenuAt412By892" classname="de.pyryco.mobile.ui.conversations.thread.ThreadActivityIndicatorCaptureTest" time="15.129" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.design.ThreadDesignCaptureTest" tests="1" failures="0" errors="0" skipped="0" time="16.363" timestamp="2026-10-05T03:27:56" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="rowAndNoticeFramesAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="16.363" />
+  </testsuite>
+</testsuites>

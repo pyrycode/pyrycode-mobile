@@ -37,3 +37,7 @@ Pending for the documentation stage:
 - `app/src/androidTest/assets/design-1220/thread/index.md`, “Turn outcome — `685:3992`”: update the verdict from fresh evidence for placement, copy, icon absence and whole-pill action. Preserve stopped-row spacing under #1608 and other owning-ticket mismatches.
 - `docs/knowledge/features/turn-outcome-indicator.md` and owning thread feature documentation: describe overlay placement and unchanged lifecycle/Compact path.
 - Owning thread documentation and evidence verdict: record dispatcher full live-suite counts and confirmation that the named reconnect/Compact method ran and passed after that evidence exists.
+
+## Revisions
+
+- 2026-10-05: the fresh hardware capture measures the context pill at 176×24px, x=216..391 and y=121..144 in the 412×892 framebuffer. Removing the real 24px status-bar offset gives the design's y=97 placement, with the same 20px right gutter. Android's shared Roboto `bodySmall` label is 4px wider than Figma's 172px instance. Keep the shared typography and 8/4dp padding and hug the full copy rather than force a width that would wrap it or compress its glyphs; record this small platform text-metric deviation in the PR and documentation handoff. Native Robolectric graphics are required for exact text geometry; legacy graphics falsely wrapped the label to 43dp height.

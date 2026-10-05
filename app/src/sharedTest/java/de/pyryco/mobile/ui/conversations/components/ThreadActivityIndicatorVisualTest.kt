@@ -58,7 +58,7 @@ class ThreadActivityIndicatorVisualTest {
             val bounds = composeRule.onNodeWithTag(tag).getUnclippedBoundsInRoot()
             assertTrue("$tag fits the band", bounds.bottom - bounds.top <= 24.dp)
         }
-        // #1357: the recovery notice may wrap to its two lines; the Compact pill beside it holds the band height.
-        composeRule.onNodeWithText("Compact").assertHeightIsEqualTo(24.dp)
+        // #1603: one combined Error pill has the design's 24dp visible height.
+        composeRule.onNodeWithText("Context too long - Compact").assertHeightIsEqualTo(24.dp)
     }
 }
