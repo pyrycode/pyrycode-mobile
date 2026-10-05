@@ -92,7 +92,10 @@ internal class PendingMarkdown(
     private fun visit(node: ASTNode) {
         when (node.type) {
             MarkdownElementTypes.CODE_FENCE, MarkdownElementTypes.CODE_BLOCK -> Unit
-            MarkdownElementTypes.PARAGRAPH, MarkdownTokenTypes.ATX_CONTENT, GFMTokenTypes.CELL -> inline(node)
+            MarkdownElementTypes.PARAGRAPH, MarkdownTokenTypes.ATX_CONTENT -> inline(node)
+            // A pipe or newline closes a cell even if the parser split inline punctuation across it.
+            // Only the final cell touching EOF can still grow; closed cells use the shared renderer.
+            GFMTokenTypes.CELL -> if (node.endOffset == source.length) inline(node)
             // Its actual separator closes the header; the parser's cell grammar is authoritative.
             GFMElementTypes.TABLE -> node.children.filter { it.type == GFMElementTypes.ROW }.forEach(::visit)
             else -> node.children.forEach(::visit)

@@ -261,6 +261,31 @@ class StreamingMarkdownComposeTest {
         settleAndCompare()
     }
 
+    @Test fun closedTableBodyDelimiterSiblingsKeepTextStylesAndBoundsThroughSettlement() {
+        show("")
+        for (delimiter in listOf("`", "**", "__", "*", "_", "~~", "~")) {
+            for (ending in listOf("", "\n")) {
+                compose.runOnIdle { streaming.value = true }
+                change("| A | B |\n| --- | --- |\n| ${delimiter}C|D$delimiter |$ending")
+                assertEquals(delimiter, listOf("A", "${delimiter}C", "B", "D$delimiter"), texts().map { it.text })
+                settleAndCompare()
+            }
+        }
+    }
+
+    @Test fun growingFinalTableCellStabilizesWhileClosedCellsKeepLiteralSource() {
+        show("| A | B |\n| --- | --- |\n| **literal | [text](https://exa")
+        assertEquals(listOf("A", "**literal", "B", "text"), texts().map { it.text })
+        val label = annotated("text")
+        assertTrue(label.getLinkAnnotations(0, label.length).isEmpty())
+        compose.onNodeWithText("text").performClick()
+        assertTrue(taps.isEmpty())
+        change(source.value + "mple.com) |\n")
+        val complete = annotated("text")
+        assertEquals("https://example.com", (complete.getLinkAnnotations(0, complete.length).single().item as LinkAnnotation.Url).url)
+        settleAndCompare()
+    }
+
     @Test fun partialOrderedListMarkerRejoinsWithoutRenumberingAtSettlement() {
         show("1. first\n\n2")
         change("1. first\n\n2. second")

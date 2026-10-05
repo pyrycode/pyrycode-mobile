@@ -266,6 +266,45 @@ class StreamingMarkdownTest {
         assertEquals(null, cache.update("$source\n").single().let { it.pending.blockText(it.node) })
     }
 
+    @Test fun closedTableBodyCellsKeepSharedRendererLiteralDelimiters() {
+        for (delimiter in listOf("`", "**", "__", "*", "_", "~~", "~")) {
+            for (ending in listOf("", "\n")) {
+                val source = "| A | B |\n| --- | --- |\n| ${delimiter}C|D$delimiter |$ending"
+                val root = MarkdownParser(MarkdownFlavour).buildMarkdownTreeFromString(source)
+                val pending = PendingMarkdown(source, root)
+                val row =
+                    root.children
+                        .single { it.type == GFMElementTypes.TABLE }
+                        .children
+                        .single { it.type == GFMElementTypes.ROW }
+                val cells = row.children.filter { it.type == org.intellij.markdown.flavours.gfm.GFMTokenTypes.CELL }
+                assertEquals(source, listOf("${delimiter}C", "D$delimiter"), cells.map { inlineText(it.trimmedContent(), source) })
+                assertEquals(
+                    source,
+                    cells.map {
+                        inlineText(it.trimmedContent(), source)
+                    },
+                    cells.map { streamingInlineText(it.trimmedContent(), source, pending) },
+                )
+            }
+        }
+    }
+
+    @Test fun onlyTheGrowingFinalTableCellReceivesPendingMasks() {
+        for ((arrived, expected) in listOf("**bold" to "bold", "`code" to "code", "[text](https://exa" to "text")) {
+            val source = "| A | B |\n| --- | --- |\n| **literal | $arrived"
+            val root = MarkdownParser(MarkdownFlavour).buildMarkdownTreeFromString(source)
+            val pending = PendingMarkdown(source, root)
+            val row =
+                root.children
+                    .single { it.type == GFMElementTypes.TABLE }
+                    .children
+                    .single { it.type == GFMElementTypes.ROW }
+            val cells = row.children.filter { it.type == org.intellij.markdown.flavours.gfm.GFMTokenTypes.CELL }
+            assertEquals(source, listOf("**literal", expected), cells.map { streamingInlineText(it.trimmedContent(), source, pending) })
+        }
+    }
+
     @Test fun pendingCodeInsideFormattingKeepsLiteralClosingPunctuationUntilCodeCloses() {
         for (delimiter in listOf("**", "*", "_", "__", "~~", "~")) {
             val prefix = "${delimiter}foo `bar$delimiter"
