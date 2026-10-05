@@ -1144,7 +1144,12 @@ panel while work is running; since #1631 the top overflow's Background tasks row
 the same populated panel after dismissing the menu. Since #1668, the method retains its historical
 name but asserts Background tasks is absent from Actions. `openBackgroundTasks` and its progress-scenario
 caller use the count-free top menu. Once the task finishes, the pill disappears and the top menu reopens
-the panel. The panel's own end state
+the panel. Since #1751, this `InteractiveStreamE2ETest` scenario separately asserts
+the decoded task type is `local_bash` and the visible label is "Command" from both
+the running-pill and top-menu entry points. Display labels must have independent
+expectations: matching the raw payload against visible text broke both live waits
+while deterministic gates stayed green. See the [panel's label rules](knowledge/features/mobile-modal-callers.md).
+The panel's own end state
 is **not** durable: the terminal `background_task_updated` marks the task Finished, but real claude also
 sends an empty `background_task_roster` unprompted after a finish, and `BackgroundTaskProjection`'s
 wholesale-replace rule (see [`backgroundTasks`](knowledge/features/remote-conversation-repository-live-stream-and-modals.md#backgroundtasks--the-v2-background-task-decodefold-seam-677))
@@ -3017,6 +3022,20 @@ handoff; this table does not claim a later execution.
 
 Earlier results and failure history:
 
+- **LIVE verified for #1751 (2026-10-05):** the dispatcher selected five
+  `InteractiveStreamE2ETest` methods with `android-test-gate.py live --tests`
+  against `feature/1751` at `91acd54dc4`, merged with `origin/main` at `24784c9388`.
+  The fresh report `2026-10-05T02-40-19-025Z_real-claude-gate_#1751.log` records
+  **5 executed, 4 passed, 1 failed, 0 errors, 0 skipped**. Both
+  `interactiveTurn_backgroundTask_countsInActionsMenuAndPanel` and
+  `interactiveTurn_backgroundAgentProgress_showsOnRunningCard` are present and passed;
+  the former verifies raw `local_bash` separately from "Command" at both entry points.
+  The only failure, `interactiveTurn_offlineRetry_reconnectsSameHostAndReplies`,
+  passed on the same merged tree in `2026-10-05T02-40-19-025Z_real-claude-gate-rerun_#1751.log`:
+  **1 executed, 1 passed, 0 failed/errors, 0 skipped**. These are selected-suite
+  evidence and a one-method rerun, not a full-suite run or separate focused runs of
+  the background-task methods. The [dispatcher gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1751#issuecomment-5987310168)
+  records the offline-retry failure as nondeterministic and accepted the gate after rerun.
 - **LIVE verified for #1665 (2026-10-04):** the dispatcher ran the full
   `InteractiveStreamE2ETest` suite with
   `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`: **53 executed, 53 passed,
