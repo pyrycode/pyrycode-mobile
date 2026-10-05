@@ -1,0 +1,25 @@
+{
+  "revision": "de58447054ea782b422b3a22d714df40424e21a8",
+  "command": [
+    "./gradlew",
+    ":app:pixel2Api33AtdDebugAndroidTest",
+    "--rerun",
+    "-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest#ime_keeps_an_earlier_other_clear_of_chrome_on_open_dismiss_and_reopen",
+    "-Pandroid.experimental.androidTest.numManagedDeviceShards=1",
+    "-Pandroid.testInstrumentationRunnerArguments.disableAnimations=true",
+    "--console=plain"
+  ],
+  "started_utc": "2026-10-05T07:51:57.752507+00:00",
+  "exit_status": 0,
+  "finished_utc": "2026-10-05T07:52:17.668399+00:00",
+  "counts": {
+    "executed": 1,
+    "passed": 1,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "xml_sha256": "aa622df48f051241bba34982725eb77387a699c720694aed23eedb92b178df6f",
+  "per_test_logcat_sha256": "d1715ba9c8d19d135d5613f828f537d2bd49bb362ff29b8bc8ee74132deb5109",
+  "source_xml_sha256": "edf302d076dfb2b898cd41e4fc0728552d7ac0bace268b5f6d0ad341238c997c"
+}
