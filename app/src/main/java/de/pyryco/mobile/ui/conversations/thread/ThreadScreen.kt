@@ -312,22 +312,23 @@ fun ThreadScreen(
     if (questionState != null || openRequest != null) QuestionPromptProtection()
     val snackbarHostState = remember { SnackbarHostState() }
     val errorNotices = rememberTransientErrorNoticeState(state.conversationId)
-    // Payload-free signals and local resources keep exception and daemon text out of notices.
+    // Payload-free signals and local resources keep exception and daemon text out of notices. Each collector
+    // queues its notice and returns, so signals keep their arrival order across routes.
     val newSessionFailedMessage = stringResource(R.string.new_session_failed)
     LaunchedEffect(newSessionErrors, errorNotices) {
-        newSessionErrors.collect { errorNotices.show(newSessionFailedMessage) }
+        newSessionErrors.collect { errorNotices.enqueue(this, newSessionFailedMessage) }
     }
     val archiveFailedMessage = stringResource(R.string.archive_failed)
     LaunchedEffect(archiveErrors, errorNotices) {
-        archiveErrors.collect { errorNotices.show(archiveFailedMessage) }
+        archiveErrors.collect { errorNotices.enqueue(this, archiveFailedMessage) }
     }
     val changeWorkspaceFailedMessage = stringResource(R.string.change_workspace_failed)
     LaunchedEffect(changeWorkspaceErrors, errorNotices) {
-        changeWorkspaceErrors.collect { errorNotices.show(changeWorkspaceFailedMessage) }
+        changeWorkspaceErrors.collect { errorNotices.enqueue(this, changeWorkspaceFailedMessage) }
     }
     val sessionSettingsFailedMessage = stringResource(R.string.session_settings_failed)
     LaunchedEffect(sessionSettingsErrors, errorNotices) {
-        sessionSettingsErrors.collect { errorNotices.show(sessionSettingsFailedMessage) }
+        sessionSettingsErrors.collect { errorNotices.enqueue(this, sessionSettingsFailedMessage) }
     }
     // #933: a pick with refused entries names how many, per reason — counts only, never a file name.
     val resources = LocalContext.current.resources
@@ -335,17 +336,17 @@ fun ThreadScreen(
         attachmentRefusals.collect { refusal ->
             if (refusal.tooLarge > 0) {
                 val text = resources.getQuantityString(R.plurals.thread_attachments_too_large, refusal.tooLarge, refusal.tooLarge)
-                errorNotices.show(text)
+                errorNotices.enqueue(this, text)
             }
             if (refusal.tooMany > 0) {
                 val text = resources.getQuantityString(R.plurals.thread_attachments_too_many, refusal.tooMany, refusal.tooMany)
-                errorNotices.show(text)
+                errorNotices.enqueue(this, text)
             }
         }
     }
     // #1325: a send that stopped at a file says why in one fixed sentence — never a name or the daemon's code.
     LaunchedEffect(attachmentSendFailures, errorNotices) {
-        attachmentSendFailures.collect { failure -> errorNotices.show(failure.text(resources)) }
+        attachmentSendFailures.collect { failure -> errorNotices.enqueue(this, failure.text(resources)) }
     }
     val openAttachmentPicker = rememberAttachmentPicker(onAttachmentsPicked)
     // #985: a ready message attachment opens in another app or saves to a picked document; each outcome the
@@ -362,7 +363,7 @@ fun ThreadScreen(
     LaunchedEffect(attachmentLoads, attachmentActions) { attachmentLoads.collect(attachmentActions.loaded) }
     // #1027: a markdown file that cannot be read says what any failed open says.
     LaunchedEffect(markdownOpenFailures, errorNotices) {
-        markdownOpenFailures.collect { errorNotices.show(resources.getString(AttachmentNotice.OPEN_FAILED.message)) }
+        markdownOpenFailures.collect { errorNotices.enqueue(this, resources.getString(AttachmentNotice.OPEN_FAILED.message)) }
     }
     // #934: a pasted image joins the chat's strip through the same sink as a picked one.
     val onImagesPasted = rememberPastedImageReceiver(onAttachmentsPicked)

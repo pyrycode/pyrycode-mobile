@@ -18,7 +18,11 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.ui.conversations.components.NoticePill
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -51,6 +55,16 @@ class TransientErrorNoticeState internal constructor(
             }
         }
     }
+
+    /**
+     * Shows [message] in a child of [scope] that has joined the queue before this returns, so a signal
+     * collector moves on to its next signal at once. A collector that waited inside [show] would hold its
+     * next signal outside the queue, where a later failure from another route could overtake it.
+     */
+    internal fun enqueue(
+        scope: CoroutineScope,
+        message: String,
+    ): Job = scope.launch(start = CoroutineStart.UNDISPATCHED) { show(message) }
 }
 
 @Composable

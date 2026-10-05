@@ -8,6 +8,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.AccessibilityManager
 import androidx.compose.ui.platform.LocalAccessibilityManager
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHasClickAction
@@ -169,6 +170,71 @@ class ThreadTransientErrorTest {
         rule.onNodeWithText(many).assertIsDisplayed()
         expire()
         rule.onNodeWithTag("transient_error_notice").assertDoesNotExist()
+    }
+
+    // A collector must hand each signal to the shared queue at once: one that waits through the active pill
+    // keeps its next signal out of the queue, and a later failure from another route overtakes it.
+    @Test fun archivesSecondFailure_showsBeforeALaterMarkdownFailure() {
+        show()
+        rule.runOnIdle { errors[1].trySend(Unit) }
+        val archive = context.getString(R.string.archive_failed)
+        assertPill(archive)
+        rule.runOnIdle { errors[1].trySend(Unit) }
+        rule.mainClock.advanceTimeByFrame()
+        rule.runOnIdle { errors[4].trySend(Unit) }
+        rule.mainClock.advanceTimeByFrame()
+        rule.mainClock.advanceTimeBy(4_000)
+        assertPill(archive)
+        rule.onNodeWithText(context.getString(AttachmentNotice.OPEN_FAILED.message)).assertDoesNotExist()
+        rule.mainClock.advanceTimeBy(4_000)
+        assertPill(context.getString(AttachmentNotice.OPEN_FAILED.message))
+    }
+
+    @Test fun everyRoutesQueuedFailures_keepTheirPlace_aheadOfLaterRoutes() {
+        show()
+        val unitRoutes =
+            listOf(
+                R.string.new_session_failed,
+                R.string.archive_failed,
+                R.string.change_workspace_failed,
+                R.string.session_settings_failed,
+                AttachmentNotice.OPEN_FAILED.message,
+            )
+        val send = AttachmentSendFailure.entries.first()
+        val expected = mutableListOf<String>()
+
+        fun signal(
+            vararg texts: String,
+            post: () -> Unit,
+        ) {
+            rule.runOnIdle { post() }
+            rule.mainClock.advanceTimeByFrame()
+            expected += texts
+        }
+        errors.zip(unitRoutes).forEach { (channel, resource) ->
+            repeat(2) { signal(context.getString(resource)) { channel.trySend(Unit) } }
+        }
+        signal(
+            context.resources.getQuantityString(R.plurals.thread_attachments_too_large, 2, 2),
+            context.resources.getQuantityString(R.plurals.thread_attachments_too_many, 3, 3),
+        ) { refusals.trySend(AttachmentRefusal(tooLarge = 2, tooMany = 3)) }
+        repeat(2) { signal(send.text(context.resources)) { sends.trySend(send) } }
+        signal(context.getString(R.string.archive_failed)) { errors[1].trySend(Unit) }
+        // Every signal above arrived one frame apart, while the first pill was still showing.
+        val shown =
+            expected.indices.map {
+                rule.mainClock.advanceTimeByFrame()
+                val text =
+                    rule
+                        .onNodeWithTag("transient_error_notice")
+                        .fetchSemanticsNode()
+                        .config[SemanticsProperties.Text]
+                        .single()
+                        .text
+                rule.mainClock.advanceTimeBy(4_000)
+                text
+            }
+        assertEquals(expected, shown)
     }
 
     @Test fun identicalArchiveFailures_renderSeparateOccurrences_withFullTimeouts() {

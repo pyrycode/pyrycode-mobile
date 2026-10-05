@@ -15,6 +15,9 @@
 - `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/ThreadTopOverlayTest.kt`: stack geometry and retained actions.
 - `app/src/androidTest/java/de/pyryco/mobile/design/ThreadDesignCaptureTest.kt`: failure frame and reachable reader route.
 - `app/src/androidTest/assets/design-1220/README.md`: full-device pixel evidence and comparison contract.
+- `app/src/androidTest/java/de/pyryco/mobile/ui/settings/ArchiveAppearanceCaptureTest.kt`: sibling Archive capture whose viewport lifecycle the operator repair `d5223aa5` changed; see Revisions.
+- `app/src/androidTest/java/de/pyryco/mobile/design/ViewportRule.kt`: shared rule that sets the device viewport before an activity launches, with the `@Viewport` per-method override.
+- `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/ThreadTransientErrorTest.kt`: production collector routes, refusal order and mixed-route queue order.
 
 ## Design source
 
@@ -98,3 +101,17 @@ The verifier found enlarged Offline text could extend beyond the fixed Retry sib
 ### 2026-10-05 — verifier rework: identical queued occurrences
 
 The verifier's frame-level Archive probe found identical queued text never changed the rendered pill or its polite live region at the timeout boundary. Give `TransientErrorNoticeState` a monotonically increasing screen-local occurrence identity when each caller acquires the queue. `ThreadScreen` passes it to `ThreadTopOverlay`; the overlay and `MarkdownReaderScreen` key only their transient pill by that identity, recreating its semantics node even when the client-owned string repeats. Persistent nodes, copy, FIFO ordering, full adjusted Short delay and cancellation stay unchanged. Add permanent Compose regressions through queued Archive errors and repeated reader Refresh failures, checking distinct rendered semantics identities, first/second lifetimes, and persistent/body retention. This rework changes no geometry or capture fixture; retained requested pixel evidence remains valid.
+
+### 2026-10-05 — operator repair: Archive capture viewport lifecycle
+
+Scope: `ArchiveAppearanceCaptureTest` only, a sibling capture class outside this ticket's feature, changed by operator commit `d5223aa5`. The dispatcher's full UI gate failed `compactLargeTextKeepsRestoreReachable` with `No compose hierarchies found` while the launcher held focus. The class resized the display after the Compose rule had launched its activity, with `wm size 412x892` in its setup and a second resize to 280x400 in that method. In a full sweep a resize under a running activity can recreate it while the launcher holds focus, the order-dependent race recorded for #1402, #1467 and #1661 in `development-verification-compose-evidence.md`. A one-method baseline passes, so the failure was timing-dependent and not caused by the notice migration.
+
+New contract: the class uses the shared `ViewportRule` at rule order 0, ahead of `createComposeRule()` at order 1, and the compact method declares `@Viewport("280x400")`. The viewport settles before any activity launches, the same conversion #1661 made for its siblings. Test assertions are unchanged. Validation on the merge `c169fd13`: `ANDROID_GATE_WAIT_SECONDS=2700 UI_SHARDS=2 python3 scripts/android-test-gate.py ui` exited 0 with 185 executed, 185 passed, 0 failed and 1 known skip, `RenameDialogCaptureTest.renameAtFigmaViewport`; all three Archive methods passed, `compactLargeTextKeepsRestoreReachable` among them. The focused `spotlessApply compileDebugAndroidTestKotlin testDebugUnitTest` run over the thread and settings packages executed 1511 tests with 0 failures and the 2 known skips. Source: [operator repair comment](https://github.com/pyrycode/pyrycode-mobile/pull/1755#issuecomment-5991754129). The verifier's later full UI gate on `b2b7eb85` also passed all three Archive methods.
+
+### 2026-10-05 — verifier rework: mixed-route queue intake
+
+The verifier found that each thread collector suspended inside `show` for the whole timeout, so its next signal stayed in its source flow, outside the shared FIFO. Archive A1, Archive A2, then markdown-open B rendered A1, B, A2. The Mutex orders only callers that reach it. `TransientErrorNoticeState` gains `enqueue(scope, message)`, which starts `show` in an undispatched child of the collector's effect scope, so the child has taken the queue slot or the active pill before `enqueue` returns. The new-session, archive, workspace, run-configuration, attachment refusal, attachment-send and markdown-open collectors enqueue and return, and the refusal collector enqueues too-large then too-many in one pass. Children of the `LaunchedEffect` keep conversation and screen cancellation, and each `show` still owns a full adjusted Short lifetime. Callback outcomes and the reader already launch per notice and are unchanged. New Compose regressions through the production collectors, written red first: `archivesSecondFailure_showsBeforeALaterMarkdownFailure`, and `everyRoutesQueuedFailures_keepTheirPlace_aheadOfLaterRoutes`, which signals every route twice, both refusal reasons and a final Archive during the first pill and requires strict arrival order.
+
+### 2026-10-05 — #1759 ignore removed
+
+Main's `ef587984`, merged here, breaks long unbroken runs in drawn reader text, the memory trigger #1759 recorded. Remove the `@Ignore` from `copiesOfANoteAtTheReadersBound_areBounded` so its clipboard-bound assertions run again in both shared-test tiers. The #1760 pairing-touch ignore stays, tied to its unresolved native overlap.
