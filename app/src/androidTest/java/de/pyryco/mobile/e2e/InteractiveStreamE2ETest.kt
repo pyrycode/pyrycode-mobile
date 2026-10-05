@@ -2750,6 +2750,103 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /** #1642: a harness release-file holds Bash until Send now really reaches the daemon. */
+    @Test
+    fun interactiveTurn_sendQueuedNow_reachesRunningTurn() {
+        val args = InstrumentationRegistry.getArguments()
+        val release = twoHostArg("sendNowReleasePath")
+        require(release.matches(Regex("/[A-Za-z0-9_./-]+"))) { "invalid harness release path" }
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer =
+            SecondClientPeer(
+                PairedServer(
+                    serverId = serverId,
+                    token = twoHostArg(ARG_PEER_TOKEN),
+                    relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                    serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
+                ),
+            )
+        try {
+            awaitChannelList()
+            awaitConnected()
+            val before = hostConversationIds(serverId)
+            createChat()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+            }
+            val conversationId = newHostConversationId(serverId, before)
+            // Warm the session and its explicit capability reading before starting the held turn.
+            sendFromPhone(PING_PROMPT)
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            assertTrue("session must report mid-turn support", freshSettings(conversationId).capabilities?.midTurnInput == true)
+            val marker = "sendnow1642_" + System.currentTimeMillis()
+            val queuedPrompt = "In your final reply to this running turn include exactly this marker: $marker"
+            val command = "while [ ! -e '$release' ]; do sleep 0.1; done; printf hold_done"
+            val prompt =
+                "Run exactly this Bash command with timeout 120000, in the foreground, never background it: $command. " +
+                    "Wait for its result. Then reply with any marker supplied while the command was running."
+            runBlocking {
+                peer.open(CONNECT_TIMEOUT_MS)
+                peer.sendMessage(conversationId, prompt, THREAD_TIMEOUT_MS)
+            }
+            val allowed = mutableSetOf<String>()
+            val running =
+                allowPromptsUntil(
+                    peer,
+                    conversationId,
+                    REPLY_TIMEOUT_MS,
+                    "Bash did not remain running",
+                    allowed,
+                    frame = "tool_progress",
+                ) { it.type == "tool_progress" }
+            val turnId = requireNotNull(peer.field(running, "turn_id"))
+            assertTrue("held turn ended before queueing", peer.recorded(conversationId).none { it.type == "turn_end" })
+            sendFromPhone(queuedPrompt)
+            awaitQueuedRow(queuedPrompt)
+            val queued =
+                runBlocking {
+                    peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { q -> q.any { it.text == queuedPrompt } }
+                }.single { it.text == queuedPrompt }
+            val send = hasContentDescription("Send now") and hasAnyAncestor(queuedRow(queuedPrompt))
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(send).fetchSemanticsNodes().isNotEmpty() }
+            composeTestRule.onNode(send).performClick()
+            runBlocking { peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { q -> q.none { it.queuedMsgId == queued.queuedMsgId } } }
+            val ended =
+                allowPromptsUntil(
+                    peer,
+                    conversationId,
+                    REPLY_TIMEOUT_MS,
+                    "held turn did not finish with the marker",
+                    allowed,
+                ) { it.type == "turn_end" }
+            assertEquals(turnId, peer.field(ended, "turn_id"))
+            val frames = peer.recorded(conversationId)
+            assertEquals("Send now must stay in the running turn", 1, frames.count { it.type == "turn_end" })
+            val resultIndex = frames.indexOfLast { it.type == "tool_result" }
+            val messageIndex = frames.indexOfFirst { it.type == "message" && peer.field(it, "message_id") == queued.messageId }
+            assertTrue("delivered user push must follow Bash result", resultIndex >= 0 && messageIndex > resultIndex)
+            val finalText =
+                frames
+                    .filter { it.type == "assistant_delta" && peer.field(it, "turn_id") == turnId }
+                    .joinToString("") { peer.field(it, "text").orEmpty() }
+            assertTrue("the same turn's reply omitted the marker", marker in finalText)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(inThreadList(queuedPrompt), useUnmergedTree = true).fetchSemanticsNodes().size == 1 &&
+                    composeTestRule.onAllNodes(queuedRow(queuedPrompt)).fetchSemanticsNodes().isEmpty()
+            }
+            assertDrawnOnce(inThreadList(queuedPrompt))
+            val rows =
+                runBlocking { hostRepository().observeMessages(conversationId).first() }
+                    .filterIsInstance<ThreadItem.MessageItem>()
+            val toolIndex = rows.indexOfLast { it.message.role == Role.Tool }
+            val userIndex = rows.indexOfFirst { it.message.id == queued.messageId }
+            assertEquals(1, rows.count { it.message.id == queued.messageId })
+            assertTrue("phone placed the user row before Bash result", toolIndex >= 0 && userIndex > toolIndex)
+        } finally {
+            peer.close()
+        }
+    }
+
     /**
      * Phone replies, queued sends and drops stay consistent with another client (#849, rung 3). In a
      * conversation the [SecondClientPeer] starts, the peer's opening turn has claude run a shell command

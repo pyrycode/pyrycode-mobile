@@ -15,9 +15,24 @@ Split on 2026-09-05 to keep this document under the 50000-byte cap the docs guar
 - [Thread screen — previews and edge cases](thread-screen-previews-and-edge-cases.md) — `Previews`, `Edge cases / limitations`
 - [Thread screen — composer drafts and attachments](thread-screen-composer-drafts-and-attachments.md) — split out 2026-09-24: `Composer draft ownership`, `Composer pending attachments`
 
-The sections that stay here: `## What it does`, `## Wiring` (minus the two subsections above), `## Configuration`, `## Related`.
+The sections that stay here: `## What it does`, `Queued rows expose an independent **Send now** action before drop only when the current
+session's fresh capability report explicitly enables mid-turn input (#1642). Settings replacement,
+session change and owning-host disconnect invalidate stale support. A tap uses the destination's
+repository without confirmation or optimistic row movement; failure uses drop's existing inert
+treatment. Backlog removal does not establish delivered position: the later user-message push does,
+and a late tap can open the next turn. See [queue control and ordering](queued-backlog.md#sending-a-queued-entry-now-1642)
+and [row geometry/accessibility](queued-backlog-section.md#styling).
+
+## Wiring` (minus the two subsections above), `## Configuration`, `## Related`.
 
 ## What it does
+
+Opening or reopening a thread shows the current text of a streaming row created
+before opening immediately, even if it has never received `turn_end`. Appended
+text reveals progressively, and a reply first arriving after opening starts with
+no visible text. `ThreadScreen` remembers the phone-clock opening time per
+conversation and passes it to [MessageBubble](message-bubble.md#streaming-variant--progressive-reveal--blinking-caret-since-184).
+A fresh thread composition captures a new time, so arrived text does not replay.
 
 The thread follows [Figma `16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8).
 Its message list fills the screen area below the system status bar and above the IME,
@@ -88,7 +103,7 @@ host-local `conversationId`. The bundle also supplies connection state, live
 session events, the current permission modal and its answer/cancel callbacks, and
 Stop. See [destination dependencies](dependency-injection-host-conversation-source.md#destination-ownership).
 
-Messages, sessions, queue state, Send, Reset session, queue drop and existing
+Messages, sessions, queue state, Send, Reset session, queue drop, Send now and existing
 repository-backed actions stay with that owner. Switching compatibility selection
 while a thread or permission prompt is open cannot redirect reads or writes.
 Reconnect replaces the concrete repository beneath the same owner facade; an A

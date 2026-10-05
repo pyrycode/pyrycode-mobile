@@ -1,0 +1,19 @@
+<testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" tests="14" skipped="0" failures="0" errors="0" timestamp="2026-10-05T03:25:51.143Z" time="1.406">
+  <properties />
+  <testcase name="channel_menu_items_render_in_documented_order_when_expanded" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.134" />
+  <testcase name="tapping_channel_info_dismisses_then_dispatches_event" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.114" />
+  <testcase name="tapping_backgroundTasks_dismisses_then_opensPanel_withoutDispatchingAnEvent" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.067" />
+  <testcase name="discussion_menu_items_render_in_documented_order_when_expanded" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.106" />
+  <testcase name="channel_install_item_tracks_current_report" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.068" />
+  <testcase name="tapping_archive_dismisses_then_dispatches_event" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.1" />
+  <testcase name="tapping_save_as_channel_dismisses_then_dispatches_event" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.126" />
+  <testcase name="tapping_rename_dismisses_then_dispatches_event" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.096" />
+  <testcase name="mutation_actions_are_hidden_when_mutations_unsupported" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.122" />
+  <testcase name="actionRows_keepFullOrder_andButtonSemantics_inBothThemes" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.118" />
+  <testcase name="tapping_edit_in_a_channel_dismisses_then_dispatches_edit_channel" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.102" />
+  <testcase name="backgroundTasks_followsChannelInfo_inChannelsAndChats_withAndWithoutMutations" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.09" />
+  <testcase name="tapping_new_session_dismisses_then_dispatches_event" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.064" />
+  <testcase name="tapping_install_memory_plugin_dismisses_and_opens_docs_url" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.09" />
+  <system-out />
+  <system-err />
+</testsuite>

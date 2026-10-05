@@ -5,21 +5,21 @@ drop affordance, split from #429; folded into the thread by #782): while the act
 is busy and the daemon is buffering the user's turns, the thread renders each message still waiting to
 send as a de-emphasized row **at its own position in the list** — so the user knows what is queued
 instead of wondering whether the turns they fired during a long response were dropped — and lets the user
-**drop** any of them before they send.
+**drop** any of them before they send, or **Send now** when the current session supports it.
 
 Through #467 this lived in a dedicated foot-of-list section, `QueuedBacklog`, drawn below the message
 list. **#782 deleted that section.** The daemon parks a message and pushes a `queue_state` snapshot for
 it, but the phone had already drawn its own optimistic echo of that same send the moment
 `RemoteConversationRepository.sendMessage` issued the request — before the daemon's ack, since
 [#1355](https://github.com/pyrycode/pyrycode-mobile/issues/1355) moved the draw ahead of the await —
-interactive mode streams no user-message event back, so the echo is the phone's only record of its own
-send. The section drew the daemon's snapshot as a
+the later delivered user-message push can lag backlog removal. The section drew the daemon's snapshot as a
 *second*, near-identical row below the thread, one of the two claiming delivery it hadn't made. #782 joins
 the two at render time instead: `foldQueuedRows` (`ui/conversations/thread/ThreadRow.kt`) correlates the
 daemon's backlog against the thread's own rows on the key [#781](../codebase/781.md) carried through
 (`QueuedMessage.messageId` ↔ the echo's `Message.id` — `sendMessage` stamps both from the one minted
 `UUID`), and the list renders one row per message: the queue treatment **in place** when a send is still
-parked, gone the moment delivery removes it from the next snapshot.
+parked. Backlog removal clears the queued treatment; a busy own echo can then stay hidden
+until its delivered push establishes the thread position (#1642).
 
 **"In place" means wherever `items` already puts it, which is no longer tap-time position for this device's
 own echoes ([#1558](https://github.com/pyrycode/pyrycode-mobile/issues/1558)).** The fold cannot see which
@@ -103,11 +103,12 @@ fun QueuedMessageRow(
     text: String,
     onDrop: () -> Unit,
     modifier: Modifier = Modifier,
+    onSendNow: (() -> Unit)? = null,
 )
 ```
 
 `QueuedMessageRow` is the promoted, single render path for **both** kinds of queued row — matched and
-unmatched — so they cannot drift apart. It carries no id: `onDrop` is a payload-free trigger, bound by
+unmatched — so they cannot drift apart. It carries no id: `onDrop` and optional `onSendNow` are payload-free triggers, bound by
 the caller (`ThreadScreen`'s `onDrop = { onDropQueued(row.queuedMessageId) }`), so the row itself never
 holds a `Long` it could leak into a render, a key, or a log. The composable stays **stateless**: no
 `ViewModel` reference, no flow collection, no `remember`, no `LaunchedEffect`, no internal mutable state.
@@ -140,14 +141,22 @@ Each row mirrors the sent user bubble, de-emphasized:
   each drop affordance stays individually addressable (via `cd_thread_queued_drop`) in the unmerged
   tree.
 
-### Styling (design-owed)
+### Styling
 
-Unchanged by #782 — the visual only moved position, not shape. Queued entries deliberately read as **not
-yet sent**: the `userBubbleContainer` fill and shared user-bubble shape at `QUEUED_ALPHA = 0.6f`, plus the leading
-waiting glyph, distinguish a queued row from the full-opacity sent / streamed bubbles around it. The
-Figma `16-8` frame draws **no backlog treatment and no drop affordance** (unchanged since #461/#467); the
-visual follows the app's existing message-row idiom until the frame gains one — no contract change when
-it does, only a re-tune here.
+[Figma queued-row frame `696:4677`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=696-4677)
+supplies the waiting glyph, dimmed shared user bubble and trailing drop. #1642 extends that
+row with a low-emphasis auto-mirrored Send icon immediately before drop, without a separate
+Send now frame; the [design decision](../../../app/src/androidTest/assets/design-1220/README.md#approved-additions-without-a-separate-frame)
+records the reference. Both actions reserve 48 dp targets; `weight(1f, fill = false)` bounds
+the bubble so wrapped text cannot consume either control. Send now has its own accessible
+label “Send now”, independent callback and semantics node, just like drop.
+
+`ThreadScreen` supplies the optional callback only when `runConfig.midTurnInputSupported`
+is true; `ThreadViewModel.onSendQueuedNow` checks it again and binds the row id to the
+thread's owning conversation/repository. Unknown or false support preserves the existing
+row. See [capability freshness and delivery placement](queued-backlog.md#sending-a-queued-entry-now-1642).
+Shared Compose coverage proves true/false/unknown visibility, independent labels/callbacks,
+and pointer reachability for wrapped text at narrow width.
 
 The fill follows [MessageBubble's theme mapping](message-bubble.md#token-mapping-figma-roles-against-this-apps-two-schemes):
 `#003355` under the app root's static dark palette; isolated light and
@@ -186,7 +195,13 @@ LazyColumn(reverseLayout = true, ...) {
         // ... existing rowAlpha Box wrap ...
         when (row) {
             is ThreadRow.Delivered -> when (val item = row.item) { /* existing MessageBubble / SessionBoundaryDelimiter / UnrecognizedMessageRow dispatch */ }
-            is ThreadRow.Queued -> QueuedMessageRow(text = row.text, onDrop = { onDropQueued(row.queuedMessageId) })
+            is ThreadRow.Queued -> QueuedMessageRow(
+                text = row.text,
+                onDrop = { onDropQueued(row.queuedMessageId) },
+                onSendNow = if (state.runConfig.midTurnInputSupported) {
+                    { onSendQueuedNow(row.queuedMessageId) }
+                } else null,
+            )
         }
     }
 }
@@ -194,13 +209,13 @@ LazyColumn(reverseLayout = true, ...) {
 
 Why this is the right seam, and what it changes about the list the row now sits inside:
 
-- **A queued row sits exactly where its send would render once delivered.** It is no longer a
-  foot-of-list append — it continues the user's side of the conversation at the point it was fired,
-  which is what makes "draw once, in place" true rather than "draw once, somewhere else."
+- **The fold renders the upstream projection's position.** Busy own echoes read below the running
+  turn; idle echoes keep tap-time position. Send now's delivered push can establish a later slot,
+  after intervening tools, so the queued slot does not promise final delivery position.
 - **Key derivation is `ThreadRow.listKey(chronologicalIndex)`**, living beside the fold in `ThreadRow.kt`
   rather than in the screen, so the two halves of its uniqueness argument sit next to each other. A
   matched `Queued` row takes **the same key its `Delivered` form carries** (`"msg:$echoId"`) — the
-  property that leaves the row in place, unrecreated, when the next snapshot delivers it. An unmatched
+  identity that survives the queued-to-delivered treatment change; the projection owns movement. An unmatched
   row keys on its **position** (`"queued-row:$chronologicalIndex"`), deliberately not on
   `queued_msg_id` — see the crash this avoids in [§ The render-time join](#the-render-time-join-782)
   above. The two arms use distinct string-literal namespaces (`"msg:"` / `"boundary:"` /
@@ -278,15 +293,13 @@ matches nothing this device minted (renders after the thread rows, unmatched).
 - **String resources, changed by #782:** `thread_queued_backlog_label` ("Queued") and
   `cd_thread_queued_backlog` ("Queued messages waiting to send") are **deleted** — their only reader was
   the deleted section. `thread_queued_state_desc` ("Waiting to send") is **new**, the per-row
-  `stateDescription`. `cd_thread_queued_drop` ("Drop this queued message") is unchanged. No
+  `stateDescription`. `cd_thread_queued_drop` ("Drop this queued message") is unchanged. #1642 adds
+  `cd_thread_queued_send_now` ("Send now"). No
   server-authored text is placed in a string resource — `entry.text` / the echo's own content render only
   through the row's plain `Text`.
 
 ## Edge cases / limitations
 
-- **Visual is still design-owed.** Neither the queue treatment nor the drop affordance is drawn yet in
-  [`16-8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8); the visual follows the
-  app's M3 message-row idiom until the frame gains one.
 - **Long backlogs now compose lazily, not a regression to watch.** Pre-#782 the section was a wrap-content
   `Column`, so every queued entry composed regardless of scroll position. Moving the row into the
   `LazyColumn` (§ Position in the list) means only visible queued rows compose now — a side effect of the
@@ -298,7 +311,7 @@ matches nothing this device minted (renders after the thread rows, unmatched).
   thread row) renders instead of the empty-state prompt (§ Position in the list). Pre-#782 this rare case
   showed the empty-state prompt *above* the section; #782 closes that gap as part of the same slice.
 - **No animation.** Unchanged — the queue treatment appears/disappears with the row's snapshot-driven
-  state, not a transition. A fade is a design-owed nicety deferred with the Figma frame.
+  state, not a transition. No fade is specified by the queued-row frame.
 - **Stale-on-resume (known, accepted), unchanged.** Like `items`, the upstream `queuedMessages`
   (`stateIn(WhileSubscribed(5_000))`) can momentarily read a stale value on re-foreground after a long
   background. The data layer is connection-scoped, so a reconnect re-derives the backlog from the next

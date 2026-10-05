@@ -32,6 +32,17 @@ class MessagePayloadTest {
     ): Envelope = Envelope(id = 1, type = "message", ts = ts, payload = payload)
 
     @Test
+    fun deliveryKind_trueMeansSendNowAndOrdinaryOrOlderMessagesDefaultFalse() {
+        for ((field, expected) in listOf("" to false, ",\"sent_now\":false" to false, ",\"sent_now\":true" to true)) {
+            val payload =
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"c1","message_id":"m1","role":"user","text":"hello"$field}""",
+                )
+            assertEquals(expected, MobileJson.decodeFromJsonElement<MessagePayloadDto>(payload).sentNow)
+        }
+    }
+
+    @Test
     fun userPayload_mapsEveryFieldWithCallerSuppliedSessionId() {
         val fixture = """{"conversation_id":"c1","message_id":"m1","role":"user","text":"hello"}"""
         val element = MobileJson.parseToJsonElement(fixture)

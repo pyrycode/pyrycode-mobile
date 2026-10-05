@@ -35,6 +35,40 @@ def live_report(count):
     return ET.tostring(root, encoding="unicode")
 
 
+class DevAgentsAuthTest(unittest.TestCase):
+    def test_fetches_login_only_into_child_environment(self):
+        parent = {"OP_SERVICE_ACCOUNT_TOKEN": "restricted-fixture", "OP_SESSION_personal": "session-fixture", "PATH": "/bin"}
+        with patch.object(gate.subprocess, "run", return_value=Mock(returncode=0, stdout="login-fixture\n")) as run:
+            child = gate.live_claude_environment(parent)
+        self.assertEqual(child["CLAUDE_CODE_OAUTH_TOKEN"], "login-fixture")
+        self.assertNotIn("OP_SERVICE_ACCOUNT_TOKEN", child)
+        self.assertNotIn("OP_SESSION_personal", child)
+        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", parent)
+        self.assertEqual(run.call_args.kwargs["env"]["OP_SERVICE_ACCOUNT_TOKEN"], "restricted-fixture")
+        self.assertNotIn("OP_SESSION_personal", run.call_args.kwargs["env"])
+        self.assertNotIn("restricted-fixture", str(run.call_args.args))
+
+    def test_existing_login_needs_no_account_fetch(self):
+        with patch.object(gate.subprocess, "run") as run:
+            child = gate.live_claude_environment({"CLAUDE_CODE_OAUTH_TOKEN": "login-fixture", "OP_SERVICE_ACCOUNT_TOKEN": "restricted-fixture"})
+        run.assert_not_called()
+        self.assertNotIn("OP_SERVICE_ACCOUNT_TOKEN", child)
+
+    def test_no_account_leaves_interactive_login_available(self):
+        with patch.object(gate.subprocess, "run") as run:
+            self.assertEqual(gate.live_claude_environment({"PATH": "/bin"}), {"PATH": "/bin"})
+        run.assert_not_called()
+
+    def test_missing_item_empty_login_missing_cli_and_timeout_are_sanitized_environment_errors(self):
+        for result in [Mock(returncode=1, stdout="", stderr="restricted-fixture login-fixture"), Mock(returncode=0, stdout=""), FileNotFoundError("restricted-fixture"), subprocess.TimeoutExpired("login-fixture", 30)]:
+            with self.subTest(result=type(result).__name__), patch.object(gate.subprocess, "run", **({"side_effect": result} if isinstance(result, Exception) else {"return_value": result})):
+                with self.assertRaises(gate.ClaudeEnvironmentError) as raised:
+                    gate.live_claude_environment({"OP_SERVICE_ACCOUNT_TOKEN": "restricted-fixture"})
+                self.assertNotIn("restricted-fixture", str(raised.exception))
+                self.assertNotIn("login-fixture", str(raised.exception))
+                self.assertIn("Dev Agents", str(raised.exception))
+
+
 class AndroidGateTest(unittest.TestCase):
     def setUp(self):
         # The APK build before the device hold has its own tests; elsewhere it succeeds without running.

@@ -24,7 +24,7 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 E2E_PACKAGE = "de.pyryco.mobile.e2e"
-SCENARIOS = ("ping", "stream", "spinner", "tool", "tool-failed", "tool-progress", "reconnect", "offline-retry", "replay-order", "tool-then-text", "refusal", "mcp-failed", "context-overflow")
+SCENARIOS = ("send-now", "ping", "stream", "spinner", "tool", "tool-failed", "tool-progress", "reconnect", "offline-retry", "replay-order", "tool-then-text", "refusal", "mcp-failed", "context-overflow")
 
 def curated_live_methods():
     """The method names on scripts/e2e-emulator.sh's LIVE curated list, in list order."""
@@ -53,6 +53,29 @@ def parse_live_tests(value):
         if not name.startswith(prefix) or not method.isidentifier():
             return None
     return list(dict.fromkeys(names)) or None
+
+
+class ClaudeEnvironmentError(RuntimeError):
+    """A missing live-test credential is setup failure, not a test verdict."""
+
+
+def live_claude_environment(parent):
+    """Fetch the login in memory, strip account credentials from test children."""
+    env = {key: value for key, value in parent.items() if not key.startswith("OP_") and key != "PYRY_DEV_AGENTS_TOKEN"}
+    token = parent.get("OP_SERVICE_ACCOUNT_TOKEN")
+    if env.get("CLAUDE_CODE_OAUTH_TOKEN") or not token:
+        return env
+    op_env = {**env, "OP_SERVICE_ACCOUNT_TOKEN": token, "OP_BIOMETRIC_UNLOCK_ENABLED": "false"}
+    try:
+        result = subprocess.run(
+            ["op", "read", "--no-newline", "op://Dev agents/Claude long term token/password"],
+            env=op_env, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        raise ClaudeEnvironmentError("Dev Agents login lookup unavailable. Check the 1Password CLI and account access.") from None
+    if result.returncode or not result.stdout.strip():
+        raise ClaudeEnvironmentError("Dev Agents Claude login unavailable. Add or check the Claude long term token item in the Dev agents vault.")
+    env["CLAUDE_CODE_OAUTH_TOKEN"] = result.stdout.rstrip("\n")
+    return env
 
 
 def claude_authenticated(env):
@@ -547,6 +570,11 @@ def main():
                 env["LIVE_TESTS"] = ",".join(live_tests)
                 minimum = 1
     if args.mode == "live":
+        try:
+            env = live_claude_environment(env)
+        except ClaudeEnvironmentError as error:
+            print(f"Android gate: environment error: {error}", file=sys.stderr)
+            return 2
         # Missing login is an environment failure, not a suite of product regressions.
         if not claude_authenticated(env):
             print("Android gate: Claude authentication unavailable. Run through the dispatcher's 1Password environment or sign in to Claude.", file=sys.stderr)
@@ -606,7 +634,8 @@ def run_on_device(command, env, run_dir, device, minimum, expected_class):
         xml, passed, executed = combine_reports(paths, expected_class)
         (run_dir / "dispatcher.xml").write_text(xml + "\n")
         print(xml)
-        print(f"Android gate: {executed} executed; process exit {outcome.returncode}", file=sys.stderr)
+        failed_count = len(ET.fromstring(xml).findall(".//failure"))
+        print(f"Android gate: {executed} executed; {executed - failed_count} passed; {failed_count} failed; process exit {outcome.returncode}", file=sys.stderr)
         if executed < minimum:
             print(f"Android gate failed: Only {executed} Android tests executed; "
                   f"required at least {minimum}", file=sys.stderr)

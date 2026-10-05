@@ -4,6 +4,24 @@ Test coverage and fixture guidance for [MessageBubble](message-bubble.md).
 
 ## Testing
 
+`ThreadStreamingRevealTest` pauses the Compose clock through the real
+`ThreadScreen`: pre-open text is immediate, appended text retains its prefix and
+reveals progressively, and reopening before catch-up shows all arrived text.
+First arrival goes through `ThreadFold` with both empty and historical projections;
+a same-key repository replacement must retain partial reveal. A directly built,
+correctly timestamped repository fixture misses the live-versus-projection race.
+Use enough words to remain partially revealed at the 160 ms checkpoint under
+\#1754's word cadence; shortening the checkpoint to 64 ms did not allow reliable
+first-arrival layout. Keep prefix, progress and incomplete-text assertions together.
+
+Standalone bubble fixtures omit `threadOpenedAt` and retain zero-start behavior.
+For first-arrival timestamp retention and realistic follow fixtures, see
+[thread testing](thread-screen-testing.md#testing). Reopen-specific real-Claude
+`InteractiveStreamE2ETest` coverage and its held-stream
+`DeterministicInteractiveStreamE2ETest` twin remain pending in
+[#1762](https://github.com/pyrycode/pyrycode-mobile/issues/1762); existing full-suite
+live execution does not establish those reopen observations.
+
 `app/src/test/.../components/StreamingRevealStepTest.kt` covers the pure
 `nextStreamingRevealLength` helper: a short reply advances one word per 33 ms
 step; spaces, tabs, newlines and Unicode whitespace are preserved; a final word

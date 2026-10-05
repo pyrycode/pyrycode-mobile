@@ -2,15 +2,29 @@
 
 The top bar's overflow menu on [the markdown reader](markdown-reader-screen.md) — Copy as markdown/plain text/HTML, Refresh, Open in another app (since #1068) and Save to device (since #1069), plus their logging. Split out of the parent under the docs guard's size cap (#1533).
 
-The top bar's overflow button (`Icons.Filled.MoreVert`, `cd_more_actions`, the same 48dp touch target and bar
-metrics as `ThreadTopAppBar`'s own) opens a plain M3 `DropdownMenu` built the way `ThreadOverflowMenu` builds
-the thread's menu — the operator decided (2026-09-24) it reuses that dropdown rather than a second style.
-Figma: `Options overlay` (`533:1958`). Six items, each dismissing the menu before it acts: **Copy as
-markdown**, **Copy as plain text**, **Copy as HTML**, **Refresh**, **Open in another app** (since #1068,
-[below](#open-in-another-app-since-1068)), **Save to device** (since #1069,
-[below](#save-to-device-since-1069)). The menu shows only once the reader has content — the bar draws
-nothing until the first read finishes, and a failed first read never opens the reader at all (see [What it
-does](markdown-reader-screen.md#what-it-does)).
+## Presentation
+
+The top bar's overflow button (`Icons.Filled.MoreVert`, `cd_more_actions`, 48dp touch target)
+opens the shared [Options overlay](options-overlay.md) in Actions mode since #1667,
+following Juhana's 2026-10-03 decision. Figma `533:1958` replaces the earlier `675:5883`
+reference; there is no separate reader-menu frame. Its 1 × 1 screenshot cannot establish
+an exact open-menu pixel match, so the existing composer Actions component is the appearance reference.
+The reader uses the shared light/dark surface, bodySmall labels and row insets, with no
+selected-row indicator or subset caption.
+
+The reader mounts the overlay last in its full-size layer, above content, chrome and snackbar.
+Live button window bounds are translated by that layer's window origin. Below placement starts
+4dp below the button, aligns at `anchor.left - 12dp`, clamps to 8dp horizontal edges and scrolls
+within the space below. Remembered visibility survives ordinary recomposition and follows the
+live anchor; configuration changes may close it. `markdown-reader-menu` tags the actual column.
+Outside taps and system Back dismiss without navigation or activating underlying controls or links.
+
+Six resource-labelled rows retain this order, each dismissing before invoking its current callback:
+**Copy as Markdown**, **Copy as plain text**, **Copy as HTML**, **Refresh**, **Open in another app**
+([below](#open-in-another-app-since-1068)), **Save to device**
+([below](#save-to-device-since-1069)). Copies, open and save use the currently displayed document,
+including after Refresh. Refresh's success, failure and in-flight behavior is unchanged.
+The menu is available only after the first read succeeds; a failed first read never opens the reader.
 
 ## Copy
 

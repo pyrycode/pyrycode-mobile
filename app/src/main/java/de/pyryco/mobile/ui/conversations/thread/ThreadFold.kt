@@ -5,6 +5,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.coroutines.flow.map
+import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 
 // ---- #337: live assistant-delta accumulation (pure) ---------------------------------------------
@@ -19,6 +20,8 @@ internal sealed interface ThreadInput {
     /** One decoded live structured event from `liveSessionEvents` (#385). */
     data class Live(
         val event: LiveSessionEvent,
+        /** Phone-clock arrival, captured before reduction so the fold stays pure. */
+        val receivedAt: Instant = Clock.System.now(),
     ) : ThreadInput
 }
 
@@ -33,6 +36,8 @@ internal data class StreamingTurn(
     val ended: Boolean,
     /** Assistant [ThreadItem.MessageItem] ids present when the turn started — the finalise oracle. */
     val baselineAssistantIds: Set<String>,
+    /** First delta arrival; preserved across appends and used by streaming reveal initialization. */
+    val startedAt: Instant,
 )
 
 /** The fold accumulator: the latest finished projection plus the current [StreamingTurn]. */
@@ -65,16 +70,17 @@ internal fun ThreadFold.reduce(
                     }
             ThreadFold(finished = input.items, stream = if (turnPersisted) null else stream)
         }
-        is ThreadInput.Live -> reduceLive(input.event, conversationId)
+        is ThreadInput.Live -> reduceLive(input.event, conversationId, input.receivedAt)
     }
 
 private fun ThreadFold.reduceLive(
     event: LiveSessionEvent,
     conversationId: String,
+    receivedAt: Instant,
 ): ThreadFold {
     if (event.conversationId != conversationId) return this
     return when (event) {
-        is LiveSessionEvent.AssistantDelta -> reduceDelta(event)
+        is LiveSessionEvent.AssistantDelta -> reduceDelta(event, receivedAt)
         is LiveSessionEvent.TurnEnd -> {
             val current = stream
             if (current != null && current.turnId == event.turnId) {
@@ -91,7 +97,10 @@ private fun ThreadFold.reduceLive(
     }
 }
 
-private fun ThreadFold.reduceDelta(delta: LiveSessionEvent.AssistantDelta): ThreadFold {
+private fun ThreadFold.reduceDelta(
+    delta: LiveSessionEvent.AssistantDelta,
+    receivedAt: Instant,
+): ThreadFold {
     val current = stream
     return when {
         // A new turn (or first delta) — supersedes any unfinalised prior turn.
@@ -104,6 +113,7 @@ private fun ThreadFold.reduceDelta(delta: LiveSessionEvent.AssistantDelta): Thre
                         lastSeq = delta.seq,
                         ended = false,
                         baselineAssistantIds = finished.assistantIds(),
+                        startedAt = receivedAt,
                     ),
             )
         // In-order delta for the current turn — append.
@@ -134,7 +144,7 @@ internal fun ThreadFold.render(): List<ThreadItem> {
             sessionId = lastMessage?.message?.sessionId.orEmpty(),
             role = Role.Assistant,
             content = turn.text,
-            timestamp = lastMessage?.message?.timestamp ?: Instant.fromEpochMilliseconds(0),
+            timestamp = turn.startedAt,
             isStreaming = !turn.ended,
         )
     return finished + ThreadItem.MessageItem(synthetic)

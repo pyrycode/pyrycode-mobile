@@ -221,6 +221,7 @@ class StableConversationRepositoryTest {
             assertTrue(runCatching { facade.promote("c1", "Name", null) }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.requestScreenSnapshot("c1") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.dropQueuedMessage("c1", 42L) }.exceptionOrNull() is IllegalStateException)
+            assertTrue(runCatching { facade.sendQueuedNow("c1", 42L) }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.requestHistory("c1") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.requestSystemPrompt("c1") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.setSystemPrompt("c1", "x") }.exceptionOrNull() is IllegalStateException)
@@ -371,6 +372,7 @@ class StableConversationRepositoryTest {
             val sendResult = facade.sendMessage("c1", "hi")
             val snapshotResult = facade.requestScreenSnapshot("c9")
             facade.dropQueuedMessage("c7", 99L)
+            facade.sendQueuedNow("c7", 98L)
             // #623: the cursor and limit must arrive at the live repo untouched — an opaque cursor the
             // facade re-encoded or a limit it "normalized" would break the walk one layer down.
             val historyResult = facade.requestHistory("c8", cursor = "OPAQUE==", limit = 25)
@@ -380,6 +382,7 @@ class StableConversationRepositoryTest {
             assertEquals(listOf("c1" to "hi"), repoA.sendMessageCalls)
             assertEquals(listOf("c9"), repoA.requestScreenSnapshotCalls)
             assertEquals(listOf("c7" to 99L), repoA.dropQueuedMessageCalls)
+            assertEquals(listOf("c7" to 98L), repoA.sendQueuedNowCalls)
             assertEquals(listOf(Triple("c8", "OPAQUE==", 25)), repoA.requestHistoryCalls)
             assertSame(created, createResult)
             assertSame(channel, channelResult)
@@ -1118,6 +1121,7 @@ class StableConversationRepositoryTest {
         val createChannelCalls = mutableListOf<Pair<String, String?>>()
         val sendMessageCalls = mutableListOf<Pair<String, String>>()
         val requestScreenSnapshotCalls = mutableListOf<String>()
+        val sendQueuedNowCalls = mutableListOf<Pair<String, Long>>()
         val dropQueuedMessageCalls = mutableListOf<Pair<String, Long>>()
         val requestHistoryCalls = mutableListOf<Triple<String, String, Int>>()
 
@@ -1362,6 +1366,13 @@ class StableConversationRepositoryTest {
         override suspend fun requestScreenSnapshot(conversationId: String): String {
             requestScreenSnapshotCalls += conversationId
             return requestScreenSnapshotResult
+        }
+
+        override suspend fun sendQueuedNow(
+            conversationId: String,
+            queuedMessageId: Long,
+        ) {
+            sendQueuedNowCalls += conversationId to queuedMessageId
         }
 
         override suspend fun dropQueuedMessage(

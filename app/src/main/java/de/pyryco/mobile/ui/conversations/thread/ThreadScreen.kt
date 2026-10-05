@@ -236,6 +236,7 @@ fun ThreadScreen(
     // #467: wired by MainActivity → vm::onDropQueued (passes QueuedMessage.id). Since #782 it is bound
     // per row by the fold rather than handed to a foot-of-list section.
     onDropQueued: (Long) -> Unit = {},
+    onSendQueuedNow: (Long) -> Unit = {},
     // #1352: the reader pulled toward older messages at the thread's oldest end — ask for the next page
     // back. Wired by MainActivity → vm::onDemandOlderHistory, which decides whether the ask is sent.
     onDemandOlderHistory: () -> Unit = {},
@@ -299,6 +300,7 @@ fun ThreadScreen(
     // MainActivity → vm::onOpenMarkdownLink; a failed read reuses [markdownOpenFailures].
     onOpenMarkdownLink: (String) -> Unit = {},
 ) {
+    val threadOpenedAt = remember(state.conversationId) { Clock.System.now() }
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
     val openRequest = modalState as? ModalUiState.Open
@@ -770,6 +772,7 @@ fun ThreadScreen(
                                                 is ThreadItem.MessageItem ->
                                                     MessageBubble(
                                                         message = item.message,
+                                                        threadOpenedAt = threadOpenedAt,
                                                         toolNestingDepth = toolDepths[item.message.id] ?: 0,
                                                         joinsNextToolRow = rows.getOrNull(chronologicalIndex + 1).isToolRow(),
                                                         attachmentStates = attachmentStates,
@@ -823,6 +826,12 @@ fun ThreadScreen(
                                             QueuedMessageRow(
                                                 text = row.text,
                                                 onDrop = { onDropQueued(row.queuedMessageId) },
+                                                onSendNow =
+                                                    if (state.runConfig.midTurnInputSupported) {
+                                                        { onSendQueuedNow(row.queuedMessageId) }
+                                                    } else {
+                                                        null
+                                                    },
                                             )
                                         is ThreadRow.ToolRun ->
                                             ToolRunRow(
