@@ -56,6 +56,33 @@ or merge. Record the scenario, app/build version, daemon compatibility and execu
 test count. XML evidence is required; a zero exit code with every scenario skipped
 is not a passing proof.
 
+The earlier-Other focus evidence (#1797) separates test execution from emulator health.
+`E2eInstrumentationRunner.quietSystem` (shipped at `186c399b`) disables emulator Bluetooth,
+hides system crash dialogs during instrumentation and closes existing system dialogs;
+it restores the dialog setting on finish and leaves Bluetooth off. It does not prevent every
+Bluetooth service crash. The unchanged
+`QuestionBatchModalTest#ime_keeps_an_earlier_other_clear_of_chrome_on_open_dismiss_and_reopen`
+passed separately at `de584470` on `pixel2Api33Atd`, one shard with disabled animations:
+**1 executed, 1 passed, 0 failed, 0 errors, 0 skipped**, exit 0
+([retained XML and command/revision metadata](../../../app/src/androidTest/assets/focus-1797/README.md)).
+At `b4875016d6da445064d5d6b8e9b96655b24e724f`, the recorded dispatcher command was
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui`, exit 0.
+Fresh `build/dispatcher-tests/ui-wrsrro5i/dispatcher.xml` and
+`0-TEST-pixel2Api33Atd_0-_app-.xml` list 184 cases: **183 executed, 183 passed,
+0 failed, 0 errors, 1 skipped** (`RenameDialogCaptureTest#renameAtFigmaViewport`).
+The exact earlier-Other method is present and passed in 1.79 s with no failure/error/skipped
+child. This is fresh sweep execution following the builder's pending handoff. Its per-test
+logcat recorded a native `com.android.bluetooth` SIGABRT while the method passed; the verifier
+found no Pyrycode app crash, ANR or focus-failure markers. Preserve crash evidence even when
+system dialogs are hidden, and retain the initial focus and real-inset assertions.
+
+The [verifier record](https://github.com/pyrycode/pyrycode-mobile/pull/1800#issuecomment-5990798074)
+links that sweep to the revision and retains XML, command/exit metadata, gate log and named-method
+logcat together under `/tmp/verifier-1800/`. The requested `UI_GATE_FULL=1` setting is absent
+from the recorded command and remains unverified. Counted XML proves the sweep ran, but does
+not prove that environment setting; keep this acceptance-evidence gap visible rather than
+claiming the exact requested command ran. No live-Claude scenario changed.
+
 For a multi-operation live scenario, name each failing wait before attributing it to an older
 repair. The question-answer scenario's `QuestionAnswerStage` / `questionAnswerStep` diagnostic
 adds fixed operation labels and lazily read, content-free peer link state to coroutine and Compose

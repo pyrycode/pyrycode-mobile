@@ -373,6 +373,25 @@ question rows).
   rejection), and confirming the final release restores the original policy, including one starting from an
   already-protected window. The fresh focused device run recorded 11 executed tests, 0 failures/errors/skips
   (`app/src/androidTest/assets/question-1305/rework-api33-focused.xml`).
+- **Earlier Other, real IME:**
+  `QuestionBatchModalTest#ime_keeps_an_earlier_other_clear_of_chrome_on_open_dismiss_and_reopen`
+  requires initial host-window focus, an earlier Other field wholly obscured by the header,
+  a focused retained draft, positive real IME inset, and field clearance between header and
+  composer through keyboard open/dismiss/reopen. Its initial focus timeout reproduced before
+  scroll/IME assertions on the #1615 merge base; that failure did not establish a rendering
+  regression. With the shipped `E2eInstrumentationRunner.quietSystem` mitigation at `186c399b`,
+  the unchanged method passed a separate focused `pixel2Api33Atd` run at `de584470`:
+  **1 executed, 1 passed, 0 failed, 0 errors, 0 skipped**, exit 0, one shard and disabled animations
+  ([XML](../../../app/src/androidTest/assets/focus-1797/focused-api33.xml),
+  [command/revision record](../../../app/src/androidTest/assets/focus-1797/focused-run.json)).
+  The dispatcher sweep at `b4875016` also executed and passed this method (1.79 s):
+  **183 executed, 183 passed, 0 failed, 0 errors, 1 skipped**; the unrelated skip was
+  `RenameDialogCaptureTest#renameAtFigmaViewport`. Its logcat still recorded a native emulator
+  Bluetooth SIGABRT, with no Pyrycode app crash, ANR or focus-failure markers found. Credit the
+  mitigation for permitting these assertions to complete, without claiming Bluetooth crashes
+  were eliminated. See [verification evidence](development-verification-emulator-evidence.md#emulator-and-real-evidence)
+  for the recorded sweep command and its unverified force flag, and the
+  [verifier record](https://github.com/pyrycode/pyrycode-mobile/pull/1800#issuecomment-5990798074).
 - **`QuestionBatchModalCaptureTest`** (androidTest): adapted from the dialog's own secure-window bitmap
   capture to the activity view with `FLAG_SECURE` still set — normal 412×892, compact 320×700 at 150% text,
   and a real keyboard open. Static fixture text only; captures at

@@ -215,5 +215,9 @@ names whatever the teardown left focused (such as the launcher), not the test
 activity. A system dialog holding focus over the test is still captured. A
 crash dialog (`Application Error: …`) shows under `focus`, not `anr` — the
 first real record (#1131) found one blocking `com.android.bluetooth`, not an
-ANR. This ticket records evidence only; no mitigation (dismissal, retry) is
-implemented against it.
+ANR. The listener remains diagnostic. Separately, `E2eInstrumentationRunner.quietSystem`
+now disables emulator Bluetooth, hides system crash dialogs for the run and closes existing
+system dialogs (shipped at `186c399b`). It restores the dialog setting on finish and leaves
+Bluetooth off. The [earlier-Other evidence](development-verification-emulator-evidence.md#emulator-and-real-evidence)
+shows the unchanged IME method passing even during a native Bluetooth crash; this mitigation
+does not establish that the emulator service itself is repaired.
