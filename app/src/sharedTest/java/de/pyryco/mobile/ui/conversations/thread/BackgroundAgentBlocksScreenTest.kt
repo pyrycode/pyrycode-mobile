@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
@@ -77,10 +78,11 @@ class BackgroundAgentBlocksScreenTest {
     private fun mount(
         items: List<ThreadItem>,
         collapsed: Boolean = false,
-    ) {
+    ): StateRestorationTester {
         state = state.copy(items = items)
         collapse = collapsed
-        compose.setContent {
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent {
             PyrycodeMobileTheme {
                 ThreadScreen(
                     state = state,
@@ -92,6 +94,7 @@ class BackgroundAgentBlocksScreenTest {
                 )
             }
         }
+        return restoration
     }
 
     private fun list() = compose.onNode(hasScrollToIndexAction())
@@ -145,6 +148,35 @@ class BackgroundAgentBlocksScreenTest {
         compose.onNodeWithText("Read", useUnmergedTree = true).assertIsDisplayed()
         compose.onNodeWithText("Using tools: 2", substring = true).performClick()
         compose.runOnIdle { state = state.copy(items = state.items + user("Later")) }
+        compose.onAllNodesWithText("Agent").assertCountEquals(0)
+    }
+
+    @Test fun pendingLoneAgentExpansionSurvivesRestorationBeforeItsChildArrives() {
+        val restoration = mount(listOf(tool("outside", "Grep"), tool("a", "Agent"), user("Newer")), true)
+        compose.onNodeWithText("Using tools: 2", substring = true).performClick()
+        compose.runOnIdle { state = state.copy(items = state.items + launch()) }
+        compose.onNodeWithText("Agent started, still working").assertIsDisplayed()
+
+        restoration.emulateSavedInstanceStateRestore()
+        compose.runOnIdle { state = state.copy(items = state.items + tool("child", "Read", "a")) }
+        compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("Read", useUnmergedTree = true).assertIsDisplayed()
+
+        // Once spent, restored intent must not reopen a run the reader deliberately closes.
+        compose.onNodeWithText("Using tools: 2", substring = true).performClick()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.runOnIdle { state = state.copy(items = state.items + user("Later")) }
+        compose.onAllNodesWithText("Agent").assertCountEquals(0)
+    }
+
+    @Test fun pendingLoneAgentExpansionDoesNotLeakToAnotherConversation() {
+        mount(listOf(tool("outside", "Grep"), tool("a", "Agent"), user("Newer")), true)
+        compose.onNodeWithText("Using tools: 2", substring = true).performClick()
+        compose.runOnIdle { state = state.copy(items = state.items + launch()) }
+        compose.onNodeWithText("Agent started, still working").assertIsDisplayed()
+        compose.runOnIdle { state = state.copy(conversationId = "another") }
+        compose.runOnIdle { state = state.copy(items = state.items + tool("child", "Read", "a")) }
+        compose.onNodeWithText("Using tools: 2", substring = true).assertIsDisplayed()
         compose.onAllNodesWithText("Agent").assertCountEquals(0)
     }
 

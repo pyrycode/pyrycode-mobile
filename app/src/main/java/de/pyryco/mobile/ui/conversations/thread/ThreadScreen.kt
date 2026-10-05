@@ -579,9 +579,9 @@ fun ThreadScreen(
                 // #1635: with the setting on, each run of adjacent tool rows draws as one header the reader
                 // can open. Which runs are open is UI-local, keyed by each run's first row, and saveable so a
                 // rotation or back-stack return keeps them open, as the tool rows inside keep theirs.
-                var expandedRuns by rememberSaveable { mutableStateOf(emptySet<String>()) }
+                var expandedRuns by rememberSaveable(state.conversationId) { mutableStateOf(emptySet<String>()) }
                 var previousAgentRows by remember(state.conversationId) { mutableStateOf(agentRows) }
-                var pendingOpenTools by remember(state.conversationId) { mutableStateOf(emptySet<String>()) }
+                var pendingOpenTools by rememberSaveable(state.conversationId) { mutableStateOf(emptySet<String>()) }
                 // A late join or parent backfill moves tools between runs. Carry an open run's expansion with them.
                 val carried =
                     remember(agentRows, previousAgentRows, expandedRuns, pendingOpenTools) {
