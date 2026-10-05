@@ -28,6 +28,28 @@ The third landed in [#318](../codebase/318.md): `ConversationResponseDto` (`Conv
 - **One DTO models multiple `type`-strings when they share a shape.** `conversation_created` and `conversation_updated` carry the *identical* field set (`id`, `is_promoted`, `name?`, `cwd`, `last_used_at`, `workspace_label?` since #720; server SSOT `conversations_write.go`, #274) and differ only in `cwd`↔`name` key order — and kotlinx decodes by name, not position — so one `ConversationResponseDto` decodes both losslessly. The `_created`/`_updated` distinction is a `type`-string routing concern at the `Envelope.type` layer, not a shape concern at decode. It's a **bare object** (like #317, unlike #316's wrapper) and carries no `last_message_ts` — exactly one timestamp, validated at decode like #316 (so the mapper is a total, throw-free field copy — the #316 posture, not #317's map-time throw). It reuses #316's wire-absent-field rule **verbatim** (four list-tier placeholders, cross-referenced, no shared helper extracted — deferred until a third consumer of *that rule* appears).
 - **A single-class payload file is named after its class.** ktlint `standard:filename` (spotless) forces a file with exactly one top-level class to be named after it, so the file is `ConversationResponseDto.kt`, **not** the spec's proposed `ConversationResponsePayload.kt`. The siblings escape only because each holds two declarations (#316: wrapper + row DTO; #317: DTO + `WireRole` enum). Name future single-DTO payload files after the DTO. See [[ktlint-filename-rule-single-class]].
 
+### Background-task payloads (#1782)
+
+`BackgroundTaskPayloads.kt` groups the scalar lifecycle, roster and progress DTOs used by the
+background-task projection. `BackgroundTaskRowDto.toolCallId` decodes the additive roster string
+`tool_call_id` with a default of `""` for older daemons; a present wrong-typed value still fails decode.
+The projection normalizes an empty join to unknown. A roster can therefore supply the launching tool
+join before any started frame, while missing/empty roster joins cannot erase a known join.
+
+A known join no longer proves that a started frame supplied the description. `BackgroundTaskProjection`
+tracks started origin separately per conversation/task: once started arrives, its description, type
+and truncation report take precedence over the roster row, and its known join wins. If the started join
+is unknown, a roster can fill it. Both roster-before-start and start-before-roster preserve update,
+progress and finish slots under the existing panel rules.
+
+The panel roster remains replacement truth: omitted tasks and their pending slots, started-origin
+tracking and finished marks are pruned; disappearance is not completion. Retained
+[`BackgroundTaskLifecycle` evidence](remote-conversation-repository-reads-and-thread-store-history-paging.md#history-pages-fold-into-the-same-thread-645)
+is separate, survives empty/replacing rosters and comes only from started and terminal updated entries.
+Live and history lifecycle handling both require `interactive`; the additive roster field adds no
+capability. Task descriptions, patches and summaries remain inert text, never evaluated or logged;
+malformed decode exceptions are discarded unread. The daemon protocol remains the wire SSOT.
+
 ### Workspace-label pushes (#721): a new DTO, and `conversation_updated`'s second producer
 
 \#720's `workspace_label` field sits on the DTOs; #721 is what makes a *live* label change reach the phone, by decoding the two frames daemon #2208/#2209/#2210 ship. Wire SSOT: `../pyrycode/docs/protocol-mobile.md` § Renaming a workspace.
