@@ -255,9 +255,11 @@ class ChannelListScreenTest {
             ),
         )
 
-        val first = composeTestRule.onNode(hasText("First channel"), useUnmergedTree = true).getUnclippedBoundsInRoot()
-        val second = composeTestRule.onNode(hasText("Second channel"), useUnmergedTree = true).getUnclippedBoundsInRoot()
-        assertEquals(4.dp, second.top - first.bottom)
+        // The rows' own bands, not their text: a text line is shorter than its 24 dp band, so the gap between two
+        // names also counts the band padding around each, which real fonts make visible on the device.
+        val first = composeTestRule.onNode(hasText("First channel")).getUnclippedBoundsInRoot()
+        val second = composeTestRule.onNode(hasText("Second channel")).getUnclippedBoundsInRoot()
+        assertDpEquals(4.dp, second.top - first.bottom)
     }
 
     @Test
