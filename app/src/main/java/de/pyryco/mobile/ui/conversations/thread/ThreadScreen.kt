@@ -236,6 +236,7 @@ fun ThreadScreen(
     // #467: wired by MainActivity → vm::onDropQueued (passes QueuedMessage.id). Since #782 it is bound
     // per row by the fold rather than handed to a foot-of-list section.
     onDropQueued: (Long) -> Unit = {},
+    onSendQueuedNow: (Long) -> Unit = {},
     // #1352: the reader pulled toward older messages at the thread's oldest end — ask for the next page
     // back. Wired by MainActivity → vm::onDemandOlderHistory, which decides whether the ask is sent.
     onDemandOlderHistory: () -> Unit = {},
@@ -299,6 +300,7 @@ fun ThreadScreen(
     // MainActivity → vm::onOpenMarkdownLink; a failed read reuses [markdownOpenFailures].
     onOpenMarkdownLink: (String) -> Unit = {},
 ) {
+    val threadOpenedAt = remember(state.conversationId) { Clock.System.now() }
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
     val openRequest = modalState as? ModalUiState.Open
@@ -374,6 +376,7 @@ fun ThreadScreen(
     // #678: the read-only background-task panel the top menu and task pill open. Local and keyed like [openControl]:
     // closing it only flips this flag, so nothing is sent and no conversation or task changes.
     var backgroundTasksOpen by remember(state.conversationId) { mutableStateOf(false) }
+    var overflowAnchor by remember { mutableStateOf<Rect?>(null) }
     val footerAnchors = remember { mutableStateMapOf<FooterControl, Rect>() }
     var layerOrigin by remember { mutableStateOf(Offset.Zero) }
     val openMenu =
@@ -431,14 +434,11 @@ fun ThreadScreen(
                     title = state.displayName,
                     onBack = onBack,
                     onTitleClick = onTitleClick,
-                    onOverflowClick = { overflowExpanded = true },
-                    overflowExpanded = overflowExpanded,
-                    onOverflowDismiss = { overflowExpanded = false },
-                    onOverflowEvent = onOverflowEvent,
-                    isPromoted = state.isPromoted,
-                    mutationsSupported = state.mutationsSupported,
-                    memorySearch = state.runConfig.memorySearch,
-                    onBackgroundTasks = { backgroundTasksOpen = true },
+                    onOverflowClick = {
+                        openControl = null
+                        overflowExpanded = true
+                    },
+                    onOverflowAnchorChanged = { overflowAnchor = it },
                     modifier =
                         Modifier
                             .chromeBackdrop(chromeSource, frameColors.headerBackdrop, top = true)
@@ -522,7 +522,10 @@ fun ThreadScreen(
                     // The footer owns its asymmetric padding inside the same 20dp composer gutter.
                     ThreadComposerFooter(
                         runConfig = state.runConfig,
-                        onOpen = { openControl = it },
+                        onOpen = {
+                            overflowExpanded = false
+                            openControl = it
+                        },
                         onStatusClick = {
                             sheetVisible = true
                             onOverflowEvent(ThreadEvent.RunConfigOpen)
@@ -761,6 +764,7 @@ fun ThreadScreen(
                                                 is ThreadItem.MessageItem ->
                                                     MessageBubble(
                                                         message = item.message,
+                                                        threadOpenedAt = threadOpenedAt,
                                                         toolNestingDepth = toolDepths[item.message.id] ?: 0,
                                                         joinsNextToolRow = rows.getOrNull(chronologicalIndex + 1).isToolRow(),
                                                         attachmentStates = attachmentStates,
@@ -814,6 +818,12 @@ fun ThreadScreen(
                                             QueuedMessageRow(
                                                 text = row.text,
                                                 onDrop = { onDropQueued(row.queuedMessageId) },
+                                                onSendNow =
+                                                    if (state.runConfig.midTurnInputSupported) {
+                                                        { onSendQueuedNow(row.queuedMessageId) }
+                                                    } else {
+                                                        null
+                                                    },
                                             )
                                         is ThreadRow.ToolRun ->
                                             ToolRunRow(
@@ -894,12 +904,26 @@ fun ThreadScreen(
                 )
             }
         }
+        overflowAnchor?.let { anchor ->
+            ThreadOverflowMenu(
+                expanded = overflowExpanded,
+                isPromoted = state.isPromoted,
+                mutationsSupported = state.mutationsSupported,
+                memorySearch = state.runConfig.memorySearch,
+                anchor = anchor.translate(-layerOrigin),
+                // The header stays fixed while the column scrolls in the room above the visible IME.
+                modifier = Modifier.imePadding(),
+                onDismiss = { overflowExpanded = false },
+                onEvent = onOverflowEvent,
+                onBackgroundTasks = { backgroundTasksOpen = true },
+            )
+        }
         // #885: the slash-command suggestions share the footer overlay's layer. They stand down while a
-        // footer menu is open, so two overlays never stack. A pick completes the draft and sends nothing.
+        // header or footer menu is open, so two overlays never stack. A pick completes the draft and sends nothing.
         SlashCommandTypeAhead(
             text = draft,
             commands = state.slashCommands,
-            anchor = inputAnchor?.takeIf { openMenu == null }?.translate(-layerOrigin),
+            anchor = inputAnchor?.takeIf { openMenu == null && !overflowExpanded }?.translate(-layerOrigin),
             imeVisible = imeVisible,
             onComplete = onDraftChange,
             resetKey = state.conversationId,

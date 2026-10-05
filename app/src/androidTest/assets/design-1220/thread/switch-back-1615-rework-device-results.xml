@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites tests="20" failures="0" errors="0" skipped="0" time="62.456" timestamp="2026-10-05T06:52:41" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.design.ThreadDesignCaptureTest" tests="2" failures="0" errors="0" skipped="0" time="16.778" timestamp="2026-10-05T06:52:41" hostname="localhost">
+    <testcase name="threadNoticeFramesAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="9.174" />
+    <testcase name="refusalStateFramesAt412By892" classname="de.pyryco.mobile.design.ThreadDesignCaptureTest" time="7.604" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.components.ModelRefusalRowTest" tests="9" failures="0" errors="0" skipped="0" time="24.325" timestamp="2026-10-05T06:52:41" hostname="localhost">
+    <testcase name="an_uncut_banner_carries_no_mark" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalRowTest" time="5.184" />
+    <testcase name="a_fallback_reads_refused_on_and_continued_on" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalRowTest" time="2.225" />
+    <testcase name="long_explanation_wraps_inside_the_message_gutter" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalRowTest" time="2.624" />
+    <testcase name="an_empty_model_reads_unknown_model" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalRowTest" time="1.857" />
+    <testcase name="a_cut_banner_is_marked_and_an_uncut_one_is_not" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalRowTest" time="2.467" />
+    <testcase name="a_row_without_a_banner_has_no_click_action" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalRowTest" time="2.085" />
+    <testcase name="a_no_fallback_reads_refused_by" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalRowTest" time="1.95" />
+    <testcase name="the_banner_opens_in_place_attributed_to_claude_with_escapes_stripped" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalRowTest" time="2.975" />
+    <testcase name="tapping_the_far_edge_of_the_row_opens_and_closes_details" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalRowTest" time="2.958" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.components.ModelRefusalSwitchBackTest" tests="9" failures="0" errors="0" skipped="0" time="18.603" timestamp="2026-10-05T06:52:41" hostname="localhost">
+    <testcase name="visibleOutline_matchesTheCollapsedDesign_andBothTouchExtensionsInvokeSwitchBack" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalSwitchBackTest" time="2.488" />
+    <testcase name="longUnknownModel_paintsEveryLineInsideTheOutline" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalSwitchBackTest" time="1.772" />
+    <testcase name="offered_showsAnEnabledButtonNamingTheStrippedOriginalModel_andATapCallsBackOnce" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalSwitchBackTest" time="2.117" />
+    <testcase name="enlargedModelText_paintsEveryLineInsideTheOutline" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalSwitchBackTest" time="2.147" />
+    <testcase name="withoutAnOffer_thereIsNoButton" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalSwitchBackTest" time="1.453" />
+    <testcase name="failed_keepsTheButtonEnabled_withTheRetryMessageBelow" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalSwitchBackTest" time="1.644" />
+    <testcase name="pending_disablesTheButton" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalSwitchBackTest" time="1.922" />
+    <testcase name="pendingTouchExtension_doesNotInvokeEitherAction" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalSwitchBackTest" time="1.69" />
+    <testcase name="inTheThread_onlyTheArmingRowShowsTheButton" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalSwitchBackTest" time="3.37" />
+  </testsuite>
+</testsuites>

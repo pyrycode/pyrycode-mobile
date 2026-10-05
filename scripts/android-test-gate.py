@@ -24,7 +24,7 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 E2E_PACKAGE = "de.pyryco.mobile.e2e"
-SCENARIOS = ("ping", "stream", "spinner", "tool", "tool-failed", "tool-progress", "reconnect", "offline-retry", "replay-order", "tool-then-text", "refusal", "mcp-failed", "context-overflow")
+SCENARIOS = ("send-now", "ping", "stream", "spinner", "tool", "tool-failed", "tool-progress", "reconnect", "offline-retry", "replay-order", "tool-then-text", "refusal", "mcp-failed", "context-overflow")
 
 def curated_live_methods():
     """The method names on scripts/e2e-emulator.sh's LIVE curated list, in list order."""
@@ -53,6 +53,57 @@ def parse_live_tests(value):
         if not name.startswith(prefix) or not method.isidentifier():
             return None
     return list(dict.fromkeys(names)) or None
+
+
+class ClaudeEnvironmentError(RuntimeError):
+    """A missing live-test credential is setup failure, not a test verdict."""
+
+
+AUTOMATION_LOGIN = "op://Automation/Claude long term token/password"
+
+
+def hand_run_login(env, parent):
+    """A run started by hand, outside the dispatcher, fetches the long-term login the dispatcher's launcher uses.
+
+    Before 2026-10-05 such a run fell back to the shell's own Claude login and stalled when it was missing or
+    expired. Inside the dispatcher (AGENTS_REPO_PATH set) nothing is fetched: agents get no Automation login.
+    A failed fetch leaves the shell's own login to the authentication check, as before.
+    """
+    helper = shutil.which("automation-access", path=parent.get("PATH"))
+    if parent.get("AGENTS_REPO_PATH") or helper is None:
+        return env
+    try:
+        result = subprocess.run([helper, "op", "read", "--no-newline", AUTOMATION_LOGIN],
+                                env=env, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        result = None
+    if result is None or result.returncode or not result.stdout.strip():
+        print("Android gate: could not fetch the long-term Claude login through automation-access; "
+              "using this shell's own login", file=sys.stderr)
+        return env
+    print("Android gate: fetched the long-term Claude login through automation-access", file=sys.stderr)
+    return {**env, "CLAUDE_CODE_OAUTH_TOKEN": result.stdout.rstrip("\n")}
+
+
+def live_claude_environment(parent):
+    """Fetch the login in memory, strip account credentials from test children."""
+    env = {key: value for key, value in parent.items() if not key.startswith("OP_") and key != "PYRY_DEV_AGENTS_TOKEN"}
+    token = parent.get("OP_SERVICE_ACCOUNT_TOKEN")
+    if env.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        return env
+    if not token:
+        return hand_run_login(env, parent)
+    op_env = {**env, "OP_SERVICE_ACCOUNT_TOKEN": token, "OP_BIOMETRIC_UNLOCK_ENABLED": "false"}
+    try:
+        result = subprocess.run(
+            ["op", "read", "--no-newline", "op://Dev agents/Claude long term token/password"],
+            env=op_env, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        raise ClaudeEnvironmentError("Dev Agents login lookup unavailable. Check the 1Password CLI and account access.") from None
+    if result.returncode or not result.stdout.strip():
+        raise ClaudeEnvironmentError("Dev Agents Claude login unavailable. Add or check the Claude long term token item in the Dev agents vault.")
+    env["CLAUDE_CODE_OAUTH_TOKEN"] = result.stdout.rstrip("\n")
+    return env
 
 
 def claude_authenticated(env):
@@ -207,8 +258,9 @@ def changed_paths(base="main"):
 # Each `scripted <scenario>` run has Gradle boot and tear down its own managed emulator, and Gradle's own
 # waits for the device cost about 10 of each scenario's 23 seconds (measured 2026-09-23). scripted-all boots
 # the managed device's AVD once, read-only from its snapshot, and runs every scenario against it through
-# the harness's `connected` device, each with its own daemon, relay and pairing as before. The app is
-# reinstalled per scenario, so no app state carries over.
+# the harness's `connected` device, each with its own daemon, relay and pairing as before. Both APKs are installed
+# once; before each scenario the app's data is cleared and the runtime permissions the install granted are granted
+# again, so no app state carries over and no scenario pays Gradle's install and removal (2026-10-05).
 
 def avd_root():
     return Path(os.environ.get("ANDROID_USER_HOME") or Path.home() / ".android") / "avd"
@@ -221,6 +273,46 @@ def managed_avd(device):
     home = avd_root() / "gradle-managed"
     found = sorted(home.glob("dev33_google_atd_*_Pixel_2.ini"))
     return (home, found[0].stem) if found else None
+
+
+APP_ID = "de.pyryco.mobile"
+APKS = ("app/build/outputs/apk/debug/app-debug.apk", "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk")
+
+
+def adb_call(env, serial, *args, capture=False):
+    adb = str(Path(env["ANDROID_HOME"]) / "platform-tools" / "adb")
+    output = {"capture_output": True, "text": True} if capture else {"stdout": sys.stderr, "stderr": sys.stderr}
+    try:
+        return subprocess.run([adb, "-s", serial, *args], timeout=300, **output)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        print(f"Android gate: adb {' '.join(args[:2])} failed: {error}", file=sys.stderr)
+        return None
+
+
+def install_once(env, serial):
+    """Install both APKs as Gradle's device task does, with test packages allowed and runtime permissions granted.
+
+    Returns the runtime permissions the install granted, for reset_app to grant again, or None when the install
+    failed, in which case each scenario installs for itself through Gradle as before.
+    """
+    for apk in APKS:
+        installed = adb_call(env, serial, "install", "-r", "-t", "-g", str(ROOT / apk))
+        if installed is None or installed.returncode != 0:
+            return None
+    dump = adb_call(env, serial, "shell", "dumpsys", "package", APP_ID, capture=True)
+    if dump is None or dump.returncode != 0:
+        return None
+    granted = re.findall(r"^\s+([\w.]+): granted=true", dump.stdout.partition("runtime permissions:")[2], re.MULTILINE)
+    return list(dict.fromkeys(granted))
+
+
+def reset_app(env, serial, granted):
+    """Clear the app's data and grant back what clearing revoked, so a scenario starts as on a fresh install."""
+    for args in (("shell", "pm", "clear", APP_ID), *(("shell", "pm", "grant", APP_ID, name) for name in granted)):
+        done = adb_call(env, serial, *args)
+        if done is None or done.returncode != 0:
+            return False
+    return True
 
 
 def free_emulator_port(start=5600, end=5680):
@@ -277,9 +369,18 @@ def stop_emulator(env, serial, process):
 # Two runs driving the Gradle-managed AVD at once, from any worktrees, fail the window-focus device tests.
 # Every device-using mode holds one kernel lock beside that AVD while it drives an emulator. The descriptor
 # is never passed to a child, so the kernel drops the lock whenever this process exits, SIGKILL included.
+#
+# Waiters are served in arrival order (2026-10-05). Until then each waiter retried the lock once a second, and
+# whoever retried first after a release won: one run waited 45 minutes while later arrivals went ahead of it.
+# Now each waiter takes a numbered ticket in a queue folder beside the lock, and only the oldest live ticket
+# tries the lock. A ticket is a file its owner keeps a kernel lock on, so a waiter that dies, SIGKILL
+# included, releases it, and the next waiter that looks drops it. The device lock itself is unchanged, so
+# a run from an older checkout that still just retries the lock shares the device safely: it cannot hold it
+# at the same time, and it never waits on a ticket. It is not ordered against ticketed waiters.
 
 DEFAULT_DEVICE_WAIT_SECONDS = 300
 DEVICE_BUSY_EXIT = 75  # EX_TEMPFAIL: no test ran, so it is not a test result
+DEVICE_POLL_SECONDS = 0.25
 
 
 class DeviceBusy(Exception):
@@ -291,6 +392,10 @@ def device_hold_path():
     return avd_root() / "pyrycode-device-gate.lock"
 
 
+def device_queue_path():
+    return avd_root() / "pyrycode-device-gate.queue"
+
+
 def device_holder(fd):
     try:
         record = json.loads(os.pread(fd, 4096, 0))
@@ -299,30 +404,104 @@ def device_holder(fd):
         return "an unknown run"
 
 
+def take_ticket(queue):
+    """Join the queue; returns (fd, path) of a ticket numbered after every ticket already there.
+
+    The ticket is locked before it gets its queue name, so no other waiter ever sees it unlocked and drops it.
+    """
+    queue.mkdir(parents=True, exist_ok=True)
+    pending = queue / f"pending-{os.getpid()}-{uuid.uuid4().hex}"
+    fd = os.open(pending, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        counter = os.open(queue / "counter", os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(counter, fcntl.LOCK_EX)
+            try:
+                last = int(os.pread(counter, 32, 0) or b"0")
+            except ValueError:
+                last = 0
+            # The highest ticket too, so a lost counter never numbers a newcomer ahead of a waiting run.
+            numbers = [int(path.stem) for path in queue.glob("*.ticket") if path.stem.isdigit()]
+            number = max([last, *numbers]) + 1
+            os.ftruncate(counter, 0)
+            os.pwrite(counter, str(number).encode(), 0)
+            ticket = queue / f"{number:012d}.ticket"
+            os.rename(pending, ticket)
+        finally:
+            os.close(counter)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(pending)
+        os.close(fd)
+        raise
+    return fd, ticket
+
+
+def drop_ticket(fd, ticket):
+    """Leave the queue: remove the name first, then release the lock, so no one reads a released live ticket."""
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(ticket)
+    os.close(fd)
+
+
+def ticket_alive(path):
+    """True while the ticket's owner holds it. A ticket nobody holds belongs to a dead waiter and is removed."""
+    try:
+        fd = os.open(path, os.O_RDWR)
+    except FileNotFoundError:
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    else:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(path)
+        return False
+    finally:
+        os.close(fd)
+
+
+def tickets_ahead(queue, ticket):
+    """The live tickets older than [ticket], dropping dead ones on the way."""
+    return [path for path in sorted(queue.glob("*.ticket")) if path.name < ticket.name and ticket_alive(path)]
+
+
 @contextlib.contextmanager
 def device_hold(mode, wait):
-    """Hold the host's managed device for the block, waiting up to [wait] seconds; raises DeviceBusy."""
+    """Hold the host's managed device for the block, waiting up to [wait] seconds in arrival order; raises DeviceBusy."""
     path = device_hold_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+        ticket_fd, ticket = take_ticket(device_queue_path())
     except OSError as error:
         sys.exit(f"Android gate failed: cannot take the device hold at {path}: {error}")
     try:
-        start, announced = time.monotonic(), False
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
+        try:
+            start, announced = time.monotonic(), False
+            while True:
+                ahead = tickets_ahead(ticket.parent, ticket)
+                if not ahead:
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        pass
+                if ahead:
+                    reason = f"busy, {len(ahead)} earlier {'run' if len(ahead) == 1 else 'runs'} queued ahead"
+                else:
+                    reason = f"held by {device_holder(fd)}"
                 waited = time.monotonic() - start
                 if waited >= wait:
-                    raise DeviceBusy(f"gave up after {waited:.0f}s; held by {device_holder(fd)}") from None
+                    raise DeviceBusy(f"gave up after {waited:.0f}s; {reason}") from None
                 if not announced:
-                    print(f"Android gate: device held by {device_holder(fd)}; waiting up to {wait:.0f}s",
-                          file=sys.stderr)
+                    print(f"Android gate: device {reason}; waiting up to {wait:.0f}s", file=sys.stderr)
                     announced = True
-                time.sleep(min(1.0, wait - waited))
+                time.sleep(min(DEVICE_POLL_SECONDS, wait - waited))
+        finally:
+            drop_ticket(ticket_fd, ticket)
         if announced:
             print(f"Android gate: device free after {time.monotonic() - start:.0f}s waiting", file=sys.stderr)
         started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -332,6 +511,20 @@ def device_hold(mode, wait):
         yield
     finally:
         os.close(fd)
+
+
+def build_apks(env, mode):
+    """Build the app and test APKs before queueing for the device, and return Gradle's exit code.
+
+    A cold build took 40 seconds to 3 minutes, and every other device run waited behind it while it held the
+    device (measured 2026-10-04). Now the hold covers only boot, install and run: the device task and the
+    emulator script find both APKs up to date. The e2e modes build with the emulator script's -P properties
+    (GRADLE_BUILD_ARGS there), so its test task's up-to-date check matches.
+    """
+    command = [str(ROOT / "gradlew"), ":app:assembleDebug", ":app:assembleDebugAndroidTest", "--console=plain"]
+    if mode != "ui":
+        command.insert(3, "-PuseRelayRepository=true")
+    return subprocess.run(command, cwd=ROOT, env=env, stdout=sys.stderr, stderr=sys.stderr).returncode
 
 
 def raise_interrupt(*_):
@@ -356,10 +549,21 @@ def run_scripted_all(env, run_dir, device):
     directory = results / "connected/debug" if target == "connected" else results / "managedDevice/debug" / target
     all_paths, failed = [], []
     try:
+        granted = install_once(env, serial) if serial else None
+        if serial and granted is None:
+            print("Android gate: scripted-all could not install the APKs once; each scenario installs its own",
+                  file=sys.stderr)
         for scenario in SCENARIOS:
             scenario_env = {**env, "DETERMINISTIC": "1", "SCENARIO": scenario, "DEVICE": target}
             if serial:
                 scenario_env["ANDROID_SERIAL"] = serial
+            if granted is not None and reset_app(env, serial, granted):
+                scenario_env["E2E_INSTALLED"] = "1"
+            elif granted is not None:
+                # Gradle's device task removes the app when it finishes, so the rest install their own too.
+                print(f"Android gate: scripted {scenario}: could not clear the app; it and the rest install their own",
+                      file=sys.stderr)
+                granted = None
             started = time.time_ns()
             outcome = subprocess.run(["bash", str(ROOT / "scripts" / "e2e-emulator.sh")], cwd=ROOT,
                                      env=scenario_env, stdout=sys.stderr, stderr=sys.stderr)
@@ -447,9 +651,11 @@ def main():
         shards = os.environ.get("UI_SHARDS", "2" if full else "1")
         if not shards.isdigit() or int(shards) < 1:
             parser.error("UI_SHARDS must be a positive integer")
+        # Animations off on the managed emulator for the run (E2eInstrumentationRunner), as for the scripted runs.
         command = [str(ROOT / "gradlew"), f":app:{device}DebugAndroidTest", "--rerun",
                    f"-Pandroid.testInstrumentationRunnerArguments.notPackage={E2E_PACKAGE}",
-                   f"-Pandroid.experimental.androidTest.numManagedDeviceShards={shards}", "--console=plain"]
+                   f"-Pandroid.experimental.androidTest.numManagedDeviceShards={shards}",
+                   "-Pandroid.testInstrumentationRunnerArguments.disableAnimations=true", "--console=plain"]
         if not full:
             classes = device_only_classes()
             if not classes:
@@ -460,7 +666,12 @@ def main():
         env.pop("LIVE", None)
         env.pop("LIVE_TESTS", None)
         env.pop("DETERMINISTIC", None)
+        env.pop("E2E_DISABLE_ANIMATIONS", None)
+        env.pop("E2E_INSTALLED", None)
         command = ["bash", str(ROOT / "scripts" / "e2e-emulator.sh")]
+        if args.mode in ("scripted", "scripted-all"):
+            # Animations off on the emulator for each scenario (E2eInstrumentationRunner). The live run keeps them.
+            env["E2E_DISABLE_ANIMATIONS"] = "1"
         if args.mode == "scripted":
             env.update(DETERMINISTIC="1", SCENARIO=args.scenario)
             expected_class = E2E_PACKAGE + ".DeterministicInteractiveStreamE2ETest"
@@ -474,6 +685,11 @@ def main():
                 env["LIVE_TESTS"] = ",".join(live_tests)
                 minimum = 1
     if args.mode == "live":
+        try:
+            env = live_claude_environment(env)
+        except ClaudeEnvironmentError as error:
+            print(f"Android gate: environment error: {error}", file=sys.stderr)
+            return 2
         # Missing login is an environment failure, not a suite of product regressions.
         if not claude_authenticated(env):
             print("Android gate: Claude authentication unavailable. Run through the dispatcher's 1Password environment or sign in to Claude.", file=sys.stderr)
@@ -499,6 +715,12 @@ def main():
                 print(f"Android gate: failed to build {binary}", file=sys.stderr)
                 return 1
             env[variable] = str(destination)
+    built = build_apks(env, args.mode)
+    if built != 0:
+        print(f"Android gate failed: the app and test APK build exited {built}; the device was not taken",
+              file=sys.stderr)
+        return 1
+    env["E2E_APKS_BUILT"] = "1"
     try:
         with device_hold(args.mode, wait):
             print(f"Android gate: {args.mode} {args.scenario or ''}; artifacts: {run_dir}", file=sys.stderr)
@@ -527,7 +749,8 @@ def run_on_device(command, env, run_dir, device, minimum, expected_class):
         xml, passed, executed = combine_reports(paths, expected_class)
         (run_dir / "dispatcher.xml").write_text(xml + "\n")
         print(xml)
-        print(f"Android gate: {executed} executed; process exit {outcome.returncode}", file=sys.stderr)
+        failed_count = len(ET.fromstring(xml).findall(".//failure"))
+        print(f"Android gate: {executed} executed; {executed - failed_count} passed; {failed_count} failed; process exit {outcome.returncode}", file=sys.stderr)
         if executed < minimum:
             print(f"Android gate failed: Only {executed} Android tests executed; "
                   f"required at least {minimum}", file=sys.stderr)

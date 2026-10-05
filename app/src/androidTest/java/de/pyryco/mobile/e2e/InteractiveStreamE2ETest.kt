@@ -2098,6 +2098,66 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /** #1775: host-wide prompt storage through the real Edit host controls; zero Claude turns. */
+    @Test
+    fun interactiveTurn_hostSystemPrompt_editsResetsAndCancels() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        awaitChannelList()
+        awaitConnected()
+
+        fun fresh() = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).requestHostSystemPrompt().getOrThrow() } }
+        val original = fresh().systemPrompt
+        val custom = "Host prompt e2e1775 " + System.currentTimeMillis() + "\nPreserve this second line."
+
+        fun openPrompt() {
+            composeTestRule.onNode(hasText(context.getString(R.string.host_prompt_title)) and hasClickAction()).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasTestTag(de.pyryco.mobile.ui.host.HOST_PROMPT_FIELD_TAG)).fetchSemanticsNodes().size == 1
+            }
+        }
+
+        fun ok() = composeTestRule.onNode(hasText(EDIT_HOST_OK) and hasClickAction()).performClick()
+
+        fun cancel() = composeTestRule.onNode(hasText(modalCancel) and hasClickAction()).performClick()
+        try {
+            openHostEditor(serverId)
+            openPrompt()
+            composeTestRule.onNodeWithTag(de.pyryco.mobile.ui.host.HOST_PROMPT_FIELD_TAG).performTextReplacement(custom)
+            ok()
+            awaitEditorTitle(context)
+            assertTrue("custom host prompt was not durably stored", fresh().systemPrompt == custom)
+            cancel()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { editorClosed(context) }
+            openHostEditor(serverId)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule
+                    .onAllNodes(
+                        hasTestTag(de.pyryco.mobile.ui.host.HOST_PROMPT_PREVIEW_TAG) and hasText(custom),
+                        useUnmergedTree = true,
+                    ).fetchSemanticsNodes()
+                    .size ==
+                    1
+            }
+            openPrompt()
+            composeTestRule.onNodeWithText(context.getString(R.string.host_prompt_reset)).performClick()
+            cancel()
+            awaitEditorTitle(context)
+            assertTrue("reset then Cancel changed host storage", fresh().systemPrompt == custom)
+            openPrompt()
+            composeTestRule.onNodeWithText(context.getString(R.string.host_prompt_reset)).performClick()
+            ok()
+            awaitEditorTitle(context)
+            val reset = fresh()
+            assertTrue("reset then OK did not store the daemon default", reset.systemPrompt == reset.defaultSystemPrompt)
+            cancel()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { editorClosed(context) }
+        } finally {
+            // Restore the isolated harness host even after an assertion fails. Never print its text.
+            runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).setHostSystemPrompt(original).getOrThrow() } }
+        }
+    }
+
     /**
      * The live registry returns each paired host's own complete diagnostic archive (#1252, rung 3). A's
      * daemon alone logs a newly muted discussion id; B's archive must not contain it even while B is selected.
@@ -2685,6 +2745,103 @@ class InteractiveStreamE2ETest {
             composeTestRule.waitForIdle()
             composeTestRule.onAllNodes(peerMessage, useUnmergedTree = true).assertCountEquals(1)
             composeTestRule.onAllNodes(pingReplyMatcher(), useUnmergedTree = true).assertCountEquals(1)
+        } finally {
+            peer.close()
+        }
+    }
+
+    /** #1642: a harness release-file holds Bash until Send now really reaches the daemon. */
+    @Test
+    fun interactiveTurn_sendQueuedNow_reachesRunningTurn() {
+        val args = InstrumentationRegistry.getArguments()
+        val release = twoHostArg("sendNowReleasePath")
+        require(release.matches(Regex("/[A-Za-z0-9_./-]+"))) { "invalid harness release path" }
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer =
+            SecondClientPeer(
+                PairedServer(
+                    serverId = serverId,
+                    token = twoHostArg(ARG_PEER_TOKEN),
+                    relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                    serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
+                ),
+            )
+        try {
+            awaitChannelList()
+            awaitConnected()
+            val before = hostConversationIds(serverId)
+            createChat()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+            }
+            val conversationId = newHostConversationId(serverId, before)
+            // Warm the session and its explicit capability reading before starting the held turn.
+            sendFromPhone(PING_PROMPT)
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            assertTrue("session must report mid-turn support", freshSettings(conversationId).capabilities?.midTurnInput == true)
+            val marker = "sendnow1642_" + System.currentTimeMillis()
+            val queuedPrompt = "In your final reply to this running turn include exactly this marker: $marker"
+            val command = "while [ ! -e '$release' ]; do sleep 0.1; done; printf hold_done"
+            val prompt =
+                "Run exactly this Bash command with timeout 120000, in the foreground, never background it: $command. " +
+                    "Wait for its result. Then reply with any marker supplied while the command was running."
+            runBlocking {
+                peer.open(CONNECT_TIMEOUT_MS)
+                peer.sendMessage(conversationId, prompt, THREAD_TIMEOUT_MS)
+            }
+            val allowed = mutableSetOf<String>()
+            val running =
+                allowPromptsUntil(
+                    peer,
+                    conversationId,
+                    REPLY_TIMEOUT_MS,
+                    "Bash did not remain running",
+                    allowed,
+                    frame = "tool_progress",
+                ) { it.type == "tool_progress" }
+            val turnId = requireNotNull(peer.field(running, "turn_id"))
+            assertTrue("held turn ended before queueing", peer.recorded(conversationId).none { it.type == "turn_end" })
+            sendFromPhone(queuedPrompt)
+            awaitQueuedRow(queuedPrompt)
+            val queued =
+                runBlocking {
+                    peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { q -> q.any { it.text == queuedPrompt } }
+                }.single { it.text == queuedPrompt }
+            val send = hasContentDescription("Send now") and hasAnyAncestor(queuedRow(queuedPrompt))
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(send).fetchSemanticsNodes().isNotEmpty() }
+            composeTestRule.onNode(send).performClick()
+            runBlocking { peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { q -> q.none { it.queuedMsgId == queued.queuedMsgId } } }
+            val ended =
+                allowPromptsUntil(
+                    peer,
+                    conversationId,
+                    REPLY_TIMEOUT_MS,
+                    "held turn did not finish with the marker",
+                    allowed,
+                ) { it.type == "turn_end" }
+            assertEquals(turnId, peer.field(ended, "turn_id"))
+            val frames = peer.recorded(conversationId)
+            assertEquals("Send now must stay in the running turn", 1, frames.count { it.type == "turn_end" })
+            val resultIndex = frames.indexOfLast { it.type == "tool_result" }
+            val messageIndex = frames.indexOfFirst { it.type == "message" && peer.field(it, "message_id") == queued.messageId }
+            assertTrue("delivered user push must follow Bash result", resultIndex >= 0 && messageIndex > resultIndex)
+            val finalText =
+                frames
+                    .filter { it.type == "assistant_delta" && peer.field(it, "turn_id") == turnId }
+                    .joinToString("") { peer.field(it, "text").orEmpty() }
+            assertTrue("the same turn's reply omitted the marker", marker in finalText)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(inThreadList(queuedPrompt), useUnmergedTree = true).fetchSemanticsNodes().size == 1 &&
+                    composeTestRule.onAllNodes(queuedRow(queuedPrompt)).fetchSemanticsNodes().isEmpty()
+            }
+            assertDrawnOnce(inThreadList(queuedPrompt))
+            val rows =
+                runBlocking { hostRepository().observeMessages(conversationId).first() }
+                    .filterIsInstance<ThreadItem.MessageItem>()
+            val toolIndex = rows.indexOfLast { it.message.role == Role.Tool }
+            val userIndex = rows.indexOfFirst { it.message.id == queued.messageId }
+            assertEquals(1, rows.count { it.message.id == queued.messageId })
+            assertTrue("phone placed the user row before Bash result", toolIndex >= 0 && userIndex > toolIndex)
         } finally {
             peer.close()
         }
@@ -3476,27 +3633,27 @@ class InteractiveStreamE2ETest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val args = InstrumentationRegistry.getArguments()
         args.getString(ARG_BYPASS_UNMET)?.let { throw AssertionError(bypassUnmetMessage(it)) }
-        val serverId = bypassArg(ARG_BYPASS_SERVER_ID)
-        val pairCode = bypassArg(ARG_BYPASS_PAIR_CODE)
+        awaitChannelList()
+        awaitConnected()
+        instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
+        val fixture = BypassPairingFixture.request()
+        val serverId = fixture.serverId
         val tokenFile = bypassArg(ARG_BYPASS_TOKEN_FILE)
         val token = bypassArg(ARG_BYPASS_TOKEN)
         val peer =
             SecondClientPeer(
                 PairedServer(
                     serverId = serverId,
-                    token = bypassArg(ARG_BYPASS_PEER_TOKEN),
+                    token = fixture.peerToken,
                     relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
-                    serverStaticPublicKey = bypassArg(ARG_BYPASS_SERVER_STATIC_PUBLIC_KEY),
+                    serverStaticPublicKey = fixture.serverStaticPublicKey,
                 ),
             )
         val bypass = PermissionModeOption.Bypass
         val manual = PermissionModeOption.Default
         try {
-            // 1. Pair the dedicated host by code, create a chat on it, and run one tool-free turn.
-            awaitChannelList()
-            awaitConnected()
-            instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
-            pairHostByCode(pairCode, BYPASS_HOST_NAME)
+            // 1. Pair the freshly minted dedicated host by code, create a chat, and run one tool-free turn.
+            pairHostByCode(fixture.pairCode, BYPASS_HOST_NAME)
             val name = BYPASS_CHAT_NAME_PREFIX + System.currentTimeMillis()
             val repository = hostRepository(serverId)
             val chat = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.rename(repository.createDiscussion().id, name) } }
@@ -3831,55 +3988,59 @@ class InteractiveStreamE2ETest {
     @Test
     fun interactiveTurn_questionAnswer_reachesTheAskingConversation() {
         val (serverId, peer) = answerHostPeer()
+
+        fun <T> step(
+            stage: QuestionAnswerStage,
+            block: () -> T,
+        ): T = questionAnswerStep(stage, peer::linkState, block)
         try {
-            pairAnswerHost()
-            val (chat, name) = answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "q-")
-            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
-            openChatRow(name)
+            step(QuestionAnswerStage.PairPhone) { pairAnswerHost() }
+            val (chat, name) = step(QuestionAnswerStage.CreateChat) { answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "q-") }
+            step(QuestionAnswerStage.OpenPeer) { runBlocking { peer.open(CONNECT_TIMEOUT_MS) } }
+            step(QuestionAnswerStage.OpenThread) { openChatRow(name) }
 
             // 1. AC-3: claude asks in this chat, and the phone draws the question.
-            sendFromPhone(QUESTION_PROMPT)
-            val batchId = runBlocking { peer.awaitQuestion(chat, REPLY_TIMEOUT_MS) }
-            awaitInlineQuestion()
+            step(QuestionAnswerStage.SendFirstQuestion) { sendFromPhone(QUESTION_PROMPT) }
+            val batchId = step(QuestionAnswerStage.AwaitFirstQuestion) { runBlocking { peer.awaitQuestion(chat, REPLY_TIMEOUT_MS) } }
+            step(QuestionAnswerStage.DrawFirstQuestion) { awaitInlineQuestion() }
 
             // 2. AC-3: the phone picks one option and continues; the daemon takes it as this batch's answer.
             val mark = peer.recorded(chat).size
-            composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(
-                hasText(QUESTION_PICK, substring = true) and hasClickAction(),
-            )
-            composeTestRule
-                .onAllNodes(
-                    hasText(QUESTION_PICK, substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("thread-question-row")),
-                ).onFirst()
-                .performClick()
-            val continueButton =
-                hasText(string(R.string.question_continue)) and hasClickAction() and isEnabled() and
-                    hasAnyAncestor(hasTestTag("question-batch-actions"))
-            // The actions are a separate lazy item; selecting an option need not compose them (#1702).
-            composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(hasTestTag("question-batch-actions"))
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(continueButton).fetchSemanticsNodes().isNotEmpty()
+            step(QuestionAnswerStage.SubmitPhoneAnswer) {
+                composeTestRule
+                    .questionAnswerTarget(
+                        hasText(QUESTION_PICK, substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("thread-question-row")),
+                    ).performTouchInput { click(center) }
+                val continueButton =
+                    hasText(string(R.string.question_continue)) and hasClickAction() and isEnabled() and
+                        hasAnyAncestor(hasTestTag("question-batch-actions"))
+                // The actions are a separate lazy item; selecting an option need not compose them (#1702).
+                composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(hasTestTag("question-batch-actions"))
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(continueButton).fetchSemanticsNodes().isNotEmpty()
+                }
+                composeTestRule.questionAnswerTarget(continueButton).performTouchInput { click(center) }
             }
-            composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(continueButton)
-            composeTestRule.onNode(continueButton).performClick()
-            val dismissed = runBlocking { peer.awaitQuestionDismissed(batchId, THREAD_TIMEOUT_MS) }
+            val dismissed =
+                step(QuestionAnswerStage.AwaitPhoneDismissal) { runBlocking { peer.awaitQuestionDismissed(batchId, THREAD_TIMEOUT_MS) } }
             assertEquals("who resolved the question", REMOTE_SOURCE, peer.field(dismissed, "source"))
             assertEquals("the question's outcome", ANSWERED, peer.field(dismissed, "outcome"))
 
             // 3. AC-3: the turn ends and claude's reply names the chosen option, not the other one.
-            awaitTurnEnd(peer, chat, 1, "the phone-answered turn")
+            step(QuestionAnswerStage.EndPhoneTurn) { awaitTurnEnd(peer, chat, 1, "the phone-answered turn") }
             val reply = assistantText(peer, chat, mark)
             assertTrue("the reply does not name the chosen option", QUESTION_PICK in reply)
             assertTrue("the reply names the option the phone did not choose", QUESTION_OTHER !in reply)
-            awaitNoInlineQuestion("the question stayed after the phone answered it")
+            step(QuestionAnswerStage.RemovePhoneQuestion) { awaitNoInlineQuestion("the question stayed after the phone answered it") }
 
             // 4. AC-4: asked again, the peer answers, and the phone's inline batch disappears with no tap.
-            sendFromPhone(QUESTION_PROMPT)
-            val second = runBlocking { peer.awaitQuestion(chat, REPLY_TIMEOUT_MS, occurrence = 2) }
-            awaitInlineQuestion()
-            runBlocking { peer.answerQuestion(second, 0, QUESTION_OTHER, THREAD_TIMEOUT_MS) }
-            awaitNoInlineQuestion("the question stayed after the peer answered it")
-            awaitTurnEnd(peer, chat, 2, "the peer-answered turn")
+            step(QuestionAnswerStage.SendSecondQuestion) { sendFromPhone(QUESTION_PROMPT) }
+            val second =
+                step(QuestionAnswerStage.AwaitSecondQuestion) { runBlocking { peer.awaitQuestion(chat, REPLY_TIMEOUT_MS, occurrence = 2) } }
+            step(QuestionAnswerStage.DrawSecondQuestion) { awaitInlineQuestion() }
+            step(QuestionAnswerStage.SubmitPeerAnswer) { runBlocking { peer.answerQuestion(second, 0, QUESTION_OTHER, THREAD_TIMEOUT_MS) } }
+            step(QuestionAnswerStage.RemovePeerQuestion) { awaitNoInlineQuestion("the question stayed after the peer answered it") }
+            step(QuestionAnswerStage.EndPeerTurn) { awaitTurnEnd(peer, chat, 2, "the peer-answered turn") }
         } finally {
             peer.close()
             runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
@@ -4280,7 +4441,7 @@ class InteractiveStreamE2ETest {
                         "background_task_started"
                 }
             val started = MobileJson.decodeFromJsonElement(BackgroundTaskStartedPayloadDto.serializer(), startedFrame.payload)
-            assertTrue("the started task names no type", started.taskType.isNotBlank())
+            assertEquals("the background shell task must retain its raw wire type", "local_bash", started.taskType)
 
             // 2. The live thread pill opens the panel while the task is running.
             val taskPill =
@@ -4297,7 +4458,7 @@ class InteractiveStreamE2ETest {
                 composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_title))).fetchSemanticsNodes().isNotEmpty()
             }
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasText(started.taskType) and inBackgroundPanel()).fetchSemanticsNodes().isNotEmpty()
+                composeTestRule.onAllNodes(hasText("Command") and inBackgroundPanel()).fetchSemanticsNodes().isNotEmpty()
             }
             closeBackgroundTasks()
 
@@ -4309,7 +4470,7 @@ class InteractiveStreamE2ETest {
             Espresso.pressBack()
             openBackgroundTasks()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasText(started.taskType) and inBackgroundPanel()).fetchSemanticsNodes().isNotEmpty()
+                composeTestRule.onAllNodes(hasText("Command") and inBackgroundPanel()).fetchSemanticsNodes().isNotEmpty()
             }
             composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_unreported))).assertCountEquals(0)
             composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_empty))).assertCountEquals(0)
@@ -7782,10 +7943,6 @@ class InteractiveStreamE2ETest {
         // daemon is up, or ARG_BYPASS_UNMET naming the prerequisite it lacked. The pair code and the peer
         // token carry pairing tokens: never log them. The witness token authorizes nothing.
         const val ARG_BYPASS_UNMET = "bypassUnmet"
-        const val ARG_BYPASS_SERVER_ID = "bypassServerId"
-        const val ARG_BYPASS_PAIR_CODE = "bypassPairCode"
-        const val ARG_BYPASS_PEER_TOKEN = "bypassPeerToken"
-        const val ARG_BYPASS_SERVER_STATIC_PUBLIC_KEY = "bypassServerStaticPublicKey"
         const val ARG_BYPASS_TOKEN_FILE = "bypassTokenFile"
         const val ARG_BYPASS_TOKEN = "bypassToken"
 
@@ -7803,8 +7960,7 @@ class InteractiveStreamE2ETest {
                 "instance_name" to "the dedicated instance name is not a test instance name",
                 "isolated_home" to "the isolated HOME, its config or the token file could not be written",
                 "daemon_not_ready" to "the dedicated daemon did not answer `pyry status` within 15 s",
-                "pairing" to "the phone's pairing with the dedicated daemon could not be minted",
-                "peer_pairing" to "the peer's --allow-remote-permissions pairing could not be minted",
+                "pairing_fixture" to "the scenario-entry pairing fixture did not start",
             )
 
         // #966 answer daemon. The arguments scripts/e2e-emulator.sh passes once it is up, or ARG_ANSWER_UNMET

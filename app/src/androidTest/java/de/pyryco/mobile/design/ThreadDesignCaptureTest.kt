@@ -31,6 +31,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isNotEnabled
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -304,13 +305,11 @@ class ThreadDesignCaptureTest {
         rule.waitForIdle()
         design.capture(FOLDER, "refusal-switch-back-pending", "646:4694")
 
-        // A failed write also shows the run-configuration error pill; the compared row capture waits it out.
+        // #1615: capture the first failed state, with no timer advance or dismissal hiding duplicate feedback.
         write.completeExceptionally(IllegalStateException("design: model write fails"))
         await("Could not change the model — try again.")
-        await("Couldn't update the run configuration. Try again.")
-        design.capture(FOLDER, "refusal-switch-back-failed-snackbar", "646:4700")
-        expireErrorPill("Couldn't update")
-        await("Could not change the model — try again.")
+        rule.onNodeWithText("Couldn't update the run configuration. Try again.").assertDoesNotExist()
+        design.capture(FOLDER, "refusal-switch-back-failed-immediate", "646:4700")
         design.capture(FOLDER, "refusal-switch-back-failed", "646:4700")
         settingsGate = null
     }
@@ -493,9 +492,9 @@ class ThreadDesignCaptureTest {
         rule.onNodeWithText("Vivamus sagittis lacus vel augue.").performScrollTo()
         rule.waitForIdle()
         design.capture(FOLDER, "session-delimiter", "675:3682")
-        design.openMenu(rule.onNodeWithContentDescription("More actions"))
+        openHeaderMenu()
         noWorkspaceAction()
-        design.capture(FOLDER, "overflow-menu", "675:5883")
+        design.capture(FOLDER, "overflow-menu", "533:1958")
         Espresso.pressBack()
         rule.waitForIdle()
 
@@ -546,9 +545,9 @@ class ThreadDesignCaptureTest {
         extraItems.value = emptyList()
         usageLimit.value = null
 
-        design.openMenu(rule.onNodeWithContentDescription("More actions"))
+        openHeaderMenu()
         noWorkspaceAction()
-        design.capture(FOLDER, "compact-overflow-menu", "675:5883")
+        design.capture(FOLDER, "compact-overflow-menu", "533:1958")
         Espresso.pressBack()
         rule.waitForIdle()
         openActions()
@@ -605,7 +604,7 @@ class ThreadDesignCaptureTest {
         extraItems.value = emptyList()
         rule.waitUntil(5_000) { rule.onAllNodesWithText("Context too long", substring = true).fetchSemanticsNodes().isEmpty() }
         // #1747: the archive failure overlays the thread below the measured header.
-        design.openMenu(rule.onNodeWithContentDescription("More actions"))
+        openHeaderMenu()
         rule.onNodeWithText("Archive").performClick()
         await("Couldn't archive this conversation. Try again.")
         val header = rule.onNodeWithTag("thread-top-bar").getUnclippedBoundsInRoot()
@@ -673,6 +672,10 @@ class ThreadDesignCaptureTest {
         rule.waitUntil(5_000) { rule.onAllNodes(uploading).fetchSemanticsNodes().isNotEmpty() }
         rule.waitForIdle()
         design.capture(FOLDER, "uploading-attachments", "689:4475")
+    }
+
+    private fun openHeaderMenu() {
+        design.openHeaderMenu()
     }
 
     /** Run configuration with a four-model menu and Sonnet selected; no "Default" option in any spelling. */
@@ -796,7 +799,7 @@ class ThreadDesignCaptureTest {
     /** Opens and closes through the header X, which stays when #1496 removes the panel's Close button. */
     private fun openPanel() {
         rule.waitForIdle()
-        design.openMenu(rule.onNodeWithContentDescription("More actions"))
+        openHeaderMenu()
         rule.onNodeWithText("Background tasks").performTouchInput { click() }
         rule.waitUntil(5_000) { rule.onAllNodesWithContentDescription("Close").fetchSemanticsNodes().isNotEmpty() }
         rule.waitForIdle()
@@ -828,7 +831,9 @@ class ThreadDesignCaptureTest {
         checkNotNull(inputs.thread.value).onOpenMarkdownLink("docs/Builder Pipeline - Plan.md")
         await("Builder Pipeline Plan")
         val headingBefore = rule.onNodeWithText("Builder Pipeline Plan").getUnclippedBoundsInRoot()
-        design.openMenu(rule.onNodeWithContentDescription("More actions"))
+        // Since #1666 the reader's menu shares the activity window, like the header menu.
+        rule.onNodeWithContentDescription("More actions").performClick()
+        rule.waitUntil(5_000) { rule.onAllNodesWithTag("markdown-reader-menu").fetchSemanticsNodes().isNotEmpty() }
         // The demo's production reread is unsupported, so Refresh deterministically fails.
         rule.onNodeWithText("Refresh").performClick()
         await("Couldn't open file")

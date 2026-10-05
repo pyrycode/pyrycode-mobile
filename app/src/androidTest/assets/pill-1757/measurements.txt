@@ -1,0 +1,11 @@
+Real-bar component capture, 2026-10-05. Coordinates use exclusive right/bottom bounds.
+Measured solid container pixels, excluding shadow and touch targets:
+Default: RGB (19, 74, 116), bounds (16, 80, 183, 104), height 24px; Figma 164x24px.
+Error: RGB (147, 0, 10), bounds (16, 128, 167, 152), height 24px; Figma 164x24px.
+
+The Default retains the existing close asset; the Error retains its existing no-dismiss contract.
+Widths hug the actual font/label and action content; this ticket compares vertical line-box geometry.
+Colour roles, padding, radius and shadow are unchanged.
+Fixture fills MainActivity with the shared production component; sidecar records real system bars,
+hardware acceleration, density/font scale 1 and a 412x892 viewport.
+Captured with pixel8Api35DebugAndroidTest, NoticePillCaptureTest, requireRealSystemBars=true.

@@ -11,8 +11,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -33,7 +31,12 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -57,6 +60,9 @@ import de.pyryco.mobile.ui.conversations.components.MAX_CLIPBOARD_CHARS
 import de.pyryco.mobile.ui.conversations.components.MarkdownPresentation
 import de.pyryco.mobile.ui.conversations.components.MarkdownText
 import de.pyryco.mobile.ui.conversations.components.MarkdownTextStyle
+import de.pyryco.mobile.ui.conversations.components.OptionsOverlay
+import de.pyryco.mobile.ui.conversations.components.OptionsOverlayOption
+import de.pyryco.mobile.ui.conversations.components.OptionsOverlayPlacement
 import de.pyryco.mobile.ui.conversations.components.boundClipHtml
 import de.pyryco.mobile.ui.conversations.components.boundClipText
 import de.pyryco.mobile.ui.conversations.components.markdownHtml
@@ -371,13 +377,16 @@ fun MarkdownReaderScreen(
     val chromeSource = remember { HazeState() }
     val density = LocalDensity.current
     var barHeight by remember { mutableStateOf(0.dp) }
+    var menuExpanded by remember { mutableStateOf(false) }
+    var menuAnchor by remember { mutableStateOf<Rect?>(null) }
+    var layerOrigin by remember { mutableStateOf(Offset.Zero) }
     // A Surface, not a bare background: it also sets `onSurface` as the content colour MarkdownText's text uses.
     Surface(
         modifier = modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.threadColors.surface,
         contentColor = MaterialTheme.colorScheme.onSurface,
     ) {
-        Box {
+        Box(Modifier.fillMaxSize().onGloballyPositioned { layerOrigin = it.positionInWindow() }) {
             Column(
                 modifier =
                     Modifier
@@ -407,10 +416,8 @@ fun MarkdownReaderScreen(
             MarkdownReaderTopBar(
                 name = document.name,
                 onBack = onBack,
-                onCopy = onCopy,
-                onRefresh = onRefresh,
-                onOpenInApp = onOpenInApp,
-                onSaveToDevice = { saveNote(document) },
+                onOpenMenu = { menuExpanded = true },
+                onMenuAnchor = { menuAnchor = it },
                 modifier =
                     Modifier
                         .testTag("markdown-reader-top-bar")
@@ -429,6 +436,18 @@ fun MarkdownReaderScreen(
                 hostState = snackbarHostState,
                 modifier = Modifier.align(Alignment.BottomCenter).testTag("reader_confirmation_snackbar"),
             )
+            if (menuExpanded) {
+                menuAnchor?.let { anchor ->
+                    MarkdownReaderMenu(
+                        anchor = anchor.translate(-layerOrigin),
+                        onDismiss = { menuExpanded = false },
+                        onCopy = onCopy,
+                        onRefresh = onRefresh,
+                        onOpenInApp = onOpenInApp,
+                        onSaveToDevice = { saveNote(document) },
+                    )
+                }
+            }
         }
     }
 }
@@ -438,13 +457,10 @@ fun MarkdownReaderScreen(
 private fun MarkdownReaderTopBar(
     name: String,
     onBack: () -> Unit,
-    onCopy: (MarkdownCopyFormat) -> Unit,
-    onRefresh: () -> Unit,
-    onOpenInApp: () -> Unit,
-    onSaveToDevice: () -> Unit,
+    onOpenMenu: () -> Unit,
+    onMenuAnchor: (Rect) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var menuExpanded by remember { mutableStateOf(false) }
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
             modifier =
@@ -470,22 +486,15 @@ private fun MarkdownReaderTopBar(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Box {
-                IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(BarTouchSize)) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_thread_overflow),
-                        contentDescription = stringResource(R.string.cd_more_actions),
-                        modifier = Modifier.size(width = 6.dp, height = BarGlyphSize).offset(y = (-4).dp),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-                MarkdownReaderMenu(
-                    expanded = menuExpanded,
-                    onDismiss = { menuExpanded = false },
-                    onCopy = onCopy,
-                    onRefresh = onRefresh,
-                    onOpenInApp = onOpenInApp,
-                    onSaveToDevice = onSaveToDevice,
+            IconButton(
+                onClick = onOpenMenu,
+                modifier = Modifier.size(BarTouchSize).onGloballyPositioned { onMenuAnchor(it.boundsInWindow()) },
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_thread_overflow),
+                    contentDescription = stringResource(R.string.cd_more_actions),
+                    modifier = Modifier.size(width = 6.dp, height = BarGlyphSize).offset(y = (-4).dp),
+                    tint = MaterialTheme.colorScheme.primary,
                 )
             }
         }
@@ -498,55 +507,41 @@ private fun MarkdownReaderTopBar(
     }
 }
 
-/**
- * The reader's overflow (#1067), built as [ThreadOverflowMenu] is: each item dismisses, then acts. Open in
- * another app (#1068) follows Refresh, and Save to device (#1069) comes last.
- */
+/** The reader's client-owned Actions rows: dismiss first, then act on the displayed document. */
 @Composable
 private fun MarkdownReaderMenu(
-    expanded: Boolean,
+    anchor: Rect,
     onDismiss: () -> Unit,
     onCopy: (MarkdownCopyFormat) -> Unit,
     onRefresh: () -> Unit,
     onOpenInApp: () -> Unit,
     onSaveToDevice: () -> Unit,
 ) {
-    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss, modifier = Modifier.testTag("markdown-reader-menu")) {
-        listOf(
-            MarkdownCopyFormat.MARKDOWN to R.string.markdown_reader_copy_markdown,
-            MarkdownCopyFormat.PLAIN_TEXT to R.string.markdown_reader_copy_plain_text,
-            MarkdownCopyFormat.HTML to R.string.markdown_reader_copy_html,
-        ).forEach { (format, label) ->
-            DropdownMenuItem(
-                text = { Text(stringResource(label)) },
-                onClick = {
-                    onDismiss()
-                    onCopy(format)
-                },
-            )
-        }
-        DropdownMenuItem(
-            text = { Text(stringResource(R.string.markdown_reader_refresh)) },
-            onClick = {
-                onDismiss()
-                onRefresh()
-            },
+    val rows =
+        listOf<Pair<Int, () -> Unit>>(
+            R.string.markdown_reader_copy_markdown to { onCopy(MarkdownCopyFormat.MARKDOWN) },
+            R.string.markdown_reader_copy_plain_text to { onCopy(MarkdownCopyFormat.PLAIN_TEXT) },
+            R.string.markdown_reader_copy_html to { onCopy(MarkdownCopyFormat.HTML) },
+            R.string.markdown_reader_refresh to onRefresh,
+            R.string.markdown_reader_open_in_app to onOpenInApp,
+            R.string.markdown_reader_save_to_device to onSaveToDevice,
         )
-        DropdownMenuItem(
-            text = { Text(stringResource(R.string.markdown_reader_open_in_app)) },
-            onClick = {
+    OptionsOverlay(
+        options = rows.map { (label, _) -> OptionsOverlayOption(label.toString(), stringResource(label)) },
+        selectedValue = "",
+        notListed = 0,
+        anchor = anchor,
+        onSelect = { value ->
+            rows.firstOrNull { it.first.toString() == value }?.second?.let { action ->
                 onDismiss()
-                onOpenInApp()
-            },
-        )
-        DropdownMenuItem(
-            text = { Text(stringResource(R.string.markdown_reader_save_to_device)) },
-            onClick = {
-                onDismiss()
-                onSaveToDevice()
-            },
-        )
-    }
+                action()
+            }
+        },
+        onDismiss = onDismiss,
+        actions = true,
+        placement = OptionsOverlayPlacement.Below,
+        columnModifier = Modifier.testTag("markdown-reader-menu"),
+    )
 }
 
 private const val PREVIEW_MARKDOWN =

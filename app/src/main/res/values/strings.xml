@@ -1,4 +1,11 @@
 <resources>
+    <string name="host_prompt_title">Host system prompt</string>
+    <string name="host_prompt_empty">Empty</string>
+    <string name="host_prompt_loading">Loading…</string>
+    <string name="host_prompt_unavailable">Unavailable</string>
+    <string name="host_prompt_helper">Added to every conversation on this host, before the channel system prompt. A change takes effect from each conversation\'s next session.</string>
+    <string name="host_prompt_reset">Reset to default</string>
+    <string name="host_prompt_failed">Unable to save this prompt.</string>
     <string name="app_name">Pyrycode</string>
     <string name="cd_open_menu">Open menu</string>
     <string name="cd_pair_another_host">Pair another host</string>
@@ -513,4 +520,5 @@
     <string name="markdown_reader_open_in_app">Open in another app</string>
     <string name="markdown_reader_save_to_device">Save to device</string>
     <string name="markdown_reader_clip_label">Note</string>
+    <string name="cd_thread_queued_send_now">Send now</string>
 </resources>

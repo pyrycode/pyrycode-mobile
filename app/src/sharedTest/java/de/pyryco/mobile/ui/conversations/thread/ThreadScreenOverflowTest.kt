@@ -1,11 +1,22 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -31,6 +42,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import androidx.compose.ui.semantics.Role as SemanticsRole
 
 @RunWith(AndroidJUnit4::class)
 class ThreadScreenOverflowTest {
@@ -122,7 +134,10 @@ class ThreadScreenOverflowTest {
 
         composeTestRule.onNodeWithContentDescription(string(R.string.cd_more_actions)).performClick()
 
-        composeTestRule.onNodeWithText("Reset session").assertIsDisplayed()
+        val reset = composeTestRule.onNodeWithText("Reset session")
+        reset.assertIsDisplayed()
+        assertEquals(SemanticsRole.Button, reset.fetchSemanticsNode().config[SemanticsProperties.Role])
+        assertTrue(!reset.fetchSemanticsNode().config.contains(SemanticsProperties.Selected))
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_edit)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_change_workspace)).assertDoesNotExist()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_archive)).assertIsDisplayed()
@@ -139,6 +154,85 @@ class ThreadScreenOverflowTest {
 
         assertEquals(listOf(ThreadEvent.NewSession), events)
         composeTestRule.onNodeWithText("Reset session").assertDoesNotExist()
+    }
+
+    @Test
+    fun outsideTap_consumesBackControl_andPreservesComposerFocus() {
+        var backs = 0
+        val events = mutableListOf<ThreadEvent>()
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ThreadScreen(
+                    state = baseState(),
+                    onBack = { backs++ },
+                    onSendMessage = {},
+                    connectionState = ConnectionState.Connected,
+                    onRetry = {},
+                    onOverflowEvent = { events += it },
+                )
+            }
+        }
+        val field = composeTestRule.onNode(hasSetTextAction())
+        field.performTouchInput { click() }
+        field.assertIsFocused()
+        composeTestRule.onNodeWithContentDescription(string(R.string.cd_more_actions)).performTouchInput { click() }
+        field.assertIsFocused()
+        composeTestRule.onNodeWithContentDescription(string(R.string.cd_back)).performTouchInput { click() }
+        composeTestRule.onNodeWithText("Reset session").assertDoesNotExist()
+        field.assertIsFocused()
+        assertEquals(0, backs)
+        assertTrue(events.isEmpty())
+    }
+
+    @Test
+    fun headerMenu_tracksLiveWindowAnchor_andLayerOrigin() {
+        val top = mutableStateOf(10.dp)
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                Box(Modifier.padding(top = top.value)) {
+                    ThreadScreen(
+                        state = baseState(),
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                    )
+                }
+            }
+        }
+        val button = composeTestRule.onNodeWithContentDescription(string(R.string.cd_more_actions))
+        button.performClick()
+        for (offset in listOf(10.dp, 40.dp)) {
+            composeTestRule.runOnIdle { top.value = offset }
+            val anchor = button.getUnclippedBoundsInRoot()
+            val row = composeTestRule.onNodeWithText("Reset session").getUnclippedBoundsInRoot()
+            // The column begins at +4dp; its first row follows the shared 2dp vertical inset.
+            assertEquals(anchor.bottom.value + 6f, row.top.value, 1f)
+            assertTrue(
+                row.right.value <= composeTestRule
+                    .onNodeWithContentDescription(
+                        string(R.string.cd_options_overlay_dismiss),
+                    ).getUnclippedBoundsInRoot()
+                    .right.value - 8f + 1f,
+            )
+        }
+    }
+
+    @Test
+    fun headerAndFooterMenus_doNotStack() {
+        setContent(mutableListOf())
+        composeTestRule.onNodeWithText("Actions").performClick()
+        composeTestRule.onNodeWithText("Compact session").assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription(string(R.string.cd_more_actions)).performClick()
+        composeTestRule.onNodeWithText("Compact session").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Reset session").assertDoesNotExist()
+        composeTestRule.onNodeWithContentDescription(string(R.string.cd_more_actions)).performClick()
+        composeTestRule.onNodeWithText("Reset session").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Actions").performClick()
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_edit)).assertDoesNotExist()
+        composeTestRule.onNodeWithText("Compact session").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Actions").performClick()
+        composeTestRule.onNodeWithText("Compact session").assertIsDisplayed()
     }
 
     @Test

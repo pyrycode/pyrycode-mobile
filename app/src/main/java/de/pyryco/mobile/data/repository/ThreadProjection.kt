@@ -20,7 +20,6 @@ import de.pyryco.mobile.data.network.toDenial
 import de.pyryco.mobile.data.network.toRow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
@@ -58,9 +57,15 @@ internal class ThreadProjection(
      * insertion fixes a message's position; through [appendMessages] a repeat `message_id` updates it in
      * place (the dedup rule), while [appendLiveMessage] keeps the held row unchanged (#1351);
      * boundaries append in arrival order, skipping one the thread already holds ([holdsBoundary]). The thread is
-     * complete-on-first-emission once backfill arrives and live rows append after.
+     * complete-on-first-emission once backfill arrives and live rows append after. Rows and echo
+     * bookkeeping share one value, so every subscriber reads a single generation during delivery.
      */
-    private val threadByConversation = MutableStateFlow<Map<String, List<ThreadItem>>>(emptyMap())
+    private val state = MutableStateFlow(ProjectionState())
+
+    /** Row-only folds preserve echo bookkeeping in the same atomic state. */
+    private fun updateThreads(transform: (Map<String, List<ThreadItem>>) -> Map<String, List<ThreadItem>>) {
+        state.update { it.copy(threads = transform(it.threads)) }
+    }
 
     /**
      * `conversationId -> the turn ids whose turn_end this conversation has seen` on either lane (#1419).
@@ -133,10 +138,18 @@ internal class ThreadProjection(
      * store once ([moveOwnEchoToEnd]) — on the drain's `queue_state` or the pushed `message`, whichever
      * arrives first. An echo queued while idle is not parked and keeps its tap-time slot (#1636).
      *
-     * Written only by the inbound collector, through [settleQueuedEchoes] and [appendLiveMessage].
+     * A parked echo removed while a turn is open waits hidden in [OwnEchoQueue.awaitingPush] until
+     * the delivered push establishes placement, including a Send now from another paired client.
+     * Local send-now intent, recorded before enqueue, also defers a busy echo across a turn ending.
+     * Closed-turn removal retains ordinary settlement but keeps [OwnEchoQueue.placementPending]
+     * until the delivered push identifies Send now. An ordinary confirmation preserves that slot.
+     * Written atomically by the inbound collector and [recordSendNow] / [withdrawSendNow].
      * Connection-scoped and in-memory like [mintedMessageIds], and observed only through [observe].
      */
-    private val ownEchoQueues = MutableStateFlow<Map<String, OwnEchoQueue>>(emptyMap())
+    private data class ProjectionState(
+        val threads: Map<String, List<ThreadItem>> = emptyMap(),
+        val echoQueues: Map<String, OwnEchoQueue> = emptyMap(),
+    )
 
     /**
      * Source of the client-owned [ThreadItem.UnrecognizedMessage.id] (#609). The `unrecognized_message`
@@ -207,7 +220,7 @@ internal class ThreadProjection(
         decodeModelRefusal(envelope)?.also { (conversationId, refused) -> appendModelRefusal(conversationId, refused.refusal) }
 
     /**
-     * Append [rows] (`conversationId -> Message`) into [threadByConversation] as [ThreadItem.MessageItem]
+     * Append [rows] (`conversationId -> Message`) into [ProjectionState.threads] as [ThreadItem.MessageItem]
      * rows in one atomic [MutableStateFlow.update], preserving order and deduping by `message_id` — the
      * per-row fold is [withMessage], which #645 lifted out of the repository so the history reduction runs
      * the **same** fold rather than a second copy of it (see `HistoryPageReducer`). Batching a whole
@@ -216,7 +229,7 @@ internal class ThreadProjection(
      */
     fun appendMessages(rows: List<Pair<String, Message>>) {
         if (rows.isEmpty()) return
-        threadByConversation.update { current ->
+        updateThreads { current ->
             val updated = current.toMutableMap()
             for ((conversationId, message) in rows) {
                 updated[conversationId] = updated[conversationId].orEmpty().withMessage(message)
@@ -236,28 +249,44 @@ internal class ThreadProjection(
      * The one exception is position (#1558): the push of an echo still [OwnEchoQueue.queued] is its delivery,
      * so a [OwnEchoQueue.parked] one, unchanged, first moves to the end of the thread, after the turn it
      * waited behind. One queued while idle stays where it was drawn (#1636).
+     * A busy echo settled by closed-turn queue removal moves again only when [sentNow] identifies
+     * Send now. Normal delivery keeps its settled slot even when the reply started before its push.
+     * [OwnEchoQueue.placementPending] retains eligibility until either kind of push consumes it.
      */
     fun appendLiveMessage(
         conversationId: String,
         message: Message,
+        sentNow: Boolean = false,
     ) {
         if (message.id in mintedMessageIds.value[conversationId].orEmpty()) trail.delivered(message.id)
-        val echoes = ownEchoQueues.value[conversationId]
-        if (echoes != null && message.id in echoes.queued) {
-            if (message.id in echoes.parked) moveOwnEchoToEnd(conversationId, message.id)
-            ownEchoQueues.update { all ->
-                val current = all[conversationId] ?: return@update all
-                all +
-                    (
-                        conversationId to
-                            OwnEchoQueue(current.queued - message.id, current.delivered + message.id, current.behindTurn - message.id)
-                    )
+        state.update { current ->
+            val echoes = current.echoQueues[conversationId]
+            var rows = current.threads[conversationId].orEmpty()
+            var queues = current.echoQueues
+            val pendingPlacement = echoes != null && (message.id in echoes.awaitingPush || message.id in echoes.placementPending)
+            if (echoes != null && (message.id in echoes.queued || pendingPlacement)) {
+                val needsPlacement =
+                    message.id in echoes.parked ||
+                        message.id in echoes.awaitingPush ||
+                        (sentNow && message.id in echoes.placementPending)
+                if (needsPlacement) {
+                    rows = rows.moveOwnEchoToEnd(conversationId, message.id)
+                }
+                queues = queues + (
+                    conversationId to
+                        echoes.copy(
+                            queued = echoes.queued - message.id,
+                            delivered = echoes.delivered + message.id,
+                            behindTurn = echoes.behindTurn - message.id,
+                            sendNow = echoes.sendNow - message.id,
+                            awaitingPush = echoes.awaitingPush - message.id,
+                            placementPending = echoes.placementPending - message.id,
+                        )
+                )
             }
-        }
-        threadByConversation.update { current ->
-            val thread = current[conversationId].orEmpty()
-            val held = thread.any { it is ThreadItem.MessageItem && it.message.id == message.id }
-            if (held) current else current + (conversationId to (thread + ThreadItem.MessageItem(message)))
+            val held = rows.any { it is ThreadItem.MessageItem && it.message.id == message.id }
+            if (!held) rows = rows + ThreadItem.MessageItem(message)
+            current.copy(threads = current.threads + (conversationId to rows), echoQueues = queues)
         }
     }
 
@@ -280,7 +309,7 @@ internal class ThreadProjection(
         conversationId: String,
         boundary: ThreadItem.SessionBoundary,
     ) {
-        threadByConversation.update { current ->
+        updateThreads { current ->
             val thread = current[conversationId].orEmpty()
             if (thread.holdsBoundary(boundary)) current else current + (conversationId to (thread + boundary))
         }
@@ -288,7 +317,7 @@ internal class ThreadProjection(
 
     /**
      * Append [row] to [conversationId]'s thread in one atomic [MutableStateFlow.update] (#609): a pure
-     * end-append in arrival order into the same [threadByConversation] the live `message` and `tool_use`
+     * end-append in arrival order into the same [ProjectionState.threads] the live `message` and `tool_use`
      * arms write, so the row interleaves with everything else in the thread (AC #1). Routes strictly into
      * [conversationId]'s slice, so it can only ever surface in `observeMessages(conversationId)` — never
      * cross-routed. The untrusted `raw` / `messageType` ride inside the typed [row] and are never logged
@@ -311,7 +340,7 @@ internal class ThreadProjection(
         conversationId: String,
         row: ThreadItem.UnrecognizedMessage,
     ) {
-        threadByConversation.update { it + (conversationId to (it[conversationId].orEmpty() + row)) }
+        updateThreads { it + (conversationId to (it[conversationId].orEmpty() + row)) }
     }
 
     /**
@@ -326,7 +355,7 @@ internal class ThreadProjection(
         conversationId: String,
         row: ThreadItem.Banner,
     ) {
-        threadByConversation.update { threads ->
+        updateThreads { threads ->
             val thread = threads[conversationId].orEmpty()
             if (thread.holdsBanner(row)) threads else threads + (conversationId to (thread + row))
         }
@@ -345,7 +374,7 @@ internal class ThreadProjection(
     ) {
         val fold = compactionFolds.value[conversationId] ?: CompactionFold()
         var next = fold
-        threadByConversation.update { threads ->
+        updateThreads { threads ->
             val thread = threads[conversationId].orEmpty()
             val (rows, stepped) = step(thread, fold)
             next = stepped
@@ -364,7 +393,7 @@ internal class ThreadProjection(
         conversationId: String,
         row: ThreadItem.ModelRefusal,
     ) {
-        threadByConversation.update { threads ->
+        updateThreads { threads ->
             val thread = threads[conversationId].orEmpty()
             if (thread.holdsModelRefusal(row)) threads else threads + (conversationId to (thread + row))
         }
@@ -374,7 +403,7 @@ internal class ThreadProjection(
      * Open a live tool-call row for a `tool_use` (#387): append a `Running` [Role.Tool] [Message]
      * carrying the tool name + input, keyed by [LiveSessionEvent.ToolUse.toolUseId] (the correlation
      * handle and the row's [Message.id]). One atomic [MutableStateFlow.update] into the same
-     * [threadByConversation] the live `message` arm writes, so the row interleaves by **arrival
+     * [ProjectionState.threads] the live `message` arm writes, so the row interleaves by **arrival
      * order** with messages (AC #4). **Idempotent on a repeat id:** if a [Role.Tool] row with this id
      * already exists (possibly already completed by an earlier `tool_result`), it is left untouched —
      * a duplicate `tool_use` never adds a second row nor resets a finished one to `Running` (AC #3).
@@ -390,7 +419,7 @@ internal class ThreadProjection(
      * The clock is the one thing the two lanes differ on, which is why it is a parameter there.
      */
     fun applyToolUse(event: LiveSessionEvent.ToolUse) {
-        threadByConversation.update { current ->
+        updateThreads { current ->
             current + (event.conversationId to current[event.conversationId].orEmpty().withToolUse(event, Clock.System.now()))
         }
     }
@@ -406,7 +435,7 @@ internal class ThreadProjection(
      * is carried **verbatim** — never trimmed, parsed, or logged (Security review).
      */
     fun applyToolResult(event: LiveSessionEvent.ToolResult) {
-        threadByConversation.update { current ->
+        updateThreads { current ->
             current + (event.conversationId to current[event.conversationId].orEmpty().withToolResult(event))
         }
     }
@@ -425,8 +454,8 @@ internal class ThreadProjection(
             } catch (e: IllegalArgumentException) {
                 return
             }
-        threadByConversation.update { current ->
-            val rows = current[dto.conversationId] ?: return@update current
+        updateThreads { current ->
+            val rows = current[dto.conversationId] ?: return@updateThreads current
             current + (dto.conversationId to rows.withToolDenied(dto.toolUseId, dto.toDenial()))
         }
     }
@@ -444,8 +473,8 @@ internal class ThreadProjection(
             } catch (e: IllegalArgumentException) {
                 return
             }
-        threadByConversation.update { current ->
-            val rows = current[dto.conversationId] ?: return@update current
+        updateThreads { current ->
+            val rows = current[dto.conversationId] ?: return@updateThreads current
             current + (dto.conversationId to rows.withToolProgress(dto))
         }
     }
@@ -455,7 +484,7 @@ internal class ThreadProjection(
      * delta extends the last row when it is a segment of the same turn and otherwise opens a new
      * streaming [Role.Assistant] segment at the end, so text after a tool call or a user message draws
      * below it; [withAssistantDelta] has the segment key and the guards that keep it unique. One atomic
-     * [MutableStateFlow.update] into the same [threadByConversation] the live `message` and tool
+     * [MutableStateFlow.update] into the same [ProjectionState.threads] the live `message` and tool
      * arms write, so the assistant text interleaves by **arrival order** with messages and tool rows
      * (AC #4).
      *
@@ -472,11 +501,20 @@ internal class ThreadProjection(
      * echo to de-dup against.
      */
     fun applyAssistantDelta(event: LiveSessionEvent.AssistantDelta) {
-        val parkedEchoes = ownEchoQueues.value[event.conversationId]?.parked.orEmpty()
-        threadByConversation.update { current ->
-            val rows = current[event.conversationId].orEmpty().withAssistantDelta(event, Clock.System.now(), passOver = parkedEchoes)
+        state.update { current ->
+            val echoes = current.echoQueues[event.conversationId]
+            val parkedEchoes = echoes?.let { it.parked + it.awaitingPush }.orEmpty()
+            val rows =
+                current.threads[event.conversationId].orEmpty().withAssistantDelta(
+                    event,
+                    Clock.System.now(),
+                    passOver = parkedEchoes,
+                )
             val ended = event.turnId in endedTurns.value[event.conversationId].orEmpty()
-            current + (event.conversationId to if (ended) rows.withSettledTurns(setOf(event.turnId)) else rows)
+            current.copy(
+                threads =
+                    current.threads + (event.conversationId to if (ended) rows.withSettledTurns(setOf(event.turnId)) else rows),
+            )
         }
     }
 
@@ -492,7 +530,7 @@ internal class ThreadProjection(
      */
     fun finalizeAssistantTurn(event: LiveSessionEvent.TurnEnd) {
         recordEnded(event.conversationId, setOf(event.turnId))
-        threadByConversation.update { current ->
+        updateThreads { current ->
             current + (event.conversationId to current[event.conversationId].orEmpty().withFinalizedTurn(event, Clock.System.now()))
         }
     }
@@ -507,6 +545,37 @@ internal class ThreadProjection(
         messageId: String,
     ) {
         mintedMessageIds.update { it + (conversationId to (it[conversationId].orEmpty() + messageId)) }
+    }
+
+    /** Track a Send now separately from drops, only for a minted echo queued behind a turn. */
+    fun recordSendNow(
+        conversationId: String,
+        messageId: String,
+    ): Boolean {
+        if (messageId.isEmpty() || messageId !in mintedMessageIds.value[conversationId].orEmpty()) return false
+        var recorded = false
+        state.update { all ->
+            val current = all.echoQueues[conversationId] ?: OwnEchoQueue()
+            recorded = messageId in current.parked && messageId !in current.sendNow && messageId !in current.delivered
+            if (recorded) {
+                all.copy(
+                    echoQueues = all.echoQueues + (conversationId to current.copy(sendNow = current.sendNow + messageId)),
+                )
+            } else {
+                all
+            }
+        }
+        return recorded
+    }
+
+    fun withdrawSendNow(
+        conversationId: String,
+        messageId: String,
+    ) {
+        state.update { all ->
+            val current = all.echoQueues[conversationId] ?: return@update all
+            all.copy(echoQueues = all.echoQueues + (conversationId to current.copy(sendNow = current.sendNow - messageId)))
+        }
     }
 
     /** Record a drop of [queuedMessageId] whose echo is [echoId] before it is sent (#859); see [pendingDrops]. */
@@ -559,9 +628,11 @@ internal class ThreadProjection(
     /**
      * Track this device's queued echoes against [queue]'s current snapshots (#1558), after a `queue_state`
      * has been applied and [settleDrops] has run. In each conversation this device minted into, an echo the
-     * snapshot holds is [OwnEchoQueue.queued], and one that has left the snapshot is delivered: it moves to
-     * the end of the thread before it stops reading as queued, so no read shows it at its tap-time slot. A
-     * dropped echo has already been removed and its id spent, so the move finds nothing.
+     * snapshot holds is [OwnEchoQueue.queued]. A busy echo leaving an open turn's backlog waits for its
+     * delivered message in [OwnEchoQueue.awaitingPush], since the control may have come from a peer.
+     * Closed-turn removal moves the echo before it stops reading as queued, retaining ordinary drain's
+     * immediate settlement. Only a delivered Send now push corrects that position. A dropped echo has
+     * already been removed and its id spent, so the move finds nothing.
      *
      * Only an echo first reported while [turnOpen] held for its conversation waits behind a turn (#1636): it
      * alone reads last and moves when it drains. One first reported while idle keeps its tap-time slot.
@@ -570,7 +641,7 @@ internal class ThreadProjection(
         queue: QueueProjection,
         turnOpen: (conversationId: String) -> Boolean,
     ) {
-        (mintedMessageIds.value.keys + ownEchoQueues.value.keys).forEach { settleQueuedEchoes(it, queue, turnOpen(it)) }
+        (mintedMessageIds.value.keys + state.value.echoQueues.keys).forEach { settleQueuedEchoes(it, queue, turnOpen(it)) }
     }
 
     private fun settleQueuedEchoes(
@@ -579,18 +650,45 @@ internal class ThreadProjection(
         turnOpen: Boolean,
     ) {
         val inSnapshot = queue.current(conversationId).mapTo(HashSet()) { it.messageId }
-        val echoes = ownEchoQueues.value[conversationId] ?: OwnEchoQueue()
-        val drained = echoes.queued - inSnapshot
-        drained.filter { it in echoes.behindTurn }.forEach { moveOwnEchoToEnd(conversationId, it) }
-        val delivered = echoes.delivered + drained
-        val minted = mintedMessageIds.value[conversationId].orEmpty()
-        val queued = inSnapshot.intersect(minted) - delivered
-        val behindTurn = (echoes.behindTurn intersect queued) + if (turnOpen) queued - echoes.queued else emptySet()
-        val next = OwnEchoQueue(queued, delivered, behindTurn)
-        // A dropped echo has already left the ledger, so only a drained one still in it was delivered.
-        drained.filter { it in minted }.forEach(trail::delivered)
-        next.queued.forEach(trail::queued)
-        if (next != echoes) ownEchoQueues.update { it + (conversationId to next) }
+        // Rows and intent derive from one CAS input; retries have no nested writes or trail effects.
+        var deliveredIds: Set<String> = emptySet()
+        var queuedIds: Set<String> = emptySet()
+        state.update { all ->
+            val echoes = all.echoQueues[conversationId] ?: OwnEchoQueue()
+            val drained = echoes.queued - inSnapshot
+            val minted = mintedMessageIds.value[conversationId].orEmpty()
+            val deferred = drained.intersect(echoes.behindTurn).filterTo(HashSet()) { turnOpen || it in echoes.sendNow }
+            val rows =
+                drained
+                    .filter { it in echoes.behindTurn && it !in deferred }
+                    .fold(all.threads[conversationId].orEmpty()) { rows, id -> rows.moveOwnEchoToEnd(conversationId, id) }
+            val delivered = echoes.delivered + (drained - deferred)
+            val queued = inSnapshot.intersect(minted) - delivered
+            val behindTurn = (echoes.behindTurn intersect queued) + if (turnOpen) queued - echoes.queued else emptySet()
+            val next =
+                echoes.copy(
+                    queued = queued,
+                    delivered = delivered,
+                    behindTurn = behindTurn,
+                    awaitingPush = echoes.awaitingPush + deferred,
+                    placementPending = echoes.placementPending + drained.intersect(echoes.behindTurn).intersect(minted),
+                )
+            deliveredIds = drained.intersect(minted) - deferred
+            queuedIds = next.queued
+            if (next ==
+                echoes
+            ) {
+                all
+            } else {
+                all.copy(
+                    threads = all.threads + (conversationId to rows),
+                    echoQueues =
+                        all.echoQueues + (conversationId to next),
+                )
+            }
+        }
+        deliveredIds.forEach(trail::delivered)
+        queuedIds.forEach(trail::queued)
     }
 
     /**
@@ -598,18 +696,15 @@ internal class ThreadProjection(
      * (#1558). A no-op unless the id is in [mintedMessageIds] and the first message row carrying it is a
      * user row, so a daemon frame naming somebody else's id, or a non-user row's, never moves anything.
      */
-    private fun moveOwnEchoToEnd(
+    private fun List<ThreadItem>.moveOwnEchoToEnd(
         conversationId: String,
         messageId: String,
-    ) {
-        if (messageId !in mintedMessageIds.value[conversationId].orEmpty()) return
-        threadByConversation.update { current ->
-            val rows = current[conversationId] ?: return@update current
-            val index = rows.indexOfFirst { it is ThreadItem.MessageItem && it.message.id == messageId }
-            val row = rows.getOrNull(index) as? ThreadItem.MessageItem ?: return@update current
-            if (row.message.role != Role.User || index == rows.lastIndex) return@update current
-            current + (conversationId to (rows.filterIndexed { i, _ -> i != index } + row))
-        }
+    ): List<ThreadItem> {
+        if (messageId !in mintedMessageIds.value[conversationId].orEmpty()) return this
+        val index = indexOfFirst { it is ThreadItem.MessageItem && it.message.id == messageId }
+        val row = getOrNull(index) as? ThreadItem.MessageItem ?: return this
+        if (row.message.role != Role.User || index == lastIndex) return this
+        return filterIndexed { i, _ -> i != index } + row
     }
 
     /**
@@ -631,8 +726,8 @@ internal class ThreadProjection(
         if (messageId !in mintedMessageIds.value[conversationId].orEmpty()) return
         trail.dropped(messageId)
         mintedMessageIds.update { it + (conversationId to (it[conversationId].orEmpty() - messageId)) }
-        threadByConversation.update { current ->
-            val rows = current[conversationId] ?: return@update current
+        updateThreads { current ->
+            val rows = current[conversationId] ?: return@updateThreads current
             current + (conversationId to rows.filterNot { it is ThreadItem.MessageItem && it.message.id == messageId })
         }
     }
@@ -671,7 +766,7 @@ internal class ThreadProjection(
     ) {
         if (page.entries.isEmpty()) return
         recordEnded(conversationId, endedTurnIds(page.entries, interactive))
-        threadByConversation.update { current ->
+        updateThreads { current ->
             val existing = current[conversationId].orEmpty()
             val merged = existing.mergeHistoryRows(reduceHistoryPage(page.entries, interactive))
             current + (conversationId to merged.withSettledTurns(endedTurns.value[conversationId].orEmpty()))
@@ -686,8 +781,8 @@ internal class ThreadProjection(
      * window (see [endedTurns]). Writes nothing when nothing changes.
      */
     private fun settleEndedTurns(conversationId: String) {
-        threadByConversation.update { current ->
-            val rows = current[conversationId] ?: return@update current
+        updateThreads { current ->
+            val rows = current[conversationId] ?: return@updateThreads current
             val settled = rows.withSettledTurns(endedTurns.value[conversationId].orEmpty())
             if (settled === rows) current else current + (conversationId to settled)
         }
@@ -710,8 +805,7 @@ internal class ThreadProjection(
     fun remove(conversationId: String) {
         endedTurns.update { it - conversationId }
         compactionFolds.update { it - conversationId }
-        ownEchoQueues.update { it - conversationId }
-        threadByConversation.update { it - conversationId }
+        state.update { it.copy(threads = it.threads - conversationId, echoQueues = it.echoQueues - conversationId) }
     }
 
     /**
@@ -730,10 +824,22 @@ internal class ThreadProjection(
      * below every row of the turn they wait behind, and the last-row rule runs over the rows without them,
      * so the running reply keeps streaming.
      */
-    fun observe(conversationId: String): Flow<List<ThreadItem>> =
-        combine(threadByConversation, ownEchoQueues) { threads, echoes ->
-            threads[conversationId].orEmpty().withParkedEchoesLast(echoes[conversationId]?.parked.orEmpty())
-        }.distinctUntilChanged()
+    fun observe(conversationId: String): Flow<List<ThreadItem>> = observeSnapshot(conversationId).map { it.rows }.distinctUntilChanged()
+
+    /** Derive rows and suppression from one state generation, including on a concurrent reopen. */
+    fun observeSnapshot(conversationId: String): Flow<ThreadSnapshot> =
+        state
+            .map { current ->
+                val echoes = current.echoQueues[conversationId]
+                val suppressed = echoes?.awaitingPush.orEmpty()
+                val rows =
+                    current.threads[conversationId]
+                        .orEmpty()
+                        .filterNot {
+                            it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.id in suppressed
+                        }.withParkedEchoesLast(echoes?.parked.orEmpty())
+                ThreadSnapshot(rows, suppressed)
+            }.distinctUntilChanged()
 
     /** This thread as [observe] reads it: [parkedIds] user rows last, the rest through [withOnlyLastRowStreaming]. */
     private fun List<ThreadItem>.withParkedEchoesLast(parkedIds: Set<String>): List<ThreadItem> {
@@ -748,9 +854,9 @@ internal class ThreadProjection(
      * empty per connection, so a collector's baseline for it is zero rows.
      */
     fun observeRowCounts(): Flow<Map<String, Int>> =
-        threadByConversation
-            .map { threads ->
-                threads.mapValues { it.value.size }
+        state
+            .map { current ->
+                current.threads.mapValues { it.value.size }
             }.distinctUntilChanged()
 
     /**
@@ -819,6 +925,14 @@ internal class ThreadProjection(
      * [delivered] is the ids already moved to the end, which a later snapshot repeating one (a legal
      * duplicate `message_id`) never queues again.
      *
+     * [sendNow] holds locally requested delivery intents for busy echoes, independently of drops.
+     * [awaitingPush] holds busy echoes removed while a turn is open or a local intent is pending;
+     * they are not yet reported delivered, and remain in the store
+     * for identity and attachment metadata, hidden from the read and skipped by assistant deltas.
+     * [placementPending] retains every busy echo removed before its delivered push, including a
+     * settled closed-turn drain. The first push consumes this membership and corrects placement only
+     * when it reports Send now. Ordinary and duplicate pushes cannot move it. Idle echoes never join it.
+     *
      * [behindTurn] is the [queued] ids first reported while a turn was open (#1636), and only those, the
      * [parked] ones, read last and move on delivery. One queued while idle waits behind nothing: the daemon
      * delivers it at once, and its confirmation can arrive after its own reply began, so moving it then would
@@ -828,6 +942,9 @@ internal class ThreadProjection(
         val queued: Set<String> = emptySet(),
         val delivered: Set<String> = emptySet(),
         val behindTurn: Set<String> = emptySet(),
+        val sendNow: Set<String> = emptySet(),
+        val awaitingPush: Set<String> = emptySet(),
+        val placementPending: Set<String> = emptySet(),
     ) {
         val parked: Set<String> get() = queued intersect behindTurn
     }

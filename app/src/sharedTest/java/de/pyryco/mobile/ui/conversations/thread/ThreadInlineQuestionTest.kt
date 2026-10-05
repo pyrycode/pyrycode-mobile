@@ -57,6 +57,7 @@ import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.QuestionOption
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.e2e.questionAnswerTarget
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -364,6 +365,77 @@ class ThreadInlineQuestionTest {
             .assertIsDisplayed()
             .assertIsEnabled()
             .performClick()
+        rule.runOnIdle { assertEquals(listOf(pending.generation), continued) }
+    }
+
+    @Test
+    @OptIn(ExperimentalTestApi::class)
+    fun phone_question_scroll_sequence_submits_from_a_short_thread() {
+        var pending by mutableStateOf(
+            question.copy(
+                batch =
+                    question.batch.copy(
+                        questions =
+                            listOf(
+                                Question(
+                                    "Choose a language",
+                                    "Language",
+                                    listOf(QuestionOption("Kotlin", "JVM"), QuestionOption("Rust", "Systems")),
+                                    false,
+                                ),
+                            ),
+                    ),
+            ),
+        )
+        val continued = mutableListOf<Long>()
+        rule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 650.dp))) {
+                CompositionLocalProvider(LocalOverscrollFactory provides null) {
+                    PyrycodeMobileTheme {
+                        ThreadScreen(
+                            ThreadUiState(
+                                "chat",
+                                "Client planning",
+                                isPromoted = false,
+                                hasMessages = true,
+                                items = historyItems().take(1),
+                            ),
+                            {},
+                            {},
+                            ConnectionState.Connected,
+                            {},
+                            questionState = pending,
+                            onQuestionEvent = { event, generation ->
+                                when (event) {
+                                    is QuestionModalEvent.OptionToggled ->
+                                        pending =
+                                            pending.copy(selections = listOf(QuestionSelection(optionIndices = setOf(event.optionIndex))))
+                                    QuestionModalEvent.Continue -> continued += generation
+                                    else -> Unit
+                                }
+                            },
+                        )
+                    }
+                }
+            }
+        }
+        rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasTestTag("question-batch-title"))
+        val option = hasText("Rust", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("thread-question-row"))
+        rule.questionAnswerTarget(option).performTouchInput { click(center) }
+        rule.onNode(option).assertIsSelected()
+        val continueButton =
+            hasText("Continue") and hasClickAction() and isEnabled() and hasAnyAncestor(hasTestTag("question-batch-actions"))
+        rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasTestTag("question-batch-actions"))
+        rule.waitUntil(1_000) { rule.onAllNodes(continueButton).fetchSemanticsNodes().isNotEmpty() }
+        val target = rule.questionAnswerTarget(continueButton)
+        val tap = rule.onNode(continueButton).fetchSemanticsNode().boundsInRoot
+        val chromeTop =
+            rule
+                .onNodeWithTag("thread-composer")
+                .fetchSemanticsNode()
+                .boundsInRoot.top
+        assertTrue("Continue tap $tap must clear composer top $chromeTop", tap.center.y < chromeTop)
+        target.performTouchInput { click(center) }
         rule.runOnIdle { assertEquals(listOf(pending.generation), continued) }
     }
 

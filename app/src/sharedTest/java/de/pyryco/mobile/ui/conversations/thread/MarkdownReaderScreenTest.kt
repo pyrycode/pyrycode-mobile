@@ -6,6 +6,7 @@ import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.LocalActivityResultRegistryOwner
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.activity.result.ActivityResultRegistry
 import androidx.activity.result.ActivityResultRegistryOwner
 import androidx.activity.result.contract.ActivityResultContract
@@ -205,6 +206,7 @@ class MarkdownReaderScreenTest {
         composeRule.onNodeWithContentDescription(more).performClick()
         composeRule.onNodeWithText(item).performClick()
         composeRule.waitForIdle()
+        composeRule.onNodeWithTag("markdown-reader-menu").assertDoesNotExist()
     }
 
     private fun showRefreshable(
@@ -232,6 +234,23 @@ class MarkdownReaderScreenTest {
             }
         assertEquals(tops.sorted(), tops)
         assertEquals(6, tops.distinct().size)
+    }
+
+    @Test fun systemBackDismissesMenuWithoutLeavingReader() {
+        var backs = 0
+        var dispatcher: androidx.activity.OnBackPressedDispatcher? = null
+        composeRule.setContent {
+            dispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
+            PyrycodeMobileTheme {
+                MarkdownReaderScreen(MarkdownDocument("Plan.md", "# Plan"), onBack = { backs++ })
+            }
+        }
+        composeRule.onNodeWithContentDescription(more).performClick()
+        composeRule.onNodeWithTag("markdown-reader-menu").assertIsDisplayed()
+        composeRule.runOnIdle { checkNotNull(dispatcher).onBackPressed() }
+        composeRule.onNodeWithTag("markdown-reader-menu").assertDoesNotExist()
+        assertEquals(0, backs)
+        composeRule.onNodeWithText("Plan").assertIsDisplayed()
     }
 
     /** Stands in for the system picker (#1069): records each launch, and answers when the test says so. */
@@ -472,6 +491,66 @@ class MarkdownReaderScreenTest {
         composeRule.onNodeWithText("New note").assertIsDisplayed()
         composeRule.onNodeWithText("Old note").assertDoesNotExist()
         assertEquals(1, reads)
+        choose(copyMarkdown)
+        assertEquals(
+            "# New note",
+            clipboard.primaryClip
+                ?.getItemAt(0)
+                ?.text
+                .toString(),
+        )
+        choose(copyPlain)
+        assertEquals(
+            "New note",
+            clipboard.primaryClip
+                ?.getItemAt(0)
+                ?.text
+                .toString(),
+        )
+        choose(copyHtml)
+        assertTrue(
+            clipboard.primaryClip
+                ?.getItemAt(0)
+                ?.htmlText
+                .orEmpty()
+                .contains("<h1>New note</h1>"),
+        )
+        choose(openInApp)
+        awaitText(noApp)
+        assertEquals("# New note", File(sharedNoteDirectory(context.noBackupFilesDir), "Plan.md").readText())
+    }
+
+    @Test fun savingAfterRefreshWritesTheDisplayedDocument() {
+        val registry = PickerRegistry()
+        val owner =
+            object : ActivityResultRegistryOwner {
+                override val activityResultRegistry: ActivityResultRegistry = registry
+            }
+        composeRule.setContent {
+            CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner) {
+                PyrycodeMobileTheme {
+                    RefreshableMarkdownReader(
+                        initial = MarkdownDocument("Old.md", "# Old"),
+                        reread = { MarkdownDocument("New.md", "# Refreshed") },
+                        onBack = {},
+                    )
+                }
+            }
+        }
+        choose(refresh)
+        composeRule.onNodeWithText("Refreshed").assertIsDisplayed()
+        choose(saveToDevice)
+        assertEquals(
+            "New.md",
+            registry.launches
+                .single()
+                .second
+                .getStringExtra(Intent.EXTRA_TITLE),
+        )
+        val destination = File(context.cacheDir, "refreshed-reader-note.md")
+        answer(registry, Uri.fromFile(destination))
+        awaitText(saved)
+        assertEquals("# Refreshed", destination.readText())
     }
 
     @Test

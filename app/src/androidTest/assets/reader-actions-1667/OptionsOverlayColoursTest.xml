@@ -1,0 +1,14 @@
+<testsuite name="de.pyryco.mobile.ui.conversations.components.OptionsOverlayColoursTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-10-05T03:25:18.447Z" time="15.086">
+  <properties />
+  <testcase name="dynamicLightMenuKeepsReadableIdleRows" classname="de.pyryco.mobile.ui.conversations.components.OptionsOverlayColoursTest" time="12.446" />
+  <testcase name="belowMenuScrollsWithinTheSpaceBelowItsAnchor" classname="de.pyryco.mobile.ui.conversations.components.OptionsOverlayColoursTest" time="0.665" />
+  <testcase name="compactViewportWithLargeTextCanReachLastOption" classname="de.pyryco.mobile.ui.conversations.components.OptionsOverlayColoursTest" time="0.463" />
+  <testcase name="belowActionsUseTheExistingLightPalette" classname="de.pyryco.mobile.ui.conversations.components.OptionsOverlayColoursTest" time="0.161" />
+  <testcase name="rowsMatchFigmaHeightAndStayAboveAnchor" classname="de.pyryco.mobile.ui.conversations.components.OptionsOverlayColoursTest" time="0.106" />
+  <testcase name="lightMenuKeepsReadableIdleRows" classname="de.pyryco.mobile.ui.conversations.components.OptionsOverlayColoursTest" time="0.146" />
+  <testcase name="staticDarkMenuUsesBoundFixedAndOnPrimaryRoles" classname="de.pyryco.mobile.ui.conversations.components.OptionsOverlayColoursTest" time="0.168" />
+  <testcase name="belowActionsUseTheExistingDarkPalette" classname="de.pyryco.mobile.ui.conversations.components.OptionsOverlayColoursTest" time="0.131" />
+  <testcase name="belowMenuFollowsLiveAnchorAndClampsBothHorizontalEdges" classname="de.pyryco.mobile.ui.conversations.components.OptionsOverlayColoursTest" time="0.15" />
+  <system-out />
+  <system-err />
+</testsuite>

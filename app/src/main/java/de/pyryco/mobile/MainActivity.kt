@@ -386,6 +386,7 @@ internal fun PyryNavHost(
                         ChannelListEvent.TreeHostUpdateTapped -> uriHandler.openUri(PLAY_STORE_URL)
                         is ChannelListEvent.HostEditNameSubmitted -> vm.submitHostName(event.name)
                         ChannelListEvent.HostEditDismissed -> vm.dismissHostEditor()
+                        is ChannelListEvent.HostPrompt -> vm.onHostPromptEvent(event.event)
                         ChannelListEvent.HostUnpairRequested -> vm.requestHostUnpair()
                         ChannelListEvent.HostUnpairConfirmed -> vm.confirmHostUnpair()
                         ChannelListEvent.HostUnpairDeclined -> vm.declineHostUnpair()
@@ -537,6 +538,7 @@ internal fun PyryNavHost(
                     answerRejected = answerRejected,
                     onDismissAnswerRejection = vm::onAnswerRejectionDismissed,
                     onDropQueued = vm::onDropQueued,
+                    onSendQueuedNow = vm::onSendQueuedNow,
                     onOverflowEvent = vm::onOverflowEvent,
                     onModelSelected = vm::onModelSelected,
                     switchBackOffer = switchBackOffer,
