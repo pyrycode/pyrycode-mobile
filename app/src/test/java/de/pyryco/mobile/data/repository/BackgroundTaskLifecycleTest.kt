@@ -59,6 +59,74 @@ class BackgroundTaskLifecycleTest {
         MobileJson.decodeFromJsonElement<BackgroundTaskUpdatedPayloadDto>(frame.payload)
 
     @Test
+    fun ordinaryBackfillOverlap_anchorsNewLifecyclePositionsAndSurvivesReplayAndPrepend() =
+        runTest {
+            val projection = ThreadProjection()
+            projection.appendMessages(listOf("c1" to message("m1").message, "c1" to message("m2").message))
+            val chronological =
+                listOf(
+                    entry(envelope("message", """{"conversation_id":"c1","message_id":"m1","role":"user","text":"before"}"""), 1),
+                    entry(started("t1"), 2),
+                    entry(envelope("message", """{"conversation_id":"c1","message_id":"m2","role":"user","text":"between"}"""), 3),
+                    entry(terminal("t1", "completed"), 4, last),
+                )
+            val page = HistoryPage(chronological.reversed(), "older", false)
+            projection.mergeHistoryPage("c1", page, true)
+            val merged = projection.observe("c1").first()
+            assertEquals(listOf("m1", "t1:false", "m2", "t1:true"), merged.keys())
+            assertEquals(listOf(message("m1"), message("m2")), merged.filterIsInstance<ThreadItem.MessageItem>())
+
+            projection.applyBackgroundTaskLifecycle(started("t1"))
+            projection.applyBackgroundTaskLifecycle(terminal("t1", "failed"))
+            projection.mergeHistoryPage("c1", page, true)
+            assertEquals(merged, projection.observe("c1").first())
+            val prepended = merged.mergeHistoryRows(listOf(message("m0"), message("m1")))
+            assertEquals(listOf("m0") + merged.keys(), prepended.keys())
+            assertEquals(merged.markers(), prepended.markers())
+        }
+
+    @Test
+    fun overlapWithLiveFinish_insertsOnlyMissingLaunchAndRetainsFinishPosition() {
+        val live =
+            listOf<ThreadItem>(message("m1"), message("m2"))
+                .withBackgroundTaskUpdated(updatedDto(), last) + message("m3")
+        val launch = emptyList<ThreadItem>().withBackgroundTaskStarted(startedDto(), first).single()
+        val finish = emptyList<ThreadItem>().withBackgroundTaskUpdated(updatedDto(), first).single()
+        val page = listOf(message("m0"), message("m1"), launch, message("m2"), finish, message("m3"))
+        val merged = live.mergeHistoryRows(page)
+        assertEquals(listOf("m0", "m1", "t1:false", "m2", "t1:true", "m3"), merged.keys())
+        assertEquals(last, merged.markers().last().occurredAt)
+        assertEquals("toolu_t1", merged.markers().last().toolCallId)
+        assertEquals(merged, merged.mergeHistoryRows(page))
+        assertEquals(merged.markers(), merged.mergeHistoryRows(listOf(message("older"))).markers())
+    }
+
+    @Test
+    fun overlappingPage_preservesLifecycleOrderAtBothEndsAndBetweenSharedAnchors() {
+        val launch1 = emptyList<ThreadItem>().withBackgroundTaskStarted(startedDto(), first).single()
+        val finish1 = emptyList<ThreadItem>().withBackgroundTaskUpdated(updatedDto(), last).single()
+        val launch2 = emptyList<ThreadItem>().withBackgroundTaskStarted(startedDto(started("t2")), first).single()
+        val finish2 = emptyList<ThreadItem>().withBackgroundTaskUpdated(updatedDto(terminal("t2", "completed")), last).single()
+        val ordinary = listOf<ThreadItem>(message("m1"), message("m2"))
+        val page = listOf(launch1, message("m1"), launch2, finish1, message("m2"), finish2)
+        val merged = ordinary.mergeHistoryRows(page)
+        assertEquals(listOf("t1:false", "m1", "t2:false", "t1:true", "m2", "t2:true"), merged.keys())
+        assertEquals(ordinary, merged.filterIsInstance<ThreadItem.MessageItem>())
+        assertEquals(merged, merged.mergeHistoryRows(page))
+    }
+
+    @Test
+    fun pageStartingInsideLoadedThread_usesFollowingAnchorForLeadingEvidence() {
+        val launch = emptyList<ThreadItem>().withBackgroundTaskStarted(startedDto(), first).single()
+        val finish = emptyList<ThreadItem>().withBackgroundTaskUpdated(updatedDto(), last).single()
+        val ordinary = listOf<ThreadItem>(message("older"), message("m1"), message("m2"))
+        val page = listOf(launch, message("m1"), finish, message("m2"))
+        val merged = ordinary.mergeHistoryRows(page)
+        assertEquals(listOf("older", "t1:false", "m1", "t1:true", "m2"), merged.keys())
+        assertEquals(merged, merged.mergeHistoryRows(page))
+    }
+
+    @Test
     fun reconnectMemoryMerge_completesLaunchJoinWithoutMovingCachedFinish() {
         val retained = listOf<ThreadItem>(message("m1")).withBackgroundTaskUpdated(updatedDto(), last) + message("m2")
         val reloaded = listOf<ThreadItem>(message("m1")).withBackgroundTaskStarted(startedDto(), first) + message("m2")

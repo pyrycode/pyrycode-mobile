@@ -58,6 +58,7 @@ None.
 - [Trust boundaries] Typed DTO decoding remains the boundary for authenticated but untrusted daemon content. SHOULD FIX: reject empty task ids for lifecycle evidence; unknown tool ids must not erase known joins. Descriptions, patches and summaries remain inert, daemon-bounded text, never evaluated or used as marker identities.
 - [Tokens, secrets and credentials] No credential generation, access or storage is added. Lifecycle DTOs carry no authentication material.
 - [Files and storage] SHOULD FIX: exclude markers before cache limits and serialization, retaining the current private cache schema and avoiding new plaintext persistence. No filename is derived from an id or description.
+- [Files and storage, rework] `FileConversationCache.writeThread` excludes lifecycle evidence from pre-limit trim accounting too, so authenticated lifecycle frames cannot clear a stored pagination cursor or completed-history position without actual cache trimming. Fresh-instance regression tests cover both saved positions.
 - [Android attack surface] No component, intent, permission, provider or WebView is added. Render folding filters markers, so no new text sink exists.
 - [Cryptography] Existing Noise_IK_25519_ChaChaPoly_BLAKE2s and Keystore ownership are unchanged; there is no new cryptographic operation.
 - [Network and I/O] Existing envelope caps and transport deadlines remain. The additive optional roster field tolerates older daemons; wrong types fail silently. Both live and history use the negotiated interactive gate.
@@ -71,3 +72,13 @@ None.
 ## Revisions
 
 - 2026-10-05: Inspection of `CachingConversationRepository.observeMessages` showed reconnect also merges a retained in-memory thread with `mergeCachedRows`. Apply the same lifecycle backfill to that seam; disk persistence still excludes all markers. Inspection of `ThreadProjection.observeRowCounts` also showed its visible-growth signal must exclude evidence, so lifecycle-only updates do not count as rendered thread growth. Tests cover both contracts.
+- 2026-10-05: Verifier rework on PR #1784 found lifecycle exclusion missing from cache trim accounting and fresh markers prepended ahead of overlapping ordinary backfill. Exclude markers from the pre-limit count in `FileConversationCache.writeThread`. In `mergeHistoryRows`, keep the existing ordinary-row prepend contract, but insert fresh lifecycle evidence after its preceding retained page neighbour, before the following neighbour for leading evidence, or at the front when the page has neither, preserving page order within each insertion slot and keeping retained marker positions/content. Regression tests combine ordinary backfill, live replay, a retained terminal and older-page prepend.
+
+## Documentation handoff
+
+Pending for the documentation stage:
+
+- `docs/knowledge/features/remote-conversation-repository-reads-and-thread-store-history-paging.md`, "History pages fold into the same thread": document `ThreadItem.BackgroundTaskLifecycle`, conversation-local task/phase identities, late launch backfill, terminal positions and ordinary-row anchors during history/replay overlap.
+- `docs/knowledge/features/mobile-protocol-v2-wire-layer-application-payloads.md`, "Application payloads (decoded on top of `Envelope`)": document enriched roster joins, started-description precedence, and replacing panel truth versus retained lifecycle evidence.
+- `docs/knowledge/features/caching-conversation-repository.md`, "How the restore merges with live rows", and `docs/knowledge/features/conversation-cache.md`, "The thread document's two writers (#1354)": document in-memory retention across reconnects, render/row-count/timestamp exclusions, unchanged cache schema and exclusion from trim accounting.
+- Record the regression lessons in these topics: cache exclusions must match trim accounting; overlap deduplication must retain ordinary-row anchors for new evidence.

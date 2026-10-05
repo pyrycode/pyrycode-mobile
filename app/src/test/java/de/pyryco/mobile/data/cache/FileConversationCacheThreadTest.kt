@@ -661,6 +661,30 @@ class FileConversationCacheThreadTest {
     // --- #1354: the saved history position, beside the rows in the thread document ---------------------
 
     @Test
+    fun lifecycleEvidence_keepsSavedCursorAndCompletedHistory() =
+        runTest {
+            val ordinary = message("m1")
+            val launch = ThreadItem.BackgroundTaskLifecycle("task", ordinary.message.timestamp)
+            val finish =
+                launch.copy(
+                    terminal =
+                        de.pyryco.mobile.data.model
+                            .BackgroundTaskUpdate("", "completed", "summary", null),
+                )
+            for (position in listOf(HistoryPosition("opaque-cursor", false), HistoryPosition("", true))) {
+                cache().writeThread("server-a", "conv-1", listOf(ordinary)).getOrThrow()
+                cache().writeHistoryPosition("server-a", "conv-1", position).getOrThrow()
+                val before = threadFiles().single().readText()
+
+                cache().writeThread("server-a", "conv-1", listOf(launch, ordinary, finish)).getOrThrow()
+
+                assertEquals(position, cache().readHistoryPosition("server-a", "conv-1"))
+                assertEquals(listOf(ordinary), cache().readThread("server-a", "conv-1"))
+                assertEquals(before, threadFiles().single().readText())
+            }
+        }
+
+    @Test
     fun `a history position round-trips beside the rows through a fresh instance`() =
         runTest {
             val position = HistoryPosition(cursor = "opaque-cursor", atStart = false)

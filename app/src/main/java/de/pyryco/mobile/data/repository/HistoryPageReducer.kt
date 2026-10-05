@@ -758,6 +758,9 @@ private fun historyRowId(entryId: Long): String = "history-$entryId"
  * will finish the row itself; updating in place would also break the existing rows' relative order. The
  * one exception is an attachment reference's missing hints, which a skipped twin fills without moving
  * anything (#983, see [withAttachmentHintsFrom]).
+ * Lifecycle twins also fill missing launch hints in place. Fresh lifecycle evidence uses the page's
+ * preceding retained neighbour as an anchor, since ordinary backfill can already hold both sides of a
+ * launch or finish without holding the marker itself. Existing rows keep their relative order.
  *
  * Never joins a [HistoryEntry.id] to an `event_id` — they are different sequences that both look like
  * small integers, and neither appears here at all.
@@ -775,7 +778,51 @@ internal fun List<ThreadItem>.mergeHistoryRows(rows: List<ThreadItem>): List<Thr
     val heads = segmentHeads()
     val fresh = rows.filterNot { alreadyHolds(it) }.mapNotNull { it.olderThan(heads) }
     val kept = withAttachmentHintsFrom(rows).withBackgroundTaskHintsFrom(rows)
-    return (if (fresh.isEmpty()) kept else (fresh + kept).withoutSegmentsOfWholeTurns().withJoinedSegments()).withBackgroundTaskLaunches()
+    if (fresh.isEmpty()) return kept.withBackgroundTaskLaunches()
+    val ordinary = fresh.filterNot { it is ThreadItem.BackgroundTaskLifecycle }
+    return (ordinary + kept)
+        .withHistoryLifecyclePositions(rows, fresh.filterIsInstance<ThreadItem.BackgroundTaskLifecycle>())
+        .withoutSegmentsOfWholeTurns()
+        .withJoinedSegments()
+        .withBackgroundTaskLaunches()
+}
+
+/** Insert fresh evidence beside its retained page neighbours; held markers never move on replay. */
+private fun List<ThreadItem>.withHistoryLifecyclePositions(
+    page: List<ThreadItem>,
+    fresh: List<ThreadItem.BackgroundTaskLifecycle>,
+): List<ThreadItem> {
+    if (fresh.isEmpty()) return this
+    val pending = fresh.mapTo(mutableSetOf()) { it.joinIdentity() }
+    val heldAt = HashMap<Any, Int>(size)
+    forEachIndexed { index, row -> heldAt.putIfAbsent(row.joinIdentity(), index) }
+    // Slot i precedes row i. Leading evidence waits for the page's first retained neighbour.
+    val slots = mutableMapOf<Int, MutableList<ThreadItem>>()
+    val leading = mutableListOf<ThreadItem>()
+    var slot: Int? = null
+    for (row in page) {
+        val identity = row.joinIdentity()
+        if (row is ThreadItem.BackgroundTaskLifecycle && pending.remove(identity)) {
+            val after = slot
+            if (after == null) leading += row else slots.getOrPut(after) { mutableListOf() } += row
+        } else {
+            heldAt[identity]?.let { index ->
+                if (leading.isNotEmpty()) {
+                    slots.getOrPut(index) { mutableListOf() }.addAll(leading)
+                    leading.clear()
+                }
+                slot = index + 1
+            }
+        }
+    }
+    if (leading.isNotEmpty()) slots.getOrPut(0) { mutableListOf() }.addAll(leading)
+    return buildList {
+        this@withHistoryLifecyclePositions.forEachIndexed { index, row ->
+            slots[index]?.let(::addAll)
+            add(row)
+        }
+        slots[this@withHistoryLifecyclePositions.size]?.let(::addAll)
+    }
 }
 
 /**
