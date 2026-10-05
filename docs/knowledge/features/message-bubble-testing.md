@@ -48,6 +48,14 @@ See [Streaming variant](message-bubble.md#streaming-variant--progressive-reveal-
 `LocalTextToolbar`. Use native graphics for handles and a no-op `Magnifier` shadow
 for Robolectric dismissal, in a separate class. Devices ignore them.
 
+The device-only real-thread selection pair in [the e2e ladder](../../e2e-interactive-stream.md#what-rung-3-is-made-of)
+uses actual pointer input and the platform clipboard. Wait for the repository's exact assistant
+row with `isStreaming == false`; visible text alone can still be streaming and unselectable.
+Espresso must target `isPlatformPopup()` for Android's floating Copy toolbar: its default
+activity root cannot find the action after the long-press. Keep the known selected word and
+unrelated clipboard baseline independent of the result assertion. A substituted toolbar test
+cannot establish this platform-menu behavior.
+
 `MessageMetaRowToggleTest` mounts the real `ThreadScreen` to cover show/hide and single selection, streaming-to-finished taps, links and independently visible code copy, inert attachment states, and the screen-reader toggle and hidden-row timestamp/copy semantics. Standalone `MessageBubbleTest` and palette fixtures retain the visible-row default, so their streaming copy test does not describe thread behavior. `ThreadFrameCaptureTest.compactWidthAndEnlargedText_keepFrameControlsReachable` reveals the row before testing its copy pointer target. Compose semantics assertions do not establish TalkBack's spoken order on a device.
 
 `app/src/sharedTest/.../components/MessageBubblePaletteTest.kt` uses native Canvas
