@@ -51,15 +51,18 @@ import de.pyryco.mobile.push.PushTokenSink
 import de.pyryco.mobile.push.PushTokenSource
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
+import de.pyryco.mobile.ui.conversations.share.ShareIntakeViewModel
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
 import de.pyryco.mobile.ui.conversations.thread.ContentResolverAttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.McpFailureAcknowledgements
+import de.pyryco.mobile.ui.conversations.thread.OwnedPasteCopy
 import de.pyryco.mobile.ui.conversations.thread.PermissionDraftStore
 import de.pyryco.mobile.ui.conversations.thread.QuestionDraftStore
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.conversations.thread.UsageLimitDismissals
 import de.pyryco.mobile.ui.conversations.thread.asRememberedEffortStore
+import de.pyryco.mobile.ui.conversations.thread.captureSharedAttachment
 import de.pyryco.mobile.ui.onboarding.PairCodeViewModel
 import de.pyryco.mobile.ui.onboarding.ScannerViewModel
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
@@ -208,6 +211,18 @@ val appModule =
         // typed it. Holds no connection and no disk handle, so it is unaffected by reconnects and by
         // the lifecycle driver's background close.
         single { ComposerDraftStore() }
+        viewModel {
+            val context = androidContext()
+            ShareIntakeViewModel(get(), capture = { uri, report ->
+                captureSharedAttachment(
+                    context.contentResolver,
+                    uri,
+                    context.packageName,
+                    File(context.noBackupFilesDir, OwnedPasteCopy.DIRECTORY),
+                    report,
+                )
+            })
+        }
         single { QuestionDraftStore() } onClose { it?.dispose() }
         // #1306: session-grant checkbox drafts, heap only, retired per host when its request changes.
         single { PermissionDraftStore() } onClose { it?.dispose() }
