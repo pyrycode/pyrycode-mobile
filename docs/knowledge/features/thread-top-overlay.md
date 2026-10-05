@@ -125,9 +125,8 @@ Usage sits above the lower action, matching Figma `533:1956`. When `connectionSt
 
 Every non-null `sessionError`, including an empty or unknown code, shows an inert
 Error `NoticePill` after the existing persistent usage/MCP/pairing/offline notices.
-It has no click, dismiss control, leading icon or timeout; long copy wraps. Reserve
-placement below it for #1604's future transient failure notice; that notice is not
-implemented here. Repository clearing alone removes this pill.
+It has no click, dismiss control, leading icon or timeout; long copy wraps. The
+transient error pill below follows it. Repository clearing alone removes this pill.
 
 Exact code matches select client resources; neither raw codes nor daemon prose
 reach visible text or accessibility semantics:
@@ -141,6 +140,24 @@ reach visible text or accessibility semantics:
 Blocked delivery has abandoned the backlog; child crashing retains the queued
 message. Showing an error never resends it. See [repository clearing rules](remote-conversation-repository-state-errors-and-handoff.md#conversation-session-errors-1677)
 and [destination observation](thread-screen-how-it-works-state.md#session-errors-and-local-send-settlement-1678).
+
+### The transient error pill (#1747)
+
+The thread's local failures show as the last pill in the stack, below every persistent notice and the
+session error, with the same 12 dp gap. These are new-session, archive, workspace and run-configuration
+failures, attachment size and count refusals, attachment-send failures, refused pasted or keyboard-inserted
+images, markdown-open failures, and the attachment no-app, open-failed and save-failed outcomes. Each shows
+its existing client-owned sentence in an inert Error pill (`TransientErrorPill`): no X, no tap action, a 24 dp
+minimum height and a polite live region. It overlays the list without moving it. Under an Offline pill,
+spacing follows the visible pill, not Retry's 48 dp target, and the error draws above that target so tapping
+it cannot run Retry.
+
+`TransientErrorNoticeState` (`TransientErrorNotice.kt`), remembered per conversation, owns the queue. Every
+failure joins one first-in, first-out queue in the order it happened, whichever route it came from, and each
+pill stays for the full Material Short time of 4 s, adjusted by the accessibility manager as a snackbar's would
+be. Expiry removes only that pill. Each occurrence has its own identity, so a repeated identical failure is
+announced again. Leaving the screen or switching conversation cancels the shown and queued pills. Saved
+confirmations and the dismissed-elsewhere prompt keep the bottom snackbar.
 
 ## Placement in `ThreadScreen`
 

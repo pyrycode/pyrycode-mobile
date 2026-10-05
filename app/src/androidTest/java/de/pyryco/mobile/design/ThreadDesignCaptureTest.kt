@@ -31,6 +31,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isNotEnabled
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -602,12 +603,17 @@ class ThreadDesignCaptureTest {
         }
         extraItems.value = emptyList()
         rule.waitUntil(5_000) { rule.onAllNodesWithText("Context too long", substring = true).fetchSemanticsNodes().isEmpty() }
-        // Today a failure is the bottom snackbar; the frame moves it to a top-overlay pill.
+        // #1747: the archive failure overlays the thread below the measured header.
         openHeaderMenu()
         rule.onNodeWithText("Archive").performClick()
         await("Couldn't archive this conversation. Try again.")
+        val header = rule.onNodeWithTag("thread-top-bar").getUnclippedBoundsInRoot()
+        val failure = rule.onNodeWithTag("transient_error_notice").getUnclippedBoundsInRoot()
+        assertEquals(24f, (failure.bottom - failure.top).value, 0.5f)
+        assertEquals(28f, (failure.top - header.bottom).value, 0.5f)
+        assertEquals(20f, (header.right - failure.right).value, 0.5f)
         design.capture(FOLDER, "failure-notice", "685:4337")
-        dismissSnackbar("Couldn't archive")
+        expireErrorPill("Couldn't archive")
 
         // Last: the focused composer's cursor handle is its own popup root.
         fake().setSlashCommandMenu(
@@ -811,6 +817,35 @@ class ThreadDesignCaptureTest {
     ) {
         rule.waitUntil(5_000) { rule.onAllNodesWithText(text, substring = substring).fetchSemanticsNodes().isNotEmpty() }
         rule.waitForIdle()
+    }
+
+    /** #1747: advance the Short timeout without adding a dismiss action to an inert error pill. */
+    private fun expireErrorPill(text: String) {
+        rule.mainClock.advanceTimeBy(4_100)
+        rule.waitUntil(5_000) { rule.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isEmpty() }
+    }
+
+    /** #1747: reachable production reader failure, with real bars and unchanged body reservations. */
+    @Test fun readerErrorFrameAt412By892() {
+        openThread()
+        checkNotNull(inputs.thread.value).onOpenMarkdownLink("docs/Builder Pipeline - Plan.md")
+        await("Builder Pipeline Plan")
+        val headingBefore = rule.onNodeWithText("Builder Pipeline Plan").getUnclippedBoundsInRoot()
+        // Since #1666 the reader's menu shares the activity window, like the header menu.
+        rule.onNodeWithContentDescription("More actions").performClick()
+        rule.waitUntil(5_000) { rule.onAllNodesWithTag("markdown-reader-menu").fetchSemanticsNodes().isNotEmpty() }
+        // The demo's production reread is unsupported, so Refresh deterministically fails.
+        rule.onNodeWithText("Refresh").performClick()
+        await("Couldn't open file")
+        val bar = rule.onNodeWithTag("markdown-reader-top-bar").getUnclippedBoundsInRoot()
+        val pill = rule.onNodeWithTag("transient_error_notice").getUnclippedBoundsInRoot()
+        assertEquals(24f, (pill.bottom - pill.top).value, 0.5f)
+        assertEquals(28f, (pill.top - bar.bottom).value, 0.5f)
+        assertEquals(20f, (bar.right - pill.right).value, 0.5f)
+        assertEquals(headingBefore, rule.onNodeWithText("Builder Pipeline Plan").getUnclippedBoundsInRoot())
+        design.capture(FOLDER, "reader-error", "696:5101")
+        expireErrorPill("Couldn't open file")
+        rule.onNodeWithText("Builder Pipeline Plan").assertIsDisplayed()
     }
 
     /**

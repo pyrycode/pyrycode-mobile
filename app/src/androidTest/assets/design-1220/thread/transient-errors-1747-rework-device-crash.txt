@@ -1,0 +1,4 @@
+Out-of-scope #1759: full reader/overlay class run, 2026-10-04.
+14 passed; the 15th method (copiesOfANoteAtTheReadersBound_areBounded) crashed instrumentation.
+The three verifier-named reader methods passed before the crash.
+10-04 18:34:12.196   195   195 I lowmemorykiller: Kill 'de.pyryco.mobile' (2550), uid 10098, oom_score_adj 0 to free 1387048kB rss, 0kB swap; reason: low watermark is breached and thrashing (389%)
