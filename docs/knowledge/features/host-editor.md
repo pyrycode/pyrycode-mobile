@@ -3,8 +3,8 @@
 `ui/host/HostEditor.kt` (`de.pyryco.mobile.ui.host`) holds the Edit host modal's state, the machine
 that drives it, and the one composable binding that draws it. Extracted from `ChannelListViewModel`
 (#744/#745) into this shared seam in #751, when [Settings](settings-viewmodel.md) became the machine's
-second driver. Two screens now open the same modal on their own host through the same code; there is
-no second copy of the rename or the removal.
+second driver. Since #1239, only the channel list mounts this modal; Settings retains its controller
+for compatibility but has no host-edit UI. The same flow also owns the host system prompt editor (#1775).
 
 ## Shape
 
@@ -18,12 +18,15 @@ data class HostEditorState(
     val failed: Boolean = false,
     val confirmingUnpair: Boolean = false,
     val unpairFailed: Boolean = false,
+    val prompt: HostPromptState = HostPromptState.Loading,
+    val editingPrompt: Boolean = false,
 )
 
 class HostEditorController(
     scope: CoroutineScope,
     pairedServers: PairedServerCollectionStore,
     appPreferences: AppPreferences,
+    repositoryFor: (String) -> ConversationRepository? = { null },
 ) {
     val state: StateFlow<HostEditorState?>
     val lastHostUnpaired: Flow<Unit>
@@ -33,6 +36,7 @@ class HostEditorController(
     fun declineUnpair()
     fun confirmUnpair()
     fun dismiss()
+    fun onPromptEvent(event: HostPromptEvent)
 }
 
 @Composable
@@ -43,18 +47,16 @@ internal fun HostEditorModal(
     onUnpairConfirmed: () -> Unit,
     onUnpairDeclined: () -> Unit,
     onDismissRequest: () -> Unit,
+    onPromptEvent: (HostPromptEvent) -> Unit = {},
 )
 ```
 
-Moved verbatim from `ChannelListViewModel.kt` — same fields, same six transitions, same KDoc,
-only `viewModelScope` became the injected `scope`. The verbatim move is deliberate: it is what let the
-verifier diff the moved bodies against the originals and confirm nothing changed but the scope field.
-
-`HostEditorState` holds **display text and the target id only** — never the `PairedServer` record it
-was read from. That record also carries the pairing token and the server static key; keeping it here
-would put both credentials in a `StateFlow` that outlives the modal, for no gain, since the two fields
-this state is allowed are copied out at open time and the record is dropped. It has no redacting
-`toString`, so never give it a record-typed field — a crash trace renders whatever it holds.
+`HostEditorState` contains display fields, the captured target id and prompt editing state, never the
+`PairedServer` record (which also contains pairing credentials). `HostPromptState` distinguishes
+`Loading`, `Unavailable` and `Loaded(confirmed, defaultPrompt, draft, saving, failed)`. Only a bounded,
+successful read becomes Loaded; an empty string is a deliberately cleared value, never an unread
+value. Loaded and `HostPromptEvent.Edit` redact all prompt text in their string representations,
+including when nested in the outer state. Prompt text has no phone persistence or saved-state bundle.
 
 `serverIdentity` and `relayAddress` are carried unclamped on purpose — the clamp is `EditHostModal`'s
 own, keyed on the raw identity so two hosts sharing a long prefix cannot collapse onto one name buffer.
@@ -62,7 +64,7 @@ own, keyed on the raw identity so two hosts sharing a long prefix cannot collaps
 `HostEditorModal`, see below) and this class stays free of `Context`; that also keeps an identity or a
 relay address from ever reaching the shell's live region. There is no name-draft field — `EditHostModal`
 owns its own buffer, so a failed save keeps what the operator typed with no controller involvement,
-provided the same `HostEditorState` instance stays published. `confirmingUnpair` is a flag on the open
+provided the modal remains composed under the same raw host identity. `confirmingUnpair` is a flag on the open
 editor rather than a second pending-target flow: the target is already `serverId`, captured at open
 time and never re-resolved at confirmation time, so a removal never has a second source of truth for
 which host it targets. `saving` covers a rename and a removal alike — "a write is in flight, block the
@@ -71,8 +73,8 @@ rest" is the same statement either way.
 ## The controller
 
 One instance per owner — `ChannelListViewModel` and `SettingsViewModel` each construct their own over
-their own `viewModelScope`, so two screens (or two Settings entries on the back stack) never share an
-open editor, and clearing either owner cancels only its own open-read, rename or removal.
+their own `viewModelScope`. Controller state is never shared between destinations; clearing the owner
+cancels its own reads and writes. Only the channel list currently exposes this UI.
 
 **`scope` must be the owning view model's `viewModelScope`.** An application-lifetime scope would
 outlive the screen and leave a write publishing into an editor nothing is watching. A `ViewModel`-typed
@@ -83,7 +85,8 @@ is a KDoc obligation on the caller rather than a compiler-checked one (flagged a
 - `open(serverId)` reads `pairedServers.loadById(serverId)` and publishes a `HostEditorState` built
   from exactly two of the record's fields (`serverId`, `relayUrl`) plus the stored `displayName`
   (blank when absent). Held in a single `openJob`, cancelled on every call: two opens racing on a slow
-  `loadById` must not let the slower reply publish over the faster one's target.
+  `loadById` must not let the slower reply publish over the faster one's target. Each open also creates
+  a generation token, checked before identity or prompt publication, including non-cooperative reads.
 - `submitName(name)` trims and clamps to `MAX_WORKSPACE_LABEL_CHARS` itself (never trusted from the
   caller), maps a blank result to `null`, and writes through `setDisplayName`. A thrown
   `PairedServerStoreException` republishes `saving = false, failed = true`; success closes the editor.
@@ -119,77 +122,105 @@ is a KDoc obligation on the caller rather than a compiler-checked one (flagged a
   and write nothing. Unlike the other five it needs no guard: `null` is the state a completing write
   lands on anyway, so there is no pending transition for it to strand.
 
-Every terminal transition (`submitName`, `confirmUnpair`, and their failure arms) is
-`MutableStateFlow.compareAndSet` against the state published before the call — a write that completes
+Outer terminal transitions (`submitName`, `confirmUnpair`, and their failure arms) check the open
+generation and use `MutableStateFlow.compareAndSet` against the pending state — a write that completes
 after a dismissal cannot resurrect a closed modal or overwrite a newer one. Every `RelayLog.d` line is a
 static event name plus code — `host_editor_opened`, `host_editor_open_failed`,
 `host_editor_open_rejected code=unknown_host`, `host_name_save_started/_failed/_saved`,
 `host_unpair_requested/_declined/_started/_failed/_unpaired`, `host_editor_dismissed` — never the
 entered name, the identity or the relay address.
 
+### Host prompt reads and writes
+
+Opening Edit host reads `requestHostSystemPrompt` for the captured `serverId`. The controller resolves
+`HostConversationSource.repositoryFor` at the read and again at each Save, so background/foreground
+replacement does not bind a returning draft to a retired repository. Selected-host changes do not
+retarget the editor. A missing repository, failed read or oversized current/default becomes Unavailable;
+reopening after recovery makes another read. Exceptions become static failure flags; cancellation is
+re-thrown, and logs contain only static events/outcomes.
+
+Open copies acknowledged current text into the draft. Loading/Unavailable can be viewed but cannot
+edit, reset or save. Reset copies the daemon-returned default into the draft only; there is no reset
+wire verb or local default. Save sends the draft verbatim, including unchanged or empty strings,
+whitespace and line breaks. `SystemPromptLimit.fits` supplies the inclusive 8192 UTF-8-byte bound;
+over-limit drafts remain editable but cannot save. Both read and write acknowledgements are bounded
+before publication. A successful acknowledgement supplies current/default and returns to Edit host
+with its confirmed preview. Failure, including an unavailable connection, keeps the draft for retry
+with a generic error. No session is started or refreshed: the host prompt takes effect at each
+conversation's next session, before the channel prompt.
+
+Only one prompt write runs at a time; field/reset are disabled during it. Discard returns to Edit host
+without writing and restores the draft from confirmed text. Dismissal, discard or another open prevents
+late writes from reopening or overwriting a newer editor through generation and pending-state identity
+guards. Cancellation cannot roll back an already sent daemon write. The generation guard also matters
+when reopening the *same* host: equality of outer state alone cannot identify the old open.
+
+A prompt read can complete while rename/unpair owns a pending outer state. Replacing that state would
+defeat the outer write's publication guard; dropping the read would leave Loading after a failed write.
+`deferredPromptRead` retains Loaded/Unavailable separately and merges it on outer failure, then clears
+it. Open/dismiss and successful outer completion clear it too. It must not overwrite a later prompt
+acknowledgement. The controller tests cover both read outcomes for both outer failures and same-host
+reopening races.
+
 ## `HostEditorModal`
 
-The one composable either screen draws the modal through. Renders nothing while `state` is null,
-`EditHostModal` otherwise. Owns the three things a second caller would otherwise have to re-derive: the
-presence rule (drawn exactly while a state is published), `loading = state.saving`, and the failure-flag
-→ string resolution (`unpairFailed` → `R.string.edit_host_unpair_failed`, `failed` →
-`R.string.edit_host_save_failed`). Resolving the string here rather than in a view model is what keeps
-both `HostEditorController` and its owners free of `Context` and makes it impossible for an identity or
-a relay address to reach the shell's live region from either caller.
+The binding renders nothing for null state and otherwise keeps `EditHostModal` composed. It maps
+outer saving/failure flags to the shared shell and static resource strings. The Host system prompt row
+sits between the name field and Unpair host, with bodyLarge headline, bodySmall/onSurfaceVariant
+subtitle and chevron. Only a successfully read empty value says “Empty”; Loading and Unavailable have
+their own subtitles. Saved text is one ellipsized line.
+
+`EditHostModal` owns the name buffer above its shell-selection branch. A dedicated prompt editor
+replaces the shell without unmounting that buffer, so prompt save and discard both preserve an unsaved
+host-name draft. Outer Cancel cannot undo an acknowledged prompt save.
+
+The dedicated editor uses `MobileModal` close, Back and Cancel as Discard, and OK as Save. Its plain
+multiline field has no empty hint, uses bodyMedium and the modal field colors/shape, and has a 280 dp
+minimum well. Visible field content is capped at 24 lines with internal scrolling: an over-limit paste
+must not grow the well until surrounding controls disappear. The helper uses bodySmall/onSurfaceVariant:
+“Added to every conversation on this host, before the channel system prompt. A change takes effect
+from each conversation's next session.” The outlined Reset to default action follows `UnpairAction`
+geometry and appears exactly when draft differs from returned default. Reset hides it by changing
+only the draft. Validation and save failure use a generic error.
 
 ## Callers
 
-- [`ChannelListViewModel`](channel-list-viewmodel.md) — the original owner (#744/#745). Constructs
-  `HostEditorController(viewModelScope, pairedServers, appPreferences)` and keeps its six public
-  methods (`openHostEditor`, `submitHostName`, `requestHostUnpair`, `declineHostUnpair`,
-  `confirmHostUnpair`, `dismissHostEditor`) as one-line delegations, so the screen's event dispatch and
-  `HostChannelListViewModelTest`'s existing proofs are untouched by the move. Also exposes
-  `lastHostUnpaired` (#1323) as a one-line delegation, collected by the `channel_list` destination.
-- [`SettingsViewModel`](settings-viewmodel.md) — the second owner (#751). Constructs its own
-  `HostEditorController` the same way and delegates the same five modal-driving methods, plus its own
-  `openOwnerHostEditor()` — the one caller-specific transition, gating on the destination's captured
-  owner rather than a row id (see that document for the gate). Also delegates `lastHostUnpaired`
-  (#1323), collected by the `settings` destination, though since #1239 the Settings modal draws no host
-  editor and so has no control that can currently reach `confirmUnpair` — the delegation exists for the
-  day the Settings host editor returns, or is removed with it.
-- `ChannelListScreen` and `SettingsScreen` both call `HostEditorModal(state = …, onSubmit = …, …)`
-  directly, replacing what was, before #751, an inline `EditHostModal` call in `ChannelListScreen` with
-  its own copy of the failure-string resolution — see [Shared mobile modal § Callers](mobile-modal-callers.md#callers).
+- [`ChannelListViewModel`](channel-list-viewmodel.md) constructs the controller over `viewModelScope`
+  with `hostSource::repositoryFor`, delegates outer transitions and prompt events, and exposes
+  `lastHostUnpaired` to navigation. `ChannelListScreen` mounts the shared binding.
+- [`SettingsViewModel`](settings-viewmodel.md) retains its owner-scoped controller and delegations,
+  including `lastHostUnpaired`, with the default unavailable resolver. Since #1239, `SettingsScreen`
+  does not mount the editor; constructor compatibility does not restore that retired surface.
 
 ## Testing
 
-No new test file — the machine is proven by its two callers' own suites:
+`HostPromptControllerTest` covers unread gating, retry on reopen, explicit empty/verbatim saves,
+acknowledged previews, reset/discard, inclusive multibyte limits, failed/null/replaced repositories,
+captured hosts, non-cooperative reads, duplicate/late writes, same-host reopening and deferred reads
+across failed rename/unpair. State/event/log assertions keep current/default/draft and raw exception
+text out of diagnostics. Existing `HostChannelListViewModelTest` and Settings controller tests retain
+rename/unpair and captured-owner coverage; historical Settings screen mounting tests describe the
+pre-#1239 UI rather than a currently reachable editor.
 
-- [`HostChannelListViewModelTest`](channel-list-viewmodel-testing.md#testing) — unchanged by the move, and
-  still green. That is the move's regression proof: same fixture, same assertions, same behavior
-  through the delegating one-liners.
-- `SettingsViewModelTest`'s nine `hostEditor_*` cases (#751) — the second owner's coverage: opening on
-  the captured owner (never a row id, never selection), a blank owner rejecting content-free, an owner
-  no longer paired opening nothing, a rename writing under the owner's id, decline writing nothing, a
-  confirmed removal taking exactly the owner's pairing and its own #711 workspace while a second host's
-  pairing, workspace and every app-wide preference survive, a failed rename and a failed removal each
-  keeping the editor open with a generic flag and nothing written, and dismissal writing nothing. Uses
-  an in-memory `Store: PairedServerCollectionStore` fake (`renames` / `removals` lists, `failWrite` /
-  `failRemove` switches) — the same fixture shape `HostChannelListViewModelTest`'s `Store` already
-  established.
-- `SettingsScreenTest` — `connectionSection_opensTheEditorFromTheOwnersRowOnly` /
-  `_keepsHostToHostNavigationOnEveryOtherRow` (which row fires `onEditHost` vs. `onOpenHost`),
-  `hostEditor_rendersTheModalForTheOpenTarget`, `hostEditor_showsTheUnpairConfirmationInPlace`,
-  `hostEditor_reportsAFailedRemovalWithoutNamingTheHost` (asserts the relay address renders exactly
-  once — the owner's row behind the scrim draws it legitimately per #750, so "absent from screen" is
-  the wrong property; "the modal adds no second rendering of it" is the one that holds), and
-  `connectionSection_offersNoEditorOnceTheOwnerIsNoLongerPaired`.
-- `SettingsNavigationTest.tappingTheOwnersRowOpensTheEditorOnTheCapturedHostNotTheSelectedOne` — the
-  join `SettingsScreen`'s `onEditHost` and `SettingsViewModel.openOwnerHostEditor` don't individually
-  prove: it lives in `PyryNavHost`, so this test taps the owner's row on the production nav graph with
-  a *different* host selected and asserts the modal's name field carries the captured owner's name, not
-  the selected host's — the security review's "never on selection" claim, proven end to end. Landed a
-  cycle late (`2d53a1d`) alongside restating `assertBadgedRowIs`, which had asserted the owner's row was
-  the *inert* one — the property #751 deliberately reverses.
-- `UnpairNavigationTest` (#1323) — see
-  [Navigation § Returning to Welcome after the last host](navigation.md#returning-to-welcome-after-the-last-host-1323)
-  for the full case list; it proves `lastHostUnpaired` end to end through the production graph from both
-  owners, which neither this controller's unit coverage nor either owner's `*ViewModelTest` can reach.
+Shared `HostPromptEditorTest` covers Loading/Unavailable/empty/filled/default controls, exact helper,
+no hint, reset, generic errors, editable oversized drafts, save/discard name retention, close/Back,
+and one-line ellipsized preview. A clickable row merges its descendants: waits for
+`HOST_PROMPT_PREVIEW_TAG` plus subtitle text must query `useUnmergedTree = true` in component *and*
+live tests. A merged-tree wait can time out before reset checks despite correctly rendered text.
+
+`HostPromptCaptureTest.darkHostAndPromptStates` retains five synthetic dark-state PNGs and focused
+XML/context under `app/src/androidTest/assets/host-prompt-1775/`. They establish geometry/content,
+including close/OK pixels, not hardware blur or real system bars. The default fixture is synthetic;
+production always reads the daemon default. `MobileModalTest.editHostFieldAndUnpairRemainReachableWithKeyboard`
+retains keyboard reachability coverage. `UnpairNavigationTest` proves last-host navigation through
+the production graph; see [Navigation](navigation.md#returning-to-welcome-after-the-last-host-1323).
+
+The rung-3 `InteractiveStreamE2ETest.interactiveTurn_hostSystemPrompt_editsResetsAndCancels` exercises
+custom save/fresh read/reopened preview, reset then Cancel, reset then OK, and bounded original-value
+restoration. Controller/component fakes cover deterministic transitions; no new
+`DeterministicInteractiveStreamE2ETest` twin is needed for this storage/editor flow without a Claude
+turn. Full curated live evidence and its unrelated failure/rerun are recorded in the
+[interactive stream ladder](../../e2e-interactive-stream.md#verification-status).
 
 ## Related
 
@@ -198,8 +229,10 @@ No new test file — the machine is proven by its two callers' own suites:
 - [Shared mobile modal](mobile-modal.md) — `EditHostModal` / `MobileModal`, the presentation layer
   `HostEditorModal` binds
 - [Paired server store](paired-server-store.md) — `PairedServerCollectionStore.loadById` /
-  `setDisplayName` / `remove`, the controller's only store
+  `setDisplayName` / `remove`, the pairing store used for identity, rename and unpair
 - [App preferences](app-preferences.md) — `removeDefaultWorkspace`, called only from `confirmUnpair`
+- Spec: [Host system prompt editor](../../specs/architecture/1775-host-system-prompt-editor.md) — prompt UI, concurrency and security review.
+- [System prompt editor](system-prompt-editor.md) — channel semantics and why construction-bound repositories are unsafe for reconnecting list modals.
 - Specs: `docs/specs/architecture/744-host-row-edit-and-rename.md`,
   `docs/specs/architecture/745-unpair-host-from-edit-modal.md`,
   `docs/specs/architecture/751-settings-host-edit-and-unpair.md` (the extraction and Settings' second
