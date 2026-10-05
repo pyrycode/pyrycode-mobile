@@ -1,0 +1,12 @@
+Ticket #1667, captured 2026-10-05 on managed pixel2Api33Atd (API 33).
+Reference and light/dark menus: 412x892 px, density 1, font scale 1.
+Compact resting/scrolled/menu: 320x700 px, density 1, font scale 1.5.
+Captures draw the root View in the reader's single window; they do not prove hardware backdrop blur.
+The existing root-draw capture has title-shadow artifacts; header/chrome rendering is unchanged by #1667.
+All six PNGs were produced and nonblank. Menu pixels use the existing composer Actions overlay.
+Figma 533:1958 was inspected through MCP on 2026-10-05; its open-overlay screenshot is 1x1.
+No exact open-menu Figma pixel match is claimed. Existing composer Actions is the ticket's appearance reference.
+The managed output directory contains pixel8Api35 in its name; sidecars and device-results.xml establish API 33/pixel2Api33Atd execution.
+Device: 3 executed, 0 failed/errors, 0 skipped.
+Focused JVM reader/overlay/header/composer classes: 88 executed, 0 failed/errors, 0 skipped.
+Full dispatcher live suite is pending; confirm interactiveTurn_markdownLink_opensLiveNoteInReader ran and passed and record executed/failed/skipped counts after that gate.
