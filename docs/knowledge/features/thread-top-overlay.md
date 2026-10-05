@@ -119,6 +119,14 @@ rejected-pairing state; `onRePair` is bound at `MainActivity` to
 `navController.navigate(Routes.pairCode(target.serverId))`. This pill has no dismiss X — a rejected pairing
 is never hideable, unlike a warning reading.
 
+Re-pair alone overrides the vertical minimum touch size to `0.dp`, so its target follows
+its measured visible surface height, including native text and font scaling. The usage
+X retains a 36dp vertical minimum; both inherit the platform horizontal minimum
+(48dp on the tested devices). The stack still measures a 12dp gap between visible
+surfaces. Do not assume both pills render at 24dp or give both targets symmetric
+36dp expansion: separate semantic bounds do not guarantee that an expanded edge
+can actually receive input. See [Notice pill caller contracts](notice-pill.md#caller-contracts).
+
 Usage sits above the lower action, matching Figma `533:1956`. When `connectionState` is Offline and `showRePair` is false, the lower action is the error-toned [Retry pill](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=627-4910). Its 48 dp clickable box extends below the visible pill, preserving the 12 dp gap and avoiding the usage dismiss target. Since [#1499](https://github.com/pyrycode/pyrycode-mobile/issues/1499), the visible pill no longer fills that box: it hugs "Offline · Retry" (94dp under Robolectric — the label plus 8dp padding on each side) at the box's top-right corner, which the box's `Alignment.TopEnd` places at the overlay's right edge, matching frame `627:4910`. The 144 x 48 dp box itself is unchanged from [#1283](https://github.com/pyrycode/pyrycode-mobile/issues/1283) — only the drawn pill's width changed, not the touch target. `showRePair` wins when pairing is rejected, since a network retry cannot repair that state.
 
 ### The session-error pill (#1678)
@@ -287,6 +295,46 @@ either holder; see [Channel info sheet § MCP servers section](channel-info-shee
 for why that ask shares a daemon worker with sending a message and can stall behind an unanswered one.
 
 ## Testing
+
+`ThreadTopOverlayTest.theUsagePill_sitsAboveThePairingPill_whichStartsRePair`
+uses physical center and facing-edge taps for both controls, checks exactly one
+intended callback per tap and dismissal state, and measures the 12dp visible gap,
+nonoverlapping touch bounds and retained horizontal widths. Usage's facing-edge
+tap stays inside the Surface's visible clip; advertised dismiss expansion outside
+that clip cannot be treated as tappable. After #1757's line-height repair, the
+native red did not reproduce the original 3.5px overlap: it failed because the
+advertised expanded upper Re-pair edge was untappable (1 executed, 1 failed,
+0 skipped in [native-red.xml](../../../app/src/androidTest/assets/touch-1760/native-red.xml)).
+Semantic clicks or nonoverlap assertions alone would miss that defect.
+
+Retained 2026-10-05 evidence confirms the named method passed without an ignore:
+
+- Managed Android 13: `./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun
+  '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest'
+  -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain`.
+  The [post-merge native XML](../../../app/src/androidTest/assets/touch-1760/merge-native-class-green.xml)
+  records 14 executed/passed, 0 failed/errors/skipped, including the named method
+  at `2026-10-05T18:04:20`. The earlier separate method run records 1 executed/passed,
+  0 failed/errors/skipped in [native-method-green.xml](../../../app/src/androidTest/assets/touch-1760/native-method-green.xml).
+- JVM: `./gradlew testDebugUnitTest --tests
+  'de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest' --tests
+  'de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNoticeTest' --tests
+  'de.pyryco.mobile.ui.conversations.components.NoticePillTest' assembleDebug --console=plain`.
+  [Focused post-merge XML](../../../app/src/androidTest/assets/touch-1760/merge-jvm/)
+  records 26 executed/passed (14 overlay, 10 attention, 2 component), 0 failed/errors/skipped.
+  The final `./gradlew testDebugUnitTest assembleDebug --console=plain` run records
+  4,309 executed/passed, 0 failed/errors/skipped in the
+  [summary](../../../app/src/androidTest/assets/touch-1760/merge-final-jvm-summary.xml);
+  its [overlay XML](../../../app/src/androidTest/assets/touch-1760/merge-final-jvm-overlay.xml)
+  confirms the named method passed among 14 tests.
+
+[Initial commands](../../../app/src/androidTest/assets/touch-1760/commands-and-results.txt)
+and [post-merge commands/counts](../../../app/src/androidTest/assets/touch-1760/merge-commands-and-results.txt)
+retain the exact selections and results. The default device-only UI gate does not
+select this shared test; the targeted managed-device evidence establishes its native pass.
+Removing main's temporary #1760 ignore deliberately restores this regression;
+the neighboring Offline Retry regression remains runnable.
+
 
 - **Attention (#1735):** `ThreadAttentionTest` uses a controlled clock for replacement, expiry,
   precedence, mute/name changes and cancellation/no replay. Delayed-consumer cases hold consumption
