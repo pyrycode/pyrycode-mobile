@@ -24,6 +24,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -702,17 +703,18 @@ class ThreadViewModelAttachmentTest {
         runTest {
             val store = ComposerDraftStore()
             val copy = pasteCopy()
+            val newCopy = pasteCopy()
             lateinit var vm: ThreadViewModel
             val repository =
                 RecordingRepository(whileSending = {
                     assertEquals(
-                        1,
+                        2,
                         pasteFiles.root
                             .listFiles()
                             .orEmpty()
                             .size,
                     )
-                    vm.addAttachment("content://docs/new", "new", "text/plain", 1)
+                    vm.addAttachment("content://docs/new", "new", "image/png", 3, newCopy)
                 }, neverReplies = true)
             vm = vm(repository, store)
             vm.addAttachment(PASTED_URI, "paste.png", "image/png", 3, copy)
@@ -720,7 +722,7 @@ class ThreadViewModelAttachmentTest {
             advanceUntilIdle()
             assertEquals(listOf("new"), vm.pendingAttachments.value.map { it.displayName })
             assertEquals(
-                1,
+                2,
                 pasteFiles.root
                     .listFiles()
                     .orEmpty()
@@ -733,13 +735,26 @@ class ThreadViewModelAttachmentTest {
             }
             advanceUntilIdle()
             assertEquals(
-                0,
+                1,
                 pasteFiles.root
                     .listFiles()
                     .orEmpty()
                     .size,
             )
             assertEquals(listOf("new"), store.attachmentsFor(HOST, CONV).map { it.displayName })
+            val newer = store.attachmentsFor(HOST, CONV).single()
+            assertArrayEquals(
+                byteArrayOf(1, 2, 3),
+                (requireNotNull(newer.ownedPaste).read(UnconfinedTestDispatcher(testScheduler)) as AttachmentRead.Bytes).bytes,
+            )
+            store.removeAttachment(HOST, CONV, newer.key)
+            assertEquals(
+                0,
+                pasteFiles.root
+                    .listFiles()
+                    .orEmpty()
+                    .size,
+            )
         }
 
     @Test

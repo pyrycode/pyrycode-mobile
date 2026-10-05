@@ -8,6 +8,7 @@
 - `ComposerDraftStore.kt`: `addAttachment`, `editAttachments`, host/conversation eviction and sent originals; this process-scoped owner survives destinations.
 - `ThreadViewModel.kt`: `sendWithAttachments`, `upload`, `addPickedAttachments`, `loadAttachment`; snapshot removal precedes the send's completion.
 - `ComposerAttachmentStrip.kt`: `rememberThumbnail`; preserve crop geometry while changing the image source.
+- `ComposerAttachmentStripTest`: pending tile geometry, interaction coverage and owned-source thumbnail regression.
 - `ThreadScreen.kt`: paste receiver and attachment notice collectors.
 - `PyryApp.kt`: process initialization, the only startup cleanup location.
 - `ThreadViewModelAttachmentTest`, `ComposerDraftStoreTest`, `AttachmentPasteTest`, `ComposerPasteTest`, `ComposerImagePasteDeviceTest`: existing boundaries and regression seams.
@@ -63,7 +64,7 @@ None.
 
 ## Documentation handoff
 
-Pending for documentation stage: update `docs/knowledge/features/thread-screen-composer-drafts-and-attachments.md`, “Composer pending attachments”, with owned paste source lifetime, backup exclusion and sent-retrieval fallback. Record the named rung-3 paste regression under `docs/e2e-interactive-stream.md`. Before documentation completes, dispatcher full-live evidence must include executed/failed/skipped counts and confirmation that `InteractiveStreamE2ETest.interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes` ran and passed.
+Pending for documentation stage: update `docs/knowledge/features/thread-screen-composer-drafts-and-attachments.md`, “Composer pending attachments”, with owned paste source lifetime, backup exclusion and sent-retrieval fallback. Update the attachments-from-phone scenario in `docs/e2e-interactive-stream.md`, “What rung 3 is made of”, with the named paste regression. Before documentation completes, dispatcher full-live evidence must include executed/failed/skipped counts and confirmation that `InteractiveStreamE2ETest.interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes` ran and passed.
 
 ## Security review
 
@@ -76,7 +77,7 @@ Pending for documentation stage: update `docs/knowledge/features/thread-screen-c
 - [Cryptography] Noise and Keystore are untouched; temporary copies rely on Android app-private storage and device encryption, with no rooted-device confidentiality guarantee.
 - [Network/I/O] Existing upload byte bound and wire contract remain intact. Read size is authoritative; a provider cannot bypass the cap with metadata. No new network operation.
 - [Errors/logs] Static outcomes only; provider exception messages, bytes, metadata, URI and private path are never logged or included in errors/toString.
-- [Concurrency] Reads and final deletion serialize per capability; send retains before removal and releases after completion. Capture finally covers cancellation during dispatcher return and rejected publication. No mutex nesting.
+- [Concurrency] Reads and final deletion serialize per capability; send retains before removal and releases after completion. Capture finally covers cancellation during dispatcher return and rejected publication. The store monitor can acquire a copy monitor; copy reads and releases never acquire the store monitor.
 - [Threat model] Malicious relay and hostile daemon remain covered by unchanged Noise/decoder/upload/retrieval boundaries. Token theft remains Keystore-owned. Screenshot/accessibility/keyboard image visibility is the existing UI trust model; no new image export. Rooted storage access is outside this clipboard-lifetime fix.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
@@ -87,3 +88,5 @@ Pending for documentation stage: update `docs/knowledge/features/thread-screen-c
 - 2026-10-04: Inspecting Compose `StatelessInputConnection` showed that it requests the IME grant and carries its `InputContentInfo` under `EXTRA_INPUT_CONTENT_INFO`. `ThreadInputBar` now passes that owner to the receiver (two consumers updated); the capture job holds it and releases permission on completion, including a cancelled-before-start launch. The receiver is composition-keyed by conversation and snapshots its destination callback. Send leases also register parent-job completion cleanup for cancelled-before-start sends, with one-shot release.
 
 - 2026-10-04: Capture publishes one completed image at a time through the existing sink. Count refusals therefore delete their copy before the next capture, bounding temporary accumulation while preserving clip order. Cancellation on IO return still releases the captured but unpublished capability.
+
+- 2026-10-05: Recovery validation clarified the existing store-to-copy monitor order in the security review. Added sampled-thumbnail coverage with an unavailable provider, and strengthened the in-flight send test so the newly added entry also owns a paste copy. No production contract changed.

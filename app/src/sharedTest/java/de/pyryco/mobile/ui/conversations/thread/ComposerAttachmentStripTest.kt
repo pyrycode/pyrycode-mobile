@@ -1,5 +1,6 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import android.graphics.Bitmap
 import android.net.Uri
 import androidx.activity.compose.LocalActivityResultRegistryOwner
 import androidx.activity.result.ActivityResultRegistry
@@ -43,17 +44,23 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
+import org.robolectric.annotation.GraphicsMode
+import java.io.ByteArrayOutputStream
 
 /** #933: the composer's attachment picker, strip, removal, send enablement and per-chat strips. */
 @RunWith(AndroidJUnit4::class)
 class ComposerAttachmentStripTest {
     @get:Rule
     val composeRule = createComposeRule()
+
+    @get:Rule val pasteFiles = TemporaryFolder()
 
     /** Answers every launch at once with [result], recording what the picker was asked for. */
     private class FakePickerRegistry(
@@ -109,6 +116,36 @@ class ComposerAttachmentStripTest {
         assertEquals(12.dp.value, (second.left - first.right).value, 0.5f)
         assertEquals((first.right - 15.dp).value, remove.left.value, 0.5f)
         assertEquals((first.top - 5.dp).value, remove.top.value, 0.5f)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun ownedPasteThumbnailLoadsWithoutTheOriginalProvider() {
+        val bytes =
+            ByteArrayOutputStream().use { output ->
+                Bitmap.createBitmap(1024, 512, Bitmap.Config.ARGB_8888).apply {
+                    compress(Bitmap.CompressFormat.PNG, 100, output)
+                    recycle()
+                }
+                output.toByteArray()
+            }
+        val copy =
+            runBlocking {
+                (
+                    OwnedPasteCopy.capture(pasteFiles.root, AttachmentReader { AttachmentRead.Bytes(bytes) }, "content://missing/image")
+                        as PasteCopyCapture.Captured
+                ).copy
+            }
+        try {
+            setScreen(attachments = listOf(entry(1, "paste.png", "image/png").copy(ownedPaste = copy)))
+            composeRule.onNodeWithContentDescription("paste.png").assertIsDisplayed()
+            composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText("PNG").fetchSemanticsNodes().isEmpty() }
+            val tile = composeRule.onNodeWithContentDescription("paste.png").getUnclippedBoundsInRoot()
+            assertEquals(45.dp.value, tile.width.value, 0.5f)
+            assertEquals(60.dp.value, tile.height.value, 0.5f)
+        } finally {
+            copy.release()
+        }
     }
 
     @Test

@@ -226,38 +226,46 @@ class OwnedPasteCopyTest {
         }
 
     @Test
-    fun lastOwnerCannotDeleteWhileAnotherCallerIsReading() = runTest {
-        val copy = captured()
-        val opened = CountDownLatch(1)
-        val finishRead = CountDownLatch(1)
-        val releaseStarted = CountDownLatch(1)
-        val released = CountDownLatch(1)
-        val workers = Executors.newFixedThreadPool(2)
-        try {
-            val read = workers.submit<ByteArray?> {
-                copy.withInput { input ->
-                    opened.countDown()
-                    check(finishRead.await(5, TimeUnit.SECONDS))
-                    input.readBytes()
+    fun lastOwnerCannotDeleteWhileAnotherCallerIsReading() =
+        runTest {
+            val copy = captured()
+            val opened = CountDownLatch(1)
+            val finishRead = CountDownLatch(1)
+            val releaseStarted = CountDownLatch(1)
+            val released = CountDownLatch(1)
+            val workers = Executors.newFixedThreadPool(2)
+            try {
+                val read =
+                    workers.submit<ByteArray?> {
+                        copy.withInput { input ->
+                            opened.countDown()
+                            check(finishRead.await(5, TimeUnit.SECONDS))
+                            input.readBytes()
+                        }
+                    }
+                assertTrue(opened.await(5, TimeUnit.SECONDS))
+                workers.submit {
+                    releaseStarted.countDown()
+                    copy.release()
+                    released.countDown()
                 }
+                assertTrue(releaseStarted.await(5, TimeUnit.SECONDS))
+                assertFalse(released.await(100, TimeUnit.MILLISECONDS))
+                finishRead.countDown()
+                assertArrayEquals(byteArrayOf(1, 2, 3), read.get(5, TimeUnit.SECONDS))
+                assertTrue(released.await(5, TimeUnit.SECONDS))
+                assertEquals(
+                    0,
+                    temporary.root
+                        .listFiles()
+                        .orEmpty()
+                        .size,
+                )
+            } finally {
+                finishRead.countDown()
+                workers.shutdownNow()
             }
-            assertTrue(opened.await(5, TimeUnit.SECONDS))
-            workers.submit {
-                releaseStarted.countDown()
-                copy.release()
-                released.countDown()
-            }
-            assertTrue(releaseStarted.await(5, TimeUnit.SECONDS))
-            assertFalse(released.await(100, TimeUnit.MILLISECONDS))
-            finishRead.countDown()
-            assertArrayEquals(byteArrayOf(1, 2, 3), read.get(5, TimeUnit.SECONDS))
-            assertTrue(released.await(5, TimeUnit.SECONDS))
-            assertEquals(0, temporary.root.listFiles().orEmpty().size)
-        } finally {
-            finishRead.countDown()
-            workers.shutdownNow()
         }
-    }
 
     private companion object {
         const val IMAGE_URI = "content://foreign/image"
