@@ -1061,6 +1061,27 @@ out without reaching the scroll. Continue sends the selected label to the asking
 `question_dismissed` must report `source = remote` and `outcome = answered`, and the completed reply must
 name the chosen label and exclude the other. The peer then answers the batch shown for a repeat of the
 same prompt, clearing it with no phone tap and completing the second turn. Two real claude turns.
+
+The phone's option and Continue use `questionAnswerTarget` before real pointer taps (#1703).
+`performScrollToNode` sees the full drawing viewport, including the area behind thread chrome;
+an enabled node can still have its tap center behind the composer. The helper measures the header
+and composer, applies one scroll adjustment if needed, and asserts that the actual tap center is
+between them. Requiring the whole button rectangle to clear chrome is unnecessary. The short-thread
+`ThreadInlineQuestionTest#phone_question_scroll_sequence_submits_from_a_short_thread` checks selection,
+tap geometry and exactly one submit event with the held generation; the older long empty-thread
+fixture could pass while this path was broken. The actions reveal from #1702 remains necessary.
+
+`QuestionAnswerStage` / `questionAnswerStep` labels setup, peer waits, phone submission, question
+removal and both completed-turn waits. Coroutine and Compose timeouts retain their original cause
+and add only fixed operation text and lazily read, content-free peer link state; deadlines stay
+unchanged. The captured failure was `AwaitPhoneDismissal` — `await phone answer's question_dismissed
+on peer` — after 30000 ms with `session open (link 1, replaced 0×)`. It occurred after #1702's
+enabled-Continue wait and #1686's peer admission: retained daemon logs showed accepted handshakes,
+not key-binding rejects. The red/green fixture proves tap occlusion, but missing historical phone
+logcat prevents proving that occurrence's coordinates; attribution to occlusion remains an inference.
+The repaired method ran and passed in the fresh full live suite in
+[Verification status](#verification-status), preserving both answer round trips without tap retries.
+
 \#1305 moved the batch from its own dialog into
 `ThreadScreen`'s scrollable stream (see [Question batch modal § Placement](knowledge/features/question-batch-modal.md#placement-inline-in-threadscreen-since-1305));
 `awaitInlineQuestion` / `awaitNoInlineQuestion` scroll the lazy list to the `question-batch-title` tag
@@ -2412,7 +2433,28 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-04 (#1666).** The dispatcher ran the fresh full
+**Current live verification — 2026-10-05 (#1703).** After verification, the dispatcher ran the fresh full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1703`
+at `930be240bcd64759a9462722e3cc9a757946e29c`, merged with `origin/main` at `0d2aecc85c`:
+**53 executed, 53 passed, 0 failed, 0 errors, 0 skipped**, exit 0. The inspected XML contains exactly
+one `InteractiveStreamE2ETest#interactiveTurn_questionAnswer_reachesTheAskingConversation` testcase
+with no failure, error or skip: this method ran and passed in the full suite, not a focused rerun.
+Daemon revision was `65df98859f32e49ba59a42c4446d650b7625cf62`, Claude 2.1.280. See the
+[dispatcher gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1703#issuecomment-5987043605).
+The retained report is `2026-10-05T02-12-18-576Z_real-claude-gate_#1703.log` under the dispatcher
+repository's `logs/`, with revisions in its adjacent `.stderr.log`.
+
+The earlier diagnostic capture on mobile `55e6b11f477fa25ce1e5cb824b0b6ac4d6f988c4`, merged with main
+`6bd48bc3cb52deb744c7522ba019bc2dffba8903`, used the same daemon and Claude revisions:
+**53 executed, 51 passed, 2 failed, 0 skipped**. This method failed at `AwaitPhoneDismissal` with
+the peer session still open. Main's comparison ran this method alone and failed (**1 executed,
+1 failed, 0 skipped**) with an unnamed timeout. Those failures are diagnosis evidence, not repair
+acceptance. The sanitized [operation and reproduction record](https://github.com/pyrycode/pyrycode-mobile/issues/1703#issuecomment-5986017015)
+distinguishes the observed wait from inferred historical tap occlusion; the removed gate worktree
+and phone logcat prevent coordinate confirmation. Reports are
+`2026-10-04T23-15-21-659Z_real-claude-gate_#1703.stderr.log` and its `real-claude-gate-base` counterpart.
+
+**Previous live verification — 2026-10-04 (#1666).** The dispatcher ran the fresh full
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1666`
 at `1628e840ea`, merged with `origin/main` at `6bd48bc3cb` in a detached worktree:
 **53 executed, 52 passed, 1 failed, 0 skipped**, exit 1. The fresh full-suite XML explicitly
@@ -3513,6 +3555,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
   Both collision and offered-file ran and passed in the fresh 53-test full suite
   recorded in [Verification status](#verification-status). No scenario or
   `DeterministicInteractiveStreamE2ETest` twin was added.
+
+- **Coverage — hardened:** [#1703](https://github.com/pyrycode/pyrycode-mobile/issues/1703) repairs
+  `InteractiveStreamE2ETest#interactiveTurn_questionAnswer_reachesTheAskingConversation`'s phone
+  tap positioning beneath thread chrome and labels its timeout operations. The short-thread shared
+  regression checks real pointer selection and exactly one generation-scoped submit. The existing
+  phone/peer dismissal, chosen-label-only reply and both completed turns remain enabled; the method
+  passed in the fresh 53-test full live suite in [Verification status](#verification-status).
+  No scenario or `DeterministicInteractiveStreamE2ETest` twin was added, and the pre-ship selector
+  and command are unchanged.
 
 - **Coverage — hardened:** [#1702](https://github.com/pyrycode/pyrycode-mobile/issues/1702) repairs
   `InteractiveStreamE2ETest#interactiveTurn_questionAnswer_reachesTheAskingConversation` by revealing
