@@ -1,12 +1,13 @@
-Ticket #1615 evidence, captured 2026-10-05 from the implementation over plan commit 1d890de2 (before implementation commit).
+Ticket #1615 evidence, recaptured 2026-10-05 after the PR #1794 overflow repair.
+The original plan was committed as 1d890de2 before implementation 6e69bd8c; rework retains its short-label geometry.
 Figma references refreshed 2026-10-05: 646:4694, 646:4700, 646:4707; armed row child 646:4725.
 Full Pixel 8/API 35 capture invocation required requireRealSystemBars=true.
 All four app frames: MainActivity; 412x892 px; density=1.0; fontScale=1.0; staticDark=true;
 hardwareAccelerated=true; syntheticBars=false; real status bar=24 px; IME=0.
-Real navigation bars: armed/settled-failed=24 px; pending/immediate-failed=63 px.
+Real navigation bars: all four fresh frames=24 px.
 Row comparisons align row origins only: no scaling, geometry warping, bar synthesis or image recolouring.
-Crops use x=20..392; armed y=564..660; pending y=525..621;
-settled-failed y=544..660; immediate-failed y=505..621 (exclusive right/bottom).
+Crops use x=20..392; armed/pending y=564..660;
+settled-failed/immediate-failed y=544..660 (exclusive right/bottom).
 
 Measurements (row-relative, inclusive painted pixel rows):
 State                     App outline y    Figma outline y   App/Figma width
@@ -25,14 +26,18 @@ Immediate failure captured after the inline message first appears, with no timer
 No run-configuration error text exists in the immediate failure assertion or capture.
 The older refusal-switch-back-failed-snackbar.* assets retain historical pre-fix evidence only.
 
-Focused JVM: 48 executed; 0 failed/errors; 0 skipped (switch-back-1615-unit-results.xml).
-Focused full device: 18 executed; 0 failed/errors; 0 skipped (switch-back-1615-device-results.xml).
-Deterministic refusal: 1 executed; 0 failed/errors; 0 skipped (switch-back-1615-scripted-results.xml).
+Focused rework JVM: 50 executed; 0 failed/errors; 0 skipped (switch-back-1615-rework-unit-results.xml).
+Focused rework full device: 20 executed; 0 failed/errors; 0 skipped (switch-back-1615-rework-device-results.xml).
+Rework deterministic refusal: 1 executed; 0 failed/errors; 0 skipped (switch-back-1615-rework-scripted-results.xml).
+Long unknown identifier (128 characters) and 2x font scale: native-font JVM and full-device assertions
+prove wrapped lines fit their text bounds and the growing outline, with the retry line below and pointer action intact.
+The 32 dp minimum and 8 dp vertical padding preserve the default short label while avoiding clipping.
+Original unit/device XML remains retained as historical first-pass evidence.
 Documentation handoff pending: index.md armed/pending/failed verdicts and measurements, immediate failure
 capture and inline-only feedback decision; use this evidence without a documentation-stage rerun.
 
 Evidence integrity:
-refusal-switch-back.png: 412x892, 4652 distinct RGB colours, SHA256=24e7d544b0166f54c020d3ba63580f2018bd6f2dbcea73457f9e15bcd79492ea
-refusal-switch-back-pending.png: 412x892, 5264 distinct RGB colours, SHA256=13fd1b5119f162914ca8f4e35573dc46a372714975f54075a7510548865b6bcc
-refusal-switch-back-failed-immediate.png: 412x892, 5676 distinct RGB colours, SHA256=eee89e3219c29936127f0dffbc79dffc67be708efd7ab9a7caaf2d0d46d15c29
-refusal-switch-back-failed.png: 412x892, 5267 distinct RGB colours, SHA256=fbddd572bc37229f00b49a8a4a8c08e8d7d6ca0f9915009a8a8742469d18c59c
+refusal-switch-back.png: 412x892, 4659 distinct RGB colours, SHA256=1ddb44a654053d5ecafae6dd196d31a9b8138bd98f80ddc4d20e03fc658c9544
+refusal-switch-back-pending.png: 412x892, 4694 distinct RGB colours, SHA256=115cb50a4041a3588c2f0a33942154012294acd069d3059609cbf5a980e76922
+refusal-switch-back-failed-immediate.png: 412x892, 5274 distinct RGB colours, SHA256=f679453de24921d08b9db534cd28b96d74074ff1db9a0bf34222154b03bfa5e4
+refusal-switch-back-failed.png: 412x892, 5274 distinct RGB colours, SHA256=f679453de24921d08b9db534cd28b96d74074ff1db9a0bf34222154b03bfa5e4

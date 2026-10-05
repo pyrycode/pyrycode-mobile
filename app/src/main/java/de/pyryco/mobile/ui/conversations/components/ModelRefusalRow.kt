@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -219,12 +219,15 @@ private fun SwitchBackAction(
             // bottom padding is outside its click area, leaving this extension exclusive to switch-back.
             modifier =
                 Modifier
-                    .height(SwitchBackVisibleHeight)
+                    .heightIn(min = SwitchBackVisibleHeight)
                     .testTag("refusal-switch-back-outline")
                     .clickable(enabled = !offer.pending, role = Role.Button, onClick = onSwitchBack)
                     .alpha(if (offer.pending) SWITCH_BACK_PENDING_ALPHA else 1f),
         ) {
-            Box(modifier = Modifier.padding(horizontal = SwitchBackHorizontalPadding), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier.padding(horizontal = SwitchBackHorizontalPadding, vertical = RefusalVerticalPadding),
+                contentAlignment = Alignment.Center,
+            ) {
                 Text(
                     text = switchBackLabel(offer.originalModel, knownModelLabel),
                     style = MaterialTheme.typography.bodySmall,
