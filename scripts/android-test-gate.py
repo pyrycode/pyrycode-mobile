@@ -133,7 +133,8 @@ def print_focus_records(paths):
     """Print each failing test's focus record from its logcat to stderr, where the dispatcher log keeps it (#1131).
 
     FocusRecordListener logs one record per failing device test: the window manager's focused window, focused
-    app and any ANR dialog at the moment of failure. A passing run logs none, so it prints nothing here.
+    app and any ANR dialog just after the test's rules tore down, and the last lifecycle stage of each activity
+    the test opened. A passing run logs none, so it prints nothing here.
     """
     seen = set()
     for path in paths:

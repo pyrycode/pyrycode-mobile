@@ -21,17 +21,19 @@ Both draft evictions are synchronous `MutableStateFlow.update` calls with no cor
 
 Beside the text map, `ComposerDraftStore` keeps a second `(serverId, conversationId)`-keyed map of
 `PendingAttachment` entries ([#932](https://github.com/pyrycode/pyrycode-mobile/issues/932)) — a content
-URI plus display name, MIME type, size and, once uploaded, an acknowledged id. Same nesting, same
+URI plus display name, MIME type, size and, once uploaded, an acknowledged id; pasted images
+also carry an opaque `OwnedPasteCopy` capability ([#1727](https://github.com/pyrycode/pyrycode-mobile/issues/1727)). Same nesting, same
 "empty entries and buckets are absent" rule, same eviction: `clearHost` / `clearConversation` drop a
 pair's attachments together with its text (see § Composer draft ownership above).
 `ThreadViewModel.pendingAttachments` mirrors `draft`'s shape — mapped from the store, seeded
 synchronously, `Eagerly`. `addAttachment` refuses an entry over `AttachmentUploadLimit.MAX_BYTES` or one
-that would push the pair past `MessageAttachmentIds.MAX` (32), checked inside the store's own
-`update {}` so two concurrent adds can't both pass at 31.
+that would push the pair past `MessageAttachmentIds.MAX` (32), checked inside the store's serialized
+attachment edit so two concurrent adds can't both pass at 31. Removed-copy cleanup runs once,
+outside StateFlow CAS retries.
 
 `sendMessage` refuses text that is blank *after trimming* ([#1355](https://github.com/pyrycode/pyrycode-mobile/issues/1355)) before it reads the pair's attachments at all — [#1328](https://github.com/pyrycode/pyrycode-mobile/issues/1328), matching desktop's `submitMessage`. A pending attachment cannot send on its own: the files and the draft both stay untouched for the next send, and no upload is attempted. (An earlier version of this rule read the attachments first and let them send with blank text; [`ThreadInputBar`](thread-input-bar.md#the-message-input-button--one-control-two-actions) tracked that with a `hasAttachments` parameter, since removed.) Past that guard, `sendMessage` snapshots the pair's attachment list at tap time. An entry that already carries an
-`attachmentId` is skipped; the rest are read through `AttachmentReader` — bytes only at send time, one
-file's at once, the store itself never holds file bytes — and uploaded via
+`attachmentId` is skipped; the rest are read from their owned paste copy or, for picker entries,
+through `AttachmentReader`, one file at a time, and uploaded via
 [`ConversationRepository.uploadAttachment`](attachment-upload.md), in order. Any read or upload failure
 stops the send: text and every entry stay, and ids already acknowledged are kept so a retry does not
 re-upload them. Once every upload in the snapshot has succeeded — and **before** `repository.sendMessage`
@@ -63,7 +65,7 @@ transfer](attachment-upload.md#the-transfer) for the `ConnectionLost` / `SendFai
 
 **Sent originals (#984).** Beside the text and pending-attachment maps, `ComposerDraftStore` keeps a
 third, unexposed `(serverId, conversationId)`-keyed map, attachment id to the content URI it was uploaded
-from: `fun recordSentOriginals(serverId, conversationId, originals: Map<String, String>)` and
+from, for URI-based picker entries only: `fun recordSentOriginals(serverId, conversationId, originals: Map<String, String>)` and
 `fun sentOriginal(serverId, conversationId, attachmentId): String?`. `ThreadViewModel.sendWithAttachments`
 calls `recordSentOriginals` once every upload in the snapshot has succeeded and **before**
 `repository.sendMessage` — the confirmed row can render while that call is still suspended, so the
@@ -74,7 +76,9 @@ lifecycle](message-bubble-attachment-slot.md#load-lifecycle-since-984)). Same ru
 only, never logged, `clearHost` / `clearConversation` drop it with the text and the pending attachments.
 A picker grant does not outlive the process, so neither does this entry; "sent in this app session," not
 "sent, ever," is the guarantee — reopening the app after a background/foreground cycle keeps it (the
-store is app-scoped), a process death does not.
+store is app-scoped), a process death does not. Owned paste copies are excluded from
+`recordSentOriginals`: a sent pasted image uses [daemon retrieval](attachment-retrieval.md)
+even in the current process, rather than advertising a temporary source that cleanup deletes.
 
 **Reading a content URI is a trust boundary.** `ContentResolver.openInputStream` opens `file://`,
 `android.resource://` and this app's own non-exported providers with the app's identity, so a URI handed
@@ -122,13 +126,47 @@ The pending tiles follow Figma's [Input attachment (390:7181)](https://www.figma
 
 While the thread is connecting, reconnecting or offline, the file tile's page outline and label switch to `inversePrimary` (#32628D) instead, matching the muted `File` tile in Figma's Connecting (`627:1740`), Reconnecting (`627:4657`) and Offline (`627:4910`) frames — the connection frames draw this as the natural state of a tile nothing can send yet ([#1532](https://github.com/pyrycode/pyrycode-mobile/issues/1532)). `ComposerAttachmentStrip` takes a `connected: Boolean = true` parameter, the same shape as `ThreadComposerFooter`'s, threaded down through `AttachmentItem` to `FileTile`; `ThreadScreen` passes the same `connected` value it already derives for [#1319](https://github.com/pyrycode/pyrycode-mobile/issues/1319)'s composer gating. The default keeps every caller that was not updated — the strip's previews and `AttachmentVisualCaptureTest` — on the connected, `#1290`-contrast look. Image tiles, the remove control and the `sending` alpha are unchanged by connection state.
 
-**A paste joins the same path ([#934](https://github.com/pyrycode/pyrycode-mobile/issues/934)).** Pasting an
-image into the composer, or a keyboard's image insert, hands the field image content URIs through
-[`Modifier.contentReceiver`](thread-input-bar.md#image-paste-into-the-field-934) instead of the picker's
-document-picker launcher, but from `ThreadScreen` down it is the identical sink: `rememberPastedImageReceiver`
-describes the URIs off the main thread and calls `onAttachmentsPicked` — the same callback the picker uses —
-so the size and count refusals, the snackbar, and `ComposerAttachmentStrip`'s rendering are unchanged and
-`MainActivity` does not change. Pasted text still goes into the field as text; only a `content:` URI under a
-foreign provider and an `image/*` clip type is diverted, and the provider's own `getType` is re-checked
-before the item is kept. A clip item the receiver accepts but whose provider later disagrees on type is
-dropped, not returned to the field as text — see [Thread input bar § Image paste into the field](thread-input-bar.md#image-paste-into-the-field-934).
+**Paste capture ([#1727](https://github.com/pyrycode/pyrycode-mobile/issues/1727)).** Clipboard images
+and keyboard image inserts enter through
+[`Modifier.contentReceiver`](thread-input-bar.md#image-paste-into-the-field-934). Before publishing a
+pending entry, `rememberPastedImageReceiver` re-checks the foreign-content-URI boundary and the
+provider's image MIME type, reads bounded bytes on IO, and finishes an app-private copy. Preview and
+upload read that copy, so replacing the clipboard before typing and Send cannot revoke their source.
+The keyboard's `InputContentInfo` grant owner stays held until capture completes, including cancellation.
+Text paste still enters the field; an accepted image item whose provider disagrees on type is dropped.
+The attachment-button picker continues using its existing URI-based preview and send-time reads.
+
+Captured byte count replaces provider size metadata. `AttachmentUploadLimit.MAX_BYTES` applies to
+actual bytes even when the provider reports an unknown or dishonest size. Too-large or unreadable
+capture adds no entry and emits the existing notice at paste time. Captures publish one at a time in
+clip order; a count-limit refusal releases its copy before the next capture. Partial writes, rejected
+publication and abandoned or cancelled captures are cleaned up, including cancellation as IO returns
+an already-written file. Provider text is clamped before publication. Logs carry only static outcomes
+and counts, never bytes, provider metadata, URIs or private paths.
+
+Only the private-constructor `OwnedPasteCopy` capability permits private reads. Copies use generated
+names under `noBackupFilesDir/composer-paste-copies`, excluded from backup and device transfer; no
+external URI, name or path selects an app file. This does not widen `isForeignContentUri` for own-provider,
+file or resource URIs. Draft metadata remains process-local and is not restored after process death.
+
+An accepted copy belongs to `ComposerDraftStore` across navigation and activity recreation. Explicit
+removal or host/conversation eviction releases that entry's ownership. Send retains its exact snapshot
+synchronously before asynchronous work starts: removing uploaded entries before `repository.sendMessage`
+is not the end of the send attempt. The send releases its references in `finally` after the complete
+attempt, including cancellation; a cancelled-before-start launch also releases them once. Read/upload
+failures that leave pending entries keep draft ownership for retry. New entries and other drafts are
+outside the snapshot's cleanup. Each capability serializes reads, retains and releases, so final deletion
+waits for an active upload read or thumbnail decode. `PyryApp.onCreate` removes previous-process
+leftovers from the dedicated directory before new captures exist; activity creation never runs this cleanup.
+
+Owned thumbnails use sampled `ImageDecoder` decoding inside that same read/deletion monitor, preserving
+JPEG EXIF rotation and mirroring at the existing tile bound. Replacing provider thumbnail loading with
+private decoding changes the orientation boundary: source independence alone cannot prove correct pixels.
+`ComposerAttachmentStripTest` covers an unavailable provider and three asymmetric JPEGs (rotation,
+mirroring and both), alongside existing geometry/removal assertions. `OwnedPasteCopyTest` and
+`ThreadViewModelAttachmentTest.pasteThenRevokeOriginal_sendsCapturedBytesAndNeverPublishesDeletedOriginal`
+explicitly make the original unreadable and verify captured bytes and cleanup. Clipboard replacement
+alone is insufficient evidence when a MediaStore fixture was inserted with the target app identity;
+`ComposerImagePasteDeviceTest.pasteAndKeyboardInsert_captureBeforeTheProviderDisappears` also deletes the
+provider item. See the [live attachments-from-phone regression](../../e2e-interactive-stream.md#what-rung-3-is-made-of)
+for peer digest and conversation-isolation coverage.
