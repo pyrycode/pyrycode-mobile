@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.CancellationSignal
 import android.util.Size
 import androidx.compose.foundation.Image
@@ -133,7 +134,7 @@ private fun AttachmentItem(
                 .size(TileWidth, TileHeight)
                 .alpha(if (sending) SENDING_ALPHA else 1f)
                 .semantics(mergeDescendants = true) { contentDescription = attachment.displayName }
-        val thumbnail = if (attachment.mimeType.startsWith("image/")) rememberThumbnail(attachment.uri) else null
+        val thumbnail = if (attachment.mimeType.startsWith("image/")) rememberThumbnail(attachment) else null
         if (thumbnail != null) {
             Image(
                 bitmap = thumbnail,
@@ -234,16 +235,34 @@ private fun FileTile(
 }
 
 /**
- * [uri]'s thumbnail at tile size, or `null` while it loads and whenever it cannot be had (#933). A URI the
- * send-time read would refuse ([isForeignContentUri]) is never loaded, so nothing of this app's own shows here.
+ * The pending source's thumbnail at tile size, or `null` while loading or unreadable (#933/#1727).
+ * Only a minted owned-paste capability permits private reads. External sources retain the
+ * [isForeignContentUri] boundary; externally supplied own-provider URIs are never loaded.
  * The load runs off the main thread and is cancelled through its [CancellationSignal] when the tile leaves,
  * so a provider that stalls holds nothing past that.
  */
 @Composable
-private fun rememberThumbnail(uri: String): ImageBitmap? {
+private fun rememberThumbnail(attachment: PendingAttachment): ImageBitmap? {
+    val uri = attachment.uri
     val context = LocalContext.current
     val sizePx = with(LocalDensity.current) { Size(TileHeight.roundToPx(), TileHeight.roundToPx()) }
     val thumbnail by produceState<ImageBitmap?>(initialValue = null, uri) {
+        val owned = attachment.ownedPaste
+        if (owned != null) {
+            value =
+                withContext(Dispatchers.IO) {
+                    val dimensions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    owned.withInput { BitmapFactory.decodeStream(it, null, dimensions) }
+                    val options = BitmapFactory.Options()
+                    var sample = 1
+                    while (dimensions.outWidth / sample > sizePx.width * 2 || dimensions.outHeight / sample > sizePx.height * 2) {
+                        sample *= 2
+                    }
+                    options.inSampleSize = sample
+                    owned.withInput { BitmapFactory.decodeStream(it, null, options) }?.asImageBitmapOrNull()
+                }
+            return@produceState
+        }
         val parsed = uri.toUri()
         if (!isForeignContentUri(parsed.scheme, parsed.authority, context.packageName)) return@produceState
         val signal = CancellationSignal()

@@ -6,6 +6,7 @@ import android.app.Instrumentation
 import android.app.Notification
 import android.app.NotificationManager
 import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
@@ -57,6 +58,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performFirstLinkClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
@@ -4730,7 +4732,7 @@ class InteractiveStreamE2ETest {
 
     /**
      * Files the phone attaches reach another client with their exact bytes (#1016, rung 3). In chat X the
-     * phone picks a small PNG and a ~100 KB document through the composer's **Attach files** action — the
+     * phone pastes a small PNG, replaces the clipboard, then picks a ~100 KB document through **Attach files** — the
      * system picker answered by an [ActivityIntentStub] with `MediaStore` URIs, since the app refuses any
      * authority of its own, the test APK's included — and sends one message. Then the [SecondClientPeer], the
      * desktop stand-in, sees exactly what the desktop would:
@@ -4765,8 +4767,7 @@ class InteractiveStreamE2ETest {
             val picked =
                 listOf(insertDownload(pngName, "image/png", png, inserted), insertDownload(documentName, TEXT_MIME, document, inserted))
             stub.answer(Intent.ACTION_OPEN_DOCUMENT) {
-                val clip = ClipData.newRawUri(null, picked.first()).apply { picked.drop(1).forEach { addItem(ClipData.Item(it)) } }
-                Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().apply { clipData = clip })
+                Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().apply { clipData = ClipData.newRawUri(null, picked.last()) })
             }
 
             // 1. The peer records from here on; X and Y are fresh named chats, and the phone opens X.
@@ -4778,7 +4779,16 @@ class InteractiveStreamE2ETest {
             assertPeerAnswers(peer, chatX)
             openChatRow(nameX)
 
-            // 2. Pick both fixtures through the composer's attach action, and send them with one message.
+            // 2. Paste the PNG while its clipboard grant is valid; only the document uses the picker.
+            val clipboard = instrumentation.targetContext.getSystemService(ClipboardManager::class.java)
+            composeTestRule.runOnUiThread {
+                clipboard.setPrimaryClip(ClipData.newUri(instrumentation.targetContext.contentResolver, "image", picked.first()))
+            }
+            composeTestRule.onNode(hasSetTextAction()).performSemanticsAction(SemanticsActions.PasteText)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(pngName)).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.runOnUiThread { clipboard.setPrimaryClip(ClipData.newPlainText("replacement", "copied after paste")) }
             composeTestRule.onNode(hasContentDescription(attachFilesLabel)).performClick()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 listOf(pngName, documentName).all {

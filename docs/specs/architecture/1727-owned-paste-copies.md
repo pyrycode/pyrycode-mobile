@@ -39,7 +39,7 @@ Thumbnail and upload reads use the capability, never resolve its URI to an app p
 
 Overlaps: #1642, #1666, #1682, #1689, #1690, #1691, #1693, #1695, #1747 and #1753 touch shared screen/ViewModel/live-test files. Their changes affect other blocks; keep this diff local and additive.
 
-Sizing: one deliverable, five criteria, two new exported types at most, fewer than ten simultaneous consumer updates, about 1200 written lines including tests/plan and fewer than ten reject branches. Rechecked against the written plan; below 1600 lines.
+Sizing: one deliverable, five criteria, two new exported types at most (capture outcome types stay internal), fewer than ten simultaneous consumer updates, about 1200 written lines including tests/plan and fewer than ten reject branches. Rechecked against the written plan; below 1600 lines.
 
 ## State and concurrency model
 
@@ -81,3 +81,9 @@ Pending for documentation stage: update `docs/knowledge/features/thread-screen-c
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-04
+
+## Revisions
+
+- 2026-10-04: Inspecting Compose `StatelessInputConnection` showed that it requests the IME grant and carries its `InputContentInfo` under `EXTRA_INPUT_CONTENT_INFO`. `ThreadInputBar` now passes that owner to the receiver (two consumers updated); the capture job holds it and releases permission on completion, including a cancelled-before-start launch. The receiver is composition-keyed by conversation and snapshots its destination callback. Send leases also register parent-job completion cleanup for cancelled-before-start sends, with one-shot release.
+
+- 2026-10-04: Capture publishes one completed image at a time through the existing sink. Count refusals therefore delete their copy before the next capture, bounding temporary accumulation while preserving clip order. Cancellation on IO return still releases the captured but unpublished capability.

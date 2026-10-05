@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModelStore
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.network.MessageAttachmentIds
@@ -15,6 +16,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -26,11 +28,14 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 
 /** #932: the chat's pending attachments, added and removed through the thread, and uploaded on send. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ThreadViewModelAttachmentTest {
+    @get:Rule val pasteFiles = TemporaryFolder()
     private val logs = mutableListOf<String>()
     private val oldSink = RelayLog.sink
     private val oldEnabled = RelayLog.enabled
@@ -127,6 +132,7 @@ class ThreadViewModelAttachmentTest {
         FakeConnectionStateSource(),
         store,
         attachmentReader = reader,
+        ioDispatcher = UnconfinedTestDispatcher(),
     )
 
     private fun ThreadViewModel.attach(name: String): AttachmentAddOutcome = addAttachment("content://docs/$name", name, "text/plain", 5L)
@@ -658,6 +664,222 @@ class ThreadViewModelAttachmentTest {
             }
         }
 
+    @Test
+    fun pasteThenRevokeOriginal_sendsCapturedBytesAndNeverPublishesDeletedOriginal() =
+        runTest {
+            var readable = true
+            val reader =
+                AttachmentReader {
+                    if (readable) AttachmentRead.Bytes("original PNG bytes".toByteArray()) else AttachmentRead.Unreadable
+                }
+            val capture = OwnedPasteCopy.capture(pasteFiles.root, reader, PASTED_URI, UnconfinedTestDispatcher(testScheduler))
+            val copy = (capture as PasteCopyCapture.Captured).copy
+            val store = ComposerDraftStore()
+            val repository = RecordingRepository()
+            val vm = vm(repository, store, reader)
+            vm.addPickedAttachments(listOf(PickedAttachment(PASTED_URI, "paste.png", "image/png", capture.size, copy)))
+            readable = false
+            vm.onDraftChange("typed after copying something else")
+
+            vm.sendMessage(vm.draft.value)
+            advanceUntilIdle()
+
+            assertEquals(listOf("paste.png" to "original PNG bytes"), repository.uploads)
+            assertEquals(1, repository.sends.size)
+            assertTrue(vm.pendingAttachments.value.isEmpty())
+            assertEquals(
+                0,
+                pasteFiles.root
+                    .listFiles()
+                    .orEmpty()
+                    .size,
+            )
+            assertEquals(null, store.sentOriginal(HOST, CONV, "id-paste.png"))
+        }
+
+    @Test
+    fun pasteCopyLivesUntilSendFinishes_andANewEntrySurvivesItsCleanup() =
+        runTest {
+            val store = ComposerDraftStore()
+            val copy = pasteCopy()
+            lateinit var vm: ThreadViewModel
+            val repository =
+                RecordingRepository(whileSending = {
+                    assertEquals(
+                        1,
+                        pasteFiles.root
+                            .listFiles()
+                            .orEmpty()
+                            .size,
+                    )
+                    vm.addAttachment("content://docs/new", "new", "text/plain", 1)
+                }, neverReplies = true)
+            vm = vm(repository, store)
+            vm.addAttachment(PASTED_URI, "paste.png", "image/png", 3, copy)
+            vm.sendMessage("send")
+            advanceUntilIdle()
+            assertEquals(listOf("new"), vm.pendingAttachments.value.map { it.displayName })
+            assertEquals(
+                1,
+                pasteFiles.root
+                    .listFiles()
+                    .orEmpty()
+                    .size,
+            )
+            // Cancelling the send after pre-send consumption releases its lease, not the new draft entry.
+            ViewModelStore().apply {
+                put("vm", vm)
+                clear()
+            }
+            advanceUntilIdle()
+            assertEquals(
+                0,
+                pasteFiles.root
+                    .listFiles()
+                    .orEmpty()
+                    .size,
+            )
+            assertEquals(listOf("new"), store.attachmentsFor(HOST, CONV).map { it.displayName })
+        }
+
+    @Test
+    fun failedUploadRetainsPasteForRetry_andSuccessfulRetryDeletesIt() =
+        runTest {
+            var fails = true
+            val store = ComposerDraftStore()
+            val copy = pasteCopy()
+            val repository =
+                RecordingRepository(uploadOutcome = {
+                    if (fails) AttachmentUploadResult.ConnectionLost else AttachmentUploadResult.Stored("paste-id")
+                })
+            val vm = vm(repository, store)
+            vm.addAttachment(PASTED_URI, "paste.png", "image/png", 3, copy)
+            vm.sendMessage("retry me")
+            advanceUntilIdle()
+            assertEquals(1, store.attachmentsFor(HOST, CONV).size)
+            assertEquals(
+                1,
+                pasteFiles.root
+                    .listFiles()
+                    .orEmpty()
+                    .size,
+            )
+            fails = false
+            vm.sendMessage("retry me")
+            advanceUntilIdle()
+            assertEquals(1, repository.sends.size)
+            assertEquals(
+                0,
+                pasteFiles.root
+                    .listFiles()
+                    .orEmpty()
+                    .size,
+            )
+        }
+
+    @Test
+    fun evictingDraftDuringUploadDoesNotDeleteTheActiveSendCopy() =
+        runTest {
+            val store = ComposerDraftStore()
+            val copy = pasteCopy()
+            val repository =
+                RecordingRepository(beforeUpload = {
+                    store.clearHost(HOST)
+                    assertEquals(
+                        1,
+                        pasteFiles.root
+                            .listFiles()
+                            .orEmpty()
+                            .size,
+                    )
+                })
+            val vm = vm(repository, store)
+            vm.addAttachment(PASTED_URI, "paste.png", "image/png", 3, copy)
+            vm.sendMessage("send")
+            advanceUntilIdle()
+            assertEquals(1, repository.sends.size)
+            assertEquals(
+                0,
+                pasteFiles.root
+                    .listFiles()
+                    .orEmpty()
+                    .size,
+            )
+        }
+
+    @Test
+    fun clearedViewModelDoesNotDeleteAStillPendingPasteCopy() =
+        runTest {
+            val store = ComposerDraftStore()
+            val vm = vm(RecordingRepository(), store)
+            vm.addAttachment(PASTED_URI, "paste.png", "image/png", 3, pasteCopy())
+            ViewModelStore().apply {
+                put("vm", vm)
+                clear()
+            }
+            assertEquals(
+                1,
+                pasteFiles.root
+                    .listFiles()
+                    .orEmpty()
+                    .size,
+            )
+            val recreated = vm(RecordingRepository(), store)
+            recreated.sendMessage("send after navigation")
+            advanceUntilIdle()
+            assertEquals(
+                0,
+                pasteFiles.root
+                    .listFiles()
+                    .orEmpty()
+                    .size,
+            )
+        }
+
+    @Test
+    fun cancelledBeforeSendStarts_releasesOnlyTheSendLease() =
+        runTest {
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            try {
+                val store = ComposerDraftStore()
+                val vm = vm(RecordingRepository(), store)
+                vm.addAttachment(PASTED_URI, "paste.png", "image/png", 3, pasteCopy())
+                vm.sendMessage("send")
+                ViewModelStore().apply {
+                    put("vm", vm)
+                    clear()
+                }
+                advanceUntilIdle()
+                assertEquals(
+                    1,
+                    pasteFiles.root
+                        .listFiles()
+                        .orEmpty()
+                        .size,
+                )
+                store.clearHost(HOST)
+                assertEquals(
+                    0,
+                    pasteFiles.root
+                        .listFiles()
+                        .orEmpty()
+                        .size,
+                )
+            } finally {
+                Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+            }
+        }
+
+    private suspend fun TestScope.pasteCopy(): OwnedPasteCopy =
+        (
+            OwnedPasteCopy.capture(
+                pasteFiles.root,
+                AttachmentReader { AttachmentRead.Bytes(byteArrayOf(1, 2, 3)) },
+                PASTED_URI,
+                UnconfinedTestDispatcher(testScheduler),
+            ) as PasteCopyCapture.Captured
+        ).copy
+
     private fun picked(
         name: String,
         size: Long? = 5L,
@@ -666,6 +888,7 @@ class ThreadViewModelAttachmentTest {
     private fun attachmentLogs() = logs.filter { "composer_attachment" in it }
 
     private companion object {
+        const val PASTED_URI = "content://clipboard/image"
         const val HOST = "pyrybox"
         const val CONV = "seed-channel-personal"
     }
