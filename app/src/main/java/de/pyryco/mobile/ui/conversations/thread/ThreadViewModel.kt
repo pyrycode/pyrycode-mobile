@@ -1741,6 +1741,11 @@ class ThreadViewModel(
         onSent: () -> Unit,
     ) {
         _attachmentsSending.value = true
+        val copies = attachments.mapNotNull { it.ownedPaste }.filter { it.retain() }
+        val released = AtomicBoolean()
+        val releaseCopies = { if (released.compareAndSet(false, true)) copies.forEach { it.release() } }
+        // Covers a launch into an already-cancelled ViewModel scope, whose body never starts.
+        val cancellation = viewModelScope.coroutineContext[Job]?.invokeOnCompletion { releaseCopies() }
         launchGuardedRepoCall {
             try {
                 val target = state.value.conversationId
@@ -1750,7 +1755,7 @@ class ThreadViewModel(
                     val id = entry.attachmentId ?: upload(target, entry) ?: return@launchGuardedRepoCall
                     // #983: the thread row names each file as it was uploaded.
                     references += MessageAttachment(id, entry.displayName, entry.mimeType)
-                    originals[id] = entry.uri
+                    if (entry.ownedPaste == null) originals[id] = entry.uri
                 }
                 // #984: before the send, because the confirmed row can be drawn while it is suspended. A
                 // send that then fails leaves harmless entries: its retry names the same ids.
@@ -1762,6 +1767,8 @@ class ThreadViewModel(
                 sendInLocalWindow { repository.sendMessage(target, text, references) }
                 onSent()
             } finally {
+                releaseCopies()
+                cancellation?.dispose()
                 // #933: however the send ended — sent, stopped by a failed read or upload, or a swallowed throw.
                 _attachmentsSending.value = false
                 _attachmentUploadProgress.value = null
@@ -1778,7 +1785,7 @@ class ThreadViewModel(
         entry: PendingAttachment,
     ): String? {
         val bytes =
-            when (val read = attachmentReader.read(entry.uri)) {
+            when (val read = entry.ownedPaste?.read(ioDispatcher) ?: attachmentReader.read(entry.uri)) {
                 is AttachmentRead.Bytes -> read.bytes
                 AttachmentRead.TooLarge -> return attachmentSendFailed("read_too_large", AttachmentSendFailure.TOO_LARGE)
                 AttachmentRead.Unreadable -> return attachmentSendFailed("read_failed", AttachmentSendFailure.UNREADABLE)
@@ -1815,8 +1822,9 @@ class ThreadViewModel(
         displayName: String,
         mimeType: String,
         size: Long?,
+        ownedPaste: OwnedPasteCopy? = null,
     ): AttachmentAddOutcome {
-        val outcome = draftStore.addAttachment(serverId, conversationId, uri, displayName, mimeType, size)
+        val outcome = draftStore.addAttachment(serverId, conversationId, uri, displayName, mimeType, size, ownedPaste)
         when (outcome) {
             AttachmentAddOutcome.ADDED -> Unit
             AttachmentAddOutcome.TOO_LARGE -> RelayLog.d { "event=composer_attachment_add outcome=too_large" }
@@ -1833,7 +1841,7 @@ class ThreadViewModel(
         var tooLarge = 0
         var tooMany = 0
         for (entry in picked) {
-            when (addAttachment(entry.uri, entry.displayName, entry.mimeType, entry.size)) {
+            when (addAttachment(entry.uri, entry.displayName, entry.mimeType, entry.size, entry.ownedPaste)) {
                 AttachmentAddOutcome.ADDED -> Unit
                 AttachmentAddOutcome.TOO_LARGE -> tooLarge++
                 AttachmentAddOutcome.TOO_MANY -> tooMany++

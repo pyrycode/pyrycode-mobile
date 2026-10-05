@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Context
@@ -9,6 +10,9 @@ import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import android.view.View
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
+import android.view.inputmethod.InputContentInfo
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.SemanticsActions
@@ -16,6 +20,7 @@ import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -25,8 +30,12 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -53,7 +62,7 @@ class ComposerImagePasteDeviceTest {
     }
 
     @Test
-    fun pastingAnImageContentUri_addsItToTheStrip() {
+    fun pasteAndKeyboardInsert_captureBeforeTheProviderDisappears() {
         val image = insertPng()
         var hostView: View? = null
         val viewModel =
@@ -107,8 +116,38 @@ class ComposerImagePasteDeviceTest {
             composeRule.onAllNodesWithContentDescription(displayName).fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithTag(ATTACHMENT_STRIP_TEST_TAG).assertExists()
-        assertEquals(listOf(image.toString()), viewModel.pendingAttachments.value.map { it.uri })
+        val pending = viewModel.pendingAttachments.value.single()
+        assertNotNull(pending.ownedPaste)
+        val original = requireNotNull(context.contentResolver.openInputStream(image)).use { it.readBytes() }
+        composeRule.runOnUiThread {
+            context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("replacement", "something else"))
+        }
+        // MediaStore grants under the target identity can survive clipboard replacement. Delete the
+        // provider item too, making revocation deterministic instead of claiming replacement proves it.
+        context.contentResolver.delete(image, null, null)
+        inserted = null
+        val read = runBlocking { requireNotNull(pending.ownedPaste).read() }
+        assertArrayEquals(original, (read as AttachmentRead.Bytes).bytes)
+        composeRule.runOnIdle { viewModel.removeAttachment(pending.key) }
         assertEquals("", viewModel.draft.value)
+
+        // Drive the real editor's commitContent path, which shares the receiver with clipboard paste.
+        val keyboardImage = insertPng()
+        composeRule.onNode(hasSetTextAction()).performClick()
+        composeRule.waitForIdle()
+        composeRule.runOnUiThread {
+            val connection = requireNotNull(hostView?.onCreateInputConnection(EditorInfo()))
+            val info = InputContentInfo(keyboardImage, ClipDescription("image", arrayOf("image/png")), null)
+            assertTrue(connection.commitContent(info, InputConnection.INPUT_CONTENT_GRANT_READ_URI_PERMISSION, null))
+        }
+        composeRule.waitUntil(10_000) { viewModel.pendingAttachments.value.size == 1 }
+        val keyboardPending = viewModel.pendingAttachments.value.single()
+        assertNotNull(keyboardPending.ownedPaste)
+        context.contentResolver.delete(keyboardImage, null, null)
+        inserted = null
+        val keyboardRead = runBlocking { requireNotNull(keyboardPending.ownedPaste).read() }
+        assertArrayEquals(original, (keyboardRead as AttachmentRead.Bytes).bytes)
+        composeRule.runOnIdle { viewModel.removeAttachment(keyboardPending.key) }
     }
 
     private fun insertPng(): Uri {

@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import android.graphics.Bitmap
+import android.graphics.ImageDecoder
 import android.os.CancellationSignal
 import android.util.Size
 import androidx.compose.foundation.Image
@@ -48,10 +49,12 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.repository.AttachmentUploadLimit
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
+import java.nio.ByteBuffer
 
 // Figma 16:8's `Attachment area` (390:7136): 45 × 60 tiles, 6dp corners, a 20dp remove icon overlapping each
 // tile's top-trailing corner by 5dp. Each item reserves that overlap so the scrolling row does not clip it,
@@ -133,7 +136,7 @@ private fun AttachmentItem(
                 .size(TileWidth, TileHeight)
                 .alpha(if (sending) SENDING_ALPHA else 1f)
                 .semantics(mergeDescendants = true) { contentDescription = attachment.displayName }
-        val thumbnail = if (attachment.mimeType.startsWith("image/")) rememberThumbnail(attachment.uri) else null
+        val thumbnail = if (attachment.mimeType.startsWith("image/")) rememberThumbnail(attachment) else null
         if (thumbnail != null) {
             Image(
                 bitmap = thumbnail,
@@ -234,16 +237,38 @@ private fun FileTile(
 }
 
 /**
- * [uri]'s thumbnail at tile size, or `null` while it loads and whenever it cannot be had (#933). A URI the
- * send-time read would refuse ([isForeignContentUri]) is never loaded, so nothing of this app's own shows here.
+ * The pending source's thumbnail at tile size, or `null` while loading or unreadable (#933/#1727).
+ * Only a minted owned-paste capability permits private reads. External sources retain the
+ * [isForeignContentUri] boundary; externally supplied own-provider URIs are never loaded.
  * The load runs off the main thread and is cancelled through its [CancellationSignal] when the tile leaves,
  * so a provider that stalls holds nothing past that.
  */
 @Composable
-private fun rememberThumbnail(uri: String): ImageBitmap? {
+private fun rememberThumbnail(attachment: PendingAttachment): ImageBitmap? {
+    val uri = attachment.uri
     val context = LocalContext.current
     val sizePx = with(LocalDensity.current) { Size(TileHeight.roundToPx(), TileHeight.roundToPx()) }
     val thumbnail by produceState<ImageBitmap?>(initialValue = null, uri) {
+        val owned = attachment.ownedPaste
+        if (owned != null) {
+            value =
+                withContext(Dispatchers.IO) {
+                    owned
+                        .withInput { input ->
+                            val bytes = readBounded(input, AttachmentUploadLimit.MAX_BYTES) ?: return@withInput null
+                            // ImageDecoder applies EXIF rotation and mirroring before sampling; BitmapFactory does not.
+                            ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) { decoder, info, _ ->
+                                var sample = 1
+                                while (info.size.width / sample > sizePx.width * 2 || info.size.height / sample > sizePx.height * 2) {
+                                    sample *= 2
+                                }
+                                decoder.setTargetSampleSize(sample)
+                                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                            }
+                        }?.asImageBitmapOrNull()
+                }
+            return@produceState
+        }
         val parsed = uri.toUri()
         if (!isForeignContentUri(parsed.scheme, parsed.authority, context.packageName)) return@produceState
         val signal = CancellationSignal()

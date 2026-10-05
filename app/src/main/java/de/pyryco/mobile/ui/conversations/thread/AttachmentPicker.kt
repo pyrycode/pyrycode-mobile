@@ -5,6 +5,7 @@ import android.content.ClipDescription
 import android.content.ContentResolver
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.view.inputmethod.InputContentInfo
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
@@ -14,9 +15,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.platform.LocalContext
 import de.pyryco.mobile.data.network.RelayLog
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 /**
  * One file the system picker handed back (#933), described at pick time so an oversized file is refused
@@ -30,6 +33,7 @@ data class PickedAttachment(
     val displayName: String,
     val mimeType: String,
     val size: Long?,
+    val ownedPaste: OwnedPasteCopy? = null,
 ) {
     override fun toString(): String = "PickedAttachment(size=$size)"
 }
@@ -106,26 +110,103 @@ internal fun describePastedImage(
     return described
 }
 
+/** Captures a validated external image; provider size is a hint, captured byte count is authoritative. */
+internal suspend fun capturePastedImage(
+    resolver: ContentResolver,
+    uri: Uri,
+    ownPackage: String,
+    root: File,
+    onFailure: (AttachmentSendFailure) -> Unit,
+    reader: AttachmentReader = ContentResolverAttachmentReader(resolver, ownPackage),
+): PickedAttachment? {
+    val described = describePastedImage(resolver, uri, ownPackage) ?: return null
+    return when (val result = OwnedPasteCopy.capture(root, reader, described.uri)) {
+        is PasteCopyCapture.Captured ->
+            described.copy(
+                displayName = clampProviderText(described.displayName),
+                mimeType = clampProviderText(described.mimeType),
+                size = result.size,
+                ownedPaste = result.copy,
+            )
+        PasteCopyCapture.TooLarge -> {
+            onFailure(AttachmentSendFailure.TOO_LARGE)
+            null
+        }
+        PasteCopyCapture.Unreadable -> {
+            onFailure(AttachmentSendFailure.UNREADABLE)
+            null
+        }
+    }
+}
+
+/** Transfer one completed capture at a time, so refused entries never accumulate private files. */
+internal suspend fun captureAndPublishPastedImages(
+    uris: List<Uri>,
+    capture: suspend (Uri) -> PickedAttachment?,
+    publish: (List<PickedAttachment>) -> Unit,
+    io: CoroutineDispatcher = Dispatchers.IO,
+) {
+    for (uri in uris) {
+        var pending: PickedAttachment? = null
+        try {
+            // Assignment inside IO lets finally see a copy even if cancellation drops the return value.
+            withContext(io) { pending = capture(uri) }
+            val ready = pending ?: continue
+            publish(listOf(ready))
+            pending = null
+        } finally {
+            pending?.ownedPaste?.release()
+        }
+    }
+}
+
 /**
- * The composer's paste sink (#934): returns the action that takes the image URIs a paste or a keyboard
- * image insert handed the field, describes them off the main thread, and passes the images to [onPicked]
- * in clip order — the same sink a pick uses, so the size and count refusals apply unchanged. Bound to
- * this composition, like [rememberAttachmentPicker].
+ * Paste and keyboard insertion capture before publishing a pending entry. Unpublished copies belong to
+ * this composition; the synchronous sink transfers each accepted copy to the process-scoped draft.
+ * The IME's InputContentInfo is retained until capture completes so its temporary grant stays alive.
  */
 @Composable
-fun rememberPastedImageReceiver(onPicked: (List<PickedAttachment>) -> Unit): (List<Uri>) -> Unit {
+fun rememberPastedImageReceiver(
+    onPicked: (List<PickedAttachment>) -> Unit,
+    onFailure: (AttachmentSendFailure) -> Unit,
+): (List<Uri>, InputContentInfo?) -> Unit {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val currentOnPicked by rememberUpdatedState(onPicked)
+    val currentOnFailure by rememberUpdatedState(onFailure)
     return remember(context, scope) {
-        { uris ->
-            scope.launch {
-                val pasted =
-                    withContext(Dispatchers.IO) {
-                        uris.mapNotNull { describePastedImage(context.contentResolver, it, context.packageName) }
-                    }
-                RelayLog.d { "event=composer_attachment_paste count=${pasted.size}" }
-                if (pasted.isNotEmpty()) currentOnPicked(pasted)
+        { uris, input ->
+            val deliver = currentOnPicked
+            val report = currentOnFailure
+            val failures = mutableListOf<AttachmentSendFailure>()
+            val job =
+                scope.launch {
+                    captureAndPublishPastedImages(
+                        uris,
+                        capture = { uri ->
+                            capturePastedImage(
+                                context.contentResolver,
+                                uri,
+                                context.packageName,
+                                File(context.noBackupFilesDir, OwnedPasteCopy.DIRECTORY),
+                                onFailure = { failure ->
+                                    RelayLog.d { "event=composer_attachment_paste outcome=${failure.name.lowercase()}" }
+                                    failures += failure
+                                },
+                            )
+                        },
+                        publish = deliver,
+                    )
+                    failures.forEach(report)
+                    RelayLog.d { "event=composer_attachment_paste count=${uris.size}" }
+                }
+            job.invokeOnCompletion {
+                // Also runs when an already-cancelled composition never starts the launch body.
+                try {
+                    input?.releasePermission()
+                } catch (_: Exception) {
+                    RelayLog.d { "event=composer_paste_grant_release outcome=failed" }
+                }
             }
         }
     }
