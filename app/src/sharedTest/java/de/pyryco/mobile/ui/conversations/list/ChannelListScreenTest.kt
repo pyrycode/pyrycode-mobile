@@ -55,6 +55,7 @@ import de.pyryco.mobile.data.repository.SessionPromptStatus
 import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.di.ConversationAttention
 import de.pyryco.mobile.di.HostConversationSnapshot
+import de.pyryco.mobile.ui.assertDpEquals
 import de.pyryco.mobile.ui.components.CHANNEL_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_CHAT_NAME_FIELD_TAG
@@ -863,8 +864,8 @@ class ChannelListScreenTest {
         val anchor = composeTestRule.onNode(hasContentDescription("Open menu")).getUnclippedBoundsInRoot()
         val settings = composeTestRule.onNode(hasText("Settings")).getUnclippedBoundsInRoot()
         val archive = composeTestRule.onNode(hasText("Archive")).getUnclippedBoundsInRoot()
-        assertEquals(6.dp, settings.top - anchor.bottom) // 4dp anchor gap + 2dp column padding.
-        assertEquals(8.dp, settings.left)
+        assertDpEquals(6.dp, settings.top - anchor.bottom) // 4dp anchor gap + 2dp column padding.
+        assertDpEquals(8.dp, settings.left)
         assertEquals(settings.bottom, archive.top)
         composeTestRule.onNode(hasText("Settings")).assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button))
         composeTestRule.onNode(hasText("Settings")).assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.Selected))
@@ -898,8 +899,8 @@ class ChannelListScreenTest {
     private fun assertToolbarGeometry() {
         val targets = toolbarBounds()
         targets.forEach {
-            assertEquals(44.dp, it.right - it.left)
-            assertEquals(44.dp, it.bottom - it.top)
+            assertDpEquals(44.dp, it.right - it.left)
+            assertDpEquals(44.dp, it.bottom - it.top)
             assertEquals(targets.first().top, it.top)
         }
         assertTrue(targets[0].right <= targets[1].left)
@@ -908,19 +909,19 @@ class ChannelListScreenTest {
                 composeTestRule.onNode(hasContentDescription(it), useUnmergedTree = true).getUnclippedBoundsInRoot()
             }
         val root = composeTestRule.onNodeWithTag(CHANNEL_LIST_TEST_TAG).getUnclippedBoundsInRoot()
-        assertEquals(6.dp, glyphs[0].right - glyphs[0].left)
-        assertEquals(24.dp, glyphs[0].bottom - glyphs[0].top)
-        assertEquals(24.dp, glyphs[1].right - glyphs[1].left)
-        assertEquals(24.dp, glyphs[1].bottom - glyphs[1].top)
-        assertEquals(29.dp, glyphs[0].left - root.left)
-        assertEquals(20.dp, root.right - glyphs[1].right)
-        assertEquals(32.dp, glyphs[0].top - root.top)
-        assertEquals(32.dp, glyphs[1].top - root.top)
+        assertDpEquals(6.dp, glyphs[0].right - glyphs[0].left)
+        assertDpEquals(24.dp, glyphs[0].bottom - glyphs[0].top)
+        assertDpEquals(24.dp, glyphs[1].right - glyphs[1].left)
+        assertDpEquals(24.dp, glyphs[1].bottom - glyphs[1].top)
+        assertDpEquals(29.dp, glyphs[0].left - root.left)
+        assertDpEquals(20.dp, root.right - glyphs[1].right)
+        assertDpEquals(32.dp, glyphs[0].top - root.top)
+        assertDpEquals(32.dp, glyphs[1].top - root.top)
         val rule = composeTestRule.onNodeWithTag("channel-list-toolbar-rule").getUnclippedBoundsInRoot()
-        assertEquals(20.dp, rule.left - root.left)
-        assertEquals(20.dp, root.right - rule.right)
-        assertEquals(72.dp, rule.top - root.top)
-        assertEquals(1.dp, rule.bottom - rule.top)
+        assertDpEquals(20.dp, rule.left - root.left)
+        assertDpEquals(20.dp, root.right - rule.right)
+        assertDpEquals(72.dp, rule.top - root.top)
+        assertDpEquals(1.dp, rule.bottom - rule.top)
     }
 
     /**

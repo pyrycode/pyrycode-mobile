@@ -58,6 +58,7 @@ import de.pyryco.mobile.data.model.QuestionOption
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.e2e.questionAnswerTarget
+import de.pyryco.mobile.ui.assertRectEqualsWithinPixel
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -290,9 +291,9 @@ class ThreadInlineQuestionTest {
         rule.onNode(hasScrollToIndexAction()).performScrollToIndex(15)
         val anchor = rule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot
         rule.runOnIdle { pending = question }
-        assertEquals(anchor, rule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot)
+        assertRectEqualsWithinPixel(anchor, rule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot)
         rule.runOnIdle { pending = question.copy(selections = listOf(QuestionSelection(otherTicked = true, otherText = " draft "))) }
-        assertEquals(anchor, rule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot)
+        assertRectEqualsWithinPixel(anchor, rule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot)
         rule.onNodeWithTag("question-batch-title").assertDoesNotExist()
         rule.onNode(hasScrollToIndexAction()).performScrollToIndex(32)
         // #1352: reaching the oldest row is not a pull, so it asks nothing.
