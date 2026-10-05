@@ -30,12 +30,15 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import java.io.File
 
 /** #984: a thread message's attachment, shown from the phone's own original or retrieved from its host. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ThreadViewModelAttachmentRetrievalTest {
+    @get:Rule val pasteFiles = TemporaryFolder()
     private val logs = mutableListOf<String>()
     private val oldSink = RelayLog.sink
     private val oldEnabled = RelayLog.enabled
@@ -118,6 +121,42 @@ class ThreadViewModelAttachmentRetrievalTest {
     )
 
     private val kept = File("/kept/$ATTACHMENT")
+
+    @Test
+    fun sentPasteRetrievesFromDaemonAfterTemporaryCopyCleanup_evenIfOriginalUriStillProbesReadable() =
+        runTest {
+            val copy =
+                (
+                    OwnedPasteCopy.capture(
+                        pasteFiles.root,
+                        AttachmentReader { AttachmentRead.Bytes(byteArrayOf(1)) },
+                        "content://clipboard/image",
+                        UnconfinedTestDispatcher(testScheduler),
+                    ) as PasteCopyCapture.Captured
+                ).copy
+            val repository = RetrievingRepository(AttachmentRetrievalResult.Retrieved(kept, "paste.png", "image/png"))
+            val reader = ProbingReader(setOf("content://clipboard/image"))
+            val store = ComposerDraftStore()
+            val vm = vm(repository, store, reader)
+            vm.addAttachment("content://clipboard/image", "paste.png", "image/png", 1, copy)
+            vm.sendMessage("send")
+            advanceUntilIdle()
+            assertEquals(
+                0,
+                pasteFiles.root
+                    .listFiles()
+                    .orEmpty()
+                    .size,
+            )
+            vm.onAttachmentShown(MessageAttachment("id-paste.png", "paste.png", "image/png"))
+            advanceUntilIdle()
+            assertEquals(listOf(CONV to "id-paste.png"), repository.retrievals)
+            assertTrue(reader.probes.isEmpty())
+            assertEquals(
+                AttachmentViewState.Ready(AttachmentSource.Kept(kept), "paste.png", "image/png"),
+                vm.attachmentStates.value["id-paste.png"],
+            )
+        }
 
     @Test
     fun shown_retrievesOnce_andIsReadyWithTheRetrievedHints() =

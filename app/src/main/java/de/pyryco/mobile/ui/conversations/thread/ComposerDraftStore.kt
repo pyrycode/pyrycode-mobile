@@ -32,8 +32,9 @@ import java.util.concurrent.atomic.AtomicLong
  * reach a log line, an exception message or a crash report.
  *
  * **Pending attachments (#932)** ride beside the text under the same pair key, in their own map with
- * the same rules: exact-pair isolation, in memory only, empty entries and buckets absent, every write a
- * compare-and-set [update]. They hold URIs and metadata ([PendingAttachment]), never file bytes, and
+ * the same pair isolation, process-local state and absent empty buckets. Attachment edits serialize
+ * ownership transfer and cleanup. Entries hold URIs, metadata and optional owned-paste capabilities,
+ * never in-memory file bytes. Owned copies live in private, backup-excluded temporary storage, and
  * [clearHost] / [clearConversation] drop them together with the text.
  *
  * **Sent originals (#984)** remember which picked URI each sent attachment id came from, under the same
@@ -45,6 +46,8 @@ class ComposerDraftStore {
     private val _drafts = MutableStateFlow<Map<String, Map<String, String>>>(emptyMap())
 
     private val _attachments = MutableStateFlow<Map<String, Map<String, List<PendingAttachment>>>>(emptyMap())
+
+    private val attachmentLock = Any()
 
     private val nextAttachmentKey = AtomicLong()
 
@@ -101,13 +104,21 @@ class ComposerDraftStore {
      * An unknown or already-empty [serverId] is a no-op, matching that store's own unknown-id contract,
      * so the caller needs no existence check.
      *
-     * Non-suspending, and cannot throw: a map minus through [update]'s compare-and-set loop, so a
+     * Non-suspending: text uses [update] and attachment ownership uses [attachmentLock], so a
      * concurrent write to another host cannot be lost. Its caller runs it after a removal has already
      * succeeded, where a throw would be reported as a failed unpair.
      */
     fun clearHost(serverId: String) {
         _drafts.update { it - serverId }
-        _attachments.update { it - serverId }
+        synchronized(attachmentLock) {
+            val removed =
+                _attachments.value[serverId]
+                    .orEmpty()
+                    .values
+                    .flatten()
+            _attachments.update { it - serverId }
+            removed.forEach { it.ownedPaste?.release() }
+        }
         sentOriginals.update { it - serverId }
     }
 
@@ -142,7 +153,7 @@ class ComposerDraftStore {
      * [AttachmentAddOutcome.TOO_LARGE] when [size] is known and over [AttachmentUploadLimit.MAX_BYTES];
      * an unknown size is accepted, because the read at send time bounds the bytes anyway.
      * [AttachmentAddOutcome.TOO_MANY] when the pair already holds [MessageAttachmentIds.MAX] entries. The
-     * count is checked inside the [update] lambda, so two concurrent adds at one below the limit cannot
+     * count is checked under [attachmentLock], so two concurrent adds at one below the limit cannot
      * both land. The provider's name and type are clamped by [clampProviderText].
      */
     fun addAttachment(
@@ -152,8 +163,12 @@ class ComposerDraftStore {
         displayName: String,
         mimeType: String,
         size: Long?,
+        ownedPaste: OwnedPasteCopy? = null,
     ): AttachmentAddOutcome {
-        if (size != null && size > AttachmentUploadLimit.MAX_BYTES) return AttachmentAddOutcome.TOO_LARGE
+        if (size != null && size > AttachmentUploadLimit.MAX_BYTES) {
+            ownedPaste?.release()
+            return AttachmentAddOutcome.TOO_LARGE
+        }
         val entry =
             PendingAttachment(
                 key = nextAttachmentKey.incrementAndGet(),
@@ -161,6 +176,7 @@ class ComposerDraftStore {
                 displayName = clampProviderText(displayName),
                 mimeType = clampProviderText(mimeType),
                 size = size,
+                ownedPaste = ownedPaste,
             )
         var outcome = AttachmentAddOutcome.ADDED
         editAttachments(serverId, conversationId) { current ->
@@ -172,6 +188,7 @@ class ComposerDraftStore {
                 current + entry
             }
         }
+        if (outcome != AttachmentAddOutcome.ADDED) ownedPaste?.release()
         return outcome
     }
 
@@ -235,17 +252,21 @@ class ComposerDraftStore {
         attachmentId: String,
     ): String? = sentOriginals.value[serverId]?.get(conversationId)?.get(attachmentId)
 
-    /** Rewrite one pair's list through [update], dropping the entry and host bucket once they are empty. */
+    /** Serialize one pair's edit and release removed copies once, outside any StateFlow CAS retries. */
     private fun editAttachments(
         serverId: String,
         conversationId: String,
         edit: (List<PendingAttachment>) -> List<PendingAttachment>,
     ) {
-        _attachments.update { hosts ->
+        synchronized(attachmentLock) {
+            val hosts = _attachments.value
             val conversations = hosts[serverId].orEmpty()
-            val updated = edit(conversations[conversationId].orEmpty())
+            val current = conversations[conversationId].orEmpty()
+            val updated = edit(current)
             val next = if (updated.isEmpty()) conversations - conversationId else conversations + (conversationId to updated)
-            if (next.isEmpty()) hosts - serverId else hosts + (serverId to next)
+            _attachments.value = if (next.isEmpty()) hosts - serverId else hosts + (serverId to next)
+            val kept = updated.mapTo(HashSet()) { it.key }
+            current.filterNot { it.key in kept }.forEach { it.ownedPaste?.release() }
         }
     }
 }
