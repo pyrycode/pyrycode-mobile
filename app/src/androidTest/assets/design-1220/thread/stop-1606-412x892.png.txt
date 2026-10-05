@@ -1,0 +1,4 @@
+api=35 sizeDp=412x892 density=1.0 fontScale=1.0 staticDark=true dynamicColor=false connection=Connected busy=true draftEmpty=true capture=decorView.draw design=533:1957,347:6446,113:3543,114:3549 date=2026-10-05
+buttonCropPx=340,466,388,514 glyphBoundsInCropPx=10,10,38,38 glyphCenterPx=24,24 buttonSizePx=48x48
+deviceTest=ComposerFieldCaptureTest#typedAndStopAt412By892 executed=1 passed=1 failures=0 errors=0 skipped=0 results=stop-1606-api35-results.xml
+comparisonNode=114:3549 comparison=matched-silhouette-size-centering-primary-tint primaryRGB=157,203,252 figmaAndAppGlyphBoundsPx=10,10,38,38 binaryMaskDifferencePx=3 threshold=50%-coverage note=rasterizer-antialiasing-and-host-background-differ

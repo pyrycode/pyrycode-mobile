@@ -16,6 +16,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
@@ -23,6 +24,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -53,6 +55,7 @@ private val PillShadow = 4.dp
  * content description is [contentDescription], its visible label by default; the X is its own button.
  * Set [mergeDescendants] to false when an enclosing touch target owns the merged label and action.
  * [shadowElevation] is the overlay's drop shadow; a pill laid out in the page, not over it, passes none.
+ * Set [mergeDescendants] to false when a parent click target owns the merged label and description.
  */
 @Composable
 internal fun NoticePill(
@@ -65,10 +68,12 @@ internal fun NoticePill(
     shadowElevation: Dp = PillShadow,
     leadingIcon: ImageVector? = null,
     maxLines: Int = Int.MAX_VALUE,
+    containerColor: Color = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer,
+    contentColor: Color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer,
     mergeDescendants: Boolean = true,
 ) {
-    val container = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
-    val content = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer
+    val container = containerColor
+    val content = contentColor
     val body: @Composable () -> Unit = {
         Row(
             modifier = Modifier.padding(horizontal = PillHorizontalPadding, vertical = PillVerticalPadding),
@@ -85,7 +90,10 @@ internal fun NoticePill(
             Text(
                 text = text,
                 modifier = Modifier.weight(1f, fill = false),
-                style = MaterialTheme.typography.bodySmall,
+                style =
+                    MaterialTheme.typography.bodySmall.copy(
+                        lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None),
+                    ),
                 textAlign = TextAlign.End,
                 maxLines = maxLines,
                 overflow = TextOverflow.Ellipsis,

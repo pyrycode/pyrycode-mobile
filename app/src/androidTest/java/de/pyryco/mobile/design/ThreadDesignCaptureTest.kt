@@ -304,13 +304,11 @@ class ThreadDesignCaptureTest {
         rule.waitForIdle()
         design.capture(FOLDER, "refusal-switch-back-pending", "646:4694")
 
-        // A failed write also shows the run-configuration snackbar over the row; the compared capture waits it out.
+        // #1615: capture the first failed state, with no timer advance or dismissal hiding duplicate feedback.
         write.completeExceptionally(IllegalStateException("design: model write fails"))
         await("Could not change the model — try again.")
-        await("Couldn't update the run configuration. Try again.")
-        design.capture(FOLDER, "refusal-switch-back-failed-snackbar", "646:4700")
-        dismissSnackbar("Couldn't update")
-        await("Could not change the model — try again.")
+        rule.onNodeWithText("Couldn't update the run configuration. Try again.").assertDoesNotExist()
+        design.capture(FOLDER, "refusal-switch-back-failed-immediate", "646:4700")
         design.capture(FOLDER, "refusal-switch-back-failed", "646:4700")
         settingsGate = null
     }

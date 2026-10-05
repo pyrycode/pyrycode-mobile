@@ -298,6 +298,7 @@ fun ThreadScreen(
     // #1050: a tapped link to a workspace markdown note in an assistant reply, by its path. Bound by
     // MainActivity → vm::onOpenMarkdownLink; a failed read reuses [markdownOpenFailures].
     onOpenMarkdownLink: (String) -> Unit = {},
+    attentionPill: (@Composable () -> Unit)? = null,
 ) {
     // #1357: the context notice's Compact pill takes the Actions menu's path, and no tap while
     // the published menu proves the command absent.
@@ -309,6 +310,7 @@ fun ThreadScreen(
                 { onComposerCommand(ComposerAction.CompactSession) }
             }
         }
+    val threadOpenedAt = remember(state.conversationId) { Clock.System.now() }
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
     val openRequest = modalState as? ModalUiState.Open
@@ -768,6 +770,7 @@ fun ThreadScreen(
                                                 is ThreadItem.MessageItem ->
                                                     MessageBubble(
                                                         message = item.message,
+                                                        threadOpenedAt = threadOpenedAt,
                                                         toolNestingDepth = toolDepths[item.message.id] ?: 0,
                                                         joinsNextToolRow = rows.getOrNull(chronologicalIndex + 1).isToolRow(),
                                                         attachmentStates = attachmentStates,
@@ -811,6 +814,7 @@ fun ThreadScreen(
                                                         // #1494: a model the menu knows reads as its menu label.
                                                         knownModelLabel = state.runConfig::knownModelLabel,
                                                     )
+                                                is ThreadItem.BackgroundTaskLifecycle -> Unit
                                                 is ThreadItem.StoppedTurn -> StoppedTurnRow(item = item, agent = state.agent)
                                             }
                                         // One render path for both kinds of queued row — the one the echo
@@ -856,6 +860,7 @@ fun ThreadScreen(
                         }
                     }
                     ThreadTopOverlay(
+                        attentionPill = attentionPill,
                         usageLimit = usageLimit,
                         usageLimitDismissed = usageLimit?.dismissalKey() in dismissedUsageLimits,
                         onDismissUsageLimit = { usageLimit?.let(onDismissUsageLimit) },
@@ -1399,6 +1404,7 @@ private fun ThreadItem.timestamp(): Instant =
         is ThreadItem.Banner -> occurredAt
         is ThreadItem.CompactionBoundary -> occurredAt
         is ThreadItem.ModelRefusal -> occurredAt
+        is ThreadItem.BackgroundTaskLifecycle -> occurredAt
         is ThreadItem.StoppedTurn -> occurredAt
     }
 
@@ -1406,7 +1412,8 @@ internal fun ThreadUiState.toChannelInfoUiModel(now: Instant = Clock.System.now(
     ChannelInfoUiModel(
         conversationName = displayName,
         workspacePath = workspacePath,
-        createdLabel = items.firstOrNull()?.let { formatRelativeTime(it.timestamp(), now) } ?: "—",
+        createdLabel =
+            items.firstOrNull { it !is ThreadItem.BackgroundTaskLifecycle }?.let { formatRelativeTime(it.timestamp(), now) } ?: "—",
         lastActivityLabel = lastUsedAt?.let { formatRelativeTime(it, now) } ?: "—",
         sessionCount = sessionCount,
         messageCount = items.count { it is ThreadItem.MessageItem },

@@ -277,6 +277,29 @@ delimiter positioned between the two cross-session messages, driven through the 
 
 ## What rung 3 is made of
 
+The rung-3 coverage also includes
+`InteractiveStreamE2ETest.interactiveTurn_otherConversationAttentionPills_waitingAndFinished`
+(#1735). With the phone reading A, the existing answer-host peer starts a permission-held real Claude
+turn in B. The scenario asserts B's Waiting pill, taps into B, returns to A while B still waits, then
+lets the peer answer and complete the turn, asserting B's Finished pill and expiry. The scenario
+advances the Compose rule clock by 5,100ms after turn completion before checking expiry: the
+composition-owned delay uses that virtual clock, and wall-clock polling can advance it too slowly
+under full-suite load. It is in the
+curated full live selector. Controlled unit/render tests separately cover aggregation, mute filtering,
+cross-host identity and timer races. No `DeterministicInteractiveStreamE2ETest` twin was added:
+its fixtures lack the answer-host peer and second conversation held on permission.
+
+**Host system prompt (#1775).**
+`InteractiveStreamE2ETest.interactiveTurn_hostSystemPrompt_editsResetsAndCancels` uses the real Edit
+host controls to save custom text, confirm it with a fresh daemon read and reopened preview, reset then
+Cancel without changing storage, and reset then OK so current equals the daemon-returned default.
+Cleanup restores the harness host's original value; fresh reads and restoration are bounded by
+`THREAD_TIMEOUT_MS`. The method is in the full curated live selector and spends no Claude turn.
+Controller/component fakes cover deterministic transitions; no new
+`DeterministicInteractiveStreamE2ETest` twin was added for this storage/editor flow. See
+[Host editor](knowledge/features/host-editor.md#testing) for control coverage and the unmerged subtitle
+lookup used by both component and live waits.
+
 | Piece | File |
 | --- | --- |
 | Render fix (#337): fold `assistant_delta` into a streaming assistant row, finalize on `turn_end` | `app/.../data/repository/RemoteConversationRepository.kt` (`applyAssistantDelta`, `finalizeAssistantTurn`) + unit tests in `RemoteConversationRepositoryTest.kt` |
@@ -944,6 +967,39 @@ The chat is created with `createDiscussion` on the dedicated host rather than bo
 session: pyrycode's `Pool` mints a session from the bootstrap's own template, so the minted child inherits
 the same operator pass-through and starts in bypass too — proven by the scenario's own first assertion,
 not assumed.
+
+**Pairing lifetime (#1756).** After APK build and successful bypass-daemon prerequisites,
+`scripts/e2e-emulator.sh` starts `scripts/e2e-bypass-pairing.py` without minting credentials. In
+`InteractiveStreamE2ETest`, this method waits for the channel list and connection, grants camera
+permission, then requests the fixture immediately before `pairHostByCode`. The authenticated,
+one-shot host-loopback request mints the unprivileged phone code and the separate privileged peer
+pairing on the isolated daemon, checks their host/key agreement and rewrites the phone relay address
+for the emulator. Earlier scenarios can therefore take longer than the daemon's unchanged 15-minute
+redemption window without aging these pairings. An authenticated request consumes the fixture even
+if minting fails;
+it cannot refresh or retry a failed pairing, and the general stale-code rerun does not restart it.
+Cleanup stops the helper before removing the isolated HOME. Pairing codes, tokens, keys and the
+fixture authorization capability stay out of diagnostics.
+
+The original #1668 full gate failed during `pairHostByCode`, before the permission assertions:
+53 executed, 1 failed, 0 errors and 0 skipped, with
+`v2.handshake.reject.redemption_window_elapsed`. Its same-tree focused rerun passed 1 executed,
+0 failed/errors/skipped; that established the scheduling-dependent expiry rather than a permission
+failure. Moving minting after the build (#993) had left the wait for earlier scenarios inside the
+redemption lifetime. The fake-clock regression in `scripts/test_e2e_emulator_gradle.py` advances
+16 minutes after shell fixture setup and before requesting pairing, without sleeping or invoking
+Claude; the old eager lifecycle failed at code age 960 seconds against the 900-second contract.
+See [the recorded investigation](https://github.com/pyrycode/pyrycode-mobile/issues/1756#issuecomment-5990055551).
+
+**Full-suite proof (2026-10-05).** The dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on `feature/1756` at
+`0b7267c536`, merged with `origin/main` at `13ceb8b609`: exit 0, **55 executed, 55 passed,
+0 failed, 0 errors and 0 skipped**. The retained XML explicitly includes
+`InteractiveStreamE2ETest.interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`
+with no failure, error or skip. XML artifact on the dispatcher host:
+`/Users/juhanailmoniemi/WorkSpace/Projects/pyrycode-mobile-agents/logs/2026-10-05T08-04-49-827Z_real-claude-gate_#1756.log`;
+diagnostics are in its `.stderr.log` companion. This is the fresh full curated suite, rather than
+a focused rerun. See [the gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1756#issuecomment-5990708689).
 
 Three acceptance steps, all against pyrycode#2510 (`475c406a`)'s `session_settings` reporting the mode
 Claude last confirmed for the running child, not merely `yolo`: after a tool-free ping, a fresh reading
@@ -1707,7 +1763,8 @@ Prerequisites on the host:
 The script: starts the relay → starts the daemon (`PYRY_MOBILE_V2=1`, pointed at the loopback relay,
 alongside any other harness daemons the mode needs) → builds the app and test APKs
 (`assembleDebug assembleDebugAndroidTest`, the same `-PuseRelayRepository` build properties the test task
-uses) → mints each device pairing token with `pyry pair` and parses the payload → runs
+uses) → mints the ordinary device pairing tokens with `pyry pair` and parses the payload, and starts
+the lazy bypass fixture described above → runs
 `pixel2Api33AtdDebugAndroidTest`, which finds the APKs already built, with the four values injected as
 instrumentation arguments → tears everything down. Minting moves after the build (#993): a daemon redeems
 a pairing code only within a 15-minute window, and a slow or contended Gradle build (28 minutes observed on
@@ -1719,6 +1776,16 @@ daemon logs) for `redemption_window_elapsed` and prints `pairing_codes_stale` na
 went stale — a daemon rejected a handshake because its pairing code outlived the 15-minute redemption
 window before the test redeemed it — instead of leaving the cause to the anonymous timeout. No pairing
 code, token or key appears in that message; a clean log leaves the failure output unchanged.
+
+Since 2026-10-05 the script then retries once. A full live run can reach the method that pairs a host after
+the window has passed even with minting after the build, as on #1668's gate, where the operator-bypass test
+ran 20 minutes in before #1756 moved bypass minting to scenario entry. `retry_with_fresh_codes` reads
+the failed methods from the Gradle report, remints the ordinary pairings because the reinstalled app
+holds a new key, and reruns only those methods with the fresh codes. The bypass fixture stays one-shot
+and is neither restarted nor reminted by this path. `scripts/e2e-rerun-report.py` folds the rerun's
+results into the first run's report, so the gate still counts every method. The run passes only when every retried method passes. A second expired code
+is reported again and fails the run, and there is never a second retry. The installed-app path of
+`scripted-all` never retries.
 
 On the same failed-test path, the script also scans those logs for `msg="transport: disconnected"`
 (`WSSClient`'s reconnect loop in pyrycode's `internal/transport/wssclient.go`) and prints
@@ -1746,9 +1813,16 @@ mobile parallel of the daemon's `make e2e-realclaude`. The dispatcher command is
 python3 scripts/android-test-gate.py live
 ```
 
+Full live runs and subsets selecting the host-prompt method require a daemon containing merged
+pyrycode#2768 handler commit `b3daa0432528188f2829b235877c60627afb8e43` or a descendant.
+`require_host_prompt_daemon` checks the binary's recorded revision against Git ancestry before startup;
+`PYRYCODE_SRC` must hold both revisions. Outdated or unverifiable binaries fail explicitly rather than
+skip the scenario. A daemon with the durable instructions store can still lack the paired-client
+host-prompt handlers. Scripted runs and unrelated live subsets retain their existing prerequisites.
+
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the current selector has 54 runnable `@Test` methods. The historical
+incantation to remember — the current selector has 56 runnable `@Test` methods. The historical
 inventory below describes the pre-#1193 forty-four-method set; ignored methods are excluded from
 the current selector as described under the model and effort settings round trip. It covered ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
@@ -1868,7 +1942,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of 54 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of 55 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -1933,7 +2007,7 @@ main-only base run, identifies daemon bug pyrycode#2785, and clears the live gat
 The full suite retains its one failure; manual USB evidence and the Android 16 driver failure
 above are separate from this automated named pass.
 
-**What it runs.** The current curated selector passes 54 runnable methods as a comma-separated
+**What it runs.** The current curated selector passes 55 runnable methods as a comma-separated
 `class#method` list. Its source of truth is `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET`, checked
 against `LIVE_MINIMUM` in `scripts/android-test-gate.py`. The #481
 `InteractiveStreamE2ETest#interactiveTurn_toolPrompt_rendersToolStepInThread` now rides this full
@@ -2087,7 +2161,11 @@ above. `LIVE=1` is
 Prerequisites (on top of the "How to run" list):
 
 - The runner host's Claude authenticated (as default rung 3) — Max-subscription covered, so it
-  does **not** meter tokens.
+  does **not** meter tokens. A LIVE run started by hand with no `CLAUDE_CODE_OAUTH_TOKEN` fetches the
+  long-term login through `scripts/with-claude-login.sh` (2026-10-05), the same 1Password item the
+  dispatcher's launcher uses, and falls back to the host's own login only when that fetch is unavailable.
+  `python3 scripts/android-test-gate.py live` does the same when started by hand. A throwaway test daemon
+  started by hand can borrow it too: `scripts/with-claude-login.sh pyry -pyry-name=<name> ...`.
 - The live daemon is started with `-pyry-workdir=$HOME`. The current daemon confines the supervised
   Claude workdir to the runner's home for trust handling, so a temporary checkout outside that boundary
   is rejected before the live suite can start.
@@ -2471,7 +2549,51 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
-**Current live verification — 2026-10-05 (#1703).** After verification, the dispatcher ran the fresh full
+**Attention pills — named full-suite pass (#1735, 2026-10-05).** The operator ran
+`ANDROID_GATE_WAIT_SECONDS=5400 python3 scripts/android-test-gate.py live` with the dispatcher's
+credential environment on `feature/1735` at `46c65141a0985346536ad07529114e9caae594d8`:
+**56 executed, 55 passed, 1 failed, 0 errors, 0 skipped**, exit 1. The inspected full-suite
+`dispatcher.xml` contains exactly one
+`InteractiveStreamE2ETest.interactiveTurn_otherConversationAttentionPills_waitingAndFinished`
+testcase with no failure, error or skip element: the named method executed and passed in the full
+suite, satisfying #1735's scenario evidence requirement. Daemon revision was
+`a438db4b9146620b74b0f2a305c3e23a2d144d6a`, Claude Code **2.1.280**.
+
+The suite as a whole was not green: its sole failure was
+`interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`, timing out at the peer's held
+permission prompt. The operator attributed this to the existing [#1721 flake](https://github.com/pyrycode/pyrycode-mobile/issues/1721)
+and routed #1735 back to documentation. See the [operator evidence and routing](https://github.com/pyrycode/pyrycode-mobile/issues/1735#issuecomment-5992223755).
+Retained reports live under `logs/claude-operator-1735-evidence/run2-clock-fix/` in the dispatcher
+repository: `dispatcher.xml`, `gate.log` and scenario logcats.
+
+Earlier full-suite runs failed the attention expiry assertion, while a two-method rerun passed.
+The scenario's composition-owned five-second delay uses the Compose rule's virtual clock;
+`waitUntil` advances it one frame per poll, so slow full-suite polling can exceed a real ten-second
+timeout before five virtual seconds elapse. The repaired scenario advances `mainClock` by 5,100ms
+before asserting no pill, no Finished label and no replay on reopening A. Product timing is unchanged.
+The prior scoped-label attempt still failed in the full suite; its diagnostic XML and logcat remain
+under `logs/claude-operator-1735-evidence/run1-scoped-fail/`.
+
+**Current live verification — 2026-10-05 (#1775).** The dispatcher ran the fresh full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on branch `feature/1775`
+at `b496a99e6f`, merged with `origin/main` at `9563beab61` (tested mobile revision
+`80c40ae883b081abd46afd2c818e0d350d26b7f0`): **55 executed, 54 passed, 1 failed, 0 errors,
+0 skipped**, exit 1. The inspected full-suite XML contains exactly one
+`InteractiveStreamE2ETest.interactiveTurn_hostSystemPrompt_editsResetsAndCancels` testcase with
+no failure, error or skip: the method ran and passed in the full suite. Daemon revision was
+`a438db4b9146620b74b0f2a305c3e23a2d144d6a`, with the pyrycode#2768 handler prerequisite satisfied;
+Claude Code was 2.1.280.
+
+The sole failure, `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`, passed on the
+same merged tree's focused rerun: **1 executed, 1 passed, 0 failed, 0 errors, 0 skipped**. The dispatcher
+accepted PASS after rerun; this is not a second passing full-suite run. See the
+[dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1775#issuecomment-5989909305).
+The inspected reports are `2026-10-05T06-56-43-612Z_real-claude-gate_#1775.log` and
+`2026-10-05T06-56-43-612Z_real-claude-gate-rerun_#1775.log` under the dispatcher repository's `logs/`,
+with revisions in the adjacent `.stderr.log`. The builder's earlier focused host-prompt pass is
+separate repair evidence (1 executed/passed, 0 failed/skipped), not the source of these full-suite counts.
+
+**Previous live verification — 2026-10-05 (#1703).** After verification, the dispatcher ran the fresh full
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1703`
 at `930be240bcd64759a9462722e3cc9a757946e29c`, merged with `origin/main` at `0d2aecc85c`:
 **53 executed, 53 passed, 0 failed, 0 errors, 0 skipped**, exit 0. The inspected XML contains exactly
@@ -3557,6 +3679,31 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Other-conversation attention pills (#1735):**
+  `InteractiveStreamE2ETest.interactiveTurn_otherConversationAttentionPills_waitingAndFinished`
+  covers Waiting navigation, return while waiting, peer completion, Finished and expiry. Its
+  named full-suite pass and the suite's unrelated #1721 failure are recorded in
+  [Verification status](#verification-status). Expiry assertions advance the Compose rule's virtual
+  clock explicitly; wall-clock polling alone was load-dependent. No
+  `DeterministicInteractiveStreamE2ETest` twin exists for the live-only answer-host setup;
+  controlled unit/render tests own mute, aggregation, cross-host and timer races.
+
+- **Operator-bypass pairing lifetime (#1756):**
+  `InteractiveStreamE2ETest.interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`
+  retains its full curated selection and permission assertions, with one-shot minting at scenario entry.
+  The operator-bypass coverage above records the 55-test full-suite pass and retained XML. The
+  delayed-suite regression belongs to `scripts/test_e2e_emulator_gradle.py`; no new
+  `DeterministicInteractiveStreamE2ETest` twin was added. The verifier's nonblocking hardening finding
+  remains: the single-threaded fixture server has no accepted-socket read timeout, so incomplete
+  unauthenticated headers can stall it despite the instrumentation client's deadline.
+
+- **Host system prompt — shipped coverage (#1775):**
+  `InteractiveStreamE2ETest.interactiveTurn_hostSystemPrompt_editsResetsAndCancels` covers custom
+  save/read/reopen, reset/discard, reset/save to the returned default and original-value cleanup.
+  Its explicit full-suite pass and counts, plus the unrelated Stop rerun, are recorded under
+  [Verification status](#verification-status). Controller/component fakes cover deterministic
+  transitions; no new `DeterministicInteractiveStreamE2ETest` twin was added.
 
 - **Send now — shipped coverage (#1642):**
   `InteractiveStreamE2ETest.interactiveTurn_sendQueuedNow_reachesRunningTurn` and

@@ -67,11 +67,13 @@ import de.pyryco.mobile.ui.conversations.list.PLAY_STORE_URL
 import de.pyryco.mobile.ui.conversations.list.PendingPromotion
 import de.pyryco.mobile.ui.conversations.thread.LinkedMarkdownReaderDestination
 import de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDestination
+import de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNotice
 import de.pyryco.mobile.ui.conversations.thread.ThreadNavigation
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.conversations.thread.UsageLimitDismissals
 import de.pyryco.mobile.ui.conversations.thread.readLinkedMarkdown
+import de.pyryco.mobile.ui.conversations.thread.rememberThreadAttention
 import de.pyryco.mobile.ui.onboarding.CameraPreview
 import de.pyryco.mobile.ui.onboarding.PairCodeEvent
 import de.pyryco.mobile.ui.onboarding.PairCodePhase
@@ -386,6 +388,7 @@ internal fun PyryNavHost(
                         ChannelListEvent.TreeHostUpdateTapped -> uriHandler.openUri(PLAY_STORE_URL)
                         is ChannelListEvent.HostEditNameSubmitted -> vm.submitHostName(event.name)
                         ChannelListEvent.HostEditDismissed -> vm.dismissHostEditor()
+                        is ChannelListEvent.HostPrompt -> vm.onHostPromptEvent(event.event)
                         ChannelListEvent.HostUnpairRequested -> vm.requestHostUnpair()
                         ChannelListEvent.HostUnpairConfirmed -> vm.confirmHostUnpair()
                         ChannelListEvent.HostUnpairDeclined -> vm.declineHostUnpair()
@@ -502,8 +505,16 @@ internal fun PyryNavHost(
                         }
                     }
                 }
+                val attention by rememberThreadAttention(
+                    target,
+                    conversations.snapshots,
+                    conversations.attention,
+                    conversations.alerts,
+                    backStackEntry.lifecycle,
+                )
                 val questionModal by vm.questionModal.collectAsStateWithLifecycle()
                 ThreadScreen(
+                    attentionPill = attention?.let { reading -> { ThreadAttentionNotice(reading, navController::openAttentionTarget) } },
                     collapseToolUses = collapseToolUses,
                     questionState = questionModal,
                     onQuestionEvent = { event, generation -> vm.onQuestionEvent(event, generation) },
@@ -907,4 +918,16 @@ private fun List<HostConversationSnapshot>.holdsActive(target: HostConversationT
 private fun NavHostController.openThread(target: HostConversationTarget) {
     if (currentDestination?.route == Routes.CONVERSATION_THREAD && Routes.target(currentBackStackEntry?.arguments) == target) return
     navigate(Routes.thread(target))
+}
+
+/** A pill opens an existing route only; permission and command actions remain on their own controls. */
+internal fun NavHostController.openAttentionTarget(target: HostConversationTarget?) {
+    if (target != null) {
+        openThread(target)
+    } else {
+        navigate(Routes.CHANNEL_LIST) {
+            popUpTo(Routes.CHANNEL_LIST)
+            launchSingleTop = true
+        }
+    }
 }

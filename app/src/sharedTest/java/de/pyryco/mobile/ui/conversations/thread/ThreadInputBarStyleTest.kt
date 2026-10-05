@@ -55,6 +55,7 @@ class ThreadInputBarStyleTest {
 
     private var view: View? = null
     private var expectedWell = Color.Unspecified
+    private var expectedGlyph = Color.Unspecified
     private var sends = 0
     private var stops = 0
 
@@ -77,6 +78,7 @@ class ThreadInputBarStyleTest {
             CompositionLocalProvider(LocalConfiguration provides configuration) {
                 PyrycodeMobileTheme(darkTheme = dark, dynamicColor = wallpaper) {
                     val scheme = MaterialTheme.colorScheme
+                    expectedGlyph = scheme.primary
                     expectedWell =
                         (
                             if (dark && !wallpaper) {
@@ -180,6 +182,57 @@ class ThreadInputBarStyleTest {
         assertTrue("designed send icon has a filled top-center edge", active.blue > 0.65f)
     }
 
+    @Test fun stopMatchesFullCircleAndRoundedCutoutInCentered48DpButton() {
+        show(dark = true, busy = true)
+        val stop = rule.onNodeWithContentDescription("Stop the running turn")
+        stop.assertIsEnabled().assertWidthIsEqualTo(48.dp).assertHeightIsEqualTo(48.dp)
+        val bounds = stop.fetchSemanticsNode().boundsInRoot
+        rule.runOnIdle {
+            val root = checkNotNull(view)
+            val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
+            root.draw(Canvas(bitmap))
+            val scale = bounds.width / 48f
+
+            fun pixel(
+                x: Float,
+                y: Float,
+            ): Color = Color(bitmap.getPixel((bounds.left + x * scale).toInt(), (bounds.top + y * scale).toInt()))
+
+            fun assertPixel(
+                x: Float,
+                y: Float,
+                expected: Color,
+            ) {
+                val actual = pixel(x, y)
+                assertEquals("red at $x,$y", expected.red, actual.red, 2f / 255f)
+                assertEquals("green at $x,$y", expected.green, actual.green, 2f / 255f)
+                assertEquals("blue at $x,$y", expected.blue, actual.blue, 2f / 255f)
+            }
+            // Figma 114:3549: 28dp circle starts 10dp inside the 48dp button.
+            assertPixel(24f, 11f, expectedGlyph)
+            assertPixel(24f, 36f, expectedGlyph)
+            assertPixel(11f, 24f, expectedGlyph)
+            assertPixel(36f, 24f, expectedGlyph)
+            assertPixel(24f, 7f, expectedWell)
+            assertPixel(7f, 24f, expectedWell)
+            assertPixel(24f, 24f, expectedWell)
+            // The square cutout has rounded corners, rather than Material StopCircle's sharp ones: the cutout runs
+            // from 18.75 dp with a 1.75 dp corner radius, so the curve crosses the diagonal near 19.26 dp.
+            val corner = pixel(19f, 19f)
+            assertTrue("rounded corner retains circle coverage", corner.red > expectedWell.red + 0.05f)
+            if (scale < 2f) {
+                // At density 1 the curve falls inside this one pixel, so it is part glyph, part well.
+                assertTrue("rounded corner is antialiased", corner.red < expectedGlyph.red - 0.05f)
+            } else {
+                // On the device a pixel is under half a dp, so just inside the curve is already the well,
+                // which a corner rounded wider than designed would still cover.
+                assertTrue("rounded corner is no wider than designed", pixel(19.6f, 19.6f).red < expectedGlyph.red - 0.05f)
+            }
+            assertPixel(21f, 21f, expectedWell)
+            bitmap.recycle()
+        }
+    }
+
     @Test fun busyEmptyStopsButTypedTextSends() {
         show(dark = true, busy = true)
         rule.onNodeWithContentDescription("Stop the running turn").assertIsEnabled().performClick()
@@ -198,12 +251,14 @@ class ThreadInputBarStyleTest {
 
     private fun sampleSendCircle(send: SemanticsNodeInteraction): Color {
         val bounds = send.fetchSemanticsNode().boundsInRoot
+        // 11 dp down the 48 dp button, just inside the top of its 28 dp circle, at any density.
+        val scale = bounds.width / 48f
         return rule.runOnIdle {
             val root = checkNotNull(view)
             val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
             root.draw(Canvas(bitmap))
             val color =
-                Color(bitmap.getPixel(bounds.center.x.toInt(), (bounds.top + 11).toInt()))
+                Color(bitmap.getPixel(bounds.center.x.toInt(), (bounds.top + 11 * scale).toInt()))
             bitmap.recycle()
             color
         }
