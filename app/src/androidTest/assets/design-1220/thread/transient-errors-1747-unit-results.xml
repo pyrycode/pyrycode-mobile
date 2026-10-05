@@ -1,0 +1,192 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites tests="133" failures="0" errors="0" skipped="0">
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-04T13:47:54.122Z" hostname="Juhanas-Air" time="0.968">
+    <properties />
+    <testcase name="allUnitErrorRoutes_useInertPills_withExistingCopy" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest" time="0.119" />
+    <testcase name="allAttachmentSendReasons_useTheirClientOwnedCopy" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest" time="0.254" />
+    <testcase name="bothRefusalReasons_areVisibleInOrder_forTheirFullTimeout" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest" time="0.157" />
+    <testcase name="expiryOnlyRemovesTransient_belowPersistentSessionError" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest" time="0.115" />
+    <testcase name="leavingTheScreen_cancelsActiveAndQueuedErrors" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest" time="0.116" />
+    <testcase name="dismissedElsewhere_keepsItsSnackbar_whileAnErrorPillShows" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest" time="0.101" />
+    <testcase name="accessibilityAdjustment_extendsTheShortTimeout_withTextAndNoControls" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest" time="0.1" />
+    <system-out />
+    <system-err />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.TransientErrorNoticeStateTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-04T13:47:55.095Z" hostname="Juhanas-Air" time="0.11">
+    <properties />
+    <testcase name="cancellingTheActiveError_clearsIt_andReleasesTheNextCaller" classname="de.pyryco.mobile.ui.conversations.thread.TransientErrorNoticeStateTest" time="0.098" />
+    <testcase name="queuedErrors_getTheirOwnFullTimeout_inSubmissionOrder" classname="de.pyryco.mobile.ui.conversations.thread.TransientErrorNoticeStateTest" time="0.005" />
+    <testcase name="cancellingAQueuedError_doesNotRemoveTheActiveOne_orLeaveItQueued" classname="de.pyryco.mobile.ui.conversations.thread.TransientErrorNoticeStateTest" time="0.002" />
+    <testcase name="timeoutIsCalculatedForEachNotice_whenItStarts" classname="de.pyryco.mobile.ui.conversations.thread.TransientErrorNoticeStateTest" time="0.003" />
+    <system-out />
+    <system-err />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadScreenAttachmentLoadTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-10-04T13:47:32.888Z" hostname="Juhanas-Air" time="4.006">
+    <properties />
+    <testcase name="anInvalidOpenSource_usesTheOpenFailedPill" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenAttachmentLoadTest" time="0.661" />
+    <testcase name="savedRemainsASnackbar_andCoexistsWithAnErrorPill" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenAttachmentLoadTest" time="0.564" />
+    <testcase name="aDeliveredSave_opensTheSavePickerOnce_withTheFilesNameAndType" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenAttachmentLoadTest" time="0.381" />
+    <testcase name="aFileNotFetchedYet_asksTheThreadForItself_onTapAndLongPress" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenAttachmentLoadTest" time="0.51" />
+    <testcase name="noViewer_usesTheNoAppPill" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenAttachmentLoadTest" time="0.471" />
+    <testcase name="aDeliveredOpen_runsOnce_withTheSourceItCarries_beforeTheStatesHoldIt" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenAttachmentLoadTest" time="0.364" />
+    <testcase name="aFailedSave_usesTheSaveFailedPill" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenAttachmentLoadTest" time="0.579" />
+    <testcase name="aFailedLoad_showsRetry_andTheRowNeitherOpensNorSaves" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenAttachmentLoadTest" time="0.469" />
+    <system-out />
+    <system-err>System.logW: A resource failed to call close. 
+</system-err>
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" tests="21" skipped="0" failures="0" errors="0" timestamp="2026-10-04T13:47:21.098Z" hostname="Juhanas-Air" time="11.765">
+    <properties />
+    <testcase name="theBackArrow_goesBack" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.452" />
+    <testcase name="openInAnotherApp_whenTheSharedNoteCannotBeWritten_usesOpenFailedPill" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="1.125" />
+    <testcase name="theOverflow_opensTheSixItems_inOrder" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.997" />
+    <testcase name="showsTheNameInTheBar_andTheRenderedMarkdownBelow" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.515" />
+    <testcase name="aRetry_whileTheFailureNoticeShows_readsAgain" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="1.179" />
+    <testcase name="aCancelledPicker_writesNothing_andSaysNothing" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.546" />
+    <testcase name="saveToDevice_opensTheCreateDocumentPicker_withTheNotesNameAndMarkdownType" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.695" />
+    <testcase name="aSecondRefresh_whileOneIsReading_readsNothing" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.982" />
+    <testcase name="copyAsHtml_putsOneClip_withTheHtmlAndThePlainFallback" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.428" />
+    <testcase name="aFailedRefresh_keepsTheOldContent_andSaysItCouldNotOpen" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.409" />
+    <testcase name="aReadyMarkdownTap_goesToTheReader_whateverItsSource_andOtherFilesDoNot" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.141" />
+    <testcase name="aLinkedNote_opensInTheSameReader_andItsBackArrowGoesBack" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.229" />
+    <testcase name="openInAnotherApp_withNoAppForMarkdown_saysSo" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.495" />
+    <testcase name="copiesOfANoteAtTheReadersBound_areBounded" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.498" />
+    <testcase name="copyAsPlainText_putsTheRenderedText" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.431" />
+    <testcase name="noLinkedNote_goesBackOnce_andDrawsNoReader" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.094" />
+    <testcase name="refresh_replacesTheContent_withANewRead" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.496" />
+    <testcase name="longContent_scrollsUnderAFixedBar" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.568" />
+    <testcase name="aPickedDocument_receivesTheTextOnScreen_andTheReaderSaysSaved" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.578" />
+    <testcase name="copyAsMarkdown_putsTheRawText_andShowsNoNotice" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.464" />
+    <testcase name="aFailedWrite_saysTheSaveFailed" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.42" />
+    <system-out />
+    <system-err />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" tests="13" skipped="0" failures="0" errors="0" timestamp="2026-10-04T13:47:51.430Z" hostname="Juhanas-Air" time="2.685">
+    <properties />
+    <testcase name="offlineRetry_drawsATextWidePill_atTheTargetsTopRight" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.229" />
+    <testcase name="sessionError_reusesErrorColors_andRightAlignedBodySmall_withNoDismissAction" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.486" />
+    <testcase name="offlineRetry_hasA48dpTarget_belowAUsagePill_withoutStealingDismissTaps" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.384" />
+    <testcase name="aLongServerName_isBounded" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.16" />
+    <testcase name="noNotices_drawNoPill" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.075" />
+    <testcase name="aFailedMcpServer_isNeverShownBesideThePairingOrOfflinePill" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.108" />
+    <testcase name="theUsagePill_readsTheSameForEveryAgent" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.08" />
+    <testcase name="anyOtherStatus_isAnErrorPill_withNoX" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.184" />
+    <testcase name="aWarning_isADismissiblePill_thatReturnsWhenTheResetTimeChanges" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.279" />
+    <testcase name="sessionError_sitsBelowExistingPersistentNotices_andLeavesTheirActionsWorking" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.356" />
+    <testcase name="aLiveReading_leavesTheRunningTool_theWrapUp_andInterruptedInTheStatusRow" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.144" />
+    <testcase name="aFailedMcpServer_isATappablePillBelowTheUsagePill" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.098" />
+    <testcase name="theUsagePill_sitsAboveThePairingPill_whichStartsRePair" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.084" />
+    <system-out />
+    <system-err />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest" tests="13" skipped="0" failures="0" errors="0" timestamp="2026-10-04T13:46:30.776Z" hostname="Juhanas-Air" time="24.33">
+    <properties />
+    <testcase name="whileALargeFileUploads_itsTileFillsToTheFigure_andTheStripSaysUploading" classname="de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest" time="19.114" />
+    <testcase name="aCancelledPick_handsBackNothing" classname="de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest" time="0.593" />
+    <testcase name="aFailedSend_saysWhyInOneSnackbar_withTheLimitDerivedFromTheConstant" classname="de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest" time="0.614" />
+    <testcase name="noAttachments_rendersNoStrip" classname="de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest" time="0.382" />
+    <testcase name="thePaperclip_opensTheMultiFilePicker_andHandsBackEachPickInOrder" classname="de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest" time="0.266" />
+    <testcase name="aRefusedPick_showsTheCountOfEachKind" classname="de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest" time="0.303" />
+    <testcase name="pendingFileTiles_haveTheFigmaSizeGapAndRemoveOverlap" classname="de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest" time="0.284" />
+    <testcase name="whileSending_theStripSaysSo_andOffersNoRemove" classname="de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest" time="0.416" />
+    <testcase name="attachmentsWithBlankText_keepSendDisabled_untilTextIsTyped" classname="de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest" time="0.586" />
+    <testcase name="switchingChats_showsEachChatsOwnStrip" classname="de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest" time="0.387" />
+    <testcase name="tiles_renderInTheGivenOrder_andAFailedThumbnailFallsBackToTheFileTile" classname="de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest" time="0.217" />
+    <testcase name="blankTextAndNoAttachments_keepSendDisabled" classname="de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest" time="0.169" />
+    <testcase name="aTilesRemoveControl_removesOnlyThatAttachment" classname="de.pyryco.mobile.ui.conversations.thread.ComposerAttachmentStripTest" time="0.189" />
+    <system-out />
+    <system-err />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-10-04T13:47:49.051Z" hostname="Juhanas-Air" time="2.112">
+    <properties />
+    <testcase name="tapping_new_session_fires_event_and_closes_menu" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest" time="0.202" />
+    <testcase name="resetFailure_showsFixedMessageAndRetainsThread" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest" time="0.096" />
+    <testcase name="tapping_overflow_icon_renders_all_six_menu_items" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest" time="0.137" />
+    <testcase name="boundary_and_overflow_follow_report_and_conversation_change" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest" time="0.174" />
+    <testcase name="edit_channel_modal_shows_while_open_and_reports_ok_and_cancel" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest" time="0.444" />
+    <testcase name="back_press_dismisses_open_menu_without_firing_event" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest" time="0.382" />
+    <testcase name="tapping_channel_info_fires_event_and_closes_menu" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest" time="0.254" />
+    <testcase name="tapping_edit_fires_event_and_closes_menu" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest" time="0.165" />
+    <testcase name="tapping_archive_fires_event_and_closes_menu" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest" time="0.25" />
+    <system-out />
+    <system-err />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-10-04T13:46:55.119Z" hostname="Juhanas-Air" time="25.942">
+    <properties />
+    <testcase name="longNameAndBodyLeaveControlsAndMenuReachable" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="16.183" />
+    <testcase name="headerBlocksUnderlyingCodePanelWithPositiveClearAreaControl" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="2.869" />
+    <testcase name="largeTextReservesMeasuredBarPlus28dp" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="1.005" />
+    <testcase name="headerPointerAreasRouteOnlyTheirOwnActions" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="1.046" />
+    <testcase name="headerBlocksUnderlyingLinkWithPositiveClearAreaControl" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="1.5" />
+    <testcase name="readerCodeAndQuoteUseReferenceRoles" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.646" />
+    <testcase name="plainReaderCodeScrollsHorizontallyInsideItsPanel" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.874" />
+    <testcase name="wrappedListItemContinuesAtTheGutter" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.561" />
+    <testcase name="referencePlacesBarRuleAndBodyAtFigmaCoordinates" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.221" />
+    <testcase name="scrollViewportStartsBehindTheFixedBar" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.917" />
+    <system-out />
+    <system-err />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadScreenShortStreamTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-04T13:47:51.170Z" hostname="Juhanas-Air" time="0.241">
+    <properties />
+    <testcase name="a_one_message_thread_starts_at_the_top_of_the_message_region" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenShortStreamTest" time="0.132" />
+    <testcase name="a_thread_holding_only_a_pending_permission_request_starts_at_the_top_of_the_message_region" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenShortStreamTest" time="0.103" />
+    <system-out />
+    <system-err />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadScreenNewestRowTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-04T13:47:47.770Z" hostname="Juhanas-Air" time="1.273">
+    <properties />
+    <testcase name="a_reader_scrolled_away_is_not_pulled_back_by_a_streaming_reply" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenNewestRowTest" time="0.349" />
+    <testcase name="a_scroll_refused_under_a_resting_finger_does_not_stop_later_rows_being_followed" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenNewestRowTest" time="0.439" />
+    <testcase name="a_reader_scrolled_away_is_not_pulled_back_by_a_complete_reply" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenNewestRowTest" time="0.283" />
+    <testcase name="a_complete_reply_arriving_at_the_newest_end_is_composed_and_visible" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenNewestRowTest" time="0.197" />
+    <system-out />
+    <system-err />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" tests="42" skipped="0" failures="0" errors="0" timestamp="2026-10-04T13:47:36.912Z" hostname="Juhanas-Air" time="10.852">
+    <properties />
+    <testcase name="offered_permission_prompt_shows_the_offer_and_its_rules_between_context_and_options" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.503" />
+    <testcase name="blocked_path_row_is_labelled_folder" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.534" />
+    <testcase name="arrival_reveals_the_request_to_a_reader_at_the_newest_end" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.476" />
+    <testcase name="sending_controls_are_disabled_offline_and_re_enable_on_reconnect_while_the_grant_stays_usable" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.41" />
+    <testcase name="dismissed_remote_removes_overlay_and_surfaces_reason" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.308" />
+    <testcase name="dismissed_timeout_surfaces_reason" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.329" />
+    <testcase name="open_modal_highlights_only_the_fail_safe_deny_default" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.244" />
+    <testcase name="status_band_has_no_permission_reading_without_a_request" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.202" />
+    <testcase name="no_rejection_shows_no_notice" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.202" />
+    <testcase name="tapping_cancel_invokes_on_modal_cancel" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.168" />
+    <testcase name="dismissed_forward_compat_source_falls_back_to_generic_reason" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.221" />
+    <testcase name="no_arm_marker_when_nothing_is_armed" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.188" />
+    <testcase name="armed_non_default_renders_the_second_confirm_affordance" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.218" />
+    <testcase name="open_request_renders_inline_in_an_empty_thread_with_no_dialog_and_live_navigation" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.177" />
+    <testcase name="offered_checkbox_uses_figma_box_size_and_label_gap" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.249" />
+    <testcase name="no_close_glyph_is_offered_and_cancel_follows_the_card" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.198" />
+    <testcase name="title_is_the_cards_first_line_and_keeps_heading_semantics" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.232" />
+    <testcase name="status_band_reads_waiting_for_permission_while_a_request_is_open_and_connected" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.201" />
+    <testcase name="modal_without_context_renders_no_context_rows" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.152" />
+    <testcase name="trust_prompt_carrying_rules_shows_no_offer" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.158" />
+    <testcase name="default_option_shows_no_arm_step_even_when_a_non_default_is_armed" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.217" />
+    <testcase name="open_modal_renders_title_prompt_and_options_in_array_order" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.192" />
+    <testcase name="permission_prompt_without_an_offer_shows_no_offer" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.2" />
+    <testcase name="armed_choice_shows_its_confirm_hint_directly_under_it_until_the_arm_clears" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.19" />
+    <testcase name="tapping_the_offer_reports_its_prompt_and_never_answers" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.173" />
+    <testcase name="classifier_type_without_a_reason_renders_its_sentence_alone" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.143" />
+    <testcase name="answer_rejected_shows_the_client_notice_in_the_cards_slot_and_its_x_dismisses_it" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.611" />
+    <testcase name="unknown_reason_type_renders_its_raw_category_beside_a_non_string_reason" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.239" />
+    <testcase name="tapping_the_default_forwards_its_id" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.235" />
+    <testcase name="reason_without_a_type_uses_the_generic_label" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.122" />
+    <testcase name="tapping_an_option_invokes_the_inert_callback_with_its_id" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.164" />
+    <testcase name="accepted_offer_renders_checked" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.107" />
+    <testcase name="non_default_requires_two_taps_to_confirm_via_vm_mimicking_stand_in" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.191" />
+    <testcase name="hidden_renders_no_overlay" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.186" />
+    <testcase name="dismissed_local_surfaces_reason" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.125" />
+    <testcase name="context_rows_render_between_the_prompt_and_the_options_in_desktop_order" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.154" />
+    <testcase name="arrival_and_grant_toggles_keep_a_history_reader_anchored_without_history_demand" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.261" />
+    <testcase name="cancel_is_start_aligned_with_the_card" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.125" />
+    <testcase name="armed_hint_sits_in_the_8dp_choice_gaps" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="1.009" />
+    <testcase name="permission_choices_are_40dp_surfaces_8dp_apart_with_48dp_touch_targets" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.231" />
+    <testcase name="enlarged_text_keeps_all_permission_decisions_reachable_in_the_compact_stream" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.374" />
+    <testcase name="permission_context_spacing_matches_the_frame" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenModalTest" time="0.197" />
+    <system-out />
+    <system-err />
+  </testsuite>
+</testsuites>

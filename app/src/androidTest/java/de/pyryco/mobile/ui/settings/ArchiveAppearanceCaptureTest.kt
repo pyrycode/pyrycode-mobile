@@ -2,7 +2,6 @@ package de.pyryco.mobile.ui.settings
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.os.ParcelFileDescriptor
 import android.view.View
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -22,12 +21,12 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
+import de.pyryco.mobile.design.Viewport
+import de.pyryco.mobile.design.ViewportRule
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Clock
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -37,25 +36,14 @@ import kotlin.time.Duration.Companion.days
 /** Real dark pixels and reachable controls for the Archive design comparison. */
 @RunWith(AndroidJUnit4::class)
 class ArchiveAppearanceCaptureTest {
-    @get:Rule val rule = createComposeRule()
-    private val instrumentation = InstrumentationRegistry.getInstrumentation()
-    private var oldSize = "reset"
-    private var oldDensity = "reset"
+    // The viewport settles before the compose rule launches its activity: resizing under a running
+    // activity can recreate it while the launcher holds focus, "No compose hierarchies found" (#1402, #1747).
+    @get:Rule(order = 0)
+    val viewport = ViewportRule()
+
+    @get:Rule(order = 1)
+    val rule = createComposeRule()
     private var view: View? = null
-
-    @Before fun setViewport() {
-        oldSize = overrideOf(shell("wm size"))
-        oldDensity = overrideOf(shell("wm density"))
-        shell("wm density 160")
-        shell("wm size 412x892")
-        instrumentation.waitForIdleSync()
-    }
-
-    @After fun restoreViewport() {
-        shell("wm size $oldSize")
-        shell("wm density $oldDensity")
-        instrumentation.waitForIdleSync()
-    }
 
     @Test fun populatedTabsAt412By892() {
         val channels =
@@ -108,9 +96,9 @@ class ArchiveAppearanceCaptureTest {
         capture("discussions-empty-412x892.png", 412, 892)
     }
 
-    @Test fun compactLargeTextKeepsRestoreReachable() {
-        shell("wm size 280x400")
-        instrumentation.waitForIdleSync()
+    @Viewport("280x400")
+    @Test
+    fun compactLargeTextKeepsRestoreReachable() {
         val name = "archived-conversation-with-a-very-long-name-that-must-not-cover-the-restore-control"
         rule.setContent {
             CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, 1.6f)) {
@@ -174,13 +162,4 @@ class ArchiveAppearanceCaptureTest {
         lastUsedAt = Clock.System.now() - ageDays.days,
         archived = true,
     )
-
-    private fun shell(command: String): String =
-        ParcelFileDescriptor
-            .AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command))
-            .bufferedReader()
-            .use { it.readText() }
-
-    private fun overrideOf(output: String) =
-        output.lineSequence().firstOrNull { it.startsWith("Override") }?.substringAfter(": ") ?: "reset"
 }

@@ -68,10 +68,12 @@ the app's resolved mode even when it differs from the system; global Material ro
 See [thread canvas and header](thread-screen-how-it-works-overlays-and-app-bar.md#threadtopappbar--figma-168-chrome)
 and the [palette plan](../../specs/architecture/1162-thread-reader-canvas.md).
 
-Reader notices currently remain bottom snackbars. When #1604 introduces the top-overlay
-Error pill from frame `696:5101`, its placement must be rechecked at 28dp below the actual
-measured bar-through-rule height. That notice migration and capture are not proven by the
-chrome evidence here.
+Reader failures show as an inert Error pill from frame `696:5101` (#1747): right-aligned with 20dp
+gutters, 28dp below the measured bar through its rule, over the body without moving it. A failed
+Refresh, a failed open in another app and a failed save share one queue with the thread's rules: first in,
+first out, the full accessibility-adjusted Short time each, cancelled when the reader closes. Saved still
+shows in the bottom snackbar. Copy has no failure notice. The capture is `reader-error.png` in the
+[design-1220 thread index](../../../app/src/androidTest/assets/design-1220/thread/index.md).
 
 ## Routing a tap to the reader
 
@@ -105,8 +107,8 @@ navigating, on the thread side:
   `PopBack → popBackStack()` arm.
 - `ThreadScreen` gained `onOpenMarkdownAttachment: (String) -> Unit = {}` (passed into
   `rememberAttachmentActions`) and `markdownOpenFailures: Flow<Unit> = emptyFlow()` (shown as
-  `AttachmentNotice.OPEN_FAILED`'s string via `snackbarHostState`, the same `LaunchedEffect(flow,
-  snackbarHostState)` shape `archiveErrors` uses).
+  `AttachmentNotice.OPEN_FAILED`'s string; since #1747 it joins the thread's transient Error pill queue,
+  like `archiveErrors`).
 
 `readMarkdownAttachment(repository, conversationId, attachmentId, ioDispatcher)` is the one loader both the
 thread and the reader call:
@@ -162,8 +164,9 @@ the saved-state bundle.
 `Surface` with explicit `contentColor = MaterialTheme.colorScheme.onSurface`, holding `MarkdownReaderTopBar`
 then the scrolling body. The custom canvas is not a global Material role, so automatic content-colour lookup
 cannot select its foreground; retaining `onSurface` explicitly keeps `MarkdownText`'s text colour intact. It has
-a `SnackbarHost` docked to the bottom for a failed refresh. `onRefresh` and `snackbarHostState` both default to
-inert values, so every existing caller and preview still compiles; `RefreshableMarkdownReader` is the one real
+a `SnackbarHost` docked to the bottom for Saved only; failures, including a failed refresh, go to the
+`errorNotices: TransientErrorNoticeState` pill the caller shares (#1747). `onRefresh`, `snackbarHostState` and
+`errorNotices` all default to inert values, so every existing caller and preview still compiles; `RefreshableMarkdownReader` is the one real
 caller. `MarkdownReaderTopBar` reuses `ThreadTopAppBar`'s bar-metric constants (`BarGlyphSize`, `BarTouchSize`,
 `BarTouchSlack`, `BarGutter`, `BarTopGap`, `BarRuleGap`, `BarBottomGap`, `BAR_RULE_ALPHA`) — promoted from
 `private` to `internal` in `ThreadTopAppBar.kt` by #1027, visibility-only, so both bars share one set of numbers
@@ -214,7 +217,7 @@ shows.
   LinkedMarkdown?` (a plain `var`, not a `StateFlow`; **since #1067** — before that it held only the
   `MarkdownDocument`) and sends `ThreadNavigation.OpenLinkedMarkdown` (a `data object`; the note itself never
   travels in the event); failure sends on the shared `markdownOpenFailures`, so a failed link tap shows the
-  same "Couldn't open file" snackbar the attachment path uses. `linkedMarkdown(): LinkedMarkdown?` reads the
+  same "Couldn't open file" Error pill the attachment path uses. `linkedMarkdown(): LinkedMarkdown?` reads the
   held note once; `releaseLinkedMarkdown()` drops it. Logs `event=thread_markdown_link_open outcome=reader|failed`
   only — no path, name or text, ever.
 - `class LinkedMarkdown(val path: String, val document: MarkdownDocument)` (in `MarkdownReaderScreen.kt`, #1067)
