@@ -668,6 +668,12 @@ if [ -n "${DETERMINISTIC}" ]; then
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/tool-open.jsonl}"      # drop A: tool_use, held open
       FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/tool-done.jsonl}"  # drop B: tool_result(done) + turn_end
       ;;
+    send-now)
+      TEST_METHOD="interactiveTurn_seededChannel_sendQueuedNow_placesAfterToolResult"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/tool-open.jsonl}"
+      FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/send-now-delivered.jsonl}"
+      DROP_B_FENCE="send-now"
+      ;;
     tool-failed)
       TEST_METHOD="interactiveTurn_seededChannel_failedToolStepRendersFailed"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/tool-failed.jsonl}"    # single terminal drop
@@ -1210,6 +1216,17 @@ if [ -z "${DETERMINISTIC}" ] && [ -z "${ANSWER_UNMET}" ]; then
   mint_answer_pairing
 fi
 
+# #1642: only the isolated harness daemon can release the live Bash hold. The tool
+# cannot finish until send-now delivery is logged; no wall-clock sleep releases it.
+if [ -z "${DETERMINISTIC}" ]; then
+  SEND_NOW_RELEASE="${WORK_DIR}/send-now-release"
+  (
+    while ! grep -qF 'relay: v2 send_queued_now delivered' "${DAEMON_LOG}"; do sleep 0.1; done
+    touch "${SEND_NOW_RELEASE}"
+  ) &
+  WATCHER_PID=$!
+fi
+
 # ---- 4b. release a held stream fragment after an explicit test action ---------
 # First-fragment replay belongs to fakeclaude's user-envelope handler. Only the
 # second fragment needs a host signal: enqueue #2, or a phone disconnect while
@@ -1221,6 +1238,8 @@ if [ -n "${DETERMINISTIC}" ] && [ -n "${FIXTURE_FILE_2}" ]; then
       disconnect_base="$(grep -cF "${DISCONNECT_TOKEN}" "${DISCONNECT_LOG}" 2>/dev/null || true)"
       disconnect_base="${disconnect_base:-0}"
       while [ "$(grep -cF "${DISCONNECT_TOKEN}" "${DISCONNECT_LOG}" 2>/dev/null || true)" -le "${disconnect_base}" ]; do sleep 0.2; done
+    elif [ "${DROP_B_FENCE}" = "send-now" ]; then
+      while ! grep -qF 'relay: v2 send_queued_now delivered' "${DAEMON_LOG}"; do sleep 0.1; done
     else
       while [ "$(grep -cF 'send_message.enqueued' "${DAEMON_LOG}" 2>/dev/null || true)" -lt 2 ]; do sleep 0.2; done
     fi
@@ -1345,6 +1364,7 @@ elif [ -n "${LIVE}" ]; then
   # #1581: a reply that ends while its chat is off screen is drawn after a reconnect through the open's newest-page
   # ask (#1572). Two turns (A's ping and A's permission-held command).
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_sendQueuedNow_reachesRunningTurn"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi
@@ -1354,6 +1374,9 @@ fi
 log "running ${DEVICE}DebugAndroidTest (headless emulator: boot → install → ${TEST_TARGET} → teardown)…"
 log "  phone relayUrl = ${PHONE_RELAY_URL}"
 GRADLE_TEST_ARGS=(-PuseRelayRepository=true)
+if [ -n "${SEND_NOW_RELEASE:-}" ]; then
+  GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.sendNowReleasePath="${SEND_NOW_RELEASE}")
+fi
 if [ "${PYRY_FORCE_TEST_RUN:-}" = "1" ]; then GRADLE_TEST_ARGS+=(--rerun); fi
 # The second host and the seeded collision (#847), only on the paths that started a second daemon.
 if [ -n "${SERVER_ID_B:-}" ]; then
