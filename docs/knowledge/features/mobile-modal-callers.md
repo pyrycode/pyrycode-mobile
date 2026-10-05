@@ -106,17 +106,10 @@ identity-keyed buffer and content-free debug-log patterns. Its two actions read 
 of one guard, matching desktop: OK needs a non-blank trimmed name, an available host and no write
 in flight; Archive needs only the host and no write in flight, independent of the field's content,
 and takes no confirmation step, since an archived chat comes back through Archive's Restore.
-[ChannelListScreen](channel-list-screen.md) was its first caller (#827): a Chats row's pencil —
-since #1523, drawn only on the selected row, reached by opening it and pressing Back — opened it on
-that row's own host and conversation, and OK renamed through that host's
-`ConversationRepository.rename`, resolved at the press — see
-[ChannelListScreen § tree and controls](channel-list-screen-tree-and-controls.md#chat-row-edit-control-827-retired-by-1563)
-and [ChannelListViewModel](channel-list-viewmodel.md#wiring). Archive chat was wired in #828, on the
-same guard's other half: `live.archive(conversationId)` on the same host-resolved-at-the-press
-repository, no confirmation step (desktop parity — Archive's Restore undoes it), and no read of the
-name field either way, success or failure. **#1563 (2026-10) removed that row pencil**, so this caller
-is unreachable from the UI; a chat is renamed from the thread's Rename item instead, and this modal
-binding stays only pending #1582's cleanup.
+The list's former binding (#827/#828) was removed in #1582 after #1563 retired
+conversation pens. Chats use the thread's Rename item. `EditChatModal` itself,
+its standalone tests and isolated `FormCallerCaptureTest` fixture remain; list-hosted
+rename/archive state and routes do not.
 
 The current Figma Edit Chat content uses the title “Edit Chat” and the existing
 “Channel name:” label. Its name well measures 52 dp: a Material `TextField` kept a
@@ -277,27 +270,15 @@ sends `null` for a draft over a stored prompt that the operator emptied, desktop
 available host, a non-blank trimmed name and (when the prompt is showing) a draft within
 `SystemPromptLimit.MAX_BYTES`; Archive needs only the host and no write in flight, independent of either
 field, with no confirmation step — an archived channel comes back through Archive's own Restore, the
-same parity `EditChatModal`'s Archive established. [ChannelListScreen](channel-list-screen.md) was its
-only caller through #667: the Channels row's own pen — the same pen shape #827 gave Chats rows, now
-generalised behind `TreeConversationRow`'s `editDescription: @StringRes Int` parameter — opened it on
-that row's own host and conversation. From #1523 the pen drew only on the selected conversation row
-(the one last opened and left with Back), so Edit channel, like Edit chat, was reached by opening the
-row, pressing Back and tapping its pen; it read the stored prompt once the row's host had a live
-repository, opened the checkbox at that host's own stored `Conversation.muted` (#1021), and OK wrote
-only what changed — a rename, then a mute write, then the prompt, each independently, in that order —
-through the
-repository resolved **at the press** — see [ChannelListScreen § Channels row edit control
-(#667)](channel-list-screen-tree-and-controls.md#channels-row-edit-control-667-retired-by-1563) and
-[ChannelListViewModel § Wiring](channel-list-viewmodel.md#wiring) for the two target-tagged state flows
-that keep a prompt read from ever landing on a write's own `compareAndSet`, and for why this caller
-resolves the repository at the press rather than binding one at construction the way
-[`SystemPromptEditor`](system-prompt-editor.md) does. **Since #1561 it has a second caller**: a channel's
-thread menu Edit, in place of Rename, hosts the same composable off `ThreadUiState.channelEditor` —
-[Thread screen — the sheets § EditChannelModal hosting](thread-screen-how-it-works-sheets.md#editchannelmodal-hosting-post-1561)
-has the binding, and [`ChannelEditorController`](channel-list-viewmodel.md#channeleditorcontroller-667--1561)
-is the shared machine both callers' bindings now drive, extracted from this view model so neither caller
-copies the other's write chain. **#1563 (2026-10) removed the list's Channels row pen**, so the thread
-menu's Edit is now this modal's only reachable caller; the list binding stays wired pending #1582.
+same parity `EditChatModal`'s Archive established. The channel thread's Edit item
+(#1561) is the production caller, off `ThreadUiState.channelEditor`; see
+[thread hosting](thread-screen-how-it-works-sheets.md#editchannelmodal-hosting-post-1561).
+\#1582 removed the list binding and its editor state/events/routes after #1563 removed
+conversation pens. `ChannelEditorController` remains in `ui.conversations.list`, and
+its [write/read contract](channel-list-viewmodel.md#channeleditorcontroller-667--1561)
+keeps prompt readings separate from write state, resolves the repository at the press,
+and sends only changed values in rename → mute → prompt order. Its component tests and
+isolated design captures remain.
 
 **`PermissionModalOverlay`** (`ui/conversations/thread/ThreadPermissionModal.kt`, #815) is the first of
 [`MobileGateModal`](mobile-modal.md#the-hardened-gate-mobilegatemodal)'s two callers, and the only one using it rather than

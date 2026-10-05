@@ -60,12 +60,14 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -1659,152 +1661,44 @@ class HostChannelListViewModelTest {
             assertEquals("Pyrybox", requireNotNull(f.store.loadById("Host")).displayName)
         }
 
-    /**
-     * Both hosts hold a chat with the same id and different names (#827). Globally unique ids would hide a
-     * rename sent to the wrong host, so every chat-editor test starts from this collision.
-     */
-    private fun Fixture.seedCollidingChats() {
-        a.repo.rows.value = listOf(row("same").copy(name = "A chat"), row("nameless"), row("A-channel", true).copy(name = "A channel"))
-        b.repo.rows.value = listOf(row("same").copy(name = "B chat"))
-    }
-
     @Test
-    fun chatEditorOpensOnTheRowsOwnHostAndConversationWithoutSelectingOrNavigating() =
-        runTest(dispatcher) {
-            val f = fixture()
-            f.seedCollidingChats()
-            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
-            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
-            runCurrent()
-
-            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
-            runCurrent()
-            assertEquals(ChatEditorState("Host", "same", "A chat"), f.vm.hostState.value.chatEditor)
-
-            f.vm.openChatEditor(HostConversationTarget("host", "same"))
-            runCurrent()
-            assertEquals(ChatEditorState("host", "same", "B chat"), f.vm.hostState.value.chatEditor)
-
-            // A chat with no name opens empty — never the list's placeholder text.
-            f.vm.openChatEditor(HostConversationTarget("Host", "nameless"))
-            runCurrent()
-            assertEquals(
-                "",
-                f.vm.hostState.value.chatEditor
-                    ?.initialName,
-            )
-
-            // Neither a chat on another host nor a channel is a Chats row this editor can open.
-            f.vm.dismissChatEditor()
-            for (target in listOf(HostConversationTarget("host", "nameless"), HostConversationTarget("Host", "A-channel"))) {
-                f.vm.openChatEditor(target)
-                runCurrent()
-                assertNull(f.vm.hostState.value.chatEditor)
-            }
-
-            assertNull(f.vm.hostState.value.selected)
-            assertTrue(f.nav.isEmpty())
-            assertTrue(
-                f.a.repo.renames
-                    .isEmpty() &&
-                    f.b.repo.renames
-                        .isEmpty(),
-            )
-        }
-
-    @Test
-    fun chatSubmitRenamesOnlyTheEditorsOwnHostWithTheTrimmedNameAndCloses() =
-        runTest(dispatcher) {
-            val f = fixture()
-            f.seedCollidingChats()
-            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
-
-            // No open editor: nothing to rename.
-            f.vm.submitChatName("orphan")
-            runCurrent()
-            assertTrue(
-                f.a.repo.renames
-                    .isEmpty(),
-            )
-
-            f.vm.openChatEditor(HostConversationTarget("host", "same"))
-            runCurrent()
-            f.vm.submitChatName("  Renamed  ")
-            runCurrent()
-
-            assertEquals(listOf("same" to "Renamed"), f.b.repo.renames)
-            // The other host's chat with the same id is never touched.
-            assertTrue(
-                f.a.repo.renames
-                    .isEmpty(),
-            )
-            assertNull(f.vm.hostState.value.chatEditor)
-            val hosts = f.vm.hostState.value.hosts
-            assertEquals(
-                "Renamed",
-                hosts
-                    .single { it.host.serverId == "host" }
-                    .host.chats
-                    .single()
-                    .name,
-            )
-            assertEquals(
-                "A chat",
-                hosts
-                    .single { it.host.serverId == "Host" }
-                    .host.chats
-                    .first()
-                    .name,
-            )
-        }
-
-    @Test
-    fun disconnectClosesThatHostsCreateAndEditModalsAndKeepsAnotherHostsOpen() =
+    fun disconnectClosesThatHostsCreateModalAndKeepsAnotherHostsFailedCreate() =
         runTest(dispatcher) {
             val f = fixture()
             f.seedCollidingChannelEditors()
             backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
             runCurrent()
 
-            // Host's Edit chat and Create channel, host's Edit channel and a failed Chats create on host.
-            f.vm.openChatEditor(HostConversationTarget("Host", "a-chat"))
+            // Host's Create channel and a failed Chats create on host.
             f.vm.openCreateChannel("Host")
-            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
             f.b.repo.failure = RelayErrorException("server.error", false, "server-secret")
             f.vm.createChat("host")
             runCurrent()
             f.b.repo.failure = null
-            val channelEditor = requireNotNull(f.channelEditor())
             val failedCreate = requireNotNull(f.vm.hostState.value.createChat)
             assertTrue(failedCreate.failed)
-            assertNotNull(f.vm.hostState.value.chatEditor)
             assertNotNull(f.vm.hostState.value.createChannel)
 
             f.a.status.value = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)
             runCurrent()
-            assertNull(f.vm.hostState.value.chatEditor)
             assertNull(f.vm.hostState.value.createChannel)
-            // The other host's modal and failed create are its own.
-            assertEquals(channelEditor, f.channelEditor())
+            // The other host's failed create is its own.
             assertEquals(failedCreate, f.vm.hostState.value.createChat)
 
             // A half-up host is not connected either, and a reconnect reopens nothing.
             f.b.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Handshaking)
             runCurrent()
-            assertNull(f.channelEditor())
             assertNull(f.vm.hostState.value.createChat)
             f.a.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
             f.b.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
             runCurrent()
-            assertNull(f.vm.hostState.value.chatEditor)
             assertNull(f.vm.hostState.value.createChannel)
-            assertNull(f.channelEditor())
             assertNull(f.vm.hostState.value.createChat)
             assertTrue(f.channelRenames().isEmpty() && f.promptWrites().isEmpty() && f.channelCreates().isEmpty())
         }
 
     @Test
-    fun aDisconnectedHostRefusesEveryCreateAndEditOpen() =
+    fun aDisconnectedHostRefusesEveryCreateOpen() =
         runTest(dispatcher) {
             val f = fixture()
             f.seedCollidingChannelEditors()
@@ -1814,15 +1708,11 @@ class HostChannelListViewModelTest {
 
             f.vm.createChat("Host")
             f.vm.openCreateChannel("Host")
-            f.vm.openChatEditor(HostConversationTarget("Host", "a-chat"))
-            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
             runCurrent()
 
             val state = f.vm.hostState.value
             assertNull(state.createChat)
             assertNull(state.createChannel)
-            assertNull(state.chatEditor)
-            assertNull(state.channelEditor)
             assertTrue(
                 f.a.repo.workspaces
                     .isEmpty(),
@@ -1834,18 +1724,16 @@ class HostChannelListViewModelTest {
             listOf(
                 "event=create_chat_rejected code=disconnected",
                 "event=create_channel_open_rejected code=disconnected",
-                "event=chat_editor_open_rejected code=disconnected",
-                "event=channel_editor_open_rejected code=disconnected",
             ).forEach { assertTrue(it, it in logs) }
         }
 
     /**
-     * Each create or edit submit racing a disconnect (#1336). Main runs on a queued dispatcher here, so the
+     * A create submit racing a disconnect (#1336). Main runs on a queued dispatcher here, so the
      * snapshot is already offline when the press lands but the view model's watcher has not closed the
      * modal yet: the submit's own re-check is what refuses, and the write it would launch is never sent.
      */
     @Test
-    fun aSubmitRacingADisconnectSendsNothingAndClosesItsModal() =
+    fun aCreateSubmitRacingADisconnectSendsNothingAndClosesItsModal() =
         runTest(dispatcher) {
             Dispatchers.setMain(StandardTestDispatcher(testScheduler))
             val f = fixture()
@@ -1878,23 +1766,8 @@ class HostChannelListViewModelTest {
             race("event=create_channel_rejected code=disconnected", { f.vm.openCreateChannel("Host") }) {
                 f.vm.submitCreateChannel("New", "A prompt")
             }
-            race("event=chat_rename_rejected code=disconnected", { f.vm.openChatEditor(HostConversationTarget("Host", "a-chat")) }) {
-                f.vm.submitChatName("Renamed")
-            }
-            race("event=chat_archive_rejected code=disconnected", { f.vm.openChatEditor(HostConversationTarget("Host", "a-chat")) }) {
-                f.vm.archiveChat()
-            }
-            race("event=channel_edit_rejected code=disconnected", { f.vm.openChannelEditor(HostConversationTarget("Host", "same")) }) {
-                f.vm.submitChannelEdit("Renamed", "New prompt", muted = true)
-            }
-            race("event=channel_archive_rejected code=disconnected", { f.vm.openChannelEditor(HostConversationTarget("Host", "same")) }) {
-                f.vm.archiveChannel()
-            }
-
             val state = f.vm.hostState.value
             assertNull(state.createChannel)
-            assertNull(state.chatEditor)
-            assertNull(state.channelEditor)
             assertTrue(f.channelCreates().isEmpty())
             assertTrue(f.channelRenames().isEmpty())
             assertTrue(f.promptWrites().isEmpty())
@@ -1929,232 +1802,6 @@ class HostChannelListViewModelTest {
             )
             assertNull(f.vm.hostState.value.createChat)
             assertTrue("event=create_chat_rejected code=disconnected" in logs)
-        }
-
-    @Test
-    fun failedChatRenameStaysOpenQuietlyAndALateCompletionCannotReopen() =
-        runTest(dispatcher) {
-            val f = fixture()
-            f.seedCollidingChats()
-            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
-            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
-            runCurrent()
-
-            f.a.repo.failure = RelayErrorException("server.error", false, "server-secret")
-            f.vm.submitChatName("Typed")
-            runCurrent()
-            val failed = requireNotNull(f.vm.hostState.value.chatEditor)
-            assertTrue(failed.failed)
-            assertFalse(failed.saving)
-            assertEquals("same", failed.conversationId)
-            assertEquals(
-                "A chat",
-                f.a.repo.rows.value!!
-                    .first()
-                    .name,
-            )
-            assertTrue(logs.any { "chat_rename_failed" in it })
-            assertTrue(
-                "no name, id or server message may reach a log line: $logs",
-                logs.none { "server-secret" in it || "Typed" in it || "A chat" in it || "same" in it || "Host" in it },
-            )
-
-            // Still actionable: a retry that succeeds closes.
-            f.a.repo.failure = null
-            f.vm.submitChatName("Typed")
-            runCurrent()
-            assertEquals(listOf("same" to "Typed"), f.a.repo.renames)
-            assertNull(f.vm.hostState.value.chatEditor)
-
-            // A write landing after a dismissal must not resurrect the modal, and a second OK mid-write is ignored.
-            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
-            runCurrent()
-            val gate = CompletableDeferred<Unit>()
-            f.a.repo.renameGate = gate
-            f.vm.submitChatName("Later")
-            f.vm.submitChatName("Twice")
-            runCurrent()
-            assertTrue(requireNotNull(f.vm.hostState.value.chatEditor).saving)
-            f.vm.dismissChatEditor()
-            gate.complete(Unit)
-            runCurrent()
-            assertNull(f.vm.hostState.value.chatEditor)
-            assertEquals(listOf("same" to "Typed", "same" to "Later"), f.a.repo.renames)
-        }
-
-    @Test
-    fun dismissingTheChatEditorSendsNothing() =
-        runTest(dispatcher) {
-            val f = fixture()
-            f.seedCollidingChats()
-            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
-            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
-            runCurrent()
-            f.vm.dismissChatEditor()
-            runCurrent()
-            assertNull(f.vm.hostState.value.chatEditor)
-            assertTrue(
-                f.a.repo.renames
-                    .isEmpty() &&
-                    f.b.repo.renames
-                        .isEmpty(),
-            )
-            assertEquals(
-                "A chat",
-                f.a.repo.rows.value!!
-                    .first()
-                    .name,
-            )
-        }
-
-    @Test
-    fun chatArchiveArchivesOnlyTheEditorsOwnHostAndCloses() =
-        runTest(dispatcher) {
-            val f = fixture()
-            f.seedCollidingChats()
-            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
-
-            // No open editor: nothing to archive.
-            f.vm.archiveChat()
-            runCurrent()
-            assertTrue(
-                f.a.repo.archives
-                    .isEmpty() &&
-                    f.b.repo.archives
-                        .isEmpty(),
-            )
-
-            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
-            runCurrent()
-            f.vm.archiveChat()
-            runCurrent()
-
-            assertEquals(listOf("same"), f.a.repo.archives)
-            // The other host's chat with the same id is never archived, and nothing else is sent.
-            assertTrue(
-                f.b.repo.archives
-                    .isEmpty(),
-            )
-            assertTrue(
-                f.a.repo.renames
-                    .isEmpty() &&
-                    f.a.repo.others
-                        .isEmpty(),
-            )
-            assertNull(f.vm.hostState.value.chatEditor)
-            val hosts = f.vm.hostState.value.hosts
-            assertEquals(
-                listOf("nameless"),
-                hosts
-                    .single { it.host.serverId == "Host" }
-                    .host.chats
-                    .map { it.id },
-            )
-            assertEquals(
-                listOf("same"),
-                hosts
-                    .single { it.host.serverId == "host" }
-                    .host.chats
-                    .map { it.id },
-            )
-            // Where that host's Archive screen reads it from, and Restore returns it.
-            assertEquals(
-                listOf("same"),
-                f.a.repo
-                    .observeConversations(ConversationFilter.Archived)
-                    .first()
-                    .map { it.id },
-            )
-            assertTrue(logs.any { "chat_archived" in it })
-        }
-
-    @Test
-    fun chatArchiveOnAnUnavailableHostFailsWithoutSending() =
-        runTest(dispatcher) {
-            val f = fixture()
-            f.seedCollidingChats()
-            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
-            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
-            runCurrent()
-
-            f.a.available = false
-            f.vm.archiveChat()
-            runCurrent()
-
-            val editor = requireNotNull(f.vm.hostState.value.chatEditor)
-            assertTrue(editor.archiveFailed)
-            assertFalse(editor.failed)
-            assertFalse(editor.saving)
-            assertTrue(
-                f.a.repo.archives
-                    .isEmpty() &&
-                    f.b.repo.archives
-                        .isEmpty(),
-            )
-        }
-
-    @Test
-    fun failedChatArchiveStaysOpenQuietlyAndALateCompletionCannotReopen() =
-        runTest(dispatcher) {
-            val f = fixture()
-            f.seedCollidingChats()
-            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
-            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
-            runCurrent()
-
-            for (error in listOf(
-                RelayErrorException("server.error", false, "server-secret"),
-                IllegalStateException("not connected secret"),
-            )) {
-                f.a.repo.failure = error
-                f.vm.archiveChat()
-                runCurrent()
-                val failed = requireNotNull(f.vm.hostState.value.chatEditor)
-                assertTrue(failed.archiveFailed)
-                assertFalse(failed.failed)
-                assertFalse(failed.saving)
-                assertEquals("same", failed.conversationId)
-            }
-            // Still active on its host.
-            assertEquals(
-                false,
-                f.a.repo.rows.value!!
-                    .first()
-                    .archived,
-            )
-            assertTrue(logs.any { "chat_archive_failed" in it })
-            assertTrue(
-                "no name, id or server message may reach a log line: $logs",
-                logs.none { "secret" in it || "A chat" in it || "same" in it || "Host" in it },
-            )
-
-            // A rename after a failed archive shows only the rename's own outcome.
-            f.vm.submitChatName("Typed")
-            runCurrent()
-            assertFalse(requireNotNull(f.vm.hostState.value.chatEditor).archiveFailed)
-
-            // Still actionable: a retry that succeeds closes.
-            f.a.repo.failure = null
-            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
-            runCurrent()
-            val gate = CompletableDeferred<Unit>()
-            f.a.repo.archiveGate = gate
-            f.vm.archiveChat()
-            // Mid-write, a second archive and a rename are both ignored.
-            f.vm.archiveChat()
-            f.vm.submitChatName("Twice")
-            runCurrent()
-            assertTrue(requireNotNull(f.vm.hostState.value.chatEditor).saving)
-            f.vm.dismissChatEditor()
-            gate.complete(Unit)
-            runCurrent()
-            // Landing after the dismissal, it must not resurrect the modal.
-            assertNull(f.vm.hostState.value.chatEditor)
-            assertEquals(listOf("same"), f.a.repo.archives)
-            assertTrue(
-                f.a.repo.renames
-                    .isEmpty(),
-            )
         }
 
     /**
@@ -2641,9 +2288,105 @@ class HostChannelListViewModelTest {
         b.repo.storedPrompts["same"] = "B prompt"
     }
 
+    @Test
+    fun channelDisconnectClosesOnlyItsOwnHostCancelsTheReadAndReopensNothing() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChannelEditors()
+            val gate = CompletableDeferred<Unit>()
+            f.b.repo.promptReadGate = gate
+            f.openChannelEditor(HostConversationTarget("host", "same"))
+            runCurrent()
+            val reading = requireNotNull(f.channelEditor())
+
+            f.channelController.closeUnless { it.serverId != "Host" }
+            runCurrent()
+            assertEquals(reading, f.channelEditor())
+            f.channelController.closeUnless { it.serverId != "host" }
+            runCurrent()
+            assertNull(f.channelEditor())
+            gate.complete(Unit)
+            runCurrent()
+            assertNull(f.channelEditor())
+            assertTrue("event=channel_editor_closed code=disconnected" in logs)
+            assertTrue(f.channelRenames().isEmpty() && f.promptWrites().isEmpty())
+
+            f.a.status.value = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)
+            runCurrent()
+            f.openChannelEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            assertNull(f.channelEditor())
+            assertTrue(
+                f.a.repo.promptReads
+                    .isEmpty(),
+            )
+            assertTrue("event=channel_editor_open_rejected code=disconnected" in logs)
+        }
+
+    @Test
+    fun channelSubmitAndArchiveRacingADisconnectSendNothingAndClose() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChannelEditors()
+            val online = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
+            val offline = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)
+            for (archive in listOf(false, true)) {
+                f.a.status.value = online
+                runCurrent()
+                f.openChannelEditor(HostConversationTarget("Host", "same"))
+                runCurrent()
+                f.a.status.value = offline
+                // No closeUnless call: the press's own guard must refuse this stale editor.
+                if (archive) f.channelController.archive() else f.channelController.submit("Renamed", "New prompt", true)
+                runCurrent()
+                assertNull(f.channelEditor())
+                val event = if (archive) "channel_archive_rejected" else "channel_edit_rejected"
+                assertTrue("event=$event code=disconnected" in logs)
+            }
+            assertTrue(f.channelRenames().isEmpty() && f.promptWrites().isEmpty() && f.mutes().isEmpty())
+            assertTrue(
+                f.a.repo.archives
+                    .isEmpty() &&
+                    f.b.repo.archives
+                        .isEmpty(),
+            )
+        }
+
+    @Test
+    fun channelDismissedReadCannotReplaceAFresherHostAndLateArchiveCannotReopen() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChannelEditors()
+            val readGate = CompletableDeferred<Unit>()
+            f.a.repo.promptReadGate = readGate
+            f.openChannelEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            f.channelController.dismiss()
+            f.openChannelEditor(HostConversationTarget("host", "same"))
+            runCurrent()
+            val fresh = requireNotNull(f.channelEditor())
+            readGate.complete(Unit)
+            runCurrent()
+            assertEquals(fresh, f.channelEditor())
+
+            val archiveGate = CompletableDeferred<Unit>()
+            f.b.repo.archiveGate = archiveGate
+            f.channelController.archive()
+            f.channelController.archive()
+            f.channelController.submit("Twice", null, null)
+            runCurrent()
+            assertTrue(requireNotNull(f.channelEditor()).saving)
+            f.channelController.closeUnless { false }
+            archiveGate.complete(Unit)
+            runCurrent()
+            assertNull(f.channelEditor())
+            assertEquals(listOf("same"), f.b.repo.archives)
+            assertTrue(f.channelRenames().isEmpty() && f.promptWrites().isEmpty())
+        }
+
     private fun Fixture.channelRenames() = a.repo.renames + b.repo.renames
 
-    private fun Fixture.channelEditor() = vm.hostState.value.channelEditor
+    private fun Fixture.channelEditor() = controllerState.value
 
     @Test
     fun channelEditorOpensOnTheRowsOwnHostAndReadsItsOwnPromptWithoutSelectingOrWriting() =
@@ -2657,7 +2400,7 @@ class HostChannelListViewModelTest {
             f.b.repo.promptReadGate = gate
             runCurrent()
 
-            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
+            f.openChannelEditor(HostConversationTarget("host", "same"))
             runCurrent()
             // The name is on screen while the prompt is still being read.
             assertEquals(ChannelEditorState("host", "same", "B channel", ChannelPromptReading.Reading), f.channelEditor())
@@ -2665,24 +2408,12 @@ class HostChannelListViewModelTest {
             runCurrent()
             assertEquals(ChannelPromptReading.Read("B prompt", SessionPromptStatus.Differs), f.channelEditor()?.prompt)
 
-            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
+            f.openChannelEditor(HostConversationTarget("Host", "same"))
             runCurrent()
             assertEquals(
                 ChannelEditorState("Host", "same", "A channel", ChannelPromptReading.Read("  A prompt\n", SessionPromptStatus.Matches)),
                 f.channelEditor(),
             )
-
-            // A chat, a channel id on a host that has none, or an unknown host opens nothing.
-            f.vm.dismissChannelEditor()
-            for (target in listOf(
-                HostConversationTarget("Host", "a-chat"),
-                HostConversationTarget("host", "a-chat"),
-                HostConversationTarget("gone", "same"),
-            )) {
-                f.vm.openChannelEditor(target)
-                runCurrent()
-                assertNull(f.channelEditor())
-            }
 
             assertNull(f.vm.hostState.value.selected)
             assertTrue(f.nav.isEmpty())
@@ -2710,7 +2441,7 @@ class HostChannelListViewModelTest {
             f.a.available = false
             runCurrent()
 
-            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
+            f.openChannelEditor(HostConversationTarget("Host", "same"))
             runCurrent()
             assertEquals(ChannelPromptReading.Reading, f.channelEditor()?.prompt)
             assertTrue(
@@ -2725,13 +2456,13 @@ class HostChannelListViewModelTest {
             assertEquals(ChannelPromptReading.Read("  A prompt\n", SessionPromptStatus.Matches), f.channelEditor()?.prompt)
 
             f.b.repo.promptReadFailures = 1
-            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
+            f.openChannelEditor(HostConversationTarget("host", "same"))
             runCurrent()
             assertEquals(ChannelPromptReading.Unavailable, f.channelEditor()?.prompt)
 
             // A reply over the byte limit is never put in the field, so it can never be written back.
             f.b.repo.storedPrompts["same"] = "é".repeat(SystemPromptLimit.MAX_BYTES / 2 + 1)
-            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
+            f.openChannelEditor(HostConversationTarget("host", "same"))
             runCurrent()
             assertEquals(ChannelPromptReading.Unavailable, f.channelEditor()?.prompt)
         }
@@ -2745,35 +2476,35 @@ class HostChannelListViewModelTest {
             backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
 
             // An untouched form sends nothing and closes.
-            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
+            f.openChannelEditor(HostConversationTarget("host", "same"))
             runCurrent()
-            f.vm.submitChannelEdit("B channel", "B prompt")
+            f.channelController.submit("B channel", "B prompt", muted = null)
             runCurrent()
             assertNull(f.channelEditor())
             assertTrue(f.channelRenames().isEmpty() && f.promptWrites().isEmpty())
 
             // The name alone: one rename, trimmed.
-            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
+            f.openChannelEditor(HostConversationTarget("host", "same"))
             runCurrent()
-            f.vm.submitChannelEdit("  Renamed  ", "B prompt")
+            f.channelController.submit("  Renamed  ", "B prompt", muted = null)
             runCurrent()
             assertEquals(listOf("same" to "Renamed"), f.b.repo.renames)
             assertTrue(f.promptWrites().isEmpty())
             assertNull(f.channelEditor())
 
             // The prompt alone: one verbatim write.
-            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
+            f.openChannelEditor(HostConversationTarget("host", "same"))
             runCurrent()
-            f.vm.submitChannelEdit("Renamed", "  New prompt  ")
+            f.channelController.submit("Renamed", "  New prompt  ", muted = null)
             runCurrent()
             assertEquals(listOf("same" to "Renamed"), f.b.repo.renames)
             assertEquals(listOf<Pair<String, String?>>("same" to "  New prompt  "), f.b.repo.promptWrites)
             assertNull(f.channelEditor())
 
             // Both, on the other host; an emptied box over stored text clears it with null (#1342, promptWriteFor).
-            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
+            f.openChannelEditor(HostConversationTarget("Host", "same"))
             runCurrent()
-            f.vm.submitChannelEdit("Both", "")
+            f.channelController.submit("Both", "", muted = null)
             runCurrent()
             assertEquals(listOf("same" to "Both"), f.a.repo.renames)
             assertEquals(listOf<Pair<String, String?>>("same" to null), f.a.repo.promptWrites)
@@ -2781,9 +2512,9 @@ class HostChannelListViewModelTest {
             // No stored prompt and an empty box: nothing to write.
             f.a.repo.storedPrompts
                 .remove("same")
-            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
+            f.openChannelEditor(HostConversationTarget("Host", "same"))
             runCurrent()
-            f.vm.submitChannelEdit("Both", "")
+            f.channelController.submit("Both", "", muted = null)
             runCurrent()
             assertEquals(1, f.a.repo.promptWrites.size)
             assertEquals(1, f.a.repo.renames.size)
@@ -2799,12 +2530,12 @@ class HostChannelListViewModelTest {
             val f = fixture()
             f.seedCollidingChannelEditors()
             backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
-            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
+            f.openChannelEditor(HostConversationTarget("Host", "same"))
             runCurrent()
             val read = ChannelPromptReading.Read("  A prompt\n", SessionPromptStatus.Matches)
 
             f.a.repo.failure = IllegalStateException("rename secret")
-            f.vm.submitChannelEdit("Renamed", "New prompt")
+            f.channelController.submit("Renamed", "New prompt", muted = null)
             runCurrent()
             assertEquals(ChannelEditorState("Host", "same", "A channel", read, failed = true), f.channelEditor())
             assertTrue(f.channelRenames().isEmpty() && f.promptWrites().isEmpty())
@@ -2812,14 +2543,14 @@ class HostChannelListViewModelTest {
             // The rename lands, the prompt write fails: the modal stays, holding the confirmed name.
             f.a.repo.failure = null
             f.a.repo.promptFailures = 1
-            f.vm.submitChannelEdit("Renamed", "New prompt")
+            f.channelController.submit("Renamed", "New prompt", muted = null)
             runCurrent()
             assertEquals(ChannelEditorState("Host", "same", "Renamed", read, failed = true), f.channelEditor())
             assertEquals(listOf("same" to "Renamed"), f.a.repo.renames)
             assertTrue(f.promptWrites().isEmpty())
 
             // OK retries only the prompt.
-            f.vm.submitChannelEdit("Renamed", "New prompt")
+            f.channelController.submit("Renamed", "New prompt", muted = null)
             runCurrent()
             assertEquals(listOf("same" to "Renamed"), f.a.repo.renames)
             assertEquals(listOf<Pair<String, String?>>("same" to "New prompt"), f.a.repo.promptWrites)
@@ -2854,27 +2585,27 @@ class HostChannelListViewModelTest {
             runCurrent()
 
             // Each host's own flag, though the ids collide.
-            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
+            f.openChannelEditor(HostConversationTarget("Host", "same"))
             runCurrent()
             assertEquals(true, f.channelEditor()?.savedMuted)
-            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
+            f.openChannelEditor(HostConversationTarget("host", "same"))
             runCurrent()
             assertEquals(false, f.channelEditor()?.savedMuted)
 
             // The opening value sends no mute write; Cancel, Close and Back send nothing.
-            f.vm.submitChannelEdit("B channel", "B prompt", muted = false)
+            f.channelController.submit("B channel", "B prompt", muted = false)
             runCurrent()
             assertNull(f.channelEditor())
-            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
+            f.openChannelEditor(HostConversationTarget("host", "same"))
             runCurrent()
-            f.vm.dismissChannelEditor()
+            f.channelController.dismiss()
             runCurrent()
             assertTrue(f.mutes().isEmpty())
 
             // A flipped value: one write to the editor's own host, then the modal closes.
-            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
+            f.openChannelEditor(HostConversationTarget("host", "same"))
             runCurrent()
-            f.vm.submitChannelEdit("B channel", "B prompt", muted = true)
+            f.channelController.submit("B channel", "B prompt", muted = true)
             runCurrent()
             assertEquals(listOf("same" to true), f.b.repo.mutes)
             assertTrue(
@@ -2883,9 +2614,9 @@ class HostChannelListViewModelTest {
             )
             assertNull(f.channelEditor())
 
-            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
+            f.openChannelEditor(HostConversationTarget("Host", "same"))
             runCurrent()
-            f.vm.submitChannelEdit("A channel", "  A prompt\n", muted = false)
+            f.channelController.submit("A channel", "  A prompt\n", muted = false)
             runCurrent()
             assertEquals(listOf("same" to false), f.a.repo.mutes)
             assertTrue(f.channelRenames().isEmpty() && f.promptWrites().isEmpty())
@@ -2898,27 +2629,27 @@ class HostChannelListViewModelTest {
             val f = fixture()
             f.seedCollidingChannelEditors()
             backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
-            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
+            f.openChannelEditor(HostConversationTarget("Host", "same"))
             runCurrent()
             val read = ChannelPromptReading.Read("  A prompt\n", SessionPromptStatus.Matches)
 
             // The rename lands, the mute write fails: open, holding the confirmed name, nothing else sent.
             f.a.repo.muteFailures = 1
-            f.vm.submitChannelEdit("Renamed", "New prompt", muted = true)
+            f.channelController.submit("Renamed", "New prompt", muted = true)
             runCurrent()
             assertEquals(ChannelEditorState("Host", "same", "Renamed", read, failed = true), f.channelEditor())
             assertTrue(f.mutes().isEmpty() && f.promptWrites().isEmpty())
 
             // The mute lands, the prompt write fails: the confirmed flag is recorded.
             f.a.repo.promptFailures = 1
-            f.vm.submitChannelEdit("Renamed", "New prompt", muted = true)
+            f.channelController.submit("Renamed", "New prompt", muted = true)
             runCurrent()
             assertEquals(ChannelEditorState("Host", "same", "Renamed", read, failed = true, savedMuted = true), f.channelEditor())
             assertEquals(listOf("same" to true), f.a.repo.mutes)
             assertTrue(f.promptWrites().isEmpty())
 
             // OK retries only the prompt.
-            f.vm.submitChannelEdit("Renamed", "New prompt", muted = true)
+            f.channelController.submit("Renamed", "New prompt", muted = true)
             runCurrent()
             assertNull(f.channelEditor())
             assertEquals(listOf("same" to "Renamed"), f.a.repo.renames)
@@ -2951,17 +2682,17 @@ class HostChannelListViewModelTest {
             f.a.repo.promptReadGate = gate
 
             // Still reading: the name saves, and whatever the modal sent as a prompt is not written.
-            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
+            f.openChannelEditor(HostConversationTarget("Host", "same"))
             runCurrent()
-            f.vm.submitChannelEdit("Renamed", "typed over nothing")
+            f.channelController.submit("Renamed", "typed over nothing", muted = null)
             runCurrent()
             assertEquals(listOf("same" to "Renamed"), f.a.repo.renames)
             assertNull(f.channelEditor())
 
             // Still reading: archive works.
-            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
+            f.openChannelEditor(HostConversationTarget("Host", "same"))
             runCurrent()
-            f.vm.archiveChannel()
+            f.channelController.archive()
             runCurrent()
             assertEquals(listOf("same"), f.a.repo.archives)
             assertNull(f.channelEditor())
@@ -2972,10 +2703,10 @@ class HostChannelListViewModelTest {
 
             // A failed read: the name saves, no prompt is written.
             f.b.repo.promptReadFailures = 1
-            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
+            f.openChannelEditor(HostConversationTarget("host", "same"))
             runCurrent()
             assertEquals(ChannelPromptReading.Unavailable, f.channelEditor()?.prompt)
-            f.vm.submitChannelEdit("B renamed", "")
+            f.channelController.submit("B renamed", "", muted = null)
             runCurrent()
             assertEquals(listOf("same" to "B renamed"), f.b.repo.renames)
             assertTrue(f.promptWrites().isEmpty())
@@ -2988,11 +2719,11 @@ class HostChannelListViewModelTest {
             val f = fixture()
             f.seedCollidingChannelEditors()
             backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
-            f.vm.openChannelEditor(HostConversationTarget("host", "same"))
+            f.openChannelEditor(HostConversationTarget("host", "same"))
             runCurrent()
 
             f.b.repo.failure = IllegalStateException("archive secret")
-            f.vm.archiveChannel()
+            f.channelController.archive()
             runCurrent()
             assertTrue(requireNotNull(f.channelEditor()).archiveFailed)
             assertTrue(
@@ -3001,7 +2732,7 @@ class HostChannelListViewModelTest {
             )
 
             f.b.repo.failure = null
-            f.vm.archiveChannel()
+            f.channelController.archive()
             runCurrent()
             assertEquals(listOf("same"), f.b.repo.archives)
             assertTrue(
@@ -3041,36 +2772,36 @@ class HostChannelListViewModelTest {
             backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
 
             // No open modal: nothing to send.
-            f.vm.submitChannelEdit("Orphan", null)
-            f.vm.archiveChannel()
+            f.channelController.submit("Orphan", null, muted = null)
+            f.channelController.archive()
             runCurrent()
 
             // Lost between the last status and the press: static flags, nothing sent.
-            f.vm.openChannelEditor(HostConversationTarget("Host", "same"))
+            f.openChannelEditor(HostConversationTarget("Host", "same"))
             runCurrent()
             f.a.available = false
-            f.vm.submitChannelEdit("Named", null)
+            f.channelController.submit("Named", null, muted = null)
             assertTrue(requireNotNull(f.channelEditor()).failed)
-            f.vm.archiveChannel()
+            f.channelController.archive()
             assertTrue(requireNotNull(f.channelEditor()).archiveFailed)
             f.a.available = true
 
             // A blank name or a prompt over the byte limit is ignored outright.
             val open = f.channelEditor()
-            f.vm.submitChannelEdit("   ", null)
-            f.vm.submitChannelEdit("Named", "é".repeat(SystemPromptLimit.MAX_BYTES / 2 + 1))
+            f.channelController.submit("   ", null, muted = null)
+            f.channelController.submit("Named", "é".repeat(SystemPromptLimit.MAX_BYTES / 2 + 1), muted = null)
             runCurrent()
             assertEquals(open, f.channelEditor())
 
             // A second OK mid-write is ignored, and a result landing after a dismissal cannot reopen.
             val gate = CompletableDeferred<Unit>()
             f.a.repo.renameGate = gate
-            f.vm.submitChannelEdit("Late", null)
-            f.vm.submitChannelEdit("Twice", null)
-            f.vm.archiveChannel()
+            f.channelController.submit("Late", null, muted = null)
+            f.channelController.submit("Twice", null, muted = null)
+            f.channelController.archive()
             runCurrent()
             assertTrue(requireNotNull(f.channelEditor()).saving)
-            f.vm.dismissChannelEditor()
+            f.channelController.dismiss()
             gate.complete(Unit)
             runCurrent()
             assertNull(f.channelEditor())
@@ -3203,6 +2934,34 @@ class HostChannelListViewModelTest {
                 },
             )
         val vm = app.koin.get<ChannelListViewModel>()
+
+        // Direct controller regression harness: list ownership is being retired, but its
+        // colliding-host repositories still expose wrong-host reads and writes.
+        val channelController =
+            ChannelEditorController(
+                scope = vm.viewModelScope,
+                isHostLive = { id ->
+                    source.snapshots.value.any { snapshot ->
+                        snapshot.serverId == id &&
+                            snapshot.connectionStatus == ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
+                    }
+                },
+                repositoryFor = source::repositoryFor,
+                awaitRepository = { id ->
+                    source.snapshots
+                        .map { source.repositoryFor(id) }
+                        .filterNotNull()
+                        .first()
+                },
+            )
+        val controllerState = channelController.state.stateIn(vm.viewModelScope, SharingStarted.Eagerly, null)
+
+        fun openChannelEditor(target: HostConversationTarget) {
+            val host = listOf(a, b).single { it.entry.serverId == target.serverId }
+            val channel = requireNotNull(host.repo.rows.value).single { it.id == target.conversationId }
+            channelController.open(target, channel.name, channel.muted)
+        }
+
         val nav = mutableListOf<HostConversationTarget>()
     }
 
