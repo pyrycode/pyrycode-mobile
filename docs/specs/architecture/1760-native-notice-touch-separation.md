@@ -27,3 +27,10 @@ Strengthen the existing named shared regression with physical center and facing-
 - 2026-10-05: Reading `ThreadAttentionNoticeTest.assertExpandedTarget` exposed an existing contract for dismiss taps at the usage surface's top edge. Keep the usage dismiss minimum at 36dp and disable the vertical minimum only for Re-pair. Re-pair uses its measured visible surface height, so it has no upward expansion; usage's centered 8dp X inside at least 8dp vertical padding can extend by at most 10dp beyond that surface, leaving separation within the 12dp gap. Horizontal minimum width remains inherited. This preserves existing dismiss usability and removes the assumption that both visible pills measure 24dp.
 
 - 2026-10-05: The native red run executed the named method and failed on its expanded Re-pair facing edge (one callback instead of two). Current main already includes #1757's line-height repair, so the old 3.5px overlap no longer reproduced here, but the fixed target still advertises a clipped, untappable area. The correction aligns Re-pair's advertised vertical bounds with its actual surface. Dismiss facing-edge taps stay inside the usage Surface clip, as the existing attention regression requires.
+
+## Documentation handoff
+
+Pending for the documentation stage, as requested by PR #1815's verifier:
+
+- `docs/knowledge/features/thread-top-overlay.md` and `notice-pill.md`: document Re-pair's measured-height vertical target, retained 36dp usage-dismiss minimum, inherited horizontal width and 12dp visible gap.
+- Those topics' testing sections: record the physical center/edge regression, native/JVM commands, counts and retained XML; explain the usage Surface clip and why the native red after #1757 proved an untappable advertised Re-pair edge.
