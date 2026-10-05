@@ -1,0 +1,18 @@
+Ticket #1747, enlarged Offline Retry target rework, 2026-10-05.
+Visible Offline and action target remain top-right aligned. Retry encloses the measured pill with a 144x48dp minimum, preserving the 12dp visible gap and isolation from following inert errors.
+
+Test-first red command: ./gradlew testDebugUnitTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest.enlargedOfflinePill_isEnclosedByRetry_andItsLeftEdgeReceivesPointerTaps --console=plain
+Exit 1: one executed, one failed. The physical tap on the formerly exposed left edge expected one Retry callback but observed zero. XML: transient-errors-1747-enlarged-retry-red-results.xml.
+
+Final focused JVM command: ./gradlew testDebugUnitTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest --console=plain
+Exit 0: 22 passed, 0 failures/errors, 1 known skip (23 selected). XML: transient-errors-1747-enlarged-retry-unit-results.xml.
+
+Final device/build command: ./gradlew lint assembleDebug compileDebugAndroidTestKotlin :app:pixel2Api33AtdDebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest,de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest' -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain
+Exit 0: lint/build/test compilation passed; 22 device tests passed, 0 failures/errors, 1 known skip (23 selected in XML). XML: transient-errors-1747-enlarged-retry-device-results.xml.
+Native JVM and device runs cover the 412x892, 2x-font-scale enlarged Offline pill's physical left-edge tap, measured enclosure, minimum target height, 12dp visible gap, inert transient tap and bottom-edge Retry tap. Existing normal-size Offline/transient expiry and persistent actions passed.
+Known skip: ThreadTopOverlayTest.theUsagePill_sitsAboveThePairingPill_whichStartsRePair, blocked on #1760; not counted as a pass.
+
+./gradlew spotlessApply spotlessCheck --rerun-tasks --console=plain: exit 0. bash scripts/docs-guard.sh: exit 0.
+Requested failure and reader-error captures contain no Offline notice; retained PNGs, comparisons, inset/viewport metadata and capture XML are unchanged. See transient-errors-1747-evidence.txt and transient-errors-1747-rework-evidence.txt for preceding capture and reader-fixture evidence. Documentation handoff remains pending, including excluded Saved and dismissed-elsewhere discrepancies.
+
+python3 scripts/android-test-gate.py scripted offline-retry: exit 0; 1 passed, 0 failures/errors/skips. Fresh XML confirms interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply executed. XML: transient-errors-1747-enlarged-retry-scripted-results.xml. Device lease became available after 298s; this run executed normally.

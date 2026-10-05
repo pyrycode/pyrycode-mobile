@@ -111,6 +111,14 @@ above it that the live side also holds, and only goes in front when it has no su
 older rows a reconnect's newest page does not reach, or a page that does not overlap the cache at
 all. Several cache-only rows sharing one anchor keep their cached relative order.
 
+Since #1786 both merges share one reconciliation. A cache-only row can also go between two shared rows,
+and cache-only assistant text merges per `(turnId, seq)` delta, so a restored reply missing a middle or
+suffix sequence gains only the missing text, on the correct side of tool and user rows. A legacy whole-turn
+row written before segments existed dedupes only text it demonstrably contains and keeps distinct text.
+Restored rows carry no daemon log ids, so placement uses shared neighbours and then timestamps, and live
+rows are never sorted. The lookup stays key-indexed on large threads. The fixed connection merge base and
+the deliberate-removal suppression below are unchanged, so a removed live row is not resurrected.
+
 `BackgroundTaskLifecycle` (#1782) is also retained in the last-drawn **in-memory** base at a
 connection boundary, although disk restore never supplies it. Reconnect backfills missing launch
 fields and retains one launch/finish identity per conversation/task without moving held markers.
