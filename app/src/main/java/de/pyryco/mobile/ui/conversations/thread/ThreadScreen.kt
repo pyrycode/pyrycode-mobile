@@ -366,11 +366,12 @@ fun ThreadScreen(
     LaunchedEffect(markdownOpenFailures, errorNotices) {
         markdownOpenFailures.collect { errorNotices.enqueue(this, resources.getString(AttachmentNotice.OPEN_FAILED.message)) }
     }
-    // #934: a pasted image joins the chat's strip through the same sink as a picked one.
+    // #934: a pasted image joins the chat's strip through the same sink as a picked one. A refused
+    // paste or keyboard insertion queues its Error pill like any other attachment failure (#1747).
     val onImagesPasted =
         key(state.conversationId) {
             rememberPastedImageReceiver(onAttachmentsPicked) { failure ->
-                noticeScope.launch { snackbarHostState.showSnackbar(failure.text(resources)) }
+                errorNotices.enqueue(noticeScope, failure.text(resources))
             }
         }
     // #808: the footer's open option overlay. Plain `remember`, keyed on the conversation, and never
