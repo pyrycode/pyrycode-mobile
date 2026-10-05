@@ -54,3 +54,7 @@ None. If the device exposes a different system-menu locator, record the verified
 ## Documentation handoff
 
 Pending documentation stage: update `docs/e2e-interactive-stream.md`, section "What rung 3 is made of", with the scenario, live method and deterministic twin. Document running `python3 scripts/android-test-gate.py scripted selection-copy` and record counted deterministic evidence and dispatcher-produced full live evidence. Documentation records that evidence rather than obtaining it.
+
+## Revisions
+
+- 2026-10-05: The first executed device run failed because Espresso's default root searched the activity window rather than the floating toolbar. Target the platform popup root explicitly for the actual system Copy item; retain the pointer gesture and platform clipboard assertion.

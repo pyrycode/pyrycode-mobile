@@ -13,6 +13,7 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.matcher.RootMatchers.isPlatformPopup
 import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.model.Role
@@ -77,7 +78,9 @@ internal fun ComposeTestRule.assertFinishedReplySystemCopy(
     body.performTouchInput { longClick(press) }
     waitForIdle()
     // Espresso addresses the platform toolbar's real view, outside the Compose semantics tree.
-    onView(withText(context.getString(android.R.string.copy))).perform(click())
+    onView(withText(context.getString(android.R.string.copy)))
+        .inRoot(isPlatformPopup())
+        .perform(click())
     runOnIdle {
         val copied =
             clipboard.primaryClip
