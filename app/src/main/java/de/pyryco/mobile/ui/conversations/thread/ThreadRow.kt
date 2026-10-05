@@ -131,7 +131,9 @@ internal fun foldQueuedRows(
         }
     }
 
-    return items.mapIndexed { index, item -> claimed[index] ?: ThreadRow.Delivered(item) } + unmatched
+    return items.mapIndexedNotNull { index, item ->
+        if (item is ThreadItem.BackgroundTaskLifecycle) null else claimed[index] ?: ThreadRow.Delivered(item)
+    } + unmatched
 }
 
 /**
@@ -221,6 +223,7 @@ private fun ThreadItem.listKey(): String =
         is ThreadItem.CompactionBoundary -> "compaction:$occurredAt"
         // The frame type and the daemon's per-refusal ts, which both thread writers dedup on (`holdsModelRefusal`, #875).
         is ThreadItem.ModelRefusal -> if (fallbackModel != null) "refusal:fallback:$occurredAt" else "refusal:no-fallback:$occurredAt"
+        is ThreadItem.BackgroundTaskLifecycle -> "background-task:${terminal != null}:$taskId"
         // The turn id, which both thread writers dedup a stopped row on (`holdsStoppedTurn`, #1356). It is the
         // key's whole tail, so no separator inside it can make two ids spell one key.
         is ThreadItem.StoppedTurn -> "stopped:$turnId"

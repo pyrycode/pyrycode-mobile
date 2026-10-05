@@ -39,6 +39,8 @@ import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.model.ToolDenial
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
+import de.pyryco.mobile.data.network.BackgroundTaskStartedPayloadDto
+import de.pyryco.mobile.data.network.BackgroundTaskUpdatedPayloadDto
 import de.pyryco.mobile.data.network.BannerPayloadDto
 import de.pyryco.mobile.data.network.CompactingPayloadDto
 import de.pyryco.mobile.data.network.CompactionBoundaryPayloadDto
@@ -63,6 +65,8 @@ import de.pyryco.mobile.data.network.toEvent
 import de.pyryco.mobile.data.network.toMessage
 import de.pyryco.mobile.data.network.toRow
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_ASSISTANT_DELTA
+import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_BACKGROUND_TASK_STARTED
+import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_BACKGROUND_TASK_UPDATED
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_BANNER
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_COMPACTING
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_COMPACTION_BOUNDARY
@@ -269,7 +273,11 @@ internal fun List<ThreadItem>.withAssistantDelta(
 ): List<ThreadItem> {
     if (event.seq <= highestSeqOf(event.turnId)) return this
     val delta = SegmentDelta(event.seq, event.text.length)
-    val anchor = indexOfLast { row -> !(row is ThreadItem.MessageItem && row.message.role == Role.User && row.message.id in passOver) }
+    val anchor =
+        indexOfLast { row ->
+            row !is ThreadItem.BackgroundTaskLifecycle &&
+                !(row is ThreadItem.MessageItem && row.message.role == Role.User && row.message.id in passOver)
+        }
     val last = (getOrNull(anchor) as? ThreadItem.MessageItem)?.message
     val segment = last?.segment
     if (last != null && last.role == Role.Assistant && segment?.turnId == event.turnId) {
@@ -356,10 +364,11 @@ internal fun List<ThreadItem>.withSettledTurns(turnIds: Set<String>): List<Threa
  * thread's newest segment can draw as in progress. Returns this very list when nothing changes.
  */
 internal fun List<ThreadItem>.withOnlyLastRowStreaming(): List<ThreadItem> {
-    val stale = withIndex().any { (index, row) -> index != lastIndex && row is ThreadItem.MessageItem && row.message.isStreaming }
+    val lastVisible = indexOfLast { it !is ThreadItem.BackgroundTaskLifecycle }
+    val stale = withIndex().any { (index, row) -> index != lastVisible && row is ThreadItem.MessageItem && row.message.isStreaming }
     if (!stale) return this
     return mapIndexed { index, row ->
-        if (index != lastIndex && row is ThreadItem.MessageItem && row.message.isStreaming) {
+        if (index != lastVisible && row is ThreadItem.MessageItem && row.message.isStreaming) {
             ThreadItem.MessageItem(row.message.copy(isStreaming = false))
         } else {
             row
@@ -564,6 +573,25 @@ private fun List<ThreadItem>.withHistoryEntry(
                         else -> this
                     }
                 }
+            // Invisible lifecycle evidence follows the same interactive gate as its live twin.
+            TYPE_BACKGROUND_TASK_STARTED ->
+                if (!interactive) {
+                    this
+                } else {
+                    withBackgroundTaskStarted(
+                        MobileJson.decodeFromJsonElement<BackgroundTaskStartedPayloadDto>(entry.payload),
+                        entry.timestamp,
+                    )
+                }
+            TYPE_BACKGROUND_TASK_UPDATED ->
+                if (!interactive) {
+                    this
+                } else {
+                    withBackgroundTaskUpdated(
+                        MobileJson.decodeFromJsonElement<BackgroundTaskUpdatedPayloadDto>(entry.payload),
+                        entry.timestamp,
+                    )
+                }
             // Not a live event (#811), so it has its own arm rather than a `decodeLiveEvent` case.
             TYPE_TOOL_DENIED ->
                 if (!interactive) {
@@ -730,6 +758,9 @@ private fun historyRowId(entryId: Long): String = "history-$entryId"
  * will finish the row itself; updating in place would also break the existing rows' relative order. The
  * one exception is an attachment reference's missing hints, which a skipped twin fills without moving
  * anything (#983, see [withAttachmentHintsFrom]).
+ * Lifecycle twins also fill missing launch hints in place. Fresh lifecycle evidence uses the page's
+ * preceding retained neighbour as an anchor, since ordinary backfill can already hold both sides of a
+ * launch or finish without holding the marker itself. Existing rows keep their relative order.
  *
  * Never joins a [HistoryEntry.id] to an `event_id` — they are different sequences that both look like
  * small integers, and neither appears here at all.
@@ -746,8 +777,54 @@ internal fun List<ThreadItem>.mergeHistoryRows(rows: List<ThreadItem>): List<Thr
     if (rows.isEmpty()) return this
     val heads = segmentHeads()
     val fresh = rows.filterNot { alreadyHolds(it) }.mapNotNull { it.olderThan(heads) }
-    val kept = withAttachmentHintsFrom(rows)
-    return if (fresh.isEmpty()) kept else (fresh + kept).withoutSegmentsOfWholeTurns().withJoinedSegments()
+    val kept = withAttachmentHintsFrom(rows).withBackgroundTaskHintsFrom(rows)
+    if (fresh.isEmpty()) return kept.withBackgroundTaskLaunches()
+    val ordinary = fresh.filterNot { it is ThreadItem.BackgroundTaskLifecycle }
+    return (ordinary + kept)
+        .withHistoryLifecyclePositions(rows, fresh.filterIsInstance<ThreadItem.BackgroundTaskLifecycle>())
+        .withoutSegmentsOfWholeTurns()
+        .withJoinedSegments()
+        .withBackgroundTaskLaunches()
+}
+
+/** Insert fresh history or reconnect evidence beside its neighbours; held markers never move on replay. */
+private fun List<ThreadItem>.withHistoryLifecyclePositions(
+    page: List<ThreadItem>,
+    fresh: List<ThreadItem.BackgroundTaskLifecycle>,
+): List<ThreadItem> {
+    if (fresh.isEmpty()) return this
+    // Anchor against the rows that survive: a segment a whole-turn row supersedes must not hold evidence.
+    val base = withoutSegmentsOfWholeTurns()
+    val pending = fresh.mapTo(mutableSetOf()) { it.joinIdentity() }
+    val anchors = ThreadRowAnchors(base)
+    // Slot i precedes row i. Leading evidence waits for the page's first retained neighbour.
+    val slots = mutableMapOf<Int, MutableList<ThreadItem>>()
+    val leading = mutableListOf<ThreadItem>()
+    var slot: Int? = null
+    for (row in page) {
+        val identity = row.joinIdentity()
+        if (row is ThreadItem.BackgroundTaskLifecycle && pending.remove(identity)) {
+            val after = slot
+            if (after == null) leading += row else slots.getOrPut(after) { mutableListOf() } += row
+        } else {
+            anchors.position(row)?.let { position ->
+                if (leading.isNotEmpty()) {
+                    slots.getOrPut(position.first) { mutableListOf() }.addAll(leading)
+                    leading.clear()
+                }
+                // Fresh ordinary rows prepend; they cannot pull later evidence behind a held anchor.
+                slot = maxOf(slot ?: 0, position.last + 1)
+            }
+        }
+    }
+    if (leading.isNotEmpty()) slots.getOrPut(0) { mutableListOf() }.addAll(leading)
+    return buildList {
+        base.forEachIndexed { index, row ->
+            slots[index]?.let(::addAll)
+            add(row)
+        }
+        slots[base.size]?.let(::addAll)
+    }
 }
 
 /**
@@ -774,32 +851,92 @@ internal fun List<ThreadItem>.mergeHistoryRows(rows: List<ThreadItem>): List<Thr
  */
 internal fun List<ThreadItem>.mergeCachedRows(cached: List<ThreadItem>): List<ThreadItem> {
     if (cached.isEmpty()) return this
-    val kept = withAttachmentHintsFrom(cached)
+    val kept = withAttachmentHintsFrom(cached).withBackgroundTaskHintsFrom(cached)
     val heads = segmentHeads()
     // Built once so the merge stays linear in the cached base, which holds a thread's whole history (#1353).
-    val heldAt = HashMap<Any, Int>(size)
-    forEachIndexed { index, row -> heldAt.putIfAbsent(row.joinIdentity(), index) }
+    val anchors = ThreadRowAnchors(this)
     // Slot i is in front of this thread's row i; slot size is after its last row.
     val slots = mutableMapOf<Int, MutableList<ThreadItem>>()
+    val lifecycle = mutableListOf<ThreadItem.BackgroundTaskLifecycle>()
     var slot = 0
     for (row in cached) {
-        val held = heldAt[row.joinIdentity()] ?: -1
-        if (held >= 0) {
-            slot = held + 1
+        val position = anchors.position(row)
+        if (anchors.holdsIdentity(row)) {
+            if (position != null) slot = position.last + 1
             continue
         }
-        val older = row.olderThan(heads) ?: continue
-        val ceiling = (older as? ThreadItem.MessageItem)?.message?.segment?.let { heads[it.turnId]?.index } ?: slot
-        slots.getOrPut(minOf(slot, ceiling)) { mutableListOf() } += older
-    }
-    if (slots.isEmpty()) return kept
-    return buildList {
-        kept.forEachIndexed { index, row ->
-            slots[index]?.let(::addAll)
-            add(row)
+        if (row is ThreadItem.BackgroundTaskLifecycle) {
+            lifecycle += row
+            continue
         }
-        slots[kept.size]?.let(::addAll)
-    }.withoutSegmentsOfWholeTurns().withJoinedSegments()
+        val older = row.olderThan(heads)
+        if (older != null) {
+            val ceiling = (older as? ThreadItem.MessageItem)?.message?.segment?.let { heads[it.turnId]?.index } ?: slot
+            slots.getOrPut(minOf(slot, ceiling)) { mutableListOf() } += older
+        }
+        // Even discarded text anchors following evidence when the lanes split segments differently.
+        if (position != null) slot = position.last + 1
+    }
+    if (slots.isEmpty() && lifecycle.isEmpty()) return kept.withBackgroundTaskLaunches()
+    val ordinary =
+        buildList {
+            kept.forEachIndexed { index, row ->
+                slots[index]?.let(::addAll)
+                add(row)
+            }
+            slots[kept.size]?.let(::addAll)
+        }
+    return ordinary
+        .withHistoryLifecyclePositions(cached, lifecycle)
+        .withoutSegmentsOfWholeTurns()
+        .withJoinedSegments()
+        .withBackgroundTaskLaunches()
+}
+
+/**
+ * Row anchors shared by history and reconnect, including assistant overlap with different segment ids and
+ * segments of a turn a whole-turn row holds.
+ */
+private class ThreadRowAnchors(
+    rows: List<ThreadItem>,
+) {
+    private val identities = HashMap<Any, Int>(rows.size)
+    private val sequences = HashMap<String, MutableMap<Int, Int>>()
+    private val wholeTurns = HashMap<String, Int>()
+
+    init {
+        rows.forEachIndexed { index, row ->
+            identities.putIfAbsent(row.joinIdentity(), index)
+            val message = (row as? ThreadItem.MessageItem)?.message
+            if (message?.role == Role.Assistant && message.segment == null) wholeTurns.putIfAbsent(message.id, index)
+            val segment = message?.segment
+            if (segment != null) {
+                val turn = sequences.getOrPut(segment.turnId) { HashMap() }
+                segment.deltas.forEach { turn.putIfAbsent(it.seq, index) }
+            }
+        }
+    }
+
+    fun holdsIdentity(row: ThreadItem): Boolean = row.joinIdentity() in identities
+
+    /** First and last retained neighbours represented by this row; text never participates in the join. */
+    fun position(row: ThreadItem): IntRange? {
+        val segment = (row as? ThreadItem.MessageItem)?.message?.segment
+        // A whole-turn row holds every segment of its turn, as [withoutSegmentsOfWholeTurns] decides.
+        segment?.let { wholeTurns[it.turnId] }?.let { return it..it }
+        val turn = segment?.let { sequences[it.turnId] }
+        if (segment != null && turn != null) {
+            var first = Int.MAX_VALUE
+            var last = -1
+            for (delta in segment.deltas) {
+                val index = turn[delta.seq] ?: continue
+                first = minOf(first, index)
+                last = maxOf(last, index)
+            }
+            if (last >= 0) return first..last
+        }
+        return identities[row.joinIdentity()]?.let { it..it }
+    }
 }
 
 /** Where a turn's text starts in a thread (#1350): the lowest `seq` its segments hold, and its first segment's row index. */
@@ -876,15 +1013,21 @@ private fun List<ThreadItem>.withoutSegmentsOfWholeTurns(): List<ThreadItem> {
 private fun List<ThreadItem>.withJoinedSegments(): List<ThreadItem> {
     var joined = false
     val out = ArrayList<ThreadItem>(size)
+    var lastVisible = -1
     for (row in this) {
-        val older = (out.lastOrNull() as? ThreadItem.MessageItem)?.message
+        if (row is ThreadItem.BackgroundTaskLifecycle) {
+            out += row
+            continue
+        }
+        val older = (out.getOrNull(lastVisible) as? ThreadItem.MessageItem)?.message
         val newer = (row as? ThreadItem.MessageItem)?.message
         val merged = if (older != null && newer != null) joinSegments(older, newer) else null
         if (merged != null) {
-            out[out.lastIndex] = ThreadItem.MessageItem(merged)
+            out[lastVisible] = ThreadItem.MessageItem(merged)
             joined = true
         } else {
             out += row
+            lastVisible = out.lastIndex
         }
     }
     return if (joined) out else this
@@ -961,6 +1104,7 @@ private fun MessageAttachment.withHintsFrom(twin: List<MessageAttachment>): Mess
 
 private fun List<ThreadItem>.alreadyHolds(row: ThreadItem): Boolean =
     when (row) {
+        is ThreadItem.BackgroundTaskLifecycle -> any { it is ThreadItem.BackgroundTaskLifecycle && it.samePosition(row) }
         is ThreadItem.MessageItem -> any { it is ThreadItem.MessageItem && it.message.id == row.message.id }
         is ThreadItem.SessionBoundary -> holdsBoundary(row)
         is ThreadItem.UnrecognizedMessage -> holdsUnrecognized(row.id)
@@ -976,6 +1120,7 @@ private fun List<ThreadItem>.alreadyHolds(row: ThreadItem): Boolean =
  */
 private fun ThreadItem.joinIdentity(): Any =
     when (this) {
+        is ThreadItem.BackgroundTaskLifecycle -> listOf("background-task", taskId, terminal != null)
         is ThreadItem.MessageItem -> listOf("message", message.id)
         is ThreadItem.SessionBoundary -> listOf("boundary", previousSessionId, newSessionId, occurredAt)
         is ThreadItem.UnrecognizedMessage -> listOf("unrecognized", id)
