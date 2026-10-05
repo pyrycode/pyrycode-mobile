@@ -81,6 +81,16 @@ internal fun ComposeTestRule.assertFinishedReplySystemCopy(
     onView(withText(context.getString(android.R.string.copy)))
         .inRoot(isPlatformPopup())
         .perform(click())
+    // The platform action hands copying to Compose's suspend clipboard path. UI idleness alone
+    // does not prove that the clipboard write has finished; wait for its independently known result.
+    waitUntil("system Copy replaces the unrelated baseline with the selected word", timeoutMillis) {
+        runOnIdle {
+            clipboard.primaryClip
+                ?.getItemAt(0)
+                ?.text
+                ?.toString() == word
+        }
+    }
     runOnIdle {
         val copied =
             clipboard.primaryClip
