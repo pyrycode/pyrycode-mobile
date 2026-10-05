@@ -1748,7 +1748,7 @@ python3 scripts/android-test-gate.py live
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the current selector has 53 runnable `@Test` methods. The historical
+incantation to remember — the current selector has 54 runnable `@Test` methods. The historical
 inventory below describes the pre-#1193 forty-four-method set; ignored methods are excluded from
 the current selector as described under the model and effort settings round trip. It covered ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
@@ -1868,7 +1868,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of 44 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of 54 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -1909,7 +1909,31 @@ identity test or scripted reconnect cannot prove FCM delivery; #1698's repaired-
 also separate from candidate acceptance. See [Verification status](#verification-status) for the
 candidate result and its unrelated focused rerun.
 
-**What it runs.** The current curated selector passes 44 runnable methods as a comma-separated
+**Send now coverage (#1642).**
+`InteractiveStreamE2ETest.interactiveTurn_sendQueuedNow_reachesRunningTurn` is in the curated
+rung-3 suite. With a harness-owned held Bash call, it queues a marker through the phone and
+taps Send now during the tool, then proves backlog clearing, exactly one delivered user row
+after the tool result, and the original turn's final marker reply. The rung-4 twin is
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_sendQueuedNow_placesAfterToolResult`
+(`send-now` scripted scenario). Late peer-delivery placement requires the daemon's optional
+`sent_now` delivery flag, supplied by pyrycode#2748 / v0.31.2.
+
+The dispatcher's 2026-10-04 full live run used
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`, branch
+`feature/1642` at `08536d2277`, merged with `origin/main` at `c7eb3ca79f`.
+Its XML reports **54 executed, 53 passed, 1 failed, 0 skipped**; the named Send now method
+is present and passed without failure/error/skip. This was a full-suite result, not a separate
+focused Send now run. The report is
+`2026-10-04T19-17-49-064Z_real-claude-gate_#1642.log` in the dispatcher repository's `logs/`.
+The [initial gate report](https://github.com/pyrycode/pyrycode-mobile/issues/1642#issuecomment-5983893367)
+failed on `interactiveTurn_questionAnswer_reachesTheAskingConversation`.
+The [operator disposition on 2026-10-05](https://github.com/pyrycode/pyrycode-mobile/issues/1642#issuecomment-5987961154)
+records the same lost-answer failure in three unchanged-main focused runs and the #1753
+main-only base run, identifies daemon bug pyrycode#2785, and clears the live gate for documentation.
+The full suite retains its one failure; manual USB evidence and the Android 16 driver failure
+above are separate from this automated named pass.
+
+**What it runs.** The current curated selector passes 54 runnable methods as a comma-separated
 `class#method` list. Its source of truth is `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET`, checked
 against `LIVE_MINIMUM` in `scripts/android-test-gate.py`. The #481
 `InteractiveStreamE2ETest#interactiveTurn_toolPrompt_rendersToolStepInThread` now rides this full
@@ -3533,6 +3557,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Send now — shipped coverage (#1642):**
+  `InteractiveStreamE2ETest.interactiveTurn_sendQueuedNow_reachesRunningTurn` and
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_sendQueuedNow_placesAfterToolResult`
+  cover delivery after a held tool. Full-suite counts, the named pass and the operator's
+  unrelated-failure disposition are recorded under [Live mode](#live-mode-rung-3-live-relay).
+  #1655 retains the first-confirmation-after-next-turn ordering gap; daemon pyrycode#2785
+  owns the lost question-answer failure. Queue-removal-only assertions cannot prove delivery placement.
+
 
 - #1666 retains `InteractiveStreamE2ETest.interactiveTurn_newSession_rendersSessionBoundaryDelimiter`
   (#541) and its `CD_MORE_ACTIONS` selector, now reaching Reset session through the shared header
