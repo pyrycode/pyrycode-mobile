@@ -22,6 +22,16 @@ owning `serverId` and the host-local `conversationId`.
 
 [#382](../codebase/382.md) had added a tenth route, `literal_screen/{serverId}/{conversationId}`, rendering a `LiteralScreenSurface` reached from the thread overflow menu and the stall promotion banner. [#883](../../specs/architecture/883-retire-literal-screen.md) removed the route, its destination ViewModel and both entry points once the daemon dropped the server-side screen-snapshot render path; the graph is back to nine routes.
 
+Other-conversation [attention pills](thread-top-overlay.md#the-attention-pill-1735) use
+`openAttentionTarget`: single Waiting and Finished pills retain a typed `HostConversationTarget`
+and call the existing `openThread` route for that exact host/conversation pair. Equal ids on another
+host remain distinct; display names never choose the destination. The count pill has no target and
+returns to `CHANNEL_LIST` with `popUpTo(CHANNEL_LIST)` and `launchSingleTop`. Taps only navigate;
+they do not answer a held prompt or send a command. The thread entry's RESUMED lifecycle owns the
+attention subscription and timer, so an older entry covered by another thread cannot collect finishes.
+`ThreadAttentionNavigationTest` exercises production routes, both targets, colliding ids and
+covered/background entry cancellation.
+
 ## How it works
 
 `MainActivity.setContent` uses `produceState<Boolean?>`, keyed by both the injected

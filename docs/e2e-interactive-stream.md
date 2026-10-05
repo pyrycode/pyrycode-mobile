@@ -277,6 +277,18 @@ delimiter positioned between the two cross-session messages, driven through the 
 
 ## What rung 3 is made of
 
+The rung-3 coverage also includes
+`InteractiveStreamE2ETest.interactiveTurn_otherConversationAttentionPills_waitingAndFinished`
+(#1735). With the phone reading A, the existing answer-host peer starts a permission-held real Claude
+turn in B. The scenario asserts B's Waiting pill, taps into B, returns to A while B still waits, then
+lets the peer answer and complete the turn, asserting B's Finished pill and expiry. The scenario
+advances the Compose rule clock by 5,100ms after turn completion before checking expiry: the
+composition-owned delay uses that virtual clock, and wall-clock polling can advance it too slowly
+under full-suite load. It is in the
+curated full live selector. Controlled unit/render tests separately cover aggregation, mute filtering,
+cross-host identity and timer races. No `DeterministicInteractiveStreamE2ETest` twin was added:
+its fixtures lack the answer-host peer and second conversation held on permission.
+
 **Host system prompt (#1775).**
 `InteractiveStreamE2ETest.interactiveTurn_hostSystemPrompt_editsResetsAndCancels` uses the real Edit
 host controls to save custom text, confirm it with a fresh daemon read and reopened preview, reset then
@@ -1810,7 +1822,7 @@ host-prompt handlers. Scripted runs and unrelated live subsets retain their exis
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the current selector has 55 runnable `@Test` methods. The historical
+incantation to remember — the current selector has 56 runnable `@Test` methods. The historical
 inventory below describes the pre-#1193 forty-four-method set; ignored methods are excluded from
 the current selector as described under the model and effort settings round trip. It covered ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
@@ -1930,7 +1942,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of 54 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of 55 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -1995,7 +2007,7 @@ main-only base run, identifies daemon bug pyrycode#2785, and clears the live gat
 The full suite retains its one failure; manual USB evidence and the Android 16 driver failure
 above are separate from this automated named pass.
 
-**What it runs.** The current curated selector passes 54 runnable methods as a comma-separated
+**What it runs.** The current curated selector passes 55 runnable methods as a comma-separated
 `class#method` list. Its source of truth is `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET`, checked
 against `LIVE_MINIMUM` in `scripts/android-test-gate.py`. The #481
 `InteractiveStreamE2ETest#interactiveTurn_toolPrompt_rendersToolStepInThread` now rides this full
@@ -2536,6 +2548,31 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+**Attention pills — named full-suite pass (#1735, 2026-10-05).** The operator ran
+`ANDROID_GATE_WAIT_SECONDS=5400 python3 scripts/android-test-gate.py live` with the dispatcher's
+credential environment on `feature/1735` at `46c65141a0985346536ad07529114e9caae594d8`:
+**56 executed, 55 passed, 1 failed, 0 errors, 0 skipped**, exit 1. The inspected full-suite
+`dispatcher.xml` contains exactly one
+`InteractiveStreamE2ETest.interactiveTurn_otherConversationAttentionPills_waitingAndFinished`
+testcase with no failure, error or skip element: the named method executed and passed in the full
+suite, satisfying #1735's scenario evidence requirement. Daemon revision was
+`a438db4b9146620b74b0f2a305c3e23a2d144d6a`, Claude Code **2.1.280**.
+
+The suite as a whole was not green: its sole failure was
+`interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`, timing out at the peer's held
+permission prompt. The operator attributed this to the existing [#1721 flake](https://github.com/pyrycode/pyrycode-mobile/issues/1721)
+and routed #1735 back to documentation. See the [operator evidence and routing](https://github.com/pyrycode/pyrycode-mobile/issues/1735#issuecomment-5992223755).
+Retained reports live under `logs/claude-operator-1735-evidence/run2-clock-fix/` in the dispatcher
+repository: `dispatcher.xml`, `gate.log` and scenario logcats.
+
+Earlier full-suite runs failed the attention expiry assertion, while a two-method rerun passed.
+The scenario's composition-owned five-second delay uses the Compose rule's virtual clock;
+`waitUntil` advances it one frame per poll, so slow full-suite polling can exceed a real ten-second
+timeout before five virtual seconds elapse. The repaired scenario advances `mainClock` by 5,100ms
+before asserting no pill, no Finished label and no replay on reopening A. Product timing is unchanged.
+The prior scoped-label attempt still failed in the full suite; its diagnostic XML and logcat remain
+under `logs/claude-operator-1735-evidence/run1-scoped-fail/`.
 
 **Current live verification — 2026-10-05 (#1775).** The dispatcher ran the fresh full
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on branch `feature/1775`
@@ -3642,6 +3679,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Other-conversation attention pills (#1735):**
+  `InteractiveStreamE2ETest.interactiveTurn_otherConversationAttentionPills_waitingAndFinished`
+  covers Waiting navigation, return while waiting, peer completion, Finished and expiry. Its
+  named full-suite pass and the suite's unrelated #1721 failure are recorded in
+  [Verification status](#verification-status). Expiry assertions advance the Compose rule's virtual
+  clock explicitly; wall-clock polling alone was load-dependent. No
+  `DeterministicInteractiveStreamE2ETest` twin exists for the live-only answer-host setup;
+  controlled unit/render tests own mute, aggregation, cross-host and timer races.
 
 - **Operator-bypass pairing lifetime (#1756):**
   `InteractiveStreamE2ETest.interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`
