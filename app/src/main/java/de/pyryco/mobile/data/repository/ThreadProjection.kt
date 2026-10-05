@@ -177,6 +177,8 @@ internal class ThreadProjection(
     private data class ProjectionState(
         val threads: Map<String, List<ThreadItem>> = emptyMap(),
         val echoQueues: Map<String, OwnEchoQueue> = emptyMap(),
+        // Connection-local placement evidence, never a live event id or durable coverage marker.
+        val historyOrder: Map<String, Map<Any, Long>> = emptyMap(),
     )
 
     /**
@@ -766,10 +768,9 @@ internal class ThreadProjection(
      * still returned to the caller unchanged: a walking caller needs `cursor` / `atStart` to decide
      * whether to ask again, and #646 owns that decision.
      *
-     * The reduction and the merge both run **inside** the [MutableStateFlow.update] lambda, and that is
-     * load-bearing rather than stylistic: reading the current thread, merging and assigning are one
-     * check-then-act, so hoisting them out would silently lose a concurrent live append every time the
-     * CAS retried. The cost of re-running a pure reduction on a retry is the right trade.
+     * Pure page decoding runs once before the [MutableStateFlow.update]. Reading held rows and their
+     * connection-local daemon order, merging and assigning stay in one atomic update. A CAS retry must
+     * merge against fresh live rows; no decoded page snapshot may replace that current thread.
      *
      * Routes **strictly into [conversationId]'s slice** — the conversation the client asked about — and
      * never reads an entry payload's own `conversation_id`, so a page structurally cannot write into
@@ -794,10 +795,20 @@ internal class ThreadProjection(
     ) {
         if (page.entries.isEmpty()) return
         recordEnded(conversationId, endedTurnIds(page.entries, interactive))
-        updateThreads { current ->
-            val existing = current[conversationId].orEmpty()
-            val merged = existing.mergeHistoryRows(reduceHistoryPage(page.entries, interactive))
-            current + (conversationId to merged.withSettledTurns(endedTurns.value[conversationId].orEmpty()))
+        val rows = reduceHistoryPage(page.entries, interactive)
+        val pageOrder =
+            page.entries
+                .flatMap { entry ->
+                    reduceHistoryPage(listOf(entry), interactive).map { it.mergeIdentity() to entry.id }
+                }.toMap()
+        state.update { current ->
+            val order = pageOrder + current.historyOrder[conversationId].orEmpty()
+            val existing = current.threads[conversationId].orEmpty()
+            val merged = existing.mergeOrderedHistoryRows(rows, order)
+            current.copy(
+                threads = current.threads + (conversationId to merged.withSettledTurns(endedTurns.value[conversationId].orEmpty())),
+                historyOrder = current.historyOrder + (conversationId to order),
+            )
         }
         settleEndedTurns(conversationId)
     }
@@ -833,7 +844,14 @@ internal class ThreadProjection(
     fun remove(conversationId: String) {
         endedTurns.update { it - conversationId }
         compactionFolds.update { it - conversationId }
-        state.update { it.copy(threads = it.threads - conversationId, echoQueues = it.echoQueues - conversationId) }
+        state.update {
+            it.copy(
+                threads = it.threads - conversationId,
+                echoQueues = it.echoQueues - conversationId,
+                historyOrder =
+                    it.historyOrder - conversationId,
+            )
+        }
     }
 
     /**

@@ -6,6 +6,7 @@
 - `app/src/main/java/de/pyryco/mobile/data/repository/ThreadProjection.kt`: `mergeHistoryPage`, `ProjectionState`, `endedTurns` and `remove` own the atomic history/live fold.
 - `app/src/main/java/de/pyryco/mobile/data/repository/CachingConversationRepository.kt`: `observeMessages` retains a fixed connection merge base and rebases only at disconnect.
 - `app/src/main/java/de/pyryco/mobile/data/model/Message.kt`: `AssistantSegment` records delta sequence and text length.
+- `app/src/test/java/de/pyryco/mobile/data/repository/HistoryReconciliationTest.kt`: new decoded-page permutations, mixed live/history order, legacy holes, collisions and real file-cache restore/reconnect.
 - `app/src/test/java/de/pyryco/mobile/data/repository/AssistantSegmentTest.kt`: split-page, live echo, legacy and ended-turn regressions.
 - `app/src/test/java/de/pyryco/mobile/data/repository/HistoryPageReducerTest.kt`: decoded entries, row identities and attachment hints.
 - `app/src/test/java/de/pyryco/mobile/data/repository/CachingConversationRepositoryTest.kt`: real wrapper restore/reconnect and deliberate-removal assertions.
@@ -78,3 +79,13 @@ Pending for the documentation stage:
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-05
+
+## Revisions
+
+### 2026-10-05 — compatibility checks
+
+- Legacy text fully accounted for by known deltas recovers a sequence record, so novel middle text stays between its matching fragments. A focused legacy `bd` plus incoming `b`, `c`, tool, `d` test exposed the need for this. Text already fully represented by held segments leaves their layout intact. Partially matching legacy text replaces only demonstrated matches, and sequence aliases retain neighbours for distinct prefix/suffix text. A legacy row arriving over a suffix without the opener uses the incoming lane's earlier position.
+- Disjoint incoming runs use their earliest timestamp when no logical/log anchor exists, preserving cache-only leading offers even when their individual clocks differ. Daemon ids bound placement among history rows; timestamps can locate held live rows within those bounds.
+- Fully overlapping rows return the hinted receiver without rebuilding its text; legacy matching indexes only turns that actually have a legacy row. Pure page decoding is independent of held state and runs once before the atomic history/live merge.
+- Seam joining builds each text run once with a string builder, avoiding repeated full-prefix concatenation after splitting segments into delta atoms. Ordinary key collisions cannot evict held assistant text.
+- Existing prepend-only assertions now expect a newer boundary/page after older rows, a middle message between shared anchors and a trailing row after its shared predecessor. File-cache reconnect assertions compare persisted content, order, sequences and attachment hints, since transient tool result detail is intentionally omitted on disk.

@@ -188,7 +188,7 @@ class HistoryPageReducerTest {
 
         val merged = live.mergeHistoryRows(cached)
 
-        assertEquals(listOf("older", "before", "sent-1"), merged.messageIds())
+        assertEquals(listOf("before", "sent-1", "older"), merged.messageIds())
         assertEquals(listOf(named, MessageAttachment(ID_B)), merged.messageRow("sent-1")?.attachments)
     }
 
@@ -700,7 +700,7 @@ class HistoryPageReducerTest {
         val merged = live.mergeHistoryRows(later)
 
         assertEquals(2, merged.size)
-        assertEquals(later + live, merged)
+        assertEquals(live + later, merged)
     }
 
     @Test
