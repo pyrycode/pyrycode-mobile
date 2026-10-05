@@ -270,6 +270,21 @@ Both run inside one `mutate` call, holding the instance's single `Mutex` across 
 read-modify-write, so a row write and a position write landing at the same time can never
 interleave and drop each other's half — see § Concurrency below.
 
+`BackgroundTaskLifecycle` (#1782) adds no persisted record or schema version. It survives a
+connection boundary only in the [caching repository's last-drawn in-memory base](caching-conversation-repository.md#how-the-restore-merges-with-live-rows).
+`cacheableThreadRows` excludes it before the row limit and serialization; `toRecord` rejects a marker
+if filtering is bypassed. Render folding, visible row counts and Channel info's creation timestamp
+also exclude it, so retaining lifecycle positions does not change visible placement.
+
+**Trim accounting must use the same exclusions as serialization.** `writeThread` compares the kept
+row count with the pre-limit count of settled rows excluding both `UnrecognizedMessage` and
+`BackgroundTaskLifecycle`. Counting markers there while excluding them from the saved rows would
+mistake any lifecycle evidence for trimming and erase a cursor or completed-history position even
+below the row cap. Dropping invisible evidence is not loss of cached history; only actual row-limit
+trimming invalidates the position. Regression assertions read through a fresh `FileConversationCache`
+instance for both cursor-bearing and `atStart` positions, so an in-memory value cannot conceal a
+wrong disk write.
+
 ### Read positions (#877)
 
 The read-position document is a versioned envelope over an **array**, not an object:
