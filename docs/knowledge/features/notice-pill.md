@@ -38,7 +38,8 @@ A `Surface` (6dp `RoundedCornerShape`, `shadowElevation` for the overlay's drop 
 `Modifier.weight(1f, fill = false)` — so the pill hugs short text and wraps long text while a trailing X
 stays visible — and, when `onDismiss != null`, an 8dp exported close image as its own clickable node
 (`Role.Button`, `contentDescription = R.string.thread_notice_dismiss`, "Dismiss notice"). Compose's minimum
-touch-target expansion gives the X a 48dp tap area without growing the pill's drawn size — a deliberate
+touch-target expansion gives the X the platform minimum tap area (normally 48dp
+in each axis; the overlay overrides the vertical minimum to 36dp) without growing the pill's drawn size — a deliberate
 divergence from the usual 48dp `IconButton` wrapper, kept to match Figma's compact pill height.
 
 The themed `bodySmall` (12/16sp) style uses `LineHeightStyle.Alignment.Center`
@@ -70,12 +71,17 @@ one TalkBack stop with the default `mergeDescendants = true`, the same "wording 
 - **Usage pill** ([`ThreadTopOverlay`](thread-top-overlay.md#the-usage-pill)): `onDismiss` is non-`null`
   only when [`usageLimitIsWarning`](usage-limit-indicator.md#shape) is true for the reading being shown —
   every other reading, including an unrecognised `status`, gets `onDismiss = null` and cannot be hidden.
-  `onClick` is always `null` here; tapping the pill's body does nothing. Default `shadowElevation`.
+  `onClick` is always `null` here; tapping the pill's body does nothing. The overlay retains
+  a 36dp vertical dismiss minimum and inherits the platform horizontal width. Physical
+  edge taps must remain inside the usage Surface's visible clip. Default `shadowElevation`.
 - **Pairing pill** ([`ThreadTopOverlay`](thread-top-overlay.md#the-pairing-or-offline-pill)): `onClick` starts the same
   re-pair flow the pre-#1002 `RePairButton` started (`onRePair`, bound at `MainActivity` to
   `navController.navigate(Routes.pairCode(target.serverId))`); `onDismiss` is always `null` — a rejected
   pairing is never hideable, matching the ticket's "never dismissible" requirement for anything that is not
-  the one named warning status. Default `shadowElevation`.
+  the one named warning status. Re-pair overrides only the vertical minimum to `0.dp`:
+  its target follows the measured visible surface height rather than assuming a 24dp
+  rendered pill. Horizontal minimum width stays inherited, usage-dismiss keeps its
+  36dp vertical minimum, and the visible stack gap remains 12dp. Default `shadowElevation`.
 - **Task-count pill** ([Thread screen § Thinking-indicator placement](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643),
   [#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043)): drawn inside `ThreadStatusArea` in the
   `bottomBar`, not by `ThreadTopOverlay`. `onClick` opens the
@@ -95,6 +101,20 @@ The component itself does not know which caller it serves. Its error flag, callb
 shadow, optional leading icon and line limit let the outcome reuse the same shape.
 
 ## Testing
+
+The shared `ThreadTopOverlayTest.theUsagePill_sitsAboveThePairingPill_whichStartsRePair`
+regression measures visible and touch bounds separately and uses physical center/facing-edge
+input, exact callback counts and dismissal-state checks. Usage edge input stays inside
+its Surface clip. After #1757, the native red exposed an untappable advertised Re-pair
+upper edge rather than the original 3.5px overlap; semantic clicks and nonoverlap alone
+would miss it. The [overlay testing section](thread-top-overlay.md#testing) records the
+exact native/JVM commands and retained XML: post-merge managed Android 13 had 14
+executed/passed; focused JVM overlay/attention/component coverage had 26 executed/passed;
+the final full JVM run had 4,309 executed/passed. All had 0 failed/errors/skipped,
+and both native and JVM XML confirm the named method passed without an ignore.
+The earlier separate native method run had 1 executed/passed, 0 failed/errors/skipped;
+the red run had 1 executed, 1 failed, 0 skipped. Exact commands and counts remain in
+[the retained log](../../../app/src/androidTest/assets/touch-1760/merge-commands-and-results.txt).
 
 `ThreadAttentionNoticeTest` verifies default-compatible color customization through the attention
 caller, native-graphics surface and target bounds, two-line sanitized names and stacking.

@@ -92,9 +92,16 @@ internal fun ThreadTopOverlay(
     val pillTouchConfiguration =
         remember(viewConfiguration) {
             object : ViewConfiguration by viewConfiguration {
-                // The 24dp pills sit 12dp apart. Two 48dp vertical touch targets overlap in that stack.
-                // Keep 48dp horizontally, and expand each pill to the largest non-overlapping height.
+                // Keep the dismiss X's expanded vertical target and the platform horizontal width.
+                // The adjacent Re-pair action uses its own visible-height target below.
                 override val minimumTouchTargetSize = DpSize(viewConfiguration.minimumTouchTargetSize.width, 36.dp)
+            }
+        }
+    val pairingTouchConfiguration =
+        remember(viewConfiguration) {
+            object : ViewConfiguration by viewConfiguration {
+                // Use the measured surface height vertically; native text height need not be 24dp.
+                override val minimumTouchTargetSize = DpSize(viewConfiguration.minimumTouchTargetSize.width, 0.dp)
             }
         }
     // Keep the clickable error pill at the design's 24dp visible height. The default Material layout
@@ -142,7 +149,9 @@ internal fun ThreadTopOverlay(
             }
             if (showRePair) {
                 // The label is a local resource, never daemon text.
-                NoticePill(text = stringResource(R.string.thread_re_pair), isError = true, onClick = onRePair)
+                CompositionLocalProvider(LocalViewConfiguration provides pairingTouchConfiguration) {
+                    NoticePill(text = stringResource(R.string.thread_re_pair), isError = true, onClick = onRePair)
+                }
             } else if (showOffline) {
                 val offlineLabel = stringResource(R.string.thread_connection_offline_retry)
                 // Measure spacing from the visible pill, independently of Retry's 48dp touch box.

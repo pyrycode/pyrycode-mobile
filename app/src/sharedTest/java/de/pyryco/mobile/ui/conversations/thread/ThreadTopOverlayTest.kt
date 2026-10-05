@@ -59,6 +59,8 @@ import org.robolectric.annotation.GraphicsMode
 import java.io.File
 
 /**
+ * The native usage/Re-pair regression must stay runnable without [Ignore] (#1760).
+ *
  * #1002: notices draw as pills in the thread's Top overlay, and the status row keeps only live turn status.
  */
 @RunWith(AndroidJUnit4::class)
@@ -92,6 +94,7 @@ class ThreadTopOverlayTest {
     private var view: View? = null
     private var errorContainer = Color.Unspecified
     private var errorText = Color.Unspecified
+    private var dismissTaps = 0
     private var rePairTaps = 0
     private var mcpTaps = 0
     private var retryTaps = 0
@@ -110,7 +113,10 @@ class ThreadTopOverlayTest {
                     onRetry = { retryTaps++ },
                     usageLimit = usageLimit,
                     dismissedUsageLimits = dismissed,
-                    onDismissUsageLimit = { dismissed = dismissed + it.dismissalKey() },
+                    onDismissUsageLimit = {
+                        dismissTaps++
+                        dismissed = dismissed + it.dismissalKey()
+                    },
                     showRePair = showRePair,
                     onRePair = { rePairTaps++ },
                     mcpFailure = mcpFailure,
@@ -316,7 +322,7 @@ class ThreadTopOverlayTest {
     }
 
     @Test
-    @Ignore("blocked on #1760: native usage-dismiss and Re-pair touch bounds overlap")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
     fun theUsagePill_sitsAboveThePairingPill_whichStartsRePair() {
         usageLimit = warning
         showRePair = true
@@ -334,8 +340,47 @@ class ThreadTopOverlayTest {
             dismissTouch.bottom <= pairingTouch.top || dismissTouch.right <= pairingTouch.left,
         )
 
-        composeRule.onNodeWithText(RE_PAIR_LABEL).performClick()
-        composeRule.runOnIdle { assertEquals(1, rePairTaps) }
+        val minimumWidth = with(composeRule.density) { 48.dp.toPx() }
+        assertTrue("dismiss keeps its horizontal target: $dismissTouch", dismissTouch.width >= minimumWidth)
+        assertTrue("Re-pair keeps its horizontal target: $pairingTouch", pairingTouch.width >= minimumWidth)
+        val pairing = composeRule.onNodeWithContentDescription(RE_PAIR_LABEL)
+        val dismiss = composeRule.onNodeWithContentDescription(dismissDescription)
+        pairing.performTouchInput { click(center) }
+        composeRule.runOnIdle {
+            assertEquals(1, rePairTaps)
+            assertEquals(0, dismissTaps)
+            assertTrue(dismissed.isEmpty())
+        }
+        val pairingNode = pairing.fetchSemanticsNode()
+        pairing.performTouchInput {
+            click(Offset(center.x, pairingNode.touchBoundsInRoot.top - pairingNode.boundsInRoot.top + 1f))
+        }
+        composeRule.runOnIdle {
+            assertEquals(2, rePairTaps)
+            assertEquals(0, dismissTaps)
+            assertTrue(dismissed.isEmpty())
+        }
+        val dismissNode = dismiss.fetchSemanticsNode()
+        // The usage Surface clips input outside its background, so use its facing visible edge.
+        val dismissBottom = minOf(dismissNode.touchBoundsInRoot.bottom, with(composeRule.density) { usageBounds.bottom.toPx() })
+        dismiss.performTouchInput {
+            click(Offset(center.x, dismissBottom - dismissNode.boundsInRoot.top - 1f))
+        }
+        composeRule.runOnIdle {
+            assertEquals(2, rePairTaps)
+            assertEquals(1, dismissTaps)
+            assertEquals(setOf(warning.dismissalKey()), dismissed)
+        }
+        dismiss.assertDoesNotExist()
+        composeRule.runOnIdle { dismissed = emptySet() }
+        dismiss.performTouchInput { click(center) }
+        composeRule.runOnIdle {
+            assertEquals(2, rePairTaps)
+            assertEquals(2, dismissTaps)
+            assertEquals(setOf(warning.dismissalKey()), dismissed)
+        }
+        dismiss.assertDoesNotExist()
+        pairing.assertIsDisplayed()
     }
 
     // #1345: a failed MCP server is an Error pill with no X below the usage pill; its tap opens Channel info.

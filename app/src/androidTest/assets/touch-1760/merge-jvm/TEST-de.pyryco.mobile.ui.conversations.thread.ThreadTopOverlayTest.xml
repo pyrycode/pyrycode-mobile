@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" tests="14" skipped="0" failures="0" errors="0" timestamp="2026-10-05T17:48:45.364Z" hostname="Juhanas-Air" time="19.508">
+  <properties/>
+  <testcase name="enlargedOfflinePill_isEnclosedByRetry_andItsLeftEdgeReceivesPointerTaps" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.202"/>
+  <testcase name="offlineRetry_drawsATextWidePill_atTheTargetsTopRight" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.105"/>
+  <testcase name="sessionError_reusesErrorColors_andRightAlignedBodySmall_withNoDismissAction" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.357"/>
+  <testcase name="offlineRetry_hasA48dpTarget_belowAUsagePill_withoutStealingDismissTaps" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.312"/>
+  <testcase name="theUsagePill_sitsAboveThePairingPill_whichStartsRePair" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.49"/>
+  <testcase name="aLongServerName_isBounded" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="15.075"/>
+  <testcase name="noNotices_drawNoPill" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.319"/>
+  <testcase name="aFailedMcpServer_isNeverShownBesideThePairingOrOfflinePill" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.453"/>
+  <testcase name="theUsagePill_readsTheSameForEveryAgent" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.304"/>
+  <testcase name="anyOtherStatus_isAnErrorPill_withNoX" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.29"/>
+  <testcase name="aWarning_isADismissiblePill_thatReturnsWhenTheResetTimeChanges" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.619"/>
+  <testcase name="sessionError_sitsBelowExistingPersistentNotices_andLeavesTheirActionsWorking" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.288"/>
+  <testcase name="aLiveReading_leavesTheRunningTool_theWrapUp_andInterruptedInTheStatusRow" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.378"/>
+  <testcase name="aFailedMcpServer_isATappablePillBelowTheUsagePill" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.14"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
