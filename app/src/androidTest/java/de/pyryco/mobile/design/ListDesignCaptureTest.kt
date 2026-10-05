@@ -235,7 +235,7 @@ class ListDesignCaptureTest {
 
         // No conversation row draws a pen (#1563): Edit channel opens from the thread's More actions, Edit (#1561).
         openFirst(TREE_CHANNEL_ROW_TEST_TAG)
-        design.openMenu(rule.onNodeWithContentDescription("More actions"))
+        design.openHeaderMenu()
         design.capture(FOLDER, "thread-menu$suffix", "none")
         rule.onNodeWithText("Edit").performClick()
         rule.waitUntil(5_000) { rule.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
@@ -246,21 +246,21 @@ class ListDesignCaptureTest {
 
         // Rename and Save as channel are on an unpromoted conversation's menu only; a channel's opens Edit (#1561).
         openFirst(TREE_CHAT_ROW_TEST_TAG)
-        design.openMenu(rule.onNodeWithContentDescription("More actions"))
+        design.openHeaderMenu()
         rule.onNodeWithText("Rename").performClick()
         awaitText("Name")
         design.capture(FOLDER, "rename$suffix", "671:5664")
         relaunch()
 
         openFirst(TREE_CHAT_ROW_TEST_TAG)
-        design.openMenu(rule.onNodeWithContentDescription("More actions"))
+        design.openHeaderMenu()
         rule.onNodeWithText("Save as channel…").performClick()
         awaitText("Save as channel")
         design.capture(FOLDER, "save-as-channel$suffix", "671:5718")
         relaunch()
 
         openFirst(TREE_CHANNEL_ROW_TEST_TAG)
-        design.openMenu(rule.onNodeWithContentDescription("More actions"))
+        design.openHeaderMenu()
         rule.onNodeWithText("Channel info").performClick()
         awaitText("About")
         design.capture(FOLDER, "channel-info$suffix", "668:5355")
