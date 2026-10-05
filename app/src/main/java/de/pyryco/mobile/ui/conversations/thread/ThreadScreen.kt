@@ -584,38 +584,16 @@ fun ThreadScreen(
                 // rotation or back-stack return keeps them open, as the tool rows inside keep theirs.
                 var expandedRuns by rememberSaveable { mutableStateOf(emptySet<String>()) }
                 var previousAgentRows by remember(state.conversationId) { mutableStateOf(agentRows) }
-                // A late join splits an ordinary run. Carry its expansion into the newly moved block once.
-                val retainedExpandedRuns =
-                    remember(agentRows, previousAgentRows, expandedRuns) {
-                        val previousBlocks =
-                            previousAgentRows
-                                .filterIsInstance<ThreadRow.Delivered>()
-                                .mapNotNull { it.agentBlockId }
-                                .toSet()
-                        val currentBlocks =
-                            agentRows
-                                .filterIsInstance<ThreadRow.Delivered>()
-                                .mapNotNull { it.agentBlockId }
-                                .toSet()
-                        val newlyMoved = currentBlocks - previousBlocks
-                        if (newlyMoved.isEmpty()) return@remember expandedRuns
-                        val openTools =
-                            foldToolRuns(previousAgentRows, expandedRuns)
-                                .filterIsInstance<ThreadRow.ToolRun>()
-                                .filter { it.expanded }
-                                .flatMap { it.tools }
-                                .map { it.id }
-                                .toSet()
-                        val movedFromOpenRun = newlyMoved intersect openTools
-                        val inherited =
-                            foldToolRuns(agentRows, emptySet())
-                                .filterIsInstance<ThreadRow.ToolRun>()
-                                .filter { run -> run.tools.any { it.id in movedFromOpenRun } }
-                                .map { it.runId }
-                        expandedRuns + inherited
+                var pendingOpenTools by remember(state.conversationId) { mutableStateOf(emptySet<String>()) }
+                // A late join or parent backfill moves tools between runs. Carry an open run's expansion with them.
+                val carried =
+                    remember(agentRows, previousAgentRows, expandedRuns, pendingOpenTools) {
+                        carryRunExpansion(previousAgentRows, agentRows, expandedRuns, pendingOpenTools)
                     }
+                val retainedExpandedRuns = carried.expandedRuns
                 SideEffect {
                     expandedRuns = retainedExpandedRuns
+                    pendingOpenTools = carried.pending
                     previousAgentRows = agentRows
                 }
                 val rows =

@@ -88,6 +88,8 @@ None. The cache-only limitation and dispatcher-owned live acceptance are explici
 
 2026-10-05: The same review found late movement closes a previously expanded containing tool run. Compare the previous tool-run membership when an Agent first gains a block identity, transfer the old run's expansion to its new block id, and persist it in `expandedRuns`. Ordinary updates and finish do not re-expand a run the reader deliberately closed. Compose transition tests cover expanded and collapsed starting runs, individual tool-body state, finish and marker navigation. Existing marker geometry and design tokens remain unchanged.
 
+2026-10-05: The second review of PR #1821 found two transitions the first-gain rule missed: a lone Agent leaving an open run forms no run until its child arrives, and a backfilled Agent pulls in loaded descendants while only the Agent itself is newly moved. `carryRunExpansion` replaces that rule. When any loaded tool's block identity changes, every tool of a previously open run that now sits in a different run carries the expansion to its new run. A block tool left alone holds the intent in UI-local `pending` state until its block forms a run, then the intent is spent. With no block change and nothing pending, expansion is untouched, so a run the reader closed stays closed. JVM tests drive both transitions through `carryRunExpansion`, and Compose tests mount `ThreadScreen` for each.
+
 ## Documentation handoff
 
 - Pending documentation stage: `docs/knowledge/features/thread-screen-subagent-tool-rows.md`, subagent nesting, newest-end follow and tool-run collapse sections: background-only qualification, marker navigation, running/terminal placement, roster/history backfill, retained joins and expansion on late splits.

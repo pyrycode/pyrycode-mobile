@@ -135,6 +135,33 @@ class BackgroundAgentBlocksScreenTest {
         compose.onAllNodesWithText("Agent").assertCountEquals(0)
     }
 
+    @Test fun lateJoinOfALoneAgentKeepsRunExpansionUntilItsChildArrives() {
+        mount(listOf(tool("outside", "Grep"), tool("a", "Agent"), user("Newer")), true)
+        compose.onNodeWithText("Using tools: 2", substring = true).performClick()
+        compose.runOnIdle { state = state.copy(items = state.items + launch()) }
+        compose.onNodeWithText("Agent started, still working").assertIsDisplayed()
+        compose.runOnIdle { state = state.copy(items = state.items + tool("child", "Read", "a")) }
+        compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("Read", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("Using tools: 2", substring = true).performClick()
+        compose.runOnIdle { state = state.copy(items = state.items + user("Later")) }
+        compose.onAllNodesWithText("Agent").assertCountEquals(0)
+    }
+
+    @Test fun agentBackfillCarriesAnOpenRunOfItsLoadedChildrenIntoTheBlock() {
+        mount(listOf(tool("outside", "Grep"), tool("c1", "Read", "a"), tool("c2", "Glob", "a"), user("Newer")), true)
+        compose.onNodeWithText("Using tools: 3", substring = true).performClick()
+        compose.onNodeWithText("Read").performClick()
+        val input = compose.onAllNodesWithText("original input", substring = true, useUnmergedTree = true)
+        input.assertCountEquals(1)
+        compose.runOnIdle { state = state.copy(items = listOf(tool("a", "Agent"), launch()) + state.items) }
+        compose.onNodeWithText("Using tools: 3", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("Glob", useUnmergedTree = true).assertIsDisplayed()
+        // The open Read body, plus the Agent header's own input subject.
+        input.assertCountEquals(2)
+    }
+
     @Test fun runningMarkerShowsTwoLinesAndToolExpansionSurvivesMovingAndFinishing() {
         mount(listOf(tool("a", "Agent"), tool("child", "Read", "a"), user("Newer")))
         compose.onNodeWithText("Agent").performClick()

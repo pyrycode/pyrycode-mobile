@@ -296,4 +296,30 @@ class BackgroundAgentBlocksTest {
             assertEquals(listOf("msg:a", "msg:newer"), keys(project(items)))
         }
     }
+
+    @Test fun openRunIntentWaitsForALoneMovedAgentUntilItsChildFormsARun() {
+        val ordinary = listOf(row("o", "Grep"), row("a", "Agent"), row("newer"))
+        val joined = ordinary + start()
+        val grown = joined + row("c", "Read", "a")
+        val split = carryRunExpansion(project(ordinary), project(joined), setOf("o"), emptySet())
+        assertEquals(setOf("o"), split.expandedRuns)
+        assertEquals(setOf("a"), split.pending)
+        val idle = carryRunExpansion(project(joined), project(joined), split.expandedRuns, split.pending)
+        assertEquals(split, idle)
+        val formed = carryRunExpansion(project(joined), project(grown), idle.expandedRuns, idle.pending)
+        assertEquals(setOf("o", "a"), formed.expandedRuns)
+        assertEquals(emptySet<String>(), formed.pending)
+        // Closing the formed run afterwards sticks: no block change, nothing pending.
+        assertEquals(setOf("o"), carryRunExpansion(project(grown), project(grown), setOf("o"), emptySet()).expandedRuns)
+    }
+
+    @Test fun parentBackfillCarriesAnOpenRunOfLoadedDescendantsIntoTheAgentBlock() {
+        val orphans = listOf(row("o", "Grep"), row("c1", "Read", "a"), row("c2", "Glob", "a"), row("newer"))
+        val backfilled = listOf(row("a", "Agent"), start()) + orphans
+        val carried = carryRunExpansion(project(orphans), project(backfilled), setOf("o"), emptySet())
+        assertEquals(setOf("o", "a"), carried.expandedRuns)
+        assertEquals(emptySet<String>(), carried.pending)
+        val closed = carryRunExpansion(project(orphans), project(backfilled), emptySet(), emptySet())
+        assertEquals(emptySet<String>(), closed.expandedRuns)
+    }
 }
