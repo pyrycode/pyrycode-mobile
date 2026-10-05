@@ -382,13 +382,19 @@ class InteractiveStreamE2ETest {
             assertTrue(reply.contains("`$inline`"))
             assertTrue(reply.contains("```text"))
             assertTrue(reply.contains("| $cell | present |"))
+            // The prompt repeats the final paragraph. Select the formatted reply, and require the
+            // finished bubble's details action rather than mistaking a blink-off caret for settlement.
+            val settledReply =
+                hasTestTag(MESSAGE_BUBBLE_TEST_TAG) and hasClickAction() and
+                    hasAnyDescendant(hasText("$bold $inline"))
+            val inReply = hasAnyAncestor(settledReply)
             composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText(end).fetchSemanticsNodes().isNotEmpty() &&
+                composeTestRule.onAllNodes(hasText(end) and inReply, useUnmergedTree = true).fetchSemanticsNodes().size == 1 &&
                     composeTestRule.onAllNodesWithText("▎").fetchSemanticsNodes().isEmpty()
             }
             val formatted =
                 composeTestRule
-                    .onNodeWithText("$bold $inline")
+                    .onNode(hasText("$bold $inline") and inReply, useUnmergedTree = true)
                     .fetchSemanticsNode()
                     .config[SemanticsProperties.Text]
                     .single()
@@ -405,7 +411,7 @@ class InteractiveStreamE2ETest {
                 },
             )
             listOf(code, "Key", "Value", cell, "present", end).forEach {
-                composeTestRule.onNodeWithText(it).assertIsDisplayed()
+                composeTestRule.onNode(hasText(it) and inReply, useUnmergedTree = true).assertIsDisplayed()
             }
             // The whole reply survives the streaming-to-history boundary with no lost source text.
             assertEquals(body, reply.trim())
