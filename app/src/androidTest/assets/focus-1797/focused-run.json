@@ -19,6 +19,7 @@
     "errors": 0,
     "skipped": 0
   },
-  "xml_sha256": "edf302d076dfb2b898cd41e4fc0728552d7ac0bace268b5f6d0ad341238c997c",
-  "per_test_logcat_sha256": "d1715ba9c8d19d135d5613f828f537d2bd49bb362ff29b8bc8ee74132deb5109"
+  "xml_sha256": "aa622df48f051241bba34982725eb77387a699c720694aed23eedb92b178df6f",
+  "per_test_logcat_sha256": "d1715ba9c8d19d135d5613f828f537d2bd49bb362ff29b8bc8ee74132deb5109",
+  "source_xml_sha256": "edf302d076dfb2b898cd41e4fc0728552d7ac0bace268b5f6d0ad341238c997c"
 }

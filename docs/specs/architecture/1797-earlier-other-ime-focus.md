@@ -24,4 +24,4 @@ The dispatcher must separately run `UI_GATE_FULL=1 ANDROID_GATE_WAIT_SECONDS=270
 
 ## Revisions
 
-- 2026-10-05: The unchanged focused method passed at `de58447054ea782b422b3a22d714df40424e21a8` with 1 executed, 1 passed and 0 failures/errors/skips. The focus timeout did not reproduce with the shipped `quietSystem` mitigation, so no Kotlin repair is warranted. Retained the original XML, command/revision/exit/count metadata and test lifecycle excerpt in `app/src/androidTest/assets/focus-1797/`. The forced full UI sweep remains pending with the dispatcher.
+- 2026-10-05: The unchanged focused method passed at `de58447054ea782b422b3a22d714df40424e21a8` with 1 executed, 1 passed and 0 failures/errors/skips. The focus timeout did not reproduce with the shipped `quietSystem` mitigation, so no Kotlin repair is warranted. Retained fresh XML (CRLF normalized to LF, with original and retained checksums), command/revision/exit/count metadata and test lifecycle excerpt in `app/src/androidTest/assets/focus-1797/`. The forced full UI sweep remains pending with the dispatcher.
