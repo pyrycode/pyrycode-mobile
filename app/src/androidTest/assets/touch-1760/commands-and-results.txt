@@ -1,0 +1,27 @@
+#1760 verification on 2026-10-05
+
+./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest#theUsagePill_sitsAboveThePairingPill_whichStartsRePair' -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain
+Before production change: exit 1; 1 executed, 1 failed, 0 errors, 0 skipped.
+Native red XML: native-red.xml. Failure: Re-pair facing expanded edge did not invoke callback.
+Final version: exit 0; 1 executed/passed, 0 failed/errors/skipped.
+Fresh XML: native-method-green.xml (timestamp 2026-10-05T12:34:38).
+Named method passed without any ignore.
+
+./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest' -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain
+Exit 0; 13 executed/passed, 0 failed/errors/skipped, including the named method.
+Fresh XML: native-class-green.xml. Managed device: pixel2Api33Atd (Android 13).
+
+./gradlew testDebugUnitTest --tests 'de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest' --tests 'de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNoticeTest' --tests 'de.pyryco.mobile.ui.conversations.components.NoticePillTest' lint assembleDebug compileDebugAndroidTestKotlin spotlessCheck --rerun-tasks --console=plain
+Exit 0; 25 executed/passed, 0 failed/errors/skipped (overlay 13, attention 10, pill 2).
+Named method passed on JVM with native graphics, without any ignore.
+Fresh XML: jvm/TEST-*.xml (2026-10-05T12:30 timestamps).
+Lint, assembleDebug, compileDebugAndroidTestKotlin and uncached spotlessCheck passed.
+
+./gradlew spotlessApply --console=plain
+Exit 0; scoped Kotlin and plan formatted. No unrelated files changed.
+
+Pointer coverage: Re-pair center and top touch edge each invoke only Re-pair once;
+usage dismiss bottom visible edge and center each invoke only dismissal once.
+Assertions retain the 12dp visible gap, separate touch bounds, and >=48dp horizontal targets.
+The usage Surface clips hit input outside its visible background; its facing edge is tested inside that clip.
+Current main includes #1757 line-height repair; the original 3.5px overlap did not reproduce in the red run.

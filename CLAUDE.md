@@ -91,6 +91,24 @@ The mobile wire protocol's single source of truth is the pyrycode repo's `docs/p
 - `scripts/docs-guard.sh` keeps the overviews under 50000 bytes, free of lines that markdown misreads as headings, and clean of the trailing-whitespace and end-of-file conditions `format("misc")` would otherwise rewrite. It is the second entry in the dispatcher's verifier gate list; run it before committing docs.
 - `scripts/pre-verify.py` is the first verifier gate and the builder's last step before handoff. In a few seconds it checks what the verifier would otherwise fail a pull request on: the security review a `security-sensitive` plan needs, new colour, text style and corner literals outside the theme, the PR's `## Live tests` list against the curated live list and the live methods the diff changes, and ignored files such as `AGENTS.md` on the branch. `--gradle` adds the origin/main merge, Spotless and compile check for builders.
 
+## Use codegraph for symbol lookups
+
+This repo is indexed for codegraph (`.codegraph/`, gitignored). Prefer `mcp__codegraph__codegraph_*` MCP tools over grep for symbol-level questions — where something is defined, what calls it, what breaks if it changes.
+
+- **Before changing or removing an exported function** — run `codegraph_callers` first to find every call site.
+- **"Where is X defined" / "what does X call"** — `codegraph_search`, `codegraph_node`, and `codegraph_callees` beat reading files end to end.
+- **For a broader "how does this area work"** — `codegraph_context` or `codegraph_impact` before a cross-cutting change.
+- Fall back to grep/Read for comments, string literals, and pending edits the index hasn't picked up yet.
+- In Claude Code these are deferred tools: load them once with `ToolSearch` (e.g. `select:mcp__codegraph__codegraph_search`) before first use. Codex sees the same `mcp__codegraph__<tool>` names directly.
+
+## Use QMD for documentation search
+
+The `mcp__qmd__query` / `get` / `multi_get` tools search the `pyrycode-mobile-docs` collection over MCP — faster than browsing `docs/knowledge/` by hand.
+
+- Search before writing new code, making architectural decisions, or creating new files. The answer may already be documented.
+- Give every `query` call an `intent` plus lex (keyword) and/or vec (meaning-based) sub-queries for best results.
+- In Claude Code these are deferred tools: load them once with `ToolSearch` (e.g. `select:mcp__qmd__query`) before first use. Codex sees the same `mcp__qmd__<tool>` names directly.
+
 ## Conventions
 
 - **Test-first.** Red → green → refactor. Failing test first, implementation after.

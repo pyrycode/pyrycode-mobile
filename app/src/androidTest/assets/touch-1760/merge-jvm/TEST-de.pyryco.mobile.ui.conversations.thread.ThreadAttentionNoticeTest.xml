@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNoticeTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-10-05T17:48:41.748Z" hostname="Juhanas-Air" time="3.597">
+  <properties/>
+  <testcase name="hostileLongName_isPlainBoundedText_twoLinesWithEllipsis_insideThreadWidth" classname="de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNoticeTest" time="0.797"/>
+  <testcase name="emptyAndUnavailableNames_fallBackToAppName" classname="de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNoticeTest" time="0.21"/>
+  <testcase name="singleAndFinishedLabels_useExactTarget_andCountUsesList_withoutX" classname="de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNoticeTest" time="0.258"/>
+  <testcase name="waitingAndFinishedMatchFigmaColors_bodySmallAndHugWidth" classname="de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNoticeTest" time="0.406"/>
+  <testcase name="attentionTargetContainsItsLabelAndDescription_forEveryVariant" classname="de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNoticeTest" time="0.262"/>
+  <testcase name="shortFinished_hasA48dpTarget_withExpandedBoundaryTaps" classname="de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNoticeTest" time="0.223"/>
+  <testcase name="shortCount_hasA48dpTarget_withExpandedBoundaryTaps" classname="de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNoticeTest" time="0.345"/>
+  <testcase name="shortWaiting_hasA48dpTarget_withExpandedBoundaryTaps" classname="de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNoticeTest" time="0.305"/>
+  <testcase name="attentionIsFirstAboveUsageMcpConnectionAndSessionError_withTwelveDpGaps" classname="de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNoticeTest" time="0.334"/>
+  <testcase name="attentionBottomEdge_andUsageDismissTopEdge_routeToSeparateActions" classname="de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNoticeTest" time="0.445"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

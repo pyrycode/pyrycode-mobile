@@ -585,7 +585,7 @@ class ThreadDesignCaptureTest {
         await("Payload truncated by the daemon.")
         design.capture(FOLDER, "unrecognized-message", "685:4112")
 
-        // Today the outcome is the band's arm; the frame moves it to a top-overlay pill.
+        // #1603: the outcome is a combined Error pill in the top overlay.
         extraItems.value = listOf(ThreadItem.StoppedTurn("design-turn", "prompt_too_long", "", at(10)))
         runBlocking {
             inputs.liveSessionEvents.emit(
@@ -593,7 +593,7 @@ class ThreadDesignCaptureTest {
             )
         }
         await("Stopped: context too long, compact or reset")
-        await("Context too long", substring = true)
+        await("Context too long - Compact")
         design.capture(FOLDER, "turn-outcome", "685:3992")
 
         // A turn starting clears the outcome; Idle again leaves the band at the snowflake alone.
