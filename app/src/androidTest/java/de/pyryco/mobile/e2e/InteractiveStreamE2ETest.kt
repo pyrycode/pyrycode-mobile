@@ -4154,14 +4154,17 @@ class InteractiveStreamE2ETest {
             }
             composeTestRule.onNodeWithText(finishedLabel).assertIsDisplayed()
             awaitTurnEnd(peer, chatB, 1, "B's attention-pill turn")
-            // Only B's pill belongs to this scenario. The pill also reports every other unmuted conversation on
-            // every paired host, and in the full suite an earlier method's conversation can finish a turn in
-            // this window, so a check for no pill at all failed there and passed alone (#1735).
-            val finishedPill = hasTestTag("thread_attention_pill") and hasText(finishedLabel)
-            composeTestRule.waitUntil(10_000) { composeTestRule.onAllNodes(finishedPill).fetchSemanticsNodes().isEmpty() }
+            // The pill's five-second expiry runs on the rule's virtual clock, which waitUntil advances one frame per
+            // poll. In the full suite each poll is slow enough that five virtual seconds outlast a real ten-second
+            // wait (#1735; same cause as #1664), so advance the clock past the expiry instead.
+            composeTestRule.mainClock.advanceTimeBy(5_100)
+            composeTestRule.waitUntil(10_000) {
+                composeTestRule.onAllNodes(hasTestTag("thread_attention_pill")).fetchSemanticsNodes().isEmpty()
+            }
+            composeTestRule.onNodeWithText(finishedLabel).assertDoesNotExist()
             leaveThread()
             openChatRow(nameA)
-            composeTestRule.onNode(finishedPill).assertDoesNotExist()
+            composeTestRule.onNodeWithTag("thread_attention_pill").assertDoesNotExist()
         } finally {
             peer.close()
             runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
