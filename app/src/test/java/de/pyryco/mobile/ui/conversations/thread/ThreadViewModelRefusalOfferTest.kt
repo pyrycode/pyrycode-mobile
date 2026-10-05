@@ -14,6 +14,7 @@ import de.pyryco.mobile.data.repository.LiveRefusalEvent
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.components.SwitchBackOffer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -238,12 +239,15 @@ class ThreadViewModelRefusalOfferTest {
         runTest {
             val vm = collectedVm()
             repo.refusals.emit(refused(ORIGINAL, FALLBACK, T1))
+            val errors = mutableListOf<Unit>()
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.sessionSettingsErrors.collect { errors += it } }
 
             repo.failWith = RelayErrorException("protocol.malformed", false, "requested model is not offered")
             vm.onSwitchBack()
             runCurrent()
             assertEquals(SwitchBackOffer(T1, ORIGINAL, pending = false, failed = true), vm.switchBackOffer.value)
             assertTrue("event=refusal_switch_back outcome=failed" in logs)
+            assertTrue("refused switch-back uses inline feedback only", errors.isEmpty())
 
             repo.failWith = IllegalStateException("not connected")
             repo.hold = CompletableDeferred()
@@ -258,6 +262,41 @@ class ThreadViewModelRefusalOfferTest {
             runCurrent()
             assertEquals(SwitchBackOffer(T1, ORIGINAL, pending = false, failed = true), vm.switchBackOffer.value)
             assertEquals(2, repo.settings.size)
+            assertTrue("failed switch-back uses inline feedback only", errors.isEmpty())
+        }
+
+    @Test
+    fun ordinaryModelAndEffortFailures_stillEmitSharedFeedback() =
+        runTest {
+            val vm = collectedVm()
+            val errors = mutableListOf<Unit>()
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.sessionSettingsErrors.collect { errors += it } }
+            for (failure in listOf(RelayErrorException("session.not_found", false, "secret"), IllegalStateException("offline"))) {
+                repo.failWith = failure
+                vm.onModelSelected("haiku")
+                runCurrent()
+                vm.onEffortSelected("high")
+                runCurrent()
+            }
+            assertEquals("both ordinary controls report both failure types", 4, errors.size)
+            assertEquals(4, repo.settings.size)
+        }
+
+    @Test
+    fun cancelledSwitchBack_doesNotRevertOrReportFailure() =
+        runTest {
+            val vm = collectedVm()
+            val errors = mutableListOf<Unit>()
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.sessionSettingsErrors.collect { errors += it } }
+            repo.refusals.emit(refused(ORIGINAL, FALLBACK, T1))
+            repo.failWith = CancellationException("screen exit")
+
+            vm.onSwitchBack()
+            runCurrent()
+
+            assertEquals(SwitchBackOffer(T1, ORIGINAL, pending = true, failed = false), vm.switchBackOffer.value)
+            assertTrue(errors.isEmpty())
+            assertFalse("event=refusal_switch_back outcome=failed" in logs)
         }
 
     @Test

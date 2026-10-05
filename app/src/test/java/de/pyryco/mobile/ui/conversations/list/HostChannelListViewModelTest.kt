@@ -3026,9 +3026,62 @@ class HostChannelListViewModelTest {
         }
     }
 
+    @Test
+    fun hostPromptUsesCapturedHostAndReplacementAfterSelectedHostChanges() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.vm.openHostEditor("Host")
+            runCurrent()
+            f.selected.value = f.b.repo
+            f.vm.onHostPromptEvent(de.pyryco.mobile.ui.host.HostPromptEvent.Open)
+            f.vm.onHostPromptEvent(
+                de.pyryco.mobile.ui.host.HostPromptEvent
+                    .Edit("Host-only draft"),
+            )
+            f.a.live.value = null
+            f.vm.onHostPromptEvent(de.pyryco.mobile.ui.host.HostPromptEvent.Save)
+            runCurrent()
+            val failed =
+                f.vm.hostState.value.hostEditor
+                    ?.prompt as de.pyryco.mobile.ui.host.HostPromptState.Loaded
+            assertTrue(failed.failed)
+            assertEquals("Host-only draft", failed.draft)
+            val replacement = Repo()
+            f.a.live.value = replacement
+            f.vm.onHostPromptEvent(de.pyryco.mobile.ui.host.HostPromptEvent.Save)
+            runCurrent()
+            assertEquals(listOf("Host-only draft"), replacement.hostPromptWrites)
+            assertTrue(
+                f.a.repo.hostPromptWrites
+                    .isEmpty(),
+            )
+            assertTrue(
+                f.b.repo.hostPromptWrites
+                    .isEmpty(),
+            )
+            assertFalse(requireNotNull(f.vm.hostState.value.hostEditor).editingPrompt)
+        }
+
     private class Repo(
         val hostId: String = "replacement",
     ) : ConversationRepository by FakeConversationRepository() {
+        val hostPromptWrites = mutableListOf<String>()
+
+        override suspend fun requestHostSystemPrompt() =
+            Result.success(
+                de.pyryco.mobile.data.repository
+                    .HostSystemPromptReading("", "default"),
+            )
+
+        override suspend fun setHostSystemPrompt(systemPrompt: String): Result<de.pyryco.mobile.data.repository.HostSystemPromptReading> {
+            hostPromptWrites += systemPrompt
+            return Result.success(
+                de.pyryco.mobile.data.repository
+                    .HostSystemPromptReading(systemPrompt, "default"),
+            )
+        }
+
         val rows = MutableStateFlow<List<Conversation>?>(null)
         val previews = mutableMapOf<String, Flow<Message?>>()
         val workspaces = mutableListOf<String?>()

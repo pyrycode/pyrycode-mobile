@@ -59,12 +59,40 @@ class ClaudeEnvironmentError(RuntimeError):
     """A missing live-test credential is setup failure, not a test verdict."""
 
 
+AUTOMATION_LOGIN = "op://Automation/Claude long term token/password"
+
+
+def hand_run_login(env, parent):
+    """A run started by hand, outside the dispatcher, fetches the long-term login the dispatcher's launcher uses.
+
+    Before 2026-10-05 such a run fell back to the shell's own Claude login and stalled when it was missing or
+    expired. Inside the dispatcher (AGENTS_REPO_PATH set) nothing is fetched: agents get no Automation login.
+    A failed fetch leaves the shell's own login to the authentication check, as before.
+    """
+    helper = shutil.which("automation-access", path=parent.get("PATH"))
+    if parent.get("AGENTS_REPO_PATH") or helper is None:
+        return env
+    try:
+        result = subprocess.run([helper, "op", "read", "--no-newline", AUTOMATION_LOGIN],
+                                env=env, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        result = None
+    if result is None or result.returncode or not result.stdout.strip():
+        print("Android gate: could not fetch the long-term Claude login through automation-access; "
+              "using this shell's own login", file=sys.stderr)
+        return env
+    print("Android gate: fetched the long-term Claude login through automation-access", file=sys.stderr)
+    return {**env, "CLAUDE_CODE_OAUTH_TOKEN": result.stdout.rstrip("\n")}
+
+
 def live_claude_environment(parent):
     """Fetch the login in memory, strip account credentials from test children."""
     env = {key: value for key, value in parent.items() if not key.startswith("OP_") and key != "PYRY_DEV_AGENTS_TOKEN"}
     token = parent.get("OP_SERVICE_ACCOUNT_TOKEN")
-    if env.get("CLAUDE_CODE_OAUTH_TOKEN") or not token:
+    if env.get("CLAUDE_CODE_OAUTH_TOKEN"):
         return env
+    if not token:
+        return hand_run_login(env, parent)
     op_env = {**env, "OP_SERVICE_ACCOUNT_TOKEN": token, "OP_BIOMETRIC_UNLOCK_ENABLED": "false"}
     try:
         result = subprocess.run(
@@ -341,9 +369,18 @@ def stop_emulator(env, serial, process):
 # Two runs driving the Gradle-managed AVD at once, from any worktrees, fail the window-focus device tests.
 # Every device-using mode holds one kernel lock beside that AVD while it drives an emulator. The descriptor
 # is never passed to a child, so the kernel drops the lock whenever this process exits, SIGKILL included.
+#
+# Waiters are served in arrival order (2026-10-05). Until then each waiter retried the lock once a second, and
+# whoever retried first after a release won: one run waited 45 minutes while later arrivals went ahead of it.
+# Now each waiter takes a numbered ticket in a queue folder beside the lock, and only the oldest live ticket
+# tries the lock. A ticket is a file its owner keeps a kernel lock on, so a waiter that dies, SIGKILL
+# included, releases it, and the next waiter that looks drops it. The device lock itself is unchanged, so
+# a run from an older checkout that still just retries the lock shares the device safely: it cannot hold it
+# at the same time, and it never waits on a ticket. It is not ordered against ticketed waiters.
 
 DEFAULT_DEVICE_WAIT_SECONDS = 300
 DEVICE_BUSY_EXIT = 75  # EX_TEMPFAIL: no test ran, so it is not a test result
+DEVICE_POLL_SECONDS = 0.25
 
 
 class DeviceBusy(Exception):
@@ -355,6 +392,10 @@ def device_hold_path():
     return avd_root() / "pyrycode-device-gate.lock"
 
 
+def device_queue_path():
+    return avd_root() / "pyrycode-device-gate.queue"
+
+
 def device_holder(fd):
     try:
         record = json.loads(os.pread(fd, 4096, 0))
@@ -363,30 +404,104 @@ def device_holder(fd):
         return "an unknown run"
 
 
+def take_ticket(queue):
+    """Join the queue; returns (fd, path) of a ticket numbered after every ticket already there.
+
+    The ticket is locked before it gets its queue name, so no other waiter ever sees it unlocked and drops it.
+    """
+    queue.mkdir(parents=True, exist_ok=True)
+    pending = queue / f"pending-{os.getpid()}-{uuid.uuid4().hex}"
+    fd = os.open(pending, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        counter = os.open(queue / "counter", os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(counter, fcntl.LOCK_EX)
+            try:
+                last = int(os.pread(counter, 32, 0) or b"0")
+            except ValueError:
+                last = 0
+            # The highest ticket too, so a lost counter never numbers a newcomer ahead of a waiting run.
+            numbers = [int(path.stem) for path in queue.glob("*.ticket") if path.stem.isdigit()]
+            number = max([last, *numbers]) + 1
+            os.ftruncate(counter, 0)
+            os.pwrite(counter, str(number).encode(), 0)
+            ticket = queue / f"{number:012d}.ticket"
+            os.rename(pending, ticket)
+        finally:
+            os.close(counter)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(pending)
+        os.close(fd)
+        raise
+    return fd, ticket
+
+
+def drop_ticket(fd, ticket):
+    """Leave the queue: remove the name first, then release the lock, so no one reads a released live ticket."""
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(ticket)
+    os.close(fd)
+
+
+def ticket_alive(path):
+    """True while the ticket's owner holds it. A ticket nobody holds belongs to a dead waiter and is removed."""
+    try:
+        fd = os.open(path, os.O_RDWR)
+    except FileNotFoundError:
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    else:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(path)
+        return False
+    finally:
+        os.close(fd)
+
+
+def tickets_ahead(queue, ticket):
+    """The live tickets older than [ticket], dropping dead ones on the way."""
+    return [path for path in sorted(queue.glob("*.ticket")) if path.name < ticket.name and ticket_alive(path)]
+
+
 @contextlib.contextmanager
 def device_hold(mode, wait):
-    """Hold the host's managed device for the block, waiting up to [wait] seconds; raises DeviceBusy."""
+    """Hold the host's managed device for the block, waiting up to [wait] seconds in arrival order; raises DeviceBusy."""
     path = device_hold_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+        ticket_fd, ticket = take_ticket(device_queue_path())
     except OSError as error:
         sys.exit(f"Android gate failed: cannot take the device hold at {path}: {error}")
     try:
-        start, announced = time.monotonic(), False
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
+        try:
+            start, announced = time.monotonic(), False
+            while True:
+                ahead = tickets_ahead(ticket.parent, ticket)
+                if not ahead:
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        pass
+                if ahead:
+                    reason = f"busy, {len(ahead)} earlier {'run' if len(ahead) == 1 else 'runs'} queued ahead"
+                else:
+                    reason = f"held by {device_holder(fd)}"
                 waited = time.monotonic() - start
                 if waited >= wait:
-                    raise DeviceBusy(f"gave up after {waited:.0f}s; held by {device_holder(fd)}") from None
+                    raise DeviceBusy(f"gave up after {waited:.0f}s; {reason}") from None
                 if not announced:
-                    print(f"Android gate: device held by {device_holder(fd)}; waiting up to {wait:.0f}s",
-                          file=sys.stderr)
+                    print(f"Android gate: device {reason}; waiting up to {wait:.0f}s", file=sys.stderr)
                     announced = True
-                time.sleep(min(1.0, wait - waited))
+                time.sleep(min(DEVICE_POLL_SECONDS, wait - waited))
+        finally:
+            drop_ticket(ticket_fd, ticket)
         if announced:
             print(f"Android gate: device free after {time.monotonic() - start:.0f}s waiting", file=sys.stderr)
         started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

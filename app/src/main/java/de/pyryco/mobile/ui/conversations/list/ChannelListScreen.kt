@@ -220,6 +220,10 @@ sealed interface ChannelListEvent {
     /** The modal's Cancel, Close and Back, which the shell routes through one dismissal callback. */
     data object HostEditDismissed : ChannelListEvent
 
+    data class HostPrompt(
+        val event: de.pyryco.mobile.ui.host.HostPromptEvent,
+    ) : ChannelListEvent
+
     /**
      * The open modal's `Unpair host` action (#745), which asks for a confirmation rather than removing.
      *
@@ -425,6 +429,7 @@ fun ChannelListScreen(
         onUnpairConfirmed = { onEvent(ChannelListEvent.HostUnpairConfirmed) },
         onUnpairDeclined = { onEvent(ChannelListEvent.HostUnpairDeclined) },
         onDismissRequest = { onEvent(ChannelListEvent.HostEditDismissed) },
+        onPromptEvent = { onEvent(ChannelListEvent.HostPrompt(it)) },
     )
     WorkspaceEditorModal(hostState = hostState, onEvent = onEvent)
     CreateChannelModalBinding(hostState = hostState, onEvent = onEvent)

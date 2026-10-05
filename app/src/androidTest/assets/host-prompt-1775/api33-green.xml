@@ -1,0 +1,19 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="2" failures="0" errors="0" skipped="0" time="8.325" timestamp="2026-10-04T23:12:37" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.host.HostPromptCaptureTest" tests="1" failures="0" errors="0" skipped="0" time="4.335" timestamp="2026-10-04T23:12:37" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="darkHostAndPromptStates" classname="de.pyryco.mobile.ui.host.HostPromptCaptureTest" time="4.335" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.components.MobileModalTest" tests="1" failures="0" errors="0" skipped="0" time="2.395" timestamp="2026-10-04T23:12:37" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="editHostFieldAndUnpairRemainReachableWithKeyboard" classname="de.pyryco.mobile.ui.components.MobileModalTest" time="2.395" />
+  </testsuite>
+</testsuites>

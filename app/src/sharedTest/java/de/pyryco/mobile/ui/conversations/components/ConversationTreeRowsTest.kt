@@ -46,6 +46,7 @@ import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.di.ConversationAttention
+import de.pyryco.mobile.ui.assertDpEquals
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.theme.success
 import de.pyryco.mobile.ui.theme.warning
@@ -121,9 +122,9 @@ class ConversationTreeRowsTest {
             }
         }
 
-        assertEquals(28.dp, composeTestRule.onNodeWithTag("geometry-host").getUnclippedBoundsInRoot().height)
-        assertEquals(28.dp, composeTestRule.onNodeWithTag("geometry-section").getUnclippedBoundsInRoot().height)
-        assertEquals(24.dp, composeTestRule.onNodeWithTag("geometry-conversation").getUnclippedBoundsInRoot().height)
+        assertDpEquals(28.dp, composeTestRule.onNodeWithTag("geometry-host").getUnclippedBoundsInRoot().height)
+        assertDpEquals(28.dp, composeTestRule.onNodeWithTag("geometry-section").getUnclippedBoundsInRoot().height)
+        assertDpEquals(24.dp, composeTestRule.onNodeWithTag("geometry-conversation").getUnclippedBoundsInRoot().height)
 
         composeTestRule.onNodeWithTag(treeHostEditTestTag("pyry")).performClick()
         composeTestRule.onNodeWithTag(treeHostChannelAddTestTag("pyry")).performClick()
@@ -758,7 +759,7 @@ class ConversationTreeRowsTest {
             .onAllNodes(hasContentDescription(string(R.string.cd_tree_host_edit, "Pyrybox")), useUnmergedTree = true)
             .assertCountEquals(1)
         val control = composeTestRule.onNodeWithTag(treeHostEditTestTag("pyrybox"))
-        assertEquals(28.dp, control.getUnclippedBoundsInRoot().height)
+        assertDpEquals(28.dp, control.getUnclippedBoundsInRoot().height)
         control.performClick()
 
         assertEquals(1, edits)
@@ -805,8 +806,8 @@ class ConversationTreeRowsTest {
             }
         }
 
-        assertEquals(28.dp, composeTestRule.onNode(hasText("Pyrybox")).getUnclippedBoundsInRoot().height)
-        assertEquals(28.dp, composeTestRule.onNode(hasText("Second Brain")).getUnclippedBoundsInRoot().height)
-        assertEquals(24.dp, composeTestRule.onNode(hasText("rocd-thinking")).getUnclippedBoundsInRoot().height)
+        assertDpEquals(28.dp, composeTestRule.onNode(hasText("Pyrybox")).getUnclippedBoundsInRoot().height)
+        assertDpEquals(28.dp, composeTestRule.onNode(hasText("Second Brain")).getUnclippedBoundsInRoot().height)
+        assertDpEquals(24.dp, composeTestRule.onNode(hasText("rocd-thinking")).getUnclippedBoundsInRoot().height)
     }
 }

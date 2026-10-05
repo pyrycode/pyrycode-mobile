@@ -284,7 +284,7 @@ class ChannelListViewModel(
     // here for the same reason (#744), one instance per owner so no two screens share an open editor.
     private val collapsedKeys = MutableStateFlow<Set<TreeFoldKey>>(emptySet())
     private val lastOpenedTarget = MutableStateFlow<HostConversationTarget?>(null)
-    private val hostEditor = HostEditorController(viewModelScope, pairedServers, appPreferences)
+    private val hostEditor = HostEditorController(viewModelScope, pairedServers, appPreferences, hostSource::repositoryFor)
     private val workspaceEditor = MutableStateFlow<WorkspaceEditorState?>(null)
     private val createChannel = MutableStateFlow<CreateChannelState?>(null)
     private val createChat = MutableStateFlow<CreateChatState?>(null)
@@ -667,6 +667,8 @@ class ChannelListViewModel(
     fun openHostEditor(serverId: String) = hostEditor.open(serverId)
 
     fun submitHostName(name: String) = hostEditor.submitName(name)
+
+    fun onHostPromptEvent(event: de.pyryco.mobile.ui.host.HostPromptEvent) = hostEditor.onPromptEvent(event)
 
     fun requestHostUnpair() = hostEditor.requestUnpair()
 

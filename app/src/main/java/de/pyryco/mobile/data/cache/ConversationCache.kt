@@ -167,14 +167,14 @@ const val MAX_CACHED_THREAD_ROWS = 100_000
  *
  * Every settled row kind is kept — messages, session boundaries, banners, compaction dividers and model
  * refusals (#1353) — because history loads only when the user asks, so nothing else restores them. Drops
- * every [ThreadItem.UnrecognizedMessage] (unbounded, model-adjacent JSON its KDoc forbids persisting, and
- * this cache is plain files) and every in-flight row — a streaming message or a running tool call —
+ * every [ThreadItem.BackgroundTaskLifecycle] (in-memory evidence only) and [ThreadItem.UnrecognizedMessage]
+ * (unbounded, model-adjacent JSON its KDoc forbids persisting, and this cache is plain files), and every in-flight row — a streaming message or a running tool call —
  * because those are live state: restored, they would be a permanent caret or spinner. The one definition
  * the cache enforces on write and the caching repository compares against, so the two can never disagree.
  */
 fun cacheableThreadRows(rows: List<ThreadItem>): List<ThreadItem> =
     settledThreadRows(rows)
-        .filterNot { it is ThreadItem.UnrecognizedMessage }
+        .filterNot { it is ThreadItem.UnrecognizedMessage || it is ThreadItem.BackgroundTaskLifecycle }
         .takeLast(MAX_CACHED_THREAD_ROWS)
 
 /**

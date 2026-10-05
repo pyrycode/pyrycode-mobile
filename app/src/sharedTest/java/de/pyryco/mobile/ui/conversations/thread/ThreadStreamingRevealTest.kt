@@ -53,6 +53,23 @@ class ThreadStreamingRevealTest {
         composeRule.waitForIdle()
     }
 
+    /**
+     * Advances the paused clock a frame at a time until [text] is in the tree, failing past [budgetMillis].
+     * `advanceTimeUntil` would run the finder on the main thread, which the device forbids, so the check
+     * runs here on the test thread between frames.
+     */
+    private fun advanceFramesUntilShown(
+        text: String,
+        budgetMillis: Long,
+    ) {
+        val start = composeRule.mainClock.currentTime
+        while (composeRule.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isEmpty()) {
+            val elapsed = composeRule.mainClock.currentTime - start
+            if (elapsed >= budgetMillis) throw AssertionError("'$text' not shown within $budgetMillis ms")
+            composeRule.mainClock.advanceTimeByFrame()
+        }
+    }
+
     private fun streaming(
         content: String,
         timestamp: Instant,
@@ -88,9 +105,7 @@ class ThreadStreamingRevealTest {
         composeRule.onNodeWithText(arrived, substring = true).assertDoesNotExist()
         composeRule.runOnIdle { open = true }
         // Synchronize each layout frame; the budget cannot reveal even the remaining appended text.
-        composeRule.mainClock.advanceTimeUntil(timeoutMillis = 128) {
-            composeRule.onAllNodesWithText(arrived + appended, substring = true).fetchSemanticsNodes().isNotEmpty()
-        }
+        advanceFramesUntilShown(arrived + appended, budgetMillis = 128)
         composeRule.onNodeWithText(arrived + appended, substring = true).assertExists().assertIsDisplayed()
     }
 
@@ -172,9 +187,7 @@ class ThreadStreamingRevealTest {
         composeRule.mainClock.advanceTimeBy(64)
         composeRule.waitForIdle()
         composeRule.runOnIdle { open = true }
-        composeRule.mainClock.advanceTimeUntil(timeoutMillis = 128) {
-            composeRule.onAllNodesWithText(full, substring = true).fetchSemanticsNodes().isNotEmpty()
-        }
+        advanceFramesUntilShown(full, budgetMillis = 128)
         composeRule.onNodeWithText(full, substring = true).assertIsDisplayed()
     }
 }
