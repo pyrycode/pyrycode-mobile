@@ -27,6 +27,13 @@ and [row geometry/accessibility](queued-backlog-section.md#styling).
 
 ## What it does
 
+Opening or reopening a thread shows the current text of a streaming row created
+before opening immediately, even if it has never received `turn_end`. Appended
+text reveals progressively, and a reply first arriving after opening starts with
+no visible text. `ThreadScreen` remembers the phone-clock opening time per
+conversation and passes it to [MessageBubble](message-bubble.md#streaming-variant--progressive-reveal--blinking-caret-since-184).
+A fresh thread composition captures a new time, so arrived text does not replay.
+
 The thread follows [Figma `16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8).
 Its message list fills the screen area below the system status bar and above the IME,
 scrolling behind the full-width translucent, progressively blurred header and composer.

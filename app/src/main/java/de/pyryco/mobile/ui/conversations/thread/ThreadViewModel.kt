@@ -604,7 +604,7 @@ class ThreadViewModel(
     private val threadItems: Flow<List<ThreadItem>> =
         merge(
             repository.observeMessages(conversationId).map(ThreadInput::Finished),
-            liveSessionEvents.map(ThreadInput::Live),
+            liveSessionEvents.map { ThreadInput.Live(it) },
         ).scan(ThreadFold(emptyList(), null)) { fold, input -> fold.reduce(input, conversationId) }
             .map { it.render() }
             .distinctUntilChanged()

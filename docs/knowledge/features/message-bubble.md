@@ -231,7 +231,20 @@ A `Box(Modifier.clickable(role = Role.Button) { ... }.padding(horizontal = 6.dp,
 
 ### Streaming variant — progressive reveal + blinking caret (since #184)
 
-When `message.isStreaming = true`, the assistant arm routes to a private `StreamingAssistantBody(content, modifier)` instead of the static `MarkdownText(...)` call. The composable derives two pieces of state via `produceState`:
+When `message.isStreaming = true`, the assistant arm routes to the private
+`StreamingAssistantBody` with content, initial reveal length and the markdown-link
+callback instead of the static `MarkdownText(...)` call.
+
+`MessageBubble.threadOpenedAt` defaults to `null`, keeping standalone bubbles'
+zero-start reveal. The thread supplies its remembered opening time: when `message.timestamp`
+precedes it, the body seeds `revealedLength` with the current `content.length`.
+Otherwise it starts at zero. Pre-open streaming text is therefore immediate on
+opening/reopening, while post-open appends reveal progressively from the retained
+prefix. The seed only initializes a fresh body; changing content or replacing a
+synthetic row with a repository row under the same lazy key does not reseed it.
+See [first-arrival timestamps](streaming-assistant-turns.md#the-fold).
+
+The composable derives two pieces of state via `produceState`:
 
 - `revealedLength: State<Int>` keyed on `Unit` since [#1754](../../specs/architecture/1754-word-reveal-catch-up.md). The composition-lifetime producer reads the latest `content` through `rememberUpdatedState` every `STREAMING_REVEAL_STEP_MS = 33L` tick. Small backlogs reveal one whitespace-delimited word per tick (about 30 words/sec); `nextStreamingRevealLength` includes adjacent whitespace and the last arrived word even without trailing whitespace. A 15-tick catch-up budget divides the remaining words across the remaining ticks, rounding up, so larger backlogs reveal several words per step. While behind, the countdown decreases on each tick; it resets only once caught up. Arrivals preserve the visible prefix, delay and outstanding countdown, and the deadline tick reveals all currently arrived text: each snapshot catches up within 495 ms of reveal-clock time, with presentation adding a frame.
 - `caretVisible: State<Boolean>` keyed on `Unit`. Producer: `while (true) { delay(STREAMING_CARET_BLINK_PERIOD_MS); value = !value }`. `STREAMING_CARET_BLINK_PERIOD_MS = 500L` → 1 Hz toggle / 0.5 Hz full blink cycle. Independent of the reveal — the caret keeps blinking after the prefix is fully revealed until `isStreaming` flips `false`.
@@ -327,7 +340,7 @@ fixtures, metadata gestures, palette and geometry guards, and attachment coverag
 
 - **User variant is plain text; assistant variant renders markdown** (since #129, unchanged by #644). User blank-line paragraphs have a 12dp gap while single line breaks remain literal. Assistant messages render through [`MarkdownText`](./markdown-text.md).
 - **Word boundaries follow arrived whitespace, not token boundaries.** A final arrived word is revealed even without trailing whitespace, so later deltas may extend that word. A 2000-character string with no whitespace reveals in one step. Large backlogs accelerate beyond the nominal one-word cadence to meet the catch-up deadline — see [Streaming assistant turns](streaming-assistant-turns.md#lifecycle-errors-edge-cases).
-- **Streaming state is lost on `LazyColumn` item disposal.** Disposing a streaming item cancels both `produceState` coroutines and forgets `revealedLength`; re-mounting starts at 0 with a new catch-up budget. Appended content during the same composition preserves the prefix and both clocks. Finalization removes the streaming body and renders the full static markdown immediately.
+- **Streaming state is lost on `LazyColumn` item disposal.** Disposing a streaming item cancels both `produceState` coroutines and forgets `revealedLength`; re-mounting uses a new catch-up budget and the timestamp-based seed: full current text for a row predating the thread opening, zero for a post-open row or a standalone bubble without `threadOpenedAt`. Reopening the thread captures a fresh opening time and shows all arrived text immediately. Appended content during the same composition preserves the prefix and both clocks. Finalization removes the streaming body and renders the full static markdown immediately.
 - **Caret inside an open markdown construct falls back to plain text.** Unchanged since #184 — see [`MarkdownText`](./markdown-text.md).
 - **`Role.Tool` routes to [`ToolCallRow`](./tool-call-row.md) since #131.** The null-safe `?.let` renders nothing if a `Role.Tool` message arrives with `toolCall = null`.
 - **RTL.** `Arrangement.spacedBy(0.dp, alignment)` and `Modifier.fillMaxWidth()` respect `LayoutDirection` automatically — in RTL locales the user bubble pins to the left and the assistant bubble to the right. `BubbleShape`'s uniform 6dp corners mean there is no longer an asymmetric "tail" to worry about flipping (the pre-#644 shape's `bottomEnd = 6.dp` notch is gone).

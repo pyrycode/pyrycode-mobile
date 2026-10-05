@@ -300,6 +300,7 @@ fun ThreadScreen(
     // MainActivity → vm::onOpenMarkdownLink; a failed read reuses [markdownOpenFailures].
     onOpenMarkdownLink: (String) -> Unit = {},
 ) {
+    val threadOpenedAt = remember(state.conversationId) { Clock.System.now() }
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
     val openRequest = modalState as? ModalUiState.Open
@@ -771,6 +772,7 @@ fun ThreadScreen(
                                                 is ThreadItem.MessageItem ->
                                                     MessageBubble(
                                                         message = item.message,
+                                                        threadOpenedAt = threadOpenedAt,
                                                         toolNestingDepth = toolDepths[item.message.id] ?: 0,
                                                         joinsNextToolRow = rows.getOrNull(chronologicalIndex + 1).isToolRow(),
                                                         attachmentStates = attachmentStates,
