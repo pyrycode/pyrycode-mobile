@@ -61,6 +61,8 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso
@@ -327,6 +329,67 @@ class InteractiveStreamE2ETest {
 
         // 5. Match the displayed reply itself; queued prompt removal cannot offset this signal.
         composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+    }
+
+    /** #1766: one real reply exercises the stabilized body and the same settled GFM renderer. */
+    @Test
+    fun interactiveTurn_markdownReply_rendersFormattedBody() {
+        val peer = runningToolPeer()
+        try {
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val (chat, name) = answerChat(twoHostArg(ARG_SERVER_ID), "markdown-reveal-")
+            assertPeerAnswers(peer, chat)
+            openChatRow(name)
+            val stamp = System.currentTimeMillis()
+            val bold = "bold$stamp"
+            val inline = "inline$stamp"
+            val code = "code$stamp"
+            val cell = "cell$stamp"
+            val end = "end$stamp"
+            val body = "**$bold** `$inline`\n\n```text\n$code\n```\n\n| Key | Value |\n| --- | --- |\n| $cell | present |\n\n$end"
+            sendFromPhone(
+                "Reply with exactly the following markdown body, preserving every word and its formatting. " +
+                    "Do not use tools or surround the whole response with another code fence:\n\n" + body,
+            )
+            awaitTurnEnd(peer, chat, 1, "the formatted markdown reply")
+            val reply = assistantText(peer, chat)
+            // A generated fixture that does not contain the requested constructs proves nothing.
+            assertTrue(reply.contains("**$bold**"))
+            assertTrue(reply.contains("`$inline`"))
+            assertTrue(reply.contains("```text"))
+            assertTrue(reply.contains("| $cell | present |"))
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(end).fetchSemanticsNodes().isNotEmpty() &&
+                    composeTestRule.onAllNodesWithText("▎").fetchSemanticsNodes().isEmpty()
+            }
+            val formatted =
+                composeTestRule
+                    .onNodeWithText("$bold $inline")
+                    .fetchSemanticsNode()
+                    .config[SemanticsProperties.Text]
+                    .single()
+            assertTrue(
+                formatted.spanStyles.any {
+                    it.item.fontWeight == FontWeight.Bold &&
+                        formatted.text.substring(it.start, it.end) == bold
+                },
+            )
+            assertTrue(
+                formatted.spanStyles.any {
+                    it.item.fontFamily == FontFamily.Monospace &&
+                        formatted.text.substring(it.start, it.end) == inline
+                },
+            )
+            listOf(code, "Key", "Value", cell, "present", end).forEach {
+                composeTestRule.onNodeWithText(it).assertIsDisplayed()
+            }
+            // The whole reply survives the streaming-to-history boundary with no lost source text.
+            assertEquals(body, reply.trim())
+        } finally {
+            peer.close()
+        }
     }
 
     /**

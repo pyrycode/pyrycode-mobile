@@ -1,4 +1,4 @@
 {"type":"assistant","message":{"id":"stream-1","content":[{"type":"text","text":"Hello, "}]}}
 {"type":"assistant","message":{"id":"stream-2","content":[{"type":"text","text":"streamed "}]}}
-{"type":"assistant","message":{"id":"stream-3","stop_reason":"end_turn","content":[{"type":"text","text":"world"}]}}
+{"type":"assistant","message":{"id":"stream-3","stop_reason":"end_turn","content":[{"type":"text","text":"world\n\n**formatted** `inline`\n\n```text\ncode body\n\nlast line\n```\n\n| Key | Value |\n| --- | --- |\n| cell | present |\n\nmarkdown complete"}]}}
 {"type":"result","subtype":"success","is_error":false,"session_id":"43143143-4314-4314-8314-431431431431"}

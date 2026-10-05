@@ -13,6 +13,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberUpdatedState
@@ -36,6 +37,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.theme.assistantBubbleContainer
 import de.pyryco.mobile.ui.theme.userBubbleContainer
@@ -68,7 +70,6 @@ private val ToolNestingIndent = MessageAreaRowSpacing
 // Surface is the only node that moves when the hug regresses.
 internal const val MESSAGE_BUBBLE_TEST_TAG = "message-bubble"
 
-private const val STREAMING_CARET_GLYPH = "▎"
 private val UserParagraphBreak = Regex("\\r?\\n[\\t ]*\\r?\\n")
 private const val STREAMING_REVEAL_WORDS_PER_SECOND = 30
 internal const val STREAMING_REVEAL_STEP_MS: Long = 1000L / STREAMING_REVEAL_WORDS_PER_SECOND
@@ -404,6 +405,10 @@ private fun StreamingAssistantBody(
     onOpenMarkdownLink: ((String) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
+    DisposableEffect(Unit) {
+        RelayLog.d { "event=streaming_markdown_start" }
+        onDispose { RelayLog.d { "event=streaming_markdown_end" } }
+    }
     val currentContent by rememberUpdatedState(content)
     val revealedLength by produceState(initialValue = initialRevealedLength, key1 = Unit) {
         var stepsRemaining = STREAMING_CATCH_UP_STEPS
@@ -436,8 +441,12 @@ private fun StreamingAssistantBodyView(
     onOpenMarkdownLink: ((String) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
-    val displayText = if (caretVisible) revealedText + STREAMING_CARET_GLYPH else revealedText
-    MarkdownText(markdown = displayText, modifier = modifier, onOpenMarkdownPath = onOpenMarkdownLink)
+    StreamingMarkdownText(
+        source = revealedText,
+        caretVisible = caretVisible,
+        modifier = modifier,
+        onOpenMarkdownPath = onOpenMarkdownLink,
+    )
 }
 
 // Pinned rather than Clock.System.now() so the meta row renders a stable, reviewable timestamp — the

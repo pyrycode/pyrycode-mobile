@@ -1393,6 +1393,8 @@ elif [ -n "${LIVE}" ]; then
   # #1020: history replay now names a user message's files, so the peer's file after a history reload joins,
   # one turn (the peer's message). The list holds 32 methods and 34 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload"
+  # #1766: progressive formatted markdown reaches a complete body (one real Claude turn).
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_markdownReply_rendersFormattedBody"
   # #1050: a markdown link in claude's reply opens the note live in the in-app reader (two turns: the note and
   # its rewrite). The list holds 33 methods and 36 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_markdownLink_opensLiveNoteInReader"

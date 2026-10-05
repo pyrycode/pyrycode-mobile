@@ -335,12 +335,13 @@ class MessageBubbleTest {
             composeTestRule
                 .onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.Text), useUnmergedTree = true)
                 .fetchSemanticsNodes()
-                .single()
-                .config[SemanticsProperties.Text]
-                .single()
-                .text
-                .removeSuffix(STREAMING_CARET)
-                .trimEnd()
+                .singleOrNull { it.config[SemanticsProperties.Text].single().text != STREAMING_CARET }
+                ?.config
+                ?.get(SemanticsProperties.Text)
+                ?.single()
+                ?.text
+                ?.trimEnd()
+                .orEmpty()
 
         var previous = revealedText()
         val snapshots = mutableListOf<Pair<Long, String>>()

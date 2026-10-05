@@ -18,6 +18,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.MainActivity
@@ -367,6 +369,21 @@ class DeterministicInteractiveStreamE2ETest {
             .onAllNodesWithText(STREAMED_SUBSTRING, substring = true)
             .onFirst()
             .assertIsDisplayed()
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText("markdown complete").fetchSemanticsNodes().isNotEmpty() &&
+                composeTestRule.onAllNodesWithText("▎").fetchSemanticsNodes().isEmpty()
+        }
+        val formatted =
+            composeTestRule
+                .onNodeWithText("formatted inline")
+                .fetchSemanticsNode()
+                .config[SemanticsProperties.Text]
+                .single()
+        assertTrue(formatted.spanStyles.any { it.item.fontWeight == FontWeight.Bold })
+        assertTrue(formatted.spanStyles.any { it.item.fontFamily == FontFamily.Monospace })
+        listOf("code body\n\nlast line", "Key", "Value", "cell", "present", "markdown complete").forEach {
+            composeTestRule.onNodeWithText(it).assertIsDisplayed()
+        }
     }
 
     /**

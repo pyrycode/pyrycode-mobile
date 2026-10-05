@@ -29,11 +29,15 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -184,15 +188,7 @@ fun MarkdownText(
     onOpenMarkdownPath: ((String) -> Unit)? = null,
     style: MarkdownTextStyle = MarkdownTextStyle(MaterialTheme.typography.bodyMedium),
 ) {
-    val platformHandler = LocalUriHandler.current
-    val currentOnOpenMarkdownPath by rememberUpdatedState(onOpenMarkdownPath)
-    // Every link tap goes through this one handler, so the block walkers below keep passing a UriHandler.
-    val uriHandler =
-        remember(platformHandler) {
-            object : UriHandler {
-                override fun openUri(uri: String) = routeMarkdownLink(uri, currentOnOpenMarkdownPath, platformHandler::openUri)
-            }
-        }
+    val uriHandler = rememberMarkdownUriHandler(onOpenMarkdownPath)
     val root =
         remember(markdown) {
             MarkdownParser(MarkdownFlavour).buildMarkdownTreeFromString(markdown)
@@ -210,12 +206,84 @@ fun MarkdownText(
 }
 
 @Composable
+private fun rememberMarkdownUriHandler(onOpenMarkdownPath: ((String) -> Unit)?): UriHandler {
+    val platformHandler = LocalUriHandler.current
+    val currentOnOpenMarkdownPath by rememberUpdatedState(onOpenMarkdownPath)
+    // Every link tap goes through this one handler, so the block walkers below keep passing a UriHandler.
+    val uriHandler =
+        remember(platformHandler) {
+            object : UriHandler {
+                override fun openUri(uri: String) = routeMarkdownLink(uri, currentOnOpenMarkdownPath, platformHandler::openUri)
+            }
+        }
+    return uriHandler
+}
+
+internal interface StreamingMarkdownObserver {
+    fun parsed(length: Int)
+
+    fun composed(key: Int)
+}
+
+internal val LocalStreamingMarkdownObserver = staticCompositionLocalOf<StreamingMarkdownObserver?> { null }
+private val LocalPendingMarkdown = staticCompositionLocalOf<PendingMarkdown?> { null }
+
+/** Reuses the same block and inline walkers; only the mutable suffix receives pending presentation. */
+@Composable
+internal fun StreamingMarkdownText(
+    source: String,
+    caretVisible: Boolean,
+    modifier: Modifier = Modifier,
+    onOpenMarkdownPath: ((String) -> Unit)? = null,
+    style: MarkdownTextStyle = MarkdownTextStyle(MaterialTheme.typography.bodyMedium),
+) {
+    val observer = LocalStreamingMarkdownObserver.current
+    val cache = remember(observer) { StreamingMarkdownCache { observer?.parsed(it.length) } }
+    val blocks = remember(source, cache) { cache.update(source) }
+    val handler = rememberMarkdownUriHandler(onOpenMarkdownPath)
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(style.blockSpacing)) {
+        blocks.forEachIndexed { index, block ->
+            key(block.key) {
+                if (index == blocks.lastIndex) {
+                    Column {
+                        StreamingBlockView(block, handler, style, observer)
+                        // Separate from the AST and its link/code content. Alpha keeps blink geometry stable.
+                        Text("▎", Modifier.alpha(if (caretVisible) 1f else 0f), style = style.body)
+                    }
+                } else {
+                    StreamingBlockView(block, handler, style, observer)
+                }
+            }
+        }
+        if (blocks.isEmpty()) Text("▎", Modifier.alpha(if (caretVisible) 1f else 0f), style = style.body)
+    }
+}
+
+@Composable
+private fun StreamingBlockView(
+    block: StreamingMarkdownBlock,
+    handler: UriHandler,
+    style: MarkdownTextStyle,
+    observer: StreamingMarkdownObserver?,
+) {
+    SideEffect { observer?.composed(block.key) }
+    CompositionLocalProvider(LocalPendingMarkdown provides block.pending) {
+        MarkdownBlock(block.node, block.source, handler, style)
+    }
+}
+
+@Composable
 private fun MarkdownBlock(
     node: ASTNode,
     source: String,
     uriHandler: UriHandler,
     style: MarkdownTextStyle,
 ) {
+    val pendingText = LocalPendingMarkdown.current?.blockText(node)
+    if (pendingText != null) {
+        Text(pendingText, style = style.body)
+        return
+    }
     when (node.type) {
         MarkdownElementTypes.ATX_1 ->
             HeadingBlock(node, source, uriHandler, MaterialTheme.typography.headlineSmall.readerLineHeight(style.presentation))
@@ -913,6 +981,7 @@ private data class InlineColors(
     val codeSpanBackground: Color,
     val link: Color,
     val struck: Color,
+    val pending: PendingMarkdown? = null,
 )
 
 @Composable
@@ -921,6 +990,7 @@ private fun currentInlineColors(): InlineColors =
         codeSpanBackground = MaterialTheme.colorScheme.surfaceContainer,
         link = MaterialTheme.colorScheme.primary,
         struck = MaterialTheme.colorScheme.onSurfaceVariant,
+        pending = LocalPendingMarkdown.current,
     )
 
 @Composable
@@ -954,12 +1024,24 @@ private object InertUriHandler : UriHandler {
 
 private val InertInlineColors = InlineColors(Color.Unspecified, Color.Unspecified, Color.Unspecified)
 
+internal fun streamingInlineText(
+    nodes: List<ASTNode>,
+    source: String,
+    pending: PendingMarkdown,
+): String = buildAnnotatedString { appendInlineChildren(nodes, source, InertUriHandler, InertInlineColors.copy(pending = pending)) }.text
+
 private fun AnnotatedString.Builder.appendInline(
     node: ASTNode,
     source: String,
     uriHandler: UriHandler,
     colors: InlineColors,
 ) {
+    val pending = colors.pending
+    if (pending?.isHidden(node) == true) return
+    if (pending?.isLiteral(node) == true) {
+        append(pending.text(node))
+        return
+    }
     when (node.type) {
         MarkdownElementTypes.EMPH ->
             withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
@@ -1044,7 +1126,7 @@ private fun AnnotatedString.Builder.appendInline(
         // children whose leaves (DOLLAR, TEXT, WHITE_SPACE) rebuild the `$…$` span verbatim.
         else ->
             if (node.children.isEmpty()) {
-                append(node.getTextInNode(source).toString())
+                append(pending?.text(node) ?: node.getTextInNode(source).toString())
             } else {
                 appendInlineChildren(node.children, source, uriHandler, colors)
             }
@@ -1066,7 +1148,11 @@ private fun AnnotatedString.Builder.appendInlineChildren(
     uriHandler: UriHandler,
     colors: InlineColors,
 ) {
-    val runs = singleTildeRuns(children, source)
+    val runs =
+        singleTildeRuns(children, source).filter { (open, close) ->
+            colors.pending?.isHidden(children[open]) != true &&
+                colors.pending?.isHidden(children[close]) != true
+        }
     var index = 0
     while (index < children.size) {
         val close = runs[index]
