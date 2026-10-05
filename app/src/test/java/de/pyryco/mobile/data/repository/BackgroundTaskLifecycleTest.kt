@@ -127,6 +127,114 @@ class BackgroundTaskLifecycleTest {
     }
 
     @Test
+    fun freshMessageBetweenRetainedAnchors_cannotMoveFinishBeforeLaunch() {
+        val launch = emptyList<ThreadItem>().withBackgroundTaskStarted(startedDto(), first).single()
+        val finish = emptyList<ThreadItem>().withBackgroundTaskUpdated(updatedDto(), last).single()
+        val held = listOf(message("m1"), launch, message("m3"))
+        val page = listOf(message("m1"), launch, message("m2"), finish, message("m3"))
+        val merged = held.mergeHistoryRows(page)
+        assertEquals(listOf("m2", "m1", "t1:false", "t1:true", "m3"), merged.keys())
+        assertEquals(listOf(message("m2"), message("m1"), message("m3")), merged.filterIsInstance<ThreadItem.MessageItem>())
+        assertEquals(merged, merged.mergeHistoryRows(page))
+        assertEquals(merged, merged.withBackgroundTaskStarted(startedDto(), last).withBackgroundTaskUpdated(updatedDto(), first))
+        val prepended = merged.mergeHistoryRows(listOf(message("older")))
+        assertEquals(listOf("older") + merged.keys(), prepended.keys())
+        assertEquals(merged.markers(), prepended.markers())
+    }
+
+    @Test
+    fun fullyOverlappingAssistantWithDifferentId_anchorsHistoryFinishAfterText() {
+        assertAssistantOverlapPosition(cached = false, heldLaunch = false)
+        assertAssistantOverlapPosition(cached = false, heldLaunch = true)
+    }
+
+    @Test
+    fun fullyOverlappingAssistantWithDifferentId_anchorsCachedFinishAfterText() {
+        assertAssistantOverlapPosition(cached = true, heldLaunch = false)
+        assertAssistantOverlapPosition(cached = true, heldLaunch = true)
+    }
+
+    @Test
+    fun leadingHistoryLifecycle_anchorsBeforeFirstOverlappingAssistantSegment() {
+        val delta = LiveSessionEvent.AssistantDelta("c1", "turn", 0, "hello")
+        val text = emptyList<ThreadItem>().withAssistantDelta(delta, first).withAssistantDelta(delta.copy(seq = 1, text = " world"), last)
+        val held = listOf(message("older")) + text
+        val page =
+            emptyList<ThreadItem>()
+                .withBackgroundTaskStarted(startedDto(), first)
+                .withAssistantDelta(delta.copy(seq = 1, text = " world"), last)
+                .withBackgroundTaskUpdated(updatedDto(), last)
+        val merged = held.mergeHistoryRows(page)
+        assertEquals(listOf("older", "t1:false", "turn", "t1:true"), merged.keys())
+        assertEquals(held, merged.filterIsInstance<ThreadItem.MessageItem>())
+        assertEquals(merged, merged.mergeHistoryRows(page))
+    }
+
+    private fun assertAssistantOverlapPosition(
+        cached: Boolean,
+        heldLaunch: Boolean,
+    ) {
+        val delta = LiveSessionEvent.AssistantDelta("c1", "turn", 0, "hello")
+        val text = emptyList<ThreadItem>().withAssistantDelta(delta, first).withAssistantDelta(delta.copy(seq = 1, text = " world"), last)
+        val launch = emptyList<ThreadItem>().withBackgroundTaskStarted(startedDto(), first).single()
+        val held = if (heldLaunch) listOf(launch) + text else text
+        val tail =
+            emptyList<ThreadItem>()
+                .withAssistantDelta(delta.copy(seq = 1, text = " world"), last)
+                .withBackgroundTaskUpdated(updatedDto(), last)
+        val incoming = if (heldLaunch) listOf(launch) + tail else tail
+        val merged = if (cached) held.mergeCachedRows(incoming) else held.mergeHistoryRows(incoming)
+        val expected = if (heldLaunch) listOf("t1:false", "turn", "t1:true") else listOf("turn", "t1:true")
+        assertEquals(expected, merged.keys())
+        assertEquals(text, merged.filterIsInstance<ThreadItem.MessageItem>())
+        assertEquals(merged, if (cached) merged.mergeCachedRows(incoming) else merged.mergeHistoryRows(incoming))
+        assertEquals(merged, merged.withBackgroundTaskUpdated(updatedDto(), first))
+        assertEquals(listOf("older") + expected, merged.mergeHistoryRows(listOf(message("older"))).keys())
+    }
+
+    @Test
+    fun historyAndCacheAssistantOverlapAcrossHeldSegments_anchorFinishAfterLastOverlappingSegment() {
+        val delta = LiveSessionEvent.AssistantDelta("c1", "turn", 0, "hello")
+        val held =
+            emptyList<ThreadItem>()
+                .withBackgroundTaskStarted(startedDto(), first)
+                .withAssistantDelta(delta, first) + message("middle")
+        val split = held.withAssistantDelta(delta.copy(seq = 1, text = " world"), last)
+        val incoming =
+            emptyList<ThreadItem>()
+                .withAssistantDelta(delta, first)
+                .withAssistantDelta(delta.copy(seq = 1, text = " world"), last)
+                .withBackgroundTaskUpdated(updatedDto(), last)
+        for (cached in listOf(false, true)) {
+            val merged = if (cached) split.mergeCachedRows(incoming) else split.mergeHistoryRows(incoming)
+            assertEquals(listOf("t1:false", "turn", "middle", "turn#1", "t1:true"), merged.keys())
+            assertEquals(split.filterIsInstance<ThreadItem.MessageItem>(), merged.filterIsInstance<ThreadItem.MessageItem>())
+            assertEquals(merged, if (cached) merged.mergeCachedRows(incoming) else merged.mergeHistoryRows(incoming))
+        }
+    }
+
+    @Test
+    fun partiallyOverlappingCachedAssistant_anchorsFinishAfterRetainedSuffix() {
+        val delta = LiveSessionEvent.AssistantDelta("c1", "turn", 0, "hello")
+        val held =
+            emptyList<ThreadItem>()
+                .withBackgroundTaskStarted(startedDto(), first)
+                .withAssistantDelta(delta.copy(seq = 1, text = " world"), last)
+        val cached =
+            emptyList<ThreadItem>()
+                .withBackgroundTaskStarted(startedDto(), first)
+                .withAssistantDelta(delta, first)
+                .withAssistantDelta(delta.copy(seq = 1, text = " world"), last)
+                .withBackgroundTaskUpdated(updatedDto(), last)
+        val merged = held.mergeCachedRows(cached)
+        assertEquals(listOf("t1:false", "turn", "t1:true"), merged.keys())
+        val message = merged.filterIsInstance<ThreadItem.MessageItem>().single().message
+        assertEquals("hello world", message.content)
+        assertEquals(listOf(0, 1), message.segment?.deltas?.map { it.seq })
+        assertEquals(merged, merged.mergeCachedRows(cached))
+    }
+
+    @Test
     fun reconnectMemoryMerge_completesLaunchJoinWithoutMovingCachedFinish() {
         val retained = listOf<ThreadItem>(message("m1")).withBackgroundTaskUpdated(updatedDto(), last) + message("m2")
         val reloaded = listOf<ThreadItem>(message("m1")).withBackgroundTaskStarted(startedDto(), first) + message("m2")

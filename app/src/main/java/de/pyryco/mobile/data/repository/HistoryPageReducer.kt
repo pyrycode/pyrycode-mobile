@@ -794,8 +794,7 @@ private fun List<ThreadItem>.withHistoryLifecyclePositions(
 ): List<ThreadItem> {
     if (fresh.isEmpty()) return this
     val pending = fresh.mapTo(mutableSetOf()) { it.joinIdentity() }
-    val heldAt = HashMap<Any, Int>(size)
-    forEachIndexed { index, row -> heldAt.putIfAbsent(row.joinIdentity(), index) }
+    val anchors = ThreadRowAnchors(this)
     // Slot i precedes row i. Leading evidence waits for the page's first retained neighbour.
     val slots = mutableMapOf<Int, MutableList<ThreadItem>>()
     val leading = mutableListOf<ThreadItem>()
@@ -806,12 +805,13 @@ private fun List<ThreadItem>.withHistoryLifecyclePositions(
             val after = slot
             if (after == null) leading += row else slots.getOrPut(after) { mutableListOf() } += row
         } else {
-            heldAt[identity]?.let { index ->
+            anchors.position(row)?.let { position ->
                 if (leading.isNotEmpty()) {
-                    slots.getOrPut(index) { mutableListOf() }.addAll(leading)
+                    slots.getOrPut(position.first) { mutableListOf() }.addAll(leading)
                     leading.clear()
                 }
-                slot = index + 1
+                // Fresh ordinary rows prepend; they cannot pull later evidence behind a held anchor.
+                slot = maxOf(slot ?: 0, position.last + 1)
             }
         }
     }
@@ -852,20 +852,23 @@ internal fun List<ThreadItem>.mergeCachedRows(cached: List<ThreadItem>): List<Th
     val kept = withAttachmentHintsFrom(cached).withBackgroundTaskHintsFrom(cached)
     val heads = segmentHeads()
     // Built once so the merge stays linear in the cached base, which holds a thread's whole history (#1353).
-    val heldAt = HashMap<Any, Int>(size)
-    forEachIndexed { index, row -> heldAt.putIfAbsent(row.joinIdentity(), index) }
+    val anchors = ThreadRowAnchors(this)
     // Slot i is in front of this thread's row i; slot size is after its last row.
     val slots = mutableMapOf<Int, MutableList<ThreadItem>>()
     var slot = 0
     for (row in cached) {
-        val held = heldAt[row.joinIdentity()] ?: -1
-        if (held >= 0) {
-            slot = held + 1
+        val position = anchors.position(row)
+        if (anchors.holdsIdentity(row)) {
+            if (position != null) slot = position.last + 1
             continue
         }
-        val older = row.olderThan(heads) ?: continue
-        val ceiling = (older as? ThreadItem.MessageItem)?.message?.segment?.let { heads[it.turnId]?.index } ?: slot
-        slots.getOrPut(minOf(slot, ceiling)) { mutableListOf() } += older
+        val older = row.olderThan(heads)
+        if (older != null) {
+            val ceiling = (older as? ThreadItem.MessageItem)?.message?.segment?.let { heads[it.turnId]?.index } ?: slot
+            slots.getOrPut(minOf(slot, ceiling)) { mutableListOf() } += older
+        }
+        // Even discarded text anchors following evidence when the lanes split segments differently.
+        if (position != null) slot = position.last + 1
     }
     if (slots.isEmpty()) return kept.withBackgroundTaskLaunches()
     return buildList {
@@ -875,6 +878,44 @@ internal fun List<ThreadItem>.mergeCachedRows(cached: List<ThreadItem>): List<Th
         }
         slots[kept.size]?.let(::addAll)
     }.withoutSegmentsOfWholeTurns().withJoinedSegments().withBackgroundTaskLaunches()
+}
+
+/** Row anchors shared by history and reconnect, including assistant overlap with different segment ids. */
+private class ThreadRowAnchors(
+    rows: List<ThreadItem>,
+) {
+    private val identities = HashMap<Any, Int>(rows.size)
+    private val sequences = HashMap<String, MutableMap<Int, Int>>()
+
+    init {
+        rows.forEachIndexed { index, row ->
+            identities.putIfAbsent(row.joinIdentity(), index)
+            val segment = (row as? ThreadItem.MessageItem)?.message?.segment
+            if (segment != null) {
+                val turn = sequences.getOrPut(segment.turnId) { HashMap() }
+                segment.deltas.forEach { turn.putIfAbsent(it.seq, index) }
+            }
+        }
+    }
+
+    fun holdsIdentity(row: ThreadItem): Boolean = row.joinIdentity() in identities
+
+    /** First and last retained neighbours represented by this row; text never participates in the join. */
+    fun position(row: ThreadItem): IntRange? {
+        val segment = (row as? ThreadItem.MessageItem)?.message?.segment
+        val turn = segment?.let { sequences[it.turnId] }
+        if (segment != null && turn != null) {
+            var first = Int.MAX_VALUE
+            var last = -1
+            for (delta in segment.deltas) {
+                val index = turn[delta.seq] ?: continue
+                first = minOf(first, index)
+                last = maxOf(last, index)
+            }
+            if (last >= 0) return first..last
+        }
+        return identities[row.joinIdentity()]?.let { it..it }
+    }
 }
 
 /** Where a turn's text starts in a thread (#1350): the lowest `seq` its segments hold, and its first segment's row index. */
