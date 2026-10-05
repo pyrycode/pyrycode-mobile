@@ -66,7 +66,8 @@ class ThreadPastedImageErrorTest {
             }
         }
         rule.mainClock.autoAdvance = false
-        val clip = ClipData(ClipDescription("images", arrayOf("image/jpeg")), ClipData.Item(Uri.parse("content://$AUTHORITY/unreadable.jpg")))
+        val clip =
+            ClipData(ClipDescription("images", arrayOf("image/jpeg")), ClipData.Item(Uri.parse("content://$AUTHORITY/unreadable.jpg")))
         clip.addItem(ClipData.Item(Uri.parse("content://$AUTHORITY/huge.jpg")))
         rule.runOnUiThread { context.getSystemService(ClipboardManager::class.java).setPrimaryClip(clip) }
 
@@ -114,7 +115,10 @@ class ThreadPastedImageErrorTest {
             selection: String?,
             selectionArgs: Array<out String>?,
             sortOrder: String?,
-        ): Cursor = MatrixCursor(arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)).apply { addRow(arrayOf<Any?>(uri.lastPathSegment, 1L)) }
+        ): Cursor =
+            MatrixCursor(arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)).apply {
+                addRow(arrayOf<Any?>(uri.lastPathSegment, 1L))
+            }
 
         override fun insert(
             uri: Uri,
