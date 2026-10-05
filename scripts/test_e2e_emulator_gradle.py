@@ -1,4 +1,10 @@
+import importlib.util
 import os
+import base64
+import json
+import time
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 from pathlib import Path
 import subprocess
 import tempfile
@@ -8,10 +14,227 @@ import unittest
 TEST_RUN_END = "|| TEST_STATUS=$?\nfi\n"
 
 
+class HostPromptDaemonPrerequisiteTest(unittest.TestCase):
+    def setUp(self):
+        self.script = (Path(__file__).resolve().parent / "e2e-emulator.sh").read_text()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = Path(self.tmp.name)
+        self.git("init", "--initial-branch=main")
+        self.git("config", "user.name", "Fixture")
+        self.git("config", "user.email", "fixture@example.invalid")
+        self.old = self.commit("before handlers")
+        self.required = self.commit("host prompt handlers")
+        self.current = self.commit("later daemon")
+
+    def git(self, *args):
+        return subprocess.check_output(["git", "-C", str(self.repo), *args], stderr=subprocess.DEVNULL, text=True).strip()
+
+    def commit(self, message):
+        self.git("commit", "--allow-empty", "-m", message)
+        return self.git("rev-parse", "HEAD")
+
+    def run_guard(self, revision, live="1", tests="", source=None):
+        start = self.script.index("require_host_prompt_daemon() {")
+        function = self.script[start:self.script.index("\n# resolve_runner_from_config", start)]
+        body = 'set -euo pipefail\ndie() { printf "%s\\n" "$*" >&2; exit 1; }\n' + function
+        body += '\nrequire_host_prompt_daemon "$REQUIRED_REVISION"\n'
+        return subprocess.run(["bash", "-c", body], capture_output=True, text=True,
+                              env=dict(os.environ, LIVE=live, LIVE_TESTS=tests, DAEMON_REVISION=revision,
+                                       PYRYCODE_SRC=str(self.repo) if source is None else source,
+                                       REQUIRED_REVISION=self.required))
+
+    def test_full_live_suite_rejects_daemon_before_handlers(self):
+        result = self.run_guard(self.old)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("pyrycode#2768", result.stderr)
+        self.assertIn("rebuild", result.stderr)
+
+    def test_handlers_and_later_daemon_are_accepted(self):
+        for revision in (self.required, self.current):
+            with self.subTest(revision=revision):
+                self.assertEqual(0, self.run_guard(revision).returncode)
+
+    def test_selected_host_prompt_method_requires_handlers(self):
+        method = "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_hostSystemPrompt_editsResetsAndCancels"
+        self.assertNotEqual(0, self.run_guard(self.old, tests=method).returncode)
+
+    def test_unrelated_subset_and_scripted_run_need_no_host_prompt_handlers(self):
+        self.assertEqual(0, self.run_guard("", tests="de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread").returncode)
+        self.assertEqual(0, self.run_guard("", live="").returncode)
+
+    def test_missing_or_unknown_revision_and_source_fail_explicitly(self):
+        for revision, source in (("", None), ("a" * 40, None), (self.current, ""), (self.current, str(self.repo / "missing"))):
+            with self.subTest(revision=revision, source=source):
+                result = self.run_guard(revision, source=source)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("pyrycode#2768", result.stderr)
+
+
 def device_test_run(script):
     """The device test run, from its argument list to the end of the Gradle-or-installed choice."""
     start = script.index("GRADLE_TEST_ARGS=(")
     return script[start:script.index(TEST_RUN_END, start) + len(TEST_RUN_END)]
+
+
+class BypassPairingLifecycleTest(unittest.TestCase):
+    """The actual shell lifecycle must survive preceding scenarios longer than redemption."""
+
+    def setUp(self):
+        self.root = Path(__file__).resolve().parent.parent
+        self.script = (self.root / "scripts/e2e-emulator.sh").read_text()
+        self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.clock = self.tmp / "clock"
+        self.clock.write_text("0")
+        self.calls = self.tmp / "calls"
+        self.cli = self.tmp / "pyry"
+        self.cli.write_text("""#!/usr/bin/env python3
+import base64, json, os, sys
+from pathlib import Path
+now = int(Path(os.environ['FIXTURE_CLOCK']).read_text())
+with open(os.environ['FIXTURE_CALLS'], 'a') as log:
+    log.write(json.dumps({'at': now, 'privileged': '--allow-remote-permissions' in sys.argv,
+                          'home': os.environ['HOME'], 'args': sys.argv[1:]}) + '\\n')
+if os.environ.get('FIXTURE_FAILURE'):
+    print('secret-token secret-key secret-code', file=sys.stderr)
+    sys.exit(1)
+payload = {'server': 'fixture-host', 'token': 'secret-token', 'server_static_pubkey': 'secret-key',
+           'relay': 'ws://127.0.0.1:8888/v1/server', 'mintedAt': now}
+if '--allow-remote-permissions' in sys.argv and os.environ.get('FIXTURE_MISMATCH'):
+    payload['server'] = 'wrong-host'
+print(base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip('='))
+""")
+        self.cli.chmod(0o700)
+
+    def function(self, name):
+        start = self.script.index(name + "() {")
+        return self.script[start:self.script.index("\n}\n", start) + 3]
+
+    def start_fixture(self, **extra):
+        work = self.tmp / ("run-" + str(time.monotonic_ns()))
+        work.mkdir()
+        # Exercise the old eager lifecycle too, so its failure is an expired code, not a missing symbol.
+        name = "start_bypass_pairing_fixture" if "start_bypass_pairing_fixture() {" in self.script else "mint_bypass_pairing"
+        body = "set -euo pipefail\nlog() { :; }\nbypass_unmet() { exit 9; }\n"
+        if name == "mint_bypass_pairing":
+            body += self.function("phone_pair_code") + self.function("pair_token")
+        body += self.function(name) + "\n" + name + "\n"
+        body += """export BYPASS_FIXTURE_PID BYPASS_FIXTURE_PORT BYPASS_FIXTURE_AUTH PAIR_CODE_BYPASS BYPASS_PEER_TOKEN BYPASS_PEER_SERVER_STATIC_PUBKEY
+python3 - <<'END'
+import json, os
+print(json.dumps({key: os.environ.get(key, '') for key in
+                 ('BYPASS_FIXTURE_PID', 'BYPASS_FIXTURE_PORT', 'BYPASS_FIXTURE_AUTH', 'PAIR_CODE_BYPASS',
+                  'BYPASS_PEER_TOKEN', 'BYPASS_PEER_SERVER_STATIC_PUBKEY')}))
+END
+"""
+        env = dict(os.environ, REPO_ROOT=str(self.root), WORK_DIR=str(work), BYPASS_HOME=str(self.tmp),
+                   PYRY_BIN=str(self.cli), PYRY_NAME_BYPASS="e2e-fixture-bypass", PAIR_NAME_BYPASS="phone",
+                   PAIR_NAME_BYPASS_PEER="peer", DAEMON_RELAY_URL="ws://127.0.0.1:8888/v1/server",
+                   PHONE_RELAY_URL="ws://10.0.2.2:8888", FIXTURE_CLOCK=str(self.clock), FIXTURE_CALLS=str(self.calls),
+                   PAIR_BYPASS_OUT=str(self.tmp / "phone.out"), PAIR_BYPASS_PEER_OUT=str(self.tmp / "peer.out"),
+                   SERVER_ID_BYPASS="", PAIR_CODE_BYPASS="", BYPASS_PEER_TOKEN="", BYPASS_PEER_SERVER_STATIC_PUBKEY="",
+                   BYPASS_FIXTURE_PID="", BYPASS_FIXTURE_PORT="", BYPASS_FIXTURE_AUTH="", **extra)
+        result = subprocess.run(["bash", "-c", body], env=env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(0, result.returncode, "fixture setup failed")
+        config = json.loads(result.stdout)
+        config["work"] = str(work)
+        if config.get("BYPASS_FIXTURE_PID"):
+            self.addCleanup(self.stop_fixture, int(config["BYPASS_FIXTURE_PID"]))
+        return config
+
+    def stop_fixture(self, pid):
+        import signal
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+    def request(self, config, auth=None, path="/pair"):
+        request = Request(f"http://127.0.0.1:{config['BYPASS_FIXTURE_PORT']}{path}", data=b"",
+                          headers={"Authorization": "Bearer " + (config['BYPASS_FIXTURE_AUTH'] if auth is None else auth)})
+        with urlopen(request, timeout=5) as response:
+            return json.load(response)
+
+    def assert_private_diagnostics(self, config, code=""):
+        output = (Path(config["work"]) / "bypass-pairing.log").read_text()
+        for secret in (config['BYPASS_FIXTURE_AUTH'], 'secret-token', 'secret-key', 'secret-code'):
+            self.assertTrue(secret not in output, "fixture diagnostics exposed credential material")
+        if code:
+            self.assertTrue(code not in output, "fixture diagnostics exposed a pairing code")
+
+    def test_pairing_is_redeemable_after_preceding_scenarios_exceed_the_window(self):
+        config = self.start_fixture()
+        self.clock.write_text(str(16 * 60))  # No sleep and no Claude turn.
+        if config['BYPASS_FIXTURE_PORT']:
+            self.assertFalse(self.calls.exists(), "fixture minted before scenario entry")
+            fixture = self.request(config)
+            code = fixture['pairCode']
+            self.assertTrue(fixture['peerToken'] == 'secret-token', "peer pairing missing")
+        else:
+            code = config['PAIR_CODE_BYPASS']
+        payload = json.loads(base64.urlsafe_b64decode(code + '=' * (-len(code) % 4)))
+        self.assertLess(int(self.clock.read_text()) - payload['mintedAt'], 15 * 60,
+                        "bypass phone code expired while waiting for its scenario")
+        self.assertTrue(payload['relay'] == 'ws://10.0.2.2:8888', "phone relay rewrite missing")
+        calls = [json.loads(line) for line in self.calls.read_text().splitlines()]
+        self.assertEqual([False, True], [call['privileged'] for call in calls])
+        self.assertTrue(all(call['home'] == str(self.tmp) for call in calls), "pairing escaped isolated HOME")
+        self.assertEqual([16 * 60, 16 * 60], [call['at'] for call in calls])
+        self.assert_private_diagnostics(config, code)
+        self.assertEqual(0o600, (Path(config["work"]) / "bypass-pairing.json").stat().st_mode & 0o777)
+
+    def test_harness_cleanup_stops_the_fixture(self):
+        config = self.start_fixture()
+        cleanup = self.function("cleanup")
+        body = "set -euo pipefail\nlog() { :; }\n" + cleanup + "\ncleanup\n"
+        env = dict(os.environ, BYPASS_FIXTURE_PID=config['BYPASS_FIXTURE_PID'], WORK_DIR=config['work'],
+                   WATCHER_PID="", DAEMON_PID="", RELAY_PID="", ISO_HOME="", BYPASS_HOME="", ANSWER_HOME="")
+        result = subprocess.run(["bash", "-c", body], env=env, capture_output=True, text=True, timeout=5)
+        self.assertEqual(0, result.returncode, "harness cleanup failed")
+        self.assertFalse(Path(config['work']).exists())
+        import socket
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                with socket.create_connection(('127.0.0.1', int(config['BYPASS_FIXTURE_PORT'])), timeout=0.1):
+                    time.sleep(0.01)
+            except OSError:
+                break
+        else:
+            self.fail("fixture remained reachable after harness cleanup")
+
+    def test_unauthorized_and_unknown_requests_cannot_mint_and_success_is_one_shot(self):
+        config = self.start_fixture()
+        for auth, path, status in (("wrong", "/pair", 403), (None, "/other", 404)):
+            with self.assertRaises(HTTPError) as failure:
+                self.request(config, auth=auth, path=path)
+            self.assertEqual(status, failure.exception.code)
+            failure.exception.close()
+            self.assertFalse(self.calls.exists())
+        fixture = self.request(config)
+        with self.assertRaises(HTTPError) as failure:
+            self.request(config)
+        self.assertEqual(409, failure.exception.code)
+        failure.exception.close()
+        self.assertEqual(2, len(self.calls.read_text().splitlines()))
+        self.assert_private_diagnostics(config, fixture["pairCode"])
+
+    def test_failed_mint_or_host_mismatch_is_private_and_cannot_retry(self):
+        for mode in ('FIXTURE_FAILURE', 'FIXTURE_MISMATCH'):
+            with self.subTest(mode=mode):
+                config = self.start_fixture(**{mode: '1'})
+                with self.assertRaises(HTTPError) as failure:
+                    self.request(config)
+                self.assertEqual(503, failure.exception.code)
+                self.assertTrue('secret' not in failure.exception.read().decode(), "HTTP error exposed credentials")
+                failure.exception.close()
+                count = len(self.calls.read_text().splitlines())
+                with self.assertRaises(HTTPError) as failure:
+                    self.request(config)
+                self.assertEqual(409, failure.exception.code)
+                failure.exception.close()
+                self.assertEqual(count, len(self.calls.read_text().splitlines()))
+                self.assert_private_diagnostics(config)
 
 
 class EmulatorGradleTest(unittest.TestCase):
@@ -110,20 +333,18 @@ class EmulatorGradleTest(unittest.TestCase):
                                             env=env, capture_output=True, text=True, check=True)
                     self.assertEqual(expected, arg in result.stdout.splitlines())
 
-    def test_bypass_arguments_carry_the_unmet_code_or_the_pairing(self):
-        # #687: the operator-bypass daemon passes nothing, only its unmet prerequisite, or its six arguments.
+    def test_bypass_arguments_carry_the_unmet_code_or_the_fixture(self):
+        # #687: the operator-bypass daemon passes nothing, only its unmet prerequisite, or its fixture and witness arguments.
         root = Path(__file__).resolve().parent.parent
         script = (root / "scripts/e2e-emulator.sh").read_text()
         invocation = device_test_run(script)
         prefix = "-Pandroid.testInstrumentationRunnerArguments."
-        pairing = {"SERVER_ID_BYPASS": "srv-byp", "PAIR_CODE_BYPASS": "code-byp",
-                   "BYPASS_PEER_TOKEN": "peer-byp", "BYPASS_PEER_SERVER_STATIC_PUBKEY": "key-byp",
+        pairing = {"BYPASS_FIXTURE_PORT": "12345", "BYPASS_FIXTURE_AUTH": "private-capability",
                    "BYPASS_TOKEN_FILE": "/tmp/pyry-e2e-byp.x/outside/e2e687-1.txt", "BYPASS_WITNESS": "abc123"}
         cases = (
             ({}, []),
             ({"BYPASS_UNMET": "no_credential"}, [prefix + "bypassUnmet=no_credential"]),
-            (pairing, [prefix + "bypassServerId=srv-byp", prefix + "bypassPairCode=code-byp",
-                       prefix + "bypassPeerToken=peer-byp", prefix + "bypassServerStaticPublicKey=key-byp",
+            (pairing, [prefix + "bypassFixturePort=12345", prefix + "bypassFixtureAuthorization=private-capability",
                        prefix + "bypassTokenFile=/tmp/pyry-e2e-byp.x/outside/e2e687-1.txt",
                        prefix + "bypassToken=abc123"]),
         )
@@ -195,10 +416,11 @@ class EmulatorBuildBeforeMintTest(unittest.TestCase):
     def test_every_pairing_is_minted_after_the_build(self):
         build = self.script.index('"${GRADLEW}" -p "${REPO_ROOT}" assembleDebug')
         mints = [i for i in range(len(self.script)) if self.script.startswith(" pair -pyry-name=", i)]
-        # Host A (isolated and real HOME), host B, the host A peer, and two each on the bypass and answer daemons.
-        self.assertEqual(8, len(mints))
+        # Host A (isolated and real HOME), host B, the host A peer and two on the answer daemon.
+        # Bypass pairing now waits for the scenario-entry request in e2e-bypass-pairing.py.
+        self.assertEqual(6, len(mints))
         self.assertLess(build, min(mints))
-        for name in ("mint_bypass_pairing", "mint_answer_pairing"):
+        for name in ("start_bypass_pairing_fixture", "mint_answer_pairing"):
             with self.subTest(name=name):
                 calls = [i for i in range(len(self.script)) if self.script.startswith(name, i)
                          and not self.script.startswith(name + "() {", i)]
@@ -245,6 +467,134 @@ class EmulatorBuildBeforeMintTest(unittest.TestCase):
         expired = "msg=v2.handshake.reject.redemption_window_elapsed\n"
         result = self.run_test_task(0, {"daemon.log": expired})
         self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("", result.stderr)
+
+    # 2026-10-05: one retry of the failed tests with fresh codes after an expired pairing code.
+    REPORT = """<?xml version="1.0" encoding="UTF-8"?>
+<testsuites><testsuite name="device" tests="{tests}" failures="{failures}" errors="0" skipped="0">{cases}</testsuite></testsuites>
+"""
+    PASS = '<testcase classname="fixture.Class" name="{}" time="1"/>'
+    FAIL = '<testcase classname="fixture.Class" name="{}" time="1"><failure>pairing rejected</failure></testcase>'
+    # A Gradle stand-in: each call logs its arguments, writes that call's report and appends that call's daemon log line.
+    GRADLE = """#!/bin/bash
+call=$(( $(cat "$STUB_DIR/calls" 2>/dev/null || echo 0) + 1 ))
+echo "$call" > "$STUB_DIR/calls"
+printf '%s\\n' "$@" > "$STUB_DIR/args-$call"
+results="$REPO_ROOT/app/build/outputs/androidTest-results/managedDevice/debug/$DEVICE"
+mkdir -p "$results"
+rm -f "$results"/TEST-*.xml
+[ ! -f "$STUB_DIR/report-$call" ] || cp "$STUB_DIR/report-$call" "$results/TEST-$DEVICE-_app-.xml"
+[ ! -f "$STUB_DIR/log-$call" ] || cat "$STUB_DIR/log-$call" >> "$DAEMON_BYPASS_LOG"
+exit "$(cat "$STUB_DIR/status-$call")"
+"""
+    EXPIRED = "level=WARN msg=v2.handshake.reject.redemption_window_elapsed token=log-secret close=4401\n"
+    FRESH_MINT = ('mint_pairings() { echo minted >> "$STUB_DIR/mints"; TOKEN=fresh-token; PAIR_CODE_B=fresh-code-b; '
+                  'PEER_TOKEN=fresh-peer; PAIR_CODE_BYPASS=fresh-code-bypass; BYPASS_PEER_TOKEN=fresh-bypass-peer; '
+                  'PAIR_CODE_ANSWER=fresh-code-answer; ANSWER_PEER_TOKEN=fresh-answer-peer; }\n')
+
+    def report(self, *cases):
+        return self.REPORT.format(tests=len(cases), failures=sum("<failure>" in case for case in cases),
+                                  cases="".join(cases))
+
+    def run_with_retry(self, calls, first_log=EXPIRED):
+        """[calls]: per Gradle call, (status, report or None, daemon log line or None)."""
+        stub_dir = Path(self.tmp.name) / "stub"
+        repo = Path(self.tmp.name) / "repo"
+        (repo / "scripts").mkdir(parents=True)
+        (repo / "scripts/e2e-rerun-report.py").write_text((self.root / "scripts/e2e-rerun-report.py").read_text())
+        stub_dir.mkdir()
+        for number, (status, report, log) in enumerate(calls, start=1):
+            (stub_dir / f"status-{number}").write_text(str(status))
+            if report is not None:
+                (stub_dir / f"report-{number}").write_text(report)
+            if log is not None:
+                (stub_dir / f"log-{number}").write_text(log)
+        gradle = Path(self.tmp.name) / "gradlew-retry"
+        gradle.write_text(self.GRADLE)
+        gradle.chmod(0o700)
+        bypass_log = Path(self.tmp.name) / "daemon-bypass.log"
+        bypass_log.write_text("level=INFO msg=up\n")
+        functions = (self.block("report_stale_pairing_codes() {", "\n}\n")
+                     + self.block("retry_with_fresh_codes() {", "\n}\n")
+                     + self.block("report_relay_link_drops() {", "\n}\n"))
+        invocation = self.block("GRADLE_TEST_ARGS=(", 'exit "${TEST_STATUS}"\nfi\n')
+        body = "log() { echo \"log: $*\" >&2; }\n" + self.FRESH_MINT + functions + invocation
+        result = self.run_block(body, GRADLEW=str(gradle), REPO_ROOT=str(repo), STUB_DIR=str(stub_dir),
+                                WORK_DIR=str(Path(self.tmp.name) / "work"), PYRY_NAME="e2e-x", PYRY_NAME_B="e2e-x-b",
+                                PYRY_NAME_BYPASS="e2e-x-bypass", PYRY_NAME_ANSWER="e2e-x-answer",
+                                DAEMON_LOG=str(Path(self.tmp.name) / "daemon.log"),
+                                DAEMON_B_LOG=str(Path(self.tmp.name) / "daemon-b.log"),
+                                DAEMON_BYPASS_LOG=str(bypass_log),
+                                DAEMON_ANSWER_LOG=str(Path(self.tmp.name) / "daemon-answer.log"),
+                                PAIR_CODE_B="stub-code-b", SERVER_ID_B="stub-server-b", COLLISION_ID="c",
+                                COLLISION_NAME_A="a", COLLISION_NAME_B="b", PEER_TOKEN="stub-peer",
+                                TEST_TARGET="fixture.Class", PYRY_FORCE_TEST_RUN="1")
+        results = repo / "app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd"
+        args = [(stub_dir / f"args-{n}").read_text().splitlines()
+                for n in range(1, int((stub_dir / "calls").read_text()) + 1)]
+        mints = (stub_dir / "mints").read_text().count("minted") if (stub_dir / "mints").exists() else 0
+        return result, args, mints, sorted(results.glob("TEST-*.xml"))
+
+    def combined(self, reports):
+        spec = importlib.util.spec_from_file_location("gate", self.root / "scripts/android-test-gate.py")
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        return gate.combine_reports(reports, "fixture.Class")
+
+    def test_an_expired_code_reruns_only_the_failed_tests_with_fresh_codes_once(self):
+        first = self.report(self.PASS.format("ok"), self.FAIL.format("pairs"))
+        result, args, mints, reports = self.run_with_retry(
+            [(3, first, self.EXPIRED), (0, self.report(self.PASS.format("pairs")), None)])
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(2, len(args))
+        self.assertEqual(1, mints)
+        retry = args[1]
+        self.assertIn("-Pandroid.testInstrumentationRunnerArguments.class=fixture.Class#pairs", retry)
+        for name, value in (("token", "fresh-token"), ("pairCodeB", "fresh-code-b"), ("peerToken", "fresh-peer")):
+            self.assertIn(f"-Pandroid.testInstrumentationRunnerArguments.{name}={value}", retry)
+        self.assertIn("-Pandroid.testInstrumentationRunnerArguments.serverIdB=stub-server-b", retry)
+        self.assertEqual(1, retry.count("--rerun"))
+        self.assertEqual(len(args[0]), len(retry))
+        # The gate reads one report holding the whole run, with the rerun's result for the retried test.
+        self.assertEqual(1, len(reports))
+        _, passed, executed = self.combined(reports)
+        self.assertTrue(passed)
+        self.assertEqual(2, executed)
+        self.assertEqual(1, sum("pairing_codes_stale" in line for line in result.stderr.splitlines()))
+        for secret in ("fresh-", "stub-code-b", "stub-peer", "log-secret"):
+            self.assertNotIn(secret, result.stderr)
+
+    def test_a_retry_that_fails_again_fails_the_run_and_names_only_the_new_rejection(self):
+        first = self.report(self.PASS.format("ok"), self.FAIL.format("pairs"))
+        result, args, mints, reports = self.run_with_retry(
+            [(3, first, self.EXPIRED), (4, self.report(self.FAIL.format("pairs")), self.EXPIRED)])
+        self.assertEqual(4, result.returncode)
+        self.assertEqual((2, 1), (len(args), mints))
+        _, passed, executed = self.combined(reports)
+        self.assertFalse(passed)
+        self.assertEqual(2, executed)
+        stale = [line for line in result.stderr.splitlines() if "pairing_codes_stale" in line]
+        self.assertEqual(2, len(stale), result.stderr)
+        self.assertTrue(all("e2e-x-bypass (daemon-bypass.log)" in line for line in stale))
+
+    def test_a_retry_that_produces_no_report_keeps_the_first_runs_failures(self):
+        first = self.report(self.PASS.format("ok"), self.FAIL.format("pairs"))
+        result, args, _, reports = self.run_with_retry([(3, first, self.EXPIRED), (5, None, None)])
+        self.assertEqual(5, result.returncode)
+        _, passed, executed = self.combined(reports)
+        self.assertFalse(passed)
+        self.assertEqual(2, executed)
+
+    def test_no_retry_without_a_failed_test_in_the_report(self):
+        result, args, mints, _ = self.run_with_retry([(3, None, self.EXPIRED)])
+        self.assertEqual(3, result.returncode)
+        self.assertEqual((1, 0), (len(args), mints))
+
+    def test_no_retry_without_an_expired_code(self):
+        first = self.report(self.FAIL.format("pairs"))
+        result, args, mints, _ = self.run_with_retry([(3, first, None)])
+        self.assertEqual(3, result.returncode)
+        self.assertEqual((1, 0), (len(args), mints))
         self.assertEqual("", result.stderr)
 
     # Relay-link ends as pyrycode's WSSClient logs them; `context canceled` is the teardown's own kill.

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.components.NoticePillTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-05T08:12:06.440Z" hostname="Juhanas-MacBook-Air.local" time="4.649">
+  <properties/>
+  <testcase name="largeTextWrapsToTheLimitAndActionsStillRoute" classname="de.pyryco.mobile.ui.conversations.components.NoticePillTest" time="4.298"/>
+  <testcase name="bothVariantsRetainFullSingleLineBox" classname="de.pyryco.mobile.ui.conversations.components.NoticePillTest" time="0.057"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
