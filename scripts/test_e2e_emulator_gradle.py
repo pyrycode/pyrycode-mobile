@@ -1,3 +1,4 @@
+import importlib.util
 import os
 from pathlib import Path
 import subprocess
@@ -302,6 +303,134 @@ class EmulatorBuildBeforeMintTest(unittest.TestCase):
         expired = "msg=v2.handshake.reject.redemption_window_elapsed\n"
         result = self.run_test_task(0, {"daemon.log": expired})
         self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("", result.stderr)
+
+    # 2026-10-05: one retry of the failed tests with fresh codes after an expired pairing code.
+    REPORT = """<?xml version="1.0" encoding="UTF-8"?>
+<testsuites><testsuite name="device" tests="{tests}" failures="{failures}" errors="0" skipped="0">{cases}</testsuite></testsuites>
+"""
+    PASS = '<testcase classname="fixture.Class" name="{}" time="1"/>'
+    FAIL = '<testcase classname="fixture.Class" name="{}" time="1"><failure>pairing rejected</failure></testcase>'
+    # A Gradle stand-in: each call logs its arguments, writes that call's report and appends that call's daemon log line.
+    GRADLE = """#!/bin/bash
+call=$(( $(cat "$STUB_DIR/calls" 2>/dev/null || echo 0) + 1 ))
+echo "$call" > "$STUB_DIR/calls"
+printf '%s\\n' "$@" > "$STUB_DIR/args-$call"
+results="$REPO_ROOT/app/build/outputs/androidTest-results/managedDevice/debug/$DEVICE"
+mkdir -p "$results"
+rm -f "$results"/TEST-*.xml
+[ ! -f "$STUB_DIR/report-$call" ] || cp "$STUB_DIR/report-$call" "$results/TEST-$DEVICE-_app-.xml"
+[ ! -f "$STUB_DIR/log-$call" ] || cat "$STUB_DIR/log-$call" >> "$DAEMON_BYPASS_LOG"
+exit "$(cat "$STUB_DIR/status-$call")"
+"""
+    EXPIRED = "level=WARN msg=v2.handshake.reject.redemption_window_elapsed token=log-secret close=4401\n"
+    FRESH_MINT = ('mint_pairings() { echo minted >> "$STUB_DIR/mints"; TOKEN=fresh-token; PAIR_CODE_B=fresh-code-b; '
+                  'PEER_TOKEN=fresh-peer; PAIR_CODE_BYPASS=fresh-code-bypass; BYPASS_PEER_TOKEN=fresh-bypass-peer; '
+                  'PAIR_CODE_ANSWER=fresh-code-answer; ANSWER_PEER_TOKEN=fresh-answer-peer; }\n')
+
+    def report(self, *cases):
+        return self.REPORT.format(tests=len(cases), failures=sum("<failure>" in case for case in cases),
+                                  cases="".join(cases))
+
+    def run_with_retry(self, calls, first_log=EXPIRED):
+        """[calls]: per Gradle call, (status, report or None, daemon log line or None)."""
+        stub_dir = Path(self.tmp.name) / "stub"
+        repo = Path(self.tmp.name) / "repo"
+        (repo / "scripts").mkdir(parents=True)
+        (repo / "scripts/e2e-rerun-report.py").write_text((self.root / "scripts/e2e-rerun-report.py").read_text())
+        stub_dir.mkdir()
+        for number, (status, report, log) in enumerate(calls, start=1):
+            (stub_dir / f"status-{number}").write_text(str(status))
+            if report is not None:
+                (stub_dir / f"report-{number}").write_text(report)
+            if log is not None:
+                (stub_dir / f"log-{number}").write_text(log)
+        gradle = Path(self.tmp.name) / "gradlew-retry"
+        gradle.write_text(self.GRADLE)
+        gradle.chmod(0o700)
+        bypass_log = Path(self.tmp.name) / "daemon-bypass.log"
+        bypass_log.write_text("level=INFO msg=up\n")
+        functions = (self.block("report_stale_pairing_codes() {", "\n}\n")
+                     + self.block("retry_with_fresh_codes() {", "\n}\n")
+                     + self.block("report_relay_link_drops() {", "\n}\n"))
+        invocation = self.block("GRADLE_TEST_ARGS=(", 'exit "${TEST_STATUS}"\nfi\n')
+        body = "log() { echo \"log: $*\" >&2; }\n" + self.FRESH_MINT + functions + invocation
+        result = self.run_block(body, GRADLEW=str(gradle), REPO_ROOT=str(repo), STUB_DIR=str(stub_dir),
+                                WORK_DIR=str(Path(self.tmp.name) / "work"), PYRY_NAME="e2e-x", PYRY_NAME_B="e2e-x-b",
+                                PYRY_NAME_BYPASS="e2e-x-bypass", PYRY_NAME_ANSWER="e2e-x-answer",
+                                DAEMON_LOG=str(Path(self.tmp.name) / "daemon.log"),
+                                DAEMON_B_LOG=str(Path(self.tmp.name) / "daemon-b.log"),
+                                DAEMON_BYPASS_LOG=str(bypass_log),
+                                DAEMON_ANSWER_LOG=str(Path(self.tmp.name) / "daemon-answer.log"),
+                                PAIR_CODE_B="stub-code-b", SERVER_ID_B="stub-server-b", COLLISION_ID="c",
+                                COLLISION_NAME_A="a", COLLISION_NAME_B="b", PEER_TOKEN="stub-peer",
+                                TEST_TARGET="fixture.Class", PYRY_FORCE_TEST_RUN="1")
+        results = repo / "app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd"
+        args = [(stub_dir / f"args-{n}").read_text().splitlines()
+                for n in range(1, int((stub_dir / "calls").read_text()) + 1)]
+        mints = (stub_dir / "mints").read_text().count("minted") if (stub_dir / "mints").exists() else 0
+        return result, args, mints, sorted(results.glob("TEST-*.xml"))
+
+    def combined(self, reports):
+        spec = importlib.util.spec_from_file_location("gate", self.root / "scripts/android-test-gate.py")
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        return gate.combine_reports(reports, "fixture.Class")
+
+    def test_an_expired_code_reruns_only_the_failed_tests_with_fresh_codes_once(self):
+        first = self.report(self.PASS.format("ok"), self.FAIL.format("pairs"))
+        result, args, mints, reports = self.run_with_retry(
+            [(3, first, self.EXPIRED), (0, self.report(self.PASS.format("pairs")), None)])
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(2, len(args))
+        self.assertEqual(1, mints)
+        retry = args[1]
+        self.assertIn("-Pandroid.testInstrumentationRunnerArguments.class=fixture.Class#pairs", retry)
+        for name, value in (("token", "fresh-token"), ("pairCodeB", "fresh-code-b"), ("peerToken", "fresh-peer")):
+            self.assertIn(f"-Pandroid.testInstrumentationRunnerArguments.{name}={value}", retry)
+        self.assertIn("-Pandroid.testInstrumentationRunnerArguments.serverIdB=stub-server-b", retry)
+        self.assertEqual(1, retry.count("--rerun"))
+        self.assertEqual(len(args[0]), len(retry))
+        # The gate reads one report holding the whole run, with the rerun's result for the retried test.
+        self.assertEqual(1, len(reports))
+        _, passed, executed = self.combined(reports)
+        self.assertTrue(passed)
+        self.assertEqual(2, executed)
+        self.assertEqual(1, sum("pairing_codes_stale" in line for line in result.stderr.splitlines()))
+        for secret in ("fresh-", "stub-code-b", "stub-peer", "log-secret"):
+            self.assertNotIn(secret, result.stderr)
+
+    def test_a_retry_that_fails_again_fails_the_run_and_names_only_the_new_rejection(self):
+        first = self.report(self.PASS.format("ok"), self.FAIL.format("pairs"))
+        result, args, mints, reports = self.run_with_retry(
+            [(3, first, self.EXPIRED), (4, self.report(self.FAIL.format("pairs")), self.EXPIRED)])
+        self.assertEqual(4, result.returncode)
+        self.assertEqual((2, 1), (len(args), mints))
+        _, passed, executed = self.combined(reports)
+        self.assertFalse(passed)
+        self.assertEqual(2, executed)
+        stale = [line for line in result.stderr.splitlines() if "pairing_codes_stale" in line]
+        self.assertEqual(2, len(stale), result.stderr)
+        self.assertTrue(all("e2e-x-bypass (daemon-bypass.log)" in line for line in stale))
+
+    def test_a_retry_that_produces_no_report_keeps_the_first_runs_failures(self):
+        first = self.report(self.PASS.format("ok"), self.FAIL.format("pairs"))
+        result, args, _, reports = self.run_with_retry([(3, first, self.EXPIRED), (5, None, None)])
+        self.assertEqual(5, result.returncode)
+        _, passed, executed = self.combined(reports)
+        self.assertFalse(passed)
+        self.assertEqual(2, executed)
+
+    def test_no_retry_without_a_failed_test_in_the_report(self):
+        result, args, mints, _ = self.run_with_retry([(3, None, self.EXPIRED)])
+        self.assertEqual(3, result.returncode)
+        self.assertEqual((1, 0), (len(args), mints))
+
+    def test_no_retry_without_an_expired_code(self):
+        first = self.report(self.FAIL.format("pairs"))
+        result, args, mints, _ = self.run_with_retry([(3, first, None)])
+        self.assertEqual(3, result.returncode)
+        self.assertEqual((1, 0), (len(args), mints))
         self.assertEqual("", result.stderr)
 
     # Relay-link ends as pyrycode's WSSClient logs them; `context canceled` is the teardown's own kill.
