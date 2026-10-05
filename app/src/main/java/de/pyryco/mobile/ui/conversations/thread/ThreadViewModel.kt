@@ -1388,7 +1388,12 @@ class ThreadViewModel(
         // #1309: a conversation whose claude had not run yet reads no permission mode and no applied effort,
         // so the open thread asks again when any turn on its host ends and when a reset ends. Each new
         // connection starts a fresh running set. A bump while nothing collects [sessionSettings] sends nothing.
-        viewModelScope.launch { runSettingsRereadEdges(liveSessionEvents).collect(::rereadRunSettings) }
+        viewModelScope.launch {
+            runSettingsRereadEdges(liveSessionEvents).collect { reason ->
+                rereadRunSettings(reason)
+                if (reason == "reset_end") askForContextUsage(reason)
+            }
+        }
 
         // #1345: the MCP reading starts empty on every connection, so the thread asks once when its repository is
         // first available and again on each return, keyed there for the #861 reason. Gated as Channel
@@ -1416,7 +1421,7 @@ class ThreadViewModel(
                 .distinctUntilChanged()
                 .filter { it }
                 .collect {
-                    askForContextUsage(reconnect = opened)
+                    askForContextUsage(reason = if (opened) "reconnect" else null)
                     opened = true
                 }
         }
@@ -1491,12 +1496,12 @@ class ThreadViewModel(
     }
 
     /**
-     * Ask for a fresh context reading of this thread (#1410). Only a [reconnect] ask logs, with a static reason and
-     * never the id: the open is already logged as the thread destination binds, and the opening ask runs during
-     * construction.
+     * Ask for a fresh context reading on open, reconnect (#1410), and reset end (#1761). [reason] is a static
+     * code, never the id. The open passes null because its destination binding is already logged and the ask
+     * runs during construction.
      */
-    private fun askForContextUsage(reconnect: Boolean) {
-        if (reconnect) RelayLog.d { "event=context_usage_ask reason=reconnect" }
+    private fun askForContextUsage(reason: String? = null) {
+        if (reason != null) RelayLog.d { "event=context_usage_ask reason=$reason" }
         repository.requestContextUsage(conversationId)
     }
 

@@ -30,3 +30,7 @@ Test first in `ThreadViewModelContextUsageAskTest`: initial idle, wrapping-up an
 Extend the existing rung-3 reset method without another user message or Claude turn. Identify the created conversation, observe the context reading becoming null at the transition, then require a new non-null reading after that clear and assert the footer's exact description computed from its token totals. Start observing before tapping reset so the clear cannot be missed. This is device-only because it exercises real daemon/Claude replies over the relay and the actual phone UI. Dispatcher owns live execution and must report this method passed with executed/failed/skipped counts; leave `needs-real-claude` in place and list the method in the PR.
 
 Run focused JVM tests, `lint`, `assembleDebug`, `compileDebugAndroidTestKotlin`, `spotlessApply`, and forced `spotlessCheck`. Run a relevant scripted `reconnect` scenario for the preserved ask path. Existing context-circle screen coverage checks its unchanged rendering. No documentation requirements are attached to the ticket.
+
+## Revisions
+
+- 2026-10-05: final sizing is about 255 inserted/deleted lines including the plan, within all limits. The live reading watcher uses `Dispatchers.Default` with an undispatched start: the UI's blocking test waits must not prevent it from observing the transition clear before the new reply. The planned refresh contract is unchanged.
