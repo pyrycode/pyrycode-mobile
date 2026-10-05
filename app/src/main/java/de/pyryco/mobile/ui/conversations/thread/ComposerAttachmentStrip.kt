@@ -1,7 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
 import android.os.CancellationSignal
 import android.util.Size
 import androidx.compose.foundation.Image
@@ -49,10 +49,12 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.repository.AttachmentUploadLimit
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
+import java.nio.ByteBuffer
 
 // Figma 16:8's `Attachment area` (390:7136): 45 × 60 tiles, 6dp corners, a 20dp remove icon overlapping each
 // tile's top-trailing corner by 5dp. Each item reserves that overlap so the scrolling row does not clip it,
@@ -251,15 +253,19 @@ private fun rememberThumbnail(attachment: PendingAttachment): ImageBitmap? {
         if (owned != null) {
             value =
                 withContext(Dispatchers.IO) {
-                    val dimensions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    owned.withInput { BitmapFactory.decodeStream(it, null, dimensions) }
-                    val options = BitmapFactory.Options()
-                    var sample = 1
-                    while (dimensions.outWidth / sample > sizePx.width * 2 || dimensions.outHeight / sample > sizePx.height * 2) {
-                        sample *= 2
-                    }
-                    options.inSampleSize = sample
-                    owned.withInput { BitmapFactory.decodeStream(it, null, options) }?.asImageBitmapOrNull()
+                    owned
+                        .withInput { input ->
+                            val bytes = readBounded(input, AttachmentUploadLimit.MAX_BYTES) ?: return@withInput null
+                            // ImageDecoder applies EXIF rotation and mirroring before sampling; BitmapFactory does not.
+                            ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) { decoder, info, _ ->
+                                var sample = 1
+                                while (info.size.width / sample > sizePx.width * 2 || info.size.height / sample > sizePx.height * 2) {
+                                    sample *= 2
+                                }
+                                decoder.setTargetSampleSize(sample)
+                                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                            }
+                        }?.asImageBitmapOrNull()
                 }
             return@produceState
         }
