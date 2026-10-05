@@ -5,19 +5,22 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.width
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.hideFromAccessibility
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -43,7 +46,8 @@ private val OverlayPillGap = 12.dp
  * report is a Default pill with an X only when [usageLimitIsWarning] says so, and it is left out once
  * [usageLimitDismissed]; any other reading is an Error pill that cannot be hidden. Pairing failure takes
  * precedence over the offline pill because a network retry cannot repair a rejected pairing. With none of
- * them, nothing is emitted.
+ * them, nothing is emitted. Session errors follow these persistent notices; [transientError] follows
+ * all persistent notices and expires independently under the screen's queue.
  *
  * [mcpFailure] (#1345) is the Claude-authored name of a failed MCP server: an Error pill with no X whose tap
  * runs [onOpenMcpFailure]. It is never drawn beside the pairing or offline pill.
@@ -62,12 +66,23 @@ internal fun ThreadTopOverlay(
     onOpenMcpFailure: () -> Unit = {},
     sessionError: String? = null,
     agent: ConversationAgent = ConversationAgent.Claude,
+    transientError: String? = null,
+    transientErrorOccurrence: Long = 0L,
     attentionPill: (@Composable () -> Unit)? = null,
 ) {
     val usage = usageLimit?.takeUnless { usageLimitDismissed }
     val showOffline = connectionState == ConnectionState.Offline && !showRePair
     val mcp = mcpFailure?.takeUnless { showRePair || showOffline }
-    if (attentionPill == null && usage == null && mcp == null && !showRePair && !showOffline && sessionError == null) return
+    if (attentionPill == null &&
+        usage == null &&
+        mcp == null &&
+        !showRePair &&
+        !showOffline &&
+        sessionError == null &&
+        transientError == null
+    ) {
+        return
+    }
     val viewConfiguration = LocalViewConfiguration.current
     val pillTouchConfiguration =
         remember(viewConfiguration) {
@@ -90,6 +105,14 @@ internal fun ThreadTopOverlay(
         LocalMinimumInteractiveComponentSize provides Dp.Unspecified,
         LocalViewConfiguration provides pillTouchConfiguration,
     ) {
+        val followingErrors: @Composable () -> Unit = {
+            if (sessionError != null) {
+                NoticePill(text = sessionErrorLabel(sessionError, agent), isError = true)
+            }
+            transientError?.let { text ->
+                key(transientErrorOccurrence) { TransientErrorPill(text) }
+            }
+        }
         Column(
             modifier = modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.End,
@@ -119,30 +142,51 @@ internal fun ThreadTopOverlay(
                     NoticePill(text = stringResource(R.string.thread_re_pair), isError = true, onClick = onRePair)
                 }
             } else if (showOffline) {
-                // The visible 24dp pill keeps its 12dp gap below usage. Its 48dp target extends downward,
-                // away from the usage pill's dismiss target. Figma 627:4910 (#1499): the drawn pill hugs its
-                // label at the box's top-right; the wider box is touch area only.
-                Box(
-                    modifier =
-                        Modifier
-                            .height(48.dp)
-                            .width(144.dp)
-                            .testTag("offline_retry_target")
-                            .clickable(role = Role.Button, onClick = onRetryConnection),
-                    contentAlignment = Alignment.TopEnd,
-                ) {
-                    NoticePill(
-                        text = stringResource(R.string.thread_connection_offline_retry),
-                        isError = true,
-                    )
+                val offlineLabel = stringResource(R.string.thread_connection_offline_retry)
+                // Measure spacing from the visible pill, independently of Retry's 48dp touch box.
+                // Draw the target over Offline but under following inert errors, so tapping an error
+                // cannot trigger Retry. The parent encloses the full target for bottom-edge hits.
+                Layout(
+                    modifier = Modifier.fillMaxWidth(),
+                    content = {
+                        NoticePill(
+                            text = offlineLabel,
+                            isError = true,
+                            contentDescription = "",
+                            modifier = Modifier.semantics { hideFromAccessibility() },
+                        )
+                        Box(
+                            Modifier
+                                .testTag("offline_retry_target")
+                                .semantics { contentDescription = offlineLabel }
+                                .clickable(role = Role.Button, onClick = onRetryConnection),
+                        )
+                        Column(
+                            horizontalAlignment = Alignment.End,
+                            verticalArrangement = Arrangement.spacedBy(OverlayPillGap),
+                        ) { followingErrors() }
+                    },
+                ) { measurables, constraints ->
+                    val childConstraints = constraints.copy(minWidth = 0, minHeight = 0)
+                    val pill = measurables[0].measure(childConstraints)
+                    val target =
+                        measurables[1].measure(
+                            childConstraints.copy(
+                                minWidth = maxOf(144.dp.roundToPx(), pill.width).coerceAtMost(constraints.maxWidth),
+                                minHeight = maxOf(48.dp.roundToPx(), pill.height).coerceAtMost(constraints.maxHeight),
+                            ),
+                        )
+                    val following = measurables[2].measure(childConstraints)
+                    val followingTop = pill.height + OverlayPillGap.roundToPx()
+                    val visibleHeight = if (following.height > 0) followingTop + following.height else pill.height
+                    layout(constraints.maxWidth, maxOf(target.height, visibleHeight)) {
+                        pill.placeRelative(constraints.maxWidth - pill.width, 0)
+                        target.placeRelative(constraints.maxWidth - target.width, 0)
+                        following.placeRelative(constraints.maxWidth - following.width, followingTop)
+                    }
                 }
             }
-            if (sessionError != null) {
-                NoticePill(
-                    text = sessionErrorLabel(sessionError, agent),
-                    isError = true,
-                )
-            }
+            if (!showOffline) followingErrors()
         }
     }
 }

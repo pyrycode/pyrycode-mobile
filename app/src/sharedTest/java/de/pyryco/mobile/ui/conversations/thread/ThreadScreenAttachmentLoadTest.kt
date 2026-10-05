@@ -1,19 +1,29 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import android.content.ActivityNotFoundException
+import android.content.ContextWrapper
 import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.LocalActivityResultRegistryOwner
 import androidx.activity.result.ActivityResultRegistry
 import androidx.activity.result.ActivityResultRegistryOwner
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHasNoClickAction
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.core.app.ActivityOptionsCompat
+import androidx.core.content.FileProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.model.ConnectionState
@@ -31,6 +41,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -48,6 +59,7 @@ class ThreadScreenAttachmentLoadTest {
     /** Stands in for the system's create-document picker: records each launch and never answers. */
     private class PickerRegistry : ActivityResultRegistry() {
         val launches = mutableListOf<Intent>()
+        val requestCodes = mutableListOf<Int>()
 
         override fun <I, O> onLaunch(
             requestCode: Int,
@@ -55,6 +67,7 @@ class ThreadScreenAttachmentLoadTest {
             input: I,
             options: ActivityOptionsCompat?,
         ) {
+            requestCodes += requestCode
             launches += contract.createIntent(InstrumentationRegistry.getInstrumentation().targetContext, input)
         }
     }
@@ -63,10 +76,22 @@ class ThreadScreenAttachmentLoadTest {
     private val registry = PickerRegistry()
     private val requested = mutableListOf<Pair<MessageAttachment, AttachmentAction>>()
     private val markdownOpened = mutableListOf<String>()
+    private val errors = Channel<Unit>(Channel.BUFFERED)
+    private val context = InstrumentationRegistry.getInstrumentation().targetContext
+
+    @Before fun clearCachedProviderRoots() {
+        val cache =
+            FileProvider::class.java
+                .getDeclaredField("sCache")
+                .apply { isAccessible = true }
+                .get(null) as MutableMap<*, *>
+        synchronized(cache) { cache.clear() }
+    }
 
     private fun show(
         attachment: MessageAttachment,
         states: Map<String, AttachmentViewState> = emptyMap(),
+        noViewer: Boolean = false,
     ) {
         val message =
             Message(
@@ -91,7 +116,16 @@ class ThreadScreenAttachmentLoadTest {
                 override val activityResultRegistry: ActivityResultRegistry = registry
             }
         composeTestRule.setContent {
-            CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner) {
+            val baseContext = LocalContext.current
+            val actionContext =
+                if (noViewer) {
+                    object : ContextWrapper(baseContext) {
+                        override fun startActivity(intent: Intent): Unit = throw ActivityNotFoundException("private platform text")
+                    }
+                } else {
+                    baseContext
+                }
+            CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner, LocalContext provides actionContext) {
                 PyrycodeMobileTheme {
                     ThreadScreen(
                         state = state,
@@ -100,6 +134,7 @@ class ThreadScreenAttachmentLoadTest {
                         connectionState = ConnectionState.Connected,
                         onRetry = {},
                         attachmentStates = states,
+                        newSessionErrors = errors.receiveAsFlow(),
                         onRequestAttachment = { attachment, action -> requested += attachment to action },
                         attachmentLoads = loads.receiveAsFlow(),
                         onOpenMarkdownAttachment = { markdownOpened += it },
@@ -163,6 +198,76 @@ class ThreadScreenAttachmentLoadTest {
         assertEquals(emptyList<Pair<MessageAttachment, AttachmentAction>>(), requested)
         assertEquals(emptyList<String>(), markdownOpened)
         assertEquals(emptyList<Intent>(), registry.launches)
+    }
+
+    private fun awaitNotice(notice: AttachmentNotice) {
+        val text = context.getString(notice.message)
+        composeTestRule.waitUntil(5_000) { composeTestRule.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onNodeWithText(text).assert(hasTestTag("transient_error_notice")).assertHasNoClickAction()
+    }
+
+    @Test fun anInvalidOpenSource_usesTheOpenFailedPill() {
+        show(MessageAttachment(ID, "secret-path.pdf"))
+        deliver(
+            AttachmentLoaded(
+                AttachmentTarget(ID, "secret-path.pdf", "application/pdf"),
+                AttachmentSource.Original("file:///secret-path.pdf"),
+                AttachmentAction.OPEN,
+            ),
+        )
+        awaitNotice(AttachmentNotice.OPEN_FAILED)
+        composeTestRule.onNodeWithText("secret-path.pdf").assertIsDisplayed()
+    }
+
+    @Test fun noViewer_usesTheNoAppPill() {
+        val file =
+            File(context.noBackupFilesDir, "attachments/h/c/report").apply {
+                parentFile?.mkdirs()
+                writeText("text")
+            }
+        show(MessageAttachment(ID, "report.unknown"), noViewer = true)
+        deliver(
+            AttachmentLoaded(
+                AttachmentTarget(ID, "report.unknown", "application/x-nothing-opens-this"),
+                AttachmentSource.Kept(file),
+                AttachmentAction.OPEN,
+            ),
+        )
+        awaitNotice(AttachmentNotice.NO_APP)
+    }
+
+    @Test fun aFailedSave_usesTheSaveFailedPill() {
+        show(MessageAttachment(ID, "report.pdf"), mapOf(ID to AttachmentViewState.Ready(KEPT, null, null)))
+        deliver(AttachmentLoaded(AttachmentTarget(ID, "report.pdf", "application/pdf"), KEPT, AttachmentAction.SAVE))
+        composeTestRule.runOnIdle {
+            registry.dispatchResult(registry.requestCodes.single(), Uri.fromFile(File(context.cacheDir, "missing/report.pdf")))
+        }
+        awaitNotice(AttachmentNotice.SAVE_FAILED)
+    }
+
+    @Test fun savedRemainsASnackbar_andCoexistsWithAnErrorPill() {
+        val source = File(context.cacheDir, "save-source").apply { writeText("saved bytes") }
+        val kept = AttachmentSource.Kept(source)
+        show(MessageAttachment(ID, "report.pdf"), mapOf(ID to AttachmentViewState.Ready(kept, null, null)))
+        composeTestRule.mainClock.autoAdvance = false
+        composeTestRule.runOnIdle { errors.trySend(Unit) }
+        composeTestRule.mainClock.advanceTimeBy(64)
+        composeTestRule.onNodeWithTag("transient_error_notice").assertIsDisplayed()
+        deliver(AttachmentLoaded(AttachmentTarget(ID, "report.pdf", "application/pdf"), kept, AttachmentAction.SAVE))
+        val destination = File(context.cacheDir, "saved-report.pdf")
+        composeTestRule.runOnIdle { registry.dispatchResult(registry.requestCodes.single(), Uri.fromFile(destination)) }
+        val saved = context.getString(AttachmentNotice.SAVED.message)
+        composeTestRule.waitUntil(5_000) {
+            composeTestRule.mainClock.advanceTimeByFrame()
+            composeTestRule.onAllNodesWithText(saved).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.mainClock.advanceTimeBy(300)
+        composeTestRule
+            .onNodeWithText(saved)
+            .assertIsDisplayed()
+            .assert(hasAnyAncestor(hasTestTag("thread_confirmation_snackbar")))
+        composeTestRule.onNodeWithTag("transient_error_notice").assertIsDisplayed()
+        assertEquals("saved bytes", destination.readText())
     }
 
     private companion object {

@@ -8,11 +8,31 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
 values (newest-first; each carrying a durable per-conversation log `id`, the stored frame's wire `type`,
 its still-undecoded `payload`, and a `ts`) and deliberately stopped there. [#645](../codebase/645.md) is
 the fold its KDoc promised: `requestHistory` now also calls a private `mergeHistoryPage(conversationId,
-page)`, which reduces the page and merges it ahead of `threadByConversation[conversationId]` inside one
+page)`, which reduces the page and merges it into `threadByConversation[conversationId]` inside one
 `MutableStateFlow.update {}` — a read, a merge and an assign that must stay one check-then-act, since
 computing the merge outside the lambda would silently lose a concurrent live append on a CAS retry. The
 page is still returned to the caller unchanged; the history-demand and cache sections below describe
 the callers that now consume it.
+
+**Page order, middle insertion and assistant overlap (#1786).** A page is no longer assumed to be older
+than the thread. `reduceOrderedHistoryPage` decodes the page once, outside the update, and returns its rows
+with each row's daemon log id, taken from the contextual fold, so a failed compaction divider gets its
+falling edge's id. Inside the one `ProjectionState` update, `mergeOrderedHistoryRows` inserts only rows the
+thread lacks, so an older, newer or middle page lands in daemon order and a repeat page changes nothing.
+Held rows never move and are never sorted by timestamp. A missing row goes after its nearest shared
+predecessor or before its nearest shared successor. Held rows with known log ids bound that slot, so a
+reused message id or a malformed entry cannot pull a row past a known position. With no shared row, log ids
+and then timestamps choose the slot. The log ids live in `ProjectionState.historyOrder`, are connection-local,
+are never compared with live event ids, and are dropped by `remove`. A boundary that fills a pending divider
+in place carries the divider's log id to its new identity.
+
+Assistant text merges per delta, identified by `(turnId, seq)`. Segments split into single-delta pieces by
+their recorded lengths; only missing sequences enter, before, between or after held ones. Adjacent pieces of
+one turn then join again, so text stays on the correct side of a tool or user row, and ended turns stay
+settled through the existing post-merge pass. Held text wins any overlap. A legacy whole-turn row without
+sequence records suppresses only text it demonstrably contains. Renderer keys stay unique without dropping
+text: ordinary ids claim keys first, then each turn's opener, then other segments, and a segment whose key a
+different identity holds takes a `~n` suffix.
 
 **One fold surface, not two.** The reduction reuses the live lane's own folds rather than mapping the
 page separately. `RemoteConversationRepositoryKt`'s `appendMessages` / `applyToolUse` / `applyToolResult`
