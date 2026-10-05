@@ -21,13 +21,11 @@ repository is per connection ([`HostConversationSource.repositoryFor`](dependenc
 [`LifecycleConnectionDriver`](lifecycle-connection-driver.md) closes it on background, and the foreground
 reconnect produces a new one. An operator who backgrounds the app mid-edit and returns would hold an
 editor whose every further `save()` goes to a retired repository and fails forever — the construction-time
-bind that makes this class simple for a caller with one stable repository (chat/thread editing, where
-`SystemPromptEditor` was designed in) is the same bind that breaks it for a list-screen modal that can
-outlive a reconnect. #667's `ChannelListViewModel` instead reads the prompt itself once (waiting for
-`repositoryFor(serverId)` to become non-null) and resolves the repository **again, at the OK press** —
-the same discipline every other write in that view model already followed
-([`submitChatName`](channel-list-viewmodel.md#wiring) and siblings) before this ticket gave the prompt a
-reason to need it too. It copies this editor's `changed` rule (an absent `confirmed` reads as `""`) and
+bind originally ruled out using it in a reconnect-sensitive list modal. That list
+binding retired in #1582. The retained
+[`ChannelEditorController`](channel-list-viewmodel.md#channeleditorcontroller-667--1561),
+now driven by thread Edit, keeps the separate prompt-read and press-resolved write contract.
+It copies this editor's `changed` rule (an absent `confirmed` reads as `""`) and
 its redacted `toString()`, but keeps its own `ChannelPromptReading` sealed type rather than reusing
 `SystemPromptEditorState.Loaded` — the reading is kept in a state flow separate from the write's own
 `compareAndSet` target, which `SystemPromptEditorState.Loaded` conflates by design (see the Design section
@@ -35,8 +33,8 @@ of `docs/specs/architecture/667-edit-channel-modal.md`).
 
 **#1342 is the caller this class was designed for.** `ThreadViewModel` constructs a `SystemPromptEditor`
 for the thread's own repository — the [`StableConversationRepository`](stable-conversation-repository.md)
-facade, which survives a background/foreground reconnect by design, unlike the per-connection repository
-`HostConversationSource.repositoryFor` hands a list-screen modal. The construction-time bind this class
+facade, which survives a background/foreground reconnect by design, unlike the per-connection repositories returned by
+`HostConversationSource.repositoryFor`. The construction-time bind this class
 has always had is exactly what that facade makes safe. `ThreadViewModel` constructs one each time the
 Channel info sheet's `ThreadEvent.ChannelInfo` opens it (so every open re-reads the prompt) and drops it
 to `null` on every path that closes the sheet (dismiss, Archive, Delete) — see
@@ -212,6 +210,6 @@ No device test: nothing renders.
 - [Host editor](host-editor.md) — the shape this state follows: plain-Kotlin controller, owner-scoped, `compareAndSet`-terminal transitions
 - [ChannelInfoSheet § System prompt section](channel-info-sheet.md#system-prompt-section) — the #1342 caller: `ThreadViewModel` constructs and drops this editor around the Channel info sheet's open/close, and the composable that renders `state`
 - [Mobile modal § Callers](mobile-modal-callers.md#callers) — `EditChannelModal` (#667), the caller this class was designed for but stays unclaimed: a per-connection repository bind that a background/foreground reconnect retires
-- [ChannelListViewModel § Wiring](channel-list-viewmodel.md#wiring) — `openChannelEditor`/`submitChannelEdit`, the repository-resolved-at-the-press shape `EditChannelModal` uses instead, and the #1342 clear rule (an emptied box over a stored prompt sends `null`) that `submitChannelEdit` now shares with this class's own `clear()`
+- [ChannelEditorController](channel-list-viewmodel.md#channeleditorcontroller-667--1561) — `open`/`submit`, the repository-resolved-at-the-press shape `EditChannelModal` uses instead, and the #1342 clear rule (an emptied box over a stored prompt sends `null`) that the controller now shares with this class's own `clear()`
 - Spec: `docs/specs/architecture/824-system-prompt-editor.md`, including the security review
 - Spec: `docs/specs/architecture/1342-channel-info-system-prompt.md` — mounting this editor in Channel info, desktop's `canSave`/`canClear` rules, and `refusalFor`
