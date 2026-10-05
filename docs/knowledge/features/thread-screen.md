@@ -85,10 +85,15 @@ The running-task pill shares the reading's 24 dp band at normal text scale, or s
 
 The [model-refusal row's switch-back offer](model-refusal-row.md#switch-back-1360) owns its failure
 feedback inline. A refused or failed write leaves an enabled retry button and its retry line immediately;
-only this caller suppresses the shared run-configuration snackbar, while ordinary model/effort edits
+only this caller suppresses the shared run-configuration failure notice, while ordinary model/effort edits
 still report there (#1615). Retry clears the inline failure during pending. The visible outline is a
 32 dp minimum independent of the 48 dp touch target; wrapped destinations and enlarged text grow it so
 the retry line stays below all label lines. Button extensions invoke switch-back without toggling details.
+
+Local failures no longer use a bottom snackbar (#1747). They queue as inert Error pills at the end of the
+[top overlay](thread-top-overlay.md#the-transient-error-pill-1747), in the order they happened, each for the
+accessibility-adjusted Short time, and leaving the screen cancels them. Only Saved and the dismissed-elsewhere
+prompt still use the bottom snackbar.
 
 ## Wiring
 

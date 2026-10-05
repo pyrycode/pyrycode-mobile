@@ -115,3 +115,7 @@ The verifier found that each thread collector suspended inside `show` for the wh
 ### 2026-10-05 — #1759 ignore removed
 
 Main's `ef587984`, merged here, breaks long unbroken runs in drawn reader text, the memory trigger #1759 recorded. Remove the `@Ignore` from `copiesOfANoteAtTheReadersBound_areBounded` so its clipboard-bound assertions run again in both shared-test tiers. The #1760 pairing-touch ignore stays, tied to its unresolved native overlap.
+
+### 2026-10-05 — verifier rework: pasted-image failures
+
+The verifier found one route left on the bottom snackbar: the failure callback `ThreadScreen` passes to `rememberPastedImageReceiver`. `capturePastedImage` reports `TOO_LARGE` and `UNREADABLE` there for a pasted or keyboard-inserted image. That callback now calls `errorNotices.enqueue(noticeScope, failure.text(resources))`, so it joins the shared queue in arrival order with the same client-owned copy, and leaving the screen cancels it. Clipboard paste and keyboard `commitContent` share this one receiver. `ThreadPastedImageErrorTest`, a plain `app/src/test` Robolectric test because it registers a content provider, pastes an unreadable and an oversized image through the real composer. It requires each failure as the only node carrying its text, tagged as the transient pill, in order, then expiry. It failed on the old route. Documentation handoff done by hand with this rework.
