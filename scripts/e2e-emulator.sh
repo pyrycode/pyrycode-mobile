@@ -193,17 +193,14 @@ PYRY_NAME_BYPASS="${PYRY_NAME}-bypass"
 PAIR_NAME_BYPASS="${PAIR_NAME}-bypass"
 PAIR_NAME_BYPASS_PEER="${PAIR_NAME}-bypass-peer"
 DAEMON_BYPASS_LOG="${WORK_DIR}/daemon-bypass.log"
-PAIR_BYPASS_OUT="${WORK_DIR}/pair-bypass.out"
-PAIR_BYPASS_PEER_OUT="${WORK_DIR}/pair-bypass-peer.out"
 BYPASS_HOME=""
 BYPASS_PID=""
 BYPASS_UNMET=""
 BYPASS_TOKEN_FILE=""
 BYPASS_WITNESS=""
-SERVER_ID_BYPASS=""
-PAIR_CODE_BYPASS=""
-BYPASS_PEER_TOKEN=""
-BYPASS_PEER_SERVER_STATIC_PUBKEY=""
+BYPASS_FIXTURE_PID=""
+BYPASS_FIXTURE_PORT=""
+BYPASS_FIXTURE_AUTH=""
 
 # Dedicated answer daemon (#966), rung 3 / LIVE only: a fourth test daemon under its OWN isolated HOME, in
 # #687's shape but with no operator bypass, so claude's default mode asks. Its config turns on the stdio
@@ -555,6 +552,7 @@ cleanup() {
   [ -n "${WATCHER_PID}" ] && kill "${WATCHER_PID}" 2>/dev/null || true
   [ -n "${DAEMON_PID}" ] && kill "${DAEMON_PID}" 2>/dev/null || true
   [ -n "${DAEMON_B_PID:-}" ] && kill "${DAEMON_B_PID}" 2>/dev/null || true
+  [ -n "${BYPASS_FIXTURE_PID:-}" ] && kill "${BYPASS_FIXTURE_PID}" 2>/dev/null || true
   [ -n "${BYPASS_PID:-}" ] && kill "${BYPASS_PID}" 2>/dev/null || true
   [ -n "${ANSWER_PID:-}" ] && kill "${ANSWER_PID}" 2>/dev/null || true
   [ -n "${RELAY_PID}" ] && kill "${RELAY_PID}" 2>/dev/null || true
@@ -1027,7 +1025,7 @@ start_bypass_daemon() {
     fi
     sleep 0.1
   done
-  log "operator-bypass daemon (#687) ready; its codes are minted after the build"
+  log "operator-bypass daemon (#687) ready; its codes are minted at scenario entry"
 }
 if [ -z "${DETERMINISTIC}" ]; then
   start_bypass_daemon
@@ -1174,23 +1172,33 @@ if [ -z "${DETERMINISTIC}" ]; then
 fi
 
 # ---- 4c. mint the operator-bypass and answer daemons' codes (rung 3 / LIVE only, #687 / #966) ----
-# After the build, like the host codes above (#993). A daemon with an unmet prerequisite mints nothing.
-mint_bypass_pairing() {
-  local parsed=""
-  # The phone pairs unprivileged, by code; the peer pairs --allow-remote-permissions. Never log either value.
-  env "HOME=${BYPASS_HOME}" "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME_BYPASS}" --name="${PAIR_NAME_BYPASS}" \
-    >"${PAIR_BYPASS_OUT}" 2>&1 \
-    && parsed="$(phone_pair_code "${PAIR_BYPASS_OUT}" "${PHONE_RELAY_URL}" BYPASS)" \
-    && eval "${parsed}" \
-    && [ -n "${SERVER_ID_BYPASS}" ] && [ -n "${PAIR_CODE_BYPASS}" ] \
-    || { bypass_unmet pairing "the phone pairing could not be minted; see private log ${PAIR_BYPASS_OUT}"; return 0; }
-  env "HOME=${BYPASS_HOME}" "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME_BYPASS}" --name="${PAIR_NAME_BYPASS_PEER}" --allow-remote-permissions \
-    >"${PAIR_BYPASS_PEER_OUT}" 2>&1 \
-    && parsed="$(pair_token "${PAIR_BYPASS_PEER_OUT}" BYPASS_PEER)" \
-    && eval "${parsed}" \
-    && [ -n "${BYPASS_PEER_TOKEN}" ] && [ -n "${BYPASS_PEER_SERVER_STATIC_PUBKEY}" ] \
-    || { bypass_unmet peer_pairing "the peer pairing could not be minted; see private log ${PAIR_BYPASS_PEER_OUT}"; return 0; }
-  log "operator-bypass daemon (#687) up: serverId=${SERVER_ID_BYPASS} (the test pairs it by code)"
+# After the build (#993): bypass minting waits for its scenario (#1756); answer codes are eager.
+# A daemon with an unmet prerequisite mints nothing.
+start_bypass_pairing_fixture() {
+  local config="${WORK_DIR}/bypass-pairing.json" parsed="" deadline
+  python3 "${REPO_ROOT}/scripts/e2e-bypass-pairing.py" --port-file "${config}" \
+    --pyry "${PYRY_BIN}" --home "${BYPASS_HOME}" --instance "${PYRY_NAME_BYPASS}" \
+    --phone-name "${PAIR_NAME_BYPASS}" --peer-name "${PAIR_NAME_BYPASS_PEER}" \
+    --daemon-relay "${DAEMON_RELAY_URL}" --phone-relay "${PHONE_RELAY_URL}" \
+    >"${WORK_DIR}/bypass-pairing.log" 2>&1 &
+  BYPASS_FIXTURE_PID=$!
+  deadline=$((SECONDS + 5))
+  until parsed="$(python3 - "${config}" 2>/dev/null <<'PYCONFIG'
+import json, shlex, sys
+with open(sys.argv[1]) as source:
+    config = json.load(source)
+print("BYPASS_FIXTURE_PORT=" + shlex.quote(str(config["port"])))
+print("BYPASS_FIXTURE_AUTH=" + shlex.quote(config["authorization"]))
+PYCONFIG
+)"; do
+    if ! kill -0 "${BYPASS_FIXTURE_PID}" 2>/dev/null || [ "${SECONDS}" -ge "${deadline}" ]; then
+      bypass_unmet pairing_fixture "the scenario-entry pairing fixture did not start"
+      return 0
+    fi
+    sleep 0.05
+  done
+  eval "${parsed}"
+  log "operator-bypass pairing fixture ready (minting waits for the scenario)"
 }
 mint_answer_pairing() {
   local parsed=""
@@ -1210,7 +1218,7 @@ mint_answer_pairing() {
   log "answer daemon (#966) up: serverId=${SERVER_ID_ANSWER} (the test pairs it by code)"
 }
 if [ -z "${DETERMINISTIC}" ] && [ -z "${BYPASS_UNMET}" ]; then
-  mint_bypass_pairing
+  start_bypass_pairing_fixture
 fi
 if [ -z "${DETERMINISTIC}" ] && [ -z "${ANSWER_UNMET}" ]; then
   mint_answer_pairing
@@ -1400,15 +1408,13 @@ fi
 if [ -n "${PEER_TOKEN:-}" ]; then
   GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.peerToken="${PEER_TOKEN}")
 fi
-# The operator-bypass daemon (#687): its unmet prerequisite, or the pairing, the peer and the witness.
+# The operator-bypass daemon: its unmet prerequisite, or its scenario-entry fixture and witness.
 if [ -n "${BYPASS_UNMET:-}" ]; then
   GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.bypassUnmet="${BYPASS_UNMET}")
-elif [ -n "${BYPASS_PEER_TOKEN:-}" ]; then
+elif [ -n "${BYPASS_FIXTURE_PORT:-}" ]; then
   GRADLE_TEST_ARGS+=(
-    -Pandroid.testInstrumentationRunnerArguments.bypassServerId="${SERVER_ID_BYPASS}"
-    -Pandroid.testInstrumentationRunnerArguments.bypassPairCode="${PAIR_CODE_BYPASS}"
-    -Pandroid.testInstrumentationRunnerArguments.bypassPeerToken="${BYPASS_PEER_TOKEN}"
-    -Pandroid.testInstrumentationRunnerArguments.bypassServerStaticPublicKey="${BYPASS_PEER_SERVER_STATIC_PUBKEY}"
+    -Pandroid.testInstrumentationRunnerArguments.bypassFixturePort="${BYPASS_FIXTURE_PORT}"
+    -Pandroid.testInstrumentationRunnerArguments.bypassFixtureAuthorization="${BYPASS_FIXTURE_AUTH}"
     -Pandroid.testInstrumentationRunnerArguments.bypassTokenFile="${BYPASS_TOKEN_FILE}"
     -Pandroid.testInstrumentationRunnerArguments.bypassToken="${BYPASS_WITNESS}"
   )
