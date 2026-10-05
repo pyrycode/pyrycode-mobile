@@ -42,6 +42,21 @@ Keep this lifecycle regression alongside the step tests: retaining `produceState
 values across key changes does not retain a cancelled timer or local deadline.
 See [Streaming variant](message-bubble.md#streaming-variant--progressive-reveal--blinking-caret-since-184).
 
+`StreamingMarkdownTest` pins pending inline/table rules, parser authority for
+closed table cells, append/reset cache boundaries and input-length scan/storage
+bounds. `StreamingMarkdownComposeTest` uses parse/composition counters to prove
+completed earlier blocks stay unchanged on trailing appends and caret blinks.
+Keep the trailing block mutable: partial list markers and EOF rules can rejoin a
+preceding list. Equal-width comparisons cover EOF tables, escaped bangs and
+pending code inside formatting, including styles and link targets.
+
+For settlement comparisons, flush the streaming-state change before advancing
+the paused clock, wait for settlement and assert caret absence before comparing.
+A blink-off caret alone cannot prove completion. Live reply assertions must be
+scoped to the formatted assistant bubble through unmerged semantics: a prompt
+that repeats the requested body can satisfy global text assertions. Its
+finished-only details action proves settlement before body assertions.
+
 `MessageBubbleSelectionTest` covers selection, streaming and code Copy. Compose
 1.10.4 uses
 `LocalTextContextMenuToolbarProvider`/`TextContextMenuKeys.CopyKey`, not
@@ -53,8 +68,10 @@ uses actual pointer input and the platform clipboard. Wait for the repository's 
 row with `isStreaming == false`; visible text alone can still be streaming and unselectable.
 Espresso must target `isPlatformPopup()` for Android's floating Copy toolbar: its default
 activity root cannot find the action after the long-press. Keep the known selected word and
-unrelated clipboard baseline independent of the result assertion. A substituted toolbar test
-cannot establish this platform-menu behavior.
+unrelated clipboard baseline independent of the result assertion. After the real Copy click,
+wait within the existing timeout for the independently known clipboard value: the Compose write uses a coroutine, so UI idleness alone
+does not establish write completion. A substituted toolbar test cannot establish
+this platform-menu behavior.
 
 `MessageMetaRowToggleTest` mounts the real `ThreadScreen` to cover show/hide and single selection, streaming-to-finished taps, links and independently visible code copy, inert attachment states, and the screen-reader toggle and hidden-row timestamp/copy semantics. Standalone `MessageBubbleTest` and palette fixtures retain the visible-row default, so their streaming copy test does not describe thread behavior. `ThreadFrameCaptureTest.compactWidthAndEnlargedText_keepFrameControlsReachable` reveals the row before testing its copy pointer target. Compose semantics assertions do not establish TalkBack's spoken order on a device.
 

@@ -43,6 +43,41 @@ notes. With the default `null`, including inside the reader, workspace paths sta
 
 Parse memoisation, block and inline dispatch, tables, task lists, strikethrough, code blocks, the link-safety allowlist, markdown-path links and the file-private spacing constants moved to [MarkdownText — how it works](markdown-text-internals.md) under the docs guard's size cap (#1533).
 
+Streaming uses `StreamingMarkdownText` and presentation-only `PendingMarkdown`
+(#1766), sharing `MarkdownBlock`, the inline walker, link scheme allowlist and
+`routeMarkdownLink`. The cache reparses only the mutable suffix on append and
+retains stable completed block objects. The final top-level block remains mutable;
+partial list markers and EOF rules can retain a preceding list too. Continuing
+lists, quotes and tables therefore keep the settled renderer's grouping. The
+caret is a separate composition below the trailing block, never AST content.
+
+Pending supported bold, italic and both strike forms display their arrived text
+without opening delimiters. An unclosed backtick span displays literal code text;
+that literal region takes precedence over surrounding formatting masks. Pending
+`[text](` and `[text](https://exa` display plain, inert `text`. Only actual complete
+links acquire the existing renderer's annotations and scheme-gated routing.
+Escapes, completed code, autolinks and unsupported HTML literal tokens are
+protected from pending masks; punctuation in those regions stays literal.
+The forward bracket scan and region-local protection storage are bounded by
+input length, including hostile repeated unmatched brackets.
+
+Pending pipe headers display cell text separated by spaces, hiding structural
+pipes and an incomplete separator row. Escaped/code pipes remain literal; no
+separator is invented. A real matching `TABLE` AST takes precedence, including at
+EOF without outer pipes or a final newline. A blank line or newline-closed invalid
+separator ends a candidate header. Completed parser cells closed by a pipe or
+newline retain the shared renderer's text/styles, even when the parser splits
+backticks or emphasis across cells. Only the growing body cell touching EOF
+receives inline masks; the table stays mutable for new rows. A revealed complete
+fence opener keeps blank lines inside code until its actual closing fence.
+
+Settlement always renders the original source. Caught-up complete markdown keeps
+its text, styles, targets and bounds at equal available width apart from the
+caret. Completion with backlog shows all source immediately; malformed final
+source uses the total renderer's normal literal fallback. Temporary presentation
+never rewrites message content or copying. Controlled tests and observation
+counters are described in [bubble testing](message-bubble-testing.md#testing).
+
 ## Configuration
 
 - **Library dependencies:** `implementation(libs.jetbrains.markdown)` (parser; catalog pin `jetbrainsMarkdown = "0.7.3"`) and `implementation(libs.snipme.highlights)` (code-block tokeniser since #130; catalog pin `snipmeHighlights = "1.1.0"`) in `app/build.gradle.kts`. No KSP, no kapt, no proguard rules for either.
@@ -64,7 +99,7 @@ Parse memoisation, block and inline dispatch, tables, task lists, strikethrough,
 - **Lists are flat-bulleted.** Unordered lists use `"•"`; ordered lists use `"${index + 1}."` from the 1-based item position within the list. Nested-list indentation depth comes from the recursive `MarkdownBlock` call inside the list item's `Column` — no per-level indent multiplier. **Reader exception (#1533):** a reader item's own wrapped text follows the Figma frame's hanging-free layout (continuation returns to the list edge, not the item text), while a nested block still gets the old fixed hang (`ReaderListContinuationIndent`, 14dp) because the frame draws no nested content to measure against. The thread presentation is untouched and keeps the marker-row hang for every item, wrapped or not.
 - **Blockquote appearance is presentation-specific.** Thread paragraphs remain italic with an `onSurfaceVariant` bar; reader paragraphs are regular with an `outlineVariant` bar. Nested non-paragraph blocks recurse through `MarkdownBlock`.
 - **No free-text selection.** Prose, tables, lists and quotes use bare `Text`, while code blocks expose block-only copying: thread and labelled reader fences show `CopyTextControl`; plain reader panels copy on tap. The reader menu separately copies the whole note.
-- **Streaming is not specially handled.** `MarkdownText` treats `markdown` as a complete, final string each composition; partial markdown (an unclosed `**bold` mid-stream) still parses (the JetBrains parser is total) and renders as best it can. #184 owns streaming-aware behaviour at the `MessageBubble` layer — `StreamingAssistantBody` appends a `▎` caret glyph to the revealed prefix and passes the result through this renderer unchanged. Streaming uses the default body style.
+- **Streaming shares the walkers with temporary presentation.** `MarkdownText` remains the settled-source entry point; `StreamingMarkdownText` stabilizes pending syntax and reuses completed blocks as described [above](#how-it-works). Streaming uses the default body style, with a caret outside markdown.
 - **Renderer is total.** The JetBrains parser produces an AST for any input string — there is no exception path. Unsupported element kinds hit the `else` fallback (raw text using the selected body style), so the message is never blank. #681 leaned on exactly this property to switch parser flavours without suppressing anything — see the next two points.
 - **Parser flavour is GFM since #681, and that changes more than the three constructs it was switched on for.** `org.jetbrains:markdown` has no per-construct registration — `GFMFlavourDescriptor` is the only off-the-shelf way to reach tables, task lists and strikethrough, and it necessarily also brings bare-URL autolinks (`GFM_AUTOLINK`) and `$…$` inline maths (`INLINE_MATH`) into every message this renderer sees, whether or not that message uses any of the three wanted constructs.
 - **Bare URLs and `$…$` render as their own literal characters — deliberately, by omission rather than suppression.** `GFM_AUTOLINK` is a childless leaf with no dispatcher arm, so `appendInline`'s `else` appends its raw text; there is no link annotation to tap. `INLINE_MATH` has children with no arm either, so the `else` recurses and its `DOLLAR` / `TEXT` / `WHITE_SPACE` leaves rebuild the `$…$` span verbatim. Block `$$…$$` reaches `MarkdownBlock`'s own `else` and renders as raw text the same way. `MarkdownTextParsingTest` pins the AST shape each depends on, because the property here rests on an *absent* branch, and an absent branch reddens nothing on its own if the library ever adds one.
@@ -83,7 +118,7 @@ Parse memoisation, block and inline dispatch, tables, task lists, strikethrough,
 - Sibling component pattern: [`MessageBubble`](./message-bubble.md) (file-private spacing constants; preview pairing shape)
 - Local precedent for `buildAnnotatedString` / `SpanStyle` idioms: `ScannerScreen.kt:252-260`
 - Downstream:
-  - #184 — streaming caret + animation (landed). Operates at the `MessageBubble` layer; passes the revealed-prefix-plus-caret string through this renderer unchanged each tick. Partial code fences flow through `CodeBlock` unchanged; the `remember(content, syntaxLanguage)` re-tokenises per reveal tick (sub-millisecond on typical sizes). Tables and task lists flow through the same unchanged-signature path; `singleTildeRuns` re-runs per reveal tick behind its `children.none { TILDE }` early-out rather than being memoised, since `appendInlineChildren` builds outside composition where `remember` is unavailable
+  - #184 / #1754 / #1766 — streaming caret, word pacing and stabilized presentation. [MessageBubble](message-bubble.md#streaming-variant--progressive-reveal--blinking-caret-since-184) owns the reveal clocks; the shared renderer receives cached blocks and pending presentation separately from the caret.
   - #657 — code block header/body chrome and per-block copy control (landed). See [Code blocks](markdown-text-internals.md#code-blocks); an unterminated (streaming) fence's partial content still extracts correctly, so #184's per-tick re-render carries no new edge case
   - #680 — live desktop/mobile comparison of the same replies, covering the three constructs this ticket added
   - #1050 — `onOpenMarkdownPath` routes an assistant-reply markdown-path link to [the live linked-note reader](markdown-reader-screen.md#linked-note-live-since-1050) instead of leaving it inert; see [Markdown-path links](markdown-text-internals.md#markdown-path-links-since-1050)

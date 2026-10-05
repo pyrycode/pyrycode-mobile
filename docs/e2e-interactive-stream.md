@@ -6,6 +6,16 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
 
 ## The ladder (reliable → flaky)
 
+Formatted streaming markdown (#1766) is covered at rung 3 by
+`InteractiveStreamE2ETest.interactiveTurn_markdownReply_rendersFormattedBody`
+(one real Claude turn requesting emphasis, inline code, a fenced block and a table).
+It checks formatted spans, every code/table/final text marker and exact retained
+source in the settled assistant bubble. The rung-4 `stream` scenario extends
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`
+with a multi-delta formatted reply, fenced blank lines and a table. Clock-controlled
+shared Compose tests cover pending syntax, reuse counters and equal-width transitions;
+the live scenario establishes the complete real-stack body.
+
 Background-agent placement (#1783) is covered at rung 3 by
 `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`
 and at rung 4 by
@@ -1884,7 +1894,7 @@ host-prompt handlers. Scripted runs and unrelated live subsets retain their exis
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the current selector has 59 runnable `@Test` methods. The historical
+incantation to remember — the current selector has 60 runnable `@Test` methods. The historical
 inventory below describes the pre-#1193 forty-four-method set; ignored methods are excluded from
 the current selector as described under the model and effort settings round trip. It covered ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
@@ -2597,8 +2607,10 @@ atomic `severAndRestoreLink()` is split into its two halves — `severLink()` (c
 test can hold an offline window between them:
 
 1. **First fragment** (`replay-order-open.jsonl`, the initial `isReplay` user echo followed by
-   thinking) is emitted for the first user turn → `turn_state(thinking)`, held open. The test asserts the spinner (the turn is
-   open at the moment we sever).
+   thinking) is emitted for the first user turn → `turn_state(thinking)`, held open. The echo
+   establishes the reply's causal placement before the offline fragment. Without it, idle placement
+   can insert the user confirmation between reply deltas and split the reply (#1766, also #1783).
+   The test asserts the spinner (the turn is open at the moment we sever).
 2. **`severLink()`** — the phone goes offline. The test then holds for a bounded `OFFLINE_WINDOW_MS`.
 3. **Second fragment** (`replay-order.jsonl`, three ordered `assistant_delta` lines + `end_turn`) is
    released by the relay logging the phone-leg disconnect. A severed phone cannot send a second message,
@@ -2644,6 +2656,29 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+**Formatted streaming markdown (#1766, 2026-10-06).** The dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on
+`feature/1766` at `eaa1fd22af`, merged with `origin/main` at `0ce544d8a4`.
+Fresh JUnit XML in `2026-10-05T23-22-04-667Z_real-claude-gate_#1766.log`
+records **60 executed, 59 passed, 1 failed, 0 errors, 0 skipped**, exit 1.
+`InteractiveStreamE2ETest.interactiveTurn_markdownReply_rendersFormattedBody`
+is present, unskipped and passed. The failed method was the unrelated
+`interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`; matching
+`real-claude-gate-rerun_#1766.log` XML records **1 executed, 1 passed, 0 failed,
+0 errors, 0 skipped** on the same merged tree. Both reports were inspected in the
+agents repository's `logs/`. The dispatcher accepted the gate after that focused
+rerun; this is a named markdown pass in a failed full run, not a fresh passing
+full-suite result. The ticket explicitly requires the latter, so that evidence
+handoff remains pending. See [dispatcher gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1766#issuecomment-6005823282).
+
+The supplied verifier report records **185 executed/passed, 0 failed, 1 skipped**
+for `ui` and **15 executed/passed, 0 failed, 0 skipped** for `scripted-all`.
+Inspected XML preserved in `/tmp/verifier-1810/eaa1fd22/` confirms the formatted
+`stream`, `replay-order` and `selection-copy` methods ran and passed.
+See [verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1810#issuecomment-6005293562).
+No separate focused markdown live run is inferred from the full gate result.
+
 
 **Background Agent at the newest end (#1783, 2026-10-06).** The dispatcher ran
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on `feature/1783`
@@ -3851,6 +3886,16 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Formatted streaming markdown (#1766):** the rung-3
+  `InteractiveStreamE2ETest.interactiveTurn_markdownReply_rendersFormattedBody`
+  and rung-4 `DeterministicInteractiveStreamE2ETest`
+  `interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread` are implemented
+  and selected by the live/`stream` gates. Named passes and the unrelated Stop-test
+  failure/rerun are recorded in [Verification status](#verification-status).
+  The explicit fresh passing full-live result remains pending with verification;
+  accepting a focused flake rerun does not supply that full-run evidence.
+  The pre-ship command remains `python3 scripts/android-test-gate.py live`.
 
 - **Background-agent newest-end placement (#1783):**
   `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished` passed

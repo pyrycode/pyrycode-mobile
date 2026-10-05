@@ -1,6 +1,6 @@
 # MessageBubble
 
-Stateless row primitive (#128) rendering a single `Message` in the conversation thread surface. Three visual variants dispatched off `Message.role`: a right-aligned bubble for `Role.User` (plain text) and a left-aligned bubble for `Role.Assistant` (markdown-rendered via [`MarkdownText`](./markdown-text.md) since #129 — CommonMark element set, boxed since #644), both through one shared `Message` component; and a tap-to-expand `surfaceContainerHigh` card for `Role.Tool`, routed via [`ToolCallRow`](./tool-call-row.md) since #131. User and assistant bubbles can end with a **meta row** — that message's own locale-formatted date/time plus a copy control (#644). In the thread it stays hidden until tapped, with at most one row visible and none on a streaming reply (#1621). Assistant content reveals progressively with a blinking caret when `Message.isStreaming = true` (#184). Eventual call site is the `LazyColumn(reverseLayout = true)` body of [`ThreadScreen`](./thread-screen.md).
+Stateless row primitive (#128) rendering a single `Message` in the conversation thread surface. Three visual variants dispatched off `Message.role`: a right-aligned bubble for `Role.User` (plain text) and a left-aligned bubble for `Role.Assistant` (markdown-rendered via [`MarkdownText`](./markdown-text.md) since #129 — GFM element set, boxed since #644), both through one shared `Message` component; and a tap-to-expand `surfaceContainerHigh` card for `Role.Tool`, routed via [`ToolCallRow`](./tool-call-row.md) since #131. User and assistant bubbles can end with a **meta row** — that message's own locale-formatted date/time plus a copy control (#644). In the thread it stays hidden until tapped, with at most one row visible and none on a streaming reply (#1621). Assistant content reveals progressively with a blinking caret when `Message.isStreaming = true` (#184). Eventual call site is the `LazyColumn(reverseLayout = true)` body of [`ThreadScreen`](./thread-screen.md).
 
 Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`). Files: `MessageBubble.kt` (both role bubbles, the streaming pair) and `MessageMetaRow.kt` (the meta row + copy control, since #644 — `internal` rather than file-private so [#657](../codebase/657.md)'s per-code-block copy control can reuse it). Sibling of [`DiscussionPreviewRow`](./discussion-preview-row.md), [`ConversationRow`](./conversation-row.md), `ArchiveRow.kt`.
 
@@ -251,9 +251,34 @@ The composable derives two pieces of state via `produceState`:
 
 Both producers cancel automatically when the composable leaves composition. No `LaunchedEffect`, no `DisposableEffect`, no `viewModelScope` involvement — carried over unchanged through #644's new container.
 
-The two values feed a second private composable `StreamingAssistantBodyView(revealedText, caretVisible, modifier)` (pure rendering, no state) that computes `displayText = revealedText + (if (caretVisible) STREAMING_CARET_GLYPH else "")` and calls `MarkdownText(markdown = displayText, modifier = modifier)`.
+The values feed `StreamingAssistantBodyView`, which calls `StreamingMarkdownText`
+with the revealed source and blink state separately (#1766). Its remembered cache
+parses the mutable suffix and preserves completed blocks' exact AST/source/presentation
+objects. Stable keyed block views skip unchanged earlier blocks on append and blink.
+The last block stays mutable, including a table receiving rows or a continuing list;
+a partial following list marker or EOF horizontal rule can also keep its preceding
+list mutable until the line resolves. Non-append replacement resets the cache.
+Shared `MarkdownTextStyle` spacing and grouping remain authoritative.
 
-**Caret as inline text, not a sibling composable.** `STREAMING_CARET_GLYPH = "▎"` (U+258E LEFT ONE QUARTER BLOCK). The caret is appended to the revealed prefix and flows through `MarkdownText` as ordinary text, inheriting the ambient content colour — since #644 that ambient is the enclosing `Surface(contentColor = …)`, not a `CompositionLocalProvider` the bubble sets up itself (see [Fill vs. hug](#fill-vs-hug-the-streaming-arm-keeps-fillmaxwidth-since-644) below).
+Recognized pending emphasis, italic, strike and inline-code openers hide their
+structural punctuation while showing arrived text plainly. An incomplete inline
+link shows its label without a tappable destination. Pending table headers show
+cell text with spaces, hiding structural pipes and a partial separator; only a
+real matching separator releases table formatting. Escaped punctuation and code
+remain literal. A complete fence opening line keeps its arrived body in code,
+including blank lines, until the actual closer. See
+[renderer boundaries](markdown-text.md#how-it-works) for completed table cells.
+
+The caret is a separate `Text("▎")` below the trailing block, outside code, links
+and parser delimiters. Alpha reserves its footprint while blinking; it inherits
+the bubble's ambient content colour. It never changes retained message source or
+clipboard payloads.
+
+Clearing `isStreaming` selects settled `MarkdownText` from the entire original
+source immediately, including any reveal backlog. Complete caught-up markdown
+retains text, styles and link targets at equal available width, with the caret
+removed. Malformed final source uses the existing total renderer and literal
+fallback; temporary masks never carry into final rendering.
 
 **Zero animation cost when not streaming.** Historical messages take the unchanged static `MarkdownText(...)` path — no `produceState`, no coroutine, no extra recomposition.
 
@@ -263,7 +288,11 @@ The two values feed a second private composable `StreamingAssistantBodyView(reve
 
 The finalized assistant body (`MarkdownText(markdown = message.content)`) no longer takes `Modifier.fillMaxWidth()`. Carrying that modifier over from the unboxed era was a rework-cycle bug: inside a shrink-wrapping `Surface`, `fillMaxWidth()` sets `minWidth = maxWidth`, so a bubble measured against the 272dp lane became a *fixed* width rather than the design's *maximum* — measured on device, a two-character assistant reply and a wrapping one both rendered at 271.24dp, against the frame's own short-instance example (`I533:1956;132:4539`) at 205dp. `CodeBlock` inside `MarkdownText` carries its own `fillMaxWidth()`, so a fenced code block still spans the bubble; only prose hugs.
 
-**The streaming arm is the deliberate exception.** `caretVisible` toggles the rendered string by one glyph twice a second; a hugging streaming bubble would oscillate in width at 2Hz for the whole turn — worst on exactly the short replies the hug exists for. Filling holds the width steady while deltas land, and the bubble settles onto its content in one snap at `turn_end` instead of continuous jitter. The alternative (reserving the caret's width so the blink stops moving the edge) would rework the streaming render path `MarkdownText` drives and was out of scope for #644.
+**The streaming arm keeps filling the lane.** This holds the bubble width steady
+while deltas arrive; finalized prose can hug its content at `turn_end`. Since
+\#1766 the caret also reserves its own footprint with alpha, so blinking no longer
+changes a parsed string or its layout. Equal-width body transition tests do not
+claim that the outer streaming and finalized bubbles have identical widths.
 
 A regression guard pins this: `MessageBubbleTest.shortAssistantBody_hugsItsContent_whileALongOneStillGrowsToTheLane` mounts a short and a long finalized assistant message and reads both bubble widths off `MESSAGE_BUBBLE_TEST_TAG` — the `Surface`, not the body `Text`, since a `Text` hugs its own content whether or not its container does and is the one node that does **not** move when the hug regresses. The paired "long > short" assertion is what stops a blanket shrink from passing, and the hug assertion needs real margin: a lane-pinned bubble measures a fraction *under* the computed lane (271.24 vs 271.43dp) once padding rounds through px, so a bare `short < lane` check passed even in the broken state.
 
@@ -286,7 +315,7 @@ internal const val MESSAGE_BUBBLE_TEST_TAG = "message-bubble"
 
 **`UserBubbleShape` and `UserBubbleMaxWidth` are gone** — the pre-#644 asymmetric 20/20/6/20 "tail" corner radius and the 320dp cap are both superseded by the shared `BubbleShape` (uniform 6dp) and the `MessageRoleInset` mechanism above. There is no longer a separate max-width constant for either role: the inset *is* the mechanism, and 272dp is its value at the 412dp reference width.
 
-The caret glyph and blink period stay file-private. The word rate and catch-up budget are also private; `STREAMING_REVEAL_STEP_MS` and the pure `nextStreamingRevealLength` helper are internal so the step tests can pin cadence and word boundaries.
+The blink period stays file-private; the caret glyph is rendered by `StreamingMarkdownText`. The word rate and catch-up budget are also private; `STREAMING_REVEAL_STEP_MS` and the pure `nextStreamingRevealLength` helper are internal so the step tests can pin cadence and word boundaries.
 
 Naming note: the shared row-spacing constant is `MessageAreaRowSpacing`, not (as an earlier draft of this ticket's plan called it) `MessageRowVerticalSpacing` — [`ToolCallRow.kt`](./tool-call-row.md) already owns a file-private constant of that exact name, and promoting `MessageBubble.kt`'s to `internal` under the same identifier would have been a package-level conflicting declaration at `ToolCallRow`'s own use site. `ToolCallRow.kt` is owned by [#658](../codebase/658.md) and #644 left it untouched; searching the package for a name before promoting it to `internal` is the general lesson.
 
