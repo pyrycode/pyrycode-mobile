@@ -68,10 +68,18 @@ Pending for the documentation stage:
 - [Files/storage] No source-derived path, cache filename or disk write is introduced. The cache is per-composition memory; actual workspace link taps retain `routeMarkdownLink` and daemon confinement.
 - [Android attack surface] No exported component, intent, provider, WebView or permission change. Render only native Compose text and existing links.
 - [Cryptography] Noise and key storage are untouched; no new randomness or secret comparison.
-- [Network/I/O] Existing decoded-message/frame limits and bounded table dimensions remain in force. No frame, URL or timeout change; do not amplify tables by adding rows.
+- [Network/I/O] Existing decoded-message/frame limits and bounded table dimensions remain in force. No frame, URL or timeout change; do not amplify tables by adding rows. The rework adversarial pass found a quadratic unmatched-bracket scan and suffix-sized per-region protection storage (MUST FIX). The revised design uses a single-pass bracket stack and region-local protection arrays, with deterministic input-length work/storage bounds in `unmatchedBracketsHaveLinearScanWorkAndRegionLocalStorage`; no source-derived suffix copy is allocated per region.
 - [Errors/logs] Never log source, labels, destinations or decrypted bytes. Any lifecycle diagnostics use static event codes/counts only; test counters collect no content.
 - [Concurrency] Cache is confined to composition; existing producers cancel on disposal and arrivals never restart their delay/deadline. No background task or cross-message sharing.
 - [Threat model] A malicious relay cannot gain plaintext through this UI-only change. Hostile daemon markdown stays within the total GFM walker and bounded table fan-out; incomplete and unsafe links cannot trigger navigation. Rooted-device credential theft and screenshot/accessibility leakage remain under the existing protocol/device protections; this adds no persistence or disclosure channel.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-05
+
+## Revisions
+
+### 2026-10-05 — verifier rework on PR #1810
+
+- Findings 1–6: a partial following list marker does not establish an immutable boundary. Keep its preceding list in the mutable suffix until the marker resolves. Protect GFM autolinks and HTML literal tokens from pending masks. A blank line or newline-closed invalid separator closes a candidate table header; outer cells are removed only at actual structural pipe offsets, and backslashes inside code do not escape closing backtick runs. Include setext-shaped separator prefixes and route paragraph overrides through the common inline entry point so quotes retain their existing style. Match link-label brackets in a single forward pass that skips escaped punctuation and protected code spans.
+- Finding 7 changes the Security review: hostile repeated unmatched brackets caused quadratic composition-thread work, and per-region protection arrays amplified memory by the suffix length. MUST FIX before handoff: use a bracket stack with one visit per scanned character, and allocate protection only for each disjoint inline region. Deterministic work/capacity counters carry no content and tests bound both by input length. Existing masks remain one pair per suffix; no network/storage contract changes. With these mitigations the revised security design is PASS; the elevated effort assessment remains appropriate.
+- Add prefix-by-prefix ordered-list, literal punctuation, closed prose, escaped/code pipe, quoted/setext header and code-bearing link-label regressions. Controlled Compose tests compare grouping and annotated text through settlement and exercise inert pending links. The existing live scenario and curated selection remain; focused scripted stream execution is builder-owned and fresh full live acceptance remains dispatcher-owned.

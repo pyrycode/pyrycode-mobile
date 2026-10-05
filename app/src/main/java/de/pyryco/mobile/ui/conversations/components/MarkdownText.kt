@@ -1007,6 +1007,7 @@ private fun buildInline(
     uriHandler: UriHandler,
     breakLongRuns: Boolean = false,
 ): AnnotatedString {
+    LocalPendingMarkdown.current?.blockText(node)?.let { return AnnotatedString(it) }
     val colors = currentInlineColors()
     val text =
         buildAnnotatedString {

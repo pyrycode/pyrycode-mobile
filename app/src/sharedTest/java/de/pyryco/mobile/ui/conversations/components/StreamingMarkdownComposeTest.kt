@@ -38,11 +38,13 @@ class StreamingMarkdownComposeTest {
     private val streaming = mutableStateOf(true)
     private val taps = mutableListOf<String>()
     private var parses = 0
+    private val parsedLengths = mutableListOf<Int>()
     private val compositions = mutableMapOf<Int, Int>()
     private val observer =
         object : StreamingMarkdownObserver {
             override fun parsed(length: Int) {
                 parses++
+                parsedLengths += length
             }
 
             override fun composed(key: Int) {
@@ -126,6 +128,7 @@ class StreamingMarkdownComposeTest {
         change("**earlier**\n\ntrailing grows")
         assertEquals(count, compositions[0])
         assertEquals(parseCount + 1, parses)
+        assertEquals("trailing grows".length, parsedLengths.last())
         val afterAppend = compositions.toMap()
         compose.runOnIdle { caret.value = false }
         compose.mainClock.advanceTimeBy(512)
@@ -208,5 +211,78 @@ class StreamingMarkdownComposeTest {
         compose.runOnIdle { streaming.value = false }
         compose.mainClock.advanceTimeBy(64)
         assertEquals(before, texts().map { it.text })
+    }
+
+    private fun settleAndCompare() {
+        val before = texts()
+        compose.runOnIdle { streaming.value = false }
+        compose.mainClock.advanceTimeBy(64)
+        assertEquals(before.map { it.text }, texts().map { it.text })
+        assertEquals(before.map { it.spanStyles }, texts().map { it.spanStyles })
+        assertEquals(
+            before.map { value -> value.getLinkAnnotations(0, value.length).map { (it.item as LinkAnnotation.Url).url } },
+            texts().map { value -> value.getLinkAnnotations(0, value.length).map { (it.item as LinkAnnotation.Url).url } },
+        )
+    }
+
+    @Test fun partialOrderedListMarkerRejoinsWithoutRenumberingAtSettlement() {
+        show("1. first\n\n2")
+        change("1. first\n\n2. second")
+        assertEquals(listOf("1.", "first", "2.", "second"), texts().map { it.text })
+        settleAndCompare()
+    }
+
+    @Test fun literalPunctuationAndClosedPipeProseSurviveAppendAndSettlement() {
+        show("https://example.com/~user <em title=\"~user\">x</em>\n\nleft | right\n\nnext")
+        val expected = listOf("https://example.com/~user <em title=\"~user\">x</em>", "left | right", "next grows")
+        change(source.value + " grows")
+        assertEquals(expected, texts().map { it.text })
+        settleAndCompare()
+    }
+
+    @Test fun quotedAndSetextTableHeadersReleaseOnlyOnRealSeparator() {
+        show("> | A | B |\n")
+        assertEquals(listOf("A B"), texts().map { it.text })
+        change("> | A | B |\n> ---")
+        assertEquals(listOf("A B"), texts().map { it.text })
+        change("> | A | B |\n> --- | ---\n> | one | two |\n")
+        assertEquals(setOf("A", "B", "one", "two"), texts().map { it.text }.toSet())
+        change("| A | B |\n---")
+        assertEquals(listOf("A B"), texts().map { it.text })
+        change("| A | B |\n--- | ---\n| one | two |\n")
+        assertEquals(setOf("A", "B", "one", "two"), texts().map { it.text }.toSet())
+        settleAndCompare()
+    }
+
+    @Test fun codeAndEscapedPipesStayVisibleInPendingCells() {
+        show("| A | B\\|\n")
+        assertEquals(listOf("A B\\|"), texts().map { it.text })
+        change("| A | `B|")
+        assertEquals(listOf("A B|"), texts().map { it.text })
+        change("| A | `B|`\n| --- | --- |\n")
+        // The shared GFM parser rejects an unescaped code pipe as a table; retain its complete fallback.
+        assertEquals(listOf("| A | B| | --- | --- |"), texts().map { it.text })
+        settleAndCompare()
+    }
+
+    @Test fun pendingLinkWithCodeBracketNeverExposesOrTapsThePartialDestination() {
+        show("[text `a]b`](https://exa")
+        val label = annotated("text `a]b`")
+        assertTrue(label.getLinkAnnotations(0, label.length).isEmpty())
+        compose.onNodeWithText(label.text).performClick()
+        assertTrue(taps.isEmpty())
+        change("[text `a]b`](https://example.com)")
+        val complete = annotated(label.text)
+        assertEquals("https://example.com", (complete.getLinkAnnotations(0, complete.length).single().item as LinkAnnotation.Url).url)
+        compose.onNodeWithText(label.text).performClick()
+        assertEquals(listOf("https://example.com"), taps)
+        settleAndCompare()
+    }
+
+    @Test fun newlineClosedInvalidHeaderUsesRendererFallbackBeforeSettlement() {
+        show("| A | B |\n---\nnext")
+        assertTrue(texts().any { it.text.contains("| A | B |") })
+        assertTrue(texts().any { it.text.contains("next") })
+        settleAndCompare()
     }
 }

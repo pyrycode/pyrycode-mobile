@@ -18,7 +18,7 @@ internal class StreamingMarkdownBlock(
     val pending: PendingMarkdown,
 )
 
-/** The last parser block stays open, including loose lists, table headers and unclosed fences. */
+/** The last block and any predecessor a partial list marker may rejoin stay in the mutable suffix. */
 internal class StreamingMarkdownCache(
     private val onParse: (String) -> Unit = {},
 ) {
@@ -42,8 +42,19 @@ internal class StreamingMarkdownCache(
         val next = nodes.map { StreamingMarkdownBlock(consumed + it.startOffset, it, tail, pending) }
         blocks = completed.toList() + next
         if (next.size > 1) {
-            completed += next.dropLast(1)
-            consumed += next.last().node.startOffset
+            val predecessor = next[next.lastIndex - 1].node
+            val partialMarker =
+                next
+                    .last()
+                    .node
+                    .getTextInNode(tail)
+                    .toString()
+            val mayRejoinList =
+                predecessor.type in setOf(MarkdownElementTypes.ORDERED_LIST, MarkdownElementTypes.UNORDERED_LIST) &&
+                    partialMarker.matches(Regex(" {0,3}(?:[0-9]{1,9}[.)]?|[-+*])[ \t]*"))
+            val mutableIndex = next.lastIndex - if (mayRejoinList) 1 else 0
+            completed += next.take(mutableIndex)
+            consumed += next[mutableIndex].node.startOffset
         }
         return blocks
     }
@@ -57,6 +68,12 @@ internal class PendingMarkdown(
     private val hidden = BooleanArray(source.length)
     private val literal = BooleanArray(source.length)
     private val blockOverrides = mutableMapOf<Int, String>()
+
+    // Content-free deterministic probes for scanner work and total region-local protection storage.
+    internal var scannedCharacters = 0
+        private set
+    internal var protectionCapacity = 0
+        private set
 
     init {
         visit(root)
@@ -81,22 +98,26 @@ internal class PendingMarkdown(
             GFMElementTypes.TABLE -> if (!pendingTable(node)) node.children.forEach(::visit)
             else -> node.children.forEach(::visit)
         }
-        if (node.type == MarkdownElementTypes.PARAGRAPH) pendingTable(node)
+        if (node.type in setOf(MarkdownElementTypes.PARAGRAPH, MarkdownElementTypes.SETEXT_1, MarkdownElementTypes.SETEXT_2)) {
+            pendingTable(node)
+        }
     }
 
     private fun inline(node: ASTNode) {
-        val protected = BooleanArray(source.length)
+        val protected = BooleanArray(node.endOffset - node.startOffset)
+        protectionCapacity += protected.size
 
         fun protect(part: ASTNode) {
             when (part.type) {
                 MarkdownElementTypes.CODE_SPAN, MarkdownElementTypes.INLINE_LINK,
                 MarkdownElementTypes.IMAGE, GFMElementTypes.INLINE_MATH,
+                GFMTokenTypes.GFM_AUTOLINK, MarkdownTokenTypes.HTML_TAG, MarkdownElementTypes.AUTOLINK,
                 ->
-                    for (i in part.startOffset until part.endOffset) protected[i] = true
+                    for (i in part.startOffset until part.endOffset) protected[i - node.startOffset] = true
                 MarkdownElementTypes.EMPH, MarkdownElementTypes.STRONG, GFMElementTypes.STRIKETHROUGH ->
                     part.children.forEach { child ->
                         if (child.type == MarkdownTokenTypes.EMPH || child.type == GFMTokenTypes.TILDE) {
-                            for (i in child.startOffset until child.endOffset) protected[i] = true
+                            for (i in child.startOffset until child.endOffset) protected[i - node.startOffset] = true
                         } else {
                             protect(child)
                         }
@@ -106,9 +127,11 @@ internal class PendingMarkdown(
         }
         protect(node)
         val open = mutableMapOf<Pair<Char, Int>, ArrayDeque<IntRange>>()
+        val brackets = ArrayDeque<Int>()
         var i = node.startOffset
         while (i < node.endOffset) {
-            if (protected[i]) {
+            scannedCharacters++
+            if (protected[i - node.startOffset]) {
                 i++
                 continue
             }
@@ -123,13 +146,14 @@ internal class PendingMarkdown(
                 for (index in end until node.endOffset) literal[index] = true
                 break
             }
-            if (c == '[' && source.getOrNull(i - 1) != '!') {
-                val labelEnd = closingBracket(i, node.endOffset)
-                if (labelEnd != null && source.getOrNull(labelEnd + 1) == '(') {
-                    // The parser did not recognize a complete link; its whole suffix remains inert.
-                    hide(i, i + 1)
-                    hide(labelEnd, node.endOffset)
-                    for (index in i + 1 until labelEnd) literal[index] = true
+            if (c == '[') brackets.addLast(i)
+            if (c == ']' && brackets.isNotEmpty()) {
+                val labelStart = brackets.removeLast()
+                if (source.getOrNull(labelStart - 1) != '!' && source.getOrNull(i + 1) == '(') {
+                    // Complete links were protected by the AST; only a pending destination reaches here.
+                    hide(labelStart, labelStart + 1)
+                    hide(i, node.endOffset)
+                    for (index in labelStart + 1 until i) literal[index] = true
                     break
                 }
             }
@@ -172,26 +196,23 @@ internal class PendingMarkdown(
         for (i in start until end) hidden[i] = true
     }
 
-    private fun closingBracket(
-        start: Int,
-        limit: Int,
-    ): Int? {
-        var depth = 1
-        var i = start + 1
-        while (i < limit) {
-            when (source[i]) {
-                '\\' -> i++
-                '[' -> depth++
-                ']' -> if (--depth == 0) return i
-            }
-            i++
-        }
-        return null
-    }
-
     private fun pendingTable(node: ASTNode): Boolean {
         val text = node.getTextInNode(source).toString()
-        val lines = text.split('\n')
+        val lineStart = source.lastIndexOf('\n', node.startOffset - 1) + 1
+        val quoted = source.substring(lineStart, node.startOffset).trimStart().startsWith('>')
+        val quotePrefix = Regex("^[ \t]*(?:>[ \t]*)+")
+        val lines = text.split('\n').map { if (quoted) it.replaceFirst(quotePrefix, "") else it }
+        // A line boundary already present in the original source cannot be undone by appending.
+        if (source.startsWith("\n\n", node.endOffset) || source.startsWith("\r\n\r\n", node.endOffset)) return false
+        if (lines.size == 1 && source.getOrNull(node.endOffset) == '\n') {
+            val nextStart = node.endOffset + 1
+            val nextEnd = source.indexOf('\n', nextStart)
+            val following =
+                source
+                    .substring(nextStart, if (nextEnd < 0) source.length else nextEnd)
+                    .let { if (quoted) it.replaceFirst(quotePrefix, "") else it }
+            if (following.any { it !in "|-: \t\r" } || (following.isBlank() && nextEnd >= 0)) return false
+        }
         val header = lines.firstOrNull() ?: return false
         val pipes = structuralPipes(header)
         if (pipes.isEmpty()) return false
@@ -200,12 +221,9 @@ internal class PendingMarkdown(
         if (separator != null && separator.any { it !in "|-: \t\r" }) return false
         if (separator != null) {
             val separatorCells = tableCells(separator, structuralPipes(separator))
-            val completeLine =
-                text.indexOf('\n', header.length + 1) >= 0 ||
-                    source.getOrNull(node.endOffset) == '\n' ||
-                    separator.trimEnd().endsWith('|')
+            val lineClosed = text.indexOf('\n', header.length + 1) >= 0 || source.getOrNull(node.endOffset) == '\n'
             val valid = separatorCells.size == cells.size && separatorCells.all { it.trim().matches(Regex(":?-+:?")) }
-            if (completeLine && valid) return false
+            if (lineClosed || (separator.trimEnd().endsWith('|') && valid)) return false
         }
         val arrivedCells =
             cells.map { cell ->
@@ -234,8 +252,8 @@ internal class PendingMarkdown(
             .map { (a, b) -> line.substring(a + 1, b).trim() }
             .let { cells ->
                 var result = cells
-                if (line.trimStart().startsWith('|')) result = result.drop(1)
-                if (line.trimEnd().endsWith('|')) result = result.dropLast(1)
+                if (pipes.isNotEmpty() && line.substring(0, pipes.first()).isBlank()) result = result.drop(1)
+                if (pipes.isNotEmpty() && line.substring(pipes.last() + 1).isBlank()) result = result.dropLast(1)
                 result
             }
     }
@@ -246,7 +264,7 @@ internal class PendingMarkdown(
         var i = 0
         while (i < line.length) {
             when (line[i]) {
-                '\\' -> i += 2
+                '\\' -> i += if (codeRun == 0) 2 else 1
                 '`' -> {
                     var end = i + 1
                     while (end < line.length && line[end] == '`') end++

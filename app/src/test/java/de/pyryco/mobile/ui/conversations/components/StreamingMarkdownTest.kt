@@ -132,4 +132,102 @@ class StreamingMarkdownTest {
         assertEquals(2, closed.size)
         assertEquals(MarkdownElementTypes.PARAGRAPH, closed.last().node.type)
     }
+
+    @Test fun orderedListRetainsGroupingAcrossEveryPartialMarker() {
+        listOf("1. first\n\n2. second", "1. first\n\n23. second", "- first\n\n- second").forEach { source ->
+            val cache = StreamingMarkdownCache()
+            for (length in 1..source.length) {
+                val prefix = source.take(length)
+                val actual = cache.update(prefix)
+                val expected =
+                    MarkdownParser(MarkdownFlavour)
+                        .buildMarkdownTreeFromString(prefix)
+                        .children
+                        .filter { it.type != MarkdownTokenTypes.EOL && it.type != MarkdownTokenTypes.WHITE_SPACE }
+                assertEquals(prefix, expected.map { it.type }, actual.map { it.node.type })
+                assertEquals(
+                    prefix,
+                    expected.map { it.getTextInNode(prefix).toString() },
+                    actual.map { it.node.getTextInNode(it.source).toString() },
+                )
+            }
+        }
+    }
+
+    @Test fun unsupportedLiteralRegionsKeepTheirPunctuation() {
+        listOf("https://example.com/~user", "<em title=\"~user\">x</em>", "<em title=\"**user\">x</em>", "\$`literal`").forEach {
+            val root = MarkdownParser(MarkdownFlavour).buildMarkdownTreeFromString(it)
+            val paragraph = root.children.single { node -> node.type == MarkdownElementTypes.PARAGRAPH }
+            assertEquals(it, inlineText(paragraph.children, it), text(it))
+        }
+    }
+
+    @Test fun blankLineClosesPipeProseBeforeItCanBeFrozen() {
+        val source = "left | right\n\nnext"
+        assertEquals("left | right\nnext", text(source))
+        val cache = StreamingMarkdownCache()
+        val block = cache.update(source).first()
+        assertEquals(null, block.pending.blockText(block.node))
+        assertSame(block, cache.update(source + " grows").first())
+    }
+
+    @Test fun escapedAndCodeTrailingPipesRemainCellContent() {
+        mapOf(
+            "| A | B\\|\n" to "A B\\|",
+            "| A | `B|" to "A B|",
+            "| A | `B|`\n" to "A B|",
+            "| A | `B\\`| C |\n" to "A B\\ C",
+        ).forEach { (source, expected) ->
+            assertEquals(source, expected, text(source))
+        }
+    }
+
+    @Test fun separatorWithoutOuterPipesIsPendingEvenWhenParsedAsSetext() {
+        listOf("| A | B |\n-", "| A | B |\n---", "| A | B |\n--- | --").forEach { source ->
+            val root = MarkdownParser(MarkdownFlavour).buildMarkdownTreeFromString(source)
+            assertEquals(source, "A B", PendingMarkdown(source, root).blockText(root.children.first { it.children.isNotEmpty() }))
+        }
+        val source = "| A | B |\n--- | ---\n"
+        val root = MarkdownParser(MarkdownFlavour).buildMarkdownTreeFromString(source)
+        assertEquals(null, PendingMarkdown(source, root).blockText(root.children.first { it.children.isNotEmpty() }))
+    }
+
+    @Test fun pendingLinkMatchesBracketsOutsideCodeAndEscapes() {
+        mapOf(
+            "[text `a]b`](https://exa" to "text `a]b`",
+            "[text [nested] label](https://exa" to "text [nested] label",
+            "[text \\] label](https://exa" to "text \\] label",
+        ).forEach { (source, expected) ->
+            assertEquals(source, expected, text(source))
+        }
+    }
+
+    @Test fun unmatchedBracketsHaveLinearScanWorkAndRegionLocalStorage() {
+        listOf(32, 64, 128, 512, 2048).forEach { length ->
+            val source = "[".repeat(length)
+            val root = MarkdownParser(MarkdownFlavour).buildMarkdownTreeFromString(source)
+            val pending = PendingMarkdown(source, root)
+            assertEquals(length, pending.scannedCharacters)
+            assertEquals(length, pending.protectionCapacity)
+            assertEquals(source, streamingInlineText(root.children.single().children, source, pending))
+        }
+        val list = (1..80).joinToString("\n\n") { "- item [$it" }
+        val listRoot = MarkdownParser(MarkdownFlavour).buildMarkdownTreeFromString(list)
+        val listPending = PendingMarkdown(list, listRoot)
+        assertTrue(listPending.scannedCharacters <= list.length)
+        assertTrue(listPending.protectionCapacity <= list.length)
+        val table = "| A | B |\n| --- | --- |\n" + (1..80).joinToString("\n") { "| [$it | [$it |" }
+        val tableRoot = MarkdownParser(MarkdownFlavour).buildMarkdownTreeFromString(table)
+        val tablePending = PendingMarkdown(table, tableRoot)
+        assertTrue(tablePending.scannedCharacters <= table.length)
+        assertTrue(tablePending.protectionCapacity <= table.length)
+    }
+
+    @Test fun invalidSeparatorClosedByNewlineCannotRemainAPendingHeader() {
+        listOf("| A | B |\n---\nnext", "| A | B |\n| --- |\nnext").forEach { source ->
+            val root = MarkdownParser(MarkdownFlavour).buildMarkdownTreeFromString(source)
+            val first = root.children.first { it.children.isNotEmpty() }
+            assertEquals(source, null, PendingMarkdown(source, root).blockText(first))
+        }
+    }
 }
