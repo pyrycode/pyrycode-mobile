@@ -42,6 +42,7 @@ import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -156,15 +157,25 @@ class ThreadScreenFollowTest {
         setScreen { state }
         val list = restFingerAtTheNewestEnd()
 
-        composeRule.runOnIdle { state = state.copy(items = state.items + message("reply", "Reply begins.", isStreaming = true)) }
+        val arrivedAt = Clock.System.now()
+        composeRule.runOnIdle {
+            state =
+                state.copy(items = state.items + message("reply", "Reply begins.", isStreaming = true, timestamp = arrivedAt))
+        }
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Reply begins.", substring = true, useUnmergedTree = true).assertDoesNotExist()
         list.performTouchInput {
             advanceEventTime(1_000)
             up()
         }
-        composeRule.runOnIdle { state = state.copy(items = rows(30) + message("reply", "Reply begins. More.", isStreaming = true)) }
-        composeRule.runOnIdle { state = state.copy(items = rows(30) + message("reply", LONG_REPLY, isStreaming = true)) }
+        composeRule.runOnIdle {
+            state =
+                state.copy(items = rows(30) + message("reply", "Reply begins. More.", isStreaming = true, timestamp = arrivedAt))
+        }
+        composeRule.runOnIdle {
+            state =
+                state.copy(items = rows(30) + message("reply", LONG_REPLY, isStreaming = true, timestamp = arrivedAt))
+        }
 
         awaitStreamedText("Reply ends.")
     }
@@ -465,7 +476,8 @@ class ThreadScreenFollowTest {
         content: String,
         isStreaming: Boolean,
         role: Role = Role.Assistant,
-    ): ThreadItem = ThreadItem.MessageItem(Message(id, "s1", role, content, TIMESTAMP, isStreaming))
+        timestamp: Instant = TIMESTAMP,
+    ): ThreadItem = ThreadItem.MessageItem(Message(id, "s1", role, content, timestamp, isStreaming))
 
     private fun toolRow(status: ToolCallStatus): ThreadItem =
         ThreadItem.MessageItem(
