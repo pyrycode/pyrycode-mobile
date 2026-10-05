@@ -258,6 +258,41 @@ class CachingConversationRepositoryTest {
 
     // ---- #1353: banners, compaction dividers and refusals survive a restore ------------------------
 
+    @Test
+    fun `an empty suppressed live thread retains restored history and delivery attachment hints`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val named = MessageAttachment(ATTACHMENT_ID, "photo.jpg", "image/jpeg")
+            val sent =
+                ThreadItem.MessageItem(
+                    Message("mine", "", Role.User, "", Instant.parse("2026-09-22T10:00:00Z"), false, attachments = listOf(named)),
+                )
+            val snapshots = MutableStateFlow(ThreadSnapshot(listOf(sent)))
+            val source =
+                object : ConversationRepository by delegate, ThreadSnapshotSource {
+                    override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> = snapshots
+                }
+            val cache = RecordingCache(listOf(message("older"), sent))
+            val emissions = mutableListOf<List<ThreadItem>>()
+            val job =
+                launch {
+                    CachingConversationRepository(source, cache, "server-a").observeMessages("conv-1").collect { emissions += it }
+                }
+
+            snapshots.value = ThreadSnapshot(emptyList(), setOf("mine"))
+            assertEquals(listOf(message("older")), emissions.last())
+            snapshots.value = ThreadSnapshot(emptyList(), setOf("mine", "another-pending-echo"))
+            assertEquals(listOf(message("older")), emissions.last())
+            assertEquals(listOf(message("older")), cache.writes.last())
+
+            // Pending suppression must not rebase the cache as if the connection closed. Otherwise
+            // the second empty reading spends the attachment hint before the actual delivered push.
+            val delivered = ThreadItem.MessageItem(sent.message.copy(attachments = listOf(MessageAttachment(ATTACHMENT_ID))))
+            snapshots.value = ThreadSnapshot(listOf(delivered))
+            assertEquals(listOf(message("older"), sent), emissions.last())
+            assertEquals(listOf(message("older"), sent), cache.writes.last())
+            job.cancel()
+        }
+
     private val banner = ThreadItem.Banner(BannerLevel.Warning, "hook said no", false, Instant.parse("2026-09-22T10:00:01Z"))
     private val compaction = ThreadItem.CompactionBoundary(24000, 3000, true, Instant.parse("2026-09-22T10:00:02Z"))
     private val refusal =

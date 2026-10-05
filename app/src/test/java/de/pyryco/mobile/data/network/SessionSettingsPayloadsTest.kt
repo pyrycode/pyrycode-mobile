@@ -24,6 +24,26 @@ import org.junit.Test
  * trip and the refresh triggers and deliberately does not re-assert these shapes.
  */
 class SessionSettingsPayloadsTest {
+    @Test
+    fun midTurnInput_malformedValuesCannotEnableAction() {
+        for (flag in listOf("null", "1", "\"true\"", "{}")) {
+            val report =
+                POPULATED_REPLY.dropLast(1) + ",\"capabilities\":{\"effort_levels\":[],\"permission_modes\":[],\"mid_turn_input\":$flag}}"
+            assertFalse(decode(report).capabilities?.midTurnInput == true)
+            assertEquals("opus", decode(report).model)
+        }
+    }
+
+    @Test
+    fun midTurnInput_requiresExplicitTrue() {
+        for ((flag, expected) in listOf("true" to true, "false" to false, null to false)) {
+            val field = flag?.let { ",\"mid_turn_input\":$it" }.orEmpty()
+            val report = POPULATED_REPLY.dropLast(1) + ",\"capabilities\":{\"effort_levels\":[],\"permission_modes\":[]$field}}"
+            assertEquals(expected, decode(report).capabilities?.midTurnInput)
+        }
+        assertNull(decode(POPULATED_REPLY).capabilities)
+    }
+
     // AC #1: the request names the conversation and nothing else, under the wire's snake_case key.
     @Test
     fun request_encodesConversationIdOnly() {

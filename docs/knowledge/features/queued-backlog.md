@@ -189,7 +189,7 @@ re-order a thread already cached wrong on a device, and it adds no new Figma tre
 **The move lives in `ThreadProjection`, not in the fold.** Only `ThreadProjection` can see the minted-id
 ledger ([#781](#dropping-a-queued-entry-dequeue_message-466)); `foldQueuedRows` cannot, so a move inside the
 render-time join would let a `queue_state` naming a foreign id relocate another device's row. `ThreadProjection`
-tracks a per-conversation `OwnEchoQueue(queued, delivered, behindTurn)`: `queued` is the intersection of the
+tracks per-conversation `OwnEchoQueue` metadata: `queued` is the intersection of the
 minted-id ledger and the latest `queue_state` snapshot's ids, minus `delivered`; `delivered` is every id already
 moved, so a daemon repeating an id in a later snapshot (legal — `message_id` is unique nowhere) can never park
 the row a second time. `behindTurn` and the derived `parked = queued ∩ behindTurn` are #1636's narrowing, below.
@@ -227,30 +227,37 @@ retroactively parking the first.
 - **The store itself keeps tap-time order while queued — only the read reorders.** Moving the echo in the
   store at queue time was tried and rejected: `withAssistantDelta` extends only the thread's *last* row, so
   every later delta of the running turn would open a fresh segment below an echo moved early. Leaving the
-  store alone and reordering only in `observe` means the data layer's other writers (`appendMessages`,
-  `applyAssistantDelta`, the tool folds) need no awareness of queued echoes at all.
+  store alone and reordering only in `observe` preserves streaming continuity. Tool and history
+  writers preserve the echo metadata; assistant segmentation reads it in the same atomic fold.
 - **The running reply stays one bubble.** `HistoryPageReducer.withAssistantDelta` gained an optional
   `passOver: Set<String>` naming user rows to skip when picking the "last row" a delta extends —
-  `ThreadProjection.applyAssistantDelta` passes the conversation's `parked` set, so a delta still extends the
+  `ThreadProjection.applyAssistantDelta` passes the conversation's `parked + awaitingPush` set, so a delta still extends the
   reply it belongs to instead of opening a second segment below a parked echo. The history reducer's own
   caller passes nothing; see [Remote conversation repository § Assistant reply
   segments](remote-conversation-repository-assistant-reply-segments.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350).
-  **`passOver` only ever names an id already in `parked`**, which an echo joins on the *first* `queue_state`
-  that reports it, and only if a turn was already open at that moment (#1636) — not at tap time, and not for
+  **`passOver` names ids in `parked` or `awaitingPush`**. Parking begins on the *first* `queue_state`
+  that reports the echo, and only if a turn was already open at that moment (#1636) — not at tap time, and not for
   an echo reported while idle. A delta that lands between the tap and that first snapshot, for an echo that
   does end up `behindTurn`, still opens a second segment below the echo, exactly as it did before #1558; the
   gap is the same shape as the one
   [Streaming assistant turns](streaming-assistant-turns.md#finished-rows-are-now-per-segment-not-one-bubble-per-turn-1350)
   already records for a cache composed after `observe`'s settle rule.
-- **On delivery, a `parked` row moves to the end exactly once**, on whichever of two daemon frames names it
-  first: `settleQueuedEchoes`, called from the `queue_state` arm right after `settleDrops` (see [Remote
-  conversation repository § Control sends](remote-conversation-repository-control-sends.md)), moves every
-  `parked` id the fresh drain snapshot no longer holds; `appendLiveMessage` moves a `parked` id the instant the
-  daemon pushes its delivered `message` copy, before the held-row check that would otherwise leave it in
-  place. A `queued` id that never joined `behindTurn` is never moved by either path — it already sits where it
-  was drawn. **The store move always happens before the id stops counting as queued**, in both arrival orders,
-  so no intermediate emission ever shows a parked row back at its tap-time position — moving first and
-  un-parking second is what closes that window, not a special case for either order.
+- **Backlog removal and delivery placement are separate (#1642).** A busy own echo removed
+  while its turn remains open, or with a recorded local Send now intent, waits hidden in
+  `awaitingPush` until the delivered user `message` establishes its position. Tool events can
+  arrive between removal and delivery. A closed-turn removal without local intent retains
+  ordinary drain's immediate settlement, with `placementPending` until the first push.
+  Only an explicit daemon-authored `sent_now: true` relocates that already settled echo;
+  ordinary confirmation preserves its slot before the next reply. Both consume placement
+  eligibility, so duplicate pushes never relocate it again. Queue removal alone cannot tell
+  ordinary drain from a late peer Send now. Idle-classified echoes keep tap-time position.
+- **One atomic generation owns rows and echo metadata.** `ProjectionState` holds both in one
+  connection-scoped StateFlow. Settlement, delivery, intent, removal and assistant segmentation
+  fold against the same input; `observeSnapshot` emits rows and suppressed user ids together.
+  Combining independent flows allowed a reopening collector to pair pre-delivery rows with
+  post-delivery suppression and cache the wrong order. Assistant deltas skip both parked and
+  awaiting-push echoes. The [cache reader](caching-conversation-repository.md#how-the-restore-merges-with-live-rows)
+  forwards this suppression through the stable facade and excludes restored copies until delivery.
 - **Only this device's own user rows ever move.** `moveOwnEchoToEnd` checks the minted-id ledger and
   `Role.User` before touching the store, and the `observe` read applies the same `Role.User` check to its
   own `parked` membership test (a security-review finding, since the ledger's `queued ⊆ minted` invariant
@@ -276,8 +283,29 @@ retroactively parking the first.
   echo to just after the turn it waited behind, instead of to the end of the thread — out of #1636's scope.
 - **Live coverage:** `InteractiveStreamE2ETest.interactiveTurn_peerQueue_staysConsistentAcrossClients` asserts,
   after its existing step 6, that the drained row sits below the last row of the peer's wait turn via
-  `boundsInRoot` — it is the only live method that draws a queued row, so it is the one live test this fix
-  needed. See [the real-Claude ladder](../../e2e-interactive-stream.md).
+  `boundsInRoot` — Send now has its own held-tool live scenario (#1642). See [the real-Claude ladder](../../e2e-interactive-stream.md).
+
+## Sending a queued entry now (#1642)
+
+`sendQueuedNow(conversationId, queuedMessageId)` sends the encode-only `send_queued_now`
+control through the owning host's remote/stable repository. It returns after pump enqueue,
+with no reply waiter or confirmation dialog. The row remains unchanged until authoritative
+`queue_state`; a refused send rolls back local placement intent and uses drop's inert failure
+handling. Cancellation is rethrown. Send now never enters drop's echo-deletion ledger.
+Only locally minted user ids correlate an own echo; peer messages append once by message id.
+
+Send now is visible only for a fresh current-session report containing literal JSON
+`capabilities.mid_turn_input: true`. False, omitted, absent, malformed or held readings disable
+it. Replacement settings replace support. A known session replacement stays invalidated through
+empty conversation-summary placeholders until its matching fresh report arrives. The remembered
+selection clears when the owning repository becomes unavailable, and disconnected cached selections
+cannot restore it; a fresh new-connection report can enable support again.
+
+The optional delivered-user `sent_now` flag defaults to false when omitted. Late-peer placement
+requires the companion [daemon change pyrycode#2748](https://github.com/pyrycode/pyrycode/pull/2748)
+(v0.31.2, recorded by the operator); capability alone cannot distinguish delivery kind.
+A late tap can start the next turn: the phone follows the daemon and promises no current-turn placement.
+The canonical wire contract remains the daemon's `docs/protocol-mobile.md`.
 
 ## Capability gate (fail-closed)
 
