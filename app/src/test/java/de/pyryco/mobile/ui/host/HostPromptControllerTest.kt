@@ -265,6 +265,149 @@ class HostPromptControllerTest {
             }
         }
 
+    @Test fun failedRenameRetainsSuccessfulPromptRead() = outerWriteFailureRetainsPromptRead(unpair = false, readFails = false)
+
+    @Test fun failedRenameRetainsUnavailablePromptRead() = outerWriteFailureRetainsPromptRead(unpair = false, readFails = true)
+
+    @Test fun failedUnpairRetainsSuccessfulPromptRead() = outerWriteFailureRetainsPromptRead(unpair = true, readFails = false)
+
+    @Test fun failedUnpairRetainsUnavailablePromptRead() = outerWriteFailureRetainsPromptRead(unpair = true, readFails = true)
+
+    private fun outerWriteFailureRetainsPromptRead(
+        unpair: Boolean,
+        readFails: Boolean,
+    ) = runTest {
+        val repo =
+            Repo().apply {
+                readGate = CompletableDeferred()
+                failRead = readFails
+            }
+        val store =
+            Store().apply {
+                writeGate = CompletableDeferred()
+                failWrite = true
+            }
+        val controller = HostEditorController(this, store, preferences()) { repo }
+        controller.open("A")
+        runCurrent()
+        assertEquals(HostPromptState.Loading, controller.state.value?.prompt)
+        if (unpair) {
+            controller.requestUnpair()
+            controller.confirmUnpair()
+        } else {
+            controller.submitName("New name")
+        }
+        runCurrent()
+        assertTrue(requireNotNull(controller.state.value).saving)
+        repo.readGate?.complete(Unit)
+        runCurrent()
+        assertTrue(requireNotNull(controller.state.value).saving)
+        store.writeGate?.complete(Unit)
+        runCurrent()
+        val failed = requireNotNull(controller.state.value)
+        assertFalse(failed.saving)
+        assertEquals(!unpair, failed.failed)
+        assertEquals(unpair, failed.unpairFailed)
+        if (unpair) controller.declineUnpair()
+        controller.onPromptEvent(HostPromptEvent.Open)
+        assertTrue(requireNotNull(controller.state.value).editingPrompt)
+        if (readFails) {
+            assertEquals(HostPromptState.Unavailable, controller.state.value?.prompt)
+            controller.onPromptEvent(HostPromptEvent.Edit("overwrite"))
+            controller.onPromptEvent(HostPromptEvent.Reset)
+            controller.onPromptEvent(HostPromptEvent.Save)
+            runCurrent()
+            assertTrue(repo.writes.isEmpty())
+        } else {
+            assertEquals("saved", loaded(controller).confirmed)
+            assertEquals("default", loaded(controller).defaultPrompt)
+            controller.onPromptEvent(HostPromptEvent.Edit("after failure"))
+            controller.onPromptEvent(HostPromptEvent.Save)
+            runCurrent()
+            assertEquals(listOf("after failure"), repo.writes)
+            assertEquals("after failure", loaded(controller).confirmed)
+            controller.submitName("Retry name")
+            runCurrent()
+            assertEquals("after failure", loaded(controller).confirmed)
+        }
+    }
+
+    @Test fun completedPromptReadDoesNotPreventSuccessfulRenameOrUnpair() =
+        runTest {
+            for (unpair in listOf(false, true)) {
+                val repo = Repo().apply { readGate = CompletableDeferred() }
+                val store = Store().apply { writeGate = CompletableDeferred() }
+                val controller = HostEditorController(this, store, preferences()) { repo }
+                controller.open("A")
+                runCurrent()
+                if (unpair) {
+                    controller.requestUnpair()
+                    controller.confirmUnpair()
+                } else {
+                    controller.submitName("New name")
+                }
+                runCurrent()
+                repo.readGate?.complete(Unit)
+                runCurrent()
+                store.writeGate?.complete(Unit)
+                runCurrent()
+                assertNull(controller.state.value)
+            }
+        }
+
+    @Test fun lateOuterWritesCannotCloseOrFailReopenedSameHost() =
+        runTest {
+            for (unpair in listOf(false, true)) {
+                for (fails in listOf(false, true)) {
+                    val repo = Repo().apply { readGate = CompletableDeferred() }
+                    val oldWrite = CompletableDeferred<Unit>()
+                    val newWrite = CompletableDeferred<Unit>()
+                    val store =
+                        Store().apply {
+                            writeGate = oldWrite
+                            failWrite = fails
+                        }
+                    val controller = HostEditorController(this, store, preferences()) { repo }
+
+                    fun startWrite() {
+                        if (unpair) {
+                            controller.requestUnpair()
+                            controller.confirmUnpair()
+                        } else {
+                            controller.submitName("New name")
+                        }
+                    }
+                    controller.open("A")
+                    runCurrent()
+                    startWrite()
+                    runCurrent()
+                    repo.readGate?.complete(Unit)
+                    runCurrent()
+                    controller.dismiss()
+                    repo.readGate = CompletableDeferred()
+                    store.writeGate = newWrite
+                    controller.open("A")
+                    runCurrent()
+                    startWrite()
+                    runCurrent()
+                    oldWrite.complete(Unit)
+                    runCurrent()
+                    val newer = requireNotNull(controller.state.value)
+                    assertTrue(newer.saving)
+                    assertFalse(newer.failed || newer.unpairFailed)
+                    assertEquals(HostPromptState.Loading, newer.prompt)
+                    repo.readGate?.complete(Unit)
+                    newWrite.complete(Unit)
+                    runCurrent()
+                    if (fails) {
+                        assertEquals("saved", loaded(controller).confirmed)
+                    } else {
+                        assertNull(controller.state.value)
+                    }
+                }
+            }
+        }
+
     private fun loaded(controller: HostEditorController) = controller.state.value?.prompt as HostPromptState.Loaded
 
     private fun kotlinx.coroutines.test.TestScope.controller(repo: Repo) = controller { repo }
@@ -297,6 +440,9 @@ class HostPromptControllerTest {
     }
 
     private class Store : PairedServerCollectionStore {
+        var writeGate: CompletableDeferred<Unit>? = null
+        var failWrite = false
+
         override suspend fun loadById(serverId: String): PairedServerEntry {
             val record = PairedServer(serverId, "token", "wss://relay", "key")
             return PairedServerEntry(record, "Name")
@@ -311,9 +457,14 @@ class HostPromptControllerTest {
         override suspend fun setDisplayName(
             serverId: String,
             displayName: String?,
-        ) = Unit
+        ) = write()
 
-        override suspend fun remove(serverId: String) = Unit
+        override suspend fun remove(serverId: String) = write()
+
+        private suspend fun write() {
+            writeGate?.await()
+            if (failWrite) throw IllegalStateException("secret-store-failure")
+        }
     }
 
     private fun preferences() =

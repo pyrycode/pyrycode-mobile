@@ -188,6 +188,9 @@ class HostEditorController(
     private var openJob: Job? = null
     private var openToken = Any()
 
+    // A read may settle during rename/unpair without replacing that write's compareAndSet target.
+    private var deferredPromptRead: HostPromptState? = null
+
     /**
      * Opens the Edit host modal on [serverId]'s own stored record (#744).
      *
@@ -201,6 +204,7 @@ class HostEditorController(
     fun open(serverId: String) {
         openJob?.cancel()
         val token = Any().also { openToken = it }
+        deferredPromptRead = null
         editor.value = null
         openJob =
             scope.launch {
@@ -232,8 +236,13 @@ class HostEditorController(
                 RelayLog.d { "event=host_editor_opened" }
                 val reading = promptResult { repositoryFor(serverId)?.requestHostSystemPrompt()?.getOrThrow() }
                 val current = editor.value
-                if (openToken === token && current != null && !current.saving) {
-                    editor.value = current.copy(prompt = reading?.loaded() ?: HostPromptState.Unavailable)
+                if (openToken === token && current != null) {
+                    val prompt = reading?.loaded() ?: HostPromptState.Unavailable
+                    if (current.saving) {
+                        deferredPromptRead = prompt
+                    } else {
+                        editor.value = current.copy(prompt = prompt)
+                    }
                     RelayLog.d { "event=host_prompt_read outcome=${if (reading == null) "unavailable" else "loaded"}" }
                 }
             }
@@ -317,6 +326,7 @@ class HostEditorController(
     fun submitName(name: String) {
         val target = editor.value ?: return
         if (target.saving || target.editingPrompt) return
+        val token = openToken
         val pending = target.copy(saving = true, failed = false)
         editor.value = pending
         scope.launch {
@@ -327,12 +337,21 @@ class HostEditorController(
                 if (error is CancellationException) throw error
                 // Never log the name or the store's message; the UI gets one static string.
                 RelayLog.d { "event=host_name_save_failed" }
-                editor.compareAndSet(pending, pending.copy(saving = false, failed = true))
+                if (openToken === token) {
+                    editor.compareAndSet(
+                        pending,
+                        pending.copy(saving = false, failed = true, prompt = deferredPromptRead ?: pending.prompt),
+                    )
+                    deferredPromptRead = null
+                }
                 return@launch
             }
             // An id no longer stored is a silent no-op in the store, and the host is already gone from the
             // tree, so closing is the right outcome for it too.
-            editor.compareAndSet(pending, null)
+            if (openToken === token) {
+                editor.compareAndSet(pending, null)
+                deferredPromptRead = null
+            }
             RelayLog.d { "event=host_name_saved" }
         }
     }
@@ -384,6 +403,7 @@ class HostEditorController(
     fun confirmUnpair() {
         val target = editor.value ?: return
         if (target.saving || !target.confirmingUnpair) return
+        val token = openToken
         val pending = target.copy(saving = true, failed = false, unpairFailed = false)
         editor.value = pending
         scope.launch {
@@ -394,13 +414,22 @@ class HostEditorController(
                 if (error is CancellationException) throw error
                 // Never log the id or the store's message; the UI gets one static string.
                 RelayLog.d { "event=host_unpair_failed" }
-                editor.compareAndSet(pending, pending.copy(saving = false, unpairFailed = true))
+                if (openToken === token) {
+                    editor.compareAndSet(
+                        pending,
+                        pending.copy(saving = false, unpairFailed = true, prompt = deferredPromptRead ?: pending.prompt),
+                    )
+                    deferredPromptRead = null
+                }
                 return@launch
             }
             // Only now: the pairing is gone, so clearing this host's own cached workspace cannot strand
             // a host that is still paired without one.
             appPreferences.removeDefaultWorkspace(target.serverId)
-            editor.compareAndSet(pending, null)
+            if (openToken === token) {
+                editor.compareAndSet(pending, null)
+                deferredPromptRead = null
+            }
             RelayLog.d { "event=host_unpaired" }
             // Last, after every cleanup above: the signal pops this owner's destination, and clearing its
             // view model cancels this scope. A failed read keeps the operator on the list.
@@ -425,6 +454,7 @@ class HostEditorController(
     fun dismiss() {
         openToken = Any()
         openJob?.cancel()
+        deferredPromptRead = null
         editor.value = null
         RelayLog.d { "event=host_editor_dismissed" }
     }

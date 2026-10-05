@@ -2106,7 +2106,7 @@ class InteractiveStreamE2ETest {
         awaitChannelList()
         awaitConnected()
 
-        fun fresh() = runBlocking { hostRepository(serverId).requestHostSystemPrompt().getOrThrow() }
+        fun fresh() = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).requestHostSystemPrompt().getOrThrow() } }
         val original = fresh().systemPrompt
         val custom = "Host prompt e2e1775 " + System.currentTimeMillis() + "\nPreserve this second line."
 
@@ -2153,7 +2153,7 @@ class InteractiveStreamE2ETest {
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { editorClosed(context) }
         } finally {
             // Restore the isolated harness host even after an assertion fails. Never print its text.
-            runBlocking { hostRepository(serverId).setHostSystemPrompt(original).getOrThrow() }
+            runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).setHostSystemPrompt(original).getOrThrow() } }
         }
     }
 
