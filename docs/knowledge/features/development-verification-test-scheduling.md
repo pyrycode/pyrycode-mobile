@@ -277,3 +277,15 @@ and a real gate run elsewhere on the host would block the test for the full wait
 bound instead of failing fast. `DeviceHoldTest` proves the hold against a real
 second process holding the lock, not a mock — including a SIGKILLed holder
 releasing immediately and a holder that finishes mid-wait.
+
+Waiters are served first come, first served (2026-10-05). Before, each waiter
+retried the lock once a second and whoever retried first after a release won, so
+one run waited 45 minutes behind later arrivals. Each waiter now takes a numbered
+ticket file in `pyrycode-device-gate.queue` beside the lock, keeps a kernel lock
+on it, and only the oldest live ticket tries the device lock. A ticket whose
+owner died is unlocked, so the next waiter that looks removes it. The device lock
+is unchanged, so a run from a checkout older than the queue still cannot hold the
+device at the same time as a ticketed run. It never waits on a ticket either, so
+it can still cut in. Fairness holds only among ticketed waiters. `DeviceHoldTest`
+covers arrival order, a dead waiter's ticket, a lost ticket counter and an old
+poller mixed with ticketed waiters, all with real second processes.
