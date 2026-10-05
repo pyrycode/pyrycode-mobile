@@ -41,6 +41,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -382,7 +383,12 @@ fun ThreadScreen(
         markdownOpenFailures.collect { snackbarHostState.showSnackbar(resources.getString(AttachmentNotice.OPEN_FAILED.message)) }
     }
     // #934: a pasted image joins the chat's strip through the same sink as a picked one.
-    val onImagesPasted = rememberPastedImageReceiver(onAttachmentsPicked)
+    val onImagesPasted =
+        key(state.conversationId) {
+            rememberPastedImageReceiver(onAttachmentsPicked) { failure ->
+                noticeScope.launch { snackbarHostState.showSnackbar(failure.text(resources)) }
+            }
+        }
     // #808: the footer's open option overlay. Plain `remember`, keyed on the conversation, and never
     // `rememberSaveable`: a back-stack return or another conversation must open with every overlay
     // closed. The open menu is re-derived from the live run configuration on every pass, so the overlay

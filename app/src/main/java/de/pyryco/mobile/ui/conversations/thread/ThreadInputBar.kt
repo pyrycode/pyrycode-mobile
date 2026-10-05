@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import android.net.Uri
+import android.view.inputmethod.InputContentInfo
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.content.ReceiveContentListener
 import androidx.compose.foundation.content.consume
@@ -96,7 +97,7 @@ fun ThreadInputBar(
     onInterrupt: () -> Unit = {},
     onAnchorChanged: (Rect) -> Unit = {},
     sending: Boolean = false,
-    onImagesReceived: ((List<Uri>) -> Unit)? = null,
+    onImagesReceived: ((List<Uri>, InputContentInfo?) -> Unit)? = null,
     enabled: Boolean = true,
 ) {
     val textInset = with(LocalDensity.current) { FieldLeadingInset.toPx() }
@@ -171,7 +172,14 @@ fun ThreadInputBar(
                         if (image) images += item.uri
                         image
                     }
-                if (images.isNotEmpty()) receive(images)
+                if (images.isNotEmpty()) {
+                    // Compose requests the keyboard grant and places its owner in this extra.
+                    val input =
+                        content.platformTransferableContent
+                            ?.extras
+                            ?.getParcelable("EXTRA_INPUT_CONTENT_INFO", InputContentInfo::class.java)
+                    receive(images, input)
+                }
                 rest
             }
         }

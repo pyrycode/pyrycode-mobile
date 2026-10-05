@@ -247,7 +247,11 @@ ReceiveContentListener { content ->
         if (image) images += item.uri
         image
     }
-    if (images.isNotEmpty()) receive(images)
+    if (images.isNotEmpty()) {
+        val input = content.platformTransferableContent?.extras
+            ?.getParcelable("EXTRA_INPUT_CONTENT_INFO", InputContentInfo::class.java)
+        receive(images, input)
+    }
     rest
 }
 ```
@@ -264,14 +268,12 @@ provider later types as non-image (checked off the main thread by
 it was already taken out of the clip by `content.consume`, so there is nothing left
 to paste. This is the plan's documented behaviour, not a bug.
 
-The accepted URIs are handed to `onImagesReceived`
-(`rememberPastedImageReceiver` in `AttachmentPicker.kt`, mirroring
-`rememberAttachmentPicker`), which describes them off the main thread and joins the
-same [`addPickedAttachments`](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments)
-sink a pick uses — see that document for the size/count refusals, the send-time
-bounded read, and the provider-type re-check. `ThreadScreen` is the only production
-caller and passes `onImagesReceived = rememberPastedImageReceiver(onAttachmentsPicked)`;
-no other call site changes because the parameter defaults to `null`.
+The accepted URIs and keyboard `InputContentInfo` grant owner reach `onImagesReceived`.
+`rememberPastedImageReceiver` captures bounded bytes before joining `addPickedAttachments` (#1727),
+holding the IME grant until capture completes. Preview and send read the owned copy after clipboard
+replacement; the picker still reads its URI. See
+[Composer pending attachments](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments)
+for validation, notices and copy lifetime. `ThreadScreen` supplies the receiver and failure callback.
 
 A `TextFieldState` field also exposes a `ScrollBy` semantics action that the legacy
 field did not — see [development-verification.md](development-verification.md) for
