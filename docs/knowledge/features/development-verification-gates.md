@@ -132,6 +132,12 @@ draws text with its own font, and runs at that density: a test that needs a
 412dp frame forces it with `ForcedSize`, scales pixel samples by the composition's
 density, and measures a layout box rather than the text inside it.
 
+Text width is never exact, so a test may allow slack on it and on anything a
+text's width positions. Line height is different: it is fixed by the design,
+not by the text inside it, so a test checks the height of a line and the
+vertical rhythm it sets exactly, allowing only the one device pixel
+`assertDpEquals` already grants for rounding.
+
 A shared test class needs `@RunWith(AndroidJUnit4::class)`. The device runner
 does not require it, but without it the JVM runs the class outside Robolectric and
 every test fails on a null `Build.FINGERPRINT`.
