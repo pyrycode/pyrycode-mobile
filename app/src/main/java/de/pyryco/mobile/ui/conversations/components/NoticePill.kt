@@ -23,6 +23,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -84,7 +85,10 @@ internal fun NoticePill(
             Text(
                 text = text,
                 modifier = Modifier.weight(1f, fill = false),
-                style = MaterialTheme.typography.bodySmall,
+                style =
+                    MaterialTheme.typography.bodySmall.copy(
+                        lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None),
+                    ),
                 textAlign = TextAlign.End,
                 maxLines = maxLines,
                 overflow = TextOverflow.Ellipsis,
