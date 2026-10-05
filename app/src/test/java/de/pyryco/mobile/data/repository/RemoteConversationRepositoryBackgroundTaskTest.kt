@@ -20,6 +20,43 @@ import org.junit.Test
  */
 class RemoteConversationRepositoryBackgroundTaskTest {
     @Test
+    fun rosterOnlyJoin_retainedOnTerminalAfterPanelReplacement() =
+        runTest {
+            val (pump, repo) = newRepo(setOf(CAPABILITY_INTERACTIVE))
+            pump.push(
+                BackgroundTaskProjectionTest.rosterFrame(
+                    listOf(
+                        """{"task_id":"t1","tool_call_id":"a","task_type":"local_agent","description":"Roster label","truncated_fields":null}""",
+                    ),
+                ),
+            )
+            runCurrent()
+            assertTrue(repo.observeMessages("c1").first().isEmpty())
+            pump.push(BackgroundTaskProjectionTest.terminal("t1", "completed"))
+            pump.push(BackgroundTaskProjectionTest.rosterFrame(emptyList()))
+            runCurrent()
+            val retained =
+                repo
+                    .observeMessages("c1")
+                    .first()
+                    .filterIsInstance<ThreadItem.BackgroundTaskLifecycle>()
+                    .single()
+            assertEquals("a", retained.toolCallId)
+            assertEquals("local_agent", retained.taskType)
+            assertEquals("Roster label", retained.description)
+            assertTrue(
+                repo.backgroundTasks.value
+                    .getValue("c1")
+                    .tasks
+                    .isEmpty(),
+            )
+            pump.push(BackgroundTaskProjectionTest.rosterFrame(listOf(BackgroundTaskProjectionTest.row("t2"))))
+            runCurrent()
+            assertEquals(retained, repo.observeMessages("c1").first().single())
+            assertTrue(repo.observeMessages("c2").first().isEmpty())
+        }
+
+    @Test
     fun interactiveLifecycle_retainsEvidenceAfterEmptyAndReplacingRosters() =
         runTest {
             val (pump, repo) = newRepo(setOf(CAPABILITY_INTERACTIVE))

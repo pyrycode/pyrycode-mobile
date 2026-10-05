@@ -98,6 +98,43 @@ class BackgroundAgentBlocksScreenTest {
 
     private fun marker() = compose.onNodeWithText("Go to agent ↓")
 
+    @Test fun lateJoinPreservesExpandedRunAndToolBodyAcrossSplitAndFinish() {
+        mount(listOf(tool("outside", "Grep"), tool("a", "Agent"), tool("child", "Read", "a"), user("Newer")), true)
+        compose.onNodeWithText("Using tools: 3", substring = true).performClick()
+        compose.onNodeWithText("Agent").performClick()
+        compose.runOnIdle {
+            state =
+                state.copy(
+                    backgroundTasks =
+                        BackgroundTaskRoster(
+                            listOf(BackgroundTask("t", "a", "local_agent", "Roster description", null, null, null, false)),
+                            0,
+                        ),
+                )
+        }
+        compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("Read", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("Grep", useUnmergedTree = true).assertIsDisplayed()
+        compose.onAllNodesWithText("original input", substring = true, useUnmergedTree = true).assertCountEquals(1)
+        compose.runOnIdle { state = state.copy(items = state.items + finish() + user("Later")) }
+        compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
+        compose.onAllNodesWithText("original input", substring = true, useUnmergedTree = true).assertCountEquals(1)
+        compose.onNodeWithText("Using tools: 2", substring = true).performClick()
+        compose.onAllNodesWithText("Agent").assertCountEquals(0)
+        compose.runOnIdle { state = state.copy(items = state.items + user("Another")) }
+        compose.onAllNodesWithText("Agent").assertCountEquals(0)
+        marker().performClick()
+        compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
+        compose.onAllNodesWithText("original input", substring = true, useUnmergedTree = true).assertCountEquals(1)
+    }
+
+    @Test fun lateJoinKeepsAPreviouslyCollapsedRunCollapsed() {
+        mount(listOf(tool("outside", "Grep"), tool("a", "Agent"), tool("child", "Read", "a"), user("Newer")), true)
+        compose.runOnIdle { state = state.copy(items = state.items + launch()) }
+        compose.onNodeWithText("Using tools: 2", substring = true).assertIsDisplayed()
+        compose.onAllNodesWithText("Agent").assertCountEquals(0)
+    }
+
     @Test fun runningMarkerShowsTwoLinesAndToolExpansionSurvivesMovingAndFinishing() {
         mount(listOf(tool("a", "Agent"), tool("child", "Read", "a"), user("Newer")))
         compose.onNodeWithText("Agent").performClick()

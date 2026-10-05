@@ -583,9 +583,44 @@ fun ThreadScreen(
                 // can open. Which runs are open is UI-local, keyed by each run's first row, and saveable so a
                 // rotation or back-stack return keeps them open, as the tool rows inside keep theirs.
                 var expandedRuns by rememberSaveable { mutableStateOf(emptySet<String>()) }
+                var previousAgentRows by remember(state.conversationId) { mutableStateOf(agentRows) }
+                // A late join splits an ordinary run. Carry its expansion into the newly moved block once.
+                val retainedExpandedRuns =
+                    remember(agentRows, previousAgentRows, expandedRuns) {
+                        val previousBlocks =
+                            previousAgentRows
+                                .filterIsInstance<ThreadRow.Delivered>()
+                                .mapNotNull { it.agentBlockId }
+                                .toSet()
+                        val currentBlocks =
+                            agentRows
+                                .filterIsInstance<ThreadRow.Delivered>()
+                                .mapNotNull { it.agentBlockId }
+                                .toSet()
+                        val newlyMoved = currentBlocks - previousBlocks
+                        if (newlyMoved.isEmpty()) return@remember expandedRuns
+                        val openTools =
+                            foldToolRuns(previousAgentRows, expandedRuns)
+                                .filterIsInstance<ThreadRow.ToolRun>()
+                                .filter { it.expanded }
+                                .flatMap { it.tools }
+                                .map { it.id }
+                                .toSet()
+                        val movedFromOpenRun = newlyMoved intersect openTools
+                        val inherited =
+                            foldToolRuns(agentRows, emptySet())
+                                .filterIsInstance<ThreadRow.ToolRun>()
+                                .filter { run -> run.tools.any { it.id in movedFromOpenRun } }
+                                .map { it.runId }
+                        expandedRuns + inherited
+                    }
+                SideEffect {
+                    expandedRuns = retainedExpandedRuns
+                    previousAgentRows = agentRows
+                }
                 val rows =
-                    remember(agentRows, collapseToolUses, expandedRuns) {
-                        if (collapseToolUses) foldToolRuns(agentRows, expandedRuns) else agentRows
+                    remember(agentRows, collapseToolUses, retainedExpandedRuns) {
+                        if (collapseToolUses) foldToolRuns(agentRows, retainedExpandedRuns) else agentRows
                     }
                 // A backlog item this device minted no echo for is a row of its own, so the empty state
                 // must yield to it (#782 AC #3). When an item *is* matched its echo is a MessageItem, so

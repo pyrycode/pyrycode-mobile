@@ -66,6 +66,7 @@ None. The cache-only limitation and dispatcher-owned live acceptance are explici
 - Network/I/O: no new production I/O. The test-only fixture binds loopback, accepts fixed endpoints, holds at most 180 seconds and logs no request content.
 - Errors/logs: no descriptions, summaries, ids or message contents enter new logs/errors. Projection has no classified I/O errors; lifecycle logging remains at existing boundaries.
 - Concurrency: pure projection and cancellable Compose navigation; memoised bounded parent traversal. No shared mutable task lifetime state is added.
+- Rework review: retained roster hints are connection-local, conversation-scoped and updated atomically with thread state, removed by `ThreadProjection.remove`. Only existing lifecycle entries receive missing fields; roster replay creates no position. Historical launch fields take priority. The marker retains its inert 4096-character bound, no new logging, storage, credentials or I/O is introduced, and run-expansion transfer is UI-local.
 - Threat model: relay delay/reorder is addressed by retained lifecycle positions and tests; encryption/authentication and rooted-device token theft remain owned by existing transport/key storage. Hostile daemon text is bounded inert Text; existing screenshot/accessibility exposure is unchanged.
 
 **Reviewer:** builder (self-review per builder/security-review.md)
@@ -82,3 +83,13 @@ None. The cache-only limitation and dispatcher-owned live acceptance are explici
 2026-10-05: A mixed-pagination regression exposed known launches sorting ahead of unknown older launches. Preserve unknown running agents' roster slots and sort known launch entries within the remaining slots; when all launch history is known, this becomes the authoritative launch order. Later backfill enriches the order without duplicating any block or changing terminal anchors.
 
 2026-10-05: The live proof waits for the phone's Finished marker before sending its later message, so different peer/app socket delivery timing cannot turn that message into a pre-terminal optimistic echo.
+
+2026-10-05: PR #1821's verifier reproduced loss of a roster-only join after finish and roster replacement. Retain first-known roster hints in `ThreadProjection.ProjectionState`, separate from the replacing panel, and enrich existing lifecycle entries in `observeSnapshot`. This adds connection-local reconciliation evidence, without creating a launch position or changing repository arrival/history order, terminal anchors, the cache or the ViewModel. Missing joins can be enriched by a later roster; launch history still wins. Tests drive the production projection through roster-before-terminal and terminal-before-roster, clearing/replacing rosters, history backfill/replay and conversation deletion.
+
+2026-10-05: The same review found late movement closes a previously expanded containing tool run. Compare the previous tool-run membership when an Agent first gains a block identity, transfer the old run's expansion to its new block id, and persist it in `expandedRuns`. Ordinary updates and finish do not re-expand a run the reader deliberately closed. Compose transition tests cover expanded and collapsed starting runs, individual tool-body state, finish and marker navigation. Existing marker geometry and design tokens remain unchanged.
+
+## Documentation handoff
+
+- Pending documentation stage: `docs/knowledge/features/thread-screen-subagent-tool-rows.md`, subagent nesting, newest-end follow and tool-run collapse sections: background-only qualification, marker navigation, running/terminal placement, roster/history backfill, retained joins and expansion on late splits.
+- Pending documentation stage: `docs/knowledge/features/thread-screen-previews-and-edge-cases.md`, limitations: cache-only rows without parents/lifecycle retain existing placement; the cache format is unchanged.
+- Pending documentation stage: `docs/e2e-interactive-stream.md`, coverage, “What rung 3 is made of” and “Live mode”: the named background-agent live scenario, bounded hold/release fixture and deterministic twin; record fresh full-live XML only after dispatcher execution.

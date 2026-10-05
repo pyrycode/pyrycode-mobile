@@ -7,8 +7,14 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.data.repository.BackgroundTaskProjectionTest
+import de.pyryco.mobile.data.repository.HistoryEntry
+import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.ThreadProjection
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -84,6 +90,72 @@ class BackgroundAgentBlocksTest {
         .filterIsInstance<ThreadRow.Delivered>()
         .mapNotNull { (it.item as? ThreadItem.MessageItem)?.message }
         .single { it.id == id }
+
+    @Test fun rosterOnlyJoinSurvivesFinishRosterReplacementAndLaunchBackfill() =
+        runTest {
+            for (terminalFirst in listOf(false, true)) {
+                val projection = ThreadProjection()
+                val initial = listOf(row("a", "Agent"), row("child", "Read", "a"), row("before"))
+                projection.appendMessages(initial.map { "c1" to it.message })
+                val terminal = BackgroundTaskProjectionTest.terminal("task-a", "completed")
+                val roster =
+                    BackgroundTaskProjectionTest.rosterFrame(
+                        listOf(
+                            """{"task_id":"task-a","tool_call_id":"a","task_type":"local_agent","description":"Roster description","truncated_fields":null}""",
+                        ),
+                    )
+                if (terminalFirst) projection.applyBackgroundTaskLifecycle(terminal)
+                projection.applyBackgroundTaskLifecycle(roster)
+                if (!terminalFirst) {
+                    assertEquals(initial, projection.observe("c1").first()) // A roster supplies no launch position.
+                    projection.applyBackgroundTaskLifecycle(terminal)
+                }
+                projection.appendMessages(listOf("c1" to row("later").message))
+                val expected = listOf("agent-start:a", "msg:before", "msg:a", "msg:child", "msg:later")
+                for (replacement in listOf(emptyList(), listOf(BackgroundTaskProjectionTest.row("other")))) {
+                    projection.applyBackgroundTaskLifecycle(BackgroundTaskProjectionTest.rosterFrame(replacement))
+                    val retained = projection.observe("c1").first()
+                    assertEquals(expected, keys(project(retained)))
+                    val finish = retained.filterIsInstance<ThreadItem.BackgroundTaskLifecycle>().single()
+                    assertEquals("a", finish.toolCallId)
+                    assertEquals("local_agent", finish.taskType)
+                    assertEquals(ToolCallStatus.Done, message(project(retained), "a").toolCall?.status)
+                }
+                val launch =
+                    BackgroundTaskProjectionTest.envelope(
+                        "background_task_started",
+                        """{"conversation_id":"c1","task_id":"task-a","tool_call_id":"a","task_type":"local_agent","description":"Launch description","truncated_fields":null}""",
+                    )
+                val before =
+                    BackgroundTaskProjectionTest.envelope(
+                        "message",
+                        """{"conversation_id":"c1","message_id":"before","role":"user","text":"before"}""",
+                    )
+                val page =
+                    HistoryPage(
+                        listOf(HistoryEntry(2, before.type, before.payload, ts), HistoryEntry(1, launch.type, launch.payload, ts)),
+                        "",
+                        true,
+                    )
+                projection.mergeHistoryPage("c1", page, true)
+                val backfilled = projection.observe("c1").first()
+                assertEquals(expected, keys(project(backfilled)))
+                assertEquals("Launch description", project(backfilled).filterIsInstance<ThreadRow.AgentStartMarker>().single().description)
+                projection.mergeHistoryPage("c1", page, true)
+                assertEquals(backfilled, projection.observe("c1").first())
+                projection.remove("c1")
+                projection.applyBackgroundTaskLifecycle(terminal)
+                assertEquals(
+                    null,
+                    projection
+                        .observe("c1")
+                        .first()
+                        .filterIsInstance<ThreadItem.BackgroundTaskLifecycle>()
+                        .single()
+                        .toolCallId,
+                )
+            }
+        }
 
     @Test fun runningMovesLoadedFamilyAfterNewUsersAndQueueWithoutMutatingItems() {
         val items = listOf(row("a", "Agent"), start(), row("child", "Read", "a"), row("user"), row("grandchild", "Bash", "child"))
