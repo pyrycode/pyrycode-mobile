@@ -956,6 +956,39 @@ session: pyrycode's `Pool` mints a session from the bootstrap's own template, so
 the same operator pass-through and starts in bypass too — proven by the scenario's own first assertion,
 not assumed.
 
+**Pairing lifetime (#1756).** After APK build and successful bypass-daemon prerequisites,
+`scripts/e2e-emulator.sh` starts `scripts/e2e-bypass-pairing.py` without minting credentials. In
+`InteractiveStreamE2ETest`, this method waits for the channel list and connection, grants camera
+permission, then requests the fixture immediately before `pairHostByCode`. The authenticated,
+one-shot host-loopback request mints the unprivileged phone code and the separate privileged peer
+pairing on the isolated daemon, checks their host/key agreement and rewrites the phone relay address
+for the emulator. Earlier scenarios can therefore take longer than the daemon's unchanged 15-minute
+redemption window without aging these pairings. An authenticated request consumes the fixture even
+if minting fails;
+it cannot refresh or retry a failed pairing, and the general stale-code rerun does not restart it.
+Cleanup stops the helper before removing the isolated HOME. Pairing codes, tokens, keys and the
+fixture authorization capability stay out of diagnostics.
+
+The original #1668 full gate failed during `pairHostByCode`, before the permission assertions:
+53 executed, 1 failed, 0 errors and 0 skipped, with
+`v2.handshake.reject.redemption_window_elapsed`. Its same-tree focused rerun passed 1 executed,
+0 failed/errors/skipped; that established the scheduling-dependent expiry rather than a permission
+failure. Moving minting after the build (#993) had left the wait for earlier scenarios inside the
+redemption lifetime. The fake-clock regression in `scripts/test_e2e_emulator_gradle.py` advances
+16 minutes after shell fixture setup and before requesting pairing, without sleeping or invoking
+Claude; the old eager lifecycle failed at code age 960 seconds against the 900-second contract.
+See [the recorded investigation](https://github.com/pyrycode/pyrycode-mobile/issues/1756#issuecomment-5990055551).
+
+**Full-suite proof (2026-10-05).** The dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on `feature/1756` at
+`0b7267c536`, merged with `origin/main` at `13ceb8b609`: exit 0, **55 executed, 55 passed,
+0 failed, 0 errors and 0 skipped**. The retained XML explicitly includes
+`InteractiveStreamE2ETest.interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`
+with no failure, error or skip. XML artifact on the dispatcher host:
+`/Users/juhanailmoniemi/WorkSpace/Projects/pyrycode-mobile-agents/logs/2026-10-05T08-04-49-827Z_real-claude-gate_#1756.log`;
+diagnostics are in its `.stderr.log` companion. This is the fresh full curated suite, rather than
+a focused rerun. See [the gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1756#issuecomment-5990708689).
+
 Three acceptance steps, all against pyrycode#2510 (`475c406a`)'s `session_settings` reporting the mode
 Claude last confirmed for the running child, not merely `yolo`: after a tool-free ping, a fresh reading
 reports `bypassPermissions` and the reopened footer settles on Bypass approvals, proving the daemon and
@@ -1718,7 +1751,8 @@ Prerequisites on the host:
 The script: starts the relay → starts the daemon (`PYRY_MOBILE_V2=1`, pointed at the loopback relay,
 alongside any other harness daemons the mode needs) → builds the app and test APKs
 (`assembleDebug assembleDebugAndroidTest`, the same `-PuseRelayRepository` build properties the test task
-uses) → mints each device pairing token with `pyry pair` and parses the payload → runs
+uses) → mints the ordinary device pairing tokens with `pyry pair` and parses the payload, and starts
+the lazy bypass fixture described above → runs
 `pixel2Api33AtdDebugAndroidTest`, which finds the APKs already built, with the four values injected as
 instrumentation arguments → tears everything down. Minting moves after the build (#993): a daemon redeems
 a pairing code only within a 15-minute window, and a slow or contended Gradle build (28 minutes observed on
@@ -1733,10 +1767,11 @@ code, token or key appears in that message; a clean log leaves the failure outpu
 
 Since 2026-10-05 the script then retries once. A full live run can reach the method that pairs a host after
 the window has passed even with minting after the build, as on #1668's gate, where the operator-bypass test
-ran 20 minutes in. `retry_with_fresh_codes` reads the failed methods from the Gradle report, mints every
-pairing again, because the reinstalled app holds a new key, and reruns only those methods with the fresh
-codes. `scripts/e2e-rerun-report.py` folds the rerun's results into the first run's report, so the gate
-still counts every method. The run passes only when every retried method passes. A second expired code
+ran 20 minutes in before #1756 moved bypass minting to scenario entry. `retry_with_fresh_codes` reads
+the failed methods from the Gradle report, remints the ordinary pairings because the reinstalled app
+holds a new key, and reruns only those methods with the fresh codes. The bypass fixture stays one-shot
+and is neither restarted nor reminted by this path. `scripts/e2e-rerun-report.py` folds the rerun's
+results into the first run's report, so the gate still counts every method. The run passes only when every retried method passes. A second expired code
 is reported again and fails the run, and there is never a second retry. The installed-app path of
 `scripted-all` never retries.
 
@@ -3607,6 +3642,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Operator-bypass pairing lifetime (#1756):**
+  `InteractiveStreamE2ETest.interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`
+  retains its full curated selection and permission assertions, with one-shot minting at scenario entry.
+  The operator-bypass coverage above records the 55-test full-suite pass and retained XML. The
+  delayed-suite regression belongs to `scripts/test_e2e_emulator_gradle.py`; no new
+  `DeterministicInteractiveStreamE2ETest` twin was added. The verifier's nonblocking hardening finding
+  remains: the single-threaded fixture server has no accepted-socket read timeout, so incomplete
+  unauthenticated headers can stall it despite the instrumentation client's deadline.
 
 - **Host system prompt — shipped coverage (#1775):**
   `InteractiveStreamE2ETest.interactiveTurn_hostSystemPrompt_editsResetsAndCancels` covers custom
