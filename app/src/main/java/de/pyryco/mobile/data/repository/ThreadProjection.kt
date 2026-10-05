@@ -5,6 +5,8 @@ import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.data.network.BackgroundTaskRosterPayloadDto
+import de.pyryco.mobile.data.network.BackgroundTaskRowDto
 import de.pyryco.mobile.data.network.BackgroundTaskStartedPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskUpdatedPayloadDto
 import de.pyryco.mobile.data.network.BannerPayloadDto
@@ -48,11 +50,22 @@ import java.util.concurrent.atomic.AtomicLong
 internal class ThreadProjection(
     private val trail: MessageTrail = MessageTrail(),
 ) {
-    /** Scalar lifecycle evidence shares history's folds; roster/progress never create a position. */
+    /** Scalar lifecycle evidence shares history's folds; roster hints never create a position. */
     fun applyBackgroundTaskLifecycle(envelope: Envelope) {
         try {
             val timestamp = Instant.parse(envelope.ts)
             when (envelope.type) {
+                RemoteConversationRepository.TYPE_BACKGROUND_TASK_ROSTER -> {
+                    val dto = MobileJson.decodeFromJsonElement<BackgroundTaskRosterPayloadDto>(envelope.payload)
+                    if (dto.conversationId.isEmpty() || dto.droppedTasks < 0) return
+                    state.update { current ->
+                        val hints = current.backgroundTaskHints[dto.conversationId].orEmpty().toMutableMap()
+                        dto.tasks.forEach { row ->
+                            if (row.taskId.isNotEmpty() && row.toolCallId.isNotEmpty()) hints.putIfAbsent(row.taskId, row)
+                        }
+                        current.copy(backgroundTaskHints = current.backgroundTaskHints + (dto.conversationId to hints))
+                    }
+                }
                 RemoteConversationRepository.TYPE_BACKGROUND_TASK_STARTED -> {
                     val dto = MobileJson.decodeFromJsonElement<BackgroundTaskStartedPayloadDto>(envelope.payload)
                     if (dto.conversationId.isEmpty() || dto.taskId.isEmpty()) return
@@ -176,6 +189,8 @@ internal class ThreadProjection(
      */
     private data class ProjectionState(
         val threads: Map<String, List<ThreadItem>> = emptyMap(),
+        // Retain known joins independently of replacement panel state, without inventing launch positions.
+        val backgroundTaskHints: Map<String, Map<String, BackgroundTaskRowDto>> = emptyMap(),
         val echoQueues: Map<String, OwnEchoQueue> = emptyMap(),
         // Connection-local placement evidence, never a live event id or durable coverage marker.
         val historyOrder: Map<String, Map<Any, Long>> = emptyMap(),
@@ -872,6 +887,7 @@ internal class ThreadProjection(
             it.copy(
                 threads = it.threads - conversationId,
                 echoQueues = it.echoQueues - conversationId,
+                backgroundTaskHints = it.backgroundTaskHints - conversationId,
                 historyOrder =
                     it.historyOrder - conversationId,
             )
@@ -907,6 +923,23 @@ internal class ThreadProjection(
                         .orEmpty()
                         .filterNot {
                             it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.id in suppressed
+                        }.map { row ->
+                            val hint =
+                                (row as? ThreadItem.BackgroundTaskLifecycle)?.let {
+                                    current.backgroundTaskHints[conversationId]?.get(
+                                        it.taskId,
+                                    )
+                                }
+                            if (row is ThreadItem.BackgroundTaskLifecycle && hint != null) {
+                                row.copy(
+                                    toolCallId = row.toolCallId ?: hint.toolCallId,
+                                    taskType = row.taskType ?: hint.taskType,
+                                    description = row.description ?: hint.description,
+                                    truncatedFields = if (row.description == null) hint.truncatedFields else row.truncatedFields,
+                                )
+                            } else {
+                                row
+                            }
                         }.withParkedEchoesLast(echoes?.parked.orEmpty())
                 ThreadSnapshot(rows, suppressed)
             }.distinctUntilChanged()

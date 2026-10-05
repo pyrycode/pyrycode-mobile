@@ -629,6 +629,7 @@ keep_bypass_transcripts() {
 cleanup() {
   local code=$?
   log "tearing down…"
+  [ -n "${BACKGROUND_AGENT_FIXTURE_PID:-}" ] && kill "${BACKGROUND_AGENT_FIXTURE_PID}" 2>/dev/null || true
   [ -n "${WATCHER_PID}" ] && kill "${WATCHER_PID}" 2>/dev/null || true
   [ -n "${DAEMON_PID}" ] && kill "${DAEMON_PID}" 2>/dev/null || true
   [ -n "${DAEMON_B_PID:-}" ] && kill "${DAEMON_B_PID}" 2>/dev/null || true
@@ -756,6 +757,11 @@ if [ -n "${DETERMINISTIC}" ]; then
       FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/send-now-delivered.jsonl}"
       DROP_B_FENCE="send-now"
       ;;
+    background-agent)
+      TEST_METHOD="interactiveTurn_seededChannel_backgroundAgentMovesAndSettles"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/background-agent-open.jsonl}"
+      FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/background-agent-finish.jsonl}"
+      ;;
     tool-failed)
       TEST_METHOD="interactiveTurn_seededChannel_failedToolStepRendersFailed"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/tool-failed.jsonl}"    # single terminal drop
@@ -803,7 +809,7 @@ if [ -n "${DETERMINISTIC}" ]; then
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/context-overflow.jsonl}"
       ;;
     *)
-      die "unknown SCENARIO='${SCENARIO}' (expected: selection-copy | ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order | tool-then-text | refusal | mcp-failed | context-overflow)"
+      die "unknown SCENARIO='${SCENARIO}' (expected: selection-copy | background-agent | ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order | tool-then-text | refusal | mcp-failed | context-overflow)"
       ;;
   esac
   log "deterministic scenario: ${SCENARIO} → ${TEST_METHOD}"
@@ -1317,6 +1323,17 @@ fi
 # #1642: only the isolated harness daemon can release the live Bash hold. The tool
 # cannot finish until send-now delivery is logged; no wall-clock sleep releases it.
 if [ -z "${DETERMINISTIC}" ]; then
+  # #1783: hold a real background Agent until the phone's release command.
+  BACKGROUND_AGENT_PORT_FILE="${WORK_DIR}/background-agent-port"
+  python3 "${REPO_ROOT}/scripts/background-agent-fixture.py" "${BACKGROUND_AGENT_PORT_FILE}" &
+  BACKGROUND_AGENT_FIXTURE_PID=$!
+  background_agent_deadline=$((SECONDS + 10))
+  until [ -s "${BACKGROUND_AGENT_PORT_FILE}" ]; do
+    kill -0 "${BACKGROUND_AGENT_FIXTURE_PID}" 2>/dev/null || die "background Agent fixture exited"
+    [ "${SECONDS}" -lt "${background_agent_deadline}" ] || die "background Agent fixture did not start"
+    sleep 0.1
+  done
+  BACKGROUND_AGENT_URL="http://127.0.0.1:$(cat "${BACKGROUND_AGENT_PORT_FILE}")"
   SEND_NOW_RELEASE="${WORK_DIR}/send-now-release"
   (
     while ! grep -qF 'relay: v2 send_queued_now delivered' "${DAEMON_LOG}"; do sleep 0.1; done
@@ -1438,6 +1455,7 @@ elif [ -n "${LIVE}" ]; then
   # #1107: #1076's background-task progress method joins now that the daemon drops a subagent's prompt echo
   # (pyrycode/pyrycode#2658). One turn, so the list holds 44 methods and 44 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundAgentProgress_showsOnRunningCard"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundAgent_followsBottomUntilFinished"
   # #1223: the phone's acknowledged choice in one chat applies before the first real turn in a new chat.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage"
   # #1249 restores the discussion round trip and host-isolated Archive proof through the list toolbar.
@@ -1480,6 +1498,9 @@ fi
 log "running ${DEVICE}DebugAndroidTest (headless emulator: boot → install → ${TEST_TARGET} → teardown)…"
 log "  phone relayUrl = ${PHONE_RELAY_URL}"
 GRADLE_TEST_ARGS=(-PuseRelayRepository=true)
+if [ -n "${BACKGROUND_AGENT_URL:-}" ]; then
+  GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.backgroundAgentFixtureUrl="${BACKGROUND_AGENT_URL}")
+fi
 if [ -n "${SEND_NOW_RELEASE:-}" ]; then
   GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.sendNowReleasePath="${SEND_NOW_RELEASE}")
 fi

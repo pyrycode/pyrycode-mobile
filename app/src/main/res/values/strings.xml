@@ -519,6 +519,9 @@
     <string name="thread_attention_waiting_count">%1$d conversations need you</string>
     <string name="thread_attention_finished">%1$s finished</string>
     <string name="cd_thread_queued_send_now">Send now</string>
+    <string name="agent_still_working">Agent started, still working</string>
+    <string name="agent_finished">Agent finished</string>
+    <string name="agent_go_to">Go to agent ↓</string>
     <string name="share_to_title">Share to…</string>
     <plurals name="share_images">
         <item quantity="one">%d image</item>

@@ -1,0 +1,4 @@
+{"type":"user","parent_tool_use_id":"agent1783","message":{"content":[{"type":"tool_result","tool_use_id":"child1783","content":"fixture completed","is_error":false}]}}
+{"type":"system","subtype":"task_notification","task_id":"task1783","status":"completed","summary":"Done"}
+{"type":"assistant","message":{"id":"after-agent","stop_reason":"end_turn","content":[{"type":"text","text":"after1783"}]}}
+{"type":"result","subtype":"success","is_error":false,"session_id":"43143143-4314-4314-8314-431431431431"}

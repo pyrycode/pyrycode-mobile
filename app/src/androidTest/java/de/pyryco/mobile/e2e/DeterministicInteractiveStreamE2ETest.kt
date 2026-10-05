@@ -9,6 +9,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -19,6 +20,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.font.FontFamily
@@ -28,10 +30,12 @@ import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
+import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.grantNotificationPermission
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
@@ -498,6 +502,32 @@ class DeterministicInteractiveStreamE2ETest {
         assertEquals(1, rows.count { it.message.content == SECOND_PROMPT })
     }
 
+    /** #1783: deterministic lifecycle/parent fixture twin; second send releases the terminal fragment. */
+    @Test
+    fun interactiveTurn_seededChannel_backgroundAgentMovesAndSettles() {
+        arriveInSeededThread()
+        typeAndSend(SEND_PROMPT)
+        val running = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_still_working)
+        val finished = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_finished)
+        val go = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_go_to)
+        val marker = hasText(go) and hasClickAction()
+        val header = hasTestTag("background-agent:agent1783")
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodesWithText(running).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onNode(marker).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onNode(header).assertIsDisplayed()
+        typeAndSend("release1783")
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodesWithText("after1783").fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(marker)
+        composeTestRule.onNodeWithText(finished).assertIsDisplayed()
+        composeTestRule.onNode(marker).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasText("after1783"))
+        val agent = composeTestRule.onNode(header).fetchSemanticsNode().boundsInRoot
+        val after = composeTestRule.onNodeWithText("after1783", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        assertTrue("terminal block must settle before the following reply", agent.bottom <= after.top)
+    }
+
     /**
      * `tool` scenario — a tool step must render **running** while the tool is in flight and **done**
      * after the result. "Running" is transient (the row flips to done the instant the correlated
@@ -772,6 +802,41 @@ class DeterministicInteractiveStreamE2ETest {
         // In order: the cross-delta-boundary concatenation is present (a reordering breaks the substring).
         // Exactly once: it renders in a single node — no segment lost, no row duplicated.
         composeTestRule.onAllNodesWithText(ORDERED_REPLY_SUBSTRING, substring = true).assertCountEquals(1)
+
+        // Prove exact text and per-delta identity too: a duplicated sequence within one row must fail.
+        val rows =
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    val repository =
+                        requireNotNull(
+                            GlobalContext
+                                .get()
+                                .get<RelayRepositoryCoordinator>()
+                                .currentRepository.value,
+                        )
+                    val conversationId =
+                        repository
+                            .observeConversations(ConversationFilter.All)
+                            .first { conversations -> conversations.any { it.name == SEED_CHANNEL_NAME } }
+                            .single { it.name == SEED_CHANNEL_NAME }
+                            .id
+                    repository.observeMessages(conversationId).first { items ->
+                        items.filterIsInstance<ThreadItem.MessageItem>().any {
+                            it.message.role == Role.Assistant && !it.message.isStreaming && ORDERED_REPLY_SUBSTRING in it.message.content
+                        }
+                    }
+                }
+            }.filterIsInstance<ThreadItem.MessageItem>()
+        val reply = rows.single { it.message.role == Role.Assistant }
+        assertEquals(ORDERED_REPLY_SUBSTRING, reply.message.content)
+        assertEquals(
+            listOf(0, 1, 2),
+            reply.message.segment
+                ?.deltas
+                ?.map { it.seq },
+        )
+        val user = rows.single { it.message.role == Role.User && it.message.content == SEND_PROMPT }
+        assertTrue("initial user must precede the complete ordered reply", rows.indexOf(user) < rows.indexOf(reply))
     }
 
     /**

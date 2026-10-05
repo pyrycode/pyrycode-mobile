@@ -2,7 +2,6 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import android.graphics.Bitmap
 import android.os.Build
-import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.CompositionLocalProvider
@@ -24,13 +23,13 @@ import de.pyryco.mobile.data.model.BackgroundTask
 import de.pyryco.mobile.data.model.BackgroundTaskProgress
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.BackgroundTaskUpdate
+import de.pyryco.mobile.design.Viewport
+import de.pyryco.mobile.design.ViewportRule
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
-import org.junit.rules.TestRule
-import org.junit.runners.model.Statement
 import java.io.File
 
 /** Device captures of the four Figma panel readings using synthetic, fixed task data. */
@@ -38,24 +37,7 @@ class BackgroundTaskPanelCaptureTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
     @get:Rule(order = 0)
-    val viewport =
-        TestRule { base, _ ->
-            object : Statement() {
-                override fun evaluate() {
-                    val size = overrideOf(shell("wm size"))
-                    val density = overrideOf(shell("wm density"))
-                    shell("wm density 160")
-                    shell("wm size 412x892")
-                    try {
-                        instrumentation.waitForIdleSync()
-                        base.evaluate()
-                    } finally {
-                        shell("wm size $size")
-                        shell("wm density $density")
-                    }
-                }
-            }
-        }
+    val viewport = ViewportRule()
 
     @get:Rule(order = 1)
     val rule = createAndroidComposeRule<ComponentActivity>()
@@ -83,10 +65,9 @@ class BackgroundTaskPanelCaptureTest {
         capture("emulator-unreported-412x892.png")
     }
 
+    @Viewport("320x640")
     @Test
     fun compactLargeTextKeepsScrolledContentAndCloseGlyphReachable() {
-        shell("wm size 320x640")
-        instrumentation.waitForIdleSync()
         roster = CAPPED
         showPanel(fontScale = 1.5f)
         assertWithinCompactWidth("Partial list (3 not shown)")
@@ -157,15 +138,6 @@ class BackgroundTaskPanelCaptureTest {
         )
         image.recycle()
     }
-
-    private fun shell(command: String): String =
-        ParcelFileDescriptor
-            .AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command))
-            .bufferedReader()
-            .use { it.readText() }
-
-    private fun overrideOf(output: String): String =
-        output.lineSequence().firstOrNull { it.startsWith("Override") }?.substringAfter(": ") ?: "reset"
 
     private companion object {
         fun task(
