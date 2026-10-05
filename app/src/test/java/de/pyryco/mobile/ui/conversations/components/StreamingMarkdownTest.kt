@@ -133,8 +133,14 @@ class StreamingMarkdownTest {
         assertEquals(MarkdownElementTypes.PARAGRAPH, closed.last().node.type)
     }
 
-    @Test fun orderedListRetainsGroupingAcrossEveryPartialMarker() {
-        listOf("1. first\n\n2. second", "1. first\n\n23. second", "- first\n\n- second").forEach { source ->
+    @Test fun listsRetainGroupingAcrossEveryPartialMarkerOrRule() {
+        listOf(
+            "1. first\n\n2. second",
+            "1. first\n\n23. second",
+            "- first\n\n- second",
+            "* first\n\n* * *tail*",
+            "- first\n\n- - -tail",
+        ).forEach { source ->
             val cache = StreamingMarkdownCache()
             for (length in 1..source.length) {
                 val prefix = source.take(length)
@@ -245,6 +251,19 @@ class StreamingMarkdownTest {
                 assertTrue(extended.node.getTextInNode(extended.source).contains("one"))
             }
         }
+    }
+
+    @Test fun actualTableGrammarWinsOverCodeAwarePendingPipeCountingAtEof() {
+        val source = "| `A|B` |\n| --- | --- |"
+        val cache = StreamingMarkdownCache()
+        for (length in 1..source.length) cache.update(source.take(length))
+        val block = cache.update(source).single()
+        assertEquals(GFMElementTypes.TABLE, block.node.type)
+        assertEquals(null, block.pending.blockText(block.node))
+        val header = block.node.children.single { it.type == GFMElementTypes.HEADER }
+        val cells = header.children.filter { it.type == org.intellij.markdown.flavours.gfm.GFMTokenTypes.CELL }
+        assertEquals(listOf("`A", "B`"), cells.map { streamingInlineText(it.trimmedContent(), block.source, block.pending) })
+        assertEquals(null, cache.update("$source\n").single().let { it.pending.blockText(it.node) })
     }
 
     @Test fun pendingCodeInsideFormattingKeepsLiteralClosingPunctuationUntilCodeCloses() {

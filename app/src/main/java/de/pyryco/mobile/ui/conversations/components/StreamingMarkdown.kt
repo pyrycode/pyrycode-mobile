@@ -43,15 +43,13 @@ internal class StreamingMarkdownCache(
         blocks = completed.toList() + next
         if (next.size > 1) {
             val predecessor = next[next.lastIndex - 1].node
-            val partialMarker =
-                next
-                    .last()
-                    .node
-                    .getTextInNode(tail)
-                    .toString()
+            val trailing = next.last().node
+            val partialMarker = trailing.getTextInNode(tail).toString()
+            // An EOF rule can become another item when text is appended on the same line.
+            val provisionalRule = trailing.type == MarkdownTokenTypes.HORIZONTAL_RULE && trailing.endOffset == tail.length
             val mayRejoinList =
                 predecessor.type in setOf(MarkdownElementTypes.ORDERED_LIST, MarkdownElementTypes.UNORDERED_LIST) &&
-                    partialMarker.matches(Regex(" {0,3}(?:[0-9]{1,9}[.)]?|[-+*])[ \t]*"))
+                    (provisionalRule || partialMarker.matches(Regex(" {0,3}(?:[0-9]{1,9}[.)]?|[-+*])[ \t]*")))
             val mutableIndex = next.lastIndex - if (mayRejoinList) 1 else 0
             completed += next.take(mutableIndex)
             consumed += next[mutableIndex].node.startOffset
@@ -95,7 +93,8 @@ internal class PendingMarkdown(
         when (node.type) {
             MarkdownElementTypes.CODE_FENCE, MarkdownElementTypes.CODE_BLOCK -> Unit
             MarkdownElementTypes.PARAGRAPH, MarkdownTokenTypes.ATX_CONTENT, GFMTokenTypes.CELL -> inline(node)
-            GFMElementTypes.TABLE -> if (!pendingTable(node)) node.children.forEach(::visit)
+            // Its actual separator closes the header; the parser's cell grammar is authoritative.
+            GFMElementTypes.TABLE -> node.children.filter { it.type == GFMElementTypes.ROW }.forEach(::visit)
             else -> node.children.forEach(::visit)
         }
         if (node.type in setOf(MarkdownElementTypes.PARAGRAPH, MarkdownElementTypes.SETEXT_1, MarkdownElementTypes.SETEXT_2)) {
@@ -227,7 +226,7 @@ internal class PendingMarkdown(
             val separatorCells = tableCells(separator, structuralPipes(separator))
             val lineClosed = text.indexOf('\n', header.length + 1) >= 0 || source.getOrNull(node.endOffset) == '\n'
             val valid = separatorCells.size == cells.size && separatorCells.all { it.trim().matches(Regex(":?-+:?")) }
-            if (lineClosed || (valid && (node.type == GFMElementTypes.TABLE || separator.trimEnd().endsWith('|')))) return false
+            if (lineClosed || (valid && separator.trimEnd().endsWith('|'))) return false
         }
         val arrivedCells =
             cells.map { cell ->

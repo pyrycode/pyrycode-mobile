@@ -170,7 +170,10 @@ class StreamingMarkdownComposeTest {
         assertTrue(prose.spanStyles.any { it.item.fontStyle == FontStyle.Italic })
         assertTrue(prose.spanStyles.any { it.item.fontFamily == FontFamily.Monospace })
         compose.runOnIdle { streaming.value = false }
+        compose.waitForIdle()
         compose.mainClock.advanceTimeBy(64)
+        compose.waitForIdle()
+        compose.onNodeWithText("▎").assertDoesNotExist()
         val after = texts()
         assertEquals(before.map { it.text }, after.map { it.text })
         before.zip(after).forEach { (a, b) ->
@@ -202,29 +205,60 @@ class StreamingMarkdownComposeTest {
         compose.mainClock.advanceTimeBy(80)
         assertFalse(texts().any { it.text.contains("word ".repeat(40)) })
         compose.runOnIdle { message.value = message.value.copy(isStreaming = false) }
+        compose.waitForIdle()
         compose.mainClock.advanceTimeBy(64)
+        compose.waitForIdle()
         assertEquals(message.value.content, texts().single().text)
         compose.onNodeWithText("▎").assertDoesNotExist()
     }
 
     @Test fun unsupportedAndEscapedSourceSurviveCompletion() {
         show("\\*literal\\* and \$20 and \$30 and https://example.com\n\n---")
-        val before = texts().map { it.text }
-        compose.runOnIdle { streaming.value = false }
-        compose.mainClock.advanceTimeBy(64)
-        assertEquals(before, texts().map { it.text })
+        settleAndCompare()
     }
 
     private fun settleAndCompare() {
         val before = texts()
+        val bounds = textBounds()
+        assertTrue(before.isNotEmpty())
+        compose.onNodeWithText("▎").assertExists()
         compose.runOnIdle { streaming.value = false }
+        compose.waitForIdle()
         compose.mainClock.advanceTimeBy(64)
+        compose.waitForIdle()
+        compose.onNodeWithText("▎").assertDoesNotExist()
+        assertEquals(bounds, textBounds())
         assertEquals(before.map { it.text }, texts().map { it.text })
         assertEquals(before.map { it.spanStyles }, texts().map { it.spanStyles })
         assertEquals(
             before.map { value -> value.getLinkAnnotations(0, value.length).map { (it.item as LinkAnnotation.Url).url } },
             texts().map { value -> value.getLinkAnnotations(0, value.length).map { (it.item as LinkAnnotation.Url).url } },
         )
+    }
+
+    private fun textBounds() =
+        compose
+            .onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.Text), useUnmergedTree = true)
+            .fetchSemanticsNodes()
+            .filter { node -> node.config[SemanticsProperties.Text].none { it.text == "▎" } }
+            .map { it.boundsInRoot }
+
+    @Test fun provisionalRulesRejoinListsWithoutMovingItemsAtSettlement() {
+        show("")
+        for ((rule, ending) in listOf("* * *" to "tail*", "- - -" to "tail")) {
+            compose.runOnIdle { streaming.value = true }
+            val prefix = "${rule.first()} first\n\n$rule"
+            change(prefix)
+            change(prefix + ending)
+            compose.onNodeWithText("first").assertExists()
+            settleAndCompare()
+        }
+    }
+
+    @Test fun actualTableWithCodePipeUsesSharedParserCellsAtEofAndSettlement() {
+        show("| `A|B` |\n| --- | --- |")
+        assertEquals(listOf("`A", "B`"), texts().map { it.text })
+        settleAndCompare()
     }
 
     @Test fun partialOrderedListMarkerRejoinsWithoutRenumberingAtSettlement() {

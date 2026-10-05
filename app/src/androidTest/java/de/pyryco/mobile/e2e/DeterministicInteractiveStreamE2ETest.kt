@@ -712,7 +712,7 @@ class DeterministicInteractiveStreamE2ETest {
      *
      * It forks the `reconnect` two-drop fence, but the sever and restore **straddle** the event
      * production — using the split [severLink] / [restoreLink] halves of #476's atomic
-     * [severAndRestoreLink] primitive. Drop A (`replay-order-open.jsonl`, a `thinking`-only line) holds
+     * [severAndRestoreLink] primitive. Drop A (`replay-order-open.jsonl`, user echo then thinking) holds
      * the turn open on the 1st `send_message.enqueued`; the test then **severs** the link, the host drops
      * drop B (`replay-order.jsonl`, three ordered `assistant_delta` lines + `end_turn`) fenced on the
      * relay logging the phone-leg disconnect — so the whole sequence accrues in the daemon's in-ring
