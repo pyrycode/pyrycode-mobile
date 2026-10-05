@@ -87,6 +87,7 @@ import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.components.EditChannelModal
 import de.pyryco.mobile.ui.components.chromeBackdrop
 import de.pyryco.mobile.ui.components.defaultChromeShadow
+import de.pyryco.mobile.ui.conversations.components.AgentStartMarker
 import de.pyryco.mobile.ui.conversations.components.ApiRetryIndicator
 import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
@@ -576,6 +577,11 @@ fun ThreadScreen(
                     remember(state.items, state.queuedMessages) {
                         foldQueuedRows(state.items, state.queuedMessages)
                     }
+                val agentRows =
+                    remember(queuedRows, state.items, state.backgroundTasks) {
+                        foldBackgroundAgentBlocks(queuedRows, state.items, state.backgroundTasks)
+                    }
+                var goToAgent by remember(state.conversationId) { mutableStateOf<String?>(null) }
                 // #1621: the one message whose meta row (timestamp + copy) shows; every other bubble hides it
                 // until tapped. UI-local, keyed by message id so it follows the message as rows arrive.
                 var metaRowMessageId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -584,8 +590,8 @@ fun ThreadScreen(
                 // rotation or back-stack return keeps them open, as the tool rows inside keep theirs.
                 var expandedRuns by rememberSaveable { mutableStateOf(emptySet<String>()) }
                 val rows =
-                    remember(queuedRows, collapseToolUses, expandedRuns) {
-                        if (collapseToolUses) foldToolRuns(queuedRows, expandedRuns) else queuedRows
+                    remember(agentRows, collapseToolUses, expandedRuns) {
+                        if (collapseToolUses) foldToolRuns(agentRows, expandedRuns) else agentRows
                     }
                 // A backlog item this device minted no echo for is a row of its own, so the empty state
                 // must yield to it (#782 AC #3). When an item *is* matched its echo is a MessageItem, so
@@ -625,6 +631,22 @@ fun ThreadScreen(
                             (shownQuestion?.let { it.batch.questions.size + 2 } ?: 0) +
                                 (if (openRequest != null) PERMISSION_ROW_COUNT else 0) +
                                 (if (answerRejected) 1 else 0)
+                        LaunchedEffect(goToAgent, rows, promptRowCount) {
+                            val agentId = goToAgent ?: return@LaunchedEffect
+                            val run = rows.filterIsInstance<ThreadRow.ToolRun>().firstOrNull { row -> row.tools.any { it.id == agentId } }
+                            if (run != null && !run.expanded) {
+                                expandedRuns = expandedRuns + run.runId
+                            } else {
+                                val index =
+                                    reversedRows.indexOfFirst { row ->
+                                        ((row as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)?.message?.id == agentId
+                                    }
+                                if (index >= 0) {
+                                    listState.scrollToItem(index + promptRowCount)
+                                    goToAgent = null
+                                }
+                            }
+                        }
                         // Info banners retain their keys but render nothing; spacing follows the visible row.
                         val newestRenderedRow =
                             rows.lastOrNull { row ->
@@ -671,7 +693,16 @@ fun ThreadScreen(
                         FollowNewestEnd(
                             listState = listState,
                             newestRowKey = rows.lastOrNull()?.listKey(rows.lastIndex),
-                            newestRow = rows.lastOrNull(),
+                            newestRow =
+                                remember(rows, agentRows) {
+                                    listOf(
+                                        rows.lastOrNull(),
+                                        agentRows.filterIsInstance<ThreadRow.Delivered>().filter {
+                                            it.agentBlockId !=
+                                                null
+                                        },
+                                    )
+                                },
                             promptIdentity = promptIdentity,
                             promptPresent = questionState != null || openRequest != null,
                             promptRows = promptRowCount,
@@ -779,9 +810,17 @@ fun ThreadScreen(
                                                 is ThreadItem.MessageItem ->
                                                     MessageBubble(
                                                         message = item.message,
+                                                        modifier =
+                                                            if (row.agentBlockId ==
+                                                                item.message.id
+                                                            ) {
+                                                                Modifier.testTag("background-agent:${item.message.id}")
+                                                            } else {
+                                                                Modifier
+                                                            },
                                                         threadOpenedAt = threadOpenedAt,
                                                         toolNestingDepth = toolDepths[item.message.id] ?: 0,
-                                                        joinsNextToolRow = rows.getOrNull(chronologicalIndex + 1).isToolRow(),
+                                                        joinsNextToolRow = row.joinsToolRow(rows.getOrNull(chronologicalIndex + 1)),
                                                         attachmentStates = attachmentStates,
                                                         onAttachmentShown = onAttachmentShown,
                                                         onRetryAttachment = onRetryAttachment,
@@ -841,6 +880,8 @@ fun ThreadScreen(
                                                         null
                                                     },
                                             )
+                                        is ThreadRow.AgentStartMarker ->
+                                            AgentStartMarker(row.description, row.finished, onGoToAgent = { goToAgent = row.agentId })
                                         is ThreadRow.ToolRun ->
                                             ToolRunRow(
                                                 toolCalls = remember(row.tools) { row.tools.mapNotNull { it.toolCall } },

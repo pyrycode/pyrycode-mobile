@@ -7,6 +7,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -17,6 +18,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -450,6 +452,32 @@ class DeterministicInteractiveStreamE2ETest {
         val reply = rows.indexOfFirst { "send-now-marker" in it.message.content }
         assertTrue("user delivery must follow tool result and precede final reply", tool >= 0 && tool < user && user < reply)
         assertEquals(1, rows.count { it.message.content == SECOND_PROMPT })
+    }
+
+    /** #1783: deterministic lifecycle/parent fixture twin; second send releases the terminal fragment. */
+    @Test
+    fun interactiveTurn_seededChannel_backgroundAgentMovesAndSettles() {
+        arriveInSeededThread()
+        typeAndSend(SEND_PROMPT)
+        val running = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_still_working)
+        val finished = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_finished)
+        val go = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_go_to)
+        val marker = hasText(go) and hasClickAction()
+        val header = hasTestTag("background-agent:agent1783")
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodesWithText(running).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onNode(marker).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onNode(header).assertIsDisplayed()
+        typeAndSend("release1783")
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodesWithText("after1783").fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(marker)
+        composeTestRule.onNodeWithText(finished).assertIsDisplayed()
+        composeTestRule.onNode(marker).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasText("after1783"))
+        val agent = composeTestRule.onNode(header).fetchSemanticsNode().boundsInRoot
+        val after = composeTestRule.onNodeWithText("after1783", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        assertTrue("terminal block must settle before the following reply", agent.bottom <= after.top)
     }
 
     /**

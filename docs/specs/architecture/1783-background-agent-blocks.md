@@ -21,6 +21,8 @@ Inspected context and screenshots for Running `795:7178` and marker variants `79
 
 The immediate launch result resolves the Agent tool while its background task continues. Moving repository rows would damage ordered history and pagination. A pure display projection can instead leave a launch marker and move the loaded Agent family, using the retained terminal entry to settle it. Cache-only rows lack parents/lifecycle and retain today's placement; this ticket does not extend storage. No decision record is needed.
 
+In-flight overlaps: #1603 and #1747 touch separate ThreadScreen regions; #1674, #1682, #1689, #1690, #1691, #1693, #1695, #1728 and #1766 add separate live scenarios/selector entries. Changes here stay additive and local.
+
 ## Design
 
 Add `foldBackgroundAgentBlocks(rows, items, roster)` after queued joining and before run folding. Match only local_agent tasks with nonempty tool-call joins to loaded Agent/Task tool rows. Retained launch/terminal evidence takes precedence, roster fills missing launch fields and establishes running state before history arrives. Never fabricate missing tools. Resolve loaded tool-parent chains with memoisation and a cycle guard; partition each family exactly once, preserving original row order.
@@ -67,3 +69,9 @@ None. The cache-only limitation and dispatcher-owned live acceptance are explici
 
 **Reviewer:** builder (self-review per builder/security-review.md)
 **Date:** 2026-10-05
+
+## Revisions
+
+2026-10-05: Add the rung-4 `background-agent` raw-stream twin alongside the controlled multi-agent/history fixtures. It holds the first fragment until a second phone send releases the terminal fragment, proving lifecycle decoding, collapse navigation and finish placement through the daemon. The builder runs this focused scripted scenario; full live XML remains dispatcher-owned.
+
+2026-10-05: A regression for a finished roster without terminal history showed the fallback block before its launch marker. Place it immediately after the marker until terminal history provides the authoritative position. Strengthened the follow test to grow an expanded tool result in place and assert both the newest-end offset and an older reader’s pixel anchor.
