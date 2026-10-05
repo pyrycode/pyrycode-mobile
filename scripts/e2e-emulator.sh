@@ -26,7 +26,8 @@
 #   * `pyrycode-relay` and `pyry` on PATH (override with RELAY_BIN / PYRY_BIN).
 #   * rung 3 only: the operator's claude is authenticated on this host — the daemon spawns real claude.
 #     The interactive path is Max-subscription covered, so this does NOT meter tokens.
-#   * LIVE mode only: the operator's claude authenticated (as rung 3); NO relay binary needed (the daemon
+#   * LIVE mode only: the operator's claude authenticated (as rung 3), or the long-term login, which a hand
+#     run with no CLAUDE_CODE_OAUTH_TOKEN fetches through scripts/with-claude-login.sh; NO relay binary needed (the daemon
 #     dials the production relay); the emulator needs outbound internet + DNS + a system-trusted TLS cert
 #     for the relay host. Mutually exclusive with DETERMINISTIC.
 #   * rung 4 only: either FAKE_CLAUDE_BIN (a prebuilt fakeclaude) or PYRYCODE_SRC (a local pyrycode
@@ -125,6 +126,11 @@ fi
 INTERACTIVE_RUNNER="${INTERACTIVE_RUNNER:-}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# A LIVE run started by hand fetches the long-term Claude login when it has none (2026-10-05), instead of
+# stalling on a missing or expired shell login. scripts/with-claude-login.sh explains when it fetches.
+if [ -n "${LIVE}" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "${E2E_LOGIN_TRIED:-}" ]; then
+  E2E_LOGIN_TRIED=1 exec "${REPO_ROOT}/scripts/with-claude-login.sh" bash "${BASH_SOURCE[0]}" "$@"
+fi
 GRADLEW="${REPO_ROOT}/gradlew"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pyry-e2e.XXXXXX")"
 RELAY_LOG="${WORK_DIR}/relay.log"

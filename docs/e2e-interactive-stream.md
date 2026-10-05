@@ -2087,7 +2087,11 @@ above. `LIVE=1` is
 Prerequisites (on top of the "How to run" list):
 
 - The runner host's Claude authenticated (as default rung 3) — Max-subscription covered, so it
-  does **not** meter tokens.
+  does **not** meter tokens. A LIVE run started by hand with no `CLAUDE_CODE_OAUTH_TOKEN` fetches the
+  long-term login through `scripts/with-claude-login.sh` (2026-10-05), the same 1Password item the
+  dispatcher's launcher uses, and falls back to the host's own login only when that fetch is unavailable.
+  `python3 scripts/android-test-gate.py live` does the same when started by hand. A throwaway test daemon
+  started by hand can borrow it too: `scripts/with-claude-login.sh pyry -pyry-name=<name> ...`.
 - The live daemon is started with `-pyry-workdir=$HOME`. The current daemon confines the supervised
   Claude workdir to the runner's home for trust handling, so a temporary checkout outside that boundary
   is rejected before the live suite can start.
