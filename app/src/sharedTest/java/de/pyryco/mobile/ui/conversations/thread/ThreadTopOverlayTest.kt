@@ -130,7 +130,12 @@ class ThreadTopOverlayTest {
         outcome.assertIsDisplayed()
         val previous = composeRule.onNodeWithContentDescription(context.getString(R.string.thread_session_blocked))
         val before = previous.getUnclippedBoundsInRoot()
-        val after = outcome.getUnclippedBoundsInRoot()
+        val after =
+            composeRule
+                .onNodeWithContentDescription(
+                    "Context too long - Compact",
+                    useUnmergedTree = true,
+                ).getUnclippedBoundsInRoot()
         assertEquals(12f, (after.top - before.bottom).value, 0.5f)
         assertEquals(before.right.value, after.right.value, 0.5f)
         composeRule.onNodeWithText("Compact").assertDoesNotExist()
@@ -143,7 +148,12 @@ class ThreadTopOverlayTest {
         val composer = composeRule.onNodeWithTag("thread-composer").getUnclippedBoundsInRoot()
         val header = composeRule.onNodeWithTag("thread-top-bar").getUnclippedBoundsInRoot()
         turnOutcome = TurnRecoveryNotice.ContextTooLong
-        val bounds = composeRule.onNodeWithContentDescription("Context too long - Compact").getUnclippedBoundsInRoot()
+        val bounds =
+            composeRule
+                .onNodeWithContentDescription(
+                    "Context too long - Compact",
+                    useUnmergedTree = true,
+                ).getUnclippedBoundsInRoot()
         assertEquals(28f, (bounds.top - header.bottom).value, 0.5f)
         assertEquals(20f, (header.right - bounds.right).value, 0.5f)
         assertEquals(24f, bounds.height.value, 0.5f)

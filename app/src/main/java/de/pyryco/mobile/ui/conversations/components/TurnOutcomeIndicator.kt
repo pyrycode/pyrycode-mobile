@@ -1,13 +1,18 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -75,14 +80,27 @@ fun TurnOutcomeIndicator(
             TurnRecoveryNotice.AuthenticationFailed -> stringResource(R.string.thread_recovery_auth, agentName(agent))
         }
     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
-        // Hug bodySmall rather than squeezing its glyphs: API 35 measures this context label at
-        // 176dp including padding, versus Figma 685:3992's 172dp with its Roboto metrics.
-        NoticePill(
-            text = label,
-            isError = true,
-            onClick = onCompact.takeIf { notice == TurnRecoveryNotice.ContextTooLong },
-            modifier = modifier.sizeIn(minHeight = 24.dp),
-        )
+        val action = onCompact.takeIf { notice == TurnRecoveryNotice.ContextTooLong }
+        // Recovery is last in the overlay: extend its target downward, away from preceding notices,
+        // while keeping the visible pill at its Figma top/right position and 24dp height.
+        Box(
+            modifier =
+                if (action != null) {
+                    modifier.heightIn(min = 48.dp).clickable(role = Role.Button, onClick = action)
+                } else {
+                    modifier
+                },
+            contentAlignment = Alignment.TopEnd,
+        ) {
+            // Hug bodySmall rather than squeezing its glyphs: API 35 measures this context label at
+            // 176dp including padding, versus Figma 685:3992's 172dp with its Roboto metrics.
+            NoticePill(
+                text = label,
+                isError = true,
+                mergeDescendants = action == null,
+                modifier = Modifier.sizeIn(minHeight = 24.dp),
+            )
+        }
     }
 }
 
