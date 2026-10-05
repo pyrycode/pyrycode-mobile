@@ -145,7 +145,7 @@ snapshot. Creation uses explicit targets:
   send that completes after `dismissAddWorkspace()` neither navigates nor reopens the modal. The
   explicit path remains separate from the Chats confirmation. See
   [ChannelListViewModel § Wiring](channel-list-viewmodel.md#wiring) for all five methods and the
-  `compareAndSet` discipline shared with `submitChatName`.
+  `compareAndSet` discipline shared with the retained channel controller.
 
 Both creation paths resolve `hostSource.repositoryFor(capturedServerId)`
 before sending. Compatibility selection changes cannot redirect them, and a

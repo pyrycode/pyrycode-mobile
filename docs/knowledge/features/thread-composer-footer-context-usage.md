@@ -77,8 +77,13 @@ no live connection, one guarded send in `RemoteConversationRepository` behind th
 id. `ThreadViewModel` triggers it off `repositoryAvailable`: once when the thread opens on a live host,
 and once more on each later `false → true` edge (a reconnect or the host coming back), with no
 `drop(1)` — unlike the #778 history-walk restart that shares the same signal, the *opening* value here
-must send the first ask. Only the reconnect ask logs (`event=context_usage_ask reason=reconnect`, never
-the id); logging the opening ask too broke screen tests that construct `ThreadViewModel` without
+must send the first ask. Since [#1761](https://github.com/pyrycode/pyrycode-mobile/issues/1761),
+the existing settings-reread collector also asks once on each `reset_end` for this conversation: an active
+reset becoming idle. Initial idle, reset-start phases, repeated idle and host turn endings add no context
+ask; host turn endings still reread settings alone. This refreshes the reply-backed footer after reset
+without another message, while the brief settings-fallback gap described above remains possible.
+Reconnect and reset-ended asks log static reasons (`event=context_usage_ask reason=reconnect` or
+`reason=reset_end`, never the id); logging the opening ask too broke screen tests that construct `ThreadViewModel` without
 stubbing `RelayLog.sink`. A refusal (`conversation.not_found` or `context_usage.unavailable`) is an
 `error` whose `in_reply_to` matches no waiter, so it is a no-op in the existing arm — the reading stays as
 it was and nothing surfaces. The successful answer is just another `context_usage` frame, routed and
@@ -98,6 +103,12 @@ proof,
 `InteractiveStreamE2ETest#interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn`
 (see [e2e coverage](../../e2e-interactive-stream.md)), asserts the host's held reading is `null` before
 the open and then waits on `observeContextUsage(...).filterNotNull()` itself, not only the footer. The
+reset proof added in #1761,
+`InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter`, starts observing
+before the reset tap, requires the old reading to clear and then a new non-null reading, and checks the
+footer description computed from that reply’s token totals without another message. Its watcher starts
+undispatched on `Dispatchers.Default`: blocking UI test waits must not prevent observing the clear before
+the reply. A changed percentage is not required; a fresh reply can contain the same value. The
 older `interactiveTurn_pingPrompt_footerShowsContextUsage` has the same blind spot and predates this fix;
 it is not itself proof that an ask was sent, only that a reading — pushed or asked for — is showing.
 
