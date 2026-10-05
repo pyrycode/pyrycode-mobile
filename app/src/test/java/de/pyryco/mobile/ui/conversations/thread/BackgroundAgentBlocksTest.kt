@@ -7,7 +7,9 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.data.repository.BackgroundTaskProjection
 import de.pyryco.mobile.data.repository.BackgroundTaskProjectionTest
+import de.pyryco.mobile.data.repository.FinishedBackgroundTasks
 import de.pyryco.mobile.data.repository.HistoryEntry
 import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.QueuedMessage
@@ -283,6 +285,94 @@ class BackgroundAgentBlocksTest {
         val base = listOf(row("a", "Agent"), row("later"))
         assertEquals(listOf("agent-start:a", "msg:a", "msg:later"), keys(project(base, finishedRoster)))
         assertEquals(listOf("agent-start:a", "msg:later", "msg:a"), keys(project(base + finish(agent = "a"), finishedRoster)))
+    }
+
+    @Test fun emptyRosterKeepsFinishedBlockWithStartHistory() = finishedRosterReplacement(true, false)
+
+    @Test fun unrelatedRosterKeepsFinishedBlockWithStartHistory() = finishedRosterReplacement(true, true)
+
+    @Test fun emptyRosterKeepsFinishedBlockWithoutStartHistory() = finishedRosterReplacement(false, false)
+
+    @Test fun unrelatedRosterKeepsFinishedBlockWithoutStartHistory() = finishedRosterReplacement(false, true)
+
+    private fun finishedRosterReplacement(
+        startLoaded: Boolean,
+        unrelated: Boolean,
+    ) = runTest {
+        // A reconnect knows the task finished but has not loaded its terminal history position.
+        val finished = FinishedBackgroundTasks().apply { mark("c1", "task-a") }
+        val tasks = BackgroundTaskProjection(finished)
+        val thread = ThreadProjection()
+        val initial = listOf(row("a", "Agent"), row("child", "Read", "a"), row("later"))
+        thread.appendMessages(initial.map { "c1" to it.message })
+        val launch =
+            BackgroundTaskProjectionTest.envelope(
+                "background_task_started",
+                """{"conversation_id":"c1","task_id":"task-a","tool_call_id":"a","task_type":"local_agent","description":"Launch description","truncated_fields":null}""",
+            )
+        val launchPage = HistoryPage(listOf(HistoryEntry(1, launch.type, launch.payload, ts)), "", true)
+        if (startLoaded) thread.mergeHistoryPage("c1", launchPage, true)
+        val roster =
+            BackgroundTaskProjectionTest.rosterFrame(
+                listOf(
+                    """{"task_id":"task-a","tool_call_id":"a","task_type":"local_agent","description":"Roster description","truncated_fields":null}""",
+                ),
+            )
+        tasks.apply(roster)
+        thread.applyBackgroundTaskLifecycle(roster)
+
+        suspend fun display() = project(thread.observe("c1").first(), tasks.rosters.value["c1"])
+        val fallback = listOf("agent-start:a", "msg:a", "msg:child", "msg:later")
+        assertEquals(fallback, keys(display()))
+        val replacement =
+            BackgroundTaskProjectionTest.rosterFrame(
+                if (unrelated) listOf(BackgroundTaskProjectionTest.row("other")) else emptyList(),
+            )
+        tasks.apply(replacement)
+        thread.applyBackgroundTaskLifecycle(replacement)
+        assertEquals(fallback, keys(display()))
+        assertTrue(display().filterIsInstance<ThreadRow.AgentStartMarker>().single().finished)
+        assertEquals(ToolCallStatus.Done, message(display(), "a").toolCall?.status)
+        assertEquals(
+            if (unrelated) listOf("other") else emptyList<String>(),
+            tasks.rosters.value["c1"]
+                ?.tasks
+                ?.map { it.taskId },
+        )
+        assertEquals(
+            if (startLoaded) 1 else 0,
+            thread
+                .observe("c1")
+                .first()
+                .filterIsInstance<ThreadItem.BackgroundTaskLifecycle>()
+                .size,
+        )
+
+        // Late start/replayed running roster cannot undo finished knowledge or create a finish position.
+        thread.mergeHistoryPage("c1", launchPage, true)
+        tasks.apply(roster)
+        thread.applyBackgroundTaskLifecycle(roster)
+        assertEquals(fallback, keys(display()))
+        val terminal = BackgroundTaskProjectionTest.terminal("task-a", "completed")
+        val later =
+            BackgroundTaskProjectionTest.envelope(
+                "message",
+                """{"conversation_id":"c1","message_id":"later","role":"user","text":"later"}""",
+            )
+        val terminalPage =
+            HistoryPage(
+                listOf(HistoryEntry(10, terminal.type, terminal.payload, ts), HistoryEntry(9, later.type, later.payload, ts)),
+                "",
+                true,
+            )
+        thread.mergeHistoryPage("c1", terminalPage, true)
+        val settled = listOf("agent-start:a", "msg:later", "msg:a", "msg:child")
+        assertEquals(settled, keys(display()))
+        tasks.apply(replacement)
+        thread.applyBackgroundTaskLifecycle(replacement)
+        thread.mergeHistoryPage("c1", terminalPage, true)
+        assertEquals(settled, keys(display()))
+        assertEquals(settled, keys(project(thread.observe("c1").first()))) // Reload needs history alone.
     }
 
     @Test fun foregroundOrUnknownAgentLaunchDoesNotMoveEvenWhenItReportsALocalAgentTask() {

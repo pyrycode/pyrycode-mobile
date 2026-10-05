@@ -173,6 +173,31 @@ class BackgroundTaskProjectionTest {
     }
 
     @Test
+    fun retainedFinishedEvidenceEnrichesUnknownJoinWithoutChangingReplacementPanel() {
+        finished.mark("c1", "t1")
+        projection.apply(rosterFrame(listOf(row("t1"))))
+        val known = checkNotNull(roster()).settledTasks.single()
+        assertTrue(known.isFinished)
+        assertNull(known.toolCallId)
+        assertNull(known.finish)
+        projection.apply(rosterFrame(emptyList()))
+        assertTrue(checkNotNull(roster()).tasks.isEmpty())
+        assertEquals(listOf(known), roster()?.settledTasks)
+        assertEquals(0, roster()?.liveCount)
+
+        projection.apply(terminal("t1", "completed"))
+        val joined = row("t1").replace("\"task_type\"", "\"tool_call_id\":\"a\",\"task_type\"")
+        projection.apply(rosterFrame(listOf(joined)))
+        assertEquals("a", checkNotNull(roster()).settledTasks.single().toolCallId)
+        projection.apply(rosterFrame(listOf(row("t2")), droppedTasks = 2))
+        assertEquals(listOf("t2"), roster()?.tasks?.map { it.taskId })
+        assertEquals(3, roster()?.liveCount)
+        assertEquals(listOf("t1"), roster()?.settledTasks?.map { it.taskId })
+        projection.apply(rosterFrame(emptyList(), conversationId = "c2"))
+        assertTrue(checkNotNull(roster("c2")).settledTasks.isEmpty())
+    }
+
+    @Test
     fun roster_replacesTheSetAndDroppedTasks_andDropsOmittedTasksUnfinished() {
         projection.apply(started("t1"))
         projection.apply(rosterFrame(rows = listOf(row("t2")), droppedTasks = 4))

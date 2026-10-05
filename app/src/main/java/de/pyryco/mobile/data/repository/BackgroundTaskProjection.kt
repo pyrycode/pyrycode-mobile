@@ -277,7 +277,14 @@ internal class BackgroundTaskProjection(
         conversationId: String,
         roster: BackgroundTaskRoster,
     ) {
-        mutableRosters.update { it + (conversationId to roster) }
+        mutableRosters.update { current ->
+            val settled = current[conversationId]?.settledTasks.orEmpty().associateByTo(linkedMapOf()) { it.taskId }
+            roster.tasks.filter { it.isFinished }.forEach { task ->
+                val held = settled[task.taskId]
+                settled[task.taskId] = held?.copy(toolCallId = held.toolCallId ?: task.toolCallId) ?: task
+            }
+            current + (conversationId to roster.copy(settledTasks = settled.values.toList()))
+        }
     }
 
     private fun BackgroundTask.slots(): Slots = Slots(latestUpdate, finish, progress)

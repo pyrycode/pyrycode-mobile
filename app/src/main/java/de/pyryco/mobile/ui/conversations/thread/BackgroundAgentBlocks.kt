@@ -14,6 +14,16 @@ internal fun foldBackgroundAgentBlocks(
     roster?.tasks?.forEach { task ->
         evidence.putIfAbsent(task.taskId, AgentEvidence(task.toolCallId, task.taskType, task.description, task.isFinished))
     }
+    roster?.settledTasks?.forEach { task ->
+        val held = evidence[task.taskId] ?: AgentEvidence()
+        evidence[task.taskId] =
+            held.copy(
+                toolId = held.toolId ?: task.toolCallId,
+                type = held.type ?: task.taskType,
+                description = held.description ?: task.description,
+                finished = true,
+            )
+    }
     var visiblePosition = 0
     items.forEachIndexed { index, item ->
         if (item is ThreadItem.BackgroundTaskLifecycle) {
