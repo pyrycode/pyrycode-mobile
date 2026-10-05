@@ -17,8 +17,6 @@ import androidx.compose.foundation.text.input.InputTransformation
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -37,7 +35,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
@@ -236,10 +233,10 @@ fun ThreadInputBar(
                     ),
             ) {
                 Icon(
-                    // Figma defines the Send path. Its component has no Stop variant, so the
-                    // existing filled-circle Stop icon retains that action's distinct meaning.
+                    // Figma Message input button: Send 113:3543 and Action=Stop 114:3549.
+                    // Both use a full 28dp circle centered in the container-less 48dp button.
                     painter =
-                        if (stopping) rememberVectorPainter(Icons.Filled.StopCircle) else painterResource(R.drawable.ic_composer_send),
+                        painterResource(if (stopping) R.drawable.ic_composer_stop else R.drawable.ic_composer_send),
                     // The two descriptions both suites pin: "Send message" is the e2e thread-arrival
                     // marker, "Stop the running turn" is what ScriptedThreadRenderTest drives.
                     contentDescription =
