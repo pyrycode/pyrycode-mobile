@@ -2098,6 +2098,66 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /** #1775: host-wide prompt storage through the real Edit host controls; zero Claude turns. */
+    @Test
+    fun interactiveTurn_hostSystemPrompt_editsResetsAndCancels() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        awaitChannelList()
+        awaitConnected()
+
+        fun fresh() = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).requestHostSystemPrompt().getOrThrow() } }
+        val original = fresh().systemPrompt
+        val custom = "Host prompt e2e1775 " + System.currentTimeMillis() + "\nPreserve this second line."
+
+        fun openPrompt() {
+            composeTestRule.onNode(hasText(context.getString(R.string.host_prompt_title)) and hasClickAction()).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasTestTag(de.pyryco.mobile.ui.host.HOST_PROMPT_FIELD_TAG)).fetchSemanticsNodes().size == 1
+            }
+        }
+
+        fun ok() = composeTestRule.onNode(hasText(EDIT_HOST_OK) and hasClickAction()).performClick()
+
+        fun cancel() = composeTestRule.onNode(hasText(modalCancel) and hasClickAction()).performClick()
+        try {
+            openHostEditor(serverId)
+            openPrompt()
+            composeTestRule.onNodeWithTag(de.pyryco.mobile.ui.host.HOST_PROMPT_FIELD_TAG).performTextReplacement(custom)
+            ok()
+            awaitEditorTitle(context)
+            assertTrue("custom host prompt was not durably stored", fresh().systemPrompt == custom)
+            cancel()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { editorClosed(context) }
+            openHostEditor(serverId)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule
+                    .onAllNodes(
+                        hasTestTag(de.pyryco.mobile.ui.host.HOST_PROMPT_PREVIEW_TAG) and hasText(custom),
+                        useUnmergedTree = true,
+                    ).fetchSemanticsNodes()
+                    .size ==
+                    1
+            }
+            openPrompt()
+            composeTestRule.onNodeWithText(context.getString(R.string.host_prompt_reset)).performClick()
+            cancel()
+            awaitEditorTitle(context)
+            assertTrue("reset then Cancel changed host storage", fresh().systemPrompt == custom)
+            openPrompt()
+            composeTestRule.onNodeWithText(context.getString(R.string.host_prompt_reset)).performClick()
+            ok()
+            awaitEditorTitle(context)
+            val reset = fresh()
+            assertTrue("reset then OK did not store the daemon default", reset.systemPrompt == reset.defaultSystemPrompt)
+            cancel()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { editorClosed(context) }
+        } finally {
+            // Restore the isolated harness host even after an assertion fails. Never print its text.
+            runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).setHostSystemPrompt(original).getOrThrow() } }
+        }
+    }
+
     /**
      * The live registry returns each paired host's own complete diagnostic archive (#1252, rung 3). A's
      * daemon alone logs a newly muted discussion id; B's archive must not contain it even while B is selected.
