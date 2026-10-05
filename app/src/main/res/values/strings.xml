@@ -516,4 +516,5 @@
     <string name="thread_attention_waiting">%1$s needs your answer</string>
     <string name="thread_attention_waiting_count">%1$d conversations need you</string>
     <string name="thread_attention_finished">%1$s finished</string>
+    <string name="cd_thread_queued_send_now">Send now</string>
 </resources>

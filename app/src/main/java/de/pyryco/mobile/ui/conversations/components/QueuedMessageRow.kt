@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Icon
@@ -64,15 +65,15 @@ private const val QUEUED_ALPHA = 0.6f
  * cannot leak it into a render, a key or a log. The drop is a one-way trigger: this render mutates
  * nothing and the row leaves only on the next `queue_state` snapshot (no optimistic removal).
  *
- * The design-owed Figma frame (16-8) draws no backlog treatment, so the visual follows the app's
- * existing message-row idiom, exactly as [ThinkingIndicator] / [StallPromotionBanner] shipped their
- * Material 3 defaults. When the frame arrives, retune here — no contract change.
+ * Figma queued-row frame `696:4677` supplies the dimmed bubble, waiting glyph and drop. #1642
+ * extends it with Send now before drop; no separate action frame exists.
  */
 @Composable
 fun QueuedMessageRow(
     text: String,
     onDrop: () -> Unit,
     modifier: Modifier = Modifier,
+    onSendNow: (() -> Unit)? = null,
 ) {
     // The row announces its own text plus the waiting state. `stateDescription` rather than a
     // `contentDescription` that would replace the text: the row now sits among delivered rows, so what
@@ -103,6 +104,7 @@ fun QueuedMessageRow(
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Surface(
+            modifier = Modifier.weight(1f, fill = false),
             shape = BubbleShape,
             color = MaterialTheme.colorScheme.userBubbleContainer,
         ) {
@@ -117,10 +119,19 @@ fun QueuedMessageRow(
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
         }
+        if (onSendNow != null) {
+            IconButton(onClick = onSendNow, modifier = Modifier.size(48.dp)) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Outlined.Send,
+                    contentDescription = stringResource(R.string.cd_thread_queued_send_now),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         // Trailing un-queue affordance. The clickable IconButton forms its own semantics node, so it
         // stays individually addressable despite the row's mergeDescendants group. `Close` (×) is the
         // Material "remove from a list" convention — a queued message is un-queued, not deleted.
-        IconButton(onClick = onDrop) {
+        IconButton(onClick = onDrop, modifier = Modifier.size(48.dp)) {
             Icon(
                 imageVector = Icons.Outlined.Close,
                 contentDescription = stringResource(R.string.cd_thread_queued_drop),
@@ -133,7 +144,7 @@ fun QueuedMessageRow(
 @Composable
 private fun QueuedMessageRowPreviewSequence() {
     Column {
-        QueuedMessageRow(text = "Can you also update the migration tests once you're done?", onDrop = {})
+        QueuedMessageRow(text = "Can you also update the migration tests once you're done?", onDrop = {}, onSendNow = {})
         QueuedMessageRow(text = "And double-check the rollback path.", onDrop = {})
         QueuedMessageRow(text = "Then push a draft PR.", onDrop = {})
     }

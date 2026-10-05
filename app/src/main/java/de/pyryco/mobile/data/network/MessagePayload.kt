@@ -40,6 +40,8 @@ data class MessagePayloadDto(
     val role: WireRole,
     val text: String,
     @SerialName("attachment_ids") val attachmentIds: List<String>? = null,
+    /** True only for delivery through Send now; ordinary delivery omits it. */
+    @SerialName("sent_now") val sentNow: Boolean = false,
 )
 
 /**

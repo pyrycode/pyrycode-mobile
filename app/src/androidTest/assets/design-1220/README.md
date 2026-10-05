@@ -63,6 +63,16 @@ even though the audited frame draws every host connected (#1431).
 
 ## Approved additions without a separate frame
 
+[#1642](https://github.com/pyrycode/pyrycode-mobile/issues/1642) extends the existing
+[queued-row frame `696:4677`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=696-4677)
+with **Send now**, without a separate action frame. The queued-row frame exists and supplies
+the waiting glyph, dimmed user bubble and trailing drop; older claims that no queued-row
+frame exists are stale. The authorized extension places a low-emphasis Send icon immediately
+before drop, with an independent “Send now” label and 48 dp target. A weighted bubble keeps
+both controls reachable when text wraps. Visibility follows fresh current-session support;
+this decision does not declare app-wide parity.
+
+
 [#1631](https://github.com/pyrycode/pyrycode-mobile/issues/1631) records Juhana's
 2026-10-03 decision that the thread overflow's additional **Background tasks** row
 needs no separate Figma frame. Against

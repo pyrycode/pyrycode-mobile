@@ -166,6 +166,8 @@ data class SessionCapabilitiesDto(
     @SerialName("permission_modes") val permissionModes: List<String>,
     @SerialName("slash_commands") val slashCommands: Boolean = true,
     @SerialName("mcp_servers") val mcpServers: Boolean = true,
+    /** Raw token avoids the serializer accepting a quoted boolean; only literal true enables it. */
+    @SerialName("mid_turn_input") val midTurnInput: JsonElement? = null,
 )
 
 /**
@@ -199,7 +201,16 @@ fun JsonElement.toSessionSettings(): SessionSettings {
         yolo = dto.yolo,
         usedTokens = dto.usedTokens,
         windowTokens = dto.windowTokens,
-        capabilities = dto.capabilities?.let { SessionCapabilities(it.effortLevels, it.permissionModes, it.slashCommands, it.mcpServers) },
+        capabilities =
+            dto.capabilities?.let {
+                SessionCapabilities(
+                    it.effortLevels,
+                    it.permissionModes,
+                    it.slashCommands,
+                    it.mcpServers,
+                    it.midTurnInput == JsonPrimitive(true),
+                )
+            },
         memorySearch = dto.memorySearch.readMemorySearch(),
     )
 }
