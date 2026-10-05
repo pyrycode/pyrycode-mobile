@@ -23,11 +23,10 @@ receives only the selected stalled/thinking/working/running-tool reading.
 `agent` reaches the area and its reading from `ThreadScreen`'s own `state.agent` (see [Thinking indicator § The agent
 name](thinking-indicator.md#the-agent-name-1114)); `resetting`'s branch is the only one of the arms that
 picked up `agent` after #1114 shipped, closed by #1112 — see [Resetting indicator § The agent
-name](resetting-indicator.md#the-agent-name-1112). Since [#1357](turn-outcome-indicator.md) the turn-outcome arm
-shows only client-owned recovery copy — no daemon text crosses into it at all — and carries the `onCompact`
-callback the context notice's Compact pill uses. See [Thread screen § The arm
-order](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311) for `statusArm`'s
-precedence and the local-send window that feeds `localSendStage`.
+name](resetting-indicator.md#the-agent-name-1112). Since #1603, recovery advice and its published-menu-gated `onCompact`
+callback go to [ThreadTopOverlay](thread-top-overlay.md), separately from status.
+The combined Error pill takes no message space and uses the unchanged ViewModel clearing
+lifecycle; Actions → Reset session and the persistent stopped-turn row remain available.
 
 **[#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043) added the task-count pill at the band's
 right end, and split the `when` out into `StatusReading` to make room for it.** Above zero,
@@ -103,12 +102,14 @@ The `bottomBar` column's third band was `ThreadStatusRow(model = …, effort = �
 
 - **Moved, not rewritten.** The three original arms, their flags and their precedence (api-retry first, then compaction, then thinking — see [API-retry indicator](api-retry-indicator.md#placement-in-the-thread)) are byte-identical to the pre-#643 `when`; only the mount point and the horizontal inset changed at #643. `ThinkingIndicator.kt`, `ApiRetryIndicator.kt` and `CompactingIndicator.kt` were not touched by that move.
 - **[#803](thinking-indicator.md) adds a sixth flat sibling, `thinkingProgress: ThinkingProgress?`, and no new arm.** It decorates the thinking arm's own `else` branch, so it rides the precedence above rather than adding to it — retry and compaction still pre-empt a live reading for free. Visibility stays `isThinking`'s alone; see [Thinking indicator § What it does](thinking-indicator.md#what-it-does).
-- **[#805](https://github.com/pyrycode/pyrycode-mobile/issues/805) adds a flat sibling, `turnOutcome: TurnOutcomeReport?`, and one new `when` arm** — inserted between compaction and thinking, the bottom of the ladder at the time. Compaction is mid-turn progress and a turn outcome is necessarily post-turn, so the two co-occurring has not been observed. The arm is raised by a `turnOutcomeReport(event)` classification held in `ThreadViewModel.turnOutcome`, and it clears itself the moment the next turn's `thinking`/`responding` phase arrives — never on `idle`, which may arrive on either side of the `turn_end` it accompanies. See [Turn-outcome indicator](turn-outcome-indicator.md#placement-in-the-thread) for the full component.
+- **Recovery placement (#1603).** The former #805/#1357 outcome arm is removed from
+  `ThreadStatusArea` and `statusArm`; recovery now lives in the top overlay and does not
+  hide connection or active-turn readings. See [Turn-outcome indicator](turn-outcome-indicator.md).
 - **#872 adds a flat sibling, `resetting: ResetStatus?`, and one new `when` arm** — inserted directly above compaction (Reset session's phase belongs below the "something may be wrong" signal(s) above it and above compaction's benign progress). See [Resetting indicator](resetting-indicator.md#placement-in-the-thread) for the full component.
 - **[#897](thinking-indicator.md#the-running-tool-897) adds a flat sibling, `runningTool: ToolCall?`, and no new arm.** Like `thinkingProgress`, it decorates the thinking arm's own `else` branch, so every arm above still pre-empts it for free. It is also the one sibling here that is not sourced from a `ThreadViewModel` flow: `ThreadScreen` derives it locally as `if (isBusy) openToolCall(state.items) else null`, `openToolCall` being a pure top-level function beside the screen (`internal fun openToolCall(items: List<ThreadItem>): ToolCall?` — the latest `Running`-status tool row, or `null`). See [Thinking indicator § The running tool](thinking-indicator.md#the-running-tool-897) for the selector and label detail.
-- **[#804](https://github.com/pyrycode/pyrycode-mobile/issues/804) had added a flat sibling, `usageLimit: UsageLimitReading?`, and one `when` arm between api-retry and resetting; [#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) removed both.** See the callout above the code block for the full account. The ladder is now turn status only: `api-retry → resetting → compaction → turn outcome → thinking/running tool`.
+- **[#804](https://github.com/pyrycode/pyrycode-mobile/issues/804) had added a flat sibling, `usageLimit: UsageLimitReading?`, and one `when` arm between api-retry and resetting; [#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002) removed both.** See the callout above the code block for the full account. The ladder is now turn status only: `connection → resetting → api-retry → compaction → stall → running tool/thinking/working → Sending/Waiting`.
 - **`ComposerStatusGutter = 20dp − 16dp = 4dp`.** The three indicator files each already carry their own 16dp horizontal padding (sized for their old full-bleed foot-of-list mount), so reaching the design's 20dp content gutter needs only the 4dp remainder here, not the full 20dp — passing the full gutter would double the inset and land the indicators' content at 36dp, a fidelity miss that reads as a design error rather than a padding sum.
-- **The band collapses when nothing is live.** Every arm still early-returns when its flag is false, so an idle status area emits no node and the composer column's `Arrangement.spacedBy(8.dp)` gap simply doesn't open above the input field.
+- **Idle band.** Connected idle retains the snowflake with no reading; recovery text appears only in the top overlay.
 - **Composer padding (#1646).** `ComposerTopGap` is 16dp, owned by the full-width composer along with 20dp sides and 16dp bottom. The list draws underneath it; measured reservations leave an ordinary message surface 12dp above the status band at the newest end. Other rows retain their internal gaps (owned by #1630).
 - No longer gated on `hasMessages` in any special way — moving out of the content `Column` entirely means the empty-thread and populated cases share the same composer, so the old "outside the branch" reasoning is moot.
 

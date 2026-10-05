@@ -211,7 +211,7 @@ class RunningToolIndicatorTest {
     }
 
     @Test
-    fun compactionAndTurnOutcome_stillTakePrecedence() {
+    fun compactionTakesPrecedence_outcomeLeavesRunningToolVisible() {
         state = stateOf(toolRow("t1", "Bash", ToolCallStatus.Running))
         isCompacting = true
         setThreadScreen()
@@ -222,6 +222,7 @@ class RunningToolIndicatorTest {
         isCompacting = false
         turnOutcome = TurnRecoveryNotice.ContextTooLong
 
-        composeTestRule.onNodeWithText("Running Bash…").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Running Bash…").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Context too long - Compact").assertIsDisplayed()
     }
 }

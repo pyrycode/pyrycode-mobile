@@ -1,10 +1,12 @@
 package de.pyryco.mobile.e2e
 
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasSetTextAction
@@ -18,6 +20,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -160,9 +163,6 @@ class DeterministicInteractiveStreamE2ETest {
 
     private val contextNotice: String =
         InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_recovery_context)
-
-    private val compactPill: String =
-        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_recovery_compact)
 
     private val runningToolElapsedLabel: String =
         InstrumentationRegistry
@@ -309,7 +309,7 @@ class DeterministicInteractiveStreamE2ETest {
 
     /**
      * `context-overflow` scenario (#1473) — the fixture's `result` is `is_error` with `terminal_reason`
-     * `prompt_too_long`, so the status area shows the context notice and Compact. The tap sends `/compact`, which
+     * `prompt_too_long`, so the top overlay shows the combined context/Compact pill. The tap sends `/compact`, which
      * the daemon hands its child as an ordinary message, and fakeclaude answers any later turn by echoing the
      * prompt. The phone's sent row and that echo both read exactly `/compact`, with no role tag between them,
      * so the second such node is the daemon's answer. The send clears the notice.
@@ -319,17 +319,18 @@ class DeterministicInteractiveStreamE2ETest {
         arriveInSeededThread()
         typeAndSend(SEND_PROMPT)
 
-        val compact = hasContentDescription(compactPill) and hasClickAction()
+        val compact = hasContentDescription(contextNotice) and hasClickAction()
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(contextNotice)).fetchSemanticsNodes().isNotEmpty() &&
-                composeTestRule.onAllNodes(compact).fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodes(compact).fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onAllNodesWithText(COMPACT_COMMAND).assertCountEquals(0)
         composeTestRule
             .onAllNodes(compact)
             .onFirst()
             .assertIsDisplayed()
-            .performClick()
+            .performTouchInput {
+                click(centerLeft + Offset(2f, 0f))
+            }
 
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(COMPACT_COMMAND).fetchSemanticsNodes().size >= 2

@@ -1,0 +1,71 @@
+Merge rework #1760, 2026-10-05
+Merge commit: 9d463007. Main additions preserved except the temporary #1760 Ignore inside the conflict.
+Compatibility/documentation commit tested: a99a699a. No test suppression was introduced.
+
+./gradlew testDebugUnitTest --tests 'de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest' --tests 'de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNoticeTest' --tests 'de.pyryco.mobile.ui.conversations.components.NoticePillTest' assembleDebug --console=plain
+Exit 0. 26 executed/passed, 0 failed/errors/skipped (14 overlay, 10 attention, 2 NoticePill).
+Named usage/Re-pair method passed, without an Ignore. XML: merge-jvm/.
+
+./gradlew spotlessApply lint --console=plain
+Exit 0. Formatting and Android Lint passed.
+
+./gradlew testDebugUnitTest assembleDebug --console=plain
+Exit 0. 4309 executed/passed, 0 failed/errors/skipped. APK build passed.
+XML: merge-final-jvm-summary.xml and merge-final-jvm-overlay.xml.
+Named usage/Re-pair method passed, without an Ignore.
+
+python3 scripts/pre-verify.py --gradle --body-file /tmp/builder-1760/pr.md
+Exit 0. Main merged; forced Spotless rerun and all Kotlin source-set compilation passed.
+
+./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest' -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain
+Executed under the existing scripts/android-test-gate.py device_hold context to serialize the managed device.
+Exit 0. Managed Android 13: 14 executed/passed, 0 failed/errors/skipped.
+Named theUsagePill_sitsAboveThePairingPill_whichStartsRePair passed without an Ignore, time 1.877s.
+XML: merge-native-class-green.xml, timestamp 2026-10-05T18:04:20.
+
+ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted send-now
+Exit 0. 1 executed/passed, 0 failed/errors/skipped.
+Named interactiveTurn_seededChannel_sendQueuedNow_placesAfterToolResult passed.
+XML: merge-send-now-managed.xml. Original: build/dispatcher-tests/scripted-zai4z79u/dispatcher.xml.
+Daemon revision a438db4b9146620b74b0f2a305c3e23a2d144d6a, matching verifier evidence.
+An initial attempt exited 75 while waiting for the shared device: zero tests executed; it is not a pass.
+
+ANDROID_GATE_WAIT_SECONDS=2700 python3 /tmp/builder-1760/send-now-installed.py
+Exit 0. 1 executed/passed, 0 failed/errors/skipped through the installed-APK/connected path.
+Named interactiveTurn_seededChannel_sendQueuedNow_placesAfterToolResult passed.
+XML: merge-send-now-installed.xml and merge-send-now-installed-raw.xml.
+Original: build/dispatcher-tests/scripted-all-ty1_zmkm/.
+The helper imports the existing gate and selects only send-now in its sweep; no harness/fixture/repository behavior was changed.
+This focused pass does not claim that the dispatcher-owned full scripted sweep passed.
+
+Focused installed-APK helper:
+"""Run only send-now through the dispatcher's installed-APK sweep path."""
+import importlib.util
+import sys
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location('android_gate', Path.cwd() / 'scripts/android-test-gate.py')
+gate = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gate)
+gate.SCENARIOS = ('send-now',)
+sys.argv = ['android-test-gate.py', 'scripted-all']
+raise SystemExit(gate.main())
+
+Serialized native helper:
+import importlib.util
+import subprocess
+from pathlib import Path
+
+root = Path.cwd()
+spec = importlib.util.spec_from_file_location('android_gate', root / 'scripts/android-test-gate.py')
+gate = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gate)
+command = [
+    './gradlew', ':app:pixel2Api33AtdDebugAndroidTest', '--rerun',
+    '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest',
+    '-Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e', '--console=plain',
+]
+print('Command:', ' '.join(command), flush=True)
+with gate.device_hold('touch-1760', 2700):
+    result = subprocess.run(command)
+raise SystemExit(result.returncode)
