@@ -1,1 +1,2 @@
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hello"}]},"isReplay":true}
 {"type":"assistant","message":{"id":"replay-order-think","content":[{"type":"thinking","thinking":"pondering"}]}}

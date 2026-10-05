@@ -28,10 +28,12 @@ import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
+import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.grantNotificationPermission
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
@@ -720,7 +722,7 @@ class DeterministicInteractiveStreamE2ETest {
      *
      * It forks the `reconnect` two-drop fence, but the sever and restore **straddle** the event
      * production — using the split [severLink] / [restoreLink] halves of #476's atomic
-     * [severAndRestoreLink] primitive. Drop A (`replay-order-open.jsonl`, a `thinking`-only line) holds
+     * [severAndRestoreLink] primitive. Drop A (`replay-order-open.jsonl`, user echo then thinking) holds
      * the turn open on the 1st `send_message.enqueued`; the test then **severs** the link, the host drops
      * drop B (`replay-order.jsonl`, three ordered `assistant_delta` lines + `end_turn`) fenced on the
      * relay logging the phone-leg disconnect — so the whole sequence accrues in the daemon's in-ring
@@ -780,6 +782,41 @@ class DeterministicInteractiveStreamE2ETest {
         // In order: the cross-delta-boundary concatenation is present (a reordering breaks the substring).
         // Exactly once: it renders in a single node — no segment lost, no row duplicated.
         composeTestRule.onAllNodesWithText(ORDERED_REPLY_SUBSTRING, substring = true).assertCountEquals(1)
+
+        // Prove exact text and per-delta identity too: a duplicated sequence within one row must fail.
+        val rows =
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    val repository =
+                        requireNotNull(
+                            GlobalContext
+                                .get()
+                                .get<RelayRepositoryCoordinator>()
+                                .currentRepository.value,
+                        )
+                    val conversationId =
+                        repository
+                            .observeConversations(ConversationFilter.All)
+                            .first { conversations -> conversations.any { it.name == SEED_CHANNEL_NAME } }
+                            .single { it.name == SEED_CHANNEL_NAME }
+                            .id
+                    repository.observeMessages(conversationId).first { items ->
+                        items.filterIsInstance<ThreadItem.MessageItem>().any {
+                            it.message.role == Role.Assistant && !it.message.isStreaming && ORDERED_REPLY_SUBSTRING in it.message.content
+                        }
+                    }
+                }
+            }.filterIsInstance<ThreadItem.MessageItem>()
+        val reply = rows.single { it.message.role == Role.Assistant }
+        assertEquals(ORDERED_REPLY_SUBSTRING, reply.message.content)
+        assertEquals(
+            listOf(0, 1, 2),
+            reply.message.segment
+                ?.deltas
+                ?.map { it.seq },
+        )
+        val user = rows.single { it.message.role == Role.User && it.message.content == SEND_PROMPT }
+        assertTrue("initial user must precede the complete ordered reply", rows.indexOf(user) < rows.indexOf(reply))
     }
 
     /**
