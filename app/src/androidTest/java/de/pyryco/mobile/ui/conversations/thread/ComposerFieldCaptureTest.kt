@@ -29,8 +29,9 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.time.LocalDate
 
-/** Actual dark-theme device pixels for Figma Input area 533:1957 and Send 113:3543. */
+/** Actual dark-theme device pixels for Figma Input area 533:1957, Send 113:3543 and Stop 114:3549. */
 @RunWith(AndroidJUnit4::class)
 class ComposerFieldCaptureTest {
     private var draft by mutableStateOf("")
@@ -109,7 +110,8 @@ class ComposerFieldCaptureTest {
         File(output, name).outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         File(output, "$name.txt").writeText(
             "api=${Build.VERSION.SDK_INT} sizeDp=${width}x$height density=1.0 fontScale=${if (width == 280) 1.6 else 1.0} " +
-                "staticDark=true capture=decorView.draw design=533:1957,347:6446,113:3543 date=2026-09-29\n",
+                "staticDark=true dynamicColor=false connection=Connected busy=true draftEmpty=${draft.isEmpty()} " +
+                "capture=decorView.draw design=533:1957,347:6446,113:3543,114:3549 date=${LocalDate.now()}\n",
         )
         bitmap.recycle()
     }

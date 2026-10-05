@@ -604,7 +604,7 @@ class ThreadViewModel(
     private val threadItems: Flow<List<ThreadItem>> =
         merge(
             repository.observeMessages(conversationId).map(ThreadInput::Finished),
-            liveSessionEvents.map(ThreadInput::Live),
+            liveSessionEvents.map { ThreadInput.Live(it) },
         ).scan(ThreadFold(emptyList(), null)) { fold, input -> fold.reduce(input, conversationId) }
             .map { it.render() }
             .distinctUntilChanged()
@@ -2415,6 +2415,7 @@ class ThreadViewModel(
         sendSessionSettings(
             config.sessionId,
             model = offer.originalModel,
+            reportFailure = false,
             onAcked = {
                 RelayLog.d { "event=refusal_switch_back outcome=acked" }
                 refusalOffer.update { if (it?.occurredAt == offer.occurredAt) null else it }
@@ -2595,7 +2596,8 @@ class ThreadViewModel(
     /**
      * The shared outbound path for the model and effort controls (#544): send only the changed field(s)
      * to [ThreadUiState.currentSessionId] and, on failure, run [revert] to restore the control and surface a
-     * one-shot [sessionSettingsErrors] signal. The catch triad clones [sendChangeWorkspace] (set_session_settings
+     * one-shot [sessionSettingsErrors] signal when [reportFailure] is true. Switch-back reports inline
+     * through its revert callback instead. The catch triad clones [sendChangeWorkspace] (set_session_settings
      * is request/reply, so a server `error` reply is reachable) with the two failure catches gaining the
      * [revert] call:
      *
@@ -2618,6 +2620,7 @@ class ThreadViewModel(
         model: String? = null,
         effort: String? = null,
         onAcked: () -> Unit = {},
+        reportFailure: Boolean = true,
         revert: () -> Unit,
     ): Job =
         viewModelScope.launch {
@@ -2636,10 +2639,10 @@ class ThreadViewModel(
                 throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
             } catch (e: RelayErrorException) {
                 revert()
-                sessionSettingsErrorChannel.trySend(Unit)
+                if (reportFailure) sessionSettingsErrorChannel.trySend(Unit)
             } catch (e: IllegalStateException) {
                 revert()
-                sessionSettingsErrorChannel.trySend(Unit)
+                if (reportFailure) sessionSettingsErrorChannel.trySend(Unit)
             }
         }
 

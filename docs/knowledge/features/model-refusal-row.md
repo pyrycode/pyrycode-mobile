@@ -246,7 +246,13 @@ while claude is actually running the fallback — the guard would silently drop 
 exists to send. `onSwitchBack` is dropped while disconnected, without an offer, while any model write
 (either control's) is pending, or without a session to address; while pending the button is disabled and
 drawn at 38% opacity (Figma 646-4694); a refused or failed write re-enables it with the retry line "Could
-not change the model — try again." (Figma 646-4700) until the next tap.
+not change the model — try again." (Figma 646-4700) until the next tap. Only switch-back passes
+`reportFailure = false` to the shared write helper: both
+`RelayErrorException` and `IllegalStateException` still run the offer's identity-checked revert, but emit
+no `sessionSettingsErrors` signal. The inline retry line appears immediately without a duplicate
+run-configuration snackbar covering it. Retry clears `failed` before entering pending. Ordinary model
+and effort edits keep the default shared feedback. `CancellationException` is rethrown before either
+failure catch, so teardown neither marks the offer failed nor signals an error (#1615).
 
 **The remembered-model side effect.** `sendSessionSettings`'s ack path is shared by every caller and always
 calls `rememberModel(model)` (wired to `AppPreferences.setRememberedModel`), regardless of which control
@@ -269,6 +275,24 @@ original model reads as the thread menu's label for it, in the button's own text
 monospace span, the same anti-spoofing split the row's title and banner use (§ Security above) — a tap target
 is a second place an identifier could otherwise masquerade as client copy, and the label case keeps that
 split by giving the label its own `withStyle` call even though the style matches the button's copy.
+
+The normal collapsed offer's outline starts at row-relative y=56 and is 32 dp tall, with 12 clear
+pixels below visible Show details at density 1/default font scale (#1615). Foundation `clickable`
+expands input to 48 dp without reserving Material touch-target layout space. The details block's bottom
+padding stays outside its click boundary so taps in either button extension route to switch-back;
+pending disables both extensions. Offered title/details and the failed line use centred, untrimmed
+line boxes: default first/last-line trimming shortened the title/details from 20/16 dp to 18/14 dp and
+moved the outline to y=52. Offer-free rows keep their existing text layout.
+
+Treat 32 dp as the outline's **minimum**, with 8 dp vertical label padding. A fixed height matched the
+short Figma label while clipping a valid 128-character unknown destination. Wrapped identifiers and
+larger fonts must grow the outline and put the retry line below every label line; keep `appendModel`'s
+inert separate spans. Visible bounds, expanded input bounds and text containment need separate
+assertions: semantics can expose the whole label even when only its first lines paint. Pin wrapping
+fixtures to 412 dp inside their density provider and use native-font `TextLayoutResult` overflow and
+last-line/outline containment alongside physical pointer taps. See the
+[armed/pending/failed capture verdicts](../../../app/src/androidTest/assets/design-1220/thread/index.md#refusal-switch-back--6464707)
+for real-bar pixels and the immediate inline-only failure capture.
 
 **No rung-3 scenario; the rung-4 scripted `refusal` scenario is the end-to-end proof** — real claude cannot
 be made to refuse on demand. See [the scripted-scenario entry](../../e2e-interactive-stream.md#scenarios-454)
@@ -374,6 +398,19 @@ repeats it for one frame type.
   its refusal row stays monospace by design, not a defect — see the design index entries below. The scripted
   `refusal` scenario's Switch back button text follows whatever label fakeclaude's canned menu gives the
   model it names (`DeterministicInteractiveStreamE2ETest`, [e2e doc](../../e2e-interactive-stream.md#scenarios-454)).
+
+- **#1615 (geometry, overflow and inline-only failure):** retained final rework XML records 50 JVM,
+  20 device and 1 deterministic refusal executions, all passed with 0 failures/errors/skips.
+  `ThreadViewModelRefusalOfferTest.aRefusedOrFailedWrite_keepsTheOfferMarkedFailed_untilTheNextTap`
+  observes both typed failure classes and retry clearing;
+  `ordinaryModelAndEffortFailures_stillEmitSharedFeedback` and
+  `cancelledSwitchBack_doesNotRevertOrReportFailure` preserve the other write-path contracts.
+  `ModelRefusalSwitchBackTest` independently checks 32 dp visible geometry, 48 dp touch bounds, upper/lower
+  extension routing and disabled pending input. Its `longUnknownModel_paintsEveryLineInsideTheOutline`
+  and `enlargedModelText_paintsEveryLineInsideTheOutline` executed on both native-font JVM and real device.
+  `ThreadDesignCaptureTest.refusalStateFramesAt412By892` and `.threadNoticeFramesAt412By892` both passed
+  in the full API 35 focused selection with `requireRealSystemBars=true`; the failure assertion happens
+  before timer advancement or snackbar dismissal. See the linked capture index for XML and provenance.
 
 ## Related
 

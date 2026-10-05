@@ -4,6 +4,29 @@ Split out of [Thread screen](thread-screen.md) on 2026-09-05 to keep that docume
 
 ## Testing
 
+`ThreadStreamingRevealTest` pauses the Compose clock through the real
+`ThreadScreen`: pre-open text is immediate, appended text retains its prefix and
+reveals progressively, and reopening before catch-up shows all arrived text.
+First arrival goes through `ThreadFold` with both empty and historical projections;
+a same-key repository replacement must retain partial reveal. A directly built,
+correctly timestamped repository fixture misses the live-versus-projection race.
+Use enough words to remain partially revealed at the 160 ms checkpoint under
+\#1754's word cadence; shortening the checkpoint to 64 ms did not allow reliable
+first-arrival layout. Keep prefix, progress and incomplete-text assertions together.
+
+`ThreadFoldArrivalTest` pins the first delta's phone-clock timestamp with and
+without history, retention across append, backfill, duplicate and turn end, and
+a fresh timestamp for a new turn. The resting-finger arrival case in
+`ThreadScreenFollowTest` uses a current timestamp for the newly arriving reply;
+a historical fixture would make it immediate and bypass the intended reveal
+while preserving misleading follow assertions.
+
+Reopen-specific real-Claude `InteractiveStreamE2ETest` observation and its
+held-stream `DeterministicInteractiveStreamE2ETest` twin remain pending in
+[#1762](https://github.com/pyrycode/pyrycode-mobile/issues/1762). Paused-clock
+regressions establish the timing contract locally; the existing live suite does
+not implement those focused scenarios.
+
 `OpenToolCallTest` covers the [main-thread status selector](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311):
 `aNewerSubagentCall_doesNotReplaceTheLatestMainThreadCall` checks that a newer background
 call replaces neither the latest main tool's name nor its elapsed reading;
