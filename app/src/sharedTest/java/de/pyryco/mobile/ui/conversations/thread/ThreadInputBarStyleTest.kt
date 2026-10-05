@@ -216,10 +216,18 @@ class ThreadInputBarStyleTest {
             assertPixel(24f, 7f, expectedWell)
             assertPixel(7f, 24f, expectedWell)
             assertPixel(24f, 24f, expectedWell)
-            // The square cutout has rounded corners, rather than Material StopCircle's sharp ones.
+            // The square cutout has rounded corners, rather than Material StopCircle's sharp ones: the cutout runs
+            // from 18.75 dp with a 1.75 dp corner radius, so the curve crosses the diagonal near 19.26 dp.
             val corner = pixel(19f, 19f)
             assertTrue("rounded corner retains circle coverage", corner.red > expectedWell.red + 0.05f)
-            assertTrue("rounded corner is antialiased", corner.red < expectedGlyph.red - 0.05f)
+            if (scale < 2f) {
+                // At density 1 the curve falls inside this one pixel, so it is part glyph, part well.
+                assertTrue("rounded corner is antialiased", corner.red < expectedGlyph.red - 0.05f)
+            } else {
+                // On the device a pixel is under half a dp, so just inside the curve is already the well,
+                // which a corner rounded wider than designed would still cover.
+                assertTrue("rounded corner is no wider than designed", pixel(19.6f, 19.6f).red < expectedGlyph.red - 0.05f)
+            }
             assertPixel(21f, 21f, expectedWell)
             bitmap.recycle()
         }
@@ -243,12 +251,14 @@ class ThreadInputBarStyleTest {
 
     private fun sampleSendCircle(send: SemanticsNodeInteraction): Color {
         val bounds = send.fetchSemanticsNode().boundsInRoot
+        // 11 dp down the 48 dp button, just inside the top of its 28 dp circle, at any density.
+        val scale = bounds.width / 48f
         return rule.runOnIdle {
             val root = checkNotNull(view)
             val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
             root.draw(Canvas(bitmap))
             val color =
-                Color(bitmap.getPixel(bounds.center.x.toInt(), (bounds.top + 11).toInt()))
+                Color(bitmap.getPixel(bounds.center.x.toInt(), (bounds.top + 11 * scale).toInt()))
             bitmap.recycle()
             color
         }

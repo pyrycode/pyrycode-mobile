@@ -4114,6 +4114,65 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /** #1735, rung 3: one permission-held real turn in B while A stays visible. */
+    @Test
+    fun interactiveTurn_otherConversationAttentionPills_waitingAndFinished() {
+        val (serverId, peer) = answerHostPeer()
+        try {
+            pairAnswerHost()
+            val (_, nameA) = answerChat(serverId, ATTENTION_CHAT_NAME_PREFIX + "pill-a-")
+            val (chatB, nameB) = answerChat(serverId, ATTENTION_CHAT_NAME_PREFIX + "pill-b-")
+            peerStep(peer, "open attention peer") { peer.open(CONNECT_TIMEOUT_MS) }
+            openChatRow(nameA)
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val waitingLabel = context.getString(R.string.thread_attention_waiting, nameB)
+            val finishedLabel = context.getString(R.string.thread_attention_finished, nameB)
+            peerStep(peer, "start held turn in B") { peer.sendMessage(chatB, ANSWER_PERMISSION_PROMPT, THREAD_TIMEOUT_MS) }
+            val modalId = peerStep(peer, "await B's held permission") { peer.awaitPermissionModal(chatB, REPLY_TIMEOUT_MS) }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasTestTag("thread_attention_pill") and hasText(waitingLabel)).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNodeWithText(waitingLabel).assertIsDisplayed().performTouchInput { click(center) }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasText(nameB)).fetchSemanticsNodes().isNotEmpty()
+            }
+            // Navigation must leave the same prompt outstanding; it is answered only through the peer below.
+            awaitPromptDialog()
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasTestTag("thread_attention_pill") and hasText(waitingLabel)).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNodeWithText(waitingLabel).assertIsDisplayed()
+            composeTestRule.onNodeWithText(nameA).assertIsDisplayed()
+            peerStep(peer, "allow B's held permission") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
+            peerStep(peer, "await B's prompt dismissal") { peer.awaitModalDismissed(modalId, THREAD_TIMEOUT_MS) }
+            // Start watching the short-lived pill before awaiting the peer's turn_end to avoid missing it.
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule
+                    .onAllNodes(
+                        hasTestTag("thread_attention_pill") and hasText(finishedLabel),
+                    ).fetchSemanticsNodes()
+                    .isNotEmpty()
+            }
+            composeTestRule.onNodeWithText(finishedLabel).assertIsDisplayed()
+            awaitTurnEnd(peer, chatB, 1, "B's attention-pill turn")
+            // The pill's five-second expiry runs on the rule's virtual clock, which waitUntil advances one frame per
+            // poll. In the full suite each poll is slow enough that five virtual seconds outlast a real ten-second
+            // wait (#1735; same cause as #1664), so advance the clock past the expiry instead.
+            composeTestRule.mainClock.advanceTimeBy(5_100)
+            composeTestRule.waitUntil(10_000) {
+                composeTestRule.onAllNodes(hasTestTag("thread_attention_pill")).fetchSemanticsNodes().isEmpty()
+            }
+            composeTestRule.onNodeWithText(finishedLabel).assertDoesNotExist()
+            leaveThread()
+            openChatRow(nameA)
+            composeTestRule.onNodeWithTag("thread_attention_pill").assertDoesNotExist()
+        } finally {
+            peer.close()
+            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
+        }
+    }
+
     /**
      * The composer footer's readings and a model change survive a cut-and-restore of the phone's link (#967).
      * The chat is prepared as #545's are: nothing remembered and no saved model.
