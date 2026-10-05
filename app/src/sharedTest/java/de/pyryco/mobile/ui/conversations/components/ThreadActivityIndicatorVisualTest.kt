@@ -9,8 +9,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConversationAgent
@@ -58,7 +58,7 @@ class ThreadActivityIndicatorVisualTest {
             val bounds = composeRule.onNodeWithTag(tag).getUnclippedBoundsInRoot()
             assertTrue("$tag fits the band", bounds.bottom - bounds.top <= 24.dp)
         }
-        // #1357: the recovery notice may wrap to its two lines; the Compact pill beside it holds the band height.
-        composeRule.onNodeWithText("Compact").assertHeightIsEqualTo(24.dp)
+        // #1603: one combined Error pill has the design's 24dp visible height.
+        composeRule.onNodeWithContentDescription("Context too long - Compact", useUnmergedTree = true).assertHeightIsEqualTo(24.dp)
     }
 }

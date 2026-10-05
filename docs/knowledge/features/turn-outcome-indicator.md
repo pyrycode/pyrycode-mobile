@@ -1,12 +1,9 @@
 # Turn-outcome indicator — `TurnOutcomeIndicator`
 
-The status area's arm for a stopped turn, since
-[#1357](https://github.com/pyrycode/pyrycode-mobile/issues/1357) narrowed to **recovery advice only**:
-desktop's `ComposerErrorSlotControl` copy, read by desktop's `latestTurnEnd` rule. Before #1357 (originally
-\#805, split from #653) this arm decoded `turn_end` into a "Turn interrupted" / "Turn failed" / "Turn stopped
-early" label with the agent's own reported detail. [#1356](stopped-turn-row.md) gave the thread itself a
-persistent `ThreadItem.StoppedTurn` row that already tells that story, so this arm repeating it was
-redundant; #1357 copied desktop's posture, where this slot says only what to do, not what happened.
+Stopped-turn recovery advice in the thread's [top overlay](thread-top-overlay.md), moved
+out of the status band by #1603 to match Figma `685:3992`. The persistent
+[stopped-turn row](stopped-turn-row.md) reports what happened; this pill offers recovery.
+Classification and the held clearing lifecycle introduced by #1357 remain unchanged.
 
 Package: `de.pyryco.mobile.ui.conversations.components`
 (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/TurnOutcomeIndicator.kt`).
@@ -18,13 +15,13 @@ posture than #805's attribution scheme:
 
 | Notice | Copy | Pill |
 |---|---|---|
-| `ContextTooLong` | "Context too long. Compact or reset the session." | plus a tappable "Compact" pill |
+| `ContextTooLong` | "Context too long - Compact" | whole-pill Compact action when published |
 | `BillingError` | "<agent> reported a billing error. Check <agent> billing on this server." | — |
 | `AuthenticationFailed` | "<agent> reported an authentication failure. Check <agent> sign-in on this server." | — |
 
 `<agent>` is the conversation's agent, named via `agentName()` (#1113, see § The agent name below). Every
 other stopped turn, and every cancelled turn, shows nothing. The resources are `thread_recovery_context`,
-`thread_recovery_billing`, `thread_recovery_auth`, `thread_recovery_compact` — the six `thread_turn_outcome_*`
+`thread_recovery_billing`, `thread_recovery_auth` — the six `thread_turn_outcome_*`
 strings and `thread_turn_outcome_api_error` were removed with the #805 contract.
 
 ## Classification & sanitization
@@ -58,33 +55,28 @@ has no truncation gap).
 
 ## `TurnOutcomeIndicator` (composable)
 
-```kotlin
-@Composable
-fun TurnOutcomeIndicator(
-    notice: TurnRecoveryNotice?,
-    agent: ConversationAgent,
-    onCompact: (() -> Unit)?,
-    modifier: Modifier = Modifier,
-)
-```
+`TurnOutcomeIndicator(notice, agent, onCompact, modifier, followingNotice)` renders one
+Error [NoticePill](notice-pill.md): error-container background, error body-small text,
+8dp horizontal/4dp vertical padding, 6dp corners, no icon or X. Long copy wraps within
+the message-area width. A null notice emits only the optional following notice.
 
-Early-return on `null` — the sibling totality idiom shared with [`ApiRetryIndicator`](api-retry-indicator.md)
-/ [`ResettingIndicator`](resetting-indicator.md) / [`CompactingIndicator`](compacting-indicator.md). Otherwise
-a row holds the shared error [`NoticePill`](notice-pill.md) (`Icons.Outlined.ErrorOutline`, `bodySmall`,
-`maxLines = 2`) with the notice's label. For `ContextTooLong` a second, Default-variant `NoticePill` reading
-"Compact" follows it, tappable through its own `onClick = onCompact` — the same idiom as the top overlay's
-Offline · Retry pill ([`627:4910`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=627-4910)). A
-`null` `onCompact` — the command absent from the published Actions menu — leaves the pill visible with no
-click action, rather than hiding it; the figma reference has no frame for that state, so this is a judgment
-call recorded in the plan's Revisions. The pill takes `sizeIn(minHeight = 24.dp)`, matching the task-count
-pill beside it, because a text-only pill measures 22dp and the band is 24dp.
+Only context recovery with a non-null `onCompact` owns a click action. The whole pill
+and its downward-extending, at-least-48dp target invoke Compact once; its label and action
+share one merged accessibility node. Absent published Compact, context remains visible
+and inert, as do billing and sign-in. There is no separate Compact pill.
 
-**Every notice wraps to two lines even at 412dp width**, so the status band grows while one is showing — the
-same behaviour the old two-line failure labels had. `ThreadStatusBandTest` holds only the status glyph's
-leading edge for a notice reading, not its whole bounds, because the band's height is no longer fixed.
+Measure the visible surface independently of its expanded action target. The
+`followingNotice` slot places the transient error 12dp below that surface, rather than
+36dp below a 24dp pill in a 48dp box. Its inert surface consumes pointer taps where it
+overlaps the target so an attachment refusal cannot accidentally run Compact. Test
+physical taps on both preceding and following neighbors, not just the visible label.
 
-No spinner appears for a finished turn, and no icon distinguishes the three notices (#805 varied the icon
-by `Kind`; #1357 dropped that since there is no longer an "interrupted" kind to tell apart from an error).
+The fresh API 35 capture is 176×24px at x=216/y=121 in a 412×892 framebuffer;
+subtracting the real 24px status bar gives the design's top 97px and right gutter 20px.
+Android's shared Roboto metrics make the text-hug width 4px wider than Figma's 172px.
+Retain shared typography and full copy rather than force a width that wraps the label.
+Use native Robolectric graphics for text geometry: legacy graphics falsely wrapped it
+into a 43dp-high pill.
 
 ### The agent name (#1113)
 
@@ -97,21 +89,15 @@ client-side read of the daemon's own `terminal_reason`, not something claude sai
 
 ## Placement in the thread
 
-Joins [`ThreadScreen`](thread-screen.md)'s single mutually-exclusive status slot (`ThreadStatusArea`,
-`ThreadScreen.kt`), directly below compaction — since [#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311)
-with the stall arm between the two — and above the turn-level tail (an open tool, thinking, working, or the
-local-send window): `connection → resetting → api-retry → compaction → stall → turn outcome →
-thinking/working/running tool`. See [Thread screen § The arm
-order](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311) for the current `statusArm`
-precedence table. Compaction still wins the slot over a turn outcome when both are somehow live (never
-observed); `ScriptedTurnOutcomeTest.compaction_winsTheSlotOverTheOutcome` pins it. **A pending local send
-also hides a turn outcome since #1311**, and since #1357 the send itself clears the notice outright (see §
-Wiring below), so the two mechanisms now agree rather than one masking a value the other would otherwise
-keep. See [API-retry indicator § Placement](api-retry-indicator.md#placement-in-the-thread) and [Compacting
-indicator § Placement](compacting-indicator.md#placement-in-the-thread) for the rest of the ladder's history,
-and
-[Thread screen — overlays and app bar](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643)
-for the `ThreadStatusArea` composable this arm was added to and the `onCompact` wiring through it.
+`ThreadScreen` passes `turnOutcome`, `state.agent` and the published-menu-gated Compact
+callback to `ThreadTopOverlay`. Recovery follows attention, usage, MCP, pairing/Offline
+and session errors; transient errors remain last and expire independently. Visible
+notices keep a 12dp gap. The overlay reserves no message-list space.
+
+Recovery no longer participates in `statusArm`. Connected idle keeps the snowflake alone;
+connection and active-turn readings retain their existing precedence. Reset session
+remains in Actions, and the stopped-turn row survives when the recovery pill clears.
+See [the arm order](thread-screen-how-it-works-list-and-status-row.md#the-arm-order-1311).
 
 ## Wiring — `ThreadViewModel.turnOutcome`
 
@@ -172,25 +158,28 @@ failed turn with nobody watching, and no send in between. Not fixed in #1357.
   use, a tool result, a thinking reading, a new session boundary — and *not* on an older history page or a
   re-emission of the same boundary — a text send, an attachment send, a bare command, a reconnect); survives
   `Idle` and a `ReplayGap`; another conversation's events ignored.
-- **sharedTest** `ThreadRecoveryNoticeTest` (4, Robolectric, through `ThreadScreen`) — the context notice plus
-  Compact pill; tapping it calls `onComposerCommand(CompactSession)`; no click action when `CompactSession`
-  is in `absentActions`; the billing and sign-in notices name a Codex agent, with no Compact pill beside them.
-- **sharedTest (rung 2)** `ScriptedTurnOutcomeTest` (5, rewritten to the new contract on the real repository)
-  — `prompt_too_long` shows the notice and Compact; `cancelled` shows nothing; the next turn clears it; a
-  clean turn shows nothing; compaction still wins the slot.
-- Mechanical fixture updates for the dropped `TurnOutcomeReport`/`thread_turn_outcome_*` contract:
-  `ThreadAgentAttributionTest`, `ThreadTopOverlayTest`, `ThreadStatusBandTest`, `RunningToolIndicatorTest`,
-  `ThreadActivityIndicatorVisualTest` (the Compact pill's 24dp height), and the device-only
-  `ThreadActivityIndicatorCaptureTest` (real pixels, its device-only reason; capture `412x892-outcome.png`
-  shows the error notice wrapping to two lines beside the Default-variant Compact pill).
-- **Rung 3**, live-verified 2026-10-02 (50 executed, 50 passed): `InteractiveStreamE2ETest`'s
-  `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain` (#965) dropped its Interrupted-label
-  assertion — a cancelled turn shows nothing in this arm now — and keeps the method name and its assertion
-  that the Stop control itself leaves once the `cancelled` `turn_end` arrives. See [End-to-end interactive
-  stream](../../e2e-interactive-stream.md) for the scenario. The Compact pill has no rung-3 proof: real
-  claude cannot reliably reach `prompt_too_long`. [#1473](https://github.com/pyrycode/pyrycode-mobile/issues/1473)
-  covers it with the deterministic rung-4 scenario `context-overflow` instead — see [End-to-end
-  interactive stream](../../e2e-interactive-stream.md) for the scenario's shape.
+- **sharedTest** `ThreadRecoveryNoticeTest`, `ThreadTopOverlayTest` and
+  `RecoveryTransientOverlayTest` cover combined copy, inert unavailable Compact and
+  agent-specific billing/sign-in, visible geometry, 48dp action bounds and physical
+  routing after Re-pair/Offline and before a transient error. Native graphics separate
+  visible-pill bounds from merged action bounds. `ThreadStatusBandTest`,
+  `RunningToolIndicatorTest` and `ScriptedTurnOutcomeTest` cover independent status and
+  unchanged recovery clearing.
+- **Rung 4** `DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_contextOverflowCompactReachesDaemon`
+  taps the combined pill, requires the daemon child's `/compact` echo and verifies the
+  notice clears. Dispatcher `scripted-all` on 2026-10-05: 15 executed/passed, 0 failed,
+  0 skipped, including this method. Retained focused XML also records 1 executed/passed,
+  0 failed/skipped in `design-1220/thread/turn-outcome-1603-scripted-results.xml`.
+- **Capture** `ThreadDesignCaptureTest#rowAndNoticeFramesAt412By892`: retained fresh API 35
+  XML records 1 executed/passed, 0 failed/skipped at `2026-10-05T17:22:34` with real
+  system bars and hardware pixels. See the [design verdict](../../../app/src/androidTest/assets/design-1220/thread/index.md#turn-outcome--6853992).
+- **Rung 3 shared Compact path**: dispatcher full live suite on branch `5eeeeb8254`,
+  2026-10-05, run `2026-10-05T18-11-46-185Z`: 57 executed/passed, 0 failed, 0 skipped.
+  `InteractiveStreamE2ETest#interactiveTurn_reconnect_slashCommandsAndCompactStillWork`
+  executed and passed in that suite, confirmed by the dispatcher gate report and issue
+  evidence. This was a full-suite result, not a separate focused live run. Real Claude
+  cannot reliably induce context overflow; the deterministic twin proves this pill's
+  tap path. See [the ladder](../../e2e-interactive-stream.md).
 
 ## Security
 
@@ -210,7 +199,7 @@ values. Nothing is persisted or logged beyond the static reason/notice codes; th
 
 [`ThreadItem.StoppedTurn`](stopped-turn-row.md) is the thread's persistent "Stopped: …" row, built from the
 same `turn_end` by desktop's `stoppedTurnText`/`stoppedReportText` rule — attributed reportage of what
-happened, kept in the thread after the turn ends. This component is the status-area arm, a held value that
+happened, kept in the thread after the turn ends. This component is an overlay pill, a held value that
 clears on the next sign of activity (see § Wiring); since #1357 it says only what to do next, not what
 happened, so the two surfaces no longer describe the same thing in different words — they describe different
 things. Before #1357 (#805 through #1356) both arms described the current turn's failure for as long as its
@@ -222,14 +211,11 @@ narrowing this arm to advice the row doesn't carry at all — the row never tell
 
 - **The boundary edge can clear a notice out of wall-clock order** when a session transition and a failed
   turn both land while the thread is unsubscribed, with no send between them — see § Wiring above.
-- **The context notice's Compact pill has no rung-3 live proof** — real claude cannot reliably reach
-  `prompt_too_long`; #1473's deterministic rung-4 scenario `context-overflow` proves the pill reaches the
-  daemon's child instead — see § Testing.
+- **Context overflow cannot be reliably induced with real Claude.** Rung 4 proves this
+  pill's tap path; rung 3 proves the shared Compact command path — see § Testing.
 - **`errorCategory` can be one turn stale** per the protocol; it is only read on a turn already marked
   stopped by `isError`/`outcome`, so a clean turn recovering from an API error never shows a notice from it.
-- **Compaction always wins the slot when both are somehow live** (never observed) — see § Placement.
-- **No animation** — the ladder's arms swap instantly on `when`-branch change, matching every sibling status
-  affordance.
+- **No animation** — notice changes render immediately.
 - **No `liveRegion`** on this or any sibling status affordance — a pre-existing, out-of-scope gap across the
   whole family (see [API-retry indicator § Edge cases](api-retry-indicator.md#edge-cases--limitations)).
 
@@ -239,16 +225,14 @@ narrowing this arm to advice the row doesn't carry at all — the row never tell
   documents the four lenient-defaulted fields this component classifies.
 - Host: [Thread screen](thread-screen.md) / [Thread screen — overlays and app
   bar](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643)
-  — threads `turnOutcome` and `onCompact` as flat sibling parameters and arbitrates the status slot across
-  five affordances.
-- Idioms mirrored: [Usage-limit indicator](usage-limit-indicator.md) (the icon-not-spinner precedent),
-  [API-retry indicator](api-retry-indicator.md) and [Compacting indicator](compacting-indicator.md) (the row
-  idiom, early-return totality, and the precedence-lives-in-the-screen posture all four arms share).
+  — threads `turnOutcome` and `onCompact` into the overlay independently of status selection.
+- Shared surface: [NoticePill](notice-pill.md); sibling overlay reports include
+  [Usage-limit indicator](usage-limit-indicator.md).
 - Spec: `docs/specs/architecture/805-turn-outcome-status-arm.md`,
   `docs/specs/architecture/1113-agent-name-in-thread-notices.md` (§ The agent name, #1113),
   `docs/specs/architecture/1357-turn-recovery-notice.md`.
 - Sibling surface: [Stopped-turn row](stopped-turn-row.md) — the thread's persistent "Stopped: …" row built
   from the same `turn_end`, by a different rule; see § How this differs above.
-- Follow-up: [#1473](https://github.com/pyrycode/pyrycode-mobile/issues/1473) (open — a deterministic
-  rung-4 scenario for the Compact pill, since real claude cannot reliably reach `prompt_too_long`).
+- Follow-up: [#1473](https://github.com/pyrycode/pyrycode-mobile/issues/1473) (the shipped deterministic
+  rung-4 context-overflow scenario).
 - Server SSOT: `docs/protocol-mobile.md § turn_end` — cited, not restated.

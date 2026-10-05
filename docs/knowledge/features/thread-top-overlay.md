@@ -2,7 +2,7 @@
 
 The **notice surface** for the thread ([#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002)):
 other conversations' attention, claude's usage-limit report, a failed MCP server ([#1345](https://github.com/pyrycode/pyrycode-mobile/issues/1345)),
-the pairing-error notice, Offline Retry and conversation session errors, drawn as a right-aligned stack of
+the pairing-error notice, Offline Retry, conversation session errors and stopped-turn recovery, drawn as a right-aligned stack of
 [`NoticePill`](notice-pill.md)s pinned over the top of the message area — replacing the two arms they used
 to share with live turn status inside `ThreadStatusArea`.
 
@@ -41,6 +41,10 @@ internal fun ThreadTopOverlay(
     onOpenMcpFailure: () -> Unit = {},
     sessionError: String? = null,
     agent: ConversationAgent = ConversationAgent.Claude,
+    turnOutcome: TurnRecoveryNotice? = null,
+    onCompact: (() -> Unit)? = null,
+    transientError: String? = null,
+    transientErrorOccurrence: Long = 0L,
     attentionPill: (@Composable () -> Unit)? = null,
 )
 ```
@@ -49,7 +53,7 @@ The usage lead no longer names the agent ([Usage-limit indicator](usage-limit-in
 Since #1678, `agent = state.agent` selects the session-error copy independently of usage copy.
 
 Emits nothing when there is no pill to show (`usageLimit == null || usageLimitDismissed`, `mcpFailure == null`,
-`!showRePair`, `connectionState != Offline`, `sessionError == null`, and `attentionPill == null`) — the overlay is an overlap (`Box` alignment, not a layout slot), so an empty overlay costs
+`!showRePair`, `connectionState != Offline`, `sessionError == null`, `turnOutcome == null`, `transientError == null`, and `attentionPill == null`) — the overlay is an overlap (`Box` alignment, not a layout slot), so an empty overlay costs
 nothing and the message area draws exactly as if it were absent. Otherwise a `Column(horizontalAlignment =
 End, verticalArrangement = spacedBy(12.dp))` — Figma `541:2446`'s 12dp pill gap — with, top to bottom:
 
@@ -119,14 +123,21 @@ rejected-pairing state; `onRePair` is bound at `MainActivity` to
 `navController.navigate(Routes.pairCode(target.serverId))`. This pill has no dismiss X — a rejected pairing
 is never hideable, unlike a warning reading.
 
+Re-pair alone overrides the vertical minimum touch size to `0.dp`, so its target follows
+its measured visible surface height, including native text and font scaling. The usage
+X retains a 36dp vertical minimum; both inherit the platform horizontal minimum
+(48dp on the tested devices). The stack still measures a 12dp gap between visible
+surfaces. Do not assume both pills render at 24dp or give both targets symmetric
+36dp expansion: separate semantic bounds do not guarantee that an expanded edge
+can actually receive input. See [Notice pill caller contracts](notice-pill.md#caller-contracts).
+
 Usage sits above the lower action, matching Figma `533:1956`. When `connectionState` is Offline and `showRePair` is false, the lower action is the error-toned [Retry pill](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=627-4910). Its 48 dp clickable box extends below the visible pill, preserving the 12 dp gap and avoiding the usage dismiss target. Since [#1499](https://github.com/pyrycode/pyrycode-mobile/issues/1499), the visible pill no longer fills that box: it hugs "Offline · Retry" (94dp under Robolectric — the label plus 8dp padding on each side) at the box's top-right corner, which the box's `Alignment.TopEnd` places at the overlay's right edge, matching frame `627:4910`. The 144 x 48 dp box itself is unchanged from [#1283](https://github.com/pyrycode/pyrycode-mobile/issues/1283) — only the drawn pill's width changed, not the touch target. `showRePair` wins when pairing is rejected, since a network retry cannot repair that state.
 
 ### The session-error pill (#1678)
 
 Every non-null `sessionError`, including an empty or unknown code, shows an inert
 Error `NoticePill` after the existing persistent usage/MCP/pairing/offline notices.
-It has no click, dismiss control, leading icon or timeout; long copy wraps. The
-transient error pill below follows it. Repository clearing alone removes this pill.
+It has no click, dismiss control, leading icon or timeout; long copy wraps. Recovery advice follows it before the transient error pill. Repository clearing alone removes this pill.
 
 Exact code matches select client resources; neither raw codes nor daemon prose
 reach visible text or accessibility semantics:
@@ -141,10 +152,24 @@ Blocked delivery has abandoned the backlog; child crashing retains the queued
 message. Showing an error never resends it. See [repository clearing rules](remote-conversation-repository-state-errors-and-handoff.md#conversation-session-errors-1677)
 and [destination observation](thread-screen-how-it-works-state.md#session-errors-and-local-send-settlement-1678).
 
+### The stopped-turn recovery pill (#1603)
+
+[TurnOutcomeIndicator](turn-outcome-indicator.md) follows session errors as one icon-free,
+X-free Error pill. Context reads “Context too long - Compact”; its whole surface invokes
+the published Compact command once. Unavailable Compact and agent-specific billing/sign-in
+are inert. Status remains independent, with the idle snowflake when connected and idle.
+
+The visible pill keeps the design's 24dp height and 12dp neighbor gaps, while Compact's
+merged action target extends down to at least 48dp. A following transient notice is
+measured from the visible pill, and consumes taps on its inert surface where it overlaps
+that target. Reserving the target height in the stack would incorrectly make the visible
+gap 36dp. Native geometry and physical pointer tests cover both preceding and following
+neighbors, including Offline and Re-pair.
+
 ### The transient error pill (#1747)
 
 The thread's local failures show as the last pill in the stack, below every persistent notice and the
-session error, with the same 12 dp gap. These are new-session, archive, workspace and run-configuration
+session error and recovery pill, with the same 12 dp gap. These are new-session, archive, workspace and run-configuration
 failures, attachment size and count refusals, attachment-send failures, refused pasted or keyboard-inserted
 images, markdown-open failures, and the attachment no-app, open-failed and save-failed outcomes. Each shows
 its existing client-owned sentence in an inert Error pill (`TransientErrorPill`): no X, no tap action, a 24 dp
@@ -287,6 +312,46 @@ either holder; see [Channel info sheet § MCP servers section](channel-info-shee
 for why that ask shares a daemon worker with sending a message and can stall behind an unanswered one.
 
 ## Testing
+
+`ThreadTopOverlayTest.theUsagePill_sitsAboveThePairingPill_whichStartsRePair`
+uses physical center and facing-edge taps for both controls, checks exactly one
+intended callback per tap and dismissal state, and measures the 12dp visible gap,
+nonoverlapping touch bounds and retained horizontal widths. Usage's facing-edge
+tap stays inside the Surface's visible clip; advertised dismiss expansion outside
+that clip cannot be treated as tappable. After #1757's line-height repair, the
+native red did not reproduce the original 3.5px overlap: it failed because the
+advertised expanded upper Re-pair edge was untappable (1 executed, 1 failed,
+0 skipped in [native-red.xml](../../../app/src/androidTest/assets/touch-1760/native-red.xml)).
+Semantic clicks or nonoverlap assertions alone would miss that defect.
+
+Retained 2026-10-05 evidence confirms the named method passed without an ignore:
+
+- Managed Android 13: `./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun
+  '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest'
+  -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain`.
+  The [post-merge native XML](../../../app/src/androidTest/assets/touch-1760/merge-native-class-green.xml)
+  records 14 executed/passed, 0 failed/errors/skipped, including the named method
+  at `2026-10-05T18:04:20`. The earlier separate method run records 1 executed/passed,
+  0 failed/errors/skipped in [native-method-green.xml](../../../app/src/androidTest/assets/touch-1760/native-method-green.xml).
+- JVM: `./gradlew testDebugUnitTest --tests
+  'de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest' --tests
+  'de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNoticeTest' --tests
+  'de.pyryco.mobile.ui.conversations.components.NoticePillTest' assembleDebug --console=plain`.
+  [Focused post-merge XML](../../../app/src/androidTest/assets/touch-1760/merge-jvm/)
+  records 26 executed/passed (14 overlay, 10 attention, 2 component), 0 failed/errors/skipped.
+  The final `./gradlew testDebugUnitTest assembleDebug --console=plain` run records
+  4,309 executed/passed, 0 failed/errors/skipped in the
+  [summary](../../../app/src/androidTest/assets/touch-1760/merge-final-jvm-summary.xml);
+  its [overlay XML](../../../app/src/androidTest/assets/touch-1760/merge-final-jvm-overlay.xml)
+  confirms the named method passed among 14 tests.
+
+[Initial commands](../../../app/src/androidTest/assets/touch-1760/commands-and-results.txt)
+and [post-merge commands/counts](../../../app/src/androidTest/assets/touch-1760/merge-commands-and-results.txt)
+retain the exact selections and results. The default device-only UI gate does not
+select this shared test; the targeted managed-device evidence establishes its native pass.
+Removing main's temporary #1760 ignore deliberately restores this regression;
+the neighboring Offline Retry regression remains runnable.
+
 
 - **Attention (#1735):** `ThreadAttentionTest` uses a controlled clock for replacement, expiry,
   precedence, mute/name changes and cancellation/no replay. Delayed-consumer cases hold consumption
