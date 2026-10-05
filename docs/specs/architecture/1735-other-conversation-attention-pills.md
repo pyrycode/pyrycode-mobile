@@ -82,3 +82,13 @@ Pending for the documentation stage: update `docs/knowledge/features/thread-top-
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-05
+
+## Revisions
+
+### 2026-10-05 — PR #1780 touch-target review
+
+The verifier found that `ThreadAttentionNotice` inherited the overlay's 36dp vertical hit-test minimum. Its Waiting, Finished and count variants now give an inert `NoticePill` a separate clickable wrapper with 24dp of invisible space above it. The wrapper reports only the visible height to the stack and places its extra touch area upward into the existing top clearance. A 24dp surface minimum matches the Figma instance and prevents native font metrics from shortening the one-line pill; it therefore has a 48dp target, while its bodySmall typography, hug width, colours and 12dp gap below stay unchanged. Longer labels grow both the surface and target. The target ends at the visible pill's bottom, before the next notice's dismiss target, rather than expanding toward that action.
+
+Native-graphics render tests for all three short-label variants assert actual touch bounds, the unchanged 24dp surface and 12dp gap, pointer routing at both target boundaries, and the usage dismiss target above its X glyph, inside the existing Surface clip. Existing colour and geometry assertions now query the distinct visible surface; the merged clickable node retains its existing tag and navigation semantics for live coverage. The Figma count and Finished instances were fetched again for this rework. Security review remains PASS: the wrapper only calls the existing typed navigation callback, retains bounded inert text and one accessible button, and adds no state, I/O, logging or exported surface.
+
+Documentation handoff remains pending; include the separate visible-surface and upward-expanded touch-target contract in `docs/knowledge/features/thread-top-overlay.md` and `docs/knowledge/features/notice-pill.md`.

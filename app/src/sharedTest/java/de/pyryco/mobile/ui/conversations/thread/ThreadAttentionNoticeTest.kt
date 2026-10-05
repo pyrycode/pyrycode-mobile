@@ -107,7 +107,7 @@ class ThreadAttentionNoticeTest {
 
     @Test fun attentionIsFirstAboveUsageMcpConnectionAndSessionError_withTwelveDpGaps() {
         screen(usage = true)
-        val first = compose.onNodeWithTag("thread_attention_pill").getUnclippedBoundsInRoot()
+        val first = compose.onNodeWithTag("thread_attention_surface", useUnmergedTree = true).getUnclippedBoundsInRoot()
         val usage = compose.onNodeWithText("Nearly at usage limit - 7-day window").getUnclippedBoundsInRoot()
         assertEquals(12f, (usage.top - first.bottom).value, .5f)
         val mcp = compose.onNodeWithText("MCP server github failed").getUnclippedBoundsInRoot()
@@ -135,13 +135,64 @@ class ThreadAttentionNoticeTest {
         }
     }
 
+    @Test fun shortWaiting_hasA48dpTarget_withExpandedBoundaryTaps() {
+        assertExpandedTarget(ThreadAttention(1, target, "B"))
+    }
+
+    @Test fun shortFinished_hasA48dpTarget_withExpandedBoundaryTaps() {
+        assertExpandedTarget(ThreadAttention(0, target, "B"))
+    }
+
+    @Test fun shortCount_hasA48dpTarget_withExpandedBoundaryTaps() {
+        assertExpandedTarget(ThreadAttention(2))
+    }
+
+    private fun assertExpandedTarget(reading: ThreadAttention) {
+        attention = reading
+        screen(usage = true)
+        val pill = compose.onNodeWithTag("thread_attention_pill")
+        val touch = pill.fetchSemanticsNode().touchBoundsInRoot
+        val minimum = with(compose.density) { 48.dp.toPx() }
+        assertTrue("attention touch bounds $touch must be at least 48dp high", touch.height >= minimum)
+        assertTrue("attention touch bounds $touch must be at least 48dp wide", touch.width >= minimum)
+        val dismiss = compose.onNodeWithContentDescription(context.getString(R.string.thread_notice_dismiss))
+        val dismissTouch = dismiss.fetchSemanticsNode().touchBoundsInRoot
+        assertTrue("attention $touch must end before dismiss $dismissTouch", touch.bottom <= dismissTouch.top)
+
+        val visible = compose.onNodeWithTag("thread_attention_surface", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val usage = compose.onNodeWithText("Nearly at usage limit - 7-day window").fetchSemanticsNode().boundsInRoot
+        val gap = with(compose.density) { 12.dp.toPx() }
+        assertEquals(gap, usage.top - visible.bottom, 1f)
+        assertEquals(with(compose.density) { 24.dp.toPx() }, visible.height, 1f)
+        assertTrue("target must extend above the drawn pill", touch.top < visible.top)
+        val targetBounds = pill.fetchSemanticsNode().boundsInRoot
+        pill.performTouchInput { click(Offset(touch.center.x - targetBounds.left, touch.top - targetBounds.top + 1f)) }
+        pill.performTouchInput { click(Offset(touch.center.x - targetBounds.left, touch.bottom - targetBounds.top - 1f)) }
+        compose.runOnIdle {
+            assertEquals(reading.target, clicked)
+            assertEquals(2, taps)
+            assertEquals(0, dismissals)
+        }
+
+        val dismissBounds = dismiss.fetchSemanticsNode().boundsInRoot
+        // Surface clips hit-testing outside the usage pill. Tap its top edge, above the X glyph,
+        // to exercise the dismiss target's expansion inside that surface rather than its clip.
+        dismiss.performTouchInput { click(Offset(dismissTouch.center.x - dismissBounds.left, usage.top - dismissBounds.top + 1f)) }
+        compose.runOnIdle {
+            assertEquals(2, taps)
+            assertEquals(1, dismissals)
+        }
+    }
+
     @Test fun waitingAndFinishedMatchFigmaColors_bodySmallAndHugWidth() {
         screen()
         assertStyleAndContainer("Other needs your answer", Color(0xFFD8B85A), Color(0xFF3D3215))
-        val waitingWidth = compose.onNodeWithTag("thread_attention_pill").getUnclippedBoundsInRoot().width
+        val waitingWidth = compose.onNodeWithTag("thread_attention_surface", useUnmergedTree = true).getUnclippedBoundsInRoot().width
         compose.runOnIdle { attention = ThreadAttention(0, target, "Other") }
         assertStyleAndContainer("Other finished", Color(0xFF2FC038), Color(0xFF0F3313))
-        assertTrue(compose.onNodeWithTag("thread_attention_pill").getUnclippedBoundsInRoot().width < waitingWidth)
+        assertTrue(
+            compose.onNodeWithTag("thread_attention_surface", useUnmergedTree = true).getUnclippedBoundsInRoot().width < waitingWidth,
+        )
     }
 
     @Test fun hostileLongName_isPlainBoundedText_twoLinesWithEllipsis_insideThreadWidth() {
@@ -154,7 +205,7 @@ class ThreadAttentionNoticeTest {
         assertEquals(2, result.lineCount)
         assertTrue(result.isLineEllipsized(1))
         assertEquals(2, result.layoutInput.maxLines)
-        val bounds = compose.onNodeWithTag("thread_attention_pill").getUnclippedBoundsInRoot()
+        val bounds = compose.onNodeWithTag("thread_attention_surface", useUnmergedTree = true).getUnclippedBoundsInRoot()
         assertTrue(bounds.left >= 20.dp)
         assertTrue(bounds.width <= 280.dp)
         node.performTouchInput { click(center) }
@@ -185,7 +236,7 @@ class ThreadAttentionNoticeTest {
         assertEquals(text, style.color)
         assertEquals(12f, style.fontSize.value, .01f)
         assertEquals(TextAlign.End, style.textAlign)
-        val bounds = compose.onNodeWithTag("thread_attention_pill").fetchSemanticsNode().boundsInRoot
+        val bounds = compose.onNodeWithTag("thread_attention_surface", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         compose.runOnIdle {
             val root = checkNotNull(view)
             val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
