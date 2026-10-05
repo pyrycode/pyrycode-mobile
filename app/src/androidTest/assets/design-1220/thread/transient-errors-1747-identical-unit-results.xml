@@ -1,0 +1,110 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites><testsuite name="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-10-04T22:53:18.389Z" hostname="Juhanas-MacBook-Air.local" time="3.597">
+  <properties />
+  <testcase name="longNameAndBodyLeaveControlsAndMenuReachable" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="1.12" />
+  <testcase name="headerBlocksUnderlyingCodePanelWithPositiveClearAreaControl" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.572" />
+  <testcase name="largeTextReservesMeasuredBarPlus28dp" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.185" />
+  <testcase name="headerPointerAreasRouteOnlyTheirOwnActions" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.278" />
+  <testcase name="headerBlocksUnderlyingLinkWithPositiveClearAreaControl" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.335" />
+  <testcase name="readerCodeAndQuoteUseReferenceRoles" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.185" />
+  <testcase name="plainReaderCodeScrollsHorizontallyInsideItsPanel" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.278" />
+  <testcase name="wrappedListItemContinuesAtTheGutter" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.118" />
+  <testcase name="referencePlacesBarRuleAndBodyAtFigmaCoordinates" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.13" />
+  <testcase name="scrollViewportStartsBehindTheFixedBar" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.369" />
+  <system-out />
+  <system-err />
+</testsuite><testsuite name="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" tests="23" skipped="1" failures="0" errors="0" timestamp="2026-10-04T22:52:26.402Z" hostname="Juhanas-MacBook-Air.local" time="32.183">
+  <properties />
+  <testcase name="copiesOfANoteAtTheReadersBound_areBounded" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.0">
+    <skipped />
+  </testcase>
+  <testcase name="theBackArrow_goesBack" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="17.41" />
+  <testcase name="leavingTheReader_cancelsItsActiveAndPendingErrorNotices" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="2.112" />
+  <testcase name="openInAnotherApp_whenTheSharedNoteCannotBeWritten_usesOpenFailedPill" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="1.186" />
+  <testcase name="theOverflow_opensTheSixItems_inOrder" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.451" />
+  <testcase name="showsTheNameInTheBar_andTheRenderedMarkdownBelow" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.369" />
+  <testcase name="aRetry_whileTheFailureNoticeShows_readsAgain" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.884" />
+  <testcase name="aCancelledPicker_writesNothing_andSaysNothing" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.458" />
+  <testcase name="identicalRefreshFailures_renderSeparateOccurrences_withFullTimeouts" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="1.011" />
+  <testcase name="saveToDevice_opensTheCreateDocumentPicker_withTheNotesNameAndMarkdownType" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.346" />
+  <testcase name="aSecondRefresh_whileOneIsReading_readsNothing" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.45" />
+  <testcase name="copyAsHtml_putsOneClip_withTheHtmlAndThePlainFallback" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.438" />
+  <testcase name="aFailedRefresh_keepsTheOldContent_andSaysItCouldNotOpen" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.415" />
+  <testcase name="aReadyMarkdownTap_goesToTheReader_whateverItsSource_andOtherFilesDoNot" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.247" />
+  <testcase name="aLinkedNote_opensInTheSameReader_andItsBackArrowGoesBack" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.249" />
+  <testcase name="openInAnotherApp_withNoAppForMarkdown_saysSo" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.549" />
+  <testcase name="copyAsPlainText_putsTheRenderedText" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.666" />
+  <testcase name="noLinkedNote_goesBackOnce_andDrawsNoReader" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.279" />
+  <testcase name="refresh_replacesTheContent_withANewRead" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.551" />
+  <testcase name="longContent_scrollsUnderAFixedBar" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.52" />
+  <testcase name="aPickedDocument_receivesTheTextOnScreen_andTheReaderSaysSaved" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.729" />
+  <testcase name="copyAsMarkdown_putsTheRawText_andShowsNoNotice" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.548" />
+  <testcase name="aFailedWrite_saysTheSaveFailed" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.544" />
+  <system-out />
+  <system-err />
+</testsuite><testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadChromeTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-04T22:53:22.290Z" hostname="Juhanas-MacBook-Air.local" time="3.519">
+  <properties />
+  <testcase name="pending_attachment_strip_accepts_a_gradual_pointer_swipe" classname="de.pyryco.mobile.ui.conversations.thread.ThreadChromeTest" time="1.081" />
+  <testcase name="chrome_background_taps_do_not_open_message_details" classname="de.pyryco.mobile.ui.conversations.thread.ThreadChromeTest" time="0.448" />
+  <testcase name="composer_accepts_long_press_text_selection_and_drag" classname="de.pyryco.mobile.ui.conversations.thread.ThreadChromeTest" time="1.239" />
+  <testcase name="short_thread_starts_28dp_below_the_measured_rule" classname="de.pyryco.mobile.ui.conversations.thread.ThreadChromeTest" time="0.132" />
+  <testcase name="newest_text_surface_rests_12dp_above_status_after_each_composer_resize" classname="de.pyryco.mobile.ui.conversations.thread.ThreadChromeTest" time="0.412" />
+  <testcase name="invisible_info_banners_preserve_the_newest_text_rest_gap" classname="de.pyryco.mobile.ui.conversations.thread.ThreadChromeTest" time="0.162" />
+  <system-out />
+  <system-err />
+</testsuite><testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadScreenAttachmentLoadTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-10-04T22:53:25.988Z" hostname="Juhanas-MacBook-Air.local" time="2.919">
+  <properties />
+  <testcase name="anInvalidOpenSource_usesTheOpenFailedPill" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenAttachmentLoadTest" time="0.524" />
+  <testcase name="savedRemainsASnackbar_andCoexistsWithAnErrorPill" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenAttachmentLoadTest" time="0.292" />
+  <testcase name="aDeliveredSave_opensTheSavePickerOnce_withTheFilesNameAndType" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenAttachmentLoadTest" time="0.115" />
+  <testcase name="aFileNotFetchedYet_asksTheThreadForItself_onTapAndLongPress" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenAttachmentLoadTest" time="0.415" />
+  <testcase name="noViewer_usesTheNoAppPill" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenAttachmentLoadTest" time="0.265" />
+  <testcase name="aDeliveredOpen_runsOnce_withTheSourceItCarries_beforeTheStatesHoldIt" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenAttachmentLoadTest" time="0.203" />
+  <testcase name="aFailedSave_usesTheSaveFailedPill" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenAttachmentLoadTest" time="0.514" />
+  <testcase name="aFailedLoad_showsRetry_andTheRowNeitherOpensNorSaves" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenAttachmentLoadTest" time="0.578" />
+  <system-out />
+  <system-err />
+</testsuite><testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" tests="14" skipped="1" failures="0" errors="0" timestamp="2026-10-04T22:53:29.242Z" hostname="Juhanas-MacBook-Air.local" time="3.859">
+  <properties />
+  <testcase name="theUsagePill_sitsAboveThePairingPill_whichStartsRePair" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.005">
+    <skipped />
+  </testcase>
+  <testcase name="enlargedOfflinePill_isEnclosedByRetry_andItsLeftEdgeReceivesPointerTaps" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.387" />
+  <testcase name="offlineRetry_drawsATextWidePill_atTheTargetsTopRight" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.307" />
+  <testcase name="sessionError_reusesErrorColors_andRightAlignedBodySmall_withNoDismissAction" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.604" />
+  <testcase name="offlineRetry_hasA48dpTarget_belowAUsagePill_withoutStealingDismissTaps" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.374" />
+  <testcase name="aLongServerName_isBounded" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.197" />
+  <testcase name="noNotices_drawNoPill" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.19" />
+  <testcase name="aFailedMcpServer_isNeverShownBesideThePairingOrOfflinePill" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.37" />
+  <testcase name="theUsagePill_readsTheSameForEveryAgent" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.168" />
+  <testcase name="anyOtherStatus_isAnErrorPill_withNoX" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.165" />
+  <testcase name="aWarning_isADismissiblePill_thatReturnsWhenTheResetTimeChanges" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.264" />
+  <testcase name="sessionError_sitsBelowExistingPersistentNotices_andLeavesTheirActionsWorking" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.184" />
+  <testcase name="aLiveReading_leavesTheRunningTool_theWrapUp_andInterruptedInTheStatusRow" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.303" />
+  <testcase name="aFailedMcpServer_isATappablePillBelowTheUsagePill" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest" time="0.242" />
+  <system-out />
+  <system-err />
+</testsuite><testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-10-04T22:52:58.606Z" hostname="Juhanas-MacBook-Air.local" time="16.616">
+  <properties />
+  <testcase name="allUnitErrorRoutes_useInertPills_withExistingCopy" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest" time="0.832" />
+  <testcase name="allAttachmentSendReasons_useTheirClientOwnedCopy" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest" time="0.313" />
+  <testcase name="bothRefusalReasons_areVisibleInOrder_forTheirFullTimeout" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest" time="0.367" />
+  <testcase name="expiryOnlyRemovesTransient_belowPersistentSessionError" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest" time="0.451" />
+  <testcase name="leavingTheScreen_cancelsActiveAndQueuedErrors" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest" time="0.405" />
+  <testcase name="identicalArchiveFailures_renderSeparateOccurrences_withFullTimeouts" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest" time="0.232" />
+  <testcase name="dismissedElsewhere_keepsItsSnackbar_whileAnErrorPillShows" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest" time="0.248" />
+  <testcase name="accessibilityAdjustment_extendsTheShortTimeout_withTextAndNoControls" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest" time="0.224" />
+  <testcase name="offlineAndTransient_keep12dpBetweenVisiblePills_andThe48dpRetryTarget" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest" time="13.168" />
+  <testcase name="shortErrorPill_preservesTheDesigns24dpLineBox" classname="de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest" time="0.243" />
+  <system-out />
+  <system-err>System.logW: A resource failed to call close. 
+</system-err>
+</testsuite><testsuite name="de.pyryco.mobile.ui.conversations.thread.TransientErrorNoticeStateTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-04T22:53:33.563Z" hostname="Juhanas-MacBook-Air.local" time="0.098">
+  <properties />
+  <testcase name="cancellingTheActiveError_clearsIt_andReleasesTheNextCaller" classname="de.pyryco.mobile.ui.conversations.thread.TransientErrorNoticeStateTest" time="0.087" />
+  <testcase name="queuedErrors_getTheirOwnFullTimeout_inSubmissionOrder" classname="de.pyryco.mobile.ui.conversations.thread.TransientErrorNoticeStateTest" time="0.005" />
+  <testcase name="cancellingAQueuedError_doesNotRemoveTheActiveOne_orLeaveItQueued" classname="de.pyryco.mobile.ui.conversations.thread.TransientErrorNoticeStateTest" time="0.004" />
+  <testcase name="timeoutIsCalculatedForEachNotice_whenItStarts" classname="de.pyryco.mobile.ui.conversations.thread.TransientErrorNoticeStateTest" time="0.002" />
+  <system-out />
+  <system-err />
+</testsuite></testsuites>

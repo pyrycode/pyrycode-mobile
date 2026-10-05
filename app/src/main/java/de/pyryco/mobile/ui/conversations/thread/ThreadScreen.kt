@@ -313,52 +313,42 @@ fun ThreadScreen(
     // #1306: one call site for both prompt kinds, so a question → permission hand-over keeps one owner.
     if (questionState != null || openRequest != null) QuestionPromptProtection()
     val snackbarHostState = remember { SnackbarHostState() }
-    // #540: surface a failed "New session" send as a transient snackbar. Payload-free (Unit) one-shot
-    // idiom — the fixed local string keeps anything exception-derived out of the
-    // un-secured Activity window the snackbar draws in.
+    val errorNotices = rememberTransientErrorNoticeState(state.conversationId)
+    // Payload-free signals and local resources keep exception and daemon text out of notices. Each collector
+    // queues its notice and returns, so signals keep their arrival order across routes.
     val newSessionFailedMessage = stringResource(R.string.new_session_failed)
-    LaunchedEffect(newSessionErrors, snackbarHostState) {
-        newSessionErrors.collect { snackbarHostState.showSnackbar(newSessionFailedMessage) }
+    LaunchedEffect(newSessionErrors, errorNotices) {
+        newSessionErrors.collect { errorNotices.enqueue(this, newSessionFailedMessage) }
     }
-    // #556: surface a failed "Archive" as a transient snackbar. Same payload-free (Unit) one-shot idiom;
-    // the fixed local string keeps the server-supplied RelayErrorException.message out of the un-secured
-    // Activity window the snackbar draws in.
     val archiveFailedMessage = stringResource(R.string.archive_failed)
-    LaunchedEffect(archiveErrors, snackbarHostState) {
-        archiveErrors.collect { snackbarHostState.showSnackbar(archiveFailedMessage) }
+    LaunchedEffect(archiveErrors, errorNotices) {
+        archiveErrors.collect { errorNotices.enqueue(this, archiveFailedMessage) }
     }
-    // #561: surface a failed workspace change as a transient snackbar. Same payload-free (Unit) one-shot
-    // idiom; the fixed local string keeps the server-supplied RelayErrorException.message out of the
-    // un-secured Activity window the snackbar draws in.
     val changeWorkspaceFailedMessage = stringResource(R.string.change_workspace_failed)
-    LaunchedEffect(changeWorkspaceErrors, snackbarHostState) {
-        changeWorkspaceErrors.collect { snackbarHostState.showSnackbar(changeWorkspaceFailedMessage) }
+    LaunchedEffect(changeWorkspaceErrors, errorNotices) {
+        changeWorkspaceErrors.collect { errorNotices.enqueue(this, changeWorkspaceFailedMessage) }
     }
-    // #544: surface a failed run-configuration change (model / effort / permission mode) as a transient snackbar. Same
-    // payload-free (Unit) one-shot idiom; the fixed local string keeps the server-supplied
-    // RelayErrorException.message out of the un-secured Activity window the snackbar draws in. The control
-    // reverts in the ViewModel, so the sheet never settles on a value the daemon did not confirm.
     val sessionSettingsFailedMessage = stringResource(R.string.session_settings_failed)
-    LaunchedEffect(sessionSettingsErrors, snackbarHostState) {
-        sessionSettingsErrors.collect { snackbarHostState.showSnackbar(sessionSettingsFailedMessage) }
+    LaunchedEffect(sessionSettingsErrors, errorNotices) {
+        sessionSettingsErrors.collect { errorNotices.enqueue(this, sessionSettingsFailedMessage) }
     }
     // #933: a pick with refused entries names how many, per reason — counts only, never a file name.
     val resources = LocalContext.current.resources
-    LaunchedEffect(attachmentRefusals, snackbarHostState) {
+    LaunchedEffect(attachmentRefusals, errorNotices) {
         attachmentRefusals.collect { refusal ->
             if (refusal.tooLarge > 0) {
                 val text = resources.getQuantityString(R.plurals.thread_attachments_too_large, refusal.tooLarge, refusal.tooLarge)
-                snackbarHostState.showSnackbar(text)
+                errorNotices.enqueue(this, text)
             }
             if (refusal.tooMany > 0) {
                 val text = resources.getQuantityString(R.plurals.thread_attachments_too_many, refusal.tooMany, refusal.tooMany)
-                snackbarHostState.showSnackbar(text)
+                errorNotices.enqueue(this, text)
             }
         }
     }
     // #1325: a send that stopped at a file says why in one fixed sentence — never a name or the daemon's code.
-    LaunchedEffect(attachmentSendFailures, snackbarHostState) {
-        attachmentSendFailures.collect { failure -> snackbarHostState.showSnackbar(failure.text(resources)) }
+    LaunchedEffect(attachmentSendFailures, errorNotices) {
+        attachmentSendFailures.collect { failure -> errorNotices.enqueue(this, failure.text(resources)) }
     }
     val openAttachmentPicker = rememberAttachmentPicker(onAttachmentsPicked)
     // #985: a ready message attachment opens in another app or saves to a picked document; each outcome the
@@ -366,19 +356,23 @@ fun ThreadScreen(
     val noticeScope = rememberCoroutineScope()
     val attachmentActions =
         rememberAttachmentActions(attachmentStates, onOpenMarkdownAttachment) { notice ->
-            noticeScope.launch { snackbarHostState.showSnackbar(resources.getString(notice.message)) }
+            noticeScope.launch {
+                val text = resources.getString(notice.message)
+                if (notice == AttachmentNotice.SAVED) snackbarHostState.showSnackbar(text) else errorNotices.show(text)
+            }
         }
     // #1329: a tapped file that loaded ready opens or saves once, through the same actions as a ready row.
     LaunchedEffect(attachmentLoads, attachmentActions) { attachmentLoads.collect(attachmentActions.loaded) }
     // #1027: a markdown file that cannot be read says what any failed open says.
-    LaunchedEffect(markdownOpenFailures, snackbarHostState) {
-        markdownOpenFailures.collect { snackbarHostState.showSnackbar(resources.getString(AttachmentNotice.OPEN_FAILED.message)) }
+    LaunchedEffect(markdownOpenFailures, errorNotices) {
+        markdownOpenFailures.collect { errorNotices.enqueue(this, resources.getString(AttachmentNotice.OPEN_FAILED.message)) }
     }
-    // #934: a pasted image joins the chat's strip through the same sink as a picked one.
+    // #934: a pasted image joins the chat's strip through the same sink as a picked one. A refused
+    // paste or keyboard insertion queues its Error pill like any other attachment failure (#1747).
     val onImagesPasted =
         key(state.conversationId) {
             rememberPastedImageReceiver(onAttachmentsPicked) { failure ->
-                noticeScope.launch { snackbarHostState.showSnackbar(failure.text(resources)) }
+                errorNotices.enqueue(noticeScope, failure.text(resources))
             }
         }
     // #808: the footer's open option overlay. Plain `remember`, keyed on the conversation, and never
@@ -444,7 +438,7 @@ fun ThreadScreen(
             modifier = Modifier.fillMaxSize(),
             containerColor = if (frameColors.glow == null) frameColors.background else Color.Transparent,
             contentColor = MaterialTheme.colorScheme.onBackground,
-            snackbarHost = { SnackbarHost(snackbarHostState) },
+            snackbarHost = { SnackbarHost(snackbarHostState, Modifier.testTag("thread_confirmation_snackbar")) },
             topBar = {
                 ThreadTopAppBar(
                     title = state.displayName,
@@ -926,6 +920,8 @@ fun ThreadScreen(
                         onOpenMcpFailure = onOpenMcpFailure,
                         sessionError = sessionError,
                         agent = state.agent,
+                        transientError = errorNotices.currentMessage,
+                        transientErrorOccurrence = errorNotices.currentOccurrence,
                     )
                 }
             }

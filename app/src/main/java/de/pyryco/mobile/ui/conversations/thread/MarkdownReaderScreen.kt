@@ -22,6 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -271,7 +272,7 @@ fun RefreshableMarkdownReader(
     modifier: Modifier = Modifier,
 ) {
     var document by remember(initial) { mutableStateOf(initial) }
-    val snackbarHostState = remember { SnackbarHostState() }
+    val errorNotices = rememberTransientErrorNoticeState(initial)
     val scope = rememberCoroutineScope()
     val currentReread by rememberUpdatedState(reread)
     val openFailed = stringResource(AttachmentNotice.OPEN_FAILED.message)
@@ -290,12 +291,12 @@ fun RefreshableMarkdownReader(
                             document = next
                         } else {
                             // Its own job: the in-flight guard covers the read, not the notice, so a retry works.
-                            scope.launch { snackbarHostState.showSnackbar(openFailed) }
+                            scope.launch { errorNotices.show(openFailed) }
                         }
                     }
             }
         },
-        snackbarHostState = snackbarHostState,
+        errorNotices = errorNotices,
     )
 }
 
@@ -328,9 +329,9 @@ private fun markdownClip(
  * A markdown file rendered in-app (#1027), Figma `Markdown Reader Screen` (553:2574): the thread's bar with
  * the file name and the overflow menu (#1067), fixed, over a scrolling [MarkdownText] body. Copies act on
  * [document] and show no notice of their own, since the system confirms a copy; Open in another app (#1068)
- * hands [document] on and reports a failure in [snackbarHostState]; Save to device (#1069) writes [document] into
- * a document the operator picks and reports the outcome there. Refresh is the caller's, and so is
- * [snackbarHostState], where a failed refresh is reported.
+ * hands [document] on and reports a failure in [errorNotices]; Save to device (#1069) writes [document] into
+ * a document the operator picks. Saved uses [snackbarHostState]; failures use [errorNotices], shared
+ * with the caller for failed Refresh. All failures overlay the body below the measured header.
  */
 @Composable
 fun MarkdownReaderScreen(
@@ -339,6 +340,7 @@ fun MarkdownReaderScreen(
     modifier: Modifier = Modifier,
     onRefresh: () -> Unit = {},
     snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
+    errorNotices: TransientErrorNoticeState = rememberTransientErrorNoticeState(),
 ) {
     val clipboard = LocalClipboardManager.current
     val clipLabel = stringResource(R.string.markdown_reader_clip_label)
@@ -362,10 +364,16 @@ fun MarkdownReaderScreen(
                     else -> "failed"
                 }
             RelayLog.d { "event=markdown_reader_open_in_app outcome=$outcome chars=${shown.text.length}" }
-            notice?.let { snackbarHostState.showSnackbar(notices.getValue(it)) }
+            notice?.let { errorNotices.show(notices.getValue(it)) }
         }
     }
-    val saveNote = rememberNoteSaver { notice -> scope.launch { snackbarHostState.showSnackbar(notices.getValue(notice)) } }
+    val saveNote =
+        rememberNoteSaver { notice ->
+            scope.launch {
+                val text = notices.getValue(notice)
+                if (notice == AttachmentNotice.SAVED) snackbarHostState.showSnackbar(text) else errorNotices.show(text)
+            }
+        }
     val chromeSource = remember { HazeState() }
     val density = LocalDensity.current
     var barHeight by remember { mutableStateOf(0.dp) }
@@ -416,7 +424,18 @@ fun MarkdownReaderScreen(
                         .onSizeChanged { barHeight = with(density) { it.height.toDp() } }
                         .chromeBackdrop(chromeSource, MaterialTheme.colorScheme.threadColors.headerBackdrop, top = true),
             )
-            SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))
+            errorNotices.currentMessage?.let { text ->
+                key(errorNotices.currentOccurrence) {
+                    TransientErrorPill(
+                        text,
+                        Modifier.align(Alignment.TopEnd).padding(start = BarGutter, top = barHeight + ReaderBodyTopGap, end = BarGutter),
+                    )
+                }
+            }
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.align(Alignment.BottomCenter).testTag("reader_confirmation_snackbar"),
+            )
             if (menuExpanded) {
                 menuAnchor?.let { anchor ->
                     MarkdownReaderMenu(

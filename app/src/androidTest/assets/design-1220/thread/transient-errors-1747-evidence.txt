@@ -1,0 +1,34 @@
+Ticket #1747 — transient error pills
+Captured and inspected 2026-10-04. Figma file g2HIq2UyPhslEoHRokQmHG.
+
+Final device command:
+./gradlew :app:pixel8Api35DebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.design.ThreadDesignCaptureTest#rowAndNoticeFramesAt412By892,de.pyryco.mobile.design.ThreadDesignCaptureTest#readerErrorFrameAt412By892' -Pandroid.testInstrumentationRunnerArguments.requireRealSystemBars=true --console=plain
+Exit 0; 2 executed, 0 failures/errors, 0 skipped.
+XML: transient-errors-1747-device-results.xml.
+
+The earlier device run also executed refusalStateFramesAt412By892 successfully, proving the switch-back failure wait after replacing its snackbar with a pill. That run was before the 24dp transient height floor: 3 executed, 0 failures/errors, 0 skipped. Its XML is retained separately as transient-errors-1747-device-before-height-results.xml; its PNGs are not substituted for the final requested captures.
+
+failure-notice.png / failure-notice.txt: MainActivity thread archive failure, node 685:4337.
+reader-error.png / reader-error.txt: MainActivity reader Refresh failure, node 696:5101.
+Both are nonblank hardware captures at 412x892, density/font scale 1, API 35, static dark, syntheticBars=false, IME absent. Sidecars retain actual system insets.
+
+Comparisons remove real system bars without stretching. The thread has 24px status and 24px navigation insets, giving a 412x844 app area. The reader has 24px status and 63px navigation insets, giving a 412x805 app area. Each *-screen-area.png crops those exact insets; each figma-*-screen-area.png crops the chrome-free reference to the same height from its top. The full raw capture and full fresh Figma export remain available.
+
+Executed comparisons:
+python3 scripts/design-compare.py app/src/androidTest/assets/design-1220/thread/failure-notice-screen-area.png app/src/androidTest/assets/design-1220/thread/figma-685-4337-screen-area.png app/src/androidTest/assets/design-1220/thread/failure-notice
+python3 scripts/design-compare.py app/src/androidTest/assets/design-1220/thread/reader-error-screen-area.png app/src/androidTest/assets/design-1220/thread/figma-696-5101-screen-area.png app/src/androidTest/assets/design-1220/thread/reader-error
+Outputs: failure-notice-side-by-side.png, failure-notice-overlay.png, reader-error-side-by-side.png, reader-error-overlay.png.
+
+In-scope visual findings:
+- Both error containers begin at app-area y=97, 28dp below the measured 69dp bar through its rule; right edge x=392 gives the 20dp gutter.
+- Both short containers are 24dp high. Error pill reuses NoticePill's 6dp corners, 8/4dp padding, bodySmall, errorContainer/error and overlay shadow. No X or click/dismiss action is introduced.
+- Native pixel samples match errorContainer #93000a. Archive container bounds are x=115..392 in the app versus x=121..392 in Figma: 277dp versus 271dp hug width with the same client-owned text. Shared Android bodySmall metrics are retained (Roboto/SansSerif 12/16sp, weight 400, tracking 0.4sp).
+- Reader intentionally captures reachable Refresh/open-failed text, "Couldn't open file", while the reference depicts "Couldn't save file". Existing client-owned copy is preserved; both use the same error presentation. The device assertion proves the body's heading bounds do not move.
+- Thread title, messages and footer use the harness's existing fake data; reader prose retains its existing Android line wrapping. Those differences are outside this notice migration. Other retained captures are untouched.
+
+Deterministic JVM checks:
+Broader affected layout/action run: 133 executed, 0 failures/errors, 0 skipped (transient-errors-1747-unit-results.xml).
+Final focused run after the height floor and reader lifecycle test: 42 executed, 0 failures/errors, 0 skipped (transient-errors-1747-final-unit-results.xml).
+The final selection is ThreadTransientErrorTest (8), TransientErrorNoticeStateTest (4), MarkdownReaderScreenTest (22), ThreadScreenAttachmentLoadTest (8). It proves all scoped routes, FIFO/full timeout, accessibility flags/adjustment, cancellation, persistent coexistence, Saved/dismissed-elsewhere snackbar coexistence and safe copy.
+
+Documentation-stage handoff (pending): update thread/index.md's Failure notice verdict and add the reader-error entry, or update Reachable states (#1539)'s reader entry if #1619 has landed. Preserve unresolved Saved/dismissed-elsewhere design discrepancies. Fold placement/lifetime into thread and reader feature topics; this evidence does not settle the excluded non-error conflict.

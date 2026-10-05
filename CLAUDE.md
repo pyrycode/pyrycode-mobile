@@ -88,7 +88,8 @@ The mobile wire protocol's single source of truth is the pyrycode repo's `docs/p
 - Shared knowledge ownership: `docs/shared-knowledge.md`.
 - Verification topic: `docs/knowledge/features/development-verification.md`.
 - `docs/PROJECT-MEMORY.md` is a compatibility pointer; do not append to it.
-- `scripts/docs-guard.sh` keeps the overviews under 50000 bytes, free of lines that markdown misreads as headings, and clean of the trailing-whitespace and end-of-file conditions `format("misc")` would otherwise rewrite. It is the first entry in the dispatcher's verifier gate list; run it before committing docs.
+- `scripts/docs-guard.sh` keeps the overviews under 50000 bytes, free of lines that markdown misreads as headings, and clean of the trailing-whitespace and end-of-file conditions `format("misc")` would otherwise rewrite. It is the second entry in the dispatcher's verifier gate list; run it before committing docs.
+- `scripts/pre-verify.py` is the first verifier gate and the builder's last step before handoff. In a few seconds it checks what the verifier would otherwise fail a pull request on: the security review a `security-sensitive` plan needs, new colour, text style and corner literals outside the theme, the PR's `## Live tests` list against the curated live list and the live methods the diff changes, and ignored files such as `AGENTS.md` on the branch. `--gradle` adds the origin/main merge, Spotless and compile check for builders.
 
 ## Conventions
 

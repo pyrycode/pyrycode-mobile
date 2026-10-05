@@ -1,0 +1,19 @@
+Ticket #1747 verifier rework, 2026-10-04.
+Reader failure fixture: isolated noBackupFilesDir via activity ContextWrapper and TemporaryFolder with assured cleanup.
+Offline: target owns the labelled button semantics; decorative pill is hidden from accessibility. Measured visible-pill spacing; 144x48dp Retry target retained; following inert surfaces block Retry where bounds overlap.
+
+Final focused JVM command: ./gradlew spotlessApply testDebugUnitTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest --tests de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadChromeTest --tests de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest --tests de.pyryco.mobile.ui.conversations.thread.TransientErrorNoticeStateTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadScreenAttachmentLoadTest --console=plain
+Exit 0: 70 passed, 0 failures/errors, 2 skipped (72 selected). XML: transient-errors-1747-rework-unit-results.xml.
+
+Final device/build command: ./gradlew lint assembleDebug compileDebugAndroidTestKotlin :app:pixel2Api33AtdDebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest,de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest,de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest' -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain
+Exit 0: 42 passed, 0 failures/errors, 2 skipped (44 selected). XML: transient-errors-1747-rework-device-results.xml.
+The full reader class ran: 21 passed, one known skip. Its failed-open, no-app-open and leaving-reader methods all passed.
+The Offline/transient geometry test passed on JVM and device: 12dp visible gap, 48dp target, inert error tap, exposed bottom-edge Retry tap and independent transient expiry.
+
+./gradlew spotlessCheck --rerun-tasks --console=plain: exit 0. bash scripts/docs-guard.sh: exit 0.
+Known ignored methods: MarkdownReaderScreenTest.copiesOfANoteAtTheReadersBound_areBounded (#1759); ThreadTopOverlayTest.theUsagePill_sitsAboveThePairingPill_whichStartsRePair (#1760).
+Before ignores: device crash run had 14 passes and one crashed method; native overlap run had 42 passes, one failure and one skip. Both raw XMLs and the memory-kill excerpt are retained beside this file.
+Requested pixel8 failure/reader PNGs, comparisons, inset/viewport sidecars and capture XML remain unchanged; these frames have no Offline notice. See transient-errors-1747-evidence.txt for their original fresh capture/comparison commands and counts.
+Documentation handoff remains pending, including unresolved Saved/dismissed-elsewhere discrepancies.
+
+python3 scripts/android-test-gate.py scripted offline-retry: exit 0; 1 passed, 0 failures/errors/skips. XML: transient-errors-1747-rework-scripted-results.xml. Device lease freed after 205s; the earlier reconnect attempt exited busy (75) after 300s without running tests.
