@@ -1,9 +1,11 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.cache.cacheableThreadRows
+import de.pyryco.mobile.data.model.AssistantSegment
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.model.SegmentDelta
 import de.pyryco.mobile.data.network.BackgroundTaskStartedPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskUpdatedPayloadDto
 import de.pyryco.mobile.data.network.Envelope
@@ -273,6 +275,64 @@ class BackgroundTaskLifecycleTest {
             assertEquals(listOf("t1:false", "turn", "middle", "turn#1", "t1:true"), merged.keys())
             assertEquals(split.filterIsInstance<ThreadItem.MessageItem>(), merged.filterIsInstance<ThreadItem.MessageItem>())
             assertEquals(merged, if (cached) merged.mergeCachedRows(incoming) else merged.mergeHistoryRows(incoming))
+        }
+    }
+
+    @Test
+    fun assistantSuffixOfRetainedWholeTurn_anchorsFinishAfterWholeTurnInHistoryAndReconnect() {
+        val launch = emptyList<ThreadItem>().withBackgroundTaskStarted(startedDto(), first).single()
+        val finish = emptyList<ThreadItem>().withBackgroundTaskUpdated(updatedDto(), last).single()
+        val whole = ThreadItem.MessageItem(Message("T", "s1", Role.Assistant, "hello world", first, isStreaming = false))
+        val suffix =
+            ThreadItem.MessageItem(
+                Message(
+                    "T#1",
+                    "s1",
+                    Role.Assistant,
+                    " world",
+                    last,
+                    isStreaming = false,
+                    segment = AssistantSegment("T", listOf(SegmentDelta(1, 6))),
+                ),
+            )
+        for (cached in listOf(false, true)) {
+            for (heldLaunch in listOf(false, true)) {
+                val held = if (heldLaunch) listOf(message("m0"), launch, whole) else listOf(message("m0"), whole)
+                val incoming = if (heldLaunch) listOf(launch, suffix, finish) else listOf(suffix, finish)
+                val merge: List<ThreadItem>.(List<ThreadItem>) -> List<ThreadItem> =
+                    if (cached) List<ThreadItem>::mergeCachedRows else List<ThreadItem>::mergeHistoryRows
+                val merged = held.merge(incoming)
+                val expected = held.keys() + "t1:true"
+                assertEquals("cached=$cached heldLaunch=$heldLaunch", expected, merged.keys())
+                assertEquals(listOf(message("m0"), whole), merged.filterIsInstance<ThreadItem.MessageItem>())
+                assertEquals(merged, merged.merge(incoming))
+                val prepended = merged.mergeHistoryRows(listOf(message("older"), message("m0")))
+                assertEquals(listOf("older") + expected, prepended.keys())
+                assertEquals(prepended, prepended.merge(incoming))
+            }
+        }
+    }
+
+    @Test
+    fun wholeTurnArrivingOverRetainedSegments_anchorsFinishAfterWholeTurnInHistoryAndReconnect() {
+        val delta = LiveSessionEvent.AssistantDelta("c1", "T", 0, "hello")
+        val segments =
+            emptyList<ThreadItem>()
+                .withAssistantDelta(
+                    delta,
+                    first,
+                ).withAssistantDelta(delta.copy(seq = 1, text = " world"), last)
+        val whole = ThreadItem.MessageItem(Message("T", "s1", Role.Assistant, "hello world", first, isStreaming = false))
+        val finish = emptyList<ThreadItem>().withBackgroundTaskUpdated(updatedDto(), last).single()
+        val held = listOf(message("m0")) + segments
+        val incoming = listOf(message("m0"), whole, finish)
+        for (cached in listOf(false, true)) {
+            val merge: List<ThreadItem>.(List<ThreadItem>) -> List<ThreadItem> =
+                if (cached) List<ThreadItem>::mergeCachedRows else List<ThreadItem>::mergeHistoryRows
+            val merged = held.merge(incoming)
+            val ordinary = merged.filterIsInstance<ThreadItem.MessageItem>()
+            assertEquals("cached=$cached", ordinary.map { it.message.id } + "t1:true", merged.keys())
+            assertEquals(merged, merged.merge(incoming))
         }
     }
 

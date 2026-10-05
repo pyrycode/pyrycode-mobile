@@ -793,8 +793,10 @@ private fun List<ThreadItem>.withHistoryLifecyclePositions(
     fresh: List<ThreadItem.BackgroundTaskLifecycle>,
 ): List<ThreadItem> {
     if (fresh.isEmpty()) return this
+    // Anchor against the rows that survive: a segment a whole-turn row supersedes must not hold evidence.
+    val base = withoutSegmentsOfWholeTurns()
     val pending = fresh.mapTo(mutableSetOf()) { it.joinIdentity() }
-    val anchors = ThreadRowAnchors(this)
+    val anchors = ThreadRowAnchors(base)
     // Slot i precedes row i. Leading evidence waits for the page's first retained neighbour.
     val slots = mutableMapOf<Int, MutableList<ThreadItem>>()
     val leading = mutableListOf<ThreadItem>()
@@ -817,11 +819,11 @@ private fun List<ThreadItem>.withHistoryLifecyclePositions(
     }
     if (leading.isNotEmpty()) slots.getOrPut(0) { mutableListOf() }.addAll(leading)
     return buildList {
-        this@withHistoryLifecyclePositions.forEachIndexed { index, row ->
+        base.forEachIndexed { index, row ->
             slots[index]?.let(::addAll)
             add(row)
         }
-        slots[this@withHistoryLifecyclePositions.size]?.let(::addAll)
+        slots[base.size]?.let(::addAll)
     }
 }
 
@@ -891,17 +893,23 @@ internal fun List<ThreadItem>.mergeCachedRows(cached: List<ThreadItem>): List<Th
         .withBackgroundTaskLaunches()
 }
 
-/** Row anchors shared by history and reconnect, including assistant overlap with different segment ids. */
+/**
+ * Row anchors shared by history and reconnect, including assistant overlap with different segment ids and
+ * segments of a turn a whole-turn row holds.
+ */
 private class ThreadRowAnchors(
     rows: List<ThreadItem>,
 ) {
     private val identities = HashMap<Any, Int>(rows.size)
     private val sequences = HashMap<String, MutableMap<Int, Int>>()
+    private val wholeTurns = HashMap<String, Int>()
 
     init {
         rows.forEachIndexed { index, row ->
             identities.putIfAbsent(row.joinIdentity(), index)
-            val segment = (row as? ThreadItem.MessageItem)?.message?.segment
+            val message = (row as? ThreadItem.MessageItem)?.message
+            if (message?.role == Role.Assistant && message.segment == null) wholeTurns.putIfAbsent(message.id, index)
+            val segment = message?.segment
             if (segment != null) {
                 val turn = sequences.getOrPut(segment.turnId) { HashMap() }
                 segment.deltas.forEach { turn.putIfAbsent(it.seq, index) }
@@ -914,6 +922,8 @@ private class ThreadRowAnchors(
     /** First and last retained neighbours represented by this row; text never participates in the join. */
     fun position(row: ThreadItem): IntRange? {
         val segment = (row as? ThreadItem.MessageItem)?.message?.segment
+        // A whole-turn row holds every segment of its turn, as [withoutSegmentsOfWholeTurns] decides.
+        segment?.let { wholeTurns[it.turnId] }?.let { return it..it }
         val turn = segment?.let { sequences[it.turnId] }
         if (segment != null && turn != null) {
             var first = Int.MAX_VALUE
