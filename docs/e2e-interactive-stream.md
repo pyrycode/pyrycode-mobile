@@ -1456,7 +1456,7 @@ real daemon's chunk reassembly, and the scripted `fakeclaude` backend can neithe
 `attachment_chunk` / `request_attachment`. See [Verification status](#verification-status) for the mobile
 and daemon revisions and the result of the first live run.
 
-`interactiveTurn_markdownLink_opensLiveNoteInReader` (#1050, extended #1067) is likewise **always-on**: that a
+`InteractiveStreamE2ETest.interactiveTurn_markdownLink_opensLiveNoteInReader` (#1050, extended #1067; shared reader Actions menu since #1667) is likewise **always-on**: that a
 markdown-path link in an assistant reply opens [the live linked-note reader](knowledge/features/markdown-reader-screen.md#linked-note-live-since-1050)
 with the host's current content, and that its [Refresh](knowledge/features/markdown-reader-screen.md#copy-and-refresh-menu-since-1067)
 re-reads it on demand, are durable post-conditions, unrelated to the attachment scenarios above — the note is
@@ -4067,6 +4067,14 @@ The remaining checks here are specific to a real relay or real Claude execution:
   `LIVE_MINIMUM` (a floor, not an exact count) still holds. The dispatcher's post-verifier live run executed
   33, passed 25, failed 8 — all eight failures passed on a same-tree re-run (a known suite-wide flake class);
   this ticket's own method was not among them and passed outright.
+
+- **Coverage — shipped:** [#1667](https://github.com/pyrycode/pyrycode-mobile/issues/1667)
+  moves the reader to the shared Below Actions overlay. The existing
+  `InteractiveStreamE2ETest.interactiveTurn_markdownLink_opensLiveNoteInReader` still reaches Refresh;
+  no new scenario or deterministic twin was added. The fresh full dispatcher live suite on
+  2026-10-05 executed 53, passed 53, failed 0, skipped 0, with this named method present and passed
+  in retained XML. See [reader testing](knowledge/features/markdown-reader-screen.md#testing)
+  for the command, revisions and linked gate evidence; no separate focused run was required.
 
 - **Coverage — shipped:** [#1067](https://github.com/pyrycode/pyrycode-mobile/issues/1067) added
   [the reader's copy-and-refresh overflow menu](knowledge/features/markdown-reader-screen.md#copy-and-refresh-menu-since-1067)
