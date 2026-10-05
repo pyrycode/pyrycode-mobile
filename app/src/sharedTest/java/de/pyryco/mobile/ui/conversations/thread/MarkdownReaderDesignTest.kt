@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.width
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import de.pyryco.mobile.ui.pixelDp
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -123,15 +124,18 @@ class MarkdownReaderDesignTest {
                 .bottom.value,
             1f,
         )
-        assertEquals(141f, paragraph.top.value, 1f)
-        assertEquals(225f, subheading.top.value, 1f)
-        assertEquals(265f, firstItem.top.value, 1f)
+        // Each text block rounds its height up to a whole pixel at the emulator's density, so a block lower in
+        // the body may sit a few pixels below its Figma position. Robolectric's density 1 adds nothing.
+        val stacked = 1f + 4 * pixelDp()
+        assertEquals(141f, paragraph.top.value, stacked)
+        assertEquals(225f, subheading.top.value, stacked)
+        assertEquals(265f, firstItem.top.value, stacked)
         assertEquals(20f, code.left.value, 1f)
-        assertEquals(385f, code.top.value, 1f)
+        assertEquals(385f, code.top.value, stacked)
         assertEquals(372f, code.width.value, 1f)
         assertEquals(64f, code.height.value, 1f)
         assertEquals(35f, quote.left.value, 1f)
-        assertEquals(461f, quote.top.value, 2f)
+        assertEquals(461f, quote.top.value, 2f + 4 * pixelDp())
     }
 
     private fun body() = rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange))
@@ -424,9 +428,11 @@ class MarkdownReaderDesignTest {
         val menu = rule.onNodeWithTag("markdown-reader-menu").getUnclippedBoundsInRoot()
         val anchor = rule.onNodeWithContentDescription("More actions").getUnclippedBoundsInRoot()
         assertEquals(4f, (menu.top - anchor.bottom).value, 0.5f)
-        assertTrue(menu.left.value >= 8f)
-        assertTrue(menu.right.value <= 232f)
-        assertTrue(menu.bottom.value <= 212f)
+        // Each edge may round to the next whole pixel at the emulator's density.
+        val pixel = pixelDp()
+        assertTrue("menu $menu", menu.left.value >= 8f - pixel)
+        assertTrue("menu $menu", menu.right.value <= 232f + pixel)
+        assertTrue("menu $menu", menu.bottom.value <= 212f + pixel)
         rule.onNodeWithText("Save to device").performScrollTo().assertIsDisplayed()
         val last = rule.onNodeWithText("Save to device").getUnclippedBoundsInRoot()
         assertTrue(last.top >= menu.top && last.bottom <= menu.bottom)
