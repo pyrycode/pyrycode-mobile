@@ -155,10 +155,25 @@ is a kernel `flock` on a file beside `avd/gradle-managed` under
 host contends for the same file regardless of where it runs from. A waiting run
 prints who holds the device on stderr and, once it acquires it, how long it
 waited. `ANDROID_GATE_WAIT_SECONDS` (default 300) bounds that wait; a run that
-gives up exits 75 without starting Gradle or the e2e harness, naming the
+gives up exits 75 without starting the device task or the e2e harness, naming the
 holder's mode, worktree and start time — that exit code means a busy device,
 not a test result. A `ui` run that skips itself (above) takes no hold. A direct
 `./gradlew …AndroidTest` run bypasses the script and does not take the hold.
+
+Every mode builds the app and test APKs before it queues for the hold, so the
+hold covers only boot, install and run (2026-10-05). The e2e modes build with
+`-PuseRelayRepository=true`, as `scripts/e2e-emulator.sh` does, and set
+`E2E_APKS_BUILT=1` so that script skips its own build. A failed build exits 1
+without taking the device. `scripted-all` installs both APKs once on the emulator
+it boots. Before each scenario it clears the app's data and grants back the
+runtime permissions the install granted, then the harness runs the
+instrumentation directly instead of Gradle's device task;
+`scripts/instrument-report.py` turns its output into the JUnit report, and a crash,
+an unfinished test or an empty run fails. If the install or a clear fails, the
+remaining scenarios install through Gradle as before. The `ui` and scripted runs
+pass `disableAnimations=true`: `E2eInstrumentationRunner` then sets the window,
+transition and animator scales to 0 on an emulator for the run and restores them
+when it finishes. The live run keeps animations.
 
 `FocusRecordListener` (`app/src/androidTest/.../e2e/FocusRecordListener.kt`,
 registered through the `listener` instrumentation argument in
