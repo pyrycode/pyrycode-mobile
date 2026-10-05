@@ -63,3 +63,12 @@ None. The protocol fixes the no-success-reply and correlation-only contracts.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-06
+
+## Revisions
+
+2026-10-06: Verifier finding 1 reported the replay-order timeout after reconnect. Main now contains `a824b728` from #1783: the opening fixture omitted Claude's replayed initial user, allowing the daemon's idle placement fallback to insert its confirmation between assistant deltas and split the reply. Merge main rather than duplicate its repair. The fixture now emits the user echo before thinking; its harness regression pins that order, and `interactiveTurn_seededChannel_missedEventsReplayInOrderAfterReconnect` additionally checks exact reply text, delta identities and user-before-reply placement. Run the focused scripted replay-order gate with fresh counted XML on this integrated branch. The stop transport contract and security review remain unchanged; no new production replay behavior, collector, storage or logging is introduced.
+
+## Documentation handoff
+
+- Pending documentation stage: `docs/knowledge/features/remote-conversation-repository-control-sends.md`, a per-task stop section beside interrupt: document the concrete support/send/refusal APIs, subscribing before send, static failures, and send acceptance without completion. Completion comes from terminal task updates or roster omission; detection grants no authorization.
+- Pending documentation stage: `docs/knowledge/features/relay-repository-coordinator-seams-and-passthroughs.md`, Background-task roster and outbound stop passthrough: document current-host/current-open-connection support, correlation-only origin routing, supersession, terminal/roster/send-failure/connection retirement, strict required error-field types, and content-free logging.
