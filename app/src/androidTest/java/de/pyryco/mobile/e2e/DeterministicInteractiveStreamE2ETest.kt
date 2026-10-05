@@ -400,6 +400,59 @@ class DeterministicInteractiveStreamE2ETest {
         composeTestRule.onNode(hasContentDescription(thinkingDescription)).assertDoesNotExist()
     }
 
+    /** #1642 rung 4: release the tool result and user echo only after actual send-now delivery. */
+    @Test
+    fun interactiveTurn_seededChannel_sendQueuedNow_placesAfterToolResult() {
+        arriveInSeededThread()
+        typeAndSend(SEND_PROMPT)
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(toolRunningDescription)).fetchSemanticsNodes().isNotEmpty()
+        }
+        val repo =
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    GlobalContext
+                        .get()
+                        .get<RelayRepositoryCoordinator>()
+                        .currentRepository
+                        .filterNotNull()
+                        .first()
+                }
+            }
+        val conversationId =
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    repo
+                        .observeConversations(ConversationFilter.All)
+                        .first { rows -> rows.any { it.name == SEED_CHANNEL_NAME } }
+                        .first { it.name == SEED_CHANNEL_NAME }
+                        .id
+                }
+            }
+        repo.refreshSessionSettings(conversationId)
+        typeAndSend(SECOND_PROMPT)
+        val queued = hasText(SECOND_PROMPT) and SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Waiting to send")
+        val send =
+            hasContentDescription("Send now") and
+                androidx.compose.ui.test
+                    .hasAnyAncestor(queued)
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(send).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onNode(send).performClick()
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText("send-now-marker").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodes(queued).assertCountEquals(0)
+        composeTestRule.onAllNodesWithText(SECOND_PROMPT, useUnmergedTree = true).assertCountEquals(1)
+        val rows =
+            runBlocking { repo.observeMessages(conversationId).first() }
+                .filterIsInstance<de.pyryco.mobile.data.repository.ThreadItem.MessageItem>()
+        val tool = rows.indexOfFirst { it.message.role == de.pyryco.mobile.data.model.Role.Tool }
+        val user = rows.indexOfFirst { it.message.content == SECOND_PROMPT }
+        val reply = rows.indexOfFirst { "send-now-marker" in it.message.content }
+        assertTrue("user delivery must follow tool result and precede final reply", tool >= 0 && tool < user && user < reply)
+        assertEquals(1, rows.count { it.message.content == SECOND_PROMPT })
+    }
+
     /**
      * `tool` scenario — a tool step must render **running** while the tool is in flight and **done**
      * after the result. "Running" is transient (the row flips to done the instant the correlated
