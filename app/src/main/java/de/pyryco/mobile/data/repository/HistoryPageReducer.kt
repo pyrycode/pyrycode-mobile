@@ -1010,13 +1010,13 @@ private fun List<ThreadItem>.assistantParents(): MutableMap<String, String> =
         }
     }
 
-/** Fill only missing hints, including legacy cache rows with no segment record. Known values are inert. */
+/** Apply the retained turn hint to every reconstruction candidate, including legacy whole-turn rows. */
 private fun List<ThreadItem>.withAssistantParents(parents: Map<String, String>): List<ThreadItem> {
     if (parents.isEmpty()) return this
     return map { row ->
         val message = (row as? ThreadItem.MessageItem)?.message
         val parent = message?.assistantTurnId()?.let(parents::get)
-        if (message != null && message.parentToolUseId.isEmpty() && parent != null) {
+        if (message != null && parent != null && message.parentToolUseId != parent) {
             ThreadItem.MessageItem(message.copy(parentToolUseId = parent))
         } else {
             row

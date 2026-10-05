@@ -67,3 +67,15 @@ None. Representation and conflict precedence are settled above.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-06
+
+## Revisions
+
+- 2026-10-06, verifier finding 1: `withAssistantParents` filled only empty hints, so an older conflicting incoming opener or non-recoverable legacy replacement could discard the held parent. Apply the selected turn hint to every held and incoming candidate before atomization. The first non-empty held hint wins; only a turn with no held hint takes incoming evidence. Conflict probes cover older openers, prefix/suffix/middle overlap, legacy replacement and replay through both history and cache merges, preserving text, keys and held-row order. This tightens implementation of the existing precedence contract; attribution remains inert and conversation-local, with no new logging or storage.
+
+## Documentation handoff
+
+Pending for the documentation stage, as requested by the verifier:
+
+- `docs/knowledge/features/data-model.md`, `Message`, and `docs/knowledge/features/mobile-protocol-v2-wire-layer-application-payloads.md`, assistant payloads: document DTO/event/message attribution, absent versus null decoding and conversation-local inert handling.
+- `docs/knowledge/features/remote-conversation-repository-assistant-reply-segments.md`, seam join and merge: document held-parent precedence and conflict probes. Selecting a winner is insufficient unless every reconstruction or replacement candidate receives it.
+- `docs/knowledge/features/conversation-cache.md`, thread document: unchanged disk serialization, cache-only unknown attribution and in-memory enrichment/reconnect retention.

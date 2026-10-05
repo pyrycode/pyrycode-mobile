@@ -192,6 +192,90 @@ class AssistantParentAttributionTest {
     }
 
     @Test
+    fun conflictingOlderOpener_retainsHeldParentThroughHistoryAndCacheReconstruction() {
+        val held =
+            listOf(ThreadItem.MessageItem(user("before")))
+                .withAssistantDelta(delta("t", 1, "b", PARENT), TS)
+                .withMessage(user("after"))
+        val incoming = reduceHistoryPage(entries(listOf(delta("t", 0, "a", "incoming"))), true)
+        for (cache in listOf(false, true)) {
+            val merged = if (cache) held.mergeCachedRows(incoming) else held.mergeHistoryRows(incoming)
+            assertEquals(listOf("before", "t", "after"), merged.messages().map { it.id })
+            assertEquals(listOf("before", "ab", "after"), merged.messages().map { it.content })
+            assertEquals(PARENT, merged.messages()[1].parentToolUseId)
+            assertEquals(
+                listOf(0, 1),
+                merged
+                    .messages()[1]
+                    .segment
+                    ?.deltas
+                    ?.map { it.seq },
+            )
+            assertEquals(merged, if (cache) merged.mergeCachedRows(incoming) else merged.mergeHistoryRows(incoming))
+        }
+    }
+
+    @Test
+    fun conflictingOverlap_retainsHeldParentAndOrderAcrossBothMergePathsAndArrivalDirections() {
+        val complete = (0..4).map { delta("t", it, ('a' + it).toString(), "incoming") }
+        for (sequences in listOf(listOf(0, 1), listOf(3, 4), listOf(1, 3))) {
+            var held: List<ThreadItem> = listOf(ThreadItem.MessageItem(user("before")))
+            for (seq in sequences) {
+                held = held.withAssistantDelta(delta("t", seq, ('a' + seq).toString(), PARENT), TS)
+                if (sequences == listOf(1, 3) && seq == 1) held = held.withMessage(user("middle"))
+            }
+            held = held.withMessage(user("after"))
+            val incoming = reduceHistoryPage(entries(complete), true)
+            for (cache in listOf(false, true)) {
+                val merged = if (cache) held.mergeCachedRows(incoming) else held.mergeHistoryRows(incoming)
+                val baseline =
+                    if (cache) {
+                        held.withoutParents().mergeCachedRows(incoming.withoutParents())
+                    } else {
+                        held.withoutParents().mergeHistoryRows(incoming.withoutParents())
+                    }
+                assertEquals(baseline.messages().map { it.id to it.content }, merged.messages().map { it.id to it.content })
+                assertEquals(held.messages().filter { it.role == Role.User }, merged.messages().filter { it.role == Role.User })
+                val assistants = merged.messages().filter { it.role == Role.Assistant }
+                assertEquals("abcde", assistants.joinToString("") { it.content })
+                assertEquals(List(assistants.size) { PARENT }, assistants.map { it.parentToolUseId })
+                assertEquals(
+                    (0..4).toList(),
+                    assistants.flatMap {
+                        it.segment
+                            ?.deltas
+                            .orEmpty()
+                            .map { it.seq }
+                    },
+                )
+            }
+        }
+    }
+
+    @Test
+    fun conflictingLegacyReplacement_retainsHeldParentAndSlotAcrossBothMergePaths() {
+        val held =
+            listOf(ThreadItem.MessageItem(user("before")))
+                .withAssistantDelta(delta("t", 0, "b", PARENT), TS)
+                .withMessage(user("after"))
+        // Only "b" is accounted for: the legacy whole-turn row cannot recover a delta record.
+        val incoming = listOf(ThreadItem.MessageItem(Message("t", "", Role.Assistant, "abc", TS, false, parentToolUseId = "incoming")))
+        for (cache in listOf(false, true)) {
+            val merged = if (cache) held.mergeCachedRows(incoming) else held.mergeHistoryRows(incoming)
+            assertEquals(listOf("before", "t", "after"), merged.messages().map { it.id })
+            assertEquals(listOf("before", "abc", "after"), merged.messages().map { it.content })
+            assertEquals(PARENT, merged.messages()[1].parentToolUseId)
+            assertEquals(null, merged.messages()[1].segment)
+            assertEquals(merged, if (cache) merged.mergeCachedRows(incoming) else merged.mergeHistoryRows(incoming))
+        }
+    }
+
+    private fun List<ThreadItem>.withoutParents() =
+        map { row ->
+            if (row is ThreadItem.MessageItem) row.copy(message = row.message.copy(parentToolUseId = "")) else row
+        }
+
+    @Test
     fun collidingTurnKeys_doNotOverwriteHeldLaneAttributionOrGainAuthority() {
         val first = emptyList<ThreadItem>().withAssistantDelta(delta("a#1", 0, "X", "agent-x"), TS)
         val second = emptyList<ThreadItem>().withAssistantDelta(delta("a", 1, "A", "agent-a"), TS)
