@@ -932,16 +932,12 @@ private fun List<ThreadItem>.mergeRows(
         val lower = segment?.let { turn?.lowerEntry(it.firstSeq)?.value }
         val upper = segment?.let { turn?.higherEntry(it.firstSeq)?.value }
         val logId = order[identity]
-        val logSlot =
-            logId?.let { id ->
-                val before = logPositions.lowerEntry(id)?.value?.plus(1)
-                val after = logPositions.higherEntry(id)?.value
-                if (before == null && after == null) {
-                    null
-                } else {
-                    maxOf(before ?: 0, minOf(after ?: base.size, clocks.insertionSlot(row.mergeTimestamp())))
-                }
-            }
+        // Held rows with known daemon positions bound this row: a reused message id or a malformed entry
+        // can give it a shared neighbour on the wrong side of a known position.
+        val logBefore = logId?.let { logPositions.lowerEntry(it)?.value?.plus(1) }
+        val logAfter = logId?.let { logPositions.higherEntry(it)?.value }
+        val logBounds = if (logBefore == null && logAfter == null) null else (logBefore ?: 0)..(logAfter ?: base.size)
+        val logSlot = logBounds?.let { maxOf(it.first, minOf(it.last, clocks.insertionSlot(row.mergeTimestamp()))) }
         val neighbour =
             previous?.plus(1) ?: following[index].takeIf { it >= 0 }?.let {
                 // Leading restored rows preceded live-only rows before the cache was written.
@@ -958,6 +954,9 @@ private fun List<ThreadItem>.mergeRows(
                 logSlot != null -> logSlot
                 else -> clocks.insertionSlot(runTimestamp)
             }
+        if (logBounds != null && !logBounds.isEmpty()) slot = slot.coerceIn(logBounds)
+        lower?.let { slot = maxOf(slot, it + 1) }
+        upper?.let { slot = minOf(slot, it) }
         slot = maxOf(floor, slot).coerceAtMost(base.size)
         slots.getOrPut(slot) { mutableListOf() } += row
         floor = slot
@@ -1086,21 +1085,58 @@ private fun legacyDeltaMatches(
     return LegacyMatches(matches, records)
 }
 
-/** Ordinary message ids reserve their keys before new segment openers can claim them. */
+/**
+ * One renderer key per row, without losing a row whose key another identity already uses. Ordinary message ids
+ * claim their keys first and a repeated id is the same row. A turn's opening segment then claims its bare turn
+ * key, or the explicit `#0` alias beside a legacy whole-turn row. Other segments claim [segmentKey]. A segment
+ * whose key another logical identity holds, as when splitting a turn gives its suffix a key another turn or
+ * message already uses, keeps its text under a `~n` suffix instead of being dropped; a repeated
+ * `(turn, sequence)` is the same segment.
+ */
 private fun List<ThreadItem>.withUniqueMessageKeys(): List<ThreadItem> {
     val reserved = filterIsInstance<ThreadItem.MessageItem>().filter { it.message.segment == null }.mapTo(HashSet()) { it.message.id }
-    val seen = HashSet<String>()
-    return mapNotNull { row ->
-        val message = (row as? ThreadItem.MessageItem)?.message ?: return@mapNotNull row
-        val segment = message.segment
-        val key = if (segment != null && segment.firstSeq == 0 && message.id in reserved) "${segment.turnId}#0" else message.id
-        if ((segment != null && key in reserved) || !seen.add(key)) {
-            null
-        } else if (key == message.id) {
-            row
-        } else {
-            row.copy(message = message.copy(id = key))
-        }
+    val keys = arrayOfNulls<String>(size)
+    val claimed = HashSet<String>()
+    val segments = HashSet<Pair<String, Int>>()
+
+    fun preferred(message: Message): String {
+        val segment = message.segment ?: return message.id
+        return if (segment.firstSeq == 0 && message.id in reserved) "${segment.turnId}#0" else message.id
+    }
+
+    fun claim(
+        index: Int,
+        message: Message,
+        alternative: Boolean,
+    ) {
+        val identity = message.segment?.let { it.turnId to it.firstSeq }
+        if (identity != null && identity in segments) return
+        val key = preferred(message)
+        keys[index] =
+            when {
+                claimed.add(key) -> key
+                alternative -> generateSequence(1) { it + 1 }.map { "$key~$it" }.first(claimed::add)
+                else -> return
+            }
+        identity?.let(segments::add)
+    }
+    forEachIndexed { index, row ->
+        val message = (row as? ThreadItem.MessageItem)?.message ?: return@forEachIndexed
+        if (message.segment == null) claim(index, message, alternative = false)
+    }
+    forEachIndexed { index, row ->
+        val message = (row as? ThreadItem.MessageItem)?.message ?: return@forEachIndexed
+        val segment = message.segment ?: return@forEachIndexed
+        if (segment.firstSeq == 0 && message.id == segment.turnId) claim(index, message, alternative = false)
+    }
+    forEachIndexed { index, row ->
+        val message = (row as? ThreadItem.MessageItem)?.message ?: return@forEachIndexed
+        if (message.segment != null && keys[index] == null) claim(index, message, alternative = true)
+    }
+    return mapIndexedNotNull { index, row ->
+        val message = (row as? ThreadItem.MessageItem)?.message ?: return@mapIndexedNotNull row
+        val key = keys[index] ?: return@mapIndexedNotNull null
+        if (key == message.id) row else row.copy(message = message.copy(id = key))
     }
 }
 

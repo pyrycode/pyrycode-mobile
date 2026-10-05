@@ -1,10 +1,12 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.cache.FileConversationCache
+import de.pyryco.mobile.data.cache.cacheableThreadRows
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.HistoryPagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
@@ -374,6 +376,85 @@ class HistoryReconciliationTest {
             job.cancel()
         }
 
+    @Test
+    fun heldSplit_keyCollisions_keepEveryHeldTurn_onHistoryCacheRepeatsAndPersistence() =
+        runTest(UnconfinedTestDispatcher()) {
+            val cases =
+                listOf<suspend (ThreadProjection) -> Unit>(
+                    { it.applyAssistantDelta(LiveSessionEvent.AssistantDelta("c", "t#1", 0, "keep")) },
+                    { it.appendMessages(listOf("c" to message("t#1", 4).copy(content = "keep"))) },
+                )
+            for (collide in cases) {
+                val projection = ThreadProjection()
+                projection.mergeHistoryPage("c", page(delta(1, 0, "a"), delta(4, 1, "b"), end(5)), true)
+                collide(projection)
+                assertEquals(listOf("ab", "keep"), projection.observe("c").first().texts())
+                val split = page(tool(2), result(3))
+                repeat(3) {
+                    projection.mergeHistoryPage("c", split, true)
+                    val rows = projection.observe("c").first()
+                    assertEquals(listOf("a", "Bash", "b", "keep"), rows.texts())
+                    assertEquals(rows.ids().distinct(), rows.ids())
+                }
+                // Persisted settled rows keep their text and unique keys through restore, repeats and reopen.
+                val drawn = projection.observe("c").first()
+                val cache = FileConversationCache(tmp.newFolder(), UnconfinedTestDispatcher(testScheduler))
+                assertTrue(cache.writeThread("host", "c", drawn).isSuccess)
+                var restored = cache.readThread("host", "c")
+                val persisted = cacheableThreadRows(drawn).texts()
+                assertEquals(persisted, restored.texts())
+                assertTrue(persisted.containsAll(listOf("a", "Bash", "b")))
+                repeat(3) {
+                    restored = restored.mergeCachedRows(reduceHistoryPage(split.entries, true))
+                    assertEquals(persisted, restored.texts())
+                    assertEquals(restored.ids().distinct(), restored.ids())
+                    val reopened = drawn.mergeCachedRows(restored)
+                    assertEquals(listOf("a", "Bash", "b", "keep"), reopened.texts())
+                    assertEquals(reopened.ids().distinct(), reopened.ids())
+                }
+            }
+        }
+
+    @Test
+    fun reusedMessageIdOrMalformedOverlap_cannotOverrideHeldDaemonOrder() =
+        runTest {
+            val pages =
+                listOf(
+                    page(user(3, "a"), user(4, "c")),
+                    page(user(1, "a"), entry(2, "send_message", "{}"), user(3, "c")),
+                )
+            for (incoming in pages) {
+                val projection = ThreadProjection()
+                projection.mergeHistoryPage("c", page(user(1, "a"), user(2, "b")), true)
+                repeat(3) {
+                    projection.mergeHistoryPage("c", incoming, true)
+                    assertEquals(listOf("a", "b", "c"), projection.observe("c").first().ids())
+                }
+            }
+        }
+
+    @Test
+    fun liveFilledDivider_carriesItsHistoryOrder_toTheBoundaryIdentity() =
+        runTest {
+            val rising = """{"conversation_id":"c","active":true}"""
+            val falling = """{"conversation_id":"c","active":false}"""
+            val projection = ThreadProjection()
+            projection.applyCompacting(envelope(1, "compacting", rising))
+            projection.applyCompacting(envelope(2, "compacting", falling))
+            projection.mergeHistoryPage("c", page(entry(1, "compacting", rising), entry(2, "compacting", falling)), true)
+            projection.applyCompactionBoundary(
+                envelope(4, "compaction_boundary", """{"conversation_id":"c","trigger":"auto","pre_tokens":10,"post_tokens":5}"""),
+            )
+            repeat(3) {
+                projection.mergeHistoryPage("c", page(user(3, "middle")), true)
+                val rows = projection.observe("c").first()
+                assertEquals(2, rows.size)
+                assertTrue(rows.first() is ThreadItem.CompactionBoundary)
+                assertEquals(10L, (rows.first() as ThreadItem.CompactionBoundary).preTokens)
+                assertEquals(listOf("middle"), rows.ids())
+            }
+        }
+
     private fun user(
         id: Int,
         key: String,
@@ -419,6 +500,14 @@ class HistoryReconciliationTest {
     private fun List<ThreadItem>.messages() = filterIsInstance<ThreadItem.MessageItem>().map { it.message }
 
     private fun List<ThreadItem>.ids() = messages().map { it.id }
+
+    private fun List<ThreadItem>.texts() = messages().map { it.content }
+
+    private fun envelope(
+        id: Int,
+        type: String,
+        payload: String,
+    ) = Envelope(id = id.toLong(), type = type, ts = "2026-10-01T10:00:%02dZ".format(id), payload = MobileJson.parseToJsonElement(payload))
 
     private fun List<ThreadItem>.seqs() = messages().flatMap { it.segment?.deltas.orEmpty() }.map { it.seq }
 

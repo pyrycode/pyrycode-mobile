@@ -404,13 +404,42 @@ internal class ThreadProjection(
     ) {
         val fold = compactionFolds.value[conversationId] ?: CompactionFold()
         var next = fold
-        updateThreads { threads ->
-            val thread = threads[conversationId].orEmpty()
+        state.update { current ->
+            val thread = current.threads[conversationId].orEmpty()
             val (rows, stepped) = step(thread, fold)
             next = stepped
-            if (rows === thread) threads else threads + (conversationId to rows)
+            if (rows === thread) {
+                current
+            } else {
+                current.copy(
+                    threads = current.threads + (conversationId to rows),
+                    historyOrder = current.historyOrder.withFilledDividerOrder(conversationId, fold, thread, rows),
+                )
+            }
         }
         if (next != fold) compactionFolds.update { it + (conversationId to next) }
+    }
+
+    /**
+     * A boundary that fills the pending divider in place gives it a new identity; its daemon position, if a
+     * history page supplied one, moves with it, so later pages still place rows around the divider.
+     */
+    private fun Map<String, Map<Any, Long>>.withFilledDividerOrder(
+        conversationId: String,
+        fold: CompactionFold,
+        before: List<ThreadItem>,
+        after: List<ThreadItem>,
+    ): Map<String, Map<Any, Long>> {
+        val order = this[conversationId] ?: return this
+        val pendingAt = fold.pending ?: return this
+        if (before.size != after.size) return this
+        val index = before.indexOfFirst { it is ThreadItem.CompactionBoundary && it.occurredAt == pendingAt }
+        val filled = after.getOrNull(index) as? ThreadItem.CompactionBoundary ?: return this
+        val old = before[index].mergeIdentity()
+        val logId = order[old] ?: return this
+        val identity = filled.mergeIdentity()
+        if (identity == old || identity in order) return this
+        return this + (conversationId to (order - old + (identity to logId)))
     }
 
     /**
