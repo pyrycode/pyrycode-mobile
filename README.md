@@ -92,6 +92,11 @@ version code exceed the last. This needs a full clone; a shallow clone undercoun
 Override it with `-PversionCode=N` when needed. `versionName` is a hand-edited field in
 `defaultConfig` and does not move on its own.
 
+Debug builds do not carry the commit. Their version code is fixed at 999999, so the
+version name is `1.0.999999`, and the About screen's build line reads `build dev`. The
+same tree then builds the same debug APK on every commit, and Gradle's build cache can
+reuse it across worktrees. `-PversionCode=N` still overrides the debug code.
+
 ## Pre-ship gate
 
 For a ticket labelled `needs-real-claude`, the dispatcher runs the live real-Claude end-to-end gate after verifier and before documentation or merge — the mobile parallel of the daemon's `make e2e-realclaude`:

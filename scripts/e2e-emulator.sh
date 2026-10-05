@@ -473,6 +473,33 @@ PY
 #   pairing code outlived the daemon's 15-minute redemption window. Prints nothing when no log matches.
 #   Reads the logs through a fixed-string match only and never echoes a log line: they hold pairing
 #   material. Plain `if` statements, so the function cannot fail the run under `set -e`.
+# One scripted scenario on the emulator scripts/android-test-gate.py booted for scripted-all, where it installed both
+# APKs once for the whole run and cleared the app's data before this scenario (E2E_INSTALLED=1). Runs the
+# instrumentation directly instead of Gradle's device task, which installs and removes both APKs on every call, and
+# leaves the report and logcat where that task would. Takes the Gradle test arguments and passes on the runner ones.
+device_quote() { local q="'" e="'\\''"; printf "'%s'" "${1//$q/$e}"; }
+run_installed_instrumentation() {
+  local adb="${ANDROID_HOME}/platform-tools/adb"
+  local results="${REPO_ROOT}/app/build/outputs/androidTest-results/connected/debug"
+  # app/build.gradle.kts's runner and its fixed listener argument; scripts/test_e2e_emulator_gradle.py checks both.
+  local runner="de.pyryco.mobile.test/de.pyryco.mobile.e2e.E2eInstrumentationRunner"
+  local extras="-e listener de.pyryco.mobile.e2e.FocusRecordListener" arg pair
+  for arg in "$@"; do
+    case "${arg}" in
+      -Pandroid.testInstrumentationRunnerArguments.*)
+        pair="${arg#-Pandroid.testInstrumentationRunnerArguments.}"
+        extras+=" -e ${pair%%=*} $(device_quote "${pair#*=}")"
+        ;;
+    esac
+  done
+  mkdir -p "${results}"
+  log "running ${TEST_TARGET} on the installed app (no Gradle install)…"
+  "${adb}" logcat -c >/dev/null 2>&1 || true
+  "${adb}" shell "am instrument -w -r ${extras} ${runner}" >"${results}/instrument-raw.txt" 2>&1 || true
+  "${adb}" logcat -d >"${results}/logcat-${TEST_TARGET//\#/-}.txt" 2>/dev/null || true
+  python3 "${REPO_ROOT}/scripts/instrument-report.py" "${results}/instrument-raw.txt" "${results}/TEST-installed.xml"
+}
+
 report_stale_pairing_codes() {
   local stale="" entry name logfile
   for entry in "${PYRY_NAME}:${DAEMON_LOG}" "${PYRY_NAME_B}:${DAEMON_B_LOG}" \
@@ -1059,12 +1086,17 @@ fi
 # A code must be redeemed within the daemon's 15-minute window, and a slow or contended Gradle build once
 # took 28 minutes. Building here leaves only the device boot and install inside the window: the test task
 # below finds these APKs up to date. The -P build properties must match the test task's (-PuseRelayRepository
-# feeds BuildConfig); scripts/test_e2e_emulator_gradle.py checks that they do.
-log "building the app and test APKs before minting pairing codes…"
+# feeds BuildConfig); scripts/test_e2e_emulator_gradle.py checks that they do. scripts/android-test-gate.py
+# builds both with these properties before it takes the device and sets E2E_APKS_BUILT=1, so this run skips it.
 GRADLE_BUILD_ARGS=(-PuseRelayRepository=true)
-"${GRADLEW}" -p "${REPO_ROOT}" assembleDebug assembleDebugAndroidTest "${GRADLE_BUILD_ARGS[@]}" \
-  --console=plain \
-  || die "the Gradle build of the app and test APKs failed (see the output above); no pairing code was minted"
+if [ "${E2E_APKS_BUILT:-}" = "1" ]; then
+  log "the app and test APKs were built before the device hold; not building again"
+else
+  log "building the app and test APKs before minting pairing codes…"
+  "${GRADLEW}" -p "${REPO_ROOT}" assembleDebug assembleDebugAndroidTest "${GRADLE_BUILD_ARGS[@]}" \
+    --console=plain \
+    || die "the Gradle build of the app and test APKs failed (see the output above); no pairing code was minted"
+fi
 
 # ---- pair against the running test daemon ---------------
 # `pyry pair` prints a QR plus one base64url-encoded JSON line: {server, relay, token,
@@ -1374,15 +1406,24 @@ fi
 if [ -n "${FAULT_PORT:-}" ]; then
   GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.daemonFaultPort="${FAULT_PORT}")
 fi
+# Animations off on the emulator for the run; scripts/android-test-gate.py sets this for scripted scenarios only.
+if [ "${E2E_DISABLE_ANIMATIONS:-}" = "1" ]; then
+  GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.disableAnimations=true)
+fi
+GRADLE_TEST_ARGS+=(
+  -Pandroid.testInstrumentationRunnerArguments.class="${TEST_TARGET}"
+  -Pandroid.testInstrumentationRunnerArguments.relayUrl="${PHONE_RELAY_URL}"
+  -Pandroid.testInstrumentationRunnerArguments.token="${TOKEN}"
+  -Pandroid.testInstrumentationRunnerArguments.serverId="${SERVER_ID}"
+  -Pandroid.testInstrumentationRunnerArguments.serverStaticPublicKey="${SERVER_STATIC_PUBKEY}"
+)
 TEST_STATUS=0
-"${GRADLEW}" -p "${REPO_ROOT}" "${DEVICE}DebugAndroidTest" \
-  "${GRADLE_TEST_ARGS[@]}" \
-  -Pandroid.testInstrumentationRunnerArguments.class="${TEST_TARGET}" \
-  -Pandroid.testInstrumentationRunnerArguments.relayUrl="${PHONE_RELAY_URL}" \
-  -Pandroid.testInstrumentationRunnerArguments.token="${TOKEN}" \
-  -Pandroid.testInstrumentationRunnerArguments.serverId="${SERVER_ID}" \
-  -Pandroid.testInstrumentationRunnerArguments.serverStaticPublicKey="${SERVER_STATIC_PUBKEY}" \
-  --console=plain || TEST_STATUS=$?
+if [ "${E2E_INSTALLED:-}" = "1" ]; then
+  run_installed_instrumentation "${GRADLE_TEST_ARGS[@]}" || TEST_STATUS=$?
+else
+  "${GRADLEW}" -p "${REPO_ROOT}" "${DEVICE}DebugAndroidTest" "${GRADLE_TEST_ARGS[@]}" \
+    --console=plain || TEST_STATUS=$?
+fi
 if [ "${TEST_STATUS}" -ne 0 ]; then
   report_stale_pairing_codes
   report_relay_link_drops

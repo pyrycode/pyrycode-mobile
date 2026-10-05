@@ -6,7 +6,7 @@ Dedicated, navigable screen showing app version + build SHA, the open-source rep
 
 Lists four rows, in order, under the standard sub-screen chrome (back-arrow `TopAppBar` titled "About"):
 
-1. **Version** — headline `"Version ${BuildConfig.VERSION_NAME}"`, supporting `"build ${BuildConfig.GIT_SHA}"`. Non-clickable. `GIT_SHA` is the abbreviated commit SHA injected at build time (since #165 — was `VERSION_CODE` before; see [Settings screen § About Version row](settings-screen.md)), falling back to the literal `"unknown"` outside a git checkout.
+1. **Version** — headline `"Version ${BuildConfig.VERSION_NAME}"`, supporting `"build ${BuildConfig.GIT_SHA}"`. Non-clickable. `GIT_SHA` is the abbreviated commit SHA injected into release builds (since #165 — was `VERSION_CODE` before; see [Settings screen § About Version row](settings-screen.md)), falling back to the literal `"unknown"` outside a git checkout. Debug builds carry the fixed `"dev"` instead (see [Versioning](#versioning)).
 2. **Open source · github.com/pyrycode/pyrycode-mobile** — clickable; launches the platform browser via `Intent(Intent.ACTION_VIEW, Uri.parse(SOURCE_REPO_URL))` on `context.startActivity(...)`. Trailing `ExternalLinkIcon` (the 18dp `ic_open_in_new` vector). Unguarded — no `try`/`catch` for `ActivityNotFoundException`; on Min SDK 33+ a browser is universal (inherited from #90).
 3. **Privacy policy** — clickable-but-inert (`onClick = {}`), trailing `ExternalLinkIcon`. Deliberately not wired up per the #271 AC — promoting the row didn't change its behavior.
 4. **License: MIT** — non-clickable text-only row (no trailing, no ripple). No license viewer — the in-app `LicenseScreen` from #91 was deleted in #163 and was **not** revived by #271.
@@ -43,6 +43,8 @@ Two ids added to `strings.xml` in #271: `about_title` = "About" (TopAppBar) and 
 code is the Git commit count (`git rev-list --count HEAD`, requiring a full
 clone), falling back to 1 when Git cannot supply it. `-PversionCode=N` overrides
 that code and produces `1.0.N`; for example, code 3901 yields `1.0.3901`.
+Debug builds use the fixed code 999999, so `1.0.999999`, unless `-PversionCode=N`
+is given. They carry no commit, so the build cache can reuse an identical tree.
 Read the already resolved code rather than resolving the count again, so the
 name and code stay paired under overrides. The version still has exactly three
 decimal parts, no leading zeros and no suffix
