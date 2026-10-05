@@ -91,6 +91,31 @@ all header controls; its sequential effect collector preserves queued failures a
 successes. See [Archive behavior and coverage](archived-discussions-screen.md#what-it-does)
 and the [retained restore-failure verdict](../../../app/src/androidTest/assets/design-1220/list/index.md#restore-failure--error-pill-reuse-6854337).
 
+## Share destination picker (#1728)
+
+A pending Android share turns this screen into a destination picker. `ChannelListScreen` takes two
+defaulted parameters for it: `shareHeader`, which replaces `ChannelListTopBar`, and
+`conversationSelectionEnabled`. `PyryNavHost` passes `SharePickerHeader`
+(`ui/conversations/share/SharePickerHeader.kt`), built from Figma
+[771:6753](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=771-6753). It has a 48dp back
+target and the `titleLarge` title "Share to…". Below them sits a preview row with a 48dp outlined, rounded
+thumbnail, a `titleMedium` summary and the first filename in `bodySmall`. The thumbnail shows the first
+shared image from its private copy, a spinner while capture runs, or a file icon. The summary reads
+"N images" for an all-image batch, "N files" for any other file batch, or the start of the text, cut to
+one line, for a text-only share. The header's 28dp bottom padding reproduces the frame's spacing to the
+first host row.
+
+The body is the same `ConversationTree` in a selection-only mode. Folds, offline host rows and their
+reconnect affordance stay. The host edit control, the section plus controls, the options menu, the
+create-chat failure notice and the editor and add-workspace bindings are hidden. Only conversation rows
+choose a destination, and each row carries its own host target. While capture runs,
+`TreeConversationRow` is disabled for touch, accessibility and pressed feedback, so a tap cannot select
+before the batch is ready. With no hosts, the existing empty copy shows and the back arrow still cancels.
+`SharePickerTest` covers the header, summaries, the folded offline tree, the readiness gate and the
+transfer into the chosen thread. Intake and ownership are described in
+[Composer pending attachments](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments)
+and the intent flow in [Navigation § Incoming shares](navigation.md#incoming-shares-1728).
+
 ## Shape
 
 ```kotlin

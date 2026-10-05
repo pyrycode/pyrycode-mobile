@@ -248,6 +248,30 @@ the ViewModels for compatibility but are not collected by the production graph.
 
 `HostWorkspaceRepository` wraps the thread destination for its workspace picker. Settings no longer opens a picker. The channel list resolves host-specific repository operations through its ViewModel; see [WorkspacePicker § Consumers](workspace-picker.md#consumers).
 
+### Incoming shares (#1728)
+
+`MainActivity` is the share target. Its manifest entry adds an `ACTION_SEND` / `ACTION_SEND_MULTIPLE`
+filter for `*/*` and uses `singleTask`, so a share from another app reaches the existing task through
+`onNewIntent` even when the app is in the background. `SharePayload.from` parses the intent once. It
+reads plain `EXTRA_TEXT` and ordered `EXTRA_STREAM` URIs, falls back to `ClipData` URIs only when no
+stream extra is present, and drops duplicates. A wrongly typed extra, an unsupported action or an empty
+share returns no payload, so neither drafts nor the current screen change.
+
+A fresh launch reads its intent only when `savedInstanceState` is null, as the notification tap does.
+`onNewIntent` routes a share to the activity-scoped `ShareIntakeViewModel` and clears any pending
+notification target. A notification tap cancels a pending share instead. Each new tap bumps
+`openTargetVersion`, so tapping the same notification twice still navigates. While a share is pending,
+`PyryNavHost` resets the stack to `channel_list` for each new batch generation and draws the picker
+there; it also skips the notification-permission prompt. Selecting a row first transfers the batch,
+then calls `onHostRowTapped` with the row's own target, so the exact host and conversation open.
+
+System Back and the header's back arrow both cancel. They release the captured copies, leave every
+draft unchanged and finish the activity. An activity-level `OnBackPressedCallback` covers Back during
+startup, before the navigation graph has composed. Activity recreation keeps a pending batch in the
+ViewModel and never replays a consumed one. Process death drops it, as it drops drafts. Ownership and
+limits are in [Composer pending attachments](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments).
+`ShareActivityTest` covers fresh and new intents, recreation, both Back paths and an ordinary launch.
+
 ## Adding a route
 
 1. Add a `const val MY_ROUTE = "my_route"` (or `"my_route/{argName}"` for a parameterized route) to `Routes`. Keep the `{name}` placeholder inside the constant — the graph DSL consumes the literal pattern.

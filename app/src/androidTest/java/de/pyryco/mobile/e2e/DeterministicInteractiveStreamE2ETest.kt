@@ -491,7 +491,10 @@ class DeterministicInteractiveStreamE2ETest {
         val tool = rows.indexOfFirst { it.message.role == de.pyryco.mobile.data.model.Role.Tool }
         val user = rows.indexOfFirst { it.message.content == SECOND_PROMPT }
         val reply = rows.indexOfFirst { "send-now-marker" in it.message.content }
-        assertTrue("user delivery must follow tool result and precede final reply", tool >= 0 && tool < user && user < reply)
+        assertTrue(
+            "user delivery must follow tool result and precede final reply (tool=$tool, user=$user, reply=$reply)",
+            tool >= 0 && tool < user && user < reply,
+        )
         assertEquals(1, rows.count { it.message.content == SECOND_PROMPT })
     }
 
