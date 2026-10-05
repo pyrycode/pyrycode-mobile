@@ -1,0 +1,6 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest" tests="1" failures="0" errors="0" skipped="0" time="3.017">
+    <testcase classname="de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest" name="interactiveTurn_seededChannel_refusalSwitchBackRestoresOriginalModel" />
+  </testsuite>
+</testsuites>
