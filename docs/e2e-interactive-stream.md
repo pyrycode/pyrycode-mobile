@@ -1406,6 +1406,18 @@ and had to rework around (see [Verification status](#verification-status)). That
 [#1020](https://github.com/pyrycode/pyrycode-mobile/issues/1020); once it landed, this method went back
 to reading the peer's history and `awaitCachedSentAttachmentIds` was deleted.
 
+`InteractiveStreamE2ETest.interactiveTurn_sharedContentFromAndroid_arrivesAtPeerWithItsBytes`
+([#1728](https://github.com/pyrycode/pyrycode-mobile/issues/1728)) covers Android share intake. It inserts
+a PNG and a text document as `MediaStore` downloads and starts `MainActivity` with an
+`ACTION_SEND_MULTIPLE` intent carrying both stream URIs, a matching `ClipData` and the ping prompt as
+`EXTRA_TEXT`. It waits for the picker's "2 files" summary and then for the header's ready tag, so capture
+has finished before any tap. It then deletes both downloads and asserts the originals are unreadable.
+Choosing chat X must show both pending files and the shared text in the composer, with no message sent.
+After Send and X's `turn_end`, the peer's history holds exactly one user message in X. That message names
+two distinct attachment ids whose retrieved bytes match the two fixture digests and carries the shared
+text, and chat Y gains no user message. The method sits in the full live selector beside the
+attachments-from-phone regression, which stays unchanged.
+
 [#1697](https://github.com/pyrycode/pyrycode-mobile/issues/1697) confirmed this
 `InteractiveStreamE2ETest` scenario passes unchanged after #1698/#1686's shared peer identity
 repairs. A 30-second timeout plus daemon `static_key_mismatch` / `bound_to_other_key` events
@@ -2010,6 +2022,17 @@ after the tool result, and the original turn's final marker reply. The rung-4 tw
 (`send-now` scripted scenario). Late peer-delivery placement requires the daemon's optional
 `sent_now` delivery flag, supplied by pyrycode#2748 / v0.31.2.
 
+An intermittent `send-now` red whose message reads `user delivery must follow tool result and precede
+final reply` with `user` greater than `reply` is a daemon ordering race, diagnosed during the #1728
+hand finish on 2026-10-05. The scripted gate builds its daemon from the local pyrycode checkout. Before
+pyrycode [#2820](https://github.com/pyrycode/pyrycode/issues/2820) (`7a52b70a`), a sent-now message's
+live `message` push left on the operator-message emitter's own goroutine while the reply left from the
+stream drain, so the push could reach the phone after the reply had started. The phone then places the
+delivered echo below the reply. It failed full gates for #1760, #1728 and #1783 on daemon `a438db4b`
+and passed 19 other gate runs. Delaying that emitter by 50 ms in a local `a438db4b` build reproduced
+the failure in both runs, with `tool=1, user=3, reply=2`. Five runs on daemon `bf82c68e` and three on `128c54f2` passed. Daemons containing `7a52b70a` publish the push
+from the stream drain. Check the logged daemon revision before treating this red as a mobile regression.
+
 The dispatcher's 2026-10-04 full live run used
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`, branch
 `feature/1642` at `08536d2277`, merged with `origin/main` at `c7eb3ca79f`.
@@ -2567,6 +2590,13 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+**Android share intake (#1728, 2026-10-05).** Finished by hand. The full live gate,
+`automation-access op run --env-file=… -- env ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`,
+ran on `feature/1728` at `39906e88`, merged with `origin/main` at `640152e9`, with daemon `bf82c68e`
+and Claude Code 2.1.280: **58 executed, 58 passed, 0 failed, 0 errors, 0 skipped**, exit 0.
+`interactiveTurn_sharedContentFromAndroid_arrivesAtPeerWithItsBytes` and
+`interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes` both ran and passed.
 
 **Finished-reply system Copy (#1674, 2026-10-05).** The inspected dispatcher full-live
 report `2026-10-05T11-09-42-731Z_real-claude-gate_#1674.log` in the agents repository's

@@ -170,3 +170,27 @@ alone is insufficient evidence when a MediaStore fixture was inserted with the t
 `ComposerImagePasteDeviceTest.pasteAndKeyboardInsert_captureBeforeTheProviderDisappears` also deletes the
 provider item. See the [live attachments-from-phone regression](../../e2e-interactive-stream.md#what-rung-3-is-made-of)
 for peer digest and conversation-isolation coverage.
+
+**Android share intake ([#1728](https://github.com/pyrycode/pyrycode-mobile/issues/1728)).** A share from
+another app reuses the same owned-copy path, with a separate generic-file entry point:
+`captureSharedAttachment` in `AttachmentPicker.kt` accepts any MIME type, while paste keeps its
+image-only check. `ShareIntakeViewModel` (`ui/conversations/share/ShareIntake.kt`, activity-scoped)
+captures each shared URI on IO while the share intent is handled, before the picker relies on the
+provider's temporary grant. The same foreign-content-URI guard, actual-byte `MAX_BYTES` bound, clamped
+provider text and static-outcome logging apply. The batch stops at `MessageAttachmentIds.MAX` files and
+reports the remainder with the existing count notice. A generation counter guards publication, and each
+capture releases its copy in `finally` unless it published to the current generation. Cancellation,
+replacement by a newer share and ViewModel clearing therefore release every unselected copy, including
+one finished as IO returned. Destination rows stay disabled until capture completes.
+
+Selecting a row calls `select` synchronously on Main. It clears the batch before navigation, so a
+second tap, recomposition or activity recreation cannot stage it again. Files go through
+`ComposerDraftStore.addAttachment` for the row's exact host and conversation, in share order. The store
+applies its existing size and count limits against attachments the draft already holds and releases
+refused copies. Shared text, bounded to 32768 characters, is appended to a nonblank draft after a newline
+or fills an empty one. A file-only share adds no text. Nothing uploads or sends until the user taps Send,
+and accepted copies then follow the paste ownership rules above. Share state is process-local, held in
+the ViewModel and never in saved state. `ShareIntakeTest` and `ShareCaptureTest` cover limits, cleanup,
+draft isolation and merging, and a revoked source whose captured bytes still preview and send. See
+[Navigation § Incoming shares](navigation.md#incoming-shares-1728) for the intent handling and
+[ChannelListScreen § Share destination picker](channel-list-screen.md#share-destination-picker-1728) for the picker.
