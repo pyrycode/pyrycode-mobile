@@ -187,7 +187,7 @@ override suspend fun requestHistory(conversationId: String, cursor: String, limi
   (#645) re-reduces it through the same per-type decode arms the live lane runs rather than paying for
   a second parse. `HistoryEntryDto.id` maps straight to `HistoryEntry.id`; an entry carrying both `id`
   and an unrelated `event_id`-shaped key decodes from `id` only — the two are different sequences that
-  both look like small integers (see [`HistoryEntry`](conversation-repository.md#shape)).
+  both look like small integers (see [`HistoryEntry`](conversation-repository-shape.md#shape)).
 - **`security-sensitive` → never-log.** Like `requestScreenSnapshot`, the class adds zero `Log.*` call
   sites for this method: the cursor and every entry's `type`/`payload` are replayed content and never
   reach Logcat, on any branch including the not-connected `check` and every decode-failure path.

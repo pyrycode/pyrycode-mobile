@@ -56,6 +56,29 @@ or merge. Record the scenario, app/build version, daemon compatibility and execu
 test count. XML evidence is required; a zero exit code with every scenario skipped
 is not a passing proof.
 
+For a multi-operation live scenario, name each failing wait before attributing it to an older
+repair. The question-answer scenario's `QuestionAnswerStage` / `questionAnswerStep` diagnostic
+adds fixed operation labels and lazily read, content-free peer link state to coroutine and Compose
+timeouts, retaining the original cause and deadline (#1703). Its captured `AwaitPhoneDismissal`
+(`await phone answer's question_dismissed on peer`) timed out after 30000 ms with
+`session open (link 1, replaced 0×)`: later than #1702's enabled-Continue Compose wait and #1686's
+peer admission/key-binding repair. Accepted daemon handshakes do not prove that a phone answer
+was sent. Preserve sanitized stderr, counted XML and copied per-test logcat together; removed
+gate worktrees can erase the phone evidence needed to correlate them.
+
+An enabled semantic node and successful `performScrollToNode` do not establish a usable physical
+tap target. The thread draws beneath header/composer chrome. In #1703's short-thread reproduction,
+Continue's tap center was 468.5 while composer top was 461; the real pointer tap emitted no submit
+event. The long empty-thread fixture did not expose this. `questionAnswerTarget` now measures the
+readable band, applies one scroll adjustment and asserts that the tap center clears chrome before
+selection and Continue. `ThreadInlineQuestionTest#phone_question_scroll_sequence_submits_from_a_short_thread`
+checks selection and exactly one submit event with the held generation. The historical live
+occurrence's missing phone logcat leaves attribution to this reproduced defect an inference,
+not an observed tap coordinate. The repaired live method ran and passed in a fresh full suite:
+**53 executed, 53 passed, 0 failed, 0 skipped**. See the
+[question-answer scenario and revision-linked evidence](../../e2e-interactive-stream.md#verification-status)
+for the app/daemon revisions and the distinction from earlier failed captures and same-tree reruns.
+
 The dispatcher runs the twelve scripted scenarios — `ping`, `stream`, `spinner`,
 `tool`, `tool-failed`, `tool-progress`, `reconnect`, `offline-retry`,
 `replay-order`, `tool-then-text`, `refusal` and `mcp-failed` (#1457, the failed

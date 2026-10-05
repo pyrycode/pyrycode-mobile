@@ -4,6 +4,26 @@ Test coverage and fixture guidance for [MessageBubble](message-bubble.md).
 
 ## Testing
 
+`app/src/test/.../components/StreamingRevealStepTest.kt` covers the pure
+`nextStreamingRevealLength` helper: a short reply advances one word per 33 ms
+step; spaces, tabs, newlines and Unicode whitespace are preserved; a final word
+without trailing whitespace is included; an appended snapshot continues from the
+retained prefix; empty, finished and whitespace-only inputs reach their end; and
+a single 2000-character word is never split. A 2000-character multiword backlog
+reaches its end within 15 word-aligned steps (495 ms).
+
+Fixed-snapshot tests cannot detect a producer whose delay restarts on every
+arrival. `MessageBubbleTest.streamingReveal_frequentAppends_keepProgressAndCatchUpWithoutLosingThePrefix`
+pauses the Compose clock, starts with a 2000-character backlog, and appends every
+16 ms for two seconds, faster than the reveal interval. It checks progress during
+arrivals, a monotonically retained word-aligned prefix, and each snapshot's
+visibility within about 500 ms including one presentation frame (checked at
+512 ms). It also checks final catch-up while still streaming and another arrival
+after catch-up, guarding against a producer that stops once it reaches the end.
+Keep this lifecycle regression alongside the step tests: retaining `produceState`
+values across key changes does not retain a cancelled timer or local deadline.
+See [Streaming variant](message-bubble.md#streaming-variant--progressive-reveal--blinking-caret-since-184).
+
 `MessageBubbleSelectionTest` covers selection, streaming and code Copy. Compose
 1.10.4 uses
 `LocalTextContextMenuToolbarProvider`/`TextContextMenuKeys.CopyKey`, not

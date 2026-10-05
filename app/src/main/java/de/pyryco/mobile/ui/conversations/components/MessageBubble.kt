@@ -70,9 +70,9 @@ internal const val MESSAGE_BUBBLE_TEST_TAG = "message-bubble"
 
 private const val STREAMING_CARET_GLYPH = "▎"
 private val UserParagraphBreak = Regex("\\r?\\n[\\t ]*\\r?\\n")
-private const val STREAMING_REVEAL_CHARS_PER_SECOND = 50
-private const val STREAMING_REVEAL_STEP_CHARS = 1
-private const val STREAMING_REVEAL_STEP_MS: Long = 1000L / STREAMING_REVEAL_CHARS_PER_SECOND
+private const val STREAMING_REVEAL_WORDS_PER_SECOND = 30
+internal const val STREAMING_REVEAL_STEP_MS: Long = 1000L / STREAMING_REVEAL_WORDS_PER_SECOND
+private const val STREAMING_CATCH_UP_STEPS = (500L / STREAMING_REVEAL_STEP_MS).toInt()
 private const val STREAMING_CARET_BLINK_PERIOD_MS: Long = 500L
 
 /**
@@ -377,6 +377,26 @@ private data class MetaRowControl(
  */
 private fun Message.hasNoBody(): Boolean = attachments.isNotEmpty() && content.isBlank()
 
+/** Reveal whole words, sharing the arrived backlog across the positive [stepsRemaining] budget. */
+internal fun nextStreamingRevealLength(
+    content: String,
+    revealedLength: Int,
+    stepsRemaining: Int,
+): Int {
+    val wordEnds = mutableListOf<Int>()
+    var end = revealedLength
+    while (end < content.length) {
+        while (end < content.length && content[end].isWhitespace()) end++
+        if (end == content.length) break
+        while (end < content.length && !content[end].isWhitespace()) end++
+        while (end < content.length && content[end].isWhitespace()) end++
+        wordEnds.add(end)
+    }
+    if (wordEnds.isEmpty()) return content.length
+    // Rounding up avoids a shrinking fractional step leaving a long tail past the catch-up deadline.
+    return wordEnds[(wordEnds.size - 1) / stepsRemaining]
+}
+
 @Composable
 private fun StreamingAssistantBody(
     content: String,
@@ -384,11 +404,15 @@ private fun StreamingAssistantBody(
     onOpenMarkdownLink: ((String) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
-    // Content updates restart the producer while retaining its value, so only appended text reveals.
-    val revealedLength by produceState(initialValue = initialRevealedLength, key1 = content) {
-        while (value < content.length) {
+    val currentContent by rememberUpdatedState(content)
+    val revealedLength by produceState(initialValue = initialRevealedLength, key1 = Unit) {
+        var stepsRemaining = STREAMING_CATCH_UP_STEPS
+        while (true) {
             delay(STREAMING_REVEAL_STEP_MS)
-            value = (value + STREAMING_REVEAL_STEP_CHARS).coerceAtMost(content.length)
+            val arrived = currentContent
+            value = nextStreamingRevealLength(arrived, value, stepsRemaining)
+            // Arrivals must not restart the clock or extend an outstanding backlog's deadline.
+            stepsRemaining = if (value == arrived.length) STREAMING_CATCH_UP_STEPS else stepsRemaining - 1
         }
     }
     val caretVisible by produceState(initialValue = true, key1 = Unit) {

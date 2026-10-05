@@ -35,6 +35,12 @@ Additional files read: `ThreadFold.kt` (`ThreadInput.Live`, `StreamingTurn`, `re
 
 Drive the paused-clock arrival regression through the real fold with both empty and historical projections. Cover pre-open synthetic text, progressive appends, same-key repository replacement and reopening. `ThreadFoldArrivalTest` unit assertions pin first-arrival capture and retention. Repair the follow fixture with a current timestamp for the arriving reply, preserving its offscreen-arrival and follow-after-release assertions. Rerun the entire follow class, fold/streaming ViewModel coverage and the original focused checks. Figma thread and assistant body context/screenshots were inspected again; the repair changes timing only.
 
+### 2026-10-05 — merge with word-based reveal (#1754)
+
+Keep `main`'s composition-lifetime producer, latest-content state and 15-step word catch-up budget, with this ticket's `initialRevealedLength` as the initial state. Content updates no longer restart the producer; they preserve both the visible prefix and outstanding catch-up clock. Immediate pre-open content, zero-start post-open content and disposal behavior remain this ticket's contract. The only changed `main` line inside the conflict is the producer's initial value, from zero to `initialRevealedLength`; all automatically merged changes remain intact.
+
+The first focused merge run executed 45 tests with three failures: this ticket's short streaming fixtures had finished under the faster word cadence before their 160 ms intermediate assertions. Lengthen the fixture text to keep partial reveal observable at that same checkpoint, preserving the prefix, incomplete-text, same-key replacement and reopening assertions. A shorter 64 ms checkpoint was too early for first-arrival layout and is not used. The documentation handoff's producer-restart wording is superseded by #1754's stable-producer contract.
+
 ## Documentation handoff
 
 Pending for the documentation stage:

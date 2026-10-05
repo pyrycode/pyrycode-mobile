@@ -3831,55 +3831,59 @@ class InteractiveStreamE2ETest {
     @Test
     fun interactiveTurn_questionAnswer_reachesTheAskingConversation() {
         val (serverId, peer) = answerHostPeer()
+
+        fun <T> step(
+            stage: QuestionAnswerStage,
+            block: () -> T,
+        ): T = questionAnswerStep(stage, peer::linkState, block)
         try {
-            pairAnswerHost()
-            val (chat, name) = answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "q-")
-            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
-            openChatRow(name)
+            step(QuestionAnswerStage.PairPhone) { pairAnswerHost() }
+            val (chat, name) = step(QuestionAnswerStage.CreateChat) { answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "q-") }
+            step(QuestionAnswerStage.OpenPeer) { runBlocking { peer.open(CONNECT_TIMEOUT_MS) } }
+            step(QuestionAnswerStage.OpenThread) { openChatRow(name) }
 
             // 1. AC-3: claude asks in this chat, and the phone draws the question.
-            sendFromPhone(QUESTION_PROMPT)
-            val batchId = runBlocking { peer.awaitQuestion(chat, REPLY_TIMEOUT_MS) }
-            awaitInlineQuestion()
+            step(QuestionAnswerStage.SendFirstQuestion) { sendFromPhone(QUESTION_PROMPT) }
+            val batchId = step(QuestionAnswerStage.AwaitFirstQuestion) { runBlocking { peer.awaitQuestion(chat, REPLY_TIMEOUT_MS) } }
+            step(QuestionAnswerStage.DrawFirstQuestion) { awaitInlineQuestion() }
 
             // 2. AC-3: the phone picks one option and continues; the daemon takes it as this batch's answer.
             val mark = peer.recorded(chat).size
-            composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(
-                hasText(QUESTION_PICK, substring = true) and hasClickAction(),
-            )
-            composeTestRule
-                .onAllNodes(
-                    hasText(QUESTION_PICK, substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("thread-question-row")),
-                ).onFirst()
-                .performClick()
-            val continueButton =
-                hasText(string(R.string.question_continue)) and hasClickAction() and isEnabled() and
-                    hasAnyAncestor(hasTestTag("question-batch-actions"))
-            // The actions are a separate lazy item; selecting an option need not compose them (#1702).
-            composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(hasTestTag("question-batch-actions"))
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(continueButton).fetchSemanticsNodes().isNotEmpty()
+            step(QuestionAnswerStage.SubmitPhoneAnswer) {
+                composeTestRule
+                    .questionAnswerTarget(
+                        hasText(QUESTION_PICK, substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("thread-question-row")),
+                    ).performTouchInput { click(center) }
+                val continueButton =
+                    hasText(string(R.string.question_continue)) and hasClickAction() and isEnabled() and
+                        hasAnyAncestor(hasTestTag("question-batch-actions"))
+                // The actions are a separate lazy item; selecting an option need not compose them (#1702).
+                composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(hasTestTag("question-batch-actions"))
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(continueButton).fetchSemanticsNodes().isNotEmpty()
+                }
+                composeTestRule.questionAnswerTarget(continueButton).performTouchInput { click(center) }
             }
-            composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(continueButton)
-            composeTestRule.onNode(continueButton).performClick()
-            val dismissed = runBlocking { peer.awaitQuestionDismissed(batchId, THREAD_TIMEOUT_MS) }
+            val dismissed =
+                step(QuestionAnswerStage.AwaitPhoneDismissal) { runBlocking { peer.awaitQuestionDismissed(batchId, THREAD_TIMEOUT_MS) } }
             assertEquals("who resolved the question", REMOTE_SOURCE, peer.field(dismissed, "source"))
             assertEquals("the question's outcome", ANSWERED, peer.field(dismissed, "outcome"))
 
             // 3. AC-3: the turn ends and claude's reply names the chosen option, not the other one.
-            awaitTurnEnd(peer, chat, 1, "the phone-answered turn")
+            step(QuestionAnswerStage.EndPhoneTurn) { awaitTurnEnd(peer, chat, 1, "the phone-answered turn") }
             val reply = assistantText(peer, chat, mark)
             assertTrue("the reply does not name the chosen option", QUESTION_PICK in reply)
             assertTrue("the reply names the option the phone did not choose", QUESTION_OTHER !in reply)
-            awaitNoInlineQuestion("the question stayed after the phone answered it")
+            step(QuestionAnswerStage.RemovePhoneQuestion) { awaitNoInlineQuestion("the question stayed after the phone answered it") }
 
             // 4. AC-4: asked again, the peer answers, and the phone's inline batch disappears with no tap.
-            sendFromPhone(QUESTION_PROMPT)
-            val second = runBlocking { peer.awaitQuestion(chat, REPLY_TIMEOUT_MS, occurrence = 2) }
-            awaitInlineQuestion()
-            runBlocking { peer.answerQuestion(second, 0, QUESTION_OTHER, THREAD_TIMEOUT_MS) }
-            awaitNoInlineQuestion("the question stayed after the peer answered it")
-            awaitTurnEnd(peer, chat, 2, "the peer-answered turn")
+            step(QuestionAnswerStage.SendSecondQuestion) { sendFromPhone(QUESTION_PROMPT) }
+            val second =
+                step(QuestionAnswerStage.AwaitSecondQuestion) { runBlocking { peer.awaitQuestion(chat, REPLY_TIMEOUT_MS, occurrence = 2) } }
+            step(QuestionAnswerStage.DrawSecondQuestion) { awaitInlineQuestion() }
+            step(QuestionAnswerStage.SubmitPeerAnswer) { runBlocking { peer.answerQuestion(second, 0, QUESTION_OTHER, THREAD_TIMEOUT_MS) } }
+            step(QuestionAnswerStage.RemovePeerQuestion) { awaitNoInlineQuestion("the question stayed after the peer answered it") }
+            step(QuestionAnswerStage.EndPeerTurn) { awaitTurnEnd(peer, chat, 2, "the peer-answered turn") }
         } finally {
             peer.close()
             runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
@@ -4280,7 +4284,7 @@ class InteractiveStreamE2ETest {
                         "background_task_started"
                 }
             val started = MobileJson.decodeFromJsonElement(BackgroundTaskStartedPayloadDto.serializer(), startedFrame.payload)
-            assertTrue("the started task names no type", started.taskType.isNotBlank())
+            assertEquals("the background shell task must retain its raw wire type", "local_bash", started.taskType)
 
             // 2. The live thread pill opens the panel while the task is running.
             val taskPill =
@@ -4297,7 +4301,7 @@ class InteractiveStreamE2ETest {
                 composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_title))).fetchSemanticsNodes().isNotEmpty()
             }
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasText(started.taskType) and inBackgroundPanel()).fetchSemanticsNodes().isNotEmpty()
+                composeTestRule.onAllNodes(hasText("Command") and inBackgroundPanel()).fetchSemanticsNodes().isNotEmpty()
             }
             closeBackgroundTasks()
 
@@ -4309,7 +4313,7 @@ class InteractiveStreamE2ETest {
             Espresso.pressBack()
             openBackgroundTasks()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasText(started.taskType) and inBackgroundPanel()).fetchSemanticsNodes().isNotEmpty()
+                composeTestRule.onAllNodes(hasText("Command") and inBackgroundPanel()).fetchSemanticsNodes().isNotEmpty()
             }
             composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_unreported))).assertCountEquals(0)
             composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_empty))).assertCountEquals(0)

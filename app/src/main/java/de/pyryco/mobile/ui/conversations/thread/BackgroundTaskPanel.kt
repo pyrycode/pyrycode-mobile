@@ -213,7 +213,7 @@ private fun TaskRow(task: BackgroundTask) {
                 .semantics(mergeDescendants = true) {},
         verticalArrangement = Arrangement.spacedBy(TaskRowGap),
     ) {
-        val type = boundedText(task.taskType)
+        val type = boundedText(taskTypeLabel(task.taskType))
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -476,6 +476,14 @@ private fun EmptyReading(
         )
     }
 }
+
+/** Display-only names; raw task types still select description styling and remain in the roster. */
+private fun taskTypeLabel(raw: String): String =
+    when (raw) {
+        "local_agent" -> "Agent"
+        TYPE_LOCAL_BASH -> "Command"
+        else -> raw.removePrefix("local_").replace('_', ' ').replaceFirstChar { it.uppercaseChar() }
+    }
 
 private fun TextStyle.monospace(): TextStyle = copy(fontFamily = FontFamily.Monospace)
 

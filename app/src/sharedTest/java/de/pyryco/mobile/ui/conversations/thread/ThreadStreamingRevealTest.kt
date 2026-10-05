@@ -68,7 +68,7 @@ class ThreadStreamingRevealTest {
     @Test
     fun existingText_isImmediate_appendReveals_andReopeningReplaysNothing() {
         val arrived = "Already arrived"
-        val appended = " and more text arrives"
+        val appended = " and more text arrives while the reply continues streaming in the open thread"
         row = streaming(arrived, Instant.parse("2026-01-01T00:00:00Z"))
         showThread()
         composeRule.onNodeWithText(arrived, substring = true).assertIsDisplayed()
@@ -98,7 +98,7 @@ class ThreadStreamingRevealTest {
     fun firstDeltaAfterOpening_revealsFromZero() {
         var fold = ThreadFold(emptyList(), null)
         showThread()
-        val content = "New reply while open"
+        val content = "New reply while open continues with enough words to observe gradual reveal before catching up"
         composeRule.runOnIdle {
             fold = fold.reduce(ThreadInput.Live(LiveSessionEvent.AssistantDelta("c1", "reply", 1, content)), "c1")
             row = (fold.render().single() as ThreadItem.MessageItem).message
@@ -132,7 +132,7 @@ class ThreadStreamingRevealTest {
             ).copy(id = "question", role = Role.User, isStreaming = false)
         row = history
         showThread()
-        val content = "New reply after history"
+        val content = "New reply after history continues with enough words to observe gradual reveal before catching up"
         composeRule.runOnIdle {
             val fold =
                 ThreadFold(listOf(ThreadItem.MessageItem(history)), null)
@@ -155,9 +155,10 @@ class ThreadStreamingRevealTest {
         showThread()
         composeRule.onNodeWithText("Arrived before opening", substring = true).assertIsDisplayed()
 
-        val full = "Arrived before opening and appended afterward"
+        val appended = " and appended afterward while the reply continues streaming in the open thread"
+        val full = "Arrived before opening" + appended
         composeRule.runOnIdle {
-            fold = fold.reduce(ThreadInput.Live(LiveSessionEvent.AssistantDelta("c1", "reply", 2, " and appended afterward")), "c1")
+            fold = fold.reduce(ThreadInput.Live(LiveSessionEvent.AssistantDelta("c1", "reply", 2, appended)), "c1")
             row = (fold.render().single() as ThreadItem.MessageItem).message
         }
         composeRule.mainClock.advanceTimeByFrame()
