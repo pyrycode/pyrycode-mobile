@@ -43,7 +43,7 @@ result replaces the `observeMessages` arm of the `state` combine (arity stays 5)
 private val threadItems: Flow<List<ThreadItem>> =
     merge(
         repository.observeMessages(conversationId).map(ThreadInput::Finished),
-        liveSessionEvents.map(ThreadInput::Live),
+        liveSessionEvents.map { ThreadInput.Live(it) },
     ).scan(ThreadFold(emptyList(), null)) { fold, input -> fold.reduce(input, conversationId) }
         .map { it.render() }
         .distinctUntilChanged()
@@ -59,6 +59,7 @@ private data class StreamingTurn(
     val lastSeq: Int,                        // ordering/dup guard for the current turn
     val ended: Boolean,                      // turn_end seen → render isStreaming=false (settled)
     val baselineAssistantIds: Set<String>,   // assistant MessageItem ids present at turn start — the finalise oracle
+    val startedAt: Instant,                  // first live delta's phone-clock arrival
 )
 private data class ThreadFold(val finished: List<ThreadItem>, val stream: StreamingTurn?)
 ```
@@ -77,8 +78,15 @@ private data class ThreadFold(val finished: List<ThreadItem>, val stream: Stream
 
 `render` returns `finished` when idle; otherwise `finished + MessageItem(synthetic)` appended last, with
 `id = turnId`, `role = Assistant`, `content = stream.text`, `isStreaming = !stream.ended`,
-`sessionId`/`timestamp` derived from the last finished item (render-irrelevant; no live clock, so the
-fold stays pure). A **key-uniqueness guard** ([#425](../codebase/425.md)) sits at the top of `render`,
+`sessionId` derived from the last finished item and `timestamp = stream.startedAt`.
+`ThreadInput.Live.receivedAt` captures the phone clock before reduction; the first
+accepted delta stores it in `startedAt`. Appends, ignored deltas, projection
+backfill and turn end retain it; a new turn captures its own arrival. Reduction
+and rendering remain pure. Borrowing the preceding row's timestamp (or epoch zero
+with no history) incorrectly classifies a new live-first reply as pre-open and
+skips its reveal. The timestamp is consumed by
+[thread-open reveal initialization](message-bubble.md#streaming-variant--progressive-reveal--blinking-caret-since-184),
+so it is part of rendering behavior rather than incidental metadata. A **key-uniqueness guard** ([#425](../codebase/425.md)) sits at the top of `render`,
 before the synthetic is built: the synthetic is appended **only when no finished `MessageItem` already
 carries this turn's id** —
 `if (finished.any { it is ThreadItem.MessageItem && it.message.id == turn.turnId }) return finished`.
@@ -180,7 +188,10 @@ segments existed.
 - **Cancelled / refusal turn** (`turn_end` with no finished `message` ever) — the settled
   `isStreaming = false` partial text remains rendered (the partial output claude produced) and is
   superseded when the next turn starts. No infinite "streaming" state, no orphan.
-- **Reveal lifetime follows the streaming body's composition.** Since #1754,
+- **Reveal lifetime follows the streaming body's composition.** A row timestamped
+  before the thread opened starts fully visible; a post-open row starts at zero,
+  as does a standalone bubble without an opening time. Reopening captures a fresh
+  opening time, so the arrived prefix is immediate. Since #1754,
   `StreamingAssistantBody` consumes the latest text on a stable 33 ms clock, revealing
   whitespace-delimited words at about 30 words/sec and larger steps when behind. Its
   15-tick countdown resets only when caught up; arrivals preserve the prefix and
