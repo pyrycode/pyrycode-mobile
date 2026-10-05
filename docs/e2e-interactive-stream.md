@@ -277,6 +277,15 @@ delimiter positioned between the two cross-session messages, driven through the 
 
 ## What rung 3 is made of
 
+The rung-3 coverage also includes
+`InteractiveStreamE2ETest.interactiveTurn_otherConversationAttentionPills_waitingAndFinished`
+(#1735). With the phone reading A, the existing answer-host peer starts a permission-held real Claude
+turn in B. The scenario asserts B's Waiting pill, taps into B, returns to A while B still waits, then
+lets the peer answer and complete the turn, asserting B's Finished pill and expiry. It is in the
+curated full live selector. Controlled unit/render tests separately cover aggregation, mute filtering,
+cross-host identity and timer races. No `DeterministicInteractiveStreamE2ETest` twin was added:
+its fixtures lack the answer-host peer and second conversation held on permission.
+
 | Piece | File |
 | --- | --- |
 | Render fix (#337): fold `assistant_delta` into a streaming assistant row, finalize on `turn_end` | `app/.../data/repository/RemoteConversationRepository.kt` (`applyAssistantDelta`, `finalizeAssistantTurn`) + unit tests in `RemoteConversationRepositoryTest.kt` |
@@ -1748,7 +1757,7 @@ python3 scripts/android-test-gate.py live
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the current selector has 54 runnable `@Test` methods. The historical
+incantation to remember — the current selector has 55 runnable `@Test` methods. The historical
 inventory below describes the pre-#1193 forty-four-method set; ignored methods are excluded from
 the current selector as described under the model and effort settings round trip. It covered ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
@@ -1868,7 +1877,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of 54 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of 55 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -1933,7 +1942,7 @@ main-only base run, identifies daemon bug pyrycode#2785, and clears the live gat
 The full suite retains its one failure; manual USB evidence and the Android 16 driver failure
 above are separate from this automated named pass.
 
-**What it runs.** The current curated selector passes 54 runnable methods as a comma-separated
+**What it runs.** The current curated selector passes 55 runnable methods as a comma-separated
 `class#method` list. Its source of truth is `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET`, checked
 against `LIVE_MINIMUM` in `scripts/android-test-gate.py`. The #481
 `InteractiveStreamE2ETest#interactiveTurn_toolPrompt_rendersToolStepInThread` now rides this full
@@ -2470,6 +2479,20 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+**Attention pills — full-suite pass evidence pending (#1735, 2026-10-05).** The dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on `feature/1735`
+at `5c6a74c33c`, merged with `origin/main` at `cd807f369d`: **55 executed, 53 passed, 2 failed,
+0 errors, 0 skipped**, exit 1. The inspected XML contains
+`InteractiveStreamE2ETest.interactiveTurn_otherConversationAttentionPills_waitingAndFinished`
+with a failure. A separate same-tree rerun executed **2, passed 2, failed 0, skipped 0**, including
+this named method and `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`.
+The dispatcher accepted the rerun as nondeterministic-failure evidence; it does not establish the
+explicit #1735 requirement that the attention method pass in the full live suite before documentation.
+Verification must supply that full-suite named pass and executed/failed/skipped counts.
+See [gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1735#issuecomment-5988879344).
+Retained XML reports are `2026-10-05T05-22-28-909Z_real-claude-gate_#1735.log` and
+`2026-10-05T05-22-28-909Z_real-claude-gate-rerun_#1735.log` in the dispatcher repository's `logs/`.
 
 **Current live verification — 2026-10-05 (#1703).** After verification, the dispatcher ran the fresh full
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against `feature/1703`
@@ -3557,6 +3580,14 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Other-conversation attention pills (#1735):**
+  `InteractiveStreamE2ETest.interactiveTurn_otherConversationAttentionPills_waitingAndFinished`
+  covers Waiting navigation, return while waiting, peer completion, Finished and expiry. Its
+  required full-suite pass remains pending; the counted failure and separate focused pass are
+  recorded in [Verification status](#verification-status). No
+  `DeterministicInteractiveStreamE2ETest` twin exists for the live-only answer-host setup;
+  controlled unit/render tests own mute, aggregation, cross-host and timer races.
 
 - **Send now — shipped coverage (#1642):**
   `InteractiveStreamE2ETest.interactiveTurn_sendQueuedNow_reachesRunningTurn` and
