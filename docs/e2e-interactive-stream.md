@@ -1375,9 +1375,11 @@ slices (#983–#985) had only been proved against fakes. A new `ActivityIntentSt
 save picker with `MediaStore` fixtures — the app refuses any content authority of its own, the test APK's
 included, so a fixture has to come from outside the app.
 
-`interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes` picks a 4 × 4 PNG and a ~100 KB text
-document (three 45000-byte chunks, so the phone's own chunking and the daemon's reassembly both run)
-through the composer's **Attach files** action and sends them into a fresh chat X. Once the peer sees
+`InteractiveStreamE2ETest.interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes`
+([#1727](https://github.com/pyrycode/pyrycode-mobile/issues/1727)) pastes a 4 × 4 PNG, waits for its pending
+entry, replaces the clipboard with text, picks a ~100 KB text document through **Attach files**, then
+types and sends into a fresh chat X. The document still spans three 45000-byte chunks, so the phone's
+chunking and the daemon's reassembly both run. Once the peer sees
 X's `turn_end`, `userMessageAttachmentIds` reads the peer's own `history(chatX)` call and asserts it
 holds exactly one user message naming two distinct ids; each id's `request_attachment` then returns
 bytes whose SHA-256 matches a fixture, and a second chat Y on the same host gains no user message. At
@@ -2549,6 +2551,15 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
+**Pasted image survives clipboard replacement (#1727, 2026-10-05).** The dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on `feature/1727`
+at `2935b182e2`, merged with `origin/main` at `0273c41175` in a detached worktree:
+**56 executed, 56 passed, 0 failed, 0 skipped**, exit 0. The inspected fresh XML report
+`2026-10-05T12-10-50-541Z_real-claude-gate_#1727.log` under the dispatcher repository's `logs/`
+contains `InteractiveStreamE2ETest.interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes`
+with no failure, error or skip: **PASS**. This is full-suite evidence, with no separate focused live
+run claimed. See the [dispatcher gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1727#issuecomment-5994400626).
+
 **Attention pills — named full-suite pass (#1735, 2026-10-05).** The operator ran
 `ANDROID_GATE_WAIT_SECONDS=5400 python3 scripts/android-test-gate.py live` with the dispatcher's
 credential environment on `feature/1735` at `46c65141a0985346536ad07529114e9caae594d8`:
@@ -3679,6 +3690,17 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Clipboard replacement after image paste (#1727):**
+  `InteractiveStreamE2ETest.interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes`
+  now pastes the PNG, replaces the clipboard, keeps document picking, then types and sends;
+  peer byte digests and conversation isolation remain asserted. Its fresh 56-test full-suite pass
+  is recorded in [Verification status](#verification-status). The deterministic twin at the
+  changed local boundary is
+  `ThreadViewModelAttachmentTest.pasteThenRevokeOriginal_sendsCapturedBytesAndNeverPublishesDeletedOriginal`,
+  which makes the original source unreadable after capture. No new
+  `DeterministicInteractiveStreamE2ETest` scenario or scripted daemon state was needed; the
+  curated live selector and pre-ship command are unchanged.
 
 - **Other-conversation attention pills (#1735):**
   `InteractiveStreamE2ETest.interactiveTurn_otherConversationAttentionPills_waitingAndFinished`
