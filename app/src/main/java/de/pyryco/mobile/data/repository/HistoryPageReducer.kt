@@ -477,18 +477,53 @@ internal fun List<ThreadItem>.withCompactionBoundary(
 internal fun reduceHistoryPage(
     entries: List<HistoryEntry>,
     interactive: Boolean,
-): List<ThreadItem> {
+): List<ThreadItem> = reduceOrderedHistoryPage(entries, interactive).rows
+
+internal class ReducedHistoryPage(
+    val rows: List<ThreadItem>,
+    val order: Map<Any, Long>,
+)
+
+/** Order belongs to the contextual fold: a falling compaction edge needs its earlier rising edge. */
+internal fun reduceOrderedHistoryPage(
+    entries: List<HistoryEntry>,
+    interactive: Boolean,
+): ReducedHistoryPage {
     var compaction = CompactionFold()
-    return entries.asReversed().fold(emptyList()) { rows, entry ->
-        if (interactive && (entry.type == TYPE_COMPACTING || entry.type == TYPE_COMPACTION_BOUNDARY)) {
-            rows.withCompactionEntry(entry, compaction).let { (next, fold) ->
-                compaction = fold
-                next
+    val order = HashMap<Any, Long>()
+    val rows =
+        entries.asReversed().fold(emptyList<ThreadItem>()) { rows, entry ->
+            val next =
+                if (interactive && (entry.type == TYPE_COMPACTING || entry.type == TYPE_COMPACTION_BOUNDARY)) {
+                    rows.withCompactionEntry(entry, compaction).let { (next, fold) ->
+                        compaction = fold
+                        next
+                    }
+                } else {
+                    rows.withHistoryEntry(entry, interactive)
+                }
+            if (next !== rows) {
+                next.forEachIndexed { index, row ->
+                    val previous = rows.getOrNull(index)
+                    if (row === previous) return@forEachIndexed
+                    // Filling a pending divider changes its identity, but keeps the falling edge's position.
+                    val logId =
+                        if (next.size == rows.size && row is ThreadItem.CompactionBoundary && previous is ThreadItem.CompactionBoundary) {
+                            order.remove(previous.mergeIdentity()) ?: entry.id
+                        } else {
+                            entry.id
+                        }
+                    val segment = (row as? ThreadItem.MessageItem)?.message?.segment
+                    if (segment == null) {
+                        order.putIfAbsent(row.mergeIdentity(), logId)
+                    } else {
+                        segment.deltas.forEach { delta -> order.putIfAbsent(listOf("delta", segment.turnId, delta.seq), logId) }
+                    }
+                }
             }
-        } else {
-            rows.withHistoryEntry(entry, interactive)
+            next
         }
-    }
+    return ReducedHistoryPage(rows, order)
 }
 
 /**
@@ -779,7 +814,8 @@ private fun List<ThreadItem>.withHistoryLifecyclePositions(
 }
 
 /** Cache-only rows stay beside their retained neighbours, using the same delta reconciliation as pages. */
-internal fun List<ThreadItem>.mergeCachedRows(cached: List<ThreadItem>): List<ThreadItem> = mergeRows(cached, emptyMap())
+internal fun List<ThreadItem>.mergeCachedRows(cached: List<ThreadItem>): List<ThreadItem> =
+    mergeRows(cached, emptyMap(), cacheRestore = true)
 
 /** Single-delta identities survive different segment boundaries on the history, live and cache lanes. */
 internal fun ThreadItem.mergeIdentity(): Any {
@@ -790,6 +826,7 @@ internal fun ThreadItem.mergeIdentity(): Any {
 private fun List<ThreadItem>.mergeRows(
     incoming: List<ThreadItem>,
     order: Map<Any, Long>,
+    cacheRestore: Boolean = false,
 ): List<ThreadItem> {
     if (incoming.isEmpty()) return this
     val hinted = withAttachmentHintsFrom(incoming).withBackgroundTaskHintsFrom(incoming)
@@ -880,6 +917,11 @@ private fun List<ThreadItem>.mergeRows(
         val message = (row as? ThreadItem.MessageItem)?.message
         val segment = message?.segment
         val keyTwin = message?.let { heldMessageIds[it.id]?.message }
+        if (segment != null && keyTwin != null && keyTwin.segment?.turnId != segment.turnId) {
+            // Only a same-turn legacy opener may use the explicit #0 alias. Other collisions lose incoming text.
+            val legacyOpener = segment.firstSeq == 0 && keyTwin.role == Role.Assistant && keyTwin.id == segment.turnId
+            if (!legacyOpener || "${segment.turnId}#0" in heldMessageIds) return@forEachIndexed
+        }
         if (segment == null &&
             keyTwin?.segment != null &&
             (message.role != Role.Assistant || message.id != keyTwin.segment.turnId)
@@ -900,7 +942,11 @@ private fun List<ThreadItem>.mergeRows(
                     maxOf(before ?: 0, minOf(after ?: base.size, clocks.insertionSlot(row.mergeTimestamp())))
                 }
             }
-        val neighbour = previous?.plus(1) ?: following[index].takeIf { it >= 0 }
+        val neighbour =
+            previous?.plus(1) ?: following[index].takeIf { it >= 0 }?.let {
+                // Leading restored rows preceded live-only rows before the cache was written.
+                if (cacheRestore) 0 else it
+            }
         var slot =
             when {
                 lower != null ->

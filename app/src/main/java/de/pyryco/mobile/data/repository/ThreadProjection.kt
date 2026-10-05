@@ -795,16 +795,11 @@ internal class ThreadProjection(
     ) {
         if (page.entries.isEmpty()) return
         recordEnded(conversationId, endedTurnIds(page.entries, interactive))
-        val rows = reduceHistoryPage(page.entries, interactive)
-        val pageOrder =
-            page.entries
-                .flatMap { entry ->
-                    reduceHistoryPage(listOf(entry), interactive).map { it.mergeIdentity() to entry.id }
-                }.toMap()
+        val reduced = reduceOrderedHistoryPage(page.entries, interactive)
         state.update { current ->
-            val order = pageOrder + current.historyOrder[conversationId].orEmpty()
+            val order = reduced.order + current.historyOrder[conversationId].orEmpty()
             val existing = current.threads[conversationId].orEmpty()
-            val merged = existing.mergeOrderedHistoryRows(rows, order)
+            val merged = existing.mergeOrderedHistoryRows(reduced.rows, order)
             current.copy(
                 threads = current.threads + (conversationId to merged.withSettledTurns(endedTurns.value[conversationId].orEmpty())),
                 historyOrder = current.historyOrder + (conversationId to order),

@@ -253,6 +253,106 @@ class HistoryReconciliationTest {
     }
 
     @Test
+    fun hostileSegmentKey_cannotEvictHeldAssistantText_onHistoryOrCacheRepeats() =
+        runTest {
+            val projection = ThreadProjection()
+            projection.applyAssistantDelta(LiveSessionEvent.AssistantDelta("c", "t#2", 0, "keep"))
+            projection.applyAssistantDelta(LiveSessionEvent.AssistantDelta("c", "t#2", 1, " tail"))
+            val held = projection.observe("c").first()
+            val collision = page(delta(1, 2, "older"), end(2))
+            var cached = held
+            repeat(3) {
+                projection.mergeHistoryPage("c", collision, true)
+                assertEquals(held, projection.observe("c").first())
+                cached = cached.mergeCachedRows(reduceHistoryPage(collision.entries, true))
+                assertEquals(held, cached)
+                assertEquals(cached.ids().distinct(), cached.ids())
+            }
+        }
+
+    @Test
+    fun legacyOpenerAlias_cannotEvictAnotherHeldTurn() {
+        val legacy = ThreadItem.MessageItem(message("t", 0).copy(role = Role.Assistant, content = "unmatched legacy"))
+        val held = listOf(legacy) + reduced(delta(1, 0, "keep", turn = "t#0"))
+        val incoming = reduced(delta(2, 0, "novel"))
+        var cached = held
+        var history = held
+        repeat(3) {
+            history = history.mergeHistoryRows(incoming)
+            cached = cached.mergeCachedRows(incoming)
+            assertEquals(held, history)
+            assertEquals(held, cached)
+            assertEquals(cached.ids().distinct(), cached.ids())
+        }
+    }
+
+    @Test
+    fun cacheObserve_reopen_keepsLeadingRowBeforeLiveOnlyRowsAndSharedNeighbour() =
+        runTest(UnconfinedTestDispatcher()) {
+            val cache = FileConversationCache(tmp.newFolder(), UnconfinedTestDispatcher(testScheduler))
+            val restored = reduced(user(1, "older", 10), user(3, "own", 5))
+            assertTrue(cache.writeThread("host", "c", restored).isSuccess)
+            val live = MutableStateFlow(reduced(tool(2), user(3, "own", 5)))
+            val delegate =
+                object : ConversationRepository by FakeConversationRepository() {
+                    override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = live
+                }
+            val repository = CachingConversationRepository(delegate, cache, "host")
+            repeat(2) {
+                val emissions = mutableListOf<List<ThreadItem>>()
+                val reader =
+                    backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+                        repository.observeMessages("c").collect { emissions += it }
+                    }
+                runCurrent()
+                assertEquals(listOf("older", "tool", "own"), emissions.last().ids())
+                assertEquals(listOf("older", "own"), cache.readThread("host", "c").ids())
+                reader.cancel()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun filledCompactionDivider_keepsItsFallingEdgeOrder_whenBoundaryChangesItsTimestamp() =
+        runTest {
+            val compacting = entry(1, "compacting", """{"conversation_id":"c","active":true}""", 0)
+            val inactive = entry(2, "compacting", """{"conversation_id":"c","active":false}""", 1)
+            val boundary =
+                entry(4, "compaction_boundary", """{"conversation_id":"c","pre_tokens":10,"post_tokens":5,"trigger":"auto"}""", 4)
+            val divider = page(compacting, inactive, boundary)
+            val middle = page(user(3, "middle", 4))
+            for (pages in listOf(listOf(divider, middle), listOf(middle, divider))) {
+                val projection = ThreadProjection()
+                for (incoming in pages + pages) projection.mergeHistoryPage("c", incoming, true)
+                val rows = projection.observe("c").first()
+                assertEquals(2, rows.size)
+                assertTrue(rows.first() is ThreadItem.CompactionBoundary)
+                assertEquals(10L, (rows.first() as ThreadItem.CompactionBoundary).preTokens)
+                assertEquals(listOf("middle"), rows.ids())
+            }
+        }
+
+    @Test
+    fun contextualCompactionDivider_usesDaemonOrder_inBothPageOrdersAndRepeats() =
+        runTest {
+            for (newerClock in listOf(0, 5)) {
+                val compacting = entry(1, "compacting", """{"conversation_id":"c","active":true}""", 0)
+                val failed = entry(2, "compacting", """{"conversation_id":"c","active":false,"compact_result":"failed"}""", 5)
+                val older = page(compacting, failed)
+                val newer = page(user(3, "newer", newerClock))
+                for (pages in listOf(listOf(older, newer), listOf(newer, older))) {
+                    val projection = ThreadProjection()
+                    for (incoming in pages + pages) projection.mergeHistoryPage("c", incoming, true)
+                    val rows = projection.observe("c").first()
+                    assertEquals(2, rows.size)
+                    assertTrue(rows.first() is ThreadItem.CompactionBoundary)
+                    assertTrue((rows.first() as ThreadItem.CompactionBoundary).failed)
+                    assertEquals(listOf("newer"), rows.ids())
+                }
+            }
+        }
+
+    @Test
     fun cacheObserve_doesNotRebaseAndResurrectDeliberatelyRemovedLiveRows() =
         runTest(UnconfinedTestDispatcher()) {
             val cache = FileConversationCache(tmp.newFolder(), UnconfinedTestDispatcher(testScheduler))
@@ -285,7 +385,8 @@ class HistoryReconciliationTest {
         id: Int,
         seq: Int,
         text: String,
-    ) = entry(id, "assistant_delta", """{"conversation_id":"c","turn_id":"t","seq":$seq,"text":"$text"}""")
+        turn: String = "t",
+    ) = entry(id, "assistant_delta", """{"conversation_id":"c","turn_id":"$turn","seq":$seq,"text":"$text"}""")
 
     private fun tool(id: Int) =
         entry(id, "tool_use", """{"conversation_id":"c","turn_id":"t","tool_use_id":"tool","name":"Bash","input_summary":"ls"}""")
