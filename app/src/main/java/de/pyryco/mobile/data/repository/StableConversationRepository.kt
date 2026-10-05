@@ -56,7 +56,8 @@ import kotlinx.coroutines.flow.flowOf
 class StableConversationRepository(
     private val currentRepository: StateFlow<ConversationRepository?>,
     private val heldReadings: HostReadings? = null,
-) : ConversationRepository {
+) : ConversationRepository,
+    ThreadSnapshotSource {
     /**
      * Switch a cold read over [currentRepository]: delegate to the live repository's [select] flow, or
      * emit [whenAbsent] once while no connection is live. [flatMapLatest] cancels the prior inner flow
@@ -88,6 +89,9 @@ class StableConversationRepository(
 
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
         switchToLive(emptyList()) { it.observeMessages(conversationId) }
+
+    override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> =
+        switchToLive(ThreadSnapshot(emptyList())) { it.threadSnapshots(conversationId) }
 
     override fun observeLastMessage(conversationId: String): Flow<Message?> =
         switchToLive<Message?>(null) { it.observeLastMessage(conversationId) }
@@ -349,6 +353,11 @@ class StableConversationRepository(
 
     override suspend fun requestScreenSnapshot(conversationId: String): String = live.requestScreenSnapshot(conversationId)
 
+    override suspend fun sendQueuedNow(
+        conversationId: String,
+        queuedMessageId: Long,
+    ): Unit = live.sendQueuedNow(conversationId, queuedMessageId)
+
     override suspend fun dropQueuedMessage(
         conversationId: String,
         queuedMessageId: Long,
@@ -365,6 +374,17 @@ class StableConversationRepository(
         cursor: String,
         limit: Int,
     ): HistoryPage = live.requestHistory(conversationId, cursor, limit)
+
+    /** Host settings are live-only; snapshot once so reconnect cannot redirect an operation. */
+    override suspend fun requestHostSystemPrompt(): Result<HostSystemPromptReading> {
+        val repository = currentRepository.value ?: return Result.failure(IllegalStateException(NOT_CONNECTED))
+        return repository.requestHostSystemPrompt()
+    }
+
+    override suspend fun setHostSystemPrompt(systemPrompt: String): Result<HostSystemPromptReading> {
+        val repository = currentRepository.value ?: return Result.failure(IllegalStateException(NOT_CONNECTED))
+        return repository.setHostSystemPrompt(systemPrompt)
+    }
 
     /**
      * One-shot delegation of the system-prompt read and write (#823) to the live repository — the one

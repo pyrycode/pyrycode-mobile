@@ -161,7 +161,8 @@ class RemoteConversationRepository(
      * before `Open`. Never the full `conn_id`.
      */
     connToken: () -> String? = { null },
-) : ConversationRepository {
+) : ConversationRepository,
+    ThreadSnapshotSource {
     /**
      * The conversation list and the last-message previews (#913): the list projection, the most-recent
      * message per conversation, and every write that folds into either. [onInbound] hands it the
@@ -453,16 +454,19 @@ class RemoteConversationRepository(
                 // survives. `sessionId = ""` — the payload carries none and the last-message preview
                 // never reads it (list-tier placeholder, as #312 uses for currentSessionId). Drop
                 // silently: message content may be sensitive, so nothing here logs the payload.
-                val (conversationId, message) =
+                val (conversationId, message, sentNow) =
                     try {
                         val dto = MobileJson.decodeFromJsonElement<MessagePayloadDto>(envelope.payload)
                         val message = dto.toMessage(envelope, sessionId = "")
-                        dto.conversationId to
+                        Triple(
+                            dto.conversationId,
                             if (message.role == Role.User) {
                                 message.copy(attachments = storedAttachmentReferences(dto.attachmentIds))
                             } else {
                                 message
-                            }
+                            },
+                            dto.sentNow,
+                        )
                     } catch (e: IllegalArgumentException) {
                         return
                     }
@@ -471,7 +475,7 @@ class RemoteConversationRepository(
                 // operator's delivered turn alone, and assistant output arrives as structured events.
                 // A held id — the phone's own confirmed send among them — is kept, not replaced.
                 conversationListProjection.recordLastMessage(conversationId, message)
-                if (message.role == Role.User) threadProjection.appendLiveMessage(conversationId, message)
+                if (message.role == Role.User) threadProjection.appendLiveMessage(conversationId, message, sentNow)
             }
             TYPE_MESSAGE_CHUNK -> {
                 // The `backfill_since` response (#313): a batch of finished messages, each carrying
@@ -547,7 +551,7 @@ class RemoteConversationRepository(
             }
             TYPE_ACK, TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_DELETED,
             TYPE_SCREEN_SNAPSHOT, TYPE_SESSION_SETTINGS_UPDATED, TYPE_WORKSPACE_FOLDER_CREATED,
-            TYPE_RECENT_WORKSPACES_LIST, TYPE_HISTORY_PAGE, TYPE_SESSION_SETTINGS, TYPE_SYSTEM_PROMPT,
+            TYPE_RECENT_WORKSPACES_LIST, TYPE_HISTORY_PAGE, TYPE_SESSION_SETTINGS, TYPE_SYSTEM_PROMPT, TYPE_HOST_SYSTEM_PROMPT,
             ->
                 // Success reply to a correlated request, handed verbatim to the waiter. An `ack`
                 // (#346) carries the empty `{}` the bare-ack waiter ignores; a `conversation_created`
@@ -1190,9 +1194,12 @@ class RemoteConversationRepository(
      * dropped — the live stream still fills the thread and the next subscription re-backfills.
      */
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
+        observeThreadSnapshot(conversationId).map { it.rows }.distinctUntilChanged()
+
+    override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> =
         flow {
             pump.send(backfillSinceRequest(conversationId))
-            emitAll(threadProjection.observe(conversationId))
+            emitAll(threadProjection.observeSnapshot(conversationId))
         }
 
     override fun observeThreadRowCounts(): Flow<Map<String, Int>> = threadProjection.observeRowCounts()
@@ -1322,6 +1329,12 @@ class RemoteConversationRepository(
     /** Request the rendered claude screen (#375); see [MessageCommands.requestScreenSnapshot]. */
     override suspend fun requestScreenSnapshot(conversationId: String): String = messageCommands.requestScreenSnapshot(conversationId)
 
+    /** Deliver a queued message now through this host connection. */
+    override suspend fun sendQueuedNow(
+        conversationId: String,
+        queuedMessageId: Long,
+    ): Unit = messageCommands.sendQueuedNow(conversationId, queuedMessageId)
+
     /** Drop a queued message over fire-and-forget `dequeue_message` (#466); see [MessageCommands.dropQueuedMessage]. */
     override suspend fun dropQueuedMessage(
         conversationId: String,
@@ -1407,6 +1420,12 @@ class RemoteConversationRepository(
         yolo: Boolean?,
         permissionMode: String?,
     ): Unit = sessionSettingsCommands.setSessionSettings(sessionId, model, effort, yolo, permissionMode)
+
+    /** Read/write this connection's host settings, with no conversation state mutation. */
+    override suspend fun requestHostSystemPrompt(): Result<HostSystemPromptReading> = sessionSettingsCommands.requestHostSystemPrompt()
+
+    override suspend fun setHostSystemPrompt(systemPrompt: String): Result<HostSystemPromptReading> =
+        sessionSettingsCommands.setHostSystemPrompt(systemPrompt)
 
     /** Read a conversation's stored system prompt (#823); see [SessionSettingsCommands.requestSystemPrompt]. */
     override suspend fun requestSystemPrompt(conversationId: String): SystemPromptReading =
@@ -1567,6 +1586,9 @@ class RemoteConversationRepository(
          * session's verdict against it. Carries no conversation id, and is **never an error frame**.
          */
         const val TYPE_SYSTEM_PROMPT = "system_prompt"
+
+        /** Correlated read and durable-write reply; never a conversation push. */
+        const val TYPE_HOST_SYSTEM_PROMPT = "host_system_prompt"
 
         /** Request: set or clear a conversation's system prompt (#823). Acked by [TYPE_CONVERSATION_UPDATED]. */
         const val TYPE_SET_SYSTEM_PROMPT = "set_system_prompt"

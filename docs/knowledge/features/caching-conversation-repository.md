@@ -57,6 +57,13 @@ stay delegation: they are not removals, so neither can reach a cache-clearing pa
 cache § Removal on unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost) for the
 wording this mirrors).
 
+`requestHostSystemPrompt` and `setHostSystemPrompt` (#1774) also pass through by
+Kotlin delegation. Current/default prompt strings never enter `ConversationCache`
+or become offline readings. With the stable delegate, both operations keep its
+[live-only snapshot and failed-result behavior](stable-conversation-repository.md#host-system-prompts--snapshot-or-result-1774).
+`HostSystemPromptFacadesTest` checks read and write replies through this wrapper
+and asserts that these calls perform no cache read or write.
+
 `observeSessionError` (#1677) is also plain delegation: current and changing codes
 pass through without a cache read or write. It retains no code or daemon prose and
 cannot restore an error from history. With the stable delegate, disconnect emits
@@ -89,7 +96,7 @@ wrapper's own direction: paging normally prepends an *older* page onto what is o
 restored rows are the older set and the live projection is the receiver:
 
 ```
-drawn = live.mergeCachedRows(restored)
+drawn = snapshot.rows.mergeCachedRows(restoredWithoutSuppressedUserEchoes)
 ```
 
 `mergeCachedRows` shares `mergeHistoryRows`'s join (`message_id` for a message, covering a
@@ -97,12 +104,28 @@ drawn = live.mergeCachedRows(restored)
 boundary) and its [attachment-reference hint fill](remote-conversation-repository-reads-and-thread-store-history-paging.md),
 so a restored row the daemon re-delivers is never drawn twice and a sent row's names come back even
 when the live side's replayed copy has none. Merging into an empty live projection returns the
-restored rows verbatim — the disconnected case needs no branch of its own, it falls out of the same
-merge that handles a reconnect. Where it differs from `mergeHistoryRows`: a row *only* the cache
+restored rows after suppression filtering. The disconnected case falls out of the same merge
+that handles a reconnect. Where it differs from `mergeHistoryRows`: a row *only* the cache
 holds does not always go to the front. It goes right after the live copy of the nearest cached row
 above it that the live side also holds, and only goes in front when it has no such anchor — the
 older rows a reconnect's newest page does not reach, or a page that does not overlap the cache at
 all. Several cache-only rows sharing one anchor keep their cached relative order.
+
+For queue delivery (#1642), `ThreadSnapshotSource` supplies visible rows and
+`suppressedUserMessageIds` together through Remote → Stable → Caching. The cache filters only
+restored `Role.User` messages whose ids are suppressed while awaiting a delivered push.
+Missing live rows alone never justify deleting unrelated offline history or cache-only rows.
+The original base remains available for attachment hints when delivery arrives; suppression
+is connection-local and is never serialized. Repositories without this contract retain the
+list-only fallback with empty suppression.
+
+Rows and suppression must come from the same `ThreadProjection.ProjectionState` generation.
+Independent StateFlows could pair old tap-time rows with newly cleared suppression during
+reopen, briefly show the echo before intervening tools, and persist that wrong order. Delivery
+now establishes live position and clears suppression in one atomic fold. Wrapper tests with a
+real file cache cover local/peer Send now, reopen, removal → tools → push, duplicates and offline
+history retention; `VerifierSnapshotRaceTest.reopenDuringDelivery_neverEmitsUnsuppressedTapTimeRows`
+controls the subscription/delivery interleaving that ordinary final-order assertions missed.
 
 **The merge is key-indexed, not quadratic (#1353, verifier rework).** `mergeCachedRows` builds a
 `HashMap<Any, Int>` once per call, mapping each live row's `joinIdentity()` to the first live index
@@ -151,8 +174,8 @@ wrote that shrunk snapshot back. Read → background → process death → offli
 blank on a first-read thread, which is the ticket's headline scenario.
 
 The fix: the merge base is not fixed for the whole collection. It starts as `restored`. Each time
-`live` is empty — a connection boundary — the base moves to `settledThreadRows(lastDrawn)`, the
-rows the screen already drew with their in-flight (streaming / running-tool) rows stripped. While
+`live` is empty **and suppression is empty** — a connection boundary — the base moves to
+`settledThreadRows(lastDrawn)`, the rows the screen already drew with their in-flight (streaming / running-tool) rows stripped. While
 live rows are flowing inside one connection, the base stays fixed, so a row the live side
 deliberately removes (`RemoteConversationRepository.removeOwnEcho` on a dropped queued send) is
 still honoured and not resurrected by an accumulating union — the same reasoning that ruled out an
@@ -162,9 +185,16 @@ accumulating union for the original restored-snapshot design.
 var base = cache.readThread(serverId, conversationId)
 var lastWritten = base
 var lastDrawn = base
-delegate.observeMessages(conversationId).collect { live ->
-    if (live.isEmpty()) base = settledThreadRows(lastDrawn)
-    val drawn = live.mergeCachedRows(base)
+delegate.threadSnapshots(conversationId).collect { snapshot ->
+    val live = snapshot.rows
+    if (live.isEmpty() && snapshot.suppressedUserMessageIds.isEmpty()) {
+        base = settledThreadRows(lastDrawn)
+    }
+    val restored = base.filterNot {
+        it is ThreadItem.MessageItem && it.message.role == Role.User &&
+            it.message.id in snapshot.suppressedUserMessageIds
+    }
+    val drawn = live.mergeCachedRows(restored)
     lastDrawn = drawn
     emit(drawn)
     val cacheable = cacheableThreadRows(drawn)
@@ -180,6 +210,11 @@ delegate.observeMessages(conversationId).collect { live ->
     }
 }
 ```
+
+An empty visible snapshot with nonempty suppression is a pending-delivery reading within the
+same connection, not a disconnect. Rebasing there would lose the fixed restore base and its
+attachment metadata. The filtered drawn rows are emitted and cached, so reopening cannot
+resurrect a hidden queued echo before its delivered push.
 
 After the rebase, `cacheableThreadRows(drawn)` equals whatever the previous emission already
 wrote, so a disconnect **writes nothing** — the only exception is retrying an earlier failed

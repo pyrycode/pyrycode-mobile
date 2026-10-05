@@ -3,16 +3,29 @@ package de.pyryco.mobile.ui.conversations.thread
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
@@ -20,6 +33,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
@@ -29,6 +43,8 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.width
@@ -43,6 +59,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import kotlin.math.roundToInt
 
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(qualifiers = "w412dp-h892dp")
@@ -249,6 +266,7 @@ class MarkdownReaderDesignTest {
         assertTrue(title.right <= more.getUnclippedBoundsInRoot().left)
         more.performClick()
         rule.onNodeWithText("Save to device").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Close options").performClick()
         rule.onNodeWithText("Paragraph 80").performScrollTo().assertIsDisplayed()
     }
 
@@ -282,6 +300,181 @@ class MarkdownReaderDesignTest {
                 .width.value,
             1f,
         )
+    }
+
+    @Test fun readerMenuOpensFourDpBelowItsButtonWithSharedEdgeClamp() {
+        show()
+        val button = rule.onNodeWithContentDescription("More actions")
+        button.performClick()
+        val anchor = button.getUnclippedBoundsInRoot()
+        val menu = rule.onNodeWithTag("markdown-reader-menu").getUnclippedBoundsInRoot()
+        assertEquals(4f, (menu.top - anchor.bottom).value, 0.5f)
+        assertEquals(8f, (rule.onNodeWithTag("markdown-reader-top-bar").getUnclippedBoundsInRoot().right - menu.right).value, 0.5f)
+    }
+
+    @Test fun readerMenuRowsAreActionsWithoutSelectionOrCaption() {
+        show()
+        rule.onNodeWithContentDescription("More actions").performClick()
+        for (label in listOf(
+            "Copy as markdown",
+            "Copy as plain text",
+            "Copy as HTML",
+            "Refresh",
+            "Open in another app",
+            "Save to device",
+        )) {
+            val row = rule.onNodeWithText(label)
+            row.assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button))
+            assertTrue(!row.fetchSemanticsNode().config.contains(SemanticsProperties.Selected))
+            val style = layout(label).layoutInput.style
+            assertEquals(12.sp, style.fontSize)
+            assertEquals(16.sp, style.lineHeight)
+        }
+        rule.onNodeWithText("not listed", substring = true).assertDoesNotExist()
+    }
+
+    @Test fun outsideTapsDismissWithoutActivatingBackOrUnderlyingLinks() {
+        var backs = 0
+        var links = 0
+        show(markdown = "[Underlying link](https://example.com)", onBack = { backs++ }, onUri = { links++ })
+        val back = rule.onNodeWithContentDescription("Back")
+        val link = rule.onNodeWithText("Underlying link")
+        rule.onNodeWithContentDescription("More actions").performTouchInput { click() }
+        back.performTouchInput { click() }
+        rule.onNodeWithTag("markdown-reader-menu").assertDoesNotExist()
+        assertEquals(0, backs)
+        rule.onNodeWithContentDescription("More actions").performTouchInput { click() }
+        // Link's left edge is outside the right-aligned menu; the next tap is a positive control.
+        val menu = rule.onNodeWithTag("markdown-reader-menu").fetchSemanticsNode().boundsInRoot
+        val target = link.fetchSemanticsNode().boundsInRoot.topLeft + Offset(20f, 10f)
+        assertTrue(target.x < menu.left)
+        rule.onRoot().performTouchInput { click(target) }
+        rule.onNodeWithTag("markdown-reader-menu").assertDoesNotExist()
+        assertEquals(0, links)
+        rule.onRoot().performTouchInput { click(target) }
+        assertEquals(1, links)
+        back.performTouchInput { click() }
+        assertEquals(1, backs)
+    }
+
+    @Test fun openMenuSurvivesRecompositionAndFollowsTheLiveAnchorInAnOffsetHost() {
+        val top = mutableStateOf(30.dp)
+        val document = mutableStateOf(MarkdownDocument("Before.md", "# Before"))
+        rule.setContent {
+            PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
+                Box(Modifier.fillMaxSize().padding(start = 16.dp, top = top.value, end = 16.dp)) {
+                    MarkdownReaderScreen(document.value, onBack = {})
+                }
+            }
+        }
+        rule.onNodeWithContentDescription("More actions").performClick()
+        val before = rule.onNodeWithTag("markdown-reader-menu").getUnclippedBoundsInRoot()
+        rule.runOnIdle {
+            top.value = 70.dp
+            document.value = MarkdownDocument("After.md", "# After")
+        }
+        val after = rule.onNodeWithTag("markdown-reader-menu").getUnclippedBoundsInRoot()
+        val anchor = rule.onNodeWithContentDescription("More actions").getUnclippedBoundsInRoot()
+        assertEquals(40f, (after.top - before.top).value, 0.5f)
+        assertEquals(4f, (after.top - anchor.bottom).value, 0.5f)
+        assertEquals(8f, (rule.onNodeWithTag("markdown-reader-top-bar").getUnclippedBoundsInRoot().right - after.right).value, 0.5f)
+        rule.onNodeWithText("Copy as markdown").performTouchInput { click() }
+        rule.onNodeWithTag("markdown-reader-menu").assertDoesNotExist()
+        val clipboard = ApplicationProvider.getApplicationContext<Context>().getSystemService(ClipboardManager::class.java)
+        assertEquals(
+            "# After",
+            clipboard.primaryClip
+                ?.getItemAt(0)
+                ?.text
+                .toString(),
+        )
+    }
+
+    @Test fun compactEnlargedTextScrollsToLastActionWithinTheSpaceBelow() {
+        var refreshes = 0
+        var saves = 0
+        val registry =
+            object : androidx.activity.result.ActivityResultRegistry() {
+                override fun <I, O> onLaunch(
+                    requestCode: Int,
+                    contract: androidx.activity.result.contract.ActivityResultContract<I, O>,
+                    input: I,
+                    options: androidx.core.app.ActivityOptionsCompat?,
+                ) {
+                    saves++
+                }
+            }
+        val pickerOwner =
+            object : androidx.activity.result.ActivityResultRegistryOwner {
+                override val activityResultRegistry = registry
+            }
+        rule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(240.dp, 220.dp))) {
+                PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
+                    CompositionLocalProvider(
+                        LocalDensity provides Density(LocalDensity.current.density, 1.6f),
+                        androidx.activity.compose.LocalActivityResultRegistryOwner provides pickerOwner,
+                    ) {
+                        MarkdownReaderScreen(MarkdownDocument("Compact.md", "# Note"), onBack = {}, onRefresh = { refreshes++ })
+                    }
+                }
+            }
+        }
+        rule.onNodeWithContentDescription("More actions").performClick()
+        val menu = rule.onNodeWithTag("markdown-reader-menu").getUnclippedBoundsInRoot()
+        val anchor = rule.onNodeWithContentDescription("More actions").getUnclippedBoundsInRoot()
+        assertEquals(4f, (menu.top - anchor.bottom).value, 0.5f)
+        assertTrue(menu.left.value >= 8f)
+        assertTrue(menu.right.value <= 232f)
+        assertTrue(menu.bottom.value <= 212f)
+        rule.onNodeWithText("Save to device").performScrollTo().assertIsDisplayed()
+        val last = rule.onNodeWithText("Save to device").getUnclippedBoundsInRoot()
+        assertTrue(last.top >= menu.top && last.bottom <= menu.bottom)
+        // Physical activation proves scrolling leaves the last action reachable and closes the column.
+        rule.onNodeWithText("Save to device").performTouchInput { click() }
+        rule.onNodeWithTag("markdown-reader-menu").assertDoesNotExist()
+        assertEquals(0, refreshes)
+        assertEquals(1, saves)
+    }
+
+    @Test fun readerActionsUseComposerLightAppearance() = assertReaderActionPalette(dark = false)
+
+    @Test fun readerActionsUseComposerDarkAppearance() = assertReaderActionPalette(dark = true)
+
+    private fun assertReaderActionPalette(dark: Boolean) {
+        var view: android.view.View? = null
+        var background = Color.Unspecified
+        var foreground = Color.Unspecified
+        rule.setContent {
+            PyrycodeMobileTheme(darkTheme = dark, dynamicColor = false) {
+                view = LocalView.current
+                background = if (dark) MaterialTheme.colorScheme.onPrimaryFixed else MaterialTheme.colorScheme.surfaceContainerLowest
+                foreground = MaterialTheme.colorScheme.primary
+                MarkdownReaderScreen(MarkdownDocument("Plan.md", "# Plan"), onBack = {})
+            }
+        }
+        rule.onNodeWithContentDescription("More actions").performClick()
+        val bitmap =
+            rule.runOnIdle {
+                val root = checkNotNull(view)
+                Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888).also { root.draw(Canvas(it)) }
+            }
+        for (label in listOf(
+            "Copy as markdown",
+            "Copy as plain text",
+            "Copy as HTML",
+            "Refresh",
+            "Open in another app",
+            "Save to device",
+        )) {
+            val bounds = rule.onNodeWithText(label).fetchSemanticsNode().boundsInRoot
+            assertEquals(background.toArgb(), bitmap.getPixel(bounds.left.roundToInt() + 6, bounds.center.y.roundToInt()))
+            val style = layout(label).layoutInput.style
+            assertEquals(foreground, style.color)
+            assertEquals(12.sp, style.fontSize)
+            assertEquals(16.sp, style.lineHeight)
+        }
+        bitmap.recycle()
     }
 
     private companion object {

@@ -426,6 +426,9 @@ class ThreadViewModel(
             ) to announced?.takeUnless { it.truncated }?.model.orEmpty()
         }
 
+    /** Last selection on this connection; empty summaries cannot undo a known session replacement. */
+    private var lastKnownSessionId = ""
+
     /**
      * The conversation list, shared (#1110) so [state] and [conversationAgent] ride one upstream
      * subscription: the remote repository sends a `list_conversations` request on every subscription.
@@ -437,6 +440,11 @@ class ThreadViewModel(
         repository
             .observeConversations(ConversationFilter.All)
             .onEach { list ->
+                if (hostAvailable.value) {
+                    list.firstOrNull { it.id == conversationId }?.currentSessionId?.takeIf { it.isNotEmpty() }?.let {
+                        lastKnownSessionId = it
+                    }
+                }
                 if (list.any { it.id == conversationId && it.archived } && leaveForList()) {
                     RelayLog.d { "event=thread_left_archived" }
                 }
@@ -574,7 +582,13 @@ class ThreadViewModel(
      * the #861 reason on [repositoryAvailable].
      */
     private val hostAvailable: StateFlow<Boolean> =
-        repositoryAvailable.distinctUntilChanged().stateIn(viewModelScope, SharingStarted.Eagerly, false)
+        repositoryAvailable
+            .distinctUntilChanged()
+            .onEach { available ->
+                // A replacement connection may report only empty summaries after the session changed offline.
+                // Forget its predecessor's selection, while held settings remain display-only.
+                if (!available) lastKnownSessionId = ""
+            }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     /**
      * The thread rows (#337): the #313 finished-message projection from [ConversationRepository.observeMessages]
@@ -647,7 +661,7 @@ class ThreadViewModel(
                 workspacePath = conv?.cwd ?: "",
                 lastUsedAt = conv?.lastUsedAt,
                 sessionCount = conv?.sessionHistory?.size ?: 0,
-                runConfig = runConfig.forLiveSession(conv?.currentSessionId.orEmpty()),
+                runConfig = runConfig.forLiveSession(lastKnownSessionId),
                 mutationsSupported = mutationsSupported,
                 historyTail = content.historyTail,
             )
@@ -2302,6 +2316,23 @@ class ThreadViewModel(
         }
     }
 
+    /** One-way control, bound to this destination's owner; failures use the queue-drop treatment. */
+    fun onSendQueuedNow(queuedMessageId: Long) {
+        if (!state.value.runConfig.midTurnInputSupported) return
+        viewModelScope.launch {
+            try {
+                repository.sendQueuedNow(conversationId, queuedMessageId)
+                RelayLog.d { "event=send_queued_now_sent" }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: RelayErrorException) {
+                RelayLog.d { "event=send_queued_now_failed code=relay_error" }
+            } catch (e: IllegalStateException) {
+                RelayLog.d { "event=send_queued_now_failed code=not_connected" }
+            }
+        }
+    }
+
     /**
      * Drop queued message [queuedMessageId] from this conversation's backlog (#467) — fire the #466
      * `dequeue_message` send through the facade. Reachable as a [ConversationRepository] interface method
@@ -2994,7 +3025,12 @@ private fun ModelMenu.forAgent(agent: ConversationAgent): ModelMenu =
  */
 private fun ThreadRunConfig.forLiveSession(liveSessionId: String): ThreadRunConfig =
     if (liveSessionId.isNotEmpty() && liveSessionId != sessionId) {
-        copy(permissionMode = "", appliedEffort = EffectiveEffort.Unavailable, memorySearch = MemorySearchReport.Unknown)
+        copy(
+            permissionMode = "",
+            appliedEffort = EffectiveEffort.Unavailable,
+            memorySearch = MemorySearchReport.Unknown,
+            capabilities = capabilities?.copy(midTurnInput = false),
+        )
     } else {
         this
     }

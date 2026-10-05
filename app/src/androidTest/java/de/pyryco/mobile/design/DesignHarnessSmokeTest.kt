@@ -2,7 +2,6 @@ package de.pyryco.mobile.design
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
-import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -49,7 +48,7 @@ class DesignHarnessSmokeTest {
         val thread = checkNotNull(design.inputs.thread.value)
         rule.waitUntil(5_000) { thread.state.value.backgroundTaskCount == 2 }
         rule.waitUntil(5_000) { thread.connectionState.value == ConnectionState.Offline }
-        design.openMenu(rule.onNodeWithContentDescription("More actions"))
+        design.openHeaderMenu()
         design.capture("smoke", "thread-offline-tasks-menu", "none")
     }
 }

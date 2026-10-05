@@ -6,7 +6,7 @@ Part of [Remote conversation repository — the Phase 4 `ConversationRepository`
 
 `McpStatusProjection` (#1343) is one more connection-scoped status projection, the `ModelMenuProjection` shape: it owns the decode, the retained state, the three outbound sends and their refusal correlation, constructed once per `RemoteConversationRepository` instance from the shared `send`/`negotiatedCapabilities`/`nextRequestId` the repository's other projections already use. **Deliberately not in [`HostReadings`](relay-repository-coordinator.md)**: unlike `SlashCommandMenuProjection`, which #1317 promoted to a held-per-host reading, the MCP reading stays per connection on purpose — a reconnect starts from nothing and the surface that wants it (#1344's Channel info list, #1345's failure notice) asks again. That re-ask is the designed recovery path, not a gap to close.
 
-`ConversationRepository.observeMcpStatus(conversationId): Flow<McpStatus>` returns one value that carries a report and five flags together, not five+1 separate streams — see [Conversation repository § `McpStatus`](conversation-repository.md#shape) for the domain type and the rule that a report clears all five flags in the same emission a collector sees it in, so nothing can observe a fresh report beside a stale flag.
+`ConversationRepository.observeMcpStatus(conversationId): Flow<McpStatus>` returns one value that carries a report and five flags together, not five+1 separate streams — see [Conversation repository § `McpStatus`](conversation-repository-shape.md#shape) for the domain type and the rule that a report clears all five flags in the same emission a collector sees it in, so nothing can observe a fresh report beside a stale flag.
 
 ## The push and the correlated reply — `mcp_status`
 
@@ -38,7 +38,7 @@ The report and the five flags are the only state this ticket produces; rendering
 
 ## Related
 
-- [Conversation repository § `McpStatus`/`McpStatusReport`/`McpServerStatus`](conversation-repository.md#shape) — the domain types and interface shape.
+- [Conversation repository § `McpStatus`/`McpStatusReport`/`McpServerStatus`](conversation-repository-shape.md#shape) — the domain types and interface shape.
 - [Conversation repository — Conventions](conversation-repository-conventions.md) — the no-op default exception these six members join.
 - [Remote conversation repository § Status projections](remote-conversation-repository.md#status-projections-one-file-per-status-event) — where this projection sits among its siblings.
 - [Remote conversation repository — the model-list and slash-command-list menu retentions](remote-conversation-repository-model-and-slash-command-menus.md) — the closest sibling shape, including its own ask-ledger and refusal-correlation reasoning.

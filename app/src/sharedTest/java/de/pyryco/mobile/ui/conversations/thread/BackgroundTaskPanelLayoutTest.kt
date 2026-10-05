@@ -49,7 +49,7 @@ class BackgroundTaskPanelLayoutTest {
         }
 
         assertTextSize("Running · 1", 13)
-        assertTextSize("local_bash", 12)
+        assertTextSize("Command", 12)
         assertTextSize("Running", 11)
         assertTextSize("go test ./...", 13)
     }

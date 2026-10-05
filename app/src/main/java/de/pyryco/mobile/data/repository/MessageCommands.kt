@@ -14,6 +14,7 @@ import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.RequestSnapshotPayloadDto
 import de.pyryco.mobile.data.network.ScreenSnapshotPayloadDto
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
+import de.pyryco.mobile.data.network.SendQueuedNowPayloadDto
 import de.pyryco.mobile.data.network.attachmentDisplayName
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.ERROR_CONVERSATION_NOT_FOUND
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_ATTACHMENT_CHUNK
@@ -329,6 +330,31 @@ internal class MessageCommands(
         // Throws on a server `error` / not-Open session; the decode below is unreachable on failure.
         val reply = requests.sendAndAwaitReply(request)
         return MobileJson.decodeFromJsonElement<ScreenSnapshotPayloadDto>(reply).text
+    }
+
+    /** Send now has no reply and never uses drop settlement. */
+    suspend fun sendQueuedNow(
+        conversationId: String,
+        queuedMessageId: Long,
+    ) {
+        val echoId =
+            queueProjection
+                .current(conversationId)
+                .firstOrNull { it.id == queuedMessageId }
+                ?.messageId
+                .orEmpty()
+        val recorded = threadProjection.recordSendNow(conversationId, echoId)
+        val request =
+            Envelope(
+                id = requests.nextRequestId(),
+                type = "send_queued_now",
+                ts = Clock.System.now().toString(),
+                payload = MobileJson.encodeToJsonElement(SendQueuedNowPayloadDto(conversationId, queuedMessageId)),
+            )
+        if (!send(request)) {
+            if (recorded) threadProjection.withdrawSendNow(conversationId, echoId)
+            throw IllegalStateException("send_queued_now not sent: session not connected")
+        }
     }
 
     /**

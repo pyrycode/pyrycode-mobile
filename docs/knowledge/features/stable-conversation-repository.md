@@ -88,7 +88,8 @@ attachment-naming one, #830 — follow the identical snapshot-or-throw shape bel
 `setSessionSettings` ([#544](../codebase/544.md), the facade delegation [#543](../codebase/543.md)
 deliberately deferred), `requestHistory` (#623), `requestSystemPrompt`/`setSystemPrompt` (#823),
 `setMuted` (#1000), **and**
-`uploadAttachment` (#829, the one one-shot that does **not** follow the snapshot-or-throw shape below —
+`requestHostSystemPrompt`/`setHostSystemPrompt` (#1774, snapshot-or-result), and
+`uploadAttachment` (#829, another one-shot that does **not** follow the snapshot-or-throw shape below —
 see [Uploads — snapshot-or-result](#uploads--snapshot-or-result-829))), **and** the one capability property
 `mutationsSupported` (#507) — including every member that ships a default body on the interface
 (`recentWorkspaces`, `createWorkspaceFolder`, `delete`, `requestScreenSnapshot` (#375),
@@ -98,7 +99,7 @@ see [Uploads — snapshot-or-result](#uploads--snapshot-or-result-829))), **and*
 `setMuted` (#1000), **and** `mutationsSupported` (#507)), so
 delegation is faithful and nothing silently falls back to a default. `setSessionSettings`, `requestHistory`,
 `requestSystemPrompt`/`setSystemPrompt` and `setMuted` all follow the
-plain one-shot snapshot-or-throw shape below, like every other mutator — neither introduces a new
+plain one-shot snapshot-or-throw shape below — none introduces a new
 delegation posture; `requestHistory` forwards its `cursor`/`limit` verbatim, the same pass-through the
 shape already gives every other multi-arg one-shot, `setSystemPrompt` forwards its `systemPrompt`
 verbatim including a `null` clear — the facade neither pre-checks the 8192-byte limit nor short-circuits
@@ -192,7 +193,7 @@ private val live: ConversationRepository
 // e.g. override suspend fun sendMessage(id, text) = live.sendMessage(id, text)
 ```
 
-Each one-shot snapshots the live repo at call entry (`currentRepository.value`, read exactly once) and
+Each throwing one-shot snapshots the live repo at call entry (`currentRepository.value`, read exactly once) and
 delegates; with no connection live it throws `IllegalStateException("No live relay connection")`.
 Snapshotting once is correct: if the connection drops *after* the snapshot, the delegate's own method
 throws on its not-`Open` send — the facade need not re-check.
@@ -202,6 +203,20 @@ a throwing stub (`archive`/`unarchive`/`rename`/`startNewSession`/`changeWorkspa
 `UnsupportedOperationException` on the remote repo), and a wired error (`RelayErrorException`,
 `IllegalArgumentException`) all propagate **verbatim** — the facade adds, suppresses, and translates
 nothing.
+
+### Host system prompts — snapshot-or-result (#1774)
+
+`requestHostSystemPrompt` and `setHostSystemPrompt` read `currentRepository.value`
+once and delegate that entire call to the snapshot. No live connection returns
+`Result.failure(IllegalStateException(NOT_CONNECTED))`; neither supplies retained
+readings or retries on a replacement connection. A pending read or save stays on
+its original host connection even if the facade reconnects before the reply.
+The live delegate owns byte validation and sanitized failures; caller cancellation
+propagates. This differs from the channel prompt pair's throwing API.
+
+`HostSystemPromptFacadesTest` exercises these operations through real remote
+delegates, including absent connections and replacement while a save is waiting.
+See [the host contract](conversation-repository-conventions.md#host-system-prompt-contract-1774).
 
 ### Uploads — snapshot-or-result (#829)
 
@@ -270,8 +285,7 @@ accepted, documented limitation, not this facade's concern. See [`../codebase/50
 `sendAndAwaitReply` already throws `IllegalStateException` when its pump is not `Open`
 ([`RemoteConversationRepository.kt:262`](remote-conversation-repository.md)). So a caller catches **one**
 exception type whether the connection was absent at call time (facade throws) or dropped between the
-call and the send (remote repo throws). This stays within the existing "[failures throw, they don't
-`Result`-wrap](conversation-repository.md)" convention — the interface returns the domain entity
+call and the send (remote repo throws). This stays within the [channel operations' throwing failure convention](conversation-repository-conventions.md#conventions) — the interface returns the domain entity
 directly, so throwing is the only way to surface "not connected" without cascading a sealed-result
 return type across every consumer and the Fake. It is a *defined, catchable, non-crashing* outcome, not
 an app crash.
@@ -431,7 +445,7 @@ section](relay-repository-coordinator.md#testing).
   [Status sheet](status-sheet.md) run-configuration controls; a not-connected change surfaces as this
   facade's `IllegalStateException`, which the ViewModel catches to revert + snackbar.
 - Delegated one-shot: `uploadAttachment` ([#829](https://github.com/pyrycode/pyrycode-mobile/issues/829)) —
-  the sole one-shot with a **snapshot-or-result**, not snapshot-or-throw, no-connection case. See
+  a one-shot with a **snapshot-or-result** no-connection case. See
   [Attachment upload](attachment-upload.md).
 - Delegated one-shot: `fetchAttachment` ([#899](https://github.com/pyrycode/pyrycode-mobile/issues/899)) —
   the same snapshot-or-result shape as `uploadAttachment`, with no local bound to check; no-connection

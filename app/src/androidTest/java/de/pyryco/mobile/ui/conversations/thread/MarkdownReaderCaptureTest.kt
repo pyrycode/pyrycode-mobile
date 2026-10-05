@@ -75,9 +75,9 @@ class MarkdownReaderCaptureTest {
         capture("reference-412x892.png", 412, 892, 1f)
 
         rule.onNodeWithContentDescription(string(R.string.cd_more_actions)).performClick()
-        rule.onNodeWithText(string(R.string.markdown_reader_save_to_device)).assertIsDisplayed()
+        rule.onNodeWithText(string(R.string.markdown_reader_save_to_device)).performScrollTo().assertIsDisplayed()
         rule.onNodeWithTag("markdown-reader-menu").assertIsDisplayed()
-        capture("menu-412x892.png", 412, 892, 1f, systemWindow = true)
+        capture("menu-412x892.png", 412, 892, 1f)
     }
 
     @Viewport("320x700")
@@ -94,19 +94,28 @@ class MarkdownReaderCaptureTest {
         rule.onNodeWithText("Paragraph 30").performScrollTo().assertIsDisplayed()
         capture("compact-scrolled-320x700.png", 320, 700, 1.5f)
         rule.onNodeWithContentDescription(string(R.string.cd_more_actions)).performClick()
-        rule.onNodeWithText(string(R.string.markdown_reader_save_to_device)).assertIsDisplayed()
+        rule.onNodeWithText(string(R.string.markdown_reader_save_to_device)).performScrollTo().assertIsDisplayed()
         rule.onNodeWithTag("markdown-reader-menu").assertIsDisplayed()
-        capture("compact-menu-320x700.png", 320, 700, 1.5f, systemWindow = true)
+        capture("compact-menu-320x700.png", 320, 700, 1.5f)
+    }
+
+    @Test fun lightActionsMenuAt412By892() {
+        show("Builder Pipeline - Plan.md", REFERENCE_MARKDOWN, 1f, dark = false)
+        rule.onNodeWithContentDescription(string(R.string.cd_more_actions)).performClick()
+        rule.onNodeWithTag("markdown-reader-menu").assertIsDisplayed()
+        rule.onNodeWithText(string(R.string.markdown_reader_save_to_device)).assertIsDisplayed()
+        capture("menu-light-412x892.png", 412, 892, 1f, dark = false)
     }
 
     private fun show(
         name: String,
         markdown: String,
         fontScale: Float,
+        dark: Boolean = true,
     ) {
         rule.setContent {
             CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale)) {
-                PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
+                PyrycodeMobileTheme(darkTheme = dark, dynamicColor = false) {
                     view = LocalView.current
                     MarkdownReaderScreen(MarkdownDocument(name, markdown), onBack = {})
                 }
@@ -119,37 +128,16 @@ class MarkdownReaderCaptureTest {
         width: Int,
         height: Int,
         fontScale: Float,
-        systemWindow: Boolean = false,
+        dark: Boolean = true,
     ) {
         rule.waitForIdle()
         val bitmap =
-            if (systemWindow) {
-                rule.runOnIdle {
-                    Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { bitmap ->
-                        val canvas = Canvas(bitmap)
-                        val global = Class.forName("android.view.WindowManagerGlobal")
-                        val manager = global.getMethod("getInstance").invoke(null)
-                        val roots = global.getDeclaredField("mViews").apply { isAccessible = true }.get(manager) as List<*>
-                        roots.filterIsInstance<View>().filter(View::isShown).forEach { window ->
-                            val origin = IntArray(2)
-                            window.getLocationOnScreen(origin)
-                            canvas.save()
-                            canvas.translate(origin[0].toFloat(), origin[1].toFloat())
-                            window.draw(canvas)
-                            canvas.restore()
-                        }
-                    }
-                }
-            } else {
-                rule.runOnIdle {
-                    val root = checkNotNull(view).rootView
-                    Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888).also { root.draw(Canvas(it)) }
-                }
+            rule.runOnIdle {
+                val root = checkNotNull(view).rootView
+                Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888).also { root.draw(Canvas(it)) }
             }
-        if (!systemWindow) {
-            assertEquals(width, bitmap.width)
-            assertEquals(height, bitmap.height)
-        }
+        assertEquals(width, bitmap.width)
+        assertEquals(height, bitmap.height)
         val samples =
             (0 until bitmap.height step 4).flatMap { y -> (0 until bitmap.width step 4).map { x -> bitmap.getPixel(x, y) } }
         if (samples.toSet().size <= 10) {
@@ -164,7 +152,7 @@ class MarkdownReaderCaptureTest {
         File(output, name).outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         File(output, "$name.txt").writeText(
             "api=${Build.VERSION.SDK_INT} sizeDp=${width}x$height density=1 fontScale=$fontScale " +
-                "staticDark=true design=553:2574 inspected=2026-09-30 menuComposite=$systemWindow " +
+                "staticDark=$dark design=553:2574 menuDesign=533:1958 inspected=2026-10-05 menuComposite=false " +
                 "capturePixels=${bitmap.width}x${bitmap.height}\n",
         )
         bitmap.recycle()

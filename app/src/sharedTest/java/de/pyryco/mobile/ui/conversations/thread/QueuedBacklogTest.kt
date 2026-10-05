@@ -3,14 +3,20 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
@@ -107,6 +113,118 @@ class QueuedBacklogTest {
             .top
 
     private fun dropAffordances() = composeTestRule.onAllNodes(hasContentDescription(dropDescription), useUnmergedTree = true)
+
+    @Test
+    fun screenRoutesEachActionToItsQueuedId() {
+        val sends = mutableListOf<Long>()
+        val drops = mutableListOf<Long>()
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ThreadScreen(
+                    state =
+                        stateWith(listOf(queued(42, "queued"))).copy(
+                            runConfig =
+                                ThreadRunConfig(
+                                    sessionId = "s1",
+                                    settingsAvailable = true,
+                                    capabilities =
+                                        de.pyryco.mobile.data.repository
+                                            .SessionCapabilities(emptyList(), emptyList(), midTurnInput = true),
+                                ),
+                        ),
+                    onBack = {},
+                    onSendMessage = {},
+                    connectionState = ConnectionState.Connected,
+                    onRetry = {},
+                    onSendQueuedNow = { sends += it },
+                    onDropQueued = { drops += it },
+                )
+            }
+        }
+        composeTestRule.onNodeWithContentDescription("Send now").performClick()
+        assertEquals(listOf(42L), sends)
+        assertTrue(drops.isEmpty())
+        composeTestRule.onNodeWithContentDescription(dropDescription).performClick()
+        assertEquals(listOf(42L), drops)
+        assertEquals(listOf(42L), sends)
+        composeTestRule.onNodeWithText("queued", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun sendNow_visibilityFollowsOnlyFreshExplicitSupport() {
+        var config by mutableStateOf(ThreadRunConfig())
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ThreadScreen(
+                    state = stateWith(listOf(queued(42, "queued"))).copy(runConfig = config),
+                    onBack = {},
+                    onSendMessage = {},
+                    connectionState = ConnectionState.Connected,
+                    onRetry = {},
+                )
+            }
+        }
+
+        fun actions() = composeTestRule.onAllNodes(hasContentDescription("Send now"))
+        actions().assertCountEquals(0)
+        config =
+            ThreadRunConfig(
+                sessionId = "s1",
+                settingsAvailable = true,
+                capabilities =
+                    de.pyryco.mobile.data.repository
+                        .SessionCapabilities(emptyList(), emptyList(), midTurnInput = true),
+            )
+        actions().assertCountEquals(1)
+        config = config.copy(capabilities = config.capabilities?.copy(midTurnInput = false))
+        actions().assertCountEquals(0)
+        config = config.copy(sessionId = "s2", capabilities = null)
+        actions().assertCountEquals(0)
+        config =
+            config.copy(
+                capabilities =
+                    de.pyryco.mobile.data.repository
+                        .SessionCapabilities(emptyList(), emptyList(), midTurnInput = true),
+                settingsHeld = true,
+            )
+        actions().assertCountEquals(0)
+    }
+
+    @Test
+    fun wrappedQueuedText_keepsIndependentSendAndDropPointerTargets() {
+        var sends = 0
+        var drops = 0
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                de.pyryco.mobile.ui.conversations.components.QueuedMessageRow(
+                    text = "A long queued message that wraps over multiple lines while both controls remain reachable.",
+                    onDrop = { drops++ },
+                    onSendNow = { sends++ },
+                )
+            }
+        }
+        val send = composeTestRule.onNodeWithContentDescription("Send now")
+        val drop = composeTestRule.onNodeWithContentDescription(dropDescription)
+        send.assertIsDisplayed().assertHasClickAction()
+        drop.assertIsDisplayed().assertHasClickAction()
+        val sendBounds = send.getUnclippedBoundsInRoot()
+        val dropBounds = drop.getUnclippedBoundsInRoot()
+        assertTrue((sendBounds.right - sendBounds.left) >= 48.dp && (sendBounds.bottom - sendBounds.top) >= 48.dp)
+        assertTrue((dropBounds.right - dropBounds.left) >= 48.dp && (dropBounds.bottom - dropBounds.top) >= 48.dp)
+        assertTrue(sendBounds.right <= dropBounds.left)
+        send.performTouchInput { click(center) }
+        assertEquals(1, sends)
+        assertEquals(0, drops)
+        drop.performTouchInput { click(center) }
+        assertEquals(1, sends)
+        assertEquals(1, drops)
+        send.performTouchInput { click(Offset(center.x * 2f - 1f, center.y)) }
+        assertEquals(2, sends)
+        assertEquals(1, drops)
+        drop.performTouchInput { click(Offset(1f, center.y)) }
+        assertEquals(2, sends)
+        assertEquals(2, drops)
+    }
 
     // AC #1 — the bug this slice fixes. The echo and the backlog item are the same message, so the
     // thread draws ONE row carrying the queue treatment, not the echo plus a second section row.

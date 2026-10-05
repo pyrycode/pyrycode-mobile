@@ -1,0 +1,4 @@
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_e2e","content":"hello","is_error":false}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"bye"}]},"isReplay":true}
+{"type":"assistant","message":{"id":"send-now-reply","content":[{"type":"text","text":"send-now-marker"}]}}
+{"type":"result","subtype":"success","is_error":false,"result":"send-now-marker","session_id":"43143143-4314-4314-8314-431431431431"}

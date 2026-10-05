@@ -4,6 +4,7 @@ import de.pyryco.mobile.data.cache.AttachmentStore
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.cacheableThreadRows
 import de.pyryco.mobile.data.cache.settledThreadRows
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.RelayLog
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
@@ -31,7 +32,7 @@ import java.util.concurrent.ConcurrentHashMap
  * drawn. It is the merge base while live rows flow: a row the live projection deliberately removes (a
  * dropped queued send's echo) is not resurrected from an ever-growing union.
  *
- * An empty live projection is a connection boundary — the stable facade emits `emptyList()` on every
+ * An empty live projection without suppressed echoes is a connection boundary — the stable facade emits `emptyList()` on every
  * disconnect and before a new connection's first page. There the base moves to the settled rows last
  * drawn ([settledThreadRows]), so losing reception keeps the thread on screen and never rewrites the
  * cache with the open-time snapshot, and the next connection's rows merge over everything drawn so far.
@@ -76,9 +77,21 @@ class CachingConversationRepository(
             var base = cache.readThread(serverId, conversationId)
             var lastWritten = base
             var lastDrawn = base
-            delegate.observeMessages(conversationId).collect { live ->
-                if (live.isEmpty()) base = settledThreadRows(lastDrawn)
-                val drawn = live.mergeCachedRows(base)
+            delegate.threadSnapshots(conversationId).collect { snapshot ->
+                val live = snapshot.rows
+                // Awaiting delivery can hide the only live row; that is not a connection boundary.
+                if (live.isEmpty() && snapshot.suppressedUserMessageIds.isEmpty()) base = settledThreadRows(lastDrawn)
+                val restored =
+                    if (snapshot.suppressedUserMessageIds.isEmpty()) {
+                        base
+                    } else {
+                        base.filterNot {
+                            it is ThreadItem.MessageItem &&
+                                it.message.role == Role.User &&
+                                it.message.id in snapshot.suppressedUserMessageIds
+                        }
+                    }
+                val drawn = live.mergeCachedRows(restored)
                 lastDrawn = drawn
                 emit(drawn)
                 val cacheable = cacheableThreadRows(drawn)

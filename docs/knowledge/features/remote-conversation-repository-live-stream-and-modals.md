@@ -195,7 +195,7 @@ and `TYPE_SESSION_FACTS = "session_facts"` each get their own `onInbound` arm, g
   (`neitherFrame_touchesStallThreadOrSessionSettings`) proves a `session_facts` frame claiming
   `bypassPermissions` leaves `observeSessionSettings`'s `permissionMode` unchanged.
 - **Renders nothing.** Both readings are data-layer only; the UI that surfaces "what claude says it's
-  running" is a separate, not-yet-shipped ticket. See [`AnnouncedModel`/`SessionFacts`](conversation-repository.md#shape)
+  running" is a separate, not-yet-shipped ticket. See [`AnnouncedModel`/`SessionFacts`](conversation-repository-shape.md#shape)
   for the domain types and their untrusted-text KDoc.
 
 ## `context_usage` — the context-usage reading (#945)
@@ -264,7 +264,7 @@ Wire SSOT: pyrycode `docs/protocol-mobile.md` § `context_usage`.
   A rung-3 scenario, `interactiveTurn_pingPrompt_footerShowsContextUsage`, proves one live reading after a real
   turn, and since [#1410](https://github.com/pyrycode/pyrycode-mobile/issues/1410)
   `interactiveTurn_reopenAfterReconnect_footerShowsContextUsageBeforeAnyTurn` proves one arriving from the ask
-  alone, before any turn — see [e2e coverage](../../e2e-interactive-stream.md). See [`ContextUsage`](conversation-repository.md#shape)
+  alone, before any turn — see [e2e coverage](../../e2e-interactive-stream.md). See [`ContextUsage`](conversation-repository-shape.md#shape)
   for the domain type and its untrusted-text KDoc (there is none to carry — every string on the frame is left
   undecoded).
 
