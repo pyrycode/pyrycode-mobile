@@ -315,6 +315,10 @@ data class ThreadRunConfig(
     /** What the surfaces show: a pending tap while one is outstanding, the confirmed reading otherwise. */
     val selectedModel: String get() = pendingModel ?: savedModel
 
+    /** Send now requires a fresh current-session reading with explicit `mid_turn_input: true`. */
+    val midTurnInputSupported: Boolean
+        get() = settingsAvailable && !settingsHeld && sessionId.isNotEmpty() && capabilities?.midTurnInput == true
+
     /** Whether this session answers MCP status (#1344): only an explicit `mcp_servers: false` hides Channel info's section. */
     val mcpServersSupported: Boolean get() = capabilities?.mcpServers ?: true
 

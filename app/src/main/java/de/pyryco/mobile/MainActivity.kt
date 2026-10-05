@@ -537,6 +537,7 @@ internal fun PyryNavHost(
                     answerRejected = answerRejected,
                     onDismissAnswerRejection = vm::onAnswerRejectionDismissed,
                     onDropQueued = vm::onDropQueued,
+                    onSendQueuedNow = vm::onSendQueuedNow,
                     onOverflowEvent = vm::onOverflowEvent,
                     onModelSelected = vm::onModelSelected,
                     switchBackOffer = switchBackOffer,
