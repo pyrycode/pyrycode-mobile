@@ -55,7 +55,6 @@ private val PillShadow = 4.dp
  * content description is [contentDescription], its visible label by default; the X is its own button.
  * Set [mergeDescendants] to false when an enclosing touch target owns the merged label and action.
  * [shadowElevation] is the overlay's drop shadow; a pill laid out in the page, not over it, passes none.
- * Set [mergeDescendants] to false when a parent click target owns the merged label and description.
  */
 @Composable
 internal fun NoticePill(
