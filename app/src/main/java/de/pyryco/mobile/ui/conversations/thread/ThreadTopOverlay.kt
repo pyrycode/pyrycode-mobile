@@ -107,10 +107,15 @@ internal fun ThreadTopOverlay(
             if (sessionError != null) {
                 NoticePill(text = sessionErrorLabel(sessionError, agent), isError = true)
             }
-            TurnOutcomeIndicator(notice = turnOutcome, agent = agent, onCompact = onCompact)
-            transientError?.let { text ->
-                key(transientErrorOccurrence) { TransientErrorPill(text) }
-            }
+            TurnOutcomeIndicator(
+                notice = turnOutcome,
+                agent = agent,
+                onCompact = onCompact,
+                followingNotice =
+                    transientError?.let { text ->
+                        { key(transientErrorOccurrence) { TransientErrorPill(text) } }
+                    },
+            )
         }
         Column(
             modifier = modifier.fillMaxWidth(),

@@ -2,8 +2,8 @@ package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.Surface
@@ -11,6 +11,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.tooling.preview.Preview
@@ -63,7 +65,8 @@ internal fun turnRecoveryNotice(event: LiveSessionEvent.TurnEnd): TurnRecoveryNo
  *
  * The whole context pill runs [onCompact]; a `null` [onCompact], the command being
  * absent from the published menu, leaves the pill with no click action. Stateless and total: it emits
- * nothing for `null`, the sibling early-return idiom.
+ * no recovery for `null`. [followingNotice] stays 12dp below the visible pill and intercepts taps
+ * on its inert surface without inheriting Compact's action.
  */
 @Composable
 fun TurnOutcomeIndicator(
@@ -71,8 +74,12 @@ fun TurnOutcomeIndicator(
     agent: ConversationAgent,
     onCompact: (() -> Unit)?,
     modifier: Modifier = Modifier,
+    followingNotice: (@Composable () -> Unit)? = null,
 ) {
-    if (notice == null) return
+    if (notice == null) {
+        followingNotice?.invoke()
+        return
+    }
     val label =
         when (notice) {
             TurnRecoveryNotice.ContextTooLong -> stringResource(R.string.thread_recovery_context)
@@ -81,25 +88,45 @@ fun TurnOutcomeIndicator(
         }
     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
         val action = onCompact.takeIf { notice == TurnRecoveryNotice.ContextTooLong }
-        // Recovery is last in the overlay: extend its target downward, away from preceding notices,
-        // while keeping the visible pill at its Figma top/right position and 24dp height.
-        Box(
-            modifier =
-                if (action != null) {
-                    modifier.heightIn(min = 48.dp).clickable(role = Role.Button, onClick = action)
-                } else {
-                    modifier
-                },
-            contentAlignment = Alignment.TopEnd,
-        ) {
-            // Hug bodySmall rather than squeezing its glyphs: API 35 measures this context label at
-            // 176dp including padding, versus Figma 685:3992's 172dp with its Roboto metrics.
-            NoticePill(
-                text = label,
-                isError = true,
-                mergeDescendants = action == null,
-                modifier = Modifier.sizeIn(minHeight = 24.dp),
-            )
+        // Measure the visible surface before expanding Compact's target. A following inert notice
+        // keeps the 12dp visible gap and owns its pixels where the 48dp target extends beneath it.
+        Layout(
+            modifier = modifier,
+            content = {
+                Box(
+                    modifier = if (action != null) Modifier.clickable(role = Role.Button, onClick = action) else Modifier,
+                    contentAlignment = Alignment.TopEnd,
+                ) {
+                    // API 35 hugs this label at 176dp, versus Figma 685:3992's 172dp Roboto metrics.
+                    NoticePill(
+                        text = label,
+                        isError = true,
+                        mergeDescendants = action == null,
+                        modifier = Modifier.sizeIn(minHeight = 24.dp),
+                    )
+                }
+                if (followingNotice != null) {
+                    // This is a touch barrier, not an action or accessible button.
+                    Box(Modifier.pointerInput(Unit) { detectTapGestures { } }) { followingNotice() }
+                }
+            },
+        ) { measurables, constraints ->
+            val childConstraints = constraints.copy(minWidth = 0, minHeight = 0)
+            val visibleHeight = measurables[0].minIntrinsicHeight(constraints.maxWidth)
+            val target =
+                measurables[0].measure(
+                    childConstraints.copy(
+                        minHeight = if (action != null) maxOf(48.dp.roundToPx(), visibleHeight).coerceAtMost(constraints.maxHeight) else 0,
+                    ),
+                )
+            val following = measurables.getOrNull(1)?.measure(childConstraints)
+            val followingTop = visibleHeight + 12.dp.roundToPx()
+            val width = maxOf(target.width, following?.width ?: 0)
+            val height = maxOf(target.height, following?.let { followingTop + it.height } ?: 0)
+            layout(width, height) {
+                target.placeRelative(width - target.width, 0)
+                following?.placeRelative(width - following.width, followingTop)
+            }
         }
     }
 }
