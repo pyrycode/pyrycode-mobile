@@ -131,6 +131,15 @@ budget for the fetch; `MarkdownText` parses the text during composition and lays
 non-lazy column, so a large `.md` well within the retrieval bound could still freeze the UI. 256 KiB is far
 above any realistic workspace note.
 
+**A run with no whitespace gets a line break every `MAX_UNBROKEN_RUN` (1024) characters in the reader's
+drawn text (2026-10-05).** Android's text engine shapes a space-separated word at a time, and a word wider
+than the line costs native memory far faster than linearly: on the test emulator a 64 KB word took about
+220 MB and a 256 KB one got the process killed by the low-memory killer. A zero-width space or a slash does
+not end the engine's word; a line break does. `withBreaksInLongRuns` applies it to the reader's paragraphs,
+headings, list items, quotes and fallback blocks, keeping styles and links. Chat bubbles are untouched,
+since their text is selectable and a copied selection would carry the breaks. Copies read the note, not
+the drawn text. Code blocks do not wrap and are not changed.
+
 `MarkdownDocument(name, text)` overrides `toString()` to print lengths only
 (`MarkdownDocument(name=7, text=482)`), the same redaction discipline `AttachmentSource` and `Ready` use in
 [MessageBubble — attachment slot](message-bubble-attachment-slot.md#view-state-keyed-by-attachment-id).
