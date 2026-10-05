@@ -11,8 +11,8 @@ the fold its KDoc promised: `requestHistory` now also calls a private `mergeHist
 page)`, which reduces the page and merges it ahead of `threadByConversation[conversationId]` inside one
 `MutableStateFlow.update {}` — a read, a merge and an assign that must stay one check-then-act, since
 computing the merge outside the lambda would silently lose a concurrent live append on a CAS retry. The
-page is still returned to the caller unchanged; nothing in the app calls `requestHistory` yet
-([#646](../codebase/646.md) owns the demand side, [#647](../codebase/647.md) the offline cache).
+page is still returned to the caller unchanged; the history-demand and cache sections below describe
+the callers that now consume it.
 
 **One fold surface, not two.** The reduction reuses the live lane's own folds rather than mapping the
 page separately. `RemoteConversationRepositoryKt`'s `appendMessages` / `applyToolUse` / `applyToolResult`
@@ -127,10 +127,42 @@ and it is also `appendMessages`' existing live-lane dedup rule. An `Unrecognized
 which the reducer derives as `"history-${entry.id}"` from the durable per-conversation log id — stable
 across re-reduction, and disjoint from the live lane's per-process-counter `"unrecognized-<n>"` namespace
 (see [Unrecognized message row](unrecognized-message-row.md)) so the two cannot collide by coincidence.
-The merge is a **prepend, never a re-sort** (`fresh + this`, never a timestamp sort — the thread is
-arrival-order by deliberate choice, see `applyToolUse`'s KDoc above) and a duplicate is **skipped, not
-updated in place**: a page is always older than the live lane, so the only possible overlap is the narrow
-ask-versus-answer race the protocol names, and in that window the live lane still owns the newer state.
+For ordinary rows, the merge is a **prepend, never a re-sort** (never a timestamp sort — the thread
+is arrival-order by deliberate choice, see `applyToolUse`'s KDoc above). Duplicate ordinary rows keep
+the held state, apart from missing attachment hints: in the narrow ask-versus-answer overlap window
+the protocol names, the live lane still owns the newer state.
+
+**Invisible background-task positions (#1782).** `ThreadItem.BackgroundTaskLifecycle` retains
+launch and finish evidence alongside ordinary entries. Within the requested conversation its identity
+is `(taskId, terminal != null)`: a null terminal denotes launch, a non-null `BackgroundTaskUpdate`
+denotes finish. Neither pagination indexes, history/replay ids nor timestamps define that identity.
+Live and history use the same pure folds under the negotiated `interactive` gate; newest-first pages
+reduce in reverse order. Empty task ids add no marker. Any non-empty update status is terminal,
+including an unknown status; mid-life updates, progress and rosters add no position.
+
+A finish may precede its launch or Agent/Task tool row. Later launch evidence fills unknown tool-call
+id, description, task type and truncation report by task id without moving the retained finish or
+replacing first-seen content. The tool-call id joins a tool row whenever it loads; existing tool-parent
+links stay intact. Overlap retains one marker per task/phase, fills missing launch fields before
+skipping twins, and completes launch-to-finish joins across page seams. An empty/replacing panel roster
+cannot remove this evidence or manufacture completion; see [application payloads](mobile-protocol-v2-wire-layer-application-payloads.md#background-task-payloads-1782).
+
+Fresh evidence needs the page's ordinary-row neighbours even when overlap discards those rows.
+`withHistoryLifecyclePositions` inserts after the preceding retained neighbour; leading evidence waits
+for the first overlapping neighbour and goes before it, or at the front if none exists. Insertion slots
+advance monotonically, so older ordinary backfill cannot pull later evidence across a retained anchor.
+Rows sharing a slot keep page order, and retained markers keep their positions relative to existing
+rows through replay and older-page prepend. This preserves terminal-before-start arrival rather than
+sorting by phase. Anchor lookup uses typed row identities and assistant `(turnId, seq)` overlap, never
+text or timestamps. Differently keyed or partly discarded segments still represent retained neighbours.
+
+Choose anchors **after** removing segments superseded by whole-turn rows: a suffix of a retained
+whole turn must resolve to that whole-turn row. Anchoring a finish to a temporary suffix and removing
+that suffix later can strand the finish at the front. The lifecycle regressions cover both history and
+[reconnect merges](caching-conversation-repository.md#how-the-restore-merges-with-live-rows), whole-turn/
+segment overlap in both directions, retained-launch variants, replay and older-page prepend. Ordinary
+assistant delta anchoring and segment joining treat markers as transparent; hidden evidence cannot
+split text or create visible rows. Descriptions and summaries remain inert and unlogged.
 
 **A page cannot promote a `Running` tool row to `Done`/`Failed` — only the live lane can, for now.** A
 page carrying a `tool_result` for a tool row the thread already holds as `Running` (the ask-versus-answer

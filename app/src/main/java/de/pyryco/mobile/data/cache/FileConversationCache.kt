@@ -108,7 +108,11 @@ class FileConversationCache(
             val document = threadDocumentFor(serverId, conversationId)
             val kept = cacheableThreadRows(rows)
             // #1354: keep the saved history position, unless trimming moved the oldest row away from it.
-            val trimmed = kept.size < settledThreadRows(rows).count { it !is ThreadItem.UnrecognizedMessage }
+            val trimmed =
+                kept.size <
+                    settledThreadRows(rows).count {
+                        it !is ThreadItem.UnrecognizedMessage && it !is ThreadItem.BackgroundTaskLifecycle
+                    }
             val history = if (trimmed) null else storedHistoryOrNull(document)
             val record = CachedThread(VERSION, kept.map { it.toRecord() }, history)
             writeAtomically(document, MobileJson.encodeToString(record))
@@ -655,6 +659,7 @@ private fun ThreadItem.toRecord(): CachedThreadRow =
                 refusal = CachedRefusal(originalModel, fallbackModel, banner, bannerTruncated, occurredAt.toString()),
             )
         is ThreadItem.StoppedTurn -> CachedThreadRow(stopped = CachedStoppedTurn(turnId, reason, category, occurredAt.toString()))
+        is ThreadItem.BackgroundTaskLifecycle -> throw IllegalStateException("lifecycle evidence is never cached")
         is ThreadItem.UnrecognizedMessage -> throw IllegalStateException("unrecognized rows are never cached")
     }
 

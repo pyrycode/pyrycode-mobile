@@ -139,7 +139,9 @@ class TaskCountPillTest {
             }
         }
         val bounds = composeTestRule.onNodeWithContentDescription("2 tasks running").getUnclippedBoundsInRoot()
-        assertEquals(288f, bounds.left.value, 2f)
+        // The pill hugs its label, so its left edge follows the font's text width: the emulator's Roboto draws the
+        // label about 2 dp narrower than Figma's. The anchored right, top and bottom edges stay at 2 dp.
+        assertEquals(288f, bounds.left.value, 3f)
         assertEquals(392f, bounds.right.value, 2f)
         assertEquals(696f, bounds.top.value, 2f)
         assertEquals(720f, bounds.bottom.value, 2f)

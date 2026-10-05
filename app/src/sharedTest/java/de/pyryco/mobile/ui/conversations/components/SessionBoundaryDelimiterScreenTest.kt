@@ -10,6 +10,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
@@ -18,6 +21,8 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.repository.BoundaryReason
@@ -110,35 +115,45 @@ class SessionBoundaryDelimiterScreenTest {
     }
 
     // Figma 675:3797 insets the frame 20 px inside the 20 px message gutter: at 412 px the rules span x 40–372.
+    // The qualifier gives Robolectric a 412 dp window at density 1. The device ignores it, so the forced size
+    // lays the row out 412 dp wide there too, at whatever density fits, and samples scale by that density.
+    @OptIn(ExperimentalTestApi::class)
     @Test
     @Config(qualifiers = "w412dp-h892dp-mdpi")
     fun reset_rules_span_the_design_inset_at_412_wide() {
         var rule = Color.Unspecified
         var surface = Color.Unspecified
         var view: View? = null
+        var scale = 0f
         composeTestRule.setContent {
-            PyrycodeMobileTheme(darkTheme = true) {
-                rule =
-                    MaterialTheme.colorScheme.inversePrimary
-                        .copy(alpha = 0.6f)
-                        .compositeOver(MaterialTheme.colorScheme.surface)
-                surface = MaterialTheme.colorScheme.surface
-                view = LocalView.current
-                Surface {
-                    SessionBoundaryDelimiter(boundary = clearBoundary())
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, 892.dp))) {
+                PyrycodeMobileTheme(darkTheme = true) {
+                    rule =
+                        MaterialTheme.colorScheme.inversePrimary
+                            .copy(alpha = 0.6f)
+                            .compositeOver(MaterialTheme.colorScheme.surface)
+                    surface = MaterialTheme.colorScheme.surface
+                    view = LocalView.current
+                    scale = LocalDensity.current.density
+                    Surface {
+                        SessionBoundaryDelimiter(boundary = clearBoundary())
+                    }
                 }
             }
         }
 
-        val label = composeTestRule.onNodeWithText("New session — ", substring = true).getUnclippedBoundsInRoot()
-        val y = (label.top.value + label.height.value / 2).toInt()
+        val row = composeTestRule.onNodeWithTag(SESSION_BOUNDARY_TEST_TAG).fetchSemanticsNode().boundsInRoot
+        assertEquals(412f, row.width / scale, 0.5f)
+        val label = composeTestRule.onNodeWithText("New session — ", substring = true).fetchSemanticsNode().boundsInRoot
+        val y = label.center.y.toInt()
         val samples =
             composeTestRule.runOnIdle {
                 val root = checkNotNull(view)
-                assertEquals(412, root.width)
                 val image = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
                 root.draw(Canvas(image))
-                listOf(36, 44, 368, 376).associateWith { Color(image.getPixel(it, y)) }.also { image.recycle() }
+                listOf(36, 44, 368, 376)
+                    .associateWith { Color(image.getPixel((row.left + it * scale).toInt(), y)) }
+                    .also { image.recycle() }
             }
 
         fun close(

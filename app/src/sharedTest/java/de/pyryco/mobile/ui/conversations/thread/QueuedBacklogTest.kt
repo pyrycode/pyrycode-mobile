@@ -25,6 +25,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.pixelDp
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -209,8 +210,10 @@ class QueuedBacklogTest {
         drop.assertIsDisplayed().assertHasClickAction()
         val sendBounds = send.getUnclippedBoundsInRoot()
         val dropBounds = drop.getUnclippedBoundsInRoot()
-        assertTrue((sendBounds.right - sendBounds.left) >= 48.dp && (sendBounds.bottom - sendBounds.top) >= 48.dp)
-        assertTrue((dropBounds.right - dropBounds.left) >= 48.dp && (dropBounds.bottom - dropBounds.top) >= 48.dp)
+        // 126 px at the emulator's density is exactly 48 dp, but dividing it back out can land a hair under.
+        val target = 48.dp - pixelDp().dp
+        assertTrue("send $sendBounds", (sendBounds.right - sendBounds.left) >= target && (sendBounds.bottom - sendBounds.top) >= target)
+        assertTrue("drop $dropBounds", (dropBounds.right - dropBounds.left) >= target && (dropBounds.bottom - dropBounds.top) >= target)
         assertTrue(sendBounds.right <= dropBounds.left)
         send.performTouchInput { click(center) }
         assertEquals(1, sends)

@@ -41,7 +41,8 @@ private val OverlayPillGap = 12.dp
  * to the top of the message area, drawn over the messages so it takes no layout space. Notices live here
  * rather than in the status row, so they never hide what the running turn is doing.
  *
- * Top to bottom: the usage-limit report, a failed MCP server, then a pairing error or offline retry. The
+ * Top to bottom: other-conversation attention, the usage-limit report, a failed MCP server,
+ * a pairing error or offline retry, then a session error. The attention pill has no X. The
  * report is a Default pill with an X only when [usageLimitIsWarning] says so, and it is left out once
  * [usageLimitDismissed]; any other reading is an Error pill that cannot be hidden. Pairing failure takes
  * precedence over the offline pill because a network retry cannot repair a rejected pairing. With none of
@@ -67,11 +68,21 @@ internal fun ThreadTopOverlay(
     agent: ConversationAgent = ConversationAgent.Claude,
     transientError: String? = null,
     transientErrorOccurrence: Long = 0L,
+    attentionPill: (@Composable () -> Unit)? = null,
 ) {
     val usage = usageLimit?.takeUnless { usageLimitDismissed }
     val showOffline = connectionState == ConnectionState.Offline && !showRePair
     val mcp = mcpFailure?.takeUnless { showRePair || showOffline }
-    if (usage == null && mcp == null && !showRePair && !showOffline && sessionError == null && transientError == null) return
+    if (attentionPill == null &&
+        usage == null &&
+        mcp == null &&
+        !showRePair &&
+        !showOffline &&
+        sessionError == null &&
+        transientError == null
+    ) {
+        return
+    }
     val viewConfiguration = LocalViewConfiguration.current
     val pillTouchConfiguration =
         remember(viewConfiguration) {
@@ -100,6 +111,7 @@ internal fun ThreadTopOverlay(
             horizontalAlignment = Alignment.End,
             verticalArrangement = Arrangement.spacedBy(OverlayPillGap),
         ) {
+            attentionPill?.invoke()
             if (usage != null) {
                 val warning = usageLimitIsWarning(usage)
                 NoticePill(
