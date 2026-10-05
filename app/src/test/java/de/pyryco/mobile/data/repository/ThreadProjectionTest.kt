@@ -344,7 +344,11 @@ class ThreadProjectionTest {
             projection.onQueueState(queue, 42L to "mine-1", 43L to "mine-2")
             projection.applyToolUse(toolUse("turn-1", "tool-1"))
             projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-1", "end_turn"))
+            runCurrent()
+            assertEquals(listOf("turn-1", "tool-1", "mine-1", "mine-2"), ids(thread.last()))
             projection.applyAssistantDelta(delta("turn-2", 0, "Reply"))
+            runCurrent()
+            assertEquals(listOf("turn-1", "tool-1", "turn-2", "mine-1", "mine-2"), ids(thread.last()))
             projection.appendLiveMessage("c1", userMessage("mine-1", "first", PUSHED_AT))
             projection.onQueueState(queue, 43L to "mine-2")
             projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-2", "end_turn"))
@@ -374,6 +378,50 @@ class ThreadProjectionTest {
             runCurrent()
             assertEquals(listOf("turn-1", "tool-1", "peer", "turn-2", "mine", "turn-3"), ids(thread.last()))
         }
+
+    @Test
+    fun parkedOwnEcho_peerConsumptionSurvivesAnotherConversationsSnapshot() =
+        runTest { assertPeerConsumptionSurvivesSnapshot(repeatOwnSnapshot = false) }
+
+    @Test
+    fun parkedOwnEcho_peerConsumptionSurvivesRepeatedSnapshot() =
+        runTest { assertPeerConsumptionSurvivesSnapshot(repeatOwnSnapshot = true) }
+
+    private fun TestScope.assertPeerConsumptionSurvivesSnapshot(repeatOwnSnapshot: Boolean) {
+        val projection = ThreadProjection()
+        val queue = QueueProjection()
+        val thread = collect(projection, "c1")
+        val original = startQueuedTurn(projection, queue)
+        projection.onQueueState(queue, 41L to "peer", 42L to "mine")
+        projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-1", "end_turn"))
+        projection.appendLiveMessage("c1", userMessage("peer", "from desktop", PUSHED_AT))
+        projection.applyAssistantDelta(delta("turn-2", 0, "Peer reply"))
+        repeat(2) {
+            if (repeatOwnSnapshot) {
+                projection.onQueueState(queue, 41L to "peer", 42L to "mine")
+            } else {
+                queue.apply(
+                    Envelope(
+                        id = 2L,
+                        type = "queue_state",
+                        ts = RISE,
+                        payload = MobileJson.parseToJsonElement("""{"conversation_id":"c2","queued":[]}"""),
+                    ),
+                )
+                projection.settleDrops(queue)
+                projection.settleQueuedEchoes(queue) { true }
+            }
+        }
+        projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-2", "end_turn"))
+        projection.applyAssistantDelta(delta("turn-3", 0, "Hello, "))
+        projection.applyAssistantDelta(delta("turn-3", 1, "streamed "))
+        projection.appendLiveMessage("c1", userMessage("mine", "daemon copy", PUSHED_AT))
+        projection.applyAssistantDelta(delta("turn-3", 2, "world"))
+        runCurrent()
+        assertEquals(listOf("turn-1", "tool-1", "peer", "turn-2", "mine", "turn-3"), ids(thread.last()))
+        assertEquals(ThreadItem.MessageItem(original), thread.last()[4])
+        assertEquals("Hello, streamed world", (thread.last().last() as ThreadItem.MessageItem).message.content)
+    }
 
     @Test
     fun parkedOwnEcho_toolOnlyOrFailedTurn_reservesAfterAllEndingRows() =

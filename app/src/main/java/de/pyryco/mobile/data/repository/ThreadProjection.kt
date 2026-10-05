@@ -292,7 +292,13 @@ internal class ThreadProjection(
             // A delivered peer head also frees the next queued own echo to wait behind the next turn.
             if (echoes != null && message.role == Role.User && message.id in echoes.backlog) {
                 val next = queues[conversationId] ?: echoes
-                queues = queues + (conversationId to next.copy(backlog = next.backlog - message.id))
+                queues = queues + (
+                    conversationId to
+                        next.copy(
+                            backlog = next.backlog - message.id,
+                            consumedBacklog = next.consumedBacklog + message.id,
+                        )
+                )
             }
             val held = rows.any { it is ThreadItem.MessageItem && it.message.id == message.id }
             if (!held) rows = rows + ThreadItem.MessageItem(message)
@@ -715,10 +721,12 @@ internal class ThreadProjection(
             val behindTurn = (echoes.behindTurn intersect queued) + if (turnOpen) queued - echoes.queued else emptySet()
             val awaitingPush = echoes.awaitingPush + deferred
             val placementPending = echoes.placementPending + drained.intersect(echoes.behindTurn).intersect(minted)
+            val consumedBacklog = echoes.consumedBacklog intersect inSnapshot
             val next =
                 echoes.copy(
                     queued = queued,
-                    backlog = snapshot.filterNot { it in delivered },
+                    backlog = snapshot.filterNot { it in delivered || it in consumedBacklog },
+                    consumedBacklog = consumedBacklog,
                     delivered = delivered,
                     behindTurn = behindTurn,
                     awaitingPush = awaitingPush,
@@ -878,7 +886,7 @@ internal class ThreadProjection(
      * stops streaming once any row follows it, whichever write appended that row. This is the one read of
      * the store, so no reader sees an earlier segment still streaming.
      *
-     * This device's parked echoes, those queued behind a turn, read last (#1558, #1636), in thread order,
+     * This device's parked echoes, those queued behind a turn, read last (#1558, #1636), in backlog order,
      * below every row of the turn they wait behind, and the last-row rule runs over the rows without them,
      * so the running reply keeps streaming.
      */
@@ -895,15 +903,20 @@ internal class ThreadProjection(
                         .orEmpty()
                         .filterNot {
                             it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.id in suppressed
-                        }.withParkedEchoesLast(echoes?.parked.orEmpty())
+                        }.withParkedEchoesLast(echoes?.parked.orEmpty(), echoes?.backlog.orEmpty())
                 ThreadSnapshot(rows, suppressed)
             }.distinctUntilChanged()
 
-    /** This thread as [observe] reads it: [parkedIds] user rows last, the rest through [withOnlyLastRowStreaming]. */
-    private fun List<ThreadItem>.withParkedEchoesLast(parkedIds: Set<String>): List<ThreadItem> {
+    /** Reserved store positions cannot change [backlog] display order; only [parkedIds] user rows read last. */
+    private fun List<ThreadItem>.withParkedEchoesLast(
+        parkedIds: Set<String>,
+        backlog: List<String>,
+    ): List<ThreadItem> {
         if (parkedIds.isEmpty()) return withOnlyLastRowStreaming()
         val (parked, rest) = partition { it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.id in parkedIds }
-        return if (parked.isEmpty()) withOnlyLastRowStreaming() else rest.withOnlyLastRowStreaming() + parked
+        val order = backlog.withIndex().associate { it.value to it.index }
+        val queuedRows = parked.sortedBy { order[(it as ThreadItem.MessageItem).message.id] ?: Int.MAX_VALUE }
+        return if (parked.isEmpty()) withOnlyLastRowStreaming() else rest.withOnlyLastRowStreaming() + queuedRows
     }
 
     /**
@@ -1002,10 +1015,13 @@ internal class ThreadProjection(
      * lasts until the first push, including across queue removal, so Send now can override it once.
      * [backlog] retains snapshot FIFO order, including peer ids, minus confirmed deliveries. Only
      * its head can reserve a slot; a peer ahead of an own echo makes that echo wait for another turn.
+     * [consumedBacklog] remembers delivered user ids still in the current snapshot, so settling an
+     * unchanged snapshot cannot restore a peer head. Snapshot removal prunes this bounded set.
      */
     private data class OwnEchoQueue(
         val queued: Set<String> = emptySet(),
         val backlog: List<String> = emptyList(),
+        val consumedBacklog: Set<String> = emptySet(),
         val delivered: Set<String> = emptySet(),
         val behindTurn: Set<String> = emptySet(),
         val sendNow: Set<String> = emptySet(),
