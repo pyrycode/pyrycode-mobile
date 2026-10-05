@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
@@ -113,7 +114,7 @@ internal fun observeThreadAttention(
         } finally {
             RelayLog.d { "event=thread_attention_closed" }
         }
-    }.distinctUntilChanged()
+    }.conflate().distinctUntilChanged()
 
 /** RESUMED excludes background and covered back-stack entries even when their composition remains. */
 @Composable

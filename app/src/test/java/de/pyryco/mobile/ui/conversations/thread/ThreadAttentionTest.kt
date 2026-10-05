@@ -10,6 +10,7 @@ import de.pyryco.mobile.di.ConversationAttention
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -65,11 +66,11 @@ class ThreadAttentionTest {
             }
     }
 
-    private fun finish(
+    private suspend fun finish(
         target: HostConversationTarget,
         key: String = "turn",
     ) {
-        alerts.tryEmit(AttentionAlert(target.serverId, target.conversationId, AttentionAlert.Kind.TurnCompleted, key))
+        alerts.emit(AttentionAlert(target.serverId, target.conversationId, AttentionAlert.Kind.TurnCompleted, key))
     }
 
     private fun updateOther(
@@ -164,6 +165,82 @@ class ThreadAttentionTest {
             assertNull(shown)
         }
 
+    @Test fun delayedConsumerReceivesLatestFinish_andItsReplacementExpiry() =
+        runTest {
+            val consumeNext = Channel<Unit>()
+            backgroundScope.launch {
+                observeThreadAttention(current, snapshots, attention, alerts).collect {
+                    shown = it
+                    consumeNext.receive()
+                }
+            }
+            runCurrent()
+            assertEquals(1, alerts.subscriptionCount.value)
+            repeat(100) { index ->
+                finish(if (index % 2 == 0) other else third, "burst-$index")
+                runCurrent()
+            }
+            advanceTimeBy(4_000)
+            finish(third, "latest")
+            runCurrent()
+            assertEquals(101, logs.count { it == "event=thread_attention_finish_shown" })
+
+            consumeNext.send(Unit)
+            runCurrent()
+            assertEquals(ThreadAttention(0, third, "Third"), shown)
+            advanceTimeBy(1_000)
+            runCurrent()
+            assertEquals(third, shown?.target)
+            advanceTimeBy(3_999)
+            runCurrent()
+            assertEquals(third, shown?.target)
+            consumeNext.send(Unit)
+            runCurrent()
+            advanceTimeBy(1)
+            runCurrent()
+            assertNull(shown)
+        }
+
+    @Test fun delayedConsumerReceivesWaitingThenClear_withoutReplayingSuppressedFinishes() =
+        runTest {
+            val consumeNext = Channel<Unit>()
+            backgroundScope.launch {
+                observeThreadAttention(current, snapshots, attention, alerts).collect {
+                    shown = it
+                    consumeNext.receive()
+                }
+            }
+            runCurrent()
+            assertEquals(1, alerts.subscriptionCount.value)
+            repeat(100) { index ->
+                finish(if (index % 2 == 0) other else third, "burst-$index")
+                runCurrent()
+            }
+            assertEquals(100, logs.count { it == "event=thread_attention_finish_shown" })
+            waiting(third)
+            runCurrent()
+            finish(other, "suppressed")
+            runCurrent()
+            assertEquals(1, logs.count { it == "event=thread_attention_finish_suppressed reason=waiting" })
+            consumeNext.send(Unit)
+            runCurrent()
+            assertEquals(ThreadAttention(1, third, "Third"), shown)
+
+            repeat(100) { index ->
+                if (index % 2 == 0) waiting(other, third) else waiting(third)
+                runCurrent()
+            }
+            waiting()
+            runCurrent()
+            consumeNext.send(Unit)
+            runCurrent()
+            assertNull(shown)
+            consumeNext.send(Unit)
+            advanceTimeBy(10_000)
+            runCurrent()
+            assertNull(shown)
+        }
+
     @Test fun waitingClearsFinish_suppressesNewFinishes_andNeverReplaysThem() =
         runTest {
             start()
@@ -218,7 +295,7 @@ class ThreadAttentionTest {
             start()
             runCurrent()
             finish(current)
-            alerts.tryEmit(AttentionAlert(other.serverId, other.conversationId, AttentionAlert.Kind.Prompt, "modal"))
+            alerts.emit(AttentionAlert(other.serverId, other.conversationId, AttentionAlert.Kind.Prompt, "modal"))
             attention.value = mapOf(other.serverId to mapOf(other.conversationId to ConversationAttention.Unread))
             runCurrent()
             assertNull(shown)
