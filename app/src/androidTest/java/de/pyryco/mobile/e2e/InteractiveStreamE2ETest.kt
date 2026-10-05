@@ -4094,13 +4094,14 @@ class InteractiveStreamE2ETest {
             }
             composeTestRule.onNodeWithText(finishedLabel).assertIsDisplayed()
             awaitTurnEnd(peer, chatB, 1, "B's attention-pill turn")
-            composeTestRule.waitUntil(10_000) {
-                composeTestRule.onAllNodes(hasTestTag("thread_attention_pill")).fetchSemanticsNodes().isEmpty()
-            }
-            composeTestRule.onNodeWithText(finishedLabel).assertDoesNotExist()
+            // Only B's pill belongs to this scenario. The pill also reports every other unmuted conversation on
+            // every paired host, and in the full suite an earlier method's conversation can finish a turn in
+            // this window, so a check for no pill at all failed there and passed alone (#1735).
+            val finishedPill = hasTestTag("thread_attention_pill") and hasText(finishedLabel)
+            composeTestRule.waitUntil(10_000) { composeTestRule.onAllNodes(finishedPill).fetchSemanticsNodes().isEmpty() }
             leaveThread()
             openChatRow(nameA)
-            composeTestRule.onNodeWithTag("thread_attention_pill").assertDoesNotExist()
+            composeTestRule.onNode(finishedPill).assertDoesNotExist()
         } finally {
             peer.close()
             runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
