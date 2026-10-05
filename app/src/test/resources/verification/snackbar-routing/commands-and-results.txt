@@ -7,3 +7,7 @@ Exit 1; 1 executed, 1 expected failure, 0 errors/skips. The permissive stub sile
 Final focused verification:
 ./gradlew testDebugUnitTest --tests 'de.pyryco.mobile.verification.SnackbarRoutingGuardTest' lint assembleDebug --console=plain
 Exit 0; 11 executed/passed, 0 failures/errors/skips. 292 production source files checked, 0 unclassified routes. The same production assertion rejected the added error-route negative control. Lint and assembleDebug passed. See green.xml.
+
+Production-source-set negative control after the filter repair:
+./gradlew testDebugUnitTest --tests 'de.pyryco.mobile.verification.SnackbarRoutingGuardTest.productionSourcesContainOnlyClassifiedNonErrorRoutes' --init-script app/src/test/resources/verification/snackbar-routing/production-source-set-control.gradle --console=plain
+Exit 1; 1 executed, 1 expected assertion failure, 0 errors/skips. The test-only init script adds the production build type latest and its test-resource error-route fixture. The repaired gate scans 293 files and rejects the new showSnackbar route. See source-set-negative.xml. Before the repair this command incorrectly passed after scanning only 292 files.

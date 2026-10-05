@@ -165,7 +165,7 @@ android {
             // Source-routing checks must rerun even when a source edit does not change bytecode.
             val productionRoots =
                 sourceSets
-                    .filter { sourceSet -> !sourceSet.name.contains("test", ignoreCase = true) }
+                    .filterNot { sourceSet -> sourceSet.name.startsWith("test") || sourceSet.name.startsWith("androidTest") }
                     .flatMap { sourceSet -> sourceSet.java.directories + sourceSet.kotlin.directories }
                     .distinct()
             it.workingDir(projectDir)
