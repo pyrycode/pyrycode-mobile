@@ -1720,6 +1720,15 @@ went stale — a daemon rejected a handshake because its pairing code outlived t
 window before the test redeemed it — instead of leaving the cause to the anonymous timeout. No pairing
 code, token or key appears in that message; a clean log leaves the failure output unchanged.
 
+Since 2026-10-05 the script then retries once. A full live run can reach the method that pairs a host after
+the window has passed even with minting after the build, as on #1668's gate, where the operator-bypass test
+ran 20 minutes in. `retry_with_fresh_codes` reads the failed methods from the Gradle report, mints every
+pairing again, because the reinstalled app holds a new key, and reruns only those methods with the fresh
+codes. `scripts/e2e-rerun-report.py` folds the rerun's results into the first run's report, so the gate
+still counts every method. The run passes only when every retried method passes. A second expired code
+is reported again and fails the run, and there is never a second retry. The installed-app path of
+`scripted-all` never retries.
+
 On the same failed-test path, the script also scans those logs for `msg="transport: disconnected"`
 (`WSSClient`'s reconnect loop in pyrycode's `internal/transport/wssclient.go`) and prints
 `relay_link_dropped` naming each daemon whose relay link ended some way other than the teardown's own kill
