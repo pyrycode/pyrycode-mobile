@@ -4634,7 +4634,8 @@ class InteractiveStreamE2ETest {
             val hold = "curl --max-time 180 --silent --show-error $fixture/hold"
             sendFromPhone(
                 "Use Agent once with run_in_background=true, subagent_type=general-purpose and description=Held background agent. " +
-                    "Give it exactly these instructions: run Bash with timeout 180000 in the foreground: $hold . " +
+                    "Give it exactly these instructions: first make two separate foreground Bash calls, " +
+                    "each running printf agent1783_ready. Then run Bash with timeout 180000 in the foreground: $hold . " +
                     "Wait for that command to finish, then reply done. Do not use any other tool yourself or wait for the agent. " +
                     "End your own turn immediately with exactly: launched1783.",
             )
@@ -4711,6 +4712,10 @@ class InteractiveStreamE2ETest {
                     !peer.field(it, "status").isNullOrEmpty()
             }
             awaitNoPromptDialog("permission still covers finished Agent")
+            composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(marker)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(string(R.string.agent_finished)).fetchSemanticsNodes().isNotEmpty()
+            }
             val later = "Reply exactly later1783."
             sendFromPhone(later)
             composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {

@@ -6,6 +6,7 @@
 - `docs/knowledge/features/tool-call-row.md`, `ToolCallRow`, `MessageBubble`, `ConversationStatusDot`: existing inert tool treatment, gutters and theme-backed status dots.
 - `BackgroundTask`, `BackgroundTaskProjection.applyStarted/applyUpdated/applyRoster`, `BackgroundTaskLifecycleFold`, `ThreadProjection.applyBackgroundTaskLifecycle`, `ThreadItem.BackgroundTaskLifecycle`: merged #1782 exposes roster joins and retained ordered finish positions independently of replacement panel state.
 - `ThreadViewModel.backgroundTaskReading`, `ThreadUiState`: existing conversation-scoped lifecycle and roster inputs; no new ViewModel state required.
+- `InteractivePayloads.toInputFields`, `HistoryPageReducer` ToolUse fold: daemon-stringified boolean launch inputs reach both live and historical ToolCall input fields.
 - `ThreadRow.foldQueuedRows/foldToolRuns/listKey/toolNestingDepths`, `ThreadScreen`, `ThreadListFollow.FollowNewestEnd`: projection and scroll seams.
 - `ToolRunFoldTest`, `ToolRunCollapseTest`, `ThreadScreenFollowTest`: existing projection, expansion and scroll coverage.
 - `InteractiveStreamE2ETest.answerChat/runningToolPeer/allowPromptsUntil`, `scripts/e2e-emulator.sh`, `docs/e2e-interactive-stream.md` sections “What rung 3 is made of” and “Live mode”: isolated real-Claude harness and dispatcher evidence ownership.
@@ -75,3 +76,9 @@ None. The cache-only limitation and dispatcher-owned live acceptance are explici
 2026-10-05: Add the rung-4 `background-agent` raw-stream twin alongside the controlled multi-agent/history fixtures. It holds the first fragment until a second phone send releases the terminal fragment, proving lifecycle decoding, collapse navigation and finish placement through the daemon. The builder runs this focused scripted scenario; full live XML remains dispatcher-owned.
 
 2026-10-05: A regression for a finished roster without terminal history showed the fallback block before its launch marker. Place it immediately after the marker until terminal history provides the authoritative position. Strengthened the follow test to grow an expanded tool result in place and assert both the newest-end offset and an older reader’s pixel anchor.
+
+2026-10-05: The existing progress-panel live scenario documents that foreground subagents also emit local_agent lifecycle frames. A new failing regression proved task type and join alone would move them. Require the loaded Agent/Task input field `run_in_background` to equal `true`; false or missing inputs preserve current rendering. The new live scenario first makes two harmless printf tool calls because protocol task progress requires the tool count to advance by two, then enters its causal hold.
+
+2026-10-05: A mixed-pagination regression exposed known launches sorting ahead of unknown older launches. Preserve unknown running agents' roster slots and sort known launch entries within the remaining slots; when all launch history is known, this becomes the authoritative launch order. Later backfill enriches the order without duplicating any block or changing terminal anchors.
+
+2026-10-05: The live proof waits for the phone's Finished marker before sending its later message, so different peer/app socket delivery timing cannot turn that message into a pre-terminal optimistic echo.

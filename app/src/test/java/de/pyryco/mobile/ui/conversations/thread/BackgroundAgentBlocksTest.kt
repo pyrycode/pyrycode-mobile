@@ -29,7 +29,23 @@ class BackgroundAgentBlocksTest {
             id,
             ts,
             false,
-            toolCall = name?.let { ToolCall(it, "input", "Async agent launched", parentToolUseId = parent) },
+            toolCall =
+                name?.let {
+                    ToolCall(
+                        it,
+                        "input",
+                        "Async agent launched",
+                        inputFields =
+                            if (it == "Agent" ||
+                                it == "Task"
+                            ) {
+                                mapOf("run_in_background" to "true")
+                            } else {
+                                emptyMap()
+                            },
+                        parentToolUseId = parent,
+                    )
+                },
         ),
     )
 
@@ -128,6 +144,16 @@ class BackgroundAgentBlocksTest {
         )
     }
 
+    @Test fun partiallyLoadedLaunchHistoryKeepsTheUnknownAgentInRosterOrder() {
+        val items = listOf(row("a", "Agent"), row("b", "Agent"), start("task-b", "b"), row("new"))
+        assertEquals(
+            listOf("agent-start:a", "agent-start:b", "msg:new", "msg:a", "msg:b"),
+            keys(project(items, roster("a", "b"))),
+        )
+        val backfilled = listOf(start()) + items
+        assertEquals(keys(project(items, roster("a", "b"))), keys(project(backfilled, roster("a", "b"))))
+    }
+
     @Test fun rosterBeforeHistoryJoinsOnceAndTerminalBeforeLaunchBackfillKeepsFinishNeighbors() {
         val newest = listOf(row("before"), finish(), row("after"), row("child", "Read", "a"))
         assertEquals(listOf("msg:before", "msg:after", "msg:child"), keys(project(newest, roster("a"))))
@@ -185,5 +211,17 @@ class BackgroundAgentBlocksTest {
         val base = listOf(row("a", "Agent"), row("later"))
         assertEquals(listOf("agent-start:a", "msg:a", "msg:later"), keys(project(base, finishedRoster)))
         assertEquals(listOf("agent-start:a", "msg:later", "msg:a"), keys(project(base + finish(agent = "a"), finishedRoster)))
+    }
+
+    @Test fun foregroundOrUnknownAgentLaunchDoesNotMoveEvenWhenItReportsALocalAgentTask() {
+        for (fields in listOf(emptyMap(), mapOf("run_in_background" to "false"))) {
+            val agent =
+                row(
+                    "a",
+                    "Agent",
+                ).let { it.copy(message = it.message.copy(toolCall = it.message.toolCall?.copy(inputFields = fields))) }
+            val items = listOf(agent, start(), row("newer"))
+            assertEquals(listOf("msg:a", "msg:newer"), keys(project(items)))
+        }
     }
 }

@@ -40,7 +40,12 @@ internal fun foldBackgroundAgentBlocks(
     for (task in evidence.values) {
         val id = task.toolId?.takeIf { it.isNotEmpty() } ?: continue
         val tool = ((tools[id]?.item as? ThreadItem.MessageItem)?.message)?.toolCall ?: continue
-        if (task.type == "local_agent" && tool.toolName in setOf("Agent", "Task")) roots.putIfAbsent(id, task)
+        if (task.type == "local_agent" &&
+            tool.toolName in setOf("Agent", "Task") &&
+            tool.inputFields["run_in_background"] == "true"
+        ) {
+            roots.putIfAbsent(id, task)
+        }
     }
     if (roots.isEmpty()) return rows
 
@@ -95,11 +100,18 @@ internal fun foldBackgroundAgentBlocks(
     }
     // A terminal after the last visible entry still precedes subsequent unmatched queued rows.
     settled[rows.size]?.forEach { result += blocks.getValue(it) }
-    roots
-        .filterValues { !it.finished }
-        .keys
-        .sortedWith(compareBy { roots.getValue(it).launchOrder ?: Int.MAX_VALUE })
-        .forEach { result += blocks.getValue(it) }
+    val running = roots.filterValues { !it.finished }.keys
+    val knownLaunches =
+        running
+            .filter { roots.getValue(it).launchOrder != null }
+            .sortedBy { roots.getValue(it).launchOrder }
+            .iterator()
+    // A newest-first page can reveal a newer start before an older start. Keep
+    // unknown launches in their roster slots until their own history is loaded.
+    running.forEach { id ->
+        val orderedId = if (roots.getValue(id).launchOrder == null) id else knownLaunches.next()
+        result += blocks.getValue(orderedId)
+    }
     return result
 }
 

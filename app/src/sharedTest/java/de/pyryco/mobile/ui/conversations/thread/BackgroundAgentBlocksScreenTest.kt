@@ -44,7 +44,28 @@ class BackgroundAgentBlocksScreenTest {
         name: String,
         parent: String = "",
     ) = ThreadItem.MessageItem(
-        Message(id, "s", Role.Tool, "", ts, false, ToolCall(name, "original input", "original output", parentToolUseId = parent)),
+        Message(
+            id,
+            "s",
+            Role.Tool,
+            "",
+            ts,
+            false,
+            ToolCall(
+                name,
+                "original input",
+                "original output",
+                inputFields =
+                    if (name ==
+                        "Agent"
+                    ) {
+                        mapOf("run_in_background" to "true")
+                    } else {
+                        emptyMap()
+                    },
+                parentToolUseId = parent,
+            ),
+        ),
     )
 
     private fun user(id: String) = ThreadItem.MessageItem(Message(id, "s", Role.User, id, ts, false))
