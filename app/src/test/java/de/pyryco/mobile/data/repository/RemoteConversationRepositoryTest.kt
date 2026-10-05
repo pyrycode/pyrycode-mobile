@@ -2701,10 +2701,10 @@ class RemoteConversationRepositoryTest {
     // ---- exhaustively and without a relay in HistoryPageReducerTest; this block owns the WIRING —
     // ---- that the fold happens at all, where it lands, and what it leaves alone -------------------
 
-    // AC #1: a page's rows reach observeMessages, oldest-first and ahead of what is already there,
+    // A newer page reaches observeMessages in daemon order after the older live row,
     // and the page is still returned to the caller for its cursor / at_start.
     @Test
-    fun requestHistory_foldsThePageAheadOfTheLiveThreadAndStillReturnsIt() =
+    fun requestHistory_foldsNewerPageAfterOlderLiveRowsAndStillReturnsIt() =
         runTest {
             val pump = FakeSessionPump()
             val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
@@ -2730,7 +2730,7 @@ class RemoteConversationRepositoryTest {
             )
             runCurrent()
 
-            assertEquals(listOf("h1", "h2", "live-1"), messageIds(thread.last()))
+            assertEquals(listOf("live-1", "h1", "h2"), messageIds(thread.last()))
             assertEquals(CURSOR, page().getOrThrow().cursor)
         }
 
