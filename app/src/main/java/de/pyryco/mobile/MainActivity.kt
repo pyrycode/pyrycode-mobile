@@ -389,11 +389,6 @@ internal fun PyryNavHost(
                         ChannelListEvent.HostUnpairRequested -> vm.requestHostUnpair()
                         ChannelListEvent.HostUnpairConfirmed -> vm.confirmHostUnpair()
                         ChannelListEvent.HostUnpairDeclined -> vm.declineHostUnpair()
-                        // And for renaming a chat (#827): the pencil's own host and conversation.
-                        is ChannelListEvent.TreeChatEditTapped -> vm.openChatEditor(event.target)
-                        is ChannelListEvent.ChatEditNameSubmitted -> vm.submitChatName(event.name)
-                        ChannelListEvent.ChatEditDismissed -> vm.dismissChatEditor()
-                        ChannelListEvent.ChatArchiveRequested -> vm.archiveChat()
                         is ChannelListEvent.AddWorkspaceSelected -> vm.selectAddWorkspaceFolder(event.path)
                         is ChannelListEvent.AddWorkspaceFolderCreateRequested -> vm.createAddWorkspaceFolder(event.name)
                         ChannelListEvent.AddWorkspaceSubmitted -> vm.submitAddWorkspace()
@@ -407,11 +402,6 @@ internal fun PyryNavHost(
                         is ChannelListEvent.TreeHostChannelAddTapped -> vm.openCreateChannel(event.serverId)
                         is ChannelListEvent.CreateChannelSubmitted -> vm.submitCreateChannel(event.name, event.systemPrompt)
                         ChannelListEvent.CreateChannelDismissed -> vm.dismissCreateChannel()
-                        // And for editing a channel (#667): the pen's own host and conversation.
-                        is ChannelListEvent.TreeChannelEditTapped -> vm.openChannelEditor(event.target)
-                        is ChannelListEvent.ChannelEditSubmitted -> vm.submitChannelEdit(event.name, event.systemPrompt, event.muted)
-                        ChannelListEvent.ChannelArchiveRequested -> vm.archiveChannel()
-                        ChannelListEvent.ChannelEditDismissed -> vm.dismissChannelEditor()
                     }
                 },
             )

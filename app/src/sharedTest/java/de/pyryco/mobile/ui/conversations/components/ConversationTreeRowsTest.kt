@@ -115,7 +115,6 @@ class ConversationTreeRowsTest {
                         conversationName = "kitchenclaw refactor",
                         selected = false,
                         onClick = { opens++ },
-                        onEditTapped = { edits++ },
                         modifier = Modifier.testTag("geometry-conversation"),
                     )
                 }

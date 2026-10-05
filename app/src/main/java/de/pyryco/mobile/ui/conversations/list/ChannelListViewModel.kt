@@ -77,16 +77,12 @@ data class HostChannelListState(
     val selected: HostConversationTarget? = null,
     /** The host whose Edit host modal is open, or null when none is (#744). */
     val hostEditor: HostEditorState? = null,
-    /** The chat whose Edit chat modal is open, or null when none is (#827). */
-    val chatEditor: ChatEditorState? = null,
     /** The workspace whose Edit workspace modal is open, or null when none is (#905). */
     val workspaceEditor: WorkspaceEditorState? = null,
     /** The host whose Channels-section Create channel modal is open, or null when none is. */
     val createChannel: CreateChannelState? = null,
     /** The host whose Chats-section create request is in flight or has failed. */
     val createChat: CreateChatState? = null,
-    /** The channel whose Edit channel modal is open, or null when none is (#667). */
-    val channelEditor: ChannelEditorState? = null,
 ) {
     /**
      * Whether [serverId]'s own session is up, read from the same snapshot its rows are drawn from (#827).
@@ -102,27 +98,7 @@ data class HostChannelListState(
 private fun ConnectionStatus.isLive(): Boolean = relay == RelayLinkStatus.Connected && pyrycode == PyrycodeLinkStatus.Connected
 
 /**
- * The Edit chat modal's target and flags (#827), shaped like [HostEditorState]: ids and display text only.
- *
- * [initialName] is the chat's own name as its host's snapshot held it at open time — empty for a chat
- * with no name — and is carried unclamped: `EditChatModal` clamps it at its own boundary, surrogate-safe.
- * [saving], [failed] and [archiveFailed] are flags so the failure string resolves on screen and no daemon
- * message can reach the shell's live region. [saving] covers either write in flight — a rename or an
- * archive (#828) — since the modal's one loading flag gates both actions; [failed] is the rename's
- * failure and [archiveFailed] the archive's, and each write clears both as it starts. The typed name is
- * the modal's own buffer, keyed on [conversationId].
- */
-data class ChatEditorState(
-    val serverId: String,
-    val conversationId: String,
-    val initialName: String,
-    val saving: Boolean = false,
-    val failed: Boolean = false,
-    val archiveFailed: Boolean = false,
-)
-
-/**
- * The Edit workspace modal's target and flags (#905), shaped like [ChatEditorState].
+ * The Edit workspace modal's target and flags (#905), shaped like [HostEditorState].
  *
  * The target is the ([serverId], [cwd]) pair a workspace row is keyed on — never its shown name, which a
  * second workspace can share. [initialName] is the name the row showed at open time, daemon-authored and
@@ -142,7 +118,7 @@ data class WorkspaceEditorState(
 )
 
 /**
- * The Add workspace modal's target and flags (#904), shaped like [ChatEditorState].
+ * The Add workspace modal's target and flags (#904), shaped like [HostEditorState].
  *
  * [selected] is the folder OK will start a chat in: a recent folder the operator picked, or one just
  * created on [serverId]. [busy] covers either write in flight — a folder creation or a chat start —
@@ -210,7 +186,7 @@ sealed interface ChannelPromptReading {
 }
 
 /**
- * The Edit channel modal's target and flags (#667), shaped like [ChatEditorState].
+ * The Edit channel modal's target and flags (#667), shaped like [HostEditorState].
  *
  * [savedName] is the channel's name as its own host's snapshot held it at open time, clamped for layout,
  * and then the name the daemon confirmed: OK renames only when the trimmed field differs from it, so a
@@ -309,27 +285,12 @@ class ChannelListViewModel(
     private val collapsedKeys = MutableStateFlow<Set<TreeFoldKey>>(emptySet())
     private val lastOpenedTarget = MutableStateFlow<HostConversationTarget?>(null)
     private val hostEditor = HostEditorController(viewModelScope, pairedServers, appPreferences)
-    private val chatEditor = MutableStateFlow<ChatEditorState?>(null)
     private val workspaceEditor = MutableStateFlow<WorkspaceEditorState?>(null)
     private val createChannel = MutableStateFlow<CreateChannelState?>(null)
     private val createChat = MutableStateFlow<CreateChatState?>(null)
     private var nextCreateChatRequestId = 0L
     private val pendingNewChatModels = mutableSetOf<HostConversationTarget>()
     private val tappedPendingNewChats = mutableSetOf<HostConversationTarget>()
-
-    // #667: the Edit channel modal's machine, shared with the thread's menu since #1561.
-    private val channelEditor =
-        ChannelEditorController(
-            scope = viewModelScope,
-            isHostLive = ::isHostLive,
-            repositoryFor = hostSource::repositoryFor,
-            awaitRepository = { serverId ->
-                hostSource.snapshots
-                    .map { hostSource.repositoryFor(serverId) }
-                    .filterNotNull()
-                    .first()
-            },
-        )
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val hostState: StateFlow<HostChannelListState> =
@@ -349,9 +310,8 @@ class ChannelListViewModel(
             collapsedKeys,
             lastOpenedTarget,
             // Grouped first: five flows is the typed `combine`'s limit.
-            combine(combine(hostEditor.state, chatEditor, ::Pair), workspaceEditor, channelEditor.state, ::Triple),
-        ) { hosts, (adding, recent, creatingModals), collapsed, selected, (editorAndChat, workspace, channel) ->
-            val (editor, chat) = editorAndChat
+            combine(hostEditor.state, workspaceEditor, ::Pair),
+        ) { hosts, (adding, recent, creatingModals), collapsed, selected, (editor, workspace) ->
             val (creating, creatingChat) = creatingModals
             HostChannelListState(
                 hosts = hosts,
@@ -361,16 +321,14 @@ class ChannelListViewModel(
                 collapsed = collapsed,
                 selected = selected,
                 hostEditor = editor,
-                chatEditor = chat,
                 workspaceEditor = workspace,
                 createChannel = creating,
                 createChat = creatingChat,
-                channelEditor = channel,
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), HostChannelListState())
 
     init {
-        // #1336, desktop's rule: a host that stops being connected closes its create and edit modals and
+        // #1336, desktop's rule: a host that stops being connected closes its create modal and
         // clears its failed Chats create. A write already in flight may finish; its terminal
         // `compareAndSet` against the cleared state is a no-op, so nothing is resurrected.
         viewModelScope.launch {
@@ -378,8 +336,6 @@ class ChannelListViewModel(
                 val live = hosts.filter { it.connectionStatus.isLive() }.mapTo(HashSet()) { it.serverId }
                 createChannel.clearUnless("create_channel") { it.serverId in live }
                 createChat.clearUnless("create_chat") { it.serverId in live }
-                chatEditor.clearUnless("chat_editor") { it.serverId in live }
-                channelEditor.closeUnless { it.serverId in live }
             }
         }
     }
@@ -618,7 +574,7 @@ class ChannelListViewModel(
     /**
      * Creates a folder on the modal's own host and selects it; it starts nothing (#904).
      *
-     * The repository is resolved from the modal's `serverId` at the press, as [submitChatName] does, and
+     * The repository is resolved from the modal's `serverId` at the press, as [submitWorkspaceName] does, and
      * both terminal transitions are `compareAndSet` against the state published before the write, so a
      * result landing after a dismissal or a reopen cannot touch the modal. A failure keeps the selection
      * and publishes a flag, never the exception's message.
@@ -724,130 +680,6 @@ class ChannelListViewModel(
     fun dismissHostEditor() = hostEditor.dismiss()
 
     /**
-     * Opens the Edit chat modal on a Chats row's own host and conversation (#827).
-     *
-     * The name is read from that host's own snapshot, never from row text or another host's list: the
-     * conversation id is host-local, so a second host may hold a different chat under the same id. Only a
-     * chat qualifies — a channel's editor is [openChannelEditor]. The selection and navigation are left alone: the pen
-     * edits the row, it does not open it.
-     */
-    fun openChatEditor(target: HostConversationTarget) {
-        val chat =
-            hostSource.snapshots.value
-                .firstOrNull { it.serverId == target.serverId }
-                ?.chats
-                ?.firstOrNull { it.id == target.conversationId }
-        if (chat == null) {
-            RelayLog.d { "event=chat_editor_open_rejected code=unknown_chat" }
-            return
-        }
-        if (!isHostLive(target.serverId)) {
-            RelayLog.d { "event=chat_editor_open_rejected code=disconnected" }
-            return
-        }
-        chatEditor.value =
-            ChatEditorState(
-                serverId = target.serverId,
-                conversationId = target.conversationId,
-                initialName = chat.name?.takeIf { it.isNotBlank() }.orEmpty(),
-            )
-        RelayLog.d { "event=chat_editor_opened" }
-    }
-
-    /**
-     * Renames the open editor's chat on the editor's own host, then closes the modal.
-     *
-     * The repository is resolved from the editor's `serverId` at the press — never from the selected host —
-     * and a host with no open session fails the press rather than queueing it. The trim is this method's own
-     * so the contract holds for any caller; a blank name is ignored, as the daemon would reject it.
-     *
-     * Both terminal transitions are `compareAndSet` against the state published before the write, so a
-     * rename finishing after a dismissal cannot resurrect a closed modal or overwrite a newer one. A
-     * failure publishes a flag, never the exception's message.
-     */
-    fun submitChatName(name: String) {
-        val target = chatEditor.value ?: return
-        if (target.saving) return
-        val trimmed = name.trim()
-        if (trimmed.isEmpty()) return
-        if (!isHostLive(target.serverId)) {
-            RelayLog.d { "event=chat_rename_rejected code=disconnected" }
-            chatEditor.compareAndSet(target, null)
-            return
-        }
-        val live = hostSource.repositoryFor(target.serverId)
-        if (live == null) {
-            RelayLog.d { "event=chat_rename_rejected code=unavailable" }
-            chatEditor.value = target.copy(failed = true, archiveFailed = false)
-            return
-        }
-        val pending = target.copy(saving = true, failed = false, archiveFailed = false)
-        chatEditor.value = pending
-        viewModelScope.launch {
-            RelayLog.d { "event=chat_rename_started" }
-            try {
-                live.rename(target.conversationId, trimmed)
-            } catch (error: Exception) {
-                if (error is CancellationException) throw error
-                // Never log the name, the ids or the server's message; the UI gets one static string.
-                RelayLog.d { "event=chat_rename_failed" }
-                chatEditor.compareAndSet(pending, pending.copy(saving = false, failed = true))
-                return@launch
-            }
-            // The row picks the new name up from the host's own conversation stream; nothing is patched here.
-            chatEditor.compareAndSet(pending, null)
-            RelayLog.d { "event=chat_renamed" }
-        }
-    }
-
-    /**
-     * Archives the open editor's chat on the editor's own host, then closes the modal (#828).
-     *
-     * Whatever the name field holds is irrelevant, so this takes no name, and it asks no confirmation:
-     * the host's Archive screen restores the chat. The host and the terminal transitions follow
-     * [submitChatName] exactly — the repository is resolved from the editor's `serverId` at the press,
-     * and a result landing after a dismissal or a reopen cannot touch the modal. The chat leaves the
-     * list through the host's own conversation stream; nothing is patched here.
-     */
-    fun archiveChat() {
-        val target = chatEditor.value ?: return
-        if (target.saving) return
-        if (!isHostLive(target.serverId)) {
-            RelayLog.d { "event=chat_archive_rejected code=disconnected" }
-            chatEditor.compareAndSet(target, null)
-            return
-        }
-        val live = hostSource.repositoryFor(target.serverId)
-        if (live == null) {
-            RelayLog.d { "event=chat_archive_rejected code=unavailable" }
-            chatEditor.value = target.copy(failed = false, archiveFailed = true)
-            return
-        }
-        val pending = target.copy(saving = true, failed = false, archiveFailed = false)
-        chatEditor.value = pending
-        viewModelScope.launch {
-            RelayLog.d { "event=chat_archive_started" }
-            try {
-                live.archive(target.conversationId)
-            } catch (error: Exception) {
-                if (error is CancellationException) throw error
-                // Never log the ids or the server's message; the UI gets one static string.
-                RelayLog.d { "event=chat_archive_failed" }
-                chatEditor.compareAndSet(pending, pending.copy(saving = false, archiveFailed = true))
-                return@launch
-            }
-            chatEditor.compareAndSet(pending, null)
-            RelayLog.d { "event=chat_archived" }
-        }
-    }
-
-    /** Cancel, Close and Back: close the Edit chat modal and send nothing. */
-    fun dismissChatEditor() {
-        chatEditor.value = null
-        RelayLog.d { "event=chat_editor_dismissed" }
-    }
-
-    /**
      * Opens the Edit workspace modal on a workspace row's own host and exact `cwd` (#905), in either section.
      *
      * The shown name is read from that host's own snapshot — the first channel or chat at [cwd], through
@@ -877,7 +709,7 @@ class ChannelListViewModel(
      * The label rule is applied here, so it holds for any caller: [workspaceLabelFor] against the folder's
      * own name, and a label the daemon would refuse for its size is not sent at all. The repository is
      * resolved from the editor's `serverId` at the press and the terminal transitions are `compareAndSet`,
-     * exactly as [submitChatName]; a failure publishes a flag, never the exception's message.
+     * with the same host-local targeting; a failure publishes a flag, never the exception's message.
      */
     fun submitWorkspaceName(name: String) {
         val target = workspaceEditor.value ?: return
@@ -1063,44 +895,6 @@ class ChannelListViewModel(
         createChannel.value = null
         RelayLog.d { "event=create_channel_dismissed" }
     }
-
-    /**
-     * Opens the Edit channel modal on a Channels row's own host and conversation (#667), then reads that
-     * channel's stored prompt once.
-     *
-     * The name is read from that host's own snapshot, never from row text or another host: conversation ids
-     * are host-local. Only a channel qualifies — a chat's editor is [openChatEditor]. The read waits for the
-     * host's repository, so a modal opened while its host is down fills once it connects; it calls nothing
-     * that starts or resets a session. Selection and navigation are left alone.
-     */
-    fun openChannelEditor(target: HostConversationTarget) {
-        val channel =
-            hostSource.snapshots.value
-                .firstOrNull { it.serverId == target.serverId }
-                ?.channels
-                ?.firstOrNull { it.id == target.conversationId }
-        if (channel == null) {
-            RelayLog.d { "event=channel_editor_open_rejected code=unknown_channel" }
-            return
-        }
-        channelEditor.open(target, channel.name, channel.muted)
-    }
-
-    /**
-     * OK on the Edit channel modal: writes only what changed, rename then mute then prompt (#667, #1021).
-     * The machine is [ChannelEditorController.submit].
-     */
-    fun submitChannelEdit(
-        name: String,
-        systemPrompt: String?,
-        muted: Boolean? = null,
-    ) = channelEditor.submit(name, systemPrompt, muted)
-
-    /** Archives the open editor's channel on its own host, then closes the modal (#667). */
-    fun archiveChannel() = channelEditor.archive()
-
-    /** Cancel, Close and Back: close the Edit channel modal, stop its prompt read and send nothing. */
-    fun dismissChannelEditor() = channelEditor.dismiss()
 
     private companion object {
         const val STOP_TIMEOUT_MILLIS = 5_000L

@@ -63,8 +63,6 @@ import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.ui.components.AddWorkspaceModal
 import de.pyryco.mobile.ui.components.CreateChannelModal
-import de.pyryco.mobile.ui.components.EditChannelModal
-import de.pyryco.mobile.ui.components.EditChatModal
 import de.pyryco.mobile.ui.components.EditWorkspaceModal
 import de.pyryco.mobile.ui.conversations.components.NoticePill
 import de.pyryco.mobile.ui.conversations.components.OptionsOverlay
@@ -243,31 +241,6 @@ sealed interface ChannelListEvent {
     data object HostUnpairDeclined : ChannelListEvent
 
     /**
-     * A Chats row's pencil: open the Edit chat modal on **that** row's own host and conversation (#827).
-     * Ids only — the view model reads the name from that host's own snapshot.
-     */
-    data class TreeChatEditTapped(
-        val target: HostConversationTarget,
-    ) : ChannelListEvent
-
-    /**
-     * The Edit chat modal's OK, carrying the entered name already trimmed by the component. No ids, for
-     * the reason [HostEditNameSubmitted] carries none: the target is the open editor's.
-     */
-    data class ChatEditNameSubmitted(
-        val name: String,
-    ) : ChannelListEvent
-
-    /** The Edit chat modal's Cancel, Close and Back. */
-    data object ChatEditDismissed : ChannelListEvent
-
-    /**
-     * The Edit chat modal's Archive chat (#828). No ids and no name: the target is the open editor's, and
-     * archiving never depends on what the name field holds.
-     */
-    data object ChatArchiveRequested : ChannelListEvent
-
-    /**
      * An Add workspace row selected (#904): the row's raw path, never its displayed text. No `serverId`,
      * for the reason [HostEditNameSubmitted] carries none: the target is the open modal's.
      */
@@ -328,35 +301,6 @@ sealed interface ChannelListEvent {
 
     /** The Create channel modal's Cancel, Close and Back. */
     data object CreateChannelDismissed : ChannelListEvent
-
-    /**
-     * A Channels row's pen: open Edit channel on **that** row's own host and conversation (#667). The name
-     * is read from the host's own snapshot, never from the row's text.
-     */
-    data class TreeChannelEditTapped(
-        val target: HostConversationTarget,
-    ) : ChannelListEvent
-
-    /**
-     * The Edit channel modal's OK: the name already trimmed by the component, the prompt verbatim — or `null`
-     * when the modal never showed a stored prompt — and the Mute notifications checkbox as it stands (#1021).
-     * No ids: the target is the open modal's.
-     */
-    data class ChannelEditSubmitted(
-        val name: String,
-        val systemPrompt: String?,
-        val muted: Boolean,
-    ) : ChannelListEvent {
-        // The prompt may hold a pasted credential; a logged or crash-traced event must not carry it.
-        override fun toString(): String =
-            "ChannelEditSubmitted(name=$name, systemPrompt=${if (systemPrompt == null) "absent" else "<redacted>"}, muted=$muted)"
-    }
-
-    /** The Edit channel modal's Archive channel; the target is the open modal's. */
-    data object ChannelArchiveRequested : ChannelListEvent
-
-    /** The Edit channel modal's Cancel, Close and Back. */
-    data object ChannelEditDismissed : ChannelListEvent
 }
 
 /**
@@ -482,10 +426,8 @@ fun ChannelListScreen(
         onUnpairDeclined = { onEvent(ChannelListEvent.HostUnpairDeclined) },
         onDismissRequest = { onEvent(ChannelListEvent.HostEditDismissed) },
     )
-    ChatEditorModal(hostState = hostState, onEvent = onEvent)
     WorkspaceEditorModal(hostState = hostState, onEvent = onEvent)
     CreateChannelModalBinding(hostState = hostState, onEvent = onEvent)
-    ChannelEditorModal(hostState = hostState, onEvent = onEvent)
 }
 
 /**
@@ -534,38 +476,6 @@ private fun Modifier.canvasGlow(scheme: ColorScheme): Modifier =
             drawRect(scheme.scrim.copy(alpha = CANVAS_SCRIM_ALPHA))
         }
     }
-
-/**
- * [EditChannelModal] bound to the open [ChannelEditorState] (#667), present exactly while there is one.
- *
- * OK and Archive follow the channel's **own** host's connection, read on every draw as the chat editor does.
- * Both failure strings are static: the shell announces them aloud, and the daemon's message never reaches
- * this screen.
- */
-@Composable
-private fun ChannelEditorModal(
-    hostState: HostChannelListState,
-    onEvent: (ChannelListEvent) -> Unit,
-) {
-    val editor = hostState.channelEditor ?: return
-    EditChannelModal(
-        conversationId = editor.conversationId,
-        initialName = editor.savedName,
-        prompt = editor.prompt,
-        initialMuted = editor.savedMuted,
-        onSubmit = { name, systemPrompt, muted -> onEvent(ChannelListEvent.ChannelEditSubmitted(name, systemPrompt, muted)) },
-        onArchiveRequested = { onEvent(ChannelListEvent.ChannelArchiveRequested) },
-        onDismissRequest = { onEvent(ChannelListEvent.ChannelEditDismissed) },
-        hostAvailable = hostState.isHostConnected(editor.serverId),
-        loading = editor.saving,
-        error =
-            when {
-                editor.archiveFailed -> stringResource(R.string.archive_failed)
-                editor.failed -> stringResource(R.string.edit_channel_save_failed)
-                else -> null
-            },
-    )
-}
 
 /**
  * [CreateChannelModal] bound to the open [CreateChannelState] (#958), present exactly while there is one.
@@ -623,39 +533,6 @@ private fun AddWorkspaceModalBinding(
             when {
                 state.createFailed -> stringResource(R.string.add_workspace_create_failed)
                 state.startFailed -> stringResource(R.string.add_workspace_start_failed)
-                else -> null
-            },
-    )
-}
-
-/**
- * [EditChatModal] bound to the open [ChatEditorState] (#827), present exactly while there is one.
- *
- * OK follows the chat's **own** host: availability is read from that host's snapshot on every draw, so a
- * disconnect disables OK and a reconnect re-enables it without the modal leaving composition — the typed
- * name lives in the component's buffer and survives both. The failure string is resolved here and is
- * generic by design: the shell announces it aloud, and the daemon's message never reaches this screen.
- * Archive (#828) reads the same availability and in-flight flag; its failure resolves the thread's own
- * generic archive string rather than the rename's.
- */
-@Composable
-private fun ChatEditorModal(
-    hostState: HostChannelListState,
-    onEvent: (ChannelListEvent) -> Unit,
-) {
-    val editor = hostState.chatEditor ?: return
-    EditChatModal(
-        conversationId = editor.conversationId,
-        initialName = editor.initialName,
-        onDismissRequest = { onEvent(ChannelListEvent.ChatEditDismissed) },
-        onSubmit = { name -> onEvent(ChannelListEvent.ChatEditNameSubmitted(name)) },
-        onArchiveRequested = { onEvent(ChannelListEvent.ChatArchiveRequested) },
-        hostAvailable = hostState.isHostConnected(editor.serverId),
-        loading = editor.saving,
-        error =
-            when {
-                editor.archiveFailed -> stringResource(R.string.archive_failed)
-                editor.failed -> stringResource(R.string.edit_chat_save_failed)
                 else -> null
             },
     )

@@ -29,6 +29,10 @@ Sizing: one cleanup deliverable, no new exported types or failure branches, thre
 
 ## Testing strategy
 
-First migrate the channel-machine tests and verify them against the unchanged controller before removing list ownership. This deletion adds no new logic requiring a new red assertion. Preserve host targeting, prompt availability/byte limits/redaction, changed-only writes, mute and partial-failure retry, archive, invalid/unavailable/in-flight/dismissal tests. Add direct lifecycle assertions if thread tests leave a gap. Retain list create and disconnect checks, host controls, selection and host-specific tap coverage. Assert conversation rows have no content-description controls in their unmerged subtrees, while row opening works across selection changes.
+First migrate the channel-machine tests and verify them against the unchanged controller before removing list ownership. This deletion adds no new logic requiring a new red assertion. Preserve host targeting, prompt availability/byte limits/redaction, changed-only writes, mute and partial-failure retry, archive, invalid/unavailable/in-flight/dismissal tests. Add direct lifecycle assertions if thread tests leave a gap. Retain list create and disconnect checks, host controls, selection and host-specific tap coverage. Assert no unmerged conversation-edit descriptions are present, using retired control label prefixes independently of removed resources, while row counts and opening work across selection changes.
 
 Run focused `HostChannelListViewModelTest`, `ThreadViewModelChannelEditTest`, thread Rename unit coverage, `ChannelListScreenTest` and `ThreadScreenOverflowTest`; lint, assembleDebug, compileDebugAndroidTestKotlin, spotlessApply and forced spotlessCheck. No device-only test or live scenario is introduced; dispatcher-owned full gates remain pending.
+
+## Revisions
+
+- 2026-10-05: Repository call-site inspection also found a conversation pen argument in the component preview and the geometry test in `ConversationTreeRowsTest`. Remove those arguments and retain the host edit/action-region assertions. Include the existing component layout and interaction suite in focused verification. Controller lifecycle coverage now calls `closeUnless` directly rather than emulating the deleted list watcher.
