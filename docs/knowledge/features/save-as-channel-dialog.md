@@ -155,7 +155,7 @@ cancelled by a dismissal, since the operator already pressed OK before dismissin
 visibility is affected.
 
 The catch clause covers `Exception` and rethrows `CancellationException` — the same shape
-`ChannelListViewModel.submitChatName` uses — and never logs an exception message, the name, the prompt or
+`ChannelEditorController.submit` uses — and never logs an exception message, the name, the prompt or
 the conversation id. Every log is a static `RelayLog.d` event name:
 `save_as_channel_opened` / `_rejected` / `_promote_started` / `_promote_failed` / `_prompt_failed` /
 `_saved` / `_dismissed`.

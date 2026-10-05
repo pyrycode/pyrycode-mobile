@@ -2,6 +2,7 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import android.content.ClipDescription
 import android.content.ClipboardManager
+import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.LocalActivityResultRegistryOwner
@@ -10,8 +11,16 @@ import androidx.activity.result.ActivityResultRegistry
 import androidx.activity.result.ActivityResultRegistryOwner
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -33,10 +42,13 @@ import kotlinx.coroutines.CompletableDeferred
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import java.io.File
 
@@ -45,6 +57,9 @@ import java.io.File
 class MarkdownReaderScreenTest {
     @get:Rule
     val composeRule = createComposeRule()
+
+    @get:Rule
+    val sharedNoteFiles = TemporaryFolder.builder().assureDeletion().build()
 
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val back = context.getString(R.string.cd_back)
@@ -74,6 +89,15 @@ class MarkdownReaderScreenTest {
                 .apply { isAccessible = true }
                 .get(null) as MutableMap<*, *>
         synchronized(cache) { cache.clear() }
+    }
+
+    private fun assertErrorPill(text: String) {
+        composeRule.onNodeWithTag("transient_error_notice").assertIsDisplayed().assertHasNoClickAction()
+        composeRule.onNodeWithText(text).assert(hasTestTag("transient_error_notice"))
+        val bar = composeRule.onNodeWithTag("markdown-reader-top-bar").getUnclippedBoundsInRoot()
+        val pill = composeRule.onNodeWithTag("transient_error_notice").getUnclippedBoundsInRoot()
+        assertEquals(28f, (pill.top - bar.bottom).value, 0.5f)
+        assertEquals(20f, (bar.right - pill.right).value, 0.5f)
     }
 
     private fun show(
@@ -293,6 +317,7 @@ class MarkdownReaderScreenTest {
         answer(registry, Uri.fromFile(destination))
 
         awaitText(saved)
+        composeRule.onNodeWithText(saved).assert(hasAnyAncestor(hasTestTag("reader_confirmation_snackbar")))
         assertArrayEquals(text.toByteArray(Charsets.UTF_8), destination.readBytes())
         composeRule.onNodeWithText(saveFailed).assertDoesNotExist()
     }
@@ -307,6 +332,7 @@ class MarkdownReaderScreenTest {
         answer(registry, Uri.fromFile(destination))
 
         awaitText(saveFailed)
+        assertErrorPill(saveFailed)
         assertFalse(destination.exists())
         composeRule.onNodeWithText(saved).assertDoesNotExist()
     }
@@ -332,8 +358,56 @@ class MarkdownReaderScreenTest {
 
         // The file is written on the IO dispatcher, off the test's main clock.
         composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText(noApp).fetchSemanticsNodes().isNotEmpty() }
-        composeRule.onNodeWithText(noApp).assertIsDisplayed()
+        assertErrorPill(noApp)
         composeRule.onNodeWithText("Plan").assertIsDisplayed()
+    }
+
+    @Test fun openInAnotherApp_whenTheSharedNoteCannotBeWritten_usesOpenFailedPill() {
+        // Device methods share app storage. Block only this fixture's private root; the rule removes
+        // it even when an assertion fails, without replacing any production shared-note files.
+        sharedNoteDirectory(sharedNoteFiles.root).apply {
+            parentFile?.mkdirs()
+            writeText("blocks directory")
+        }
+        composeRule.setContent {
+            val activityContext = LocalContext.current
+            val isolatedContext =
+                remember(activityContext) {
+                    object : ContextWrapper(activityContext) {
+                        override fun getNoBackupFilesDir(): File = sharedNoteFiles.root
+                    }
+                }
+            CompositionLocalProvider(LocalContext provides isolatedContext) {
+                PyrycodeMobileTheme {
+                    MarkdownReaderScreen(MarkdownDocument("Plan.md", "# Plan"), onBack = {})
+                }
+            }
+        }
+        choose(openInApp)
+        awaitText(openFailed)
+        assertErrorPill(openFailed)
+    }
+
+    @Test fun leavingTheReader_cancelsItsActiveAndPendingErrorNotices() {
+        val present = mutableStateOf(true)
+        val errors = TransientErrorNoticeState { 4_000L }
+        composeRule.setContent {
+            PyrycodeMobileTheme {
+                if (present.value) {
+                    MarkdownReaderScreen(MarkdownDocument("Plan.md", "# Plan"), onBack = {}, errorNotices = errors)
+                }
+            }
+        }
+        choose(openInApp)
+        awaitText(noApp)
+        assertErrorPill(noApp)
+        choose(openInApp)
+        composeRule.runOnIdle { present.value = false }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("transient_error_notice").assertDoesNotExist()
+        composeRule.runOnIdle { assertNull(errors.currentMessage) }
+        composeRule.mainClock.advanceTimeBy(4_100)
+        composeRule.runOnIdle { assertNull(errors.currentMessage) }
     }
 
     @Test
@@ -502,7 +576,34 @@ class MarkdownReaderScreenTest {
         choose(refresh)
 
         composeRule.onNodeWithText("Old note").assertIsDisplayed()
-        composeRule.onNodeWithText(openFailed).assertIsDisplayed()
+        assertErrorPill(openFailed)
+    }
+
+    @Test fun identicalRefreshFailures_renderSeparateOccurrences_withFullTimeouts() {
+        var reads = 0
+        showRefreshable(MarkdownDocument("Plan.md", "# Old note")) {
+            reads++
+            null
+        }
+        choose(refresh)
+        composeRule.mainClock.autoAdvance = false
+        assertErrorPill(openFailed)
+        val first = composeRule.onNodeWithTag("transient_error_notice").fetchSemanticsNode().id
+        composeRule.mainClock.autoAdvance = true
+        choose(refresh)
+        composeRule.mainClock.autoAdvance = false
+        assertEquals(2, reads)
+        composeRule.mainClock.advanceTimeBy(3_000)
+        assertEquals(first, composeRule.onNodeWithTag("transient_error_notice").fetchSemanticsNode().id)
+        composeRule.mainClock.advanceTimeBy(1_100)
+        assertErrorPill(openFailed)
+        val second = composeRule.onNodeWithTag("transient_error_notice").fetchSemanticsNode().id
+        assertNotEquals(first, second)
+        composeRule.mainClock.advanceTimeBy(3_000)
+        assertEquals(second, composeRule.onNodeWithTag("transient_error_notice").fetchSemanticsNode().id)
+        composeRule.mainClock.advanceTimeBy(1_000)
+        composeRule.onNodeWithTag("transient_error_notice").assertDoesNotExist()
+        composeRule.onNodeWithText("Old note").assertIsDisplayed()
     }
 
     @Test

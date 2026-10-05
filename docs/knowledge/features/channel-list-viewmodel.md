@@ -4,8 +4,7 @@ Exposes ordered host-qualified channel/chat state and explicit host actions thro
 `HostConversationSource`, plus the fold and selection state
 [ChannelListScreen](channel-list-screen.md)'s assembled conversation tree needs (#731).
 Every action the screen can trigger — row taps, folds, (since #738) both add
-controls, (since #744) the host row's edit control, (since #827) a Chats
-row's own edit control and (since #667) a Channels row's own edit control — is
+controls and the host row's edit control — is
 host-qualified and resolved from this view model's own methods; `ChannelListScreen`
 carries no other state model. The flat compatibility
 `ChannelListUiState` projection, its `ChannelListNavigation` one-shot channel and its
@@ -73,31 +72,16 @@ data class HostChannelListState(
     val collapsed: Set<TreeFoldKey> = emptySet(),                    // #731 — collapsed, not expanded
     val selected: HostConversationTarget? = null,                    // #731 — last opened from this list
     val hostEditor: HostEditorState? = null,                         // #744 — open Edit host modal's target
-    val chatEditor: ChatEditorState? = null,                          // #827 — open Edit chat modal's target
     val workspaceEditor: WorkspaceEditorState? = null,                // #905 — open Edit workspace modal's target
     val createChannel: CreateChannelState? = null,                    // #958 — open Create channel modal's target
-    val channelEditor: ChannelEditorState? = null,                    // #667 — open Edit channel modal's target
+    val createChat: CreateChatState? = null,                          // immediate Chats-plus request
 ) {
-    /** True exactly when [serverId] has a snapshot and both connection legs are `Connected` (#827).
-     *  Derived from the same snapshot flow the rows draw from, so a disconnect or reconnect flips this
-     *  without publishing a new [chatEditor] — the modal and its typed name stay put. Both legs are
-     *  compared with `==`, not an exhaustive `when`, so a relay state added later reads as not
-     *  connected rather than needing a classification here. */
+    /** True when the host snapshot has both connection legs Connected. */
     fun isHostConnected(serverId: String): Boolean =
         hosts.any { it.host.serverId == serverId && it.host.connectionStatus.isLive() }
 }
 
-/** The Edit chat modal's target and flags (#827), shaped like [HostEditorState]: ids and display text
- *  only. [initialName] is unclamped — `EditChatModal` clamps it at its own boundary, surrogate-safe. */
-data class ChatEditorState(
-    val serverId: String,
-    val conversationId: String,
-    val initialName: String,
-    val saving: Boolean = false,
-    val failed: Boolean = false,
-)
-
-/** The Add workspace modal's target and flags (#904), shaped like [ChatEditorState]. [selected] is the
+/** The Add workspace modal's target and flags (#904), shaped like [HostEditorState]. [selected] is the
  *  folder OK will start a chat in — a recent folder picked, or one just created on [serverId]; creating
  *  never sets it via a chat start. [busy] covers either write in flight, since the modal's one loading
  *  flag gates both a folder creation and a chat start; [createFailed] / [startFailed] are flags, never a
@@ -197,41 +181,11 @@ target is already the open editor's: `HostUnpairRequested -> vm.requestHostUnpai
 [Dependency injection § Exact-host Retry and lifecycle](dependency-injection-host-conversation-source.md#exact-host-retry-and-lifecycle)
 — and touches no VM state: not `collapsedKeys`, not the snapshot, not the editor.
 
-**A Chats row's own edit control, host-resolved a fifth time (#827).** `TreeChatEditTapped(target) ->
-vm.openChatEditor(target)`, `ChatEditNameSubmitted(name) -> vm.submitChatName(name)` and
-`ChatEditDismissed -> vm.dismissChatEditor()`. `openChatEditor` looks the conversation up synchronously
-in `hostSource.snapshots.value`, matched by the target's own `serverId` then its own conversation id among
-that host's `chats`; an unknown id logs a content-free reject and publishes nothing, and the lookup never
-touches `lastOpenedTarget` or the navigation channel — the pencil edits the row, it does not open it.
-`submitChatName` resolves `hostSource.repositoryFor(target.serverId)` **at the press**, never from the
-selected host or `ThreadDestinationFactory`; with no live repository it publishes `failed = true` and
-sends nothing. Otherwise it publishes a `saving = true` state and launches one `viewModelScope.launch`
-that calls `rename(conversationId, trimmed)`; success does `chatEditor.compareAndSet(pending, null)`, and
-an `Exception` other than `CancellationException` does
-`chatEditor.compareAndSet(pending, pending.copy(saving = false, failed = true))` — the same
-`compareAndSet`-against-the-state-published-before-the-write discipline
-[`HostEditorController`](host-editor.md) established, so a write finishing after a dismissal can neither
-resurrect the modal nor overwrite a newer one. The renamed row's new name reaches the list through the
-repository's own conversation stream re-emitting; this method writes no local copy of it. `dismissChatEditor`
-publishes `null` unguarded, as `HostEditorController.dismiss` does. Unlike the host editor, this state is a
-private `MutableStateFlow<ChatEditorState?>` on the view model itself, not a shared controller —
-`ChannelListViewModel` is `chatEditor`'s only owner, so #744/#751's extraction has no counterpart here.
-
-**The editor's Archive action (#828).** `ChatArchiveRequested -> vm.archiveChat()`, no target id: the
-target is whichever chat the editor already has open. `archiveChat` needs an open, non-`saving` editor,
-then resolves `hostSource.repositoryFor(target.serverId)` **at the press**, exactly as `submitChatName`
-does — the same host, never the selected one, which matters because conversation ids are host-local and
-two hosts can hold a chat with the same id. With no live repository it publishes `archiveFailed = true`
-and sends nothing; otherwise it publishes `saving = true` (clearing both `failed` and `archiveFailed`,
-since one in-flight flag now gates both the rename and the archive actions the modal draws) and launches
-`live.archive(conversationId)`, `compareAndSet`-terminal the same way: success clears the editor, a
-non-cancellation `Exception` restores `saving = false` with `archiveFailed = true`. It never calls
-`rename` or `delete`. It reads no field state — the name typed into the buffer is irrelevant to
-archiving and survives a failed archive untouched, since a failure keeps the same editor instance.
-`submitChatName` clears `archiveFailed` too, in both its pending and its unavailable-host branches, so a
-failed archive followed by a successful or failed rename never shows a stale archive error. The archived
-row leaves the Chats section the same way a rename's new name arrives — the host's own conversation
-stream re-emits it with `archived = true`; nothing here patches the snapshot.
+**Conversation editing belongs to the thread.** #1582 removed the list's chat editor
+state and both conversation editors' flows, entry points and disconnect cleanup.
+`HostChannelListState` has neither `chatEditor` nor `channelEditor`. The shared channel
+controller and state types retain their current list package; the thread remains their
+production owner. Their regression tests construct the controller directly.
 
 **Create channel from a host section (#1189).** `openCreateChannel(serverId)` accepts a host in the
 current snapshot even when it has no active channel. The section action leaves `CreateChannelState.cwd`
@@ -252,7 +206,7 @@ looks up the first channel or chat at that `serverId`/`cwd` in `hostSource.snaps
 directly; an unknown host or a `cwd` with no active row opens nothing. `submitWorkspaceName` applies the
 label rule (`workspaceLabelFor`, in `ui/workspace/WorkspaceDisplayName.kt`) and rejects an over-bound
 result before ever resolving a repository, so a refusal never reaches the daemon; otherwise it resolves
-`hostSource.repositoryFor(target.serverId)` **at the press**, exactly as `submitChatName` does, and the
+`hostSource.repositoryFor(target.serverId)` **at the press**, using the held editor target, and the
 same `compareAndSet`-against-the-published-state discipline closes it. `requestWorkspaceArchive` /
 `declineWorkspaceArchive` / `confirmWorkspaceArchive` mirror `HostEditorController`'s unpair three: request
 and decline both refuse while `saving`, so a decline cannot race a confirm's own close, and a failed
@@ -260,29 +214,6 @@ confirm leaves `confirmingArchive` set so OK retries — `archiveWorkspace` leav
 archived, so a retry only touches the rows still active. Neither write patches a local copy of the row;
 both rely on the host's own conversation stream re-emitting, the same discipline every other editor here
 uses.
-
-**A Channels row's own pencil, host-resolved an eighth time (#667), its machine shared with the thread's
-menu since #1561.** `TreeChannelEditTapped(target) -> vm.openChannelEditor(target)`,
-`ChannelEditSubmitted(name, systemPrompt, muted) -> vm.submitChannelEdit(name, systemPrompt, muted)`,
-`ChannelArchiveRequested -> vm.archiveChannel()` and `ChannelEditDismissed -> vm.dismissChannelEditor()`
-are each a one-line delegation to this VM's own [`ChannelEditorController`](#channeleditorcontroller-667--1561)
-instance — kept as this class's own methods, named exactly as before, so `ChannelListScreen`'s event
-dispatch and `HostChannelListViewModelTest`'s existing proofs are untouched by the #1561 extraction.
-`openChannelEditor` keeps its own unknown-channel check — it looks the channel up synchronously in
-`hostSource.snapshots.value`, matched by the target's own `serverId` then its own conversation id among
-that host's **`channels`** (the sibling lookup to `openChatEditor`'s `chats` walk above) — then calls
-`channelEditor.open(target, channel.name, channel.muted)`; an unknown id logs a content-free reject and
-touches neither `selected` nor the navigation channel, nor the controller, exactly as the chat and
-workspace editors' opens do. `hostState` combines `channelEditor.state` where it combined
-`publishedChannelEditor` before the move; the disconnect sweep's `init` block calls
-`channelEditor.closeUnless { it.serverId in live }` in place of the prior `clearUnless("channel_editor")` +
-manual `channelPromptRead?.cancel()` pair. See [`ChannelEditorController`](#channeleditorcontroller-667--1561)
-below for what moved and why, and for the one wrinkle the move left behind: the controller's home package
-is `ui.conversations.list`, which the thread's `ThreadViewModel` now imports from even though review
-convention keeps the thread package free of imports from `list` — the plan chose that placement
-deliberately (sharing the type with its sole prior owner rather than inventing a third location), and the
-\#1561 verifier flagged moving `ChannelEditorController` and its state types to a neutral package (e.g.
-`ui/conversations/components/`) as a non-blocking follow-up, not yet done.
 
 ### `ChannelEditorController` (#667 / #1561)
 
@@ -303,13 +234,11 @@ established, applied here so a read landing mid-write can never break that write
 Its constructor takes the owner's `viewModelScope` as `scope` (so clearing the owner cancels the prompt
 read and any write chain), `isHostLive: (serverId) -> Boolean` (gates every open and press), `repositoryFor:
 (serverId) -> ConversationRepository?` (resolved fresh at each press, since a reconnect replaces it),
-`awaitRepository: suspend (serverId) -> ConversationRepository` (what the prompt read waits on, so a modal
-opened while the host is down fills once it connects) and `onArchived: suspend () -> Unit = {}` (runs after
-a confirmed archive — a no-op for the list, `leaveForList()` for the thread). `ChannelListViewModel`
-constructs `ChannelEditorController(viewModelScope, ::isHostLive, hostSource::repositoryFor,
-awaitRepository = { serverId -> hostSource.snapshots.map { hostSource.repositoryFor(serverId) }
-.filterNotNull().first() })`; `ThreadViewModel` constructs one bound to its own repository and
-`hostAvailable` instead — see [`ThreadViewModel`'s instance](thread-overflow-menu-viewmodel-dispatcher.md#editchannel--channeleditorcontroller-1561).
+`awaitRepository: suspend (serverId) -> ConversationRepository` (what the prompt read waits on, so a live host
+whose repository is not resolved yet can fill the prompt when it becomes available) and `onArchived: suspend () -> Unit = {}` (runs after
+a confirmed archive, with `leaveForList()` in the thread). `ThreadViewModel` constructs
+one bound to its own repository and `hostAvailable`; the list no longer constructs one.
+See [the thread instance](thread-overflow-menu-viewmodel-dispatcher.md#editchannel--channeleditorcontroller-1561).
 
 `open(target, name, muted)` cancels any previous read job, resets `reading` to `target to Reading`,
 publishes the new `ChannelEditorState` with `savedName` clamped through the same `boundedName` helper
@@ -318,7 +247,7 @@ the caller's own read of `channel.muted`, and launches the read job: it waits on
 `requestSystemPrompt` once, and publishes the tagged result — `Unavailable` for a thrown read or a reply
 over `SystemPromptLimit.MAX_BYTES` (never rendered or written back), `Read(prompt, status)` otherwise.
 `submit(name, systemPrompt, muted: Boolean? = null)` resolves `repositoryFor(state.serverId)` **at the
-press**, the same discipline `ChannelListViewModel.submitChatName` and `submitWorkspaceName` use, and sends
+press**, the same held-target discipline `submitWorkspaceName` uses, and sends
 only what changed, in the order **rename → mute → prompt** (#1021): a rename iff the trimmed name differs
 from `savedName`, then a `setMuted` write iff `muted` is non-null and differs from `savedMuted` (`muted ==
 null` means the caller reported no value and writes nothing — the default keeps every existing call site
@@ -332,78 +261,32 @@ goes verbatim. Every caller logs `prompt=$writesPrompt` on `channel_edited`, a b
 nullable value, since the thing worth recording is "did a prompt write happen", not what it sent. A
 confirmed rename updates `savedName`, and a confirmed mute write updates `savedMuted`, before the prompt
 leg runs — the prompt is the only write whose confirmation is never recorded, so it stays last and a retry
-after any failure sends only the writes the host has not yet confirmed. `archive()` mirrors the list's
-`archiveChat`'s shape exactly — no field condition, no confirmation, `archive(conversationId)` on the
+after any failure sends only the writes the host has not yet confirmed. `archive()` needs no field condition or confirmation: `archive(conversationId)` on the
 press-resolved repository — and on success runs `onArchived()` after its terminal `compareAndSet`, which is
 how a thread leaves for the list on a confirmed archive from the modal, through the same `leaveForList`
-its menu's own Archive uses. `dismiss()` nulls `editor` and cancels the read job unguarded. `closeUnless
-(keep)` is the list's own `clearUnless("channel_editor")` plus the prompt-read cancel, folded into the
-controller so the thread gets the same disconnect behaviour for free if it ever adopts #1336's rule (it
-does not today — see [Edit channel on the thread](thread-overflow-menu-viewmodel-dispatcher.md#editchannel--channeleditorcontroller-1561)
-for why). Every line removed from `ChannelListViewModel` reappeared here unchanged but for the renamed
+its menu's own Archive uses. `dismiss()` nulls `editor` and cancels the read job unguarded. `closeUnless(keep)` closes a target rejected by the predicate and cancels its prompt read.
+Direct controller tests exercise this lifecycle hook; stale press guards separately cover
+submit/archive after liveness changes without a preceding close hook. See the thread's
+[disconnect policy](thread-overflow-menu-viewmodel-dispatcher.md#editchannel--channeleditorcontroller-1561).
+Every line removed from `ChannelListViewModel` reappeared here unchanged but for the renamed
 fields and the injected lambdas — the #1561 verifier compared them line by line — so the guarded writes,
 the rename → mute → prompt order, cancellation handling and log events are exactly as they were before the
 move. See [System prompt editor](system-prompt-editor.md) for why this reads and writes the prompt itself
 rather than constructing a `SystemPromptEditor`: that class binds one repository at construction, which a
 background/foreground reconnect retires.
 
-**A disconnected host closes its own create and edit modals, reversing #1190 (#1336).** #1190 made
-`isHostConnected` only disable a modal's OK, so a dialog opened on a host that later dropped stayed open —
-the ticket's own rationale was that an in-flight write should not be yanked out from under the operator.
-The owner now wants desktop's rule instead: an `init` block launches `viewModelScope.launch {
-hostSource.snapshots.collect { … } }` that computes the live server-id set on every snapshot and, through a
-private `MutableStateFlow<T?>.clearUnless(name, keep)` helper (`getAndUpdate { it?.takeIf(keep) }`), sets
-`createChannel`, `chatEditor` and `createChat` to `null`, and (since #1561, through
-`channelEditor.closeUnless { it.serverId in live }` rather than a local `clearUnless` call) closes the
-Edit channel modal and cancels its own prompt read, for whichever of them belongs to a host no longer in
-that set — a modal for
-a still-live host is untouched, and the clearing is atomic against any writer calling the same state's
-`compareAndSet`. A write already in flight may still finish: its terminal `compareAndSet` targets the state
-published before the watcher ran, so once that state is `null` the write's own `compareAndSet` is a no-op
-rather than a resurrection — `createChat`'s success path still navigates, since the chat it creates
-exists regardless of whether its dialog is still open. A private `isHostLive(serverId)` reads
-`hostSource.snapshots.value` with the same liveness rule `isHostConnected` uses, and every opener —
-`createChat`, `openCreateChannel`, `openChatEditor`, `openChannelEditor` — calls it first and returns
-without publishing anything on a host that is not live (`RelayLog.d` logs `event=..._rejected
-code=disconnected`, content-free). Every submitter and archiver that can reach a repository —
-`submitCreateChannel`, `submitChatName`, `submitChannelEdit`, `archiveChat`, `archiveChannel` — re-checks
-`isHostLive` after its own `saving`/validity guard and before resolving `hostSource.repositoryFor`, and on
-a host that dropped between open and press it closes its own modal (`compareAndSet` to `null`, or
-`closeChannelEditor` for the channel editor) and sends nothing — this is what a test must race against a
-queued, not unconfined, `Main` dispatcher to actually exercise, since an unconfined one lets the watcher
-close the modal first and the submit's own re-check never runs (see
-[testing](channel-list-viewmodel-testing.md)). The `hostAvailable` parameters [`ChannelListScreen` — tree
-and controls](channel-list-screen-tree-and-controls.md#add-controls-738) still passes to the modal
-bindings are unaffected and stay redundant for this path, since other callers pass them. Out of scope and
-untouched: `hostEditor`, `addWorkspace`, `workspaceEditor` — the sidebar tree does not open the Edit host,
-Add workspace or Edit workspace modals, so none of the three needed the ticket's rule.
+**A disconnected host closes its own creation state (#1336 / #1582).** The snapshot
+watcher computes the live host set and atomically clears `createChannel` and `createChat`
+for hosts outside it. It no longer owns conversation editor cleanup. Creation entry points
+and submits re-check liveness at the press; test this with queued Main dispatch so the
+watcher cannot hide a missing press guard. A late completion cannot restore a cleared modal.
+Host, workspace and Add workspace editing retain their existing policies.
 
-**The five-flow limit.** `hostState`'s outer `combine` was already at `combine`'s five-argument typed
-overload before #744, so every editor and modal added since has had to arrive as one of those five
-arguments rather than a sixth. Two of the five are themselves a nested `combine` that packs several
-targets into one value:
-
-- The Add-workspace group (`combine(addWorkspace, addWorkspaceRecent, createChannel, ::Triple)`, #958)
-  packs the open Add workspace target, its own tagged recents list (#904) and the open Create channel
-  target into one three-argument typed `combine`, destructured back into `adding`, `recent` and `creating`
-  in the outer lambda.
-- The editor group started as `combine(hostEditor.state, chatEditor, workspaceEditor, ::Triple)` (#905:
-  `chatEditor` made it six arms, `workspaceEditor` a seventh, so this three-argument `combine` absorbed
-  both). #667's `channelEditor` made it an eighth arm, one past what a single `combine` call can hold at
-  five outer plus three inner, so the editor group is now nested two deep:
-  `combine(combine(hostEditor.state, chatEditor, ::Pair), workspaceEditor, publishedChannelEditor, ::Triple)`.
-  The outer lambda destructures the `Triple` into `editorAndChat`, `workspace` and `channel`, then the
-  `Pair` inside `editorAndChat` into `editor` and `chat` — two destructuring steps for what reads as three
-  named editors. `publishedChannelEditor` is itself `channelEditor` and `channelPrompt`'s own inner
-  `combine` (described above), not the raw `MutableStateFlow` the other four editors publish directly —
-  the state that lands in this outer combine is already the fully-projected `ChannelEditorState?`.
-
-Reach for one more nesting level, the same way, if a ninth arm is ever needed; the vararg `combine`
-overload is available but loses per-argument typing, so prefer nesting until that cost is worth paying.
-\#904 established the pairing trick both this group's `channelPrompt` (above) and the Add-workspace group's
-`addWorkspaceRecent` (below) reuse: tag every emission with the target it was produced for, and publish it
-only when that tag still matches the currently open target — the guard against a stale target's value
-landing on a fresher one's state.
+**The five-flow limit.** The outer typed `combine` groups creation state as
+`combine(addWorkspace, addWorkspaceRecent, combine(createChannel, createChat, ::Pair), ::Triple)`.
+The surviving editor group is simply `combine(hostEditor.state, workspaceEditor, ::Pair)`.
+Target-tagged recents still filter out a previous host's emission before publishing it
+against a new open target; removing editor flows does not make that guard optional.
 
 **The editor's six methods (#744/#745, delegated to a shared controller since #751).** `openHostEditor`,
 `submitHostName`, `requestHostUnpair`, `declineHostUnpair`, `confirmHostUnpair` and `dismissHostEditor`
@@ -428,8 +311,7 @@ here either: `pairedServers` resolves to
 `openAddWorkspace(serverId)` rejects an id absent from `hostSource.snapshots` (content-free log)
 and otherwise publishes `AddWorkspaceState(serverId)` — replacing `openHostWorkspacePicker`, and
 the row's **own** host exactly as that method was. `selectAddWorkspaceFolder(path)` and
-`createAddWorkspaceFolder(name)` / `submitAddWorkspace()` follow `submitChatName`'s host-resolved-
-write shape: `hostSource.repositoryFor(state.serverId)` is resolved **at the press**, never from
+`createAddWorkspaceFolder(name)` / `submitAddWorkspace()` use a host-resolved write shape: `hostSource.repositoryFor(state.serverId)` is resolved **at the press**, never from
 the selected host, and both writes publish a `busy = true` pending state before launching, with
 `compareAndSet(pending, …)` terminal transitions so a write finishing after a dismissal or a
 retarget cannot touch a newer state. Creating a folder only ever sets `selected`; only
@@ -477,7 +359,7 @@ coverage of everything under [Wiring](#wiring) above, host by host and editor by
 
 ## Edge cases / limitations
 
-- **No `init { }` block, no `refresh()`, no `retry()` method.** Cold-flow re-collection on resubscription is the existing retry surface. Explicit retry lands with the UI control that needs it.
+- **Snapshot watcher and explicit reconnect.** The `init` watcher closes creation state on disconnect; `reconnectHost` forwards to the host source. Projection still re-collects on subscription.
 - **One-shot navigation is `Channel`-backed, not `StateFlow<Navigation?>`.** `MutableSharedFlow` was considered and rejected: replay-1 would re-fire on rotation, replay-0 would drop in-flight taps. `Channel(BUFFERED)` + `receiveAsFlow()` is the right shape — survives the recomposition window between tap and consume, cancels atomically with `viewModelScope`.
 - **Create chat is single-flight per open dialog.** `saving` prevents a second send. A dialog identity
   survives state copies so a delayed reply from a dismissed dialog cannot close a reopened one for the

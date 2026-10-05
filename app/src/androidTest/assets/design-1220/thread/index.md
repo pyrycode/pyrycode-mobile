@@ -596,7 +596,8 @@ waits strictly for its marker ("Payload truncated by the daemon.", "Stopped: con
 filler bubbles and are not compared. Composer and footer verdicts are as in "Composer and footer".
 
 Three frames draw designs Juhana changed on 2026-10-02 (turn outcome, failure notice, history tail gutter). The
-captures show what the app draws today, so those verdicts are expected mismatches with their own tickets.
+captures show what the app draws today, so those verdicts are expected mismatches with their own tickets. #1747
+has since moved the failure notice to the design.
 
 ### Turn outcome — `685:3992`
 
@@ -671,26 +672,53 @@ captures show what the app draws today, so those verdicts are expected mismatche
 
 ### Failure notice — `685:4337`
 
-- **Owning ticket:** #556 (archive failure)
-- **Capture:** `failure-notice.png` (412x892, 1.0)
+- **Owning ticket:** #556 (archive failure), #1747 (Error pill migration)
+- **Capture:** `failure-notice.png` (412x892, 1.0, real system bars, API 35)
 - **Side-by-side:** `failure-notice-side-by-side.png`
 - **Overlay:** `failure-notice-overlay.png`
-- **Verdict:** mismatch (changed design)
-- Archive from the overflow menu, failing in the override.
+- **Verdict:** match, with one font-metric difference
+- Archive from the overflow menu, failing in the override. Recaptured by #1747 after the move from the bottom
+  snackbar to the top overlay's Error pill.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: a 388 px bottom snackbar above the band; the frame draws a pill hugging its text at the right of the top overlay, under the header |
-| Padding | mismatch: snackbar insets, not the pill's |
-| Spacing | mismatch: see geometry |
-| Typography | match: "Couldn't archive this conversation. Try again." The snackbar's body style is larger than the pill's |
-| Colour | mismatch: inverse-surface snackbar; the frame's pill is error-container |
+| Geometry | match: the pill hugs its text at the right of the top overlay, ending at the 20 px gutter, 97 px below the app-area top, which is 28 px under the measured header through its rule. It is 24 px tall, as in the frame. The text-hug width is 6 px wider than the frame's with the app's shared typography |
+| Padding | match: 8 px horizontal, 4 px vertical |
+| Spacing | match: below every persistent notice, with the overlay's 12 px gap when one is present |
+| Typography | match: body-small "Couldn't archive this conversation. Try again.", right-aligned |
+| Colour | match: error-container surface, error text |
 | Borders | match (none) |
-| Radii | mismatch: snackbar corners, not the pill's |
+| Radii | match: 6 px corners |
 | Icon paths | match (none, no X) |
-| Component state | match: hides itself after the snackbar's duration (waited for) |
+| Component state | match: inert, no tap action; expires after the Short snackbar time, adjusted for accessibility |
 
-- **Routed:** #1604
+- **Routed:** none. The width difference is the shared typography's, not this notice's.
+
+### Reader error — `696:5101`
+
+- **Owning ticket:** #1747
+- **Capture:** `reader-error.png` (412x892, 1.0, real system bars, API 35)
+- **Side-by-side:** `reader-error-side-by-side.png`
+- **Overlay:** `reader-error-overlay.png`
+- **Verdict:** match, with a copy difference
+- The reader's Refresh failing through the production reader. The frame draws the Save failure; the capture
+  shows the reachable Refresh failure, whose client-owned copy is "Couldn't open file". The same pill and
+  placement serve both.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | match: right-aligned at the 20 px gutter, 28 px under the measured reader bar through its rule; the body does not move |
+| Padding | match: 8 px horizontal, 4 px vertical |
+| Spacing | match |
+| Typography | mismatch by design: "Couldn't open file" against the frame's "Couldn't save file"; same body-small style |
+| Colour | match: error-container surface, error text |
+| Borders | match (none) |
+| Radii | match: 6 px corners |
+| Icon paths | match (none, no X) |
+| Component state | match: inert, expires like the thread pill. Saved still uses the bottom snackbar |
+
+- **Routed:** none. The unresolved Saved and dismissed-elsewhere differences, and #1619's non-error scope
+  conflict, stay open; this entry does not settle them.
 
 ### History tail — Loading `689:4281`, Retry `689:4330`, Dead end `689:4379`, Offline `689:4427`
 

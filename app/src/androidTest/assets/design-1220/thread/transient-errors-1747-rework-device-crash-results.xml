@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="15" failures="1" errors="0" skipped="0" time="55.594" timestamp="2026-10-04T15:34:24" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" tests="15" failures="1" errors="0" skipped="0" time="43.968" timestamp="2026-10-04T15:34:24" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="theBackArrow_goesBack" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="3.236" />
+    <testcase name="leavingTheReader_cancelsItsActiveAndPendingErrorNotices" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="2.976" />
+    <testcase name="openInAnotherApp_whenTheSharedNoteCannotBeWritten_usesOpenFailedPill" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="2.713" />
+    <testcase name="theOverflow_opensTheSixItems_inOrder" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="2.311" />
+    <testcase name="showsTheNameInTheBar_andTheRenderedMarkdownBelow" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="2.05" />
+    <testcase name="aRetry_whileTheFailureNoticeShows_readsAgain" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="2.4" />
+    <testcase name="aCancelledPicker_writesNothing_andSaysNothing" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="1.602" />
+    <testcase name="saveToDevice_opensTheCreateDocumentPicker_withTheNotesNameAndMarkdownType" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="1.83" />
+    <testcase name="aSecondRefresh_whileOneIsReading_readsNothing" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="2.489" />
+    <testcase name="copyAsHtml_putsOneClip_withTheHtmlAndThePlainFallback" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="1.587" />
+    <testcase name="aFailedRefresh_keepsTheOldContent_andSaysItCouldNotOpen" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="1.837" />
+    <testcase name="aReadyMarkdownTap_goesToTheReader_whateverItsSource_andOtherFilesDoNot" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="1.287" />
+    <testcase name="aLinkedNote_opensInTheSameReader_andItsBackArrowGoesBack" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="1.544" />
+    <testcase name="openInAnotherApp_withNoAppForMarkdown_saysSo" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="1.736" />
+    <testcase name="copiesOfANoteAtTheReadersBound_areBounded" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="14.37">
+      <failure></failure>
+    </testcase>
+  </testsuite>
+  <system-err>Test run failed to complete. Instrumentation run failed due to Process crashed.
+</system-err>
+</testsuites>
