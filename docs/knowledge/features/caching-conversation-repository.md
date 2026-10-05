@@ -111,6 +111,36 @@ above it that the live side also holds, and only goes in front when it has no su
 older rows a reconnect's newest page does not reach, or a page that does not overlap the cache at
 all. Several cache-only rows sharing one anchor keep their cached relative order.
 
+Since #1786 both merges share one reconciliation. A cache-only row can also go between two shared rows,
+and cache-only assistant text merges per `(turnId, seq)` delta, so a restored reply missing a middle or
+suffix sequence gains only the missing text, on the correct side of tool and user rows. A legacy whole-turn
+row written before segments existed dedupes only text it demonstrably contains and keeps distinct text.
+Restored rows carry no daemon log ids, so placement uses shared neighbours and then timestamps, and live
+rows are never sorted. The lookup stays key-indexed on large threads. The fixed connection merge base and
+the deliberate-removal suppression below are unchanged, so a removed live row is not resurrected.
+
+`BackgroundTaskLifecycle` (#1782) is also retained in the last-drawn **in-memory** base at a
+connection boundary, although disk restore never supplies it. Reconnect backfills missing launch
+fields and retains one launch/finish identity per conversation/task without moving held markers.
+After ordinary cache-only rows have been placed, fresh lifecycle evidence uses the same
+[neighbour fold as history](remote-conversation-repository-reads-and-thread-store-history-paging.md#history-pages-fold-into-the-same-thread-645):
+leading evidence waits for its first overlapping neighbour, and subsequent anchors cannot move
+backward. History and cache merges keep their different ordinary-row placement rules.
+
+Overlap deduplication must retain anchors even when incoming assistant text is discarded or keeps
+only an older prefix. Typed identities and `(turnId, seq)` overlap locate surviving neighbours; a
+segment superseded by a whole-turn row anchors to that whole turn after cleanup. Sharing identity
+lookup alone does not prove reconnect order: regressions must cover leading evidence, backward
+anchors, differently keyed segments and whole-turn overlap in both merge directions, including
+terminal-before-start, replay and older-page prepend.
+
+The evidence remains invisible: `foldQueuedRows` excludes it before tool grouping/rendering,
+`ThreadProjection.observeRowCounts` excludes it from visible-growth signals, and Channel info's
+creation timestamp skips it. Scalar lifecycle writes preserve queue/echo bookkeeping through the
+same atomic `ProjectionState`. Process death loses these markers; reconnect/history can reconstruct
+them. The disk schema stays unchanged, and [cache filtering and trim accounting](conversation-cache.md#the-thread-documents-two-writers-1354)
+both exclude them, so evidence alone cannot clear a saved history position.
+
 For queue delivery (#1642), `ThreadSnapshotSource` supplies visible rows and
 `suppressedUserMessageIds` together through Remote → Stable → Caching. The cache filters only
 restored `Role.User` messages whose ids are suppressed while awaiting a delivered push.
@@ -157,8 +187,8 @@ not back beside the message that produced it: cache `[m1, a1, attachment-offer-X
 page `[m1, a1, a2]` drew `[attachment-offer-X, m1, a1, a2]`, and the write-when-changed rule then
 made that reordering permanent on disk. `mergeCachedRows` exists so this wrapper's restore, and only
 this wrapper's restore, can anchor a cache-only row where it belongs; the history walk keeps
-`mergeHistoryRows` and its skip-and-prepend unchanged, since that is the deliberate answer to the
-ask-versus-answer race its own KDoc describes, not a general rule about row position.
+`mergeHistoryRows` and its ordinary-row skip-and-prepend contract, since that is the deliberate answer
+to the ask-versus-answer race its own KDoc describes, not a general rule about row position.
 
 The restored snapshot (`cache.readThread(serverId, conversationId)`) is read **once per
 collection**. A later failed read therefore cannot blank rows already drawn, and the read is the

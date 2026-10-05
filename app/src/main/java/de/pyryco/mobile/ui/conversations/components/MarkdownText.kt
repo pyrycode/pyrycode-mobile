@@ -286,14 +286,20 @@ private fun MarkdownBlock(
     }
     when (node.type) {
         MarkdownElementTypes.ATX_1 ->
-            HeadingBlock(node, source, uriHandler, MaterialTheme.typography.headlineSmall.readerLineHeight(style.presentation))
+            HeadingBlock(
+                node,
+                source,
+                uriHandler,
+                MaterialTheme.typography.headlineSmall.readerLineHeight(style.presentation),
+                style.reader,
+            )
         MarkdownElementTypes.ATX_2 ->
-            HeadingBlock(node, source, uriHandler, MaterialTheme.typography.titleLarge.readerLineHeight(style.presentation))
+            HeadingBlock(node, source, uriHandler, MaterialTheme.typography.titleLarge.readerLineHeight(style.presentation), style.reader)
         MarkdownElementTypes.ATX_3 ->
-            HeadingBlock(node, source, uriHandler, MaterialTheme.typography.titleMedium.readerLineHeight(style.presentation))
+            HeadingBlock(node, source, uriHandler, MaterialTheme.typography.titleMedium.readerLineHeight(style.presentation), style.reader)
         MarkdownElementTypes.PARAGRAPH ->
             Text(
-                text = buildInline(node, source, uriHandler),
+                text = buildInline(node, source, uriHandler, style.reader),
                 style = style.body,
             )
         MarkdownElementTypes.UNORDERED_LIST ->
@@ -338,7 +344,7 @@ private fun MarkdownBlock(
         else -> {
             val text = node.getTextInNode(source).toString().trim()
             if (text.isNotEmpty()) {
-                Text(text = text, style = style.body)
+                Text(text = AnnotatedString(text).let { if (style.reader) it.withBreaksInLongRuns() else it }, style = style.body)
             }
         }
     }
@@ -369,6 +375,7 @@ private fun HeadingBlock(
     source: String,
     uriHandler: UriHandler,
     style: androidx.compose.ui.text.TextStyle,
+    breakLongRuns: Boolean,
 ) {
     val colors = currentInlineColors()
     val content = node.children.firstOrNull { it.type == MarkdownTokenTypes.ATX_CONTENT }
@@ -378,7 +385,7 @@ private fun HeadingBlock(
                 appendInlineChildren(content.trimmedContent(), source, uriHandler, colors)
             }
         }
-    Text(text = text, style = style)
+    Text(text = if (breakLongRuns) text.withBreaksInLongRuns() else text, style = style)
 }
 
 @Composable
@@ -404,7 +411,7 @@ private fun ListBlock(
                         text =
                             buildAnnotatedString {
                                 append("$marker  ")
-                                append(buildInline(lead, source, uriHandler))
+                                append(buildInline(lead, source, uriHandler, breakLongRuns = true))
                             },
                         style = style.body,
                     )
@@ -521,7 +528,7 @@ private fun BlockQuoteBlock(
                 }.forEach { child ->
                     if (child.type == MarkdownElementTypes.PARAGRAPH) {
                         Text(
-                            text = buildInline(child, source, uriHandler),
+                            text = buildInline(child, source, uriHandler, reader),
                             style =
                                 style.body.copy(
                                     color = if (reader) MaterialTheme.colorScheme.onSurfaceVariant else style.body.color,
@@ -998,11 +1005,64 @@ private fun buildInline(
     node: ASTNode,
     source: String,
     uriHandler: UriHandler,
+    breakLongRuns: Boolean = false,
 ): AnnotatedString {
     val colors = currentInlineColors()
+    val text =
+        buildAnnotatedString {
+            appendInline(node, source, uriHandler, colors)
+        }
+    return if (breakLongRuns) text.withBreaksInLongRuns() else text
+}
+
+private val MarkdownTextStyle.reader: Boolean get() = presentation == MarkdownPresentation.Reader
+
+/** The longest run without whitespace the reader lays out as written; see [withBreaksInLongRuns]. */
+internal const val MAX_UNBROKEN_RUN = 1_024
+
+/**
+ * This text with a line break after every [MAX_UNBROKEN_RUN] characters of each longer run that has no
+ * whitespace, and unchanged otherwise. Styles and links carry over.
+ *
+ * Android's text engine shapes and caches text a space-separated word at a time, and a word wider than the
+ * line costs native memory that grows much faster than the word: on the test emulator a 32 KB word took
+ * about 30 MB, a 64 KB word about 220 MB, a 128 KB word about 570 MB, and a 256 KB word, the reader's file
+ * bound, got the process killed (2026-10-05). A zero-width space or a slash does not help, since only a
+ * space or a line break ends the engine's word. Such a run already wraps at arbitrary characters, so a line
+ * break every [MAX_UNBROKEN_RUN] characters only adds one short line per 1024. Only the drawn text changes:
+ * the reader's copies read the note, not this.
+ */
+internal fun AnnotatedString.withBreaksInLongRuns(): AnnotatedString {
+    val cuts = longRunCuts(text)
+    if (cuts.isEmpty()) return this
     return buildAnnotatedString {
-        appendInline(node, source, uriHandler, colors)
+        var from = 0
+        for (cut in cuts) {
+            append(this@withBreaksInLongRuns.subSequence(from, cut))
+            append('\n')
+            from = cut
+        }
+        append(this@withBreaksInLongRuns.subSequence(from, this@withBreaksInLongRuns.length))
     }
+}
+
+private fun longRunCuts(text: String): List<Int> {
+    val cuts = mutableListOf<Int>()
+    var runStart = 0
+    for (index in 0..text.length) {
+        if (index < text.length && !text[index].isWhitespace()) continue
+        if (index - runStart > MAX_UNBROKEN_RUN) {
+            var cut = runStart + MAX_UNBROKEN_RUN
+            while (cut < index) {
+                // Never between the halves of a surrogate pair.
+                if (text[cut].isLowSurrogate()) cut++
+                if (cut < index) cuts += cut
+                cut += MAX_UNBROKEN_RUN
+            }
+        }
+        runStart = index + 1
+    }
+    return cuts
 }
 
 /**

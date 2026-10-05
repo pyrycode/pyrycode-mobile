@@ -1,6 +1,11 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import android.net.Uri
+import android.view.View
 import androidx.activity.compose.LocalActivityResultRegistryOwner
 import androidx.activity.result.ActivityResultRegistry
 import androidx.activity.result.ActivityResultRegistryOwner
@@ -12,6 +17,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
@@ -43,17 +49,26 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
+import org.robolectric.annotation.GraphicsMode
+import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import kotlin.math.abs
 
 /** #933: the composer's attachment picker, strip, removal, send enablement and per-chat strips. */
 @RunWith(AndroidJUnit4::class)
 class ComposerAttachmentStripTest {
     @get:Rule
     val composeRule = createComposeRule()
+
+    @get:Rule val pasteFiles = TemporaryFolder()
 
     /** Answers every launch at once with [result], recording what the picker was asked for. */
     private class FakePickerRegistry(
@@ -109,6 +124,149 @@ class ComposerAttachmentStripTest {
         assertEquals(12.dp.value, (second.left - first.right).value, 0.5f)
         assertEquals((first.right - 15.dp).value, remove.left.value, 0.5f)
         assertEquals((first.top - 5.dp).value, remove.top.value, 0.5f)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun ownedPasteThumbnailLoadsWithoutTheOriginalProvider() {
+        val bytes =
+            ByteArrayOutputStream().use { output ->
+                Bitmap.createBitmap(1024, 512, Bitmap.Config.ARGB_8888).apply {
+                    compress(Bitmap.CompressFormat.PNG, 100, output)
+                    recycle()
+                }
+                output.toByteArray()
+            }
+        val copy =
+            runBlocking {
+                (
+                    OwnedPasteCopy.capture(pasteFiles.root, AttachmentReader { AttachmentRead.Bytes(bytes) }, "content://missing/image")
+                        as PasteCopyCapture.Captured
+                ).copy
+            }
+        try {
+            setScreen(attachments = listOf(entry(1, "paste.png", "image/png").copy(ownedPaste = copy)))
+            composeRule.onNodeWithContentDescription("paste.png").assertIsDisplayed()
+            composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText("PNG").fetchSemanticsNodes().isEmpty() }
+            val tile = composeRule.onNodeWithContentDescription("paste.png").getUnclippedBoundsInRoot()
+            assertEquals(45.dp.value, tile.width.value, 0.5f)
+            assertEquals(60.dp.value, tile.height.value, 0.5f)
+        } finally {
+            copy.release()
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun ownedJpegThumbnail_appliesExifRotationWithoutTheOriginalProvider() {
+        assertOrientedThumbnail(6, listOf(Color.BLUE, Color.RED, Color.YELLOW, Color.GREEN))
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun ownedJpegThumbnail_appliesExifMirroringWithoutTheOriginalProvider() {
+        assertOrientedThumbnail(2, listOf(Color.GREEN, Color.RED, Color.YELLOW, Color.BLUE))
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun ownedJpegThumbnail_appliesExifRotationAndMirroringWithoutTheOriginalProvider() {
+        assertOrientedThumbnail(7, listOf(Color.YELLOW, Color.GREEN, Color.BLUE, Color.RED))
+    }
+
+    private fun assertOrientedThumbnail(
+        orientation: Int,
+        expected: List<Int>,
+    ) {
+        val bytes = orientedJpeg(orientation)
+        val copy =
+            runBlocking {
+                (
+                    OwnedPasteCopy.capture(pasteFiles.root, AttachmentReader { AttachmentRead.Bytes(bytes) }, "content://missing/image")
+                        as PasteCopyCapture.Captured
+                ).copy
+            }
+        var view: View? = null
+        try {
+            composeRule.setContent {
+                view = LocalView.current
+                PyrycodeMobileTheme {
+                    ComposerAttachmentStrip(listOf(entry(1, "paste.jpg", "image/jpeg").copy(ownedPaste = copy)), false, {})
+                }
+            }
+            composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText("JPG").fetchSemanticsNodes().isEmpty() }
+            val tile = composeRule.onNodeWithContentDescription("paste.jpg").fetchSemanticsNode().boundsInRoot
+            assertEquals(45.dp.value, tile.width / composeRule.density.density, 0.5f)
+            assertEquals(60.dp.value, tile.height / composeRule.density.density, 0.5f)
+            composeRule.runOnIdle {
+                val root = checkNotNull(view)
+                val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
+                try {
+                    // Draw the real composition; captureToImage cannot settle its redraw on Robolectric.
+                    root.draw(Canvas(bitmap))
+                    val positions = listOf(0.25f to 0.3f, 0.75f to 0.3f, 0.25f to 0.75f, 0.75f to 0.75f)
+                    positions.zip(expected).forEach { (position, want) ->
+                        val x = (tile.left + tile.width * position.first).toInt()
+                        val y = (tile.top + tile.height * position.second).toInt()
+                        val pixel = bitmap.getPixel(x, y)
+                        assertTrue(
+                            "EXIF $orientation at $position: expected $want, got $pixel",
+                            abs(Color.red(pixel) - Color.red(want)) < 15 &&
+                                abs(Color.green(pixel) - Color.green(want)) < 15 &&
+                                abs(Color.blue(pixel) - Color.blue(want)) < 15,
+                        )
+                    }
+                } finally {
+                    bitmap.recycle()
+                }
+            }
+        } finally {
+            copy.release()
+        }
+    }
+
+    /** Four distinct quadrants, followed by a minimal EXIF APP1 segment with the requested orientation. */
+    private fun orientedJpeg(orientation: Int): ByteArray {
+        val bitmap = Bitmap.createBitmap(1024, 512, Bitmap.Config.ARGB_8888)
+        val jpeg =
+            try {
+                val canvas = Canvas(bitmap)
+                listOf(Color.RED, Color.GREEN, Color.BLUE, Color.YELLOW).forEachIndexed { index, color ->
+                    val left = (index % 2) * 512f
+                    val top = (index / 2) * 256f
+                    canvas.drawRect(left, top, left + 512f, top + 256f, Paint().apply { this.color = color })
+                }
+                ByteArrayOutputStream().use { output ->
+                    assertTrue(bitmap.compress(Bitmap.CompressFormat.JPEG, 100, output))
+                    output.toByteArray()
+                }
+            } finally {
+                bitmap.recycle()
+            }
+        val tiff =
+            ByteBuffer
+                .allocate(26)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putShort(0x4949)
+                .putShort(42)
+                .putInt(8)
+                .putShort(1)
+                .putShort(0x0112)
+                .putShort(3)
+                .putInt(1)
+                .putShort(orientation.toShort())
+                .putShort(0)
+                .putInt(0)
+                .array()
+        val app1 =
+            ByteBuffer
+                .allocate(36)
+                .putShort(0xffe1.toShort())
+                .putShort(34)
+                .put("Exif\u0000\u0000".toByteArray())
+                .put(tiff)
+                .array()
+        return jpeg.copyOfRange(0, 2) + app1 + jpeg.copyOfRange(2, jpeg.size)
     }
 
     @Test
@@ -215,7 +373,7 @@ class ComposerAttachmentStripTest {
     }
 
     @Test
-    fun aFailedSend_saysWhyInOneSnackbar_withTheLimitDerivedFromTheConstant() {
+    fun aFailedSend_saysWhyInOneNotice_withTheLimitDerivedFromTheConstant() {
         val failures = Channel<AttachmentSendFailure>(Channel.BUFFERED)
         setScreen(attachments = emptyList(), sendFailures = failures.receiveAsFlow())
 

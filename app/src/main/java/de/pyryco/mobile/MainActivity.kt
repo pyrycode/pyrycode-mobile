@@ -67,11 +67,13 @@ import de.pyryco.mobile.ui.conversations.list.PLAY_STORE_URL
 import de.pyryco.mobile.ui.conversations.list.PendingPromotion
 import de.pyryco.mobile.ui.conversations.thread.LinkedMarkdownReaderDestination
 import de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDestination
+import de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNotice
 import de.pyryco.mobile.ui.conversations.thread.ThreadNavigation
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.conversations.thread.UsageLimitDismissals
 import de.pyryco.mobile.ui.conversations.thread.readLinkedMarkdown
+import de.pyryco.mobile.ui.conversations.thread.rememberThreadAttention
 import de.pyryco.mobile.ui.onboarding.CameraPreview
 import de.pyryco.mobile.ui.onboarding.PairCodeEvent
 import de.pyryco.mobile.ui.onboarding.PairCodePhase
@@ -390,11 +392,6 @@ internal fun PyryNavHost(
                         ChannelListEvent.HostUnpairRequested -> vm.requestHostUnpair()
                         ChannelListEvent.HostUnpairConfirmed -> vm.confirmHostUnpair()
                         ChannelListEvent.HostUnpairDeclined -> vm.declineHostUnpair()
-                        // And for renaming a chat (#827): the pencil's own host and conversation.
-                        is ChannelListEvent.TreeChatEditTapped -> vm.openChatEditor(event.target)
-                        is ChannelListEvent.ChatEditNameSubmitted -> vm.submitChatName(event.name)
-                        ChannelListEvent.ChatEditDismissed -> vm.dismissChatEditor()
-                        ChannelListEvent.ChatArchiveRequested -> vm.archiveChat()
                         is ChannelListEvent.AddWorkspaceSelected -> vm.selectAddWorkspaceFolder(event.path)
                         is ChannelListEvent.AddWorkspaceFolderCreateRequested -> vm.createAddWorkspaceFolder(event.name)
                         ChannelListEvent.AddWorkspaceSubmitted -> vm.submitAddWorkspace()
@@ -408,11 +405,6 @@ internal fun PyryNavHost(
                         is ChannelListEvent.TreeHostChannelAddTapped -> vm.openCreateChannel(event.serverId)
                         is ChannelListEvent.CreateChannelSubmitted -> vm.submitCreateChannel(event.name, event.systemPrompt)
                         ChannelListEvent.CreateChannelDismissed -> vm.dismissCreateChannel()
-                        // And for editing a channel (#667): the pen's own host and conversation.
-                        is ChannelListEvent.TreeChannelEditTapped -> vm.openChannelEditor(event.target)
-                        is ChannelListEvent.ChannelEditSubmitted -> vm.submitChannelEdit(event.name, event.systemPrompt, event.muted)
-                        ChannelListEvent.ChannelArchiveRequested -> vm.archiveChannel()
-                        ChannelListEvent.ChannelEditDismissed -> vm.dismissChannelEditor()
                     }
                 },
             )
@@ -503,8 +495,16 @@ internal fun PyryNavHost(
                         }
                     }
                 }
+                val attention by rememberThreadAttention(
+                    target,
+                    conversations.snapshots,
+                    conversations.attention,
+                    conversations.alerts,
+                    backStackEntry.lifecycle,
+                )
                 val questionModal by vm.questionModal.collectAsStateWithLifecycle()
                 ThreadScreen(
+                    attentionPill = attention?.let { reading -> { ThreadAttentionNotice(reading, navController::openAttentionTarget) } },
                     collapseToolUses = collapseToolUses,
                     questionState = questionModal,
                     onQuestionEvent = { event, generation -> vm.onQuestionEvent(event, generation) },
@@ -908,4 +908,16 @@ private fun List<HostConversationSnapshot>.holdsActive(target: HostConversationT
 private fun NavHostController.openThread(target: HostConversationTarget) {
     if (currentDestination?.route == Routes.CONVERSATION_THREAD && Routes.target(currentBackStackEntry?.arguments) == target) return
     navigate(Routes.thread(target))
+}
+
+/** A pill opens an existing route only; permission and command actions remain on their own controls. */
+internal fun NavHostController.openAttentionTarget(target: HostConversationTarget?) {
+    if (target != null) {
+        openThread(target)
+    } else {
+        navigate(Routes.CHANNEL_LIST) {
+            popUpTo(Routes.CHANNEL_LIST)
+            launchSingleTop = true
+        }
+    }
 }

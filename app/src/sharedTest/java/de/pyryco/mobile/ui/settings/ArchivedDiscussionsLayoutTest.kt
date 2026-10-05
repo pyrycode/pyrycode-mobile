@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
+import de.pyryco.mobile.ui.assertDpEquals
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Clock
 import org.junit.Assert.assertEquals
@@ -178,8 +179,8 @@ class ArchivedDiscussionsLayoutTest {
             }
         }
         val tops = rows.map { compose.onNodeWithContentDescription("Restore ${it.name}").getUnclippedBoundsInRoot().top }
-        assertEquals(66.dp, tops[1] - tops[0])
-        assertEquals(66.dp, tops[2] - tops[1])
+        assertDpEquals(66.dp, tops[1] - tops[0])
+        assertDpEquals(66.dp, tops[2] - tops[1])
     }
 
     // #1487: at 320x700 and 150 % font scale each label stays on one line inside its tab, above the indicator.
@@ -247,9 +248,9 @@ class ArchivedDiscussionsLayoutTest {
             val header = compose.onNodeWithTag("archive_header").getUnclippedBoundsInRoot()
             val tabs = compose.onNodeWithTag("archive_tabs").getUnclippedBoundsInRoot()
             val indicator = compose.onNodeWithTag("archive_selected_indicator").getUnclippedBoundsInRoot()
-            assertEquals(64.dp, header.bottom - header.top)
-            assertEquals(48.dp, tabs.bottom - tabs.top)
-            assertEquals(2.dp, indicator.bottom - indicator.top)
+            assertDpEquals(64.dp, header.bottom - header.top)
+            assertDpEquals(48.dp, tabs.bottom - tabs.top)
+            assertDpEquals(2.dp, indicator.bottom - indicator.top)
             assertEquals(tabs.bottom, indicator.bottom)
             if (tab.startsWith("Channels")) {
                 assertEquals(tabs.left, indicator.left)
@@ -261,9 +262,10 @@ class ArchivedDiscussionsLayoutTest {
             icon.assertIsDisplayed()
             val bounds = icon.getUnclippedBoundsInRoot()
             val screen = compose.onRoot().getUnclippedBoundsInRoot()
-            assertEquals(22.dp, bounds.right - bounds.left)
-            assertEquals(22.dp, bounds.bottom - bounds.top)
-            assertEquals(screen.right - 25.dp, bounds.right)
+            assertDpEquals(22.dp, bounds.right - bounds.left)
+            assertDpEquals(22.dp, bounds.bottom - bounds.top)
+            // Centred in its target, which is inset from the edge: two roundings.
+            assertDpEquals(screen.right - 25.dp, bounds.right, pixels = 2)
 
             // Optional local visual evidence; normal shared/device runs create no files.
             System.getProperty("archive.capture.dir")?.let { directory ->

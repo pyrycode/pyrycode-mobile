@@ -39,7 +39,7 @@ class ComposerPasteTest {
                     text = draft,
                     onTextChange = { draft = it },
                     onSend = {},
-                    onImagesReceived = { received += it },
+                    onImagesReceived = { images, _ -> received += images },
                 )
             }
         }

@@ -1,5 +1,10 @@
 import importlib.util
 import os
+import base64
+import json
+import time
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 from pathlib import Path
 import subprocess
 import tempfile
@@ -70,6 +75,166 @@ def device_test_run(script):
     """The device test run, from its argument list to the end of the Gradle-or-installed choice."""
     start = script.index("GRADLE_TEST_ARGS=(")
     return script[start:script.index(TEST_RUN_END, start) + len(TEST_RUN_END)]
+
+
+class BypassPairingLifecycleTest(unittest.TestCase):
+    """The actual shell lifecycle must survive preceding scenarios longer than redemption."""
+
+    def setUp(self):
+        self.root = Path(__file__).resolve().parent.parent
+        self.script = (self.root / "scripts/e2e-emulator.sh").read_text()
+        self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.clock = self.tmp / "clock"
+        self.clock.write_text("0")
+        self.calls = self.tmp / "calls"
+        self.cli = self.tmp / "pyry"
+        self.cli.write_text("""#!/usr/bin/env python3
+import base64, json, os, sys
+from pathlib import Path
+now = int(Path(os.environ['FIXTURE_CLOCK']).read_text())
+with open(os.environ['FIXTURE_CALLS'], 'a') as log:
+    log.write(json.dumps({'at': now, 'privileged': '--allow-remote-permissions' in sys.argv,
+                          'home': os.environ['HOME'], 'args': sys.argv[1:]}) + '\\n')
+if os.environ.get('FIXTURE_FAILURE'):
+    print('secret-token secret-key secret-code', file=sys.stderr)
+    sys.exit(1)
+payload = {'server': 'fixture-host', 'token': 'secret-token', 'server_static_pubkey': 'secret-key',
+           'relay': 'ws://127.0.0.1:8888/v1/server', 'mintedAt': now}
+if '--allow-remote-permissions' in sys.argv and os.environ.get('FIXTURE_MISMATCH'):
+    payload['server'] = 'wrong-host'
+print(base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip('='))
+""")
+        self.cli.chmod(0o700)
+
+    def function(self, name):
+        start = self.script.index(name + "() {")
+        return self.script[start:self.script.index("\n}\n", start) + 3]
+
+    def start_fixture(self, **extra):
+        work = self.tmp / ("run-" + str(time.monotonic_ns()))
+        work.mkdir()
+        # Exercise the old eager lifecycle too, so its failure is an expired code, not a missing symbol.
+        name = "start_bypass_pairing_fixture" if "start_bypass_pairing_fixture() {" in self.script else "mint_bypass_pairing"
+        body = "set -euo pipefail\nlog() { :; }\nbypass_unmet() { exit 9; }\n"
+        if name == "mint_bypass_pairing":
+            body += self.function("phone_pair_code") + self.function("pair_token")
+        body += self.function(name) + "\n" + name + "\n"
+        body += """export BYPASS_FIXTURE_PID BYPASS_FIXTURE_PORT BYPASS_FIXTURE_AUTH PAIR_CODE_BYPASS BYPASS_PEER_TOKEN BYPASS_PEER_SERVER_STATIC_PUBKEY
+python3 - <<'END'
+import json, os
+print(json.dumps({key: os.environ.get(key, '') for key in
+                 ('BYPASS_FIXTURE_PID', 'BYPASS_FIXTURE_PORT', 'BYPASS_FIXTURE_AUTH', 'PAIR_CODE_BYPASS',
+                  'BYPASS_PEER_TOKEN', 'BYPASS_PEER_SERVER_STATIC_PUBKEY')}))
+END
+"""
+        env = dict(os.environ, REPO_ROOT=str(self.root), WORK_DIR=str(work), BYPASS_HOME=str(self.tmp),
+                   PYRY_BIN=str(self.cli), PYRY_NAME_BYPASS="e2e-fixture-bypass", PAIR_NAME_BYPASS="phone",
+                   PAIR_NAME_BYPASS_PEER="peer", DAEMON_RELAY_URL="ws://127.0.0.1:8888/v1/server",
+                   PHONE_RELAY_URL="ws://10.0.2.2:8888", FIXTURE_CLOCK=str(self.clock), FIXTURE_CALLS=str(self.calls),
+                   PAIR_BYPASS_OUT=str(self.tmp / "phone.out"), PAIR_BYPASS_PEER_OUT=str(self.tmp / "peer.out"),
+                   SERVER_ID_BYPASS="", PAIR_CODE_BYPASS="", BYPASS_PEER_TOKEN="", BYPASS_PEER_SERVER_STATIC_PUBKEY="",
+                   BYPASS_FIXTURE_PID="", BYPASS_FIXTURE_PORT="", BYPASS_FIXTURE_AUTH="", **extra)
+        result = subprocess.run(["bash", "-c", body], env=env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(0, result.returncode, "fixture setup failed")
+        config = json.loads(result.stdout)
+        config["work"] = str(work)
+        if config.get("BYPASS_FIXTURE_PID"):
+            self.addCleanup(self.stop_fixture, int(config["BYPASS_FIXTURE_PID"]))
+        return config
+
+    def stop_fixture(self, pid):
+        import signal
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+    def request(self, config, auth=None, path="/pair"):
+        request = Request(f"http://127.0.0.1:{config['BYPASS_FIXTURE_PORT']}{path}", data=b"",
+                          headers={"Authorization": "Bearer " + (config['BYPASS_FIXTURE_AUTH'] if auth is None else auth)})
+        with urlopen(request, timeout=5) as response:
+            return json.load(response)
+
+    def assert_private_diagnostics(self, config, code=""):
+        output = (Path(config["work"]) / "bypass-pairing.log").read_text()
+        for secret in (config['BYPASS_FIXTURE_AUTH'], 'secret-token', 'secret-key', 'secret-code'):
+            self.assertTrue(secret not in output, "fixture diagnostics exposed credential material")
+        if code:
+            self.assertTrue(code not in output, "fixture diagnostics exposed a pairing code")
+
+    def test_pairing_is_redeemable_after_preceding_scenarios_exceed_the_window(self):
+        config = self.start_fixture()
+        self.clock.write_text(str(16 * 60))  # No sleep and no Claude turn.
+        if config['BYPASS_FIXTURE_PORT']:
+            self.assertFalse(self.calls.exists(), "fixture minted before scenario entry")
+            fixture = self.request(config)
+            code = fixture['pairCode']
+            self.assertTrue(fixture['peerToken'] == 'secret-token', "peer pairing missing")
+        else:
+            code = config['PAIR_CODE_BYPASS']
+        payload = json.loads(base64.urlsafe_b64decode(code + '=' * (-len(code) % 4)))
+        self.assertLess(int(self.clock.read_text()) - payload['mintedAt'], 15 * 60,
+                        "bypass phone code expired while waiting for its scenario")
+        self.assertTrue(payload['relay'] == 'ws://10.0.2.2:8888', "phone relay rewrite missing")
+        calls = [json.loads(line) for line in self.calls.read_text().splitlines()]
+        self.assertEqual([False, True], [call['privileged'] for call in calls])
+        self.assertTrue(all(call['home'] == str(self.tmp) for call in calls), "pairing escaped isolated HOME")
+        self.assertEqual([16 * 60, 16 * 60], [call['at'] for call in calls])
+        self.assert_private_diagnostics(config, code)
+        self.assertEqual(0o600, (Path(config["work"]) / "bypass-pairing.json").stat().st_mode & 0o777)
+
+    def test_harness_cleanup_stops_the_fixture(self):
+        config = self.start_fixture()
+        cleanup = self.function("cleanup")
+        body = "set -euo pipefail\nlog() { :; }\n" + cleanup + "\ncleanup\n"
+        env = dict(os.environ, BYPASS_FIXTURE_PID=config['BYPASS_FIXTURE_PID'], WORK_DIR=config['work'],
+                   WATCHER_PID="", DAEMON_PID="", RELAY_PID="", ISO_HOME="", BYPASS_HOME="", ANSWER_HOME="")
+        result = subprocess.run(["bash", "-c", body], env=env, capture_output=True, text=True, timeout=5)
+        self.assertEqual(0, result.returncode, "harness cleanup failed")
+        self.assertFalse(Path(config['work']).exists())
+        import socket
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                with socket.create_connection(('127.0.0.1', int(config['BYPASS_FIXTURE_PORT'])), timeout=0.1):
+                    time.sleep(0.01)
+            except OSError:
+                break
+        else:
+            self.fail("fixture remained reachable after harness cleanup")
+
+    def test_unauthorized_and_unknown_requests_cannot_mint_and_success_is_one_shot(self):
+        config = self.start_fixture()
+        for auth, path, status in (("wrong", "/pair", 403), (None, "/other", 404)):
+            with self.assertRaises(HTTPError) as failure:
+                self.request(config, auth=auth, path=path)
+            self.assertEqual(status, failure.exception.code)
+            failure.exception.close()
+            self.assertFalse(self.calls.exists())
+        fixture = self.request(config)
+        with self.assertRaises(HTTPError) as failure:
+            self.request(config)
+        self.assertEqual(409, failure.exception.code)
+        failure.exception.close()
+        self.assertEqual(2, len(self.calls.read_text().splitlines()))
+        self.assert_private_diagnostics(config, fixture["pairCode"])
+
+    def test_failed_mint_or_host_mismatch_is_private_and_cannot_retry(self):
+        for mode in ('FIXTURE_FAILURE', 'FIXTURE_MISMATCH'):
+            with self.subTest(mode=mode):
+                config = self.start_fixture(**{mode: '1'})
+                with self.assertRaises(HTTPError) as failure:
+                    self.request(config)
+                self.assertEqual(503, failure.exception.code)
+                self.assertTrue('secret' not in failure.exception.read().decode(), "HTTP error exposed credentials")
+                failure.exception.close()
+                count = len(self.calls.read_text().splitlines())
+                with self.assertRaises(HTTPError) as failure:
+                    self.request(config)
+                self.assertEqual(409, failure.exception.code)
+                failure.exception.close()
+                self.assertEqual(count, len(self.calls.read_text().splitlines()))
+                self.assert_private_diagnostics(config)
 
 
 class EmulatorGradleTest(unittest.TestCase):
@@ -168,20 +333,18 @@ class EmulatorGradleTest(unittest.TestCase):
                                             env=env, capture_output=True, text=True, check=True)
                     self.assertEqual(expected, arg in result.stdout.splitlines())
 
-    def test_bypass_arguments_carry_the_unmet_code_or_the_pairing(self):
-        # #687: the operator-bypass daemon passes nothing, only its unmet prerequisite, or its six arguments.
+    def test_bypass_arguments_carry_the_unmet_code_or_the_fixture(self):
+        # #687: the operator-bypass daemon passes nothing, only its unmet prerequisite, or its fixture and witness arguments.
         root = Path(__file__).resolve().parent.parent
         script = (root / "scripts/e2e-emulator.sh").read_text()
         invocation = device_test_run(script)
         prefix = "-Pandroid.testInstrumentationRunnerArguments."
-        pairing = {"SERVER_ID_BYPASS": "srv-byp", "PAIR_CODE_BYPASS": "code-byp",
-                   "BYPASS_PEER_TOKEN": "peer-byp", "BYPASS_PEER_SERVER_STATIC_PUBKEY": "key-byp",
+        pairing = {"BYPASS_FIXTURE_PORT": "12345", "BYPASS_FIXTURE_AUTH": "private-capability",
                    "BYPASS_TOKEN_FILE": "/tmp/pyry-e2e-byp.x/outside/e2e687-1.txt", "BYPASS_WITNESS": "abc123"}
         cases = (
             ({}, []),
             ({"BYPASS_UNMET": "no_credential"}, [prefix + "bypassUnmet=no_credential"]),
-            (pairing, [prefix + "bypassServerId=srv-byp", prefix + "bypassPairCode=code-byp",
-                       prefix + "bypassPeerToken=peer-byp", prefix + "bypassServerStaticPublicKey=key-byp",
+            (pairing, [prefix + "bypassFixturePort=12345", prefix + "bypassFixtureAuthorization=private-capability",
                        prefix + "bypassTokenFile=/tmp/pyry-e2e-byp.x/outside/e2e687-1.txt",
                        prefix + "bypassToken=abc123"]),
         )
@@ -253,10 +416,11 @@ class EmulatorBuildBeforeMintTest(unittest.TestCase):
     def test_every_pairing_is_minted_after_the_build(self):
         build = self.script.index('"${GRADLEW}" -p "${REPO_ROOT}" assembleDebug')
         mints = [i for i in range(len(self.script)) if self.script.startswith(" pair -pyry-name=", i)]
-        # Host A (isolated and real HOME), host B, the host A peer, and two each on the bypass and answer daemons.
-        self.assertEqual(8, len(mints))
+        # Host A (isolated and real HOME), host B, the host A peer and two on the answer daemon.
+        # Bypass pairing now waits for the scenario-entry request in e2e-bypass-pairing.py.
+        self.assertEqual(6, len(mints))
         self.assertLess(build, min(mints))
-        for name in ("mint_bypass_pairing", "mint_answer_pairing"):
+        for name in ("start_bypass_pairing_fixture", "mint_answer_pairing"):
             with self.subTest(name=name):
                 calls = [i for i in range(len(self.script)) if self.script.startswith(name, i)
                          and not self.script.startswith(name + "() {", i)]

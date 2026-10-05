@@ -1,6 +1,6 @@
 # Notice pill — `NoticePill`
 
-The shared pill shape for [`ThreadTopOverlay`](thread-top-overlay.md)'s usage, MCP,
+The shared pill shape for [`ThreadTopOverlay`](thread-top-overlay.md)'s attention, usage, MCP,
 pairing, Offline Retry and session-error notices. [#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043) added the task-count caller,
 the thread status band's task-count pill, hosted on `ThreadScreen` itself rather than the overlay. Figma
 `347:6617`'s `Pill` component set, variants **Default** and **Error**.
@@ -22,6 +22,9 @@ internal fun NoticePill(
     shadowElevation: Dp = PillShadow,
     leadingIcon: ImageVector? = null,
     maxLines: Int = Int.MAX_VALUE,
+    containerColor: Color = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer,
+    contentColor: Color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer,
+    mergeDescendants: Boolean = true,
 )
 ```
 
@@ -33,22 +36,37 @@ task-count caller that overrides it to `0.dp`.
 A `Surface` (6dp `RoundedCornerShape`, `shadowElevation` for the overlay's drop shadow) holding a `Row`
 (8dp horizontal / 4dp vertical padding, 8dp gap, centre-aligned): a `bodySmall`, right-aligned `Text` in
 `Modifier.weight(1f, fill = false)` — so the pill hugs short text and wraps long text while a trailing X
-stays visible — and, when `onDismiss != null`, a 14dp `Icons.Filled.Close` glyph as its own clickable node
+stays visible — and, when `onDismiss != null`, an 8dp exported close image as its own clickable node
 (`Role.Button`, `contentDescription = R.string.thread_notice_dismiss`, "Dismiss notice"). Compose's minimum
 touch-target expansion gives the X a 48dp tap area without growing the pill's drawn size — a deliberate
 divergence from the usual 48dp `IconButton` wrapper, kept to match Figma's compact pill height.
 
+The themed `bodySmall` (12/16sp) style uses `LineHeightStyle.Alignment.Center`
+and `LineHeightStyle.Trim.None`, retaining the full top and bottom line-height space.
+At font scale 1, both variants have a 16dp single-line text box centred within a
+24dp visible background, with 4dp padding above and below. There is no fixed pill
+height: wrapping and font scaling grow the line box naturally, subject to the
+caller's `maxLines` and ellipsis. See [shared typography](shared-typography.md).
+
 **Two variants, colours from `MaterialTheme.colorScheme`:** Default is `primaryContainer` /
 `onPrimaryContainer`; Error is `errorContainer` / `error`, as Figma paints it. `isError` selects between
-them; there is no third state. Semantics: `Modifier.semantics(mergeDescendants = true) { contentDescription
+them by default; callers may override `containerColor` and `contentColor` without changing geometry
+or unrelated callers. Semantics: `Modifier.semantics(mergeDescendants = mergeDescendants) { contentDescription
 = contentDescription }` on the outer `Surface`, defaulting to the visible `text` — the merged node reads as
-one TalkBack stop, the same "wording has one source" idiom every status-row indicator already uses (see
+one TalkBack stop with the default `mergeDescendants = true`, the same "wording has one source" idiom every status-row indicator already uses (see
 [Usage-limit indicator](usage-limit-indicator.md), [Resetting indicator](resetting-indicator.md)). When
 `onClick != null` the whole pill is a clickable `Surface(onClick = onClick, ...)`; otherwise a plain
 `Surface`.
 
 ## Caller contracts
 
+- **Attention pill** ([Thread top overlay](thread-top-overlay.md#the-attention-pill-1735)):
+  overrides container/content colors for Waiting and Finished, keeps the overlay shadow and uses
+  two-line ellipsis without an X. The inert inner surface has a 24dp minimum height; a separate
+  parent button adds 24dp touch space upward while reporting only visible height to the stack.
+  This preserves the 12dp gap below and the neighboring dismiss action. `mergeDescendants = false`
+  lets that parent own the label and description as one accessible button. A nested merging surface
+  would hide them from the clickable target even while text and pointer tests passed.
 - **Usage pill** ([`ThreadTopOverlay`](thread-top-overlay.md#the-usage-pill)): `onDismiss` is non-`null`
   only when [`usageLimitIsWarning`](usage-limit-indicator.md#shape) is true for the reading being shown —
   every other reading, including an unrecognised `status`, gets `onDismiss = null` and cannot be hidden.
@@ -78,28 +96,62 @@ shadow, optional leading icon and line limit let the outcome reuse the same shap
 
 ## Testing
 
-The [`ThreadTopOverlay`](thread-top-overlay.md) callers are covered indirectly through
-[`ThreadTopOverlayTest`](thread-top-overlay.md#testing) (Robolectric, `app/src/sharedTest/.../thread/`)
-rather than a standalone Compose test of `NoticePill` in isolation — the component has no behaviour worth
-pinning apart from how each caller drives it (variant selection, dismiss wiring, wrap, shadow). Two
-`@Preview`s (light/dark, `widthDp = 412`) stack a long usage-style label with a dismiss X above a short
-error-style pairing label with `onClick`, matching the dark-theme Robolectric render the plan's Phase B
-recorded against Figma `533:1956`. The task-count caller is covered by `TaskCountPillTest`
-(`app/src/sharedTest/.../thread/`, `@GraphicsMode(NATIVE)`) — see [Thread screen § Thinking-indicator
-placement](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643)
-for what it pins.
+`ThreadAttentionNoticeTest` verifies default-compatible color customization through the attention
+caller, native-graphics surface and target bounds, two-line sanitized names and stacking.
+Its combined selector requires the parent tag, bounded text, description and click action together
+for Waiting, Finished and count variants. Test actual touch bounds separately from visible bounds,
+including the adjacent usage dismiss target. Measure width against the actual viewport's gutters.
+
+[`NoticePillTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/NoticePillTest.kt)
+uses native graphics to measure both text-only variants: 16dp text, 24dp background
+and centred 4dp insets at density/font scale 1. Its second test checks 1.5× font
+scaling, wrapping to a two-line cap (48dp text / 56dp background), and click/dismiss
+routing. The [retained component XML](../../../app/src/androidTest/assets/pill-1757/jvm/TEST-de.pyryco.mobile.ui.conversations.components.NoticePillTest.xml)
+records 2 executed/passed, 0 failed and 0 skipped on 2026-10-05; the
+[focused caller reports](../../../app/src/androidTest/assets/pill-1757/jvm/)
+record 31 executed/passed in total, 0 failed and 0 skipped, including
+`ThreadTopOverlayTest`, `TaskCountPillTest`, `ThreadActivityIndicatorVisualTest`
+and `ScriptedTurnOutcomeTest`.
+
+A 16dp leading icon can hold the row at the intended height even when Compose
+trims the text box. Measure text-only variants and scaled wrapping independently;
+a caller's correct overall height alone cannot catch this defect. Also distinguish
+the painted background from expanded touch targets, especially for a clickable
+Surface or the dismiss action.
+
+[`NoticePillCaptureTest.bothVariantsAt412By892`](../../../app/src/androidTest/java/de/pyryco/mobile/design/NoticePillCaptureTest.kt)
+hosts both production variants in MainActivity through the design harness. The
+[retained nonblank real-bar PNG](../../../app/src/androidTest/assets/pill-1757/both-variants.png)
+and [configuration sidecar](../../../app/src/androidTest/assets/pill-1757/both-variants.txt)
+record a 412×892 viewport, density/font scale 1, hardware acceleration,
+`syntheticBars=false` and 24px top/bottom system bars. The
+[measurements](../../../app/src/androidTest/assets/pill-1757/measurements.txt)
+exclude shadows and touch targets: Default `(16,80)-(183,104)` and Error
+`(16,128)-(167,152)` each have a 24px painted height, matching the retained
+[Figma Default](../../../app/src/androidTest/assets/pill-1757/figma-default.png) and
+[Error](../../../app/src/androidTest/assets/pill-1757/figma-error.png) exports.
+The [capture XML](../../../app/src/androidTest/assets/pill-1757/capture-results.xml)
+records that method executed/passed in the focused API 35 real-bar run
+(`requireRealSystemBars=true`): 1 executed, 0 failed, 0 skipped. The verifier
+compared retained exports; fresh remote Figma revisions were unavailable.
+See [Compose evidence](development-verification-compose-evidence.md) for why a
+passing synthetic-bar capture does not establish fresh pixel evidence.
+
+The light/dark previews (`widthDp = 412`) stack a long dismissible usage-style
+label above a short clickable error-style pairing label. Task-count placement
+coverage remains described in [Thread screen § Thinking-indicator placement](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643).
 
 ## Security
 
-No daemon-authored text reaches this file directly — its call sites pass already-sanitised text
-(`usageLimitLabel(reading)`, the local `R.string.thread_re_pair` resource, or the client-owned plural
+Call sites own sanitization before text reaches this file
+(`notificationTitle` for attention names, `usageLimitLabel(reading)`, the local `R.string.thread_re_pair` resource, or the client-owned plural
 `R.plurals.thread_task_count` formatted against a device-side `Int` count, or the turn-outcome arm's
 client-owned recovery copy, `turnRecoveryNotice`, which compares daemon tokens but never renders them,
 [#1357](turn-outcome-indicator.md)). `NoticePill` renders `text`
 as a plain `Text` argument only, same as every sibling status-row indicator; it performs no further
 sanitisation of its own; see [Usage-limit indicator § Security](usage-limit-indicator.md#security) for why
-the caller's sanitisation bound is the one that matters (the pill wraps instead of `maxLines`-capping, so
-the caller, not this file, must keep the text short).
+the caller's sanitisation bound is the one that matters (the default line limit permits wrapping, so callers must bound hostile text and choose
+a suitable `maxLines`).
 
 ## Related
 

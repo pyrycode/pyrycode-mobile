@@ -334,8 +334,13 @@ class ScannerScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("Confirm pairing").assertHeightIsAtLeast(48.dp)
-        composeTestRule.onNodeWithText("Don't pair").assertHeightIsAtLeast(48.dp)
+        // The modal's buttons draw a 40 dp surface and reserve the 48 dp target around it, so the target is the
+        // touch bounds, not the drawn height. Robolectric's stand-in font made the drawn button 48 dp tall.
+        for (label in listOf("Confirm pairing", "Don't pair")) {
+            val touch = composeTestRule.onNodeWithText(label).fetchSemanticsNode().touchBoundsInRoot
+            val height = with(composeTestRule.density) { touch.height.toDp() }
+            assertTrue("$label touch height $height", height >= 47.5.dp)
+        }
     }
 
     // ---- Verification after Confirm (#1386) -----------------------------------

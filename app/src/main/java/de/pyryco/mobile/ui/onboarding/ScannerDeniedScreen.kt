@@ -3,15 +3,19 @@ package de.pyryco.mobile.ui.onboarding
 import android.content.res.Configuration
 import android.util.Log
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
@@ -71,44 +75,55 @@ fun ScannerDeniedScreen(
                     startPadding = 4.dp,
                     divider = false,
                 )
-                Column(
-                    modifier = Modifier.fillMaxSize().padding(start = 32.dp, end = 32.dp, bottom = 80.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    // The frame's illustration sits 132 dp below the bar; the header is 62 dp tall.
-                    Spacer(modifier = Modifier.height(70.dp))
-                    DeniedCameraIllustration(modifier = Modifier.size(120.dp))
-                    Spacer(modifier = Modifier.height(32.dp))
-                    Text(
-                        text = "Camera permission required",
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        textAlign = TextAlign.Center,
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text =
-                            "Pyrycode needs the camera to read the QR code from your server. " +
-                                "You can also paste the pairing code instead.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.widthIn(max = 300.dp),
-                    )
-                    Spacer(modifier = Modifier.weight(1f))
-                    Button(
-                        onClick = { deniedAction("settings", onOpenSettings) },
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                BoxWithConstraints(Modifier.fillMaxSize()) {
+                    // Scrolls once large text no longer fits a small screen, rather than drawing the copy over the
+                    // buttons; at the reference size it fits, and the weighted spacer keeps the buttons at the bottom.
+                    Column(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState())
+                                .heightIn(min = maxHeight)
+                                .padding(start = 32.dp, end = 32.dp, bottom = 80.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        Text(text = "Open settings")
-                    }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Box(Modifier.fillMaxWidth().height(48.dp), contentAlignment = Alignment.Center) {
-                        TextButton(
-                            onClick = { deniedAction("paste", onPasteCode) },
-                            modifier = Modifier.fillMaxWidth().height(40.dp),
+                        // The frame's illustration sits 132 dp below the bar; the header is 62 dp tall.
+                        Spacer(modifier = Modifier.height(70.dp))
+                        DeniedCameraIllustration(modifier = Modifier.size(120.dp))
+                        Spacer(modifier = Modifier.height(32.dp))
+                        Text(
+                            text = "Camera permission required",
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            textAlign = TextAlign.Center,
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text =
+                                "Pyrycode needs the camera to read the QR code from your server. " +
+                                    "You can also paste the pairing code instead.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.widthIn(max = 300.dp),
+                        )
+                        Spacer(modifier = Modifier.weight(1f))
+                        // The least space left between the copy and the buttons when the screen has to scroll.
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(
+                            onClick = { deniedAction("settings", onOpenSettings) },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
                         ) {
-                            Text(text = "Paste code instead")
+                            Text(text = "Open settings")
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Box(Modifier.fillMaxWidth().height(48.dp), contentAlignment = Alignment.Center) {
+                            TextButton(
+                                onClick = { deniedAction("paste", onPasteCode) },
+                                modifier = Modifier.fillMaxWidth().height(40.dp),
+                            ) {
+                                Text(text = "Paste code instead")
+                            }
                         }
                     }
                 }

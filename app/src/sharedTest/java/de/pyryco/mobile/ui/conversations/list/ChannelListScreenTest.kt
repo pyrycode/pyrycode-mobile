@@ -20,8 +20,6 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
-import androidx.compose.ui.test.assertIsOff
-import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertWidthIsAtLeast
@@ -51,13 +49,11 @@ import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
-import de.pyryco.mobile.data.repository.SessionPromptStatus
-import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.di.ConversationAttention
 import de.pyryco.mobile.di.HostConversationSnapshot
+import de.pyryco.mobile.ui.assertDpEquals
 import de.pyryco.mobile.ui.components.CHANNEL_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
-import de.pyryco.mobile.ui.components.EDIT_CHAT_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_WORKSPACE_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.conversations.components.treeHostChannelAddTestTag
@@ -129,16 +125,15 @@ class ChannelListScreenTest {
         vararg hosts: HostChannelListEntry,
         selected: HostConversationTarget? = null,
         hostEditor: HostEditorState? = null,
-        chatEditor: ChatEditorState? = null,
         createChat: CreateChatState? = null,
         width: Dp? = null,
     ) {
         composeTestRule.setContent {
             if (width == null) {
-                TreeContent(hosts, selected, hostEditor, chatEditor, createChat)
+                TreeContent(hosts, selected, hostEditor, createChat)
             } else {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(width, 892.dp))) {
-                    TreeContent(hosts, selected, hostEditor, chatEditor, createChat)
+                    TreeContent(hosts, selected, hostEditor, createChat)
                 }
             }
         }
@@ -149,7 +144,6 @@ class ChannelListScreenTest {
         hosts: Array<out HostChannelListEntry>,
         selected: HostConversationTarget?,
         hostEditor: HostEditorState?,
-        chatEditor: ChatEditorState?,
         createChat: CreateChatState?,
     ) {
         var hostState by remember {
@@ -158,7 +152,6 @@ class ChannelListScreenTest {
                     hosts.toList(),
                     selected = selected,
                     hostEditor = hostEditor,
-                    chatEditor = chatEditor,
                     createChat = createChat,
                 ),
             )
@@ -254,9 +247,11 @@ class ChannelListScreenTest {
             ),
         )
 
-        val first = composeTestRule.onNode(hasText("First channel"), useUnmergedTree = true).getUnclippedBoundsInRoot()
-        val second = composeTestRule.onNode(hasText("Second channel"), useUnmergedTree = true).getUnclippedBoundsInRoot()
-        assertEquals(4.dp, second.top - first.bottom)
+        // The rows' own bands, not their text: a text line is shorter than its 24 dp band, so the gap between two
+        // names also counts the band padding around each, which real fonts make visible on the device.
+        val first = composeTestRule.onNode(hasText("First channel")).getUnclippedBoundsInRoot()
+        val second = composeTestRule.onNode(hasText("Second channel")).getUnclippedBoundsInRoot()
+        assertDpEquals(4.dp, second.top - first.bottom)
     }
 
     @Test
@@ -289,12 +284,19 @@ class ChannelListScreenTest {
         composeTestRule.setContent {
             PyrycodeMobileTheme { ChannelListScreen(state.value, onEvent = { events += it }) }
         }
-        val alphaPen = hasContentDescription(string(R.string.cd_tree_channel_edit, "alpha channel"))
-        val bravoPen = hasContentDescription(string(R.string.cd_tree_channel_edit, "bravo channel"))
-        val charliePen = hasContentDescription(string(R.string.cd_tree_chat_edit, "charlie chat"))
 
         fun assertNoRowPens() {
-            listOf(alphaPen, bravoPen, charliePen).forEach { pen -> composeTestRule.onAllNodes(pen).assertCountEquals(0) }
+            // Keep checking the retired controls independently of their removed string resources.
+            // Prefix matching also catches a pen on a newly named conversation.
+            val conversationPen =
+                SemanticsMatcher("conversation edit control") { node ->
+                    node.config.getOrElse(SemanticsProperties.ContentDescription) { emptyList() }.any {
+                        it.startsWith("Edit channel ") || it.startsWith("Edit chat ")
+                    }
+                }
+            composeTestRule.onAllNodes(conversationPen, useUnmergedTree = true).assertCountEquals(0)
+            composeTestRule.onAllNodes(hasTestTag(TREE_CHANNEL_ROW_TEST_TAG)).assertCountEquals(2)
+            composeTestRule.onAllNodes(hasTestTag(TREE_CHAT_ROW_TEST_TAG)).assertCountEquals(1)
             composeTestRule.onNodeWithTag(treeHostEditTestTag("pyrybox")).assertExists()
         }
 
@@ -863,8 +865,8 @@ class ChannelListScreenTest {
         val anchor = composeTestRule.onNode(hasContentDescription("Open menu")).getUnclippedBoundsInRoot()
         val settings = composeTestRule.onNode(hasText("Settings")).getUnclippedBoundsInRoot()
         val archive = composeTestRule.onNode(hasText("Archive")).getUnclippedBoundsInRoot()
-        assertEquals(6.dp, settings.top - anchor.bottom) // 4dp anchor gap + 2dp column padding.
-        assertEquals(8.dp, settings.left)
+        assertDpEquals(6.dp, settings.top - anchor.bottom) // 4dp anchor gap + 2dp column padding.
+        assertDpEquals(8.dp, settings.left)
         assertEquals(settings.bottom, archive.top)
         composeTestRule.onNode(hasText("Settings")).assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button))
         composeTestRule.onNode(hasText("Settings")).assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.Selected))
@@ -898,8 +900,8 @@ class ChannelListScreenTest {
     private fun assertToolbarGeometry() {
         val targets = toolbarBounds()
         targets.forEach {
-            assertEquals(44.dp, it.right - it.left)
-            assertEquals(44.dp, it.bottom - it.top)
+            assertDpEquals(44.dp, it.right - it.left)
+            assertDpEquals(44.dp, it.bottom - it.top)
             assertEquals(targets.first().top, it.top)
         }
         assertTrue(targets[0].right <= targets[1].left)
@@ -908,19 +910,19 @@ class ChannelListScreenTest {
                 composeTestRule.onNode(hasContentDescription(it), useUnmergedTree = true).getUnclippedBoundsInRoot()
             }
         val root = composeTestRule.onNodeWithTag(CHANNEL_LIST_TEST_TAG).getUnclippedBoundsInRoot()
-        assertEquals(6.dp, glyphs[0].right - glyphs[0].left)
-        assertEquals(24.dp, glyphs[0].bottom - glyphs[0].top)
-        assertEquals(24.dp, glyphs[1].right - glyphs[1].left)
-        assertEquals(24.dp, glyphs[1].bottom - glyphs[1].top)
-        assertEquals(29.dp, glyphs[0].left - root.left)
-        assertEquals(20.dp, root.right - glyphs[1].right)
-        assertEquals(32.dp, glyphs[0].top - root.top)
-        assertEquals(32.dp, glyphs[1].top - root.top)
+        assertDpEquals(6.dp, glyphs[0].right - glyphs[0].left)
+        assertDpEquals(24.dp, glyphs[0].bottom - glyphs[0].top)
+        assertDpEquals(24.dp, glyphs[1].right - glyphs[1].left)
+        assertDpEquals(24.dp, glyphs[1].bottom - glyphs[1].top)
+        assertDpEquals(29.dp, glyphs[0].left - root.left)
+        assertDpEquals(20.dp, root.right - glyphs[1].right)
+        assertDpEquals(32.dp, glyphs[0].top - root.top)
+        assertDpEquals(32.dp, glyphs[1].top - root.top)
         val rule = composeTestRule.onNodeWithTag("channel-list-toolbar-rule").getUnclippedBoundsInRoot()
-        assertEquals(20.dp, rule.left - root.left)
-        assertEquals(20.dp, root.right - rule.right)
-        assertEquals(72.dp, rule.top - root.top)
-        assertEquals(1.dp, rule.bottom - rule.top)
+        assertDpEquals(20.dp, rule.left - root.left)
+        assertDpEquals(20.dp, root.right - rule.right)
+        assertDpEquals(72.dp, rule.top - root.top)
+        assertDpEquals(1.dp, rule.bottom - rule.top)
     }
 
     /**
@@ -1330,113 +1332,6 @@ class ChannelListScreenTest {
         )
     }
 
-    private fun openChat(
-        saving: Boolean = false,
-        failed: Boolean = false,
-        archiveFailed: Boolean = false,
-    ) = ChatEditorState(
-        serverId = "pyrybox",
-        conversationId = "d1",
-        initialName = "bravo chat",
-        saving = saving,
-        failed = failed,
-        archiveFailed = archiveFailed,
-    )
-
-    private fun chatHost(pyrycode: PyrycodeLinkStatus = PyrycodeLinkStatus.Connected) =
-        entry(serverId = "pyrybox", displayName = "Pyrybox", chats = listOf(conversation("d1", "bravo chat", "/w/two", false)))
-            .let { it.copy(host = it.host.copy(connectionStatus = ConnectionStatus(RelayLinkStatus.Connected, pyrycode))) }
-
-    @Test
-    fun editChatModal_isPrefilled_reportsTheTrimmedNameAndDismissal() {
-        setTree(chatHost(), chatEditor = openChat())
-
-        composeTestRule.onNodeWithTag(EDIT_CHAT_NAME_FIELD_TAG).assertTextContains("bravo chat")
-        composeTestRule.onNodeWithTag(EDIT_CHAT_NAME_FIELD_TAG).performTextReplacement("  Renamed  ")
-        composeTestRule.onNode(hasText("OK")).performClick()
-        assertEquals(listOf(ChannelListEvent.ChatEditNameSubmitted("Renamed")), events)
-
-        events.clear()
-        composeTestRule.onNode(hasText("Cancel")).performClick()
-        assertEquals(listOf(ChannelListEvent.ChatEditDismissed), events)
-    }
-
-    @Test
-    fun editChatModal_afterAFailure_statesItGenericallyAndKeepsTheTypedName() {
-        setTree(chatHost(), chatEditor = openChat(failed = true))
-
-        val failure = string(R.string.edit_chat_save_failed)
-        composeTestRule.onNode(hasText(failure)).assertIsDisplayed()
-        assertFalse(failure.contains("bravo"))
-
-        composeTestRule.onNodeWithTag(EDIT_CHAT_NAME_FIELD_TAG).performTextReplacement("Retry")
-        composeTestRule.onNode(hasText("OK")).performClick()
-        assertEquals(listOf(ChannelListEvent.ChatEditNameSubmitted("Retry")), events)
-    }
-
-    @Test
-    fun editChatModal_okFollowsItsOwnHostsConnection_andKeepsTheTypedNameAcrossAReconnect() {
-        val state = mutableStateOf(HostChannelListState(listOf(chatHost()), chatEditor = openChat()))
-        composeTestRule.setContent {
-            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
-        }
-        composeTestRule.onNodeWithTag(EDIT_CHAT_NAME_FIELD_TAG).performTextReplacement("Typed")
-
-        state.value = state.value.copy(hosts = listOf(chatHost(PyrycodeLinkStatus.Down)))
-        composeTestRule.onNode(hasText("OK")).assertIsNotEnabled()
-        composeTestRule.onNodeWithTag(EDIT_CHAT_NAME_FIELD_TAG).assertTextContains("Typed")
-
-        state.value = state.value.copy(hosts = listOf(chatHost()))
-        composeTestRule.onNode(hasText("OK")).assertIsEnabled()
-        composeTestRule.onNodeWithTag(EDIT_CHAT_NAME_FIELD_TAG).assertTextContains("Typed")
-        composeTestRule.onNode(hasText("OK")).performClick()
-        assertEquals(listOf(ChannelListEvent.ChatEditNameSubmitted("Typed")), events)
-    }
-
-    @Test
-    fun editChatModal_archiveReportsOnlyTheArchive_whateverTheNameFieldHolds() {
-        setTree(chatHost(), chatEditor = openChat())
-
-        composeTestRule.onNodeWithTag(EDIT_CHAT_NAME_FIELD_TAG).performTextReplacement("   ")
-        composeTestRule.onNode(hasText(string(R.string.edit_chat_archive))).performClick()
-
-        assertEquals(listOf(ChannelListEvent.ChatArchiveRequested), events)
-    }
-
-    @Test
-    fun editChatModal_afterAFailedArchive_statesItGenericallyAndKeepsTheTypedName() {
-        val state = mutableStateOf(HostChannelListState(listOf(chatHost()), chatEditor = openChat()))
-        composeTestRule.setContent {
-            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
-        }
-        composeTestRule.onNodeWithTag(EDIT_CHAT_NAME_FIELD_TAG).performTextReplacement("Typed")
-
-        state.value = state.value.copy(chatEditor = openChat(archiveFailed = true))
-        val failure = string(R.string.archive_failed)
-        composeTestRule.onNode(hasText(failure)).assertIsDisplayed()
-        composeTestRule.onAllNodes(hasText(string(R.string.edit_chat_save_failed))).assertCountEquals(0)
-        assertFalse(failure.contains("bravo"))
-        composeTestRule.onNodeWithTag(EDIT_CHAT_NAME_FIELD_TAG).assertTextContains("Typed")
-        composeTestRule.onNode(hasText(string(R.string.edit_chat_archive))).assertIsEnabled()
-    }
-
-    @Test
-    fun editChatModal_archiveIsDisabledWhileItsHostIsDownOrAWriteIsInFlight() {
-        val state = mutableStateOf(HostChannelListState(listOf(chatHost(PyrycodeLinkStatus.Down)), chatEditor = openChat()))
-        composeTestRule.setContent {
-            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
-        }
-        val archive = hasText(string(R.string.edit_chat_archive))
-        composeTestRule.onNode(archive).assertIsNotEnabled()
-
-        state.value = HostChannelListState(listOf(chatHost()), chatEditor = openChat())
-        composeTestRule.onNode(archive).assertIsEnabled()
-
-        state.value = state.value.copy(chatEditor = openChat(saving = true))
-        composeTestRule.onNode(archive).assertIsNotEnabled()
-        assertTrue(events.isEmpty())
-    }
-
     @Test
     fun sectionRowsNameTheirHostAndLeaveFolderSettingsOutOfTheTree() {
         setTree(
@@ -1547,150 +1442,9 @@ class ChannelListScreenTest {
         assertFalse(events.first().toString().contains("Be brief."))
     }
 
-    private fun openChannel(
-        prompt: ChannelPromptReading = ChannelPromptReading.Reading,
-        saving: Boolean = false,
-        failed: Boolean = false,
-        archiveFailed: Boolean = false,
-        muted: Boolean = false,
-    ) = ChannelEditorState("pyrybox", "c1", "alpha channel", prompt, saving, failed, archiveFailed, muted)
-
-    @Test
-    fun editChannelModal_muteRowOpensAtTheHostsFlag_andOkReportsTheToggledValue() {
-        val read = ChannelPromptReading.Read("Be brief.", SessionPromptStatus.Matches)
-        val state = mutableStateOf(HostChannelListState(listOf(channelHost()), channelEditor = openChannel(read, muted = true)))
-        composeTestRule.setContent {
-            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
-        }
-        val mute = hasText(string(R.string.edit_channel_mute))
-
-        // The whole row is one checkbox at the touch floor, opening at the host's flag.
-        composeTestRule
-            .onNode(mute)
-            .performScrollTo()
-            .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Checkbox))
-            .assertHeightIsAtLeast(48.dp)
-            .assertIsOn()
-        composeTestRule.onNode(hasText("OK")).performClick()
-        composeTestRule.onNode(mute).performClick().assertIsOff()
-        // A failure keeps the operator's value where they put it.
-        state.value = state.value.copy(channelEditor = openChannel(read, failed = true, muted = true))
-        composeTestRule.onNode(mute).assertIsOff()
-        composeTestRule.onNode(hasText("OK")).performClick()
-        composeTestRule.onNode(hasText("Cancel")).performClick()
-
-        assertEquals(
-            listOf(
-                ChannelListEvent.ChannelEditSubmitted("alpha channel", "Be brief.", muted = true),
-                ChannelListEvent.ChannelEditSubmitted("alpha channel", "Be brief.", muted = false),
-                ChannelListEvent.ChannelEditDismissed,
-            ),
-            events,
-        )
-        assertFalse(events.first().toString().contains("Be brief."))
-    }
-
-    @Test
-    fun editChannelModal_muteRowOpensUncheckedForAnUnmutedChannel() {
-        composeTestRule.setContent {
-            PyrycodeMobileTheme {
-                ChannelListScreen(hostState = HostChannelListState(listOf(channelHost()), channelEditor = openChannel()), onEvent = {})
-            }
-        }
-        composeTestRule.onNode(hasText(string(R.string.edit_channel_mute))).performScrollTo().assertIsOff()
-    }
-
-    @Test
-    fun editChannelModal_readsThenShowsThePromptVerbatim_andReportsTheTrimmedNameAndPrompt() {
-        val state = mutableStateOf(HostChannelListState(listOf(channelHost()), channelEditor = openChannel()))
-        composeTestRule.setContent {
-            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
-        }
-
-        // Prefilled name; the prompt is locked behind a static reading line until it arrives.
-        composeTestRule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).assertTextContains("alpha channel")
-        composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).assertIsNotEnabled()
-        composeTestRule.onNode(hasText(string(R.string.edit_channel_prompt_reading))).assertExists()
-
-        composeTestRule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).performTextReplacement("  Ops  ")
-        state.value =
-            state.value.copy(channelEditor = openChannel(ChannelPromptReading.Read("  Be brief.\n", SessionPromptStatus.Differs)))
-        composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).assertIsEnabled().assertTextContains("  Be brief.\n")
-        composeTestRule.onAllNodes(hasText(string(R.string.edit_channel_prompt_reading))).assertCountEquals(0)
-        composeTestRule.onNode(hasText(string(R.string.edit_channel_prompt_next_session))).assertExists()
-        // The typed name survived the reading's arrival.
-        composeTestRule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).assertTextContains("  Ops  ")
-
-        composeTestRule.onNode(hasText("OK")).performClick()
-        composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextReplacement("Shorter.")
-        composeTestRule.onNode(hasText("OK")).performClick()
-        composeTestRule.onNode(hasText("Cancel")).performClick()
-
-        assertEquals(
-            listOf(
-                ChannelListEvent.ChannelEditSubmitted("Ops", "  Be brief.\n", muted = false),
-                ChannelListEvent.ChannelEditSubmitted("Ops", "Shorter.", muted = false),
-                ChannelListEvent.ChannelEditDismissed,
-            ),
-            events,
-        )
-        assertFalse(events.first().toString().contains("Be brief."))
-    }
-
-    @Test
-    fun editChannelModal_anUnreadPromptIsNeverReported_andArchiveIgnoresTheFields() {
-        val state =
-            mutableStateOf(HostChannelListState(listOf(channelHost()), channelEditor = openChannel(ChannelPromptReading.Unavailable)))
-        composeTestRule.setContent {
-            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
-        }
-
-        composeTestRule.onNode(hasText(string(R.string.edit_channel_prompt_unavailable))).assertExists()
-        composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).assertIsNotEnabled()
-        composeTestRule.onNode(hasText("OK")).performClick()
-
-        // A blank name disables OK but not Archive.
-        composeTestRule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).performTextReplacement("   ")
-        composeTestRule.onNode(hasText("OK")).assertIsNotEnabled()
-        composeTestRule.onNode(hasText(string(R.string.edit_channel_archive))).performScrollTo().performClick()
-
-        assertEquals(
-            listOf(ChannelListEvent.ChannelEditSubmitted("alpha channel", null, muted = false), ChannelListEvent.ChannelArchiveRequested),
-            events,
-        )
-    }
-
-    @Test
-    fun editChannelModal_failuresAreStatic_andOkAndArchiveFollowItsOwnHostAndTheByteLimit() {
-        val read = ChannelPromptReading.Read(null, SessionPromptStatus.Matches)
-        val state = mutableStateOf(HostChannelListState(listOf(channelHost()), channelEditor = openChannel(read)))
-        composeTestRule.setContent {
-            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
-        }
-        composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextInput("Typed")
-
-        state.value = state.value.copy(channelEditor = openChannel(read, failed = true))
-        composeTestRule.onNode(hasText(string(R.string.edit_channel_save_failed))).performScrollTo().assertIsDisplayed()
-        composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).assertTextContains("Typed")
-
-        state.value = state.value.copy(channelEditor = openChannel(read, archiveFailed = true))
-        composeTestRule.onNode(hasText(string(R.string.archive_failed))).performScrollTo().assertIsDisplayed()
-        composeTestRule.onAllNodes(hasText(string(R.string.edit_channel_save_failed))).assertCountEquals(0)
-
-        val archive = hasText(string(R.string.edit_channel_archive))
-        state.value = state.value.copy(channelEditor = openChannel(read, saving = true))
-        composeTestRule.onNode(archive).assertIsNotEnabled()
-
-        state.value = state.value.copy(hosts = listOf(channelHost(PyrycodeLinkStatus.Down)), channelEditor = openChannel(read))
-        composeTestRule.onNode(hasText("OK")).assertIsNotEnabled()
-        composeTestRule.onNode(archive).assertIsNotEnabled()
-
-        state.value = state.value.copy(hosts = listOf(channelHost()))
-        composeTestRule.onNode(hasText("OK")).assertIsEnabled()
-        composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextReplacement("é".repeat(SystemPromptLimit.MAX_BYTES / 2 + 1))
-        composeTestRule.onNode(hasText("OK")).assertIsNotEnabled()
-        assertTrue(events.isEmpty())
-    }
+    private fun workspaceHost(pyrycode: PyrycodeLinkStatus = PyrycodeLinkStatus.Connected) =
+        entry(serverId = "pyrybox", displayName = "Pyrybox", chats = listOf(conversation("d1", "bravo chat", "/w/two", false)))
+            .let { it.copy(host = it.host.copy(connectionStatus = ConnectionStatus(RelayLinkStatus.Connected, pyrycode))) }
 
     private fun openWorkspace(
         confirmingArchive: Boolean = false,
@@ -1707,7 +1461,7 @@ class ChannelListScreenTest {
 
     @Test
     fun editWorkspaceModal_isSeeded_reportsTheNameAndTheArchiveSteps() {
-        val state = mutableStateOf(HostChannelListState(listOf(chatHost()), workspaceEditor = openWorkspace()))
+        val state = mutableStateOf(HostChannelListState(listOf(workspaceHost()), workspaceEditor = openWorkspace()))
         composeTestRule.setContent {
             PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
         }
@@ -1737,7 +1491,7 @@ class ChannelListScreenTest {
 
     @Test
     fun editWorkspaceModal_failuresAreStaticAndTheTypedNameSurvives_andOkFollowsItsOwnHost() {
-        val state = mutableStateOf(HostChannelListState(listOf(chatHost()), workspaceEditor = openWorkspace()))
+        val state = mutableStateOf(HostChannelListState(listOf(workspaceHost()), workspaceEditor = openWorkspace()))
         composeTestRule.setContent {
             PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
         }
@@ -1747,12 +1501,12 @@ class ChannelListScreenTest {
         composeTestRule.onNode(hasText(string(R.string.edit_workspace_save_failed))).performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithTag(EDIT_WORKSPACE_NAME_FIELD_TAG).assertTextContains("Typed")
 
-        state.value = state.value.copy(hosts = listOf(chatHost(PyrycodeLinkStatus.Down)))
+        state.value = state.value.copy(hosts = listOf(workspaceHost(PyrycodeLinkStatus.Down)))
         composeTestRule.onNode(hasText("OK")).assertIsNotEnabled()
         composeTestRule.onNodeWithTag(EDIT_WORKSPACE_NAME_FIELD_TAG).assertTextContains("Typed")
 
         state.value =
-            HostChannelListState(listOf(chatHost()), workspaceEditor = openWorkspace(confirmingArchive = true, archiveFailed = true))
+            HostChannelListState(listOf(workspaceHost()), workspaceEditor = openWorkspace(confirmingArchive = true, archiveFailed = true))
         composeTestRule.onNode(hasText(string(R.string.edit_workspace_archive_failed))).performScrollTo().assertIsDisplayed()
         composeTestRule.onAllNodes(hasText(string(R.string.edit_workspace_save_failed))).assertCountEquals(0)
         assertTrue(events.isEmpty())
