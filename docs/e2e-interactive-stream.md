@@ -35,7 +35,10 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    the thread renders the session-boundary delimiter (exercises the #540 fire-and-forget wire and the
    #336 fold end to end against real claude). In `InteractiveStreamE2ETest`,
    `interactiveTurn_newSession_rendersSessionBoundaryDelimiter` selects “Reset session”
-   with explicit conversation targeting (#625), through the screen-owned header Actions overlay since #1666. The **delete-conversation** scenario (#554) renames a
+   with explicit conversation targeting (#625), through the screen-owned header Actions overlay since #1666.
+   Since #1761 it also observes the old context reading clearing at transition, requires a fresh repository
+   reply, and checks the footer description computed from its token totals without another message.
+   A footer percentage alone could be session-settings fallback and would not prove freshness. The **delete-conversation** scenario (#554) renames a
    discussion to a runtime-unique name, confirms it is present on the channel list, then deletes it from the
    thread (overflow → "Channel info" → "Delete" → the "Delete conversation?" dialog → confirm) and asserts
    it is gone from the list and the thread has popped back (exercises the #532 delete wire against a real
@@ -2588,6 +2591,17 @@ XML naming the passing twin is still required. The interrupted UI gate and unrun
 do not supply it. Documentation does not obtain device evidence.
 
 
+**Reset-ended context refresh (#1761).** The dispatcher’s 2026-10-05 full live suite ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against branch
+`4739804e42` merged with `origin/main` at `541104c306`: **56 executed, 56 passed, 0 failed,
+0 skipped**. Fresh XML in
+`/Users/juhanailmoniemi/WorkSpace/Projects/pyrycode-mobile-agents/logs/2026-10-05T13-29-08-120Z_real-claude-gate_#1761.log`
+contains a passing `InteractiveStreamE2ETest.interactiveTurn_newSession_rendersSessionBoundaryDelimiter`
+leaf, confirming the strengthened post-reset reading and matching-footer assertions ran. The affected
+open/reconnect methods and `interactiveTurn_createEditArchiveChannel_readsPromptBack` also ran and
+passed. This is full-suite evidence, not a separate focused run. See the
+[dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1761#issuecomment-5995706359).
+
 **Pasted image survives clipboard replacement (#1727, 2026-10-05).** The dispatcher ran
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on `feature/1727`
 at `2935b182e2`, merged with `origin/main` at `0273c41175` in a detached worktree:
@@ -3734,6 +3748,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
   share the platform selection assertion. Retain fresh focused `selection-copy` XML for the
   deterministic twin; the named full-live pass is recorded in [Verification status](#verification-status).
 
+
+- **Reset-ended context refresh (#1761):**
+  `InteractiveStreamE2ETest.interactiveTurn_newSession_rendersSessionBoundaryDelimiter` now requires
+  the transition clear followed by a fresh context reply and the matching footer, without another message.
+  Observe before tapping reset and keep the reading watcher off the blocking UI-test wait thread;
+  settings fallback or an unchanged percentage cannot prove or disprove reply freshness. The named
+  full-suite pass and counts are recorded in [Verification status](#verification-status).
+  No `DeterministicInteractiveStreamE2ETest` twin was added because fakeclaude context-query support
+  is not established. The existing curated method and pre-ship command remain unchanged.
 
 - **Clipboard replacement after image paste (#1727):**
   `InteractiveStreamE2ETest.interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes`
