@@ -322,6 +322,7 @@ fun ChannelListScreen(
     onEvent: (ChannelListEvent) -> Unit,
     modifier: Modifier = Modifier,
     shareHeader: (@Composable () -> Unit)? = null,
+    conversationSelectionEnabled: Boolean = true,
 ) {
     val colors = MaterialTheme.colorScheme
     var createChatFailureVisible by remember { mutableStateOf(false) }
@@ -375,7 +376,13 @@ fun ChannelListScreen(
                     // own rows, which is content rather than an empty screen.
                     CenteredText(stringResource(R.string.channel_list_empty), bodyModifier)
                 } else {
-                    ConversationTree(hostState = hostState, onEvent = onEvent, modifier = bodyModifier, selectionOnly = shareHeader != null)
+                    ConversationTree(
+                        hostState = hostState,
+                        onEvent = onEvent,
+                        modifier = bodyModifier,
+                        selectionOnly = shareHeader != null,
+                        conversationSelectionEnabled = conversationSelectionEnabled,
+                    )
                 }
                 if (createChatFailureVisible && shareHeader == null) {
                     // #1604 authorises reuse of Figma 685:4337 below this screen's measured header.
@@ -675,6 +682,7 @@ private fun ConversationTree(
     onEvent: (ChannelListEvent) -> Unit,
     modifier: Modifier = Modifier,
     selectionOnly: Boolean = false,
+    conversationSelectionEnabled: Boolean = true,
 ) {
     // Sorted here, not in treeHost: the placeholder is a string resource, and the drawn label and the
     // sorted label must come from the same string.
@@ -694,7 +702,7 @@ private fun ConversationTree(
         contentPadding = PaddingValues(start = TreeGutter, end = TreeGutter, bottom = TreeBottomInset),
     ) {
         hostState.hosts.forEachIndexed { index, entry ->
-            treeHost(index, entry, sections[index], hostState, onEvent, selectionOnly)
+            treeHost(index, entry, sections[index], hostState, onEvent, selectionOnly, conversationSelectionEnabled)
         }
     }
 }
@@ -719,6 +727,7 @@ private fun LazyListScope.treeHost(
     hostState: HostChannelListState,
     onEvent: (ChannelListEvent) -> Unit,
     selectionOnly: Boolean,
+    conversationSelectionEnabled: Boolean,
 ) {
     val host = entry.host
     val hostKey = TreeFoldKey(ConversationTreeSection.Host, host.serverId)
@@ -795,6 +804,7 @@ private fun LazyListScope.treeHost(
                     onClick = { onEvent(ChannelListEvent.TreeRowTapped(target)) },
                     modifier = Modifier.testTag(section.rowTestTag),
                     attention = entry.attentionFor(conversation.id),
+                    enabled = conversationSelectionEnabled,
                     // 15:8 draws no pen on a conversation row (#1563): a channel is edited from its thread's
                     // Edit (#1561), a chat renamed from its thread's Rename.
                 )

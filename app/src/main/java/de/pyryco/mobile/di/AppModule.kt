@@ -51,6 +51,7 @@ import de.pyryco.mobile.push.PushTokenSink
 import de.pyryco.mobile.push.PushTokenSource
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
+import de.pyryco.mobile.ui.conversations.share.ShareIntakeViewModel
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
 import de.pyryco.mobile.ui.conversations.thread.ContentResolverAttachmentReader
@@ -67,7 +68,6 @@ import de.pyryco.mobile.ui.onboarding.ScannerViewModel
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
 import de.pyryco.mobile.ui.settings.SettingsHost
 import de.pyryco.mobile.ui.settings.SettingsViewModel
-import de.pyryco.mobile.ui.share.ShareIntakeViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow

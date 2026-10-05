@@ -1,4 +1,4 @@
-package de.pyryco.mobile.ui.share
+package de.pyryco.mobile.ui.conversations.share
 
 import android.content.ClipData
 import android.content.Intent

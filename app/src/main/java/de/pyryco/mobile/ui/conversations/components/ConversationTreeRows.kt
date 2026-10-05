@@ -431,6 +431,7 @@ fun TreeConversationRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     attention: ConversationAttention = ConversationAttention.Idle,
+    enabled: Boolean = true,
 ) {
     // Clamp daemon-authored text before layout, as the host row does.
     val bounded = boundedRowText(conversationName)
@@ -444,7 +445,7 @@ fun TreeConversationRow(
             } else {
                 MaterialTheme.colorScheme.primaryContainer.copy(alpha = SELECTED_FILL_ALPHA)
             }
-        } else if (pressed) {
+        } else if (enabled && pressed) {
             if (staticDark) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primaryContainer
         } else {
             Color.Transparent
@@ -467,6 +468,7 @@ fun TreeConversationRow(
                     .heightIn(min = ConversationBandHeight)
                     .selectable(
                         selected = selected,
+                        enabled = enabled,
                         interactionSource = interactionSource,
                         indication = null,
                         role = Role.Button,

@@ -69,6 +69,9 @@ import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import de.pyryco.mobile.ui.conversations.list.PLAY_STORE_URL
 import de.pyryco.mobile.ui.conversations.list.PendingPromotion
+import de.pyryco.mobile.ui.conversations.share.ShareIntakeViewModel
+import de.pyryco.mobile.ui.conversations.share.SharePayload
+import de.pyryco.mobile.ui.conversations.share.SharePickerHeader
 import de.pyryco.mobile.ui.conversations.thread.LinkedMarkdownReaderDestination
 import de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDestination
 import de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNotice
@@ -96,9 +99,6 @@ import de.pyryco.mobile.ui.settings.ArchivedDiscussionsScreen
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
 import de.pyryco.mobile.ui.settings.SettingsScreen
 import de.pyryco.mobile.ui.settings.SettingsViewModel
-import de.pyryco.mobile.ui.share.ShareIntakeViewModel
-import de.pyryco.mobile.ui.share.SharePayload
-import de.pyryco.mobile.ui.share.SharePickerHeader
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -432,6 +432,7 @@ internal fun PyryNavHost(
             ChannelListScreen(
                 hostState = hostState,
                 shareHeader = shared?.let { batch -> { SharePickerHeader(batch, onCancelShare) } },
+                conversationSelectionEnabled = shared?.capturing != true,
                 onEvent = { event ->
                     when (event) {
                         // The row carries its own host: the tree draws rows from every host, so the

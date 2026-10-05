@@ -1,13 +1,17 @@
-package de.pyryco.mobile.ui.share
+package de.pyryco.mobile.ui.conversations.share
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.net.Uri
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
@@ -16,6 +20,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
@@ -43,6 +48,8 @@ import de.pyryco.mobile.ui.conversations.thread.OwnedPasteCopy
 import de.pyryco.mobile.ui.conversations.thread.PasteCopyCapture
 import de.pyryco.mobile.ui.conversations.thread.PickedAttachment
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -65,7 +72,8 @@ class SharePickerTest {
         val state = mutableStateOf(HostChannelListState(hosts = entries))
         val picked = mutableListOf<HostConversationTarget>()
         var cancelled = false
-        val preview = SharedContent(1, "caption", listOf(file("one.png", "image/png"), file("two.pdf", "application/pdf")), false)
+        val preview =
+            mutableStateOf(SharedContent(1, "caption", listOf(file("one.png", "image/png"), file("two.pdf", "application/pdf")), true))
         compose.setContent {
             PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
                 ChannelListScreen(state.value, { event ->
@@ -87,7 +95,11 @@ class SharePickerTest {
                                 )
                         else -> Unit
                     }
-                }, shareHeader = { SharePickerHeader(preview) { cancelled = true } })
+                }, shareHeader = {
+                    SharePickerHeader(
+                        preview.value,
+                    ) { cancelled = true }
+                }, conversationSelectionEnabled = !preview.value.capturing)
             }
         }
         compose.onNodeWithText("Share to…").assertIsDisplayed()
@@ -111,6 +123,11 @@ class SharePickerTest {
         compose.onNodeWithText("b").performClick()
         assertEquals(emptyList<HostConversationTarget>(), picked)
         compose.onNodeWithText("b").performClick()
+        compose.onNodeWithText("chat-a").assertIsNotEnabled().performTouchInput { click() }
+        compose.onNodeWithText("chat-b").assertIsNotEnabled().performTouchInput { click() }
+        assertEquals(emptyList<HostConversationTarget>(), picked)
+        compose.runOnIdle { preview.value = SharedContent(1, "caption", preview.value.files, false) }
+        compose.onNodeWithText("chat-b").assertIsEnabled()
         compose.onNodeWithText("chat-b").performClick()
         assertEquals(listOf(HostConversationTarget("b", "same")), picked)
         compose.onNodeWithContentDescription("Back").performClick()
@@ -228,11 +245,12 @@ class SharePickerTest {
         }
     }
 
-    @Test fun productionNavigationTransfersIntoTheChosenThreadOnlyOnce() {
+    @Test fun productionNavigationDisablesSelectionUntilCaptureThenTransfersIntoTheChosenThreadOnlyOnce() {
         val drafts = GlobalContext.get().get<ComposerDraftStore>()
         val target = HostConversationTarget("demo", "seed-channel-personal")
         drafts.setDraft(target.serverId, target.conversationId, "existing draft")
-        val intake = ShareIntakeViewModel(drafts, { _, _ -> null })
+        val capture = CompletableDeferred<PickedAttachment>()
+        val intake = ShareIntakeViewModel(drafts, { _, _ -> capture.await() }, Dispatchers.Main.immediate)
         lateinit var nav: NavHostController
         compose.setContent {
             nav = rememberNavController()
@@ -240,15 +258,34 @@ class SharePickerTest {
                 PyryNavHost(Routes.CHANNEL_LIST, navController = nav, shareIntake = intake)
             }
         }
-        compose.runOnIdle { intake.accept(SharePayload("shared text", emptyList())) }
+        compose.runOnIdle { intake.accept(SharePayload("shared text", listOf(Uri.parse("content://foreign/document")))) }
         compose.onNodeWithText("Share to…").assertIsDisplayed()
         compose.waitUntil(5_000) { compose.onAllNodes(hasText("Personal")).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("share-capturing").assertIsDisplayed()
+        compose.onNodeWithText("Personal").assertIsNotEnabled().performTouchInput { click() }
+        compose.onNodeWithText("Channels").assertIsEnabled().performClick()
+        compose.onAllNodes(hasText("Personal")).assertCountEquals(0)
+        compose.onNodeWithText("Channels").performClick()
+        compose.onNodeWithText("Personal").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Back").assertIsEnabled()
+        compose.runOnIdle {
+            assertEquals(Routes.CHANNEL_LIST, nav.currentDestination?.route)
+            assertEquals("existing draft", drafts.draftFor(target.serverId, target.conversationId))
+            assertTrue(drafts.attachmentsFor(target.serverId, target.conversationId).isEmpty())
+            assertEquals(false, intake.select(target))
+            capture.complete(file("document.pdf", "application/pdf"))
+        }
+        compose.onNodeWithTag("share-ready").assertIsDisplayed()
+        compose.onNodeWithText("Personal").assertIsEnabled()
         compose.onNodeWithText("Personal").performClick()
         compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.CONVERSATION_THREAD }
         compose.runOnIdle {
             assertEquals(target, Routes.target(nav.currentBackStackEntry?.arguments))
             assertEquals("existing draft\nshared text", drafts.draftFor(target.serverId, target.conversationId))
             assertEquals("", drafts.draftFor("another-host", target.conversationId))
+            assertEquals(listOf("document.pdf"), drafts.attachmentsFor(target.serverId, target.conversationId).map { it.displayName })
+            assertTrue(drafts.attachmentsFor("another-host", target.conversationId).isEmpty())
+            assertEquals(false, intake.select(target))
         }
         compose.onNode(hasSetTextAction()).assertTextContains("existing draft\nshared text")
         compose.runOnIdle { nav.popBackStack() }
