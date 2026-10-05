@@ -86,8 +86,10 @@ class ThreadChromeTest {
 
     @Test fun chrome_background_taps_do_not_open_message_details() {
         screen()
+        // Bounds, scrolls and taps are in px; the offsets below are dp, so they land alike at any density.
+        val px = rule.density.density
         rule.onNode(hasScrollToIndexAction()).performScrollToIndex(5)
-        rule.onNode(hasScrollToIndexAction()).performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 48f) }
+        rule.onNode(hasScrollToIndexAction()).performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 48f * px) }
         rule.waitForIdle()
         val band = rule.onNodeWithTag("thread-composer").fetchSemanticsNode().boundsInRoot
         val header = rule.onNodeWithTag("thread-top-bar").fetchSemanticsNode().boundsInRoot
@@ -98,11 +100,11 @@ class ThreadChromeTest {
                     useUnmergedTree = true,
                 ).fetchSemanticsNodes()
                 .map { it.boundsInRoot }
-        val touch = Offset(40f, band.top + 8f)
+        val touch = Offset(40f * px, band.top + 8f * px)
         assertTrue("a row must actually underlap the composer", bubbleBounds.any { it.contains(touch) })
         rule.onNodeWithTag("thread-message-region").performTouchInput {
             click(touch)
-            click(Offset(40f, header.bottom - 2f))
+            click(Offset(40f * px, header.bottom - 2f * px))
         }
         rule.onAllNodesWithContentDescription("Copy this message", useUnmergedTree = true).assertCountEquals(0)
     }
