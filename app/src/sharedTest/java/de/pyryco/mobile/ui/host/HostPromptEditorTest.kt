@@ -9,6 +9,8 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -177,7 +179,11 @@ class HostPromptEditorTest {
     }
 
     @Test fun filledPreviewIsOneLineAndEllipsized() {
-        show(loaded("Beginning " + "long text ".repeat(100)))
+        val text = "Beginning " + "long text ".repeat(100)
+        show(loaded(text))
+        rule.waitUntil(1_000) {
+            rule.onAllNodes(hasTestTag(HOST_PROMPT_PREVIEW_TAG) and hasText(text), useUnmergedTree = true).fetchSemanticsNodes().size == 1
+        }
         val preview = rule.onNodeWithTag(HOST_PROMPT_PREVIEW_TAG, useUnmergedTree = true)
         preview.assertIsDisplayed()
         val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()

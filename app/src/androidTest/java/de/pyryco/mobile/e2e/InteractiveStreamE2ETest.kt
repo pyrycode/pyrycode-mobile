@@ -2134,6 +2134,7 @@ class InteractiveStreamE2ETest {
                 composeTestRule
                     .onAllNodes(
                         hasTestTag(de.pyryco.mobile.ui.host.HOST_PROMPT_PREVIEW_TAG) and hasText(custom),
+                        useUnmergedTree = true,
                     ).fetchSemanticsNodes()
                     .size ==
                     1
