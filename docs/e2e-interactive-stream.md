@@ -280,6 +280,19 @@ delimiter positioned between the two cross-session messages, driven through the 
 
 ## What rung 3 is made of
 
+**Finished-reply partial Copy (#1674).**
+`InteractiveStreamE2ETest#interactiveTurn_finishedReply_systemCopyCopiesSelectedWord`
+requests `amber cobalt jade` in a fresh discussion, waits for the exact assistant row to be
+finalized, long-presses the independently known middle word `cobalt`, and invokes Android's
+actual system Copy action. The platform clipboard must replace unrelated baseline text with
+exactly that word, shorter than the reply. Its rung-4 twin is
+`DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_systemCopyCopiesSelectedWord`,
+using the seeded channel and `selection-copy.jsonl` through the real scripted harness.
+Both run on a device without substituted menu/clipboard providers or production test tags.
+The live method is in the curated full suite; run the focused deterministic scenario with
+`python3 scripts/android-test-gate.py scripted selection-copy`. `scripted-all` includes it too.
+
+
 The rung-3 coverage also includes
 `InteractiveStreamE2ETest.interactiveTurn_otherConversationAttentionPills_waitingAndFinished`
 (#1735). With the phone reading A, the existing answer-host peer starts a permission-held real Claude
@@ -2314,6 +2327,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 
 | `SCENARIO` | asserts | raw fragment(s) | fragments |
 | --- | --- | --- | --- |
+| `selection-copy` (#1674) | finished assistant prose copies only the long-pressed word through Android’s system menu | `selection-copy.jsonl` | one |
 | `ping` (default) | a single-line reply renders | `ping.jsonl` | one |
 | `stream` | a multi-`assistant_delta` reply assembles into **one** message | `stream.jsonl` | one |
 | `spinner` | the thinking spinner shows mid-turn, then clears at turn end | `spinner-open.jsonl` + `spinner-end.jsonl` | **two** |
@@ -2553,6 +2567,33 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+**Finished-reply system Copy (#1674, 2026-10-05).** The inspected dispatcher full-live
+report `2026-10-05T11-09-42-731Z_real-claude-gate_#1674.log` in the agents repository's
+`logs/` contains a passing
+`InteractiveStreamE2ETest#interactiveTurn_finishedReply_systemCopyCopiesSelectedWord` testcase.
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` ran on
+`feature/1674` at `296bce380a`, merged with `origin/main` at `86ed06dab0`:
+**57 executed, 56 passed, 1 failed, 0 errors, 0 skipped**, exit 1.
+The unrelated `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain` passed
+its same-tree rerun: **1 executed, 1 passed, 0 failed, 0 errors, 0 skipped**, in the matching
+`real-claude-gate-rerun_#1674.log`. The dispatcher accepted the gate after rerun;
+this is a named scenario pass in the full suite, not a separate focused Copy live run.
+See [dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1674#issuecomment-5993831194).
+
+The fresh configured
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all` execution reported **15 executed, 15 passed, 0 failed, 0 errors, 0 skipped**.
+Its `selection-copy` scenario XML reports **1 executed, 1 passed, 0 failed, 0 errors,
+0 skipped** and names the passing
+`DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_systemCopyCopiesSelectedWord`.
+The inspected report was `build/dispatcher-tests/scripted-all-8ngt4fjc/selection-copy-0-TEST-installed.xml`;
+the verifier retained it at `/tmp/verifier-1807/d3f481f4/selection-copy.xml`, alongside
+`scripted-all.xml`, `live-full.xml` and `live-rerun.xml`. This is scenario-specific evidence
+from `scripted-all`, not a separate focused invocation. It supersedes the unavailable original
+`build/dispatcher-tests/scripted-dvdbcu6a/dispatcher.xml` and closes the deterministic evidence gap.
+The focused command remains `python3 scripts/android-test-gate.py scripted selection-copy`.
+Documentation inspected retained evidence and ran no device tests.
+
 
 **Reset-ended context refresh (#1761).** The dispatcher’s 2026-10-05 full live suite ran
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against branch
@@ -3704,6 +3745,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Finished-reply system Copy (#1674):** the live method
+  `InteractiveStreamE2ETest#interactiveTurn_finishedReply_systemCopyCopiesSelectedWord` and
+  `DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_systemCopyCopiesSelectedWord`
+  share the platform selection assertion. Both named methods passed: the deterministic twin
+  within `scripted-all`, and the live method within the dispatcher full suite. Counted evidence
+  and retained XML paths are recorded in [Verification status](#verification-status); no Copy
+  coverage follow-up remains.
+
 
 - **Reset-ended context refresh (#1761):**
   `InteractiveStreamE2ETest.interactiveTurn_newSession_rendersSessionBoundaryDelimiter` now requires

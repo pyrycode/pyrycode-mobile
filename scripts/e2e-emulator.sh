@@ -729,6 +729,10 @@ if [ -n "${DETERMINISTIC}" ]; then
   # is offline when drop B must fire). Only the replay-order arm overrides it.
   DROP_B_FENCE="enqueue"
   case "${SCENARIO}" in
+    selection-copy)
+      TEST_METHOD="interactiveTurn_seededChannel_systemCopyCopiesSelectedWord"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/selection-copy.jsonl}"
+      ;;
     ping)
       TEST_METHOD="interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/ping.jsonl}"
@@ -805,7 +809,7 @@ if [ -n "${DETERMINISTIC}" ]; then
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/context-overflow.jsonl}"
       ;;
     *)
-      die "unknown SCENARIO='${SCENARIO}' (expected: background-agent | ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order | tool-then-text | refusal | mcp-failed | context-overflow)"
+      die "unknown SCENARIO='${SCENARIO}' (expected: selection-copy | background-agent | ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order | tool-then-text | refusal | mcp-failed | context-overflow)"
       ;;
   esac
   log "deterministic scenario: ${SCENARIO} → ${TEST_METHOD}"
@@ -1480,6 +1484,8 @@ elif [ -n "${LIVE}" ]; then
   # ask (#1572). Two turns (A's ping and A's permission-held command).
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_sendQueuedNow_reachesRunningTurn"
+  # #1674: finished reply partial selection through Android's system Copy menu. One Claude turn.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_finishedReply_systemCopyCopiesSelectedWord"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi
