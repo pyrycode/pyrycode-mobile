@@ -255,9 +255,9 @@ structural limit of dialog-window sidecars.
 
 `ThreadDesignCaptureTest` (#1432) audited the thread, composer and thread
 status states through this harness. It runs in the UI gate on ATD, so a change
-to a thread panel, menu or status band can break it. Capture keyboard states
-last: a focused composer's text-selection handle is its own popup root, which
-throws off `openMenu`'s count of roots in any later step. After an image
+to a thread panel, menu or status band can break it. Header-menu captures use
+`DesignCapture.openHeaderMenu` and await the always-present Channel info row (#1666). A same-window overlay adds no popup root; a focused composer’s text-selection handle
+can add one independently, so root counts cannot establish that the header menu opened. After an image
 attachment reaches its ready state, also wait for the decode's indeterminate
 progress indicator to clear, or the bubble is captured with a spinner instead
 of the photo. Re-export every frame with `get_screenshot` at capture time and

@@ -1,6 +1,6 @@
 # Options overlay
 
-Compact popup of option rows that opens above the control that anchors it by default, or below a header control (#1665). Landed in [#808](../codebase/808.md) as the selection surface for the [thread composer footer](thread-composer-footer.md)'s model and effort buttons, built to be reused by future footer controls. **[#650](https://github.com/pyrycode/pyrycode-mobile/issues/650) was the first of those** — the permission button's six-mode menu renders through this same component, unchanged. **[#884](https://github.com/pyrycode/pyrycode-mobile/issues/884) is the second** — the composer's Actions menu, and the first caller whose rows are not a mutually exclusive choice, so the component grew a disabled-row state and a button row mode; see [§ Row modes](#row-modes-radio-vs-button-884). **[#885](https://github.com/pyrycode/pyrycode-mobile/issues/885) is the third** — the [slash-command type-ahead](slash-command-type-ahead.md), and the first caller whose rows carry a second line of text, so the component grew an optional `detail`; see [§ Optional detail line](#optional-detail-line-885).
+Compact same-window layer of option rows that opens above the control that anchors it by default, or below a header control (#1665). Landed in [#808](../codebase/808.md) as the selection surface for the [thread composer footer](thread-composer-footer.md)'s model and effort buttons, built to be reused by future footer controls. **[#650](https://github.com/pyrycode/pyrycode-mobile/issues/650) was the first of those** — the permission button's six-mode menu renders through this same component, unchanged. **[#884](https://github.com/pyrycode/pyrycode-mobile/issues/884) is the second** — the composer's Actions menu, and the first caller whose rows are not a mutually exclusive choice, so the component grew a disabled-row state and a button row mode; see [§ Row modes](#row-modes-radio-vs-button-884). **[#885](https://github.com/pyrycode/pyrycode-mobile/issues/885) is the third** — the [slash-command type-ahead](slash-command-type-ahead.md), and the first caller whose rows carry a second line of text, so the component grew an optional `detail`; see [§ Optional detail line](#optional-detail-line-885).
 
 Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/OptionsOverlay.kt`). Figma reference: [`533:1958`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=533-1958), the `Options overlay` frame nested under the thread frame's `Input area` (`533:1957`).
 
@@ -24,12 +24,14 @@ fun OptionsOverlay(
     onSelect: (String) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    columnModifier: Modifier = Modifier,
     actions: Boolean = false,
     placement: OptionsOverlayPlacement = OptionsOverlayPlacement.Above,
 )
 ```
 
-`OptionsOverlayOption.value` is handed back to `onSelect` verbatim and never rendered; `label` is the only text drawn on every pre-#885 caller. `enabled` (#884) defaults to `true`, so every pre-#884 caller is unaffected; a `false` row is greyed out and inert to both touch and TalkBack — see [§ Row modes](#row-modes-radio-vs-button-884). `detail` (#885) defaults to `null`, so every pre-#885 caller is unaffected; a non-null `detail` renders a bounded second line below the label — see [§ Optional detail line](#optional-detail-line-885). `anchor` is a `Rect` in the **caller's own layer coordinates**, not window coordinates — the caller (`ThreadScreen` or `ChannelListScreen`) converts a control's live window bounds by subtracting the layer's own window origin before passing it in (see [thread composer footer § Wiring in `ThreadScreen`](thread-composer-footer.md#wiring-in-threadscreen)). `notListed` adds a trailing, non-interactive caption row when greater than zero, so a cut list never reads as complete; it is a plain count the caller computes, never derived here from `options.size`. `actions` (#884), also defaulted `false`, switches every row from the radio behaviour below to a button — see [§ Row modes](#row-modes-radio-vs-button-884).
+`OptionsOverlayOption.value` is handed back to `onSelect` verbatim and never rendered; `label` is the only text drawn on every pre-#885 caller. `enabled` (#884) defaults to `true`, so every pre-#884 caller is unaffected; a `false` row is greyed out and inert to both touch and TalkBack — see [§ Row modes](#row-modes-radio-vs-button-884). `detail` (#885) defaults to `null`, so every pre-#885 caller is unaffected; a non-null `detail` renders a bounded second line below the label — see [§ Optional detail line](#optional-detail-line-885). `columnModifier` defaults to `Modifier` and targets the actual options column; the reader uses it for
+`markdown-reader-menu`, rather than tagging the full-screen scrim. `anchor` is a `Rect` in the **caller's own layer coordinates**, not window coordinates — the caller (`ThreadScreen`, `ChannelListScreen` or `MarkdownReaderScreen`) converts a control's live window bounds by subtracting the layer's own window origin before passing it in (see [thread composer footer § Wiring in `ThreadScreen`](thread-composer-footer.md#wiring-in-threadscreen)). `notListed` adds a trailing, non-interactive caption row when greater than zero, so a cut list never reads as complete; it is a plain count the caller computes, never derived here from `options.size`. `actions` (#884), also defaulted `false`, switches every row from the radio behaviour below to a button — see [§ Row modes](#row-modes-radio-vs-button-884).
 
 ## How it works
 
@@ -48,19 +50,26 @@ Box(
 
 `detectTapGestures` (not `clickable`) avoids drawing a ripple across the whole screen on every dismiss tap. The `semantics` block adds an explicit `onClick` action and a content description (`cd_options_overlay_dismiss`) so a TalkBack user has a way to dismiss the overlay that doesn't depend on finding empty space to tap. `onDismiss` is captured through `rememberUpdatedState` so the `pointerInput(Unit)` block (keyed once, for gesture-detector stability) always calls the current lambda, not the one captured at first composition. `BackHandler(onBack = { currentOnDismiss() })` gives the system back gesture/button the same effect.
 
+The thread header’s Actions caller adds a mounted-only platform `PRIORITY_OVERLAY` Back callback
+so Back dismisses it before the IME, with application-level opt-in and disposal cleanup. Ordinary
+Compose BackHandler alone did not preserve the visible keyboard in that case. This header behavior
+belongs to `ThreadOverflowMenu`, not the shared footer or reader hosts.
+
 ### Placement: a custom `Layout`, not `Popup`'s `PopupPositionProvider`
 
 `AnchoredOptions` is a private single-child `Layout`. `placement` defaults to
 `OptionsOverlayPlacement.Above`, preserving the composer and slash-command callers' existing geometry,
 height limits and dismissal. Above measures only the room from the layer's 8dp top margin to
 `anchor.top - 4dp`, placing the column's bottom there. `Below`, used by the
-[channel-list header menu](channel-list-screen-how-it-works.md#the-lists-own-top-bar-737), places the top at
+[channel-list header menu](channel-list-screen-how-it-works.md#the-lists-own-top-bar-737) and
+[thread header menu](thread-overflow-menu.md) (#1666) and
+[reader menu](markdown-reader-menu.md) (#1667), places the top at
 `anchor.bottom + 4dp` and measures only the room from there to the layer's bottom minus 8dp.
 Available height is bounded at zero; a longer column scrolls within that space.
 Both placements align the column's left edge at `anchor.left - 12dp` (the row text inset), clamped to
 8dp from either horizontal edge. Below also clamps its top to the layer's bounds and top margin.
 
-Because `anchor` is read from the anchoring control's live `boundsInWindow()` every frame (see the footer doc), the overlay re-places itself as the IME lifts or the anchor otherwise moves — there is no separate keyboard-visibility branch in this file.
+Because `anchor` is read from the anchoring control's live `boundsInWindow()` every frame (see the footer doc), the overlay re-places itself as the IME lifts or the anchor otherwise moves — there is no separate keyboard-visibility branch in this file. The thread header host supplies `imePadding` so Below capacity excludes the visible IME; full-window constraints can leave lower rows behind the keyboard even when semantic visibility passes.
 
 ### The column: `IntrinsicSize.Max` before `verticalScroll`
 
@@ -113,6 +122,11 @@ No internal state beyond the `rememberScrollState()` the column's own scroll pos
 
 ## Testing
 
+Header coverage uses the same light/dark Actions palette and Below geometry. The real-IME compact
+regression checks physical last-row bounds and pointer activation, since semantic visibility alone
+cannot prove keyboard clearance. Header captures wait for Channel info rather than a popup-root count;
+see [thread menu tests](thread-overflow-menu-wiring-tests-and-edge-cases.md#tests).
+
 `OptionsOverlayColoursTest` also covers Below placement following a live anchor, both horizontal edge
 clamps, short-space scrolling and action-row palettes in light and static dark, alongside the retained
 default Above height and placement checks (#1665).
@@ -120,6 +134,16 @@ default Above height and placement checks (#1665).
 `OptionsOverlayColoursTest` draws the static-dark menu and samples selected and unselected row pixels, catching a role mapping that can look approximately right in a preview. `ThreadComposerFooterTest` (`app/src/sharedTest/.../thread/ThreadComposerFooterTest.kt`) hosts the overlay on `ThreadScreen`, where its anchor comes from a real footer button's live bounds. See [Thread composer footer — testing](thread-composer-footer-testing.md#testing) for the covered cases (row visibility and width, selection, outside-tap dismissal, the not-listed caption, the overlay's position relative to its anchor, and, since [#884](https://github.com/pyrycode/pyrycode-mobile/issues/884), the Actions menu's button-mode rows and its disabled/greyed row). The `detail` line (#885) is covered by `SlashCommandTypeAheadScreenTest.kt`, also hosted on `ThreadScreen` — see [Slash-command type-ahead § Testing](slash-command-type-ahead.md#testing), including the bounded-height case for a 1,500-character description.
 
 `OptionsOverlayCaptureTest` provides managed-device captures of Actions and slash menus at 412 × 892, plus slash suggestions at 280 × 400 with 1.6× text. [Visual evidence](../../../app/src/androidTest/assets/options-1257/comparison-412x892.png) pairs the 412 × 892 emulator views with the available Figma viewport and idle/selected option renders; [capture context](../../../app/src/androidTest/assets/options-1257/capture-context.txt) records the limits. The direct open-overlay render for `533:1958` returned 1 × 1 and the thread viewport has the menu closed, so a full open-menu pixel match remains unverified. The inspected nodes also have no disabled-option or slash-detail state; their existing semantic appearance and bounded detail are not claimed as exact Figma matches. On this managed device, `uiAutomation.takeScreenshot()` returned black frames; drawing the root view produced usable app captures.
+
+## Reader coverage (#1667)
+
+`MarkdownReaderDesignTest` and `MarkdownReaderScreenTest` cover Below geometry with a nonzero
+host origin, live anchor movement/recomposition, light/dark Actions tokens and typography,
+six-row order and current-document routing, system Back and physical outside dismissal with
+positive underlying Back/link controls. Compact enlarged-text coverage scrolls to the last row,
+checks its physical bounds and activates it: semantic visibility alone does not prove reachability.
+Same-window menu captures await column/row semantics, rather than popup-root counts.
+See [reader testing](markdown-reader-screen.md#testing) for retained captures and live evidence.
 
 ## Previews
 
@@ -129,8 +153,9 @@ Two `@Preview`s, `OptionsOverlayDarkPreview` / `OptionsOverlayLightPreview`, bot
 
 - [Channel-list screen](channel-list-screen.md) — client-owned Settings/Archive action rows, the first Below caller (#1665).
 - [Thread composer footer](thread-composer-footer.md) — an Above caller; `footerMenu` builds the `List<OptionsOverlayOption>` this component renders (for Model, Effort, [#650](https://github.com/pyrycode/pyrycode-mobile/issues/650)'s Permission, and [#884](https://github.com/pyrycode/pyrycode-mobile/issues/884)'s Actions), and `ThreadScreen` owns the anchor-tracking and layer-origin state this component depends on. See [§ Actions menu](thread-composer-footer.md#actions-menu-884) for the fourth caller's own table and absence proof.
-- [Slash-command type-ahead](slash-command-type-ahead.md) — the fifth caller ([#885](https://github.com/pyrycode/pyrycode-mobile/issues/885)), and the first to use `detail`; anchors on [Thread input bar](thread-input-bar.md)'s live bounds via `ThreadScreen`'s `inputAnchor`, gated closed whenever a footer menu is open so the two overlays never stack.
+- [Slash-command type-ahead](slash-command-type-ahead.md) — the fifth caller ([#885](https://github.com/pyrycode/pyrycode-mobile/issues/885)), and the first to use `detail`; anchors on [Thread input bar](thread-input-bar.md)'s live bounds via `ThreadScreen`'s `inputAnchor`, gated closed whenever a header or footer menu is open so the two overlays never stack.
 - [Status sheet](status-sheet.md) — the retained, non-overlay selection surface for the model/effort choices, reachable from the footer's trailing icon. The two surfaces read the same `ThreadRunConfig` and so cannot disagree. Its former YOLO toggle was retired outright by [#650](https://github.com/pyrycode/pyrycode-mobile/issues/650), not moved to this component — the permission menu is a new caller, not a relocation.
-- [Thread overflow menu](thread-overflow-menu.md) — hosts the Reset session item the Actions menu's own Reset row dispatches through; this component never renders that dispatch, since Reset session carries no command.
+- [Markdown reader menu](markdown-reader-menu.md) — Below Actions with six client-owned resource labels and the `markdown-reader-menu` column tag (#1667).
+- [Thread overflow menu](thread-overflow-menu.md) — a Below Actions caller since #1666, with client-owned rows and no subset caption. It preserves the same Reset session event used by the footer Reset action.
 - Specs: `docs/specs/architecture/808-composer-footer-model-effort-buttons.md`, `docs/specs/architecture/650-composer-permission-mode.md`, `docs/specs/architecture/884-composer-actions-control.md`.
 - Figma: [`533:1958`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=533-1958).

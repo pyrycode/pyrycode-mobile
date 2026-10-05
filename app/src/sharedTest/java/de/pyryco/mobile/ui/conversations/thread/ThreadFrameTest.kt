@@ -239,7 +239,10 @@ class ThreadFrameTest {
         composeTestRule.onNodeWithText("Test channel").performClick()
         assertEquals(1, titleTaps)
 
-        composeTestRule.onNodeWithContentDescription(string(R.string.cd_more_actions)).performClick()
+        val overflow = composeTestRule.onNodeWithContentDescription(string(R.string.cd_more_actions))
+        overflow.performClick()
+        val first = composeTestRule.onNodeWithText("Reset session").getUnclippedBoundsInRoot()
+        assertEquals(overflow.getUnclippedBoundsInRoot().bottom.value + 6f, first.top.value, 1f)
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_channel_info)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_change_workspace)).assertDoesNotExist()
     }

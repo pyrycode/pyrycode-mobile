@@ -450,28 +450,26 @@ line and equal the export's.
 
 - **Routed:** #1512
 
-### Conversation Thread / Overflow menu — `675:5883`
+### Conversation Thread / Overflow menu — `533:1958` (#1666)
 
-- **Owning ticket:** #1199
-- **Capture:** `overflow-menu.png` (412x892, 1.0)
-- **Side-by-side:** `overflow-menu-side-by-side.png`
-- **Overlay:** `overflow-menu-overlay.png`
-- **Verdict:** match
-- Open over the delimiter state.
+Juhana’s 2026-10-03 decision on #1666 supersedes the old `675:5883` Material menu audit.
+The header now reuses the composer’s Options overlay in Actions mode: bodySmall text, 12/6dp
+row insets, 2dp column inset, 6dp corners, and no selected indicator or subset caption.
+The #1631 approved Background tasks addition stays immediately after Channel info.
 
-| Aspect | Verdict |
-|---|---|
-| Geometry | match: menu anchored under the overflow button at the right gutter, four 48 px rows |
-| Padding | match: 12 px row inset |
-| Spacing | match |
-| Typography | match: Reset session, Rename, Archive, Channel info |
-| Colour | match: menu surface and labels |
-| Borders | match (none) |
-| Radii | match |
-| Icon paths | match (none) |
-| Component state | match: no workspace action (asserted) |
-
-- **Routed:** none. Delimiter rules as above (#1512).
+- **Current captures:** `overflow-menu.png` (412×892, 1.0) and `compact-overflow-menu.png`
+  (320×700, 1.5), replaced for #1666. Sidecars identify MainActivity, API 35, static dark,
+  hardware rendering, real 24px bars and no IME. `1666-capture-results.xml` records both capture
+  methods passed: 2 executed, 0 failed, 0 skipped.
+- **Appearance reference:** existing composer Actions component, Options overlay `533:1958`.
+  The direct Figma screenshot is 1×1, so no exact open-menu pixel match is claimed. Light theme
+  is covered by shared palette tests, without an independently inspected light header capture.
+- **Placement:** 4dp below live button bounds, shared horizontal alignment and 8dp edge clamps;
+  compact available height scrolls. Real keyboard reachability is separate device evidence in
+  `1666-rework-results.xml`, not shown by these keyboard-closed captures.
+- **Historical comparisons:** `overflow-menu-side-by-side.png` and `overflow-menu-overlay.png`
+  retain the #1432/#1500 comparison of the former four-row, 48px Material menu with `675:5883`.
+  They were not regenerated for #1666 and do not compare the current replacement PNGs.
 
 ### Conversation Thread / Actions menu — `675:5938`
 
@@ -723,9 +721,9 @@ The frames draw no status bar; the reference is light bar icons on the dark canv
 were taken on `main` at `3cebb1ad`, before #1510's fix merged at `8fa9df64`, on an emulator in light mode. In
 `thread.png`, `tool-row.png`, `notification-text.png`, `refusal-switch-back.png`, `session-notice.png`,
 `connecting.png`, `reconnecting.png`, `offline.png`, `task-count-pill.png`, `session-delimiter.png`,
-`overflow-menu.png`, `actions-menu.png`, `keyboard.png` and `markdown-reader.png` the clock and icons are dark
+`actions-menu.png`, `keyboard.png` and `markdown-reader.png` the clock and icons are dark
 (no pixel in the top 24 px brighter than 19 of 255). That is the #1510 defect, not counted in their Colour verdicts.
-The sheet captures (`run-configuration.png`, `tasks-*.png`) draw light icons over the sheet's scrim. #1510 is closed
+The replacement #1666 overflow captures have real light system-bar icons, as recorded in their sidecars. The sheet captures (`run-configuration.png`, `tasks-*.png`) draw light icons over the sheet’s scrim. #1510 is closed
 and merged; the compact captures, retaken after it, all draw light status-bar icons.
 
 ## Removed controls
@@ -738,7 +736,7 @@ changed to ~/Workspace/pyrycode-mobile" session delimiter, which is plain text, 
 
 ## Compact, keyboard and menus
 
-Compact captures are 320x700 at font scale 1.5, taken at `main` `85466a15` with real 24 px status and navigation
+Except the #1666 replacement overflow capture above, compact captures are 320x700 at font scale 1.5, taken at `main` `85466a15` with real 24 px status and navigation
 bars. Only `676:3981` has a frame at that size; the rest are checked for clipping, overlap and unreachable controls.
 Thread-side production changes between `3cebb1ad` and `85466a15` are #1509 (short-stream top anchoring, which does
 not apply to the seeded thread's full list) and #1510 (status-bar icons).
@@ -750,7 +748,7 @@ not apply to the seeded thread's full list) and #1510 (status-bar icons).
 | Offline pill, compact | `compact-offline.png` | "Offline · Retry" fits on one line at the right; no overlap with the header |
 | Offline with pairing error, compact | `compact-offline-overlays.png` | "Pairing error - Re-pair" (waited for) replaces the Offline pill in `ThreadTopOverlay`; it overlays the top bubble as designed. No clipping |
 | Usage pill, refusal offer and strip, compact | `compact-notices.png` | The usage-limit pill wraps to two lines without truncating, "Nearly at usage limit - 7-day" over "window", and keeps its dismiss X reachable (#1519). The refusal row and "Switch back to" button wrap and stay inside the gutter; the four tiles and their remove badges fit above the input. In the #1519 retake all three image tiles show their thumbnails |
-| Overflow menu, compact | `compact-overflow-menu.png` | All four rows visible and reachable; no workspace action |
+| Overflow menu, compact | `compact-overflow-menu.png` | #1666 replacement: shared Actions rows below the live header button, including Background tasks after Channel info; bounded scrolling, no workspace action. Keyboard is closed |
 | Actions menu, compact | `compact-actions-menu.png` | All four rows visible above the footer; it covers the count pill while open, which is the menu's overlay, not a layout overlap |
 | Task panel, compact | `compact-tasks.png` | Title wraps to two lines beside the close X; cards scroll and the Close button stays reachable (#1496 removes it; the test closes through the header X) |
 | Run configuration, compact | `compact-run-configuration.png` | Model and effort rows fit, and Done is pinned, displayed and reachable (asserted). The capture ends at "Running model"; the Permission section lies below it in the sheet's scrolling column. The test asserts only that the "Auto approval" row is composed, not that it or "Bypass approvals" scrolls into view, so reaching the Permission rows at this size is not shown. Captured before #1497, so it still shows two-line model rows and lowercase effort labels |

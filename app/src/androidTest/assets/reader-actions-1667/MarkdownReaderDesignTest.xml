@@ -1,0 +1,22 @@
+<testsuite name="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" tests="17" skipped="0" failures="0" errors="0" timestamp="2026-10-05T03:25:33.547Z" time="3.545">
+  <properties />
+  <testcase name="longNameAndBodyLeaveControlsAndMenuReachable" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.847" />
+  <testcase name="headerBlocksUnderlyingCodePanelWithPositiveClearAreaControl" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.302" />
+  <testcase name="compactEnlargedTextScrollsToLastActionWithinTheSpaceBelow" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.156" />
+  <testcase name="largeTextReservesMeasuredBarPlus28dp" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.18" />
+  <testcase name="headerPointerAreasRouteOnlyTheirOwnActions" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.131" />
+  <testcase name="headerBlocksUnderlyingLinkWithPositiveClearAreaControl" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.278" />
+  <testcase name="readerCodeAndQuoteUseReferenceRoles" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.123" />
+  <testcase name="plainReaderCodeScrollsHorizontallyInsideItsPanel" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.136" />
+  <testcase name="openMenuSurvivesRecompositionAndFollowsTheLiveAnchorInAnOffsetHost" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.155" />
+  <testcase name="wrappedListItemContinuesAtTheGutter" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.084" />
+  <testcase name="referencePlacesBarRuleAndBodyAtFigmaCoordinates" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.077" />
+  <testcase name="readerMenuRowsAreActionsWithoutSelectionOrCaption" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.142" />
+  <testcase name="readerMenuOpensFourDpBelowItsButtonWithSharedEdgeClamp" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.139" />
+  <testcase name="readerActionsUseComposerDarkAppearance" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.266" />
+  <testcase name="outsideTapsDismissWithoutActivatingBackOrUnderlyingLinks" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.224" />
+  <testcase name="readerActionsUseComposerLightAppearance" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.124" />
+  <testcase name="scrollViewportStartsBehindTheFixedBar" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDesignTest" time="0.138" />
+  <system-out />
+  <system-err />
+</testsuite>

@@ -357,7 +357,7 @@ roster. The API 33 ATD captured black pixels despite passing geometry checks;
 use the full emulator for visual comparisons, as described in
 [Compose evidence](development-verification-compose-evidence.md#compose-evidence).
 
-Each task is a card: the raw `taskType` in monospace beside a
+Each task is a card: a readable type label in monospace beside a
 [`TaskStatusTag`](../../../app/src/main/java/de/pyryco/mobile/ui/conversations/thread/TaskStatusTag.kt) pill
 (the Figma "Task status tag" component; Running `primaryContainer`/`onPrimaryContainer`, Completed
 `colorScheme.success` on a 16% tint of itself — the [success slot](success-color.md#usage)'s second consumer
@@ -366,6 +366,13 @@ Each task is a card: the raw `taskType` in monospace beside a
 "local_bash"`, a shell command line), the finish summary, and, only when the task was updated mid-life, a
 "Latest update" label over a `surface` code block holding the latest patch — italic "No change reported"
 when the patch is empty, no label or block at all when `latestUpdate` is `null`.
+Type labels map exact `local_agent` to "Agent" and `local_bash` to "Command" (#1751).
+Other values lose one leading `local_`, replace underscores with spaces, and uppercase
+only the first character, preserving the remaining case: `remote_agent` becomes
+"Remote agent" and `local_custom_task` becomes "Custom task"; empty stays empty.
+This mapping happens before printable-text filtering and display bounding. Wire payloads
+and stored roster values retain the raw type, which still selects the description's
+`local_bash` monospace styling; daemon and client truncation markers stay independent.
 The local dark styling uses 13/19sp group labels, 14dp horizontal and 12dp vertical
 card padding, 8dp row gaps, 2dp progress gaps, 13sp description and progress text, and
 a 12/17sp latest-update label. The tag uses a 10dp corner, a 6dp dot and an 11/16sp

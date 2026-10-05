@@ -551,7 +551,7 @@ class RemoteConversationRepository(
             }
             TYPE_ACK, TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_DELETED,
             TYPE_SCREEN_SNAPSHOT, TYPE_SESSION_SETTINGS_UPDATED, TYPE_WORKSPACE_FOLDER_CREATED,
-            TYPE_RECENT_WORKSPACES_LIST, TYPE_HISTORY_PAGE, TYPE_SESSION_SETTINGS, TYPE_SYSTEM_PROMPT,
+            TYPE_RECENT_WORKSPACES_LIST, TYPE_HISTORY_PAGE, TYPE_SESSION_SETTINGS, TYPE_SYSTEM_PROMPT, TYPE_HOST_SYSTEM_PROMPT,
             ->
                 // Success reply to a correlated request, handed verbatim to the waiter. An `ack`
                 // (#346) carries the empty `{}` the bare-ack waiter ignores; a `conversation_created`
@@ -1421,6 +1421,12 @@ class RemoteConversationRepository(
         permissionMode: String?,
     ): Unit = sessionSettingsCommands.setSessionSettings(sessionId, model, effort, yolo, permissionMode)
 
+    /** Read/write this connection's host settings, with no conversation state mutation. */
+    override suspend fun requestHostSystemPrompt(): Result<HostSystemPromptReading> = sessionSettingsCommands.requestHostSystemPrompt()
+
+    override suspend fun setHostSystemPrompt(systemPrompt: String): Result<HostSystemPromptReading> =
+        sessionSettingsCommands.setHostSystemPrompt(systemPrompt)
+
     /** Read a conversation's stored system prompt (#823); see [SessionSettingsCommands.requestSystemPrompt]. */
     override suspend fun requestSystemPrompt(conversationId: String): SystemPromptReading =
         sessionSettingsCommands.requestSystemPrompt(conversationId)
@@ -1580,6 +1586,9 @@ class RemoteConversationRepository(
          * session's verdict against it. Carries no conversation id, and is **never an error frame**.
          */
         const val TYPE_SYSTEM_PROMPT = "system_prompt"
+
+        /** Correlated read and durable-write reply; never a conversation push. */
+        const val TYPE_HOST_SYSTEM_PROMPT = "host_system_prompt"
 
         /** Request: set or clear a conversation's system prompt (#823). Acked by [TYPE_CONVERSATION_UPDATED]. */
         const val TYPE_SET_SYSTEM_PROMPT = "set_system_prompt"
