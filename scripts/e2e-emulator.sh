@@ -1418,6 +1418,7 @@ elif [ -n "${LIVE}" ]; then
   # This list filters; it does not order. JUnit runs methods by name hash, and the two names place the
   # phone-to-peer method last and the offered-file method before the background-task one (see their KDoc).
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_sharedContentFromAndroid_arrivesAtPeerWithItsBytes"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart"
   # #1020: history replay now names a user message's files, so the peer's file after a history reload joins,
   # one turn (the peer's message). The list holds 32 methods and 34 turns.
