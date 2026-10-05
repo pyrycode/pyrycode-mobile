@@ -228,6 +228,27 @@ ANSWER_PEER_SERVER_STATIC_PUBKEY=""
 log() { printf '\033[1;34m[e2e]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[e2e] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
+# #1775 needs the shipped daemon handlers, not just #2766's durable instructions store.
+# Check the binary's revision before starting the daemon; never silently skip the live scenario.
+require_host_prompt_daemon() {
+  local required="$1"
+  [ -n "${LIVE}" ] || return 0
+  if [ -n "${LIVE_TESTS:-}" ]; then
+    case ",${LIVE_TESTS}," in
+      *"#interactiveTurn_hostSystemPrompt_editsResetsAndCancels,"*) ;;
+      *) return 0 ;;
+    esac
+  fi
+  [[ "${DAEMON_REVISION}" =~ ^[0-9a-f]{7,64}$ ]] \
+    || die "host prompt prerequisite pyrycode#2768: daemon revision unavailable; rebuild a versioned daemon containing ${required}"
+  [ -n "${PYRYCODE_SRC}" ] \
+    && git -C "${PYRYCODE_SRC}" cat-file -e "${required}^{commit}" 2>/dev/null \
+    && git -C "${PYRYCODE_SRC}" cat-file -e "${DAEMON_REVISION}^{commit}" 2>/dev/null \
+    || die "host prompt prerequisite pyrycode#2768: set PYRYCODE_SRC to a checkout holding the required and binary revisions"
+  git -C "${PYRYCODE_SRC}" merge-base --is-ancestor "${required}" "${DAEMON_REVISION}" \
+    || die "host prompt prerequisite pyrycode#2768: daemon lacks the host prompt handlers; rebuild from ${required} or a descendant"
+}
+
 # resolve_runner_from_config <config-path> (#614)
 #   Echoes exactly one line, "<runner>\t<reason>". NEVER writes. NEVER exits non-zero — on the
 #   real-HOME paths this reads a file the harness does not own, and a config we cannot read is
@@ -883,6 +904,7 @@ if command -v go >/dev/null 2>&1; then
   DAEMON_REVISION="$(go version -m "$(command -v "${PYRY_BIN}")" 2>/dev/null | sed -n 's/.*vcs.revision=//p' || true)"
 fi
 log "daemon revision: ${DAEMON_REVISION:-unavailable}; binary: ${PYRY_BIN}"
+require_host_prompt_daemon b3daa0432528188f2829b235877c60627afb8e43
 # Claude's own revision (#687), clamped to a plain charset: it is a binary's output, printed to the log.
 if [ -n "${DETERMINISTIC}" ]; then
   log "claude revision: scripted fakeclaude (no real claude on this rung)"
@@ -1321,6 +1343,7 @@ elif [ -n "${LIVE}" ]; then
   # #1085: the second host's rename and unpair from its Edit host modal joins at no turn cost (pairing,
   # rename and a phone-local unpair), so the list holds 38 methods and 39 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_hostSystemPrompt_editsResetsAndCancels"
   # #1252: registry requests complete diagnostic archives for both paired hosts; only A's contains A's
   # daemon-log marker. No Settings export or picker is involved, and it spends no Claude turn.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_diagnosticBundles_stayOnTheirOwningHosts"

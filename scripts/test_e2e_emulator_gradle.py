@@ -8,6 +8,63 @@ import unittest
 TEST_RUN_END = "|| TEST_STATUS=$?\nfi\n"
 
 
+class HostPromptDaemonPrerequisiteTest(unittest.TestCase):
+    def setUp(self):
+        self.script = (Path(__file__).resolve().parent / "e2e-emulator.sh").read_text()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = Path(self.tmp.name)
+        self.git("init", "--initial-branch=main")
+        self.git("config", "user.name", "Fixture")
+        self.git("config", "user.email", "fixture@example.invalid")
+        self.old = self.commit("before handlers")
+        self.required = self.commit("host prompt handlers")
+        self.current = self.commit("later daemon")
+
+    def git(self, *args):
+        return subprocess.check_output(["git", "-C", str(self.repo), *args], stderr=subprocess.DEVNULL, text=True).strip()
+
+    def commit(self, message):
+        self.git("commit", "--allow-empty", "-m", message)
+        return self.git("rev-parse", "HEAD")
+
+    def run_guard(self, revision, live="1", tests="", source=None):
+        start = self.script.index("require_host_prompt_daemon() {")
+        function = self.script[start:self.script.index("\n# resolve_runner_from_config", start)]
+        body = 'set -euo pipefail\ndie() { printf "%s\\n" "$*" >&2; exit 1; }\n' + function
+        body += '\nrequire_host_prompt_daemon "$REQUIRED_REVISION"\n'
+        return subprocess.run(["bash", "-c", body], capture_output=True, text=True,
+                              env=dict(os.environ, LIVE=live, LIVE_TESTS=tests, DAEMON_REVISION=revision,
+                                       PYRYCODE_SRC=str(self.repo) if source is None else source,
+                                       REQUIRED_REVISION=self.required))
+
+    def test_full_live_suite_rejects_daemon_before_handlers(self):
+        result = self.run_guard(self.old)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("pyrycode#2768", result.stderr)
+        self.assertIn("rebuild", result.stderr)
+
+    def test_handlers_and_later_daemon_are_accepted(self):
+        for revision in (self.required, self.current):
+            with self.subTest(revision=revision):
+                self.assertEqual(0, self.run_guard(revision).returncode)
+
+    def test_selected_host_prompt_method_requires_handlers(self):
+        method = "de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_hostSystemPrompt_editsResetsAndCancels"
+        self.assertNotEqual(0, self.run_guard(self.old, tests=method).returncode)
+
+    def test_unrelated_subset_and_scripted_run_need_no_host_prompt_handlers(self):
+        self.assertEqual(0, self.run_guard("", tests="de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread").returncode)
+        self.assertEqual(0, self.run_guard("", live="").returncode)
+
+    def test_missing_or_unknown_revision_and_source_fail_explicitly(self):
+        for revision, source in (("", None), ("a" * 40, None), (self.current, ""), (self.current, str(self.repo / "missing"))):
+            with self.subTest(revision=revision, source=source):
+                result = self.run_guard(revision, source=source)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("pyrycode#2768", result.stderr)
+
+
 def device_test_run(script):
     """The device test run, from its argument list to the end of the Gradle-or-installed choice."""
     start = script.index("GRADLE_TEST_ARGS=(")
