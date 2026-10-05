@@ -8,6 +8,7 @@
 - `app/src/main/java/de/pyryco/mobile/data/repository/RemoteConversationRepository.kt`: `onInbound`, task projection and collector termination own routing and cleanup.
 - `app/src/main/java/de/pyryco/mobile/data/repository/BackgroundTaskProjection.kt`: `applyUpdated` and `applyRoster` supply decoded retirement edges, including unlisted terminal updates.
 - `app/src/main/java/de/pyryco/mobile/data/repository/RelayRepositoryCoordinator.kt`: `activeConnection`, `onConnection` and `teardownActive` select one host's current connection.
+- `app/src/test/java/de/pyryco/mobile/data/network/NoiseIkSessionTest.kt`: the encrypted handshake pins the exact advertised capability list.
 - `app/src/test/java/de/pyryco/mobile/data/repository/RelayRepositoryCoordinatorTest.kt`: managed-pump fixtures and host-isolation coverage.
 - `app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryBackgroundTaskTest.kt`: channel-backed inbound fixture and task-state regression checks.
 - `docs/knowledge/features/interrupt-send-path.md`: sending must not clear local turn state or await an acknowledgment.
