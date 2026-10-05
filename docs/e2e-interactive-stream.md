@@ -6,6 +6,12 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
 
 ## The ladder (reliable → flaky)
 
+Background-agent placement (#1783) is covered at rung 3 by
+`InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`
+and at rung 4 by
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`.
+Controlled projection/Compose fixtures separately cover multiple agents and history permutations.
+
 1. **Wire-level Go test** (`pyrycode#642`) — no emulator. Daemon → relay → simulated phone receives the
    structured stream. The steadiest rung; the future deterministic backend for rung 3/4. Lives in
    pyrycode, not here.
@@ -279,6 +285,32 @@ delimiter positioned between the two cross-session messages, driven through the 
 | Parser-gap sentinel non-vacuity (a scripted row makes the guard fire; the finding names `site` + a sanitized `message_type` and never the payload body; an unrecognized `site` token drops) — `pushUnrecognizedMessage` scripting + `unrecognizedMessageEnvelope` builder, the one builder assembled through `kotlinx.serialization` rather than string interpolation because `raw` is itself JSON | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#586), `ScriptedUnrecognizedMessageTest.kt` (#586) |
 
 ## What rung 3 is made of
+
+**Background Agent follows the newest end (#1783).**
+`InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`
+launches a real `local_agent` with `run_in_background=true` and waits for the launching turn to end
+while the task continues. Two harmless `printf` tool calls advance the subagent's tool count by two,
+the daemon's threshold for progress evidence, before a foreground Bash `curl` enters a causal hold.
+A newer phone message must render above the live block; “Go to agent ↓” must reveal its Agent header.
+A phone Bash command releases the hold, and the scenario waits for the phone's Finished marker
+before sending the later message, avoiding a race between peer and app socket delivery.
+The later message must appear below the settled block; marker navigation is checked again.
+The existing progress-panel scenario uses a foreground subagent and cannot prove this placement.
+
+`scripts/background-agent-fixture.py` is scenario-specific host I/O: loopback only, an ephemeral
+port written inside the harness temporary directory, fixed `/hold` and `/release` endpoints,
+a 180-second maximum hold and no request logging. The harness starts it, passes
+`backgroundAgentFixtureUrl` to instrumentation and cleans it up with the isolated test stack.
+This requires daemon v0.31.0's inactive-conversation delivery fix (pyrycode#2739) and the merged
+roster-enrichment contract (pyrycode#2753); existing rung-3 authentication and ownership apply.
+
+The curated live selector includes the method. The raw-stream rung-4 twin is
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`,
+selected by `background-agent`; it proves lifecycle decoding, collapsed-run navigation and finish
+placement through the daemon. Multi-agent, retained roster joins/finished knowledge and history
+permutations belong to controlled projection/Compose fixtures, rather than extra real-Claude turns.
+See [thread placement](knowledge/features/thread-screen-subagent-tool-rows.md#background-agent-lifecycle-placement-1783)
+and [counted evidence](#verification-status).
 
 **Finished-reply partial Copy (#1674).**
 `InteractiveStreamE2ETest#interactiveTurn_finishedReply_systemCopyCopiesSelectedWord`
@@ -1852,7 +1884,7 @@ host-prompt handlers. Scripted runs and unrelated live subsets retain their exis
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the current selector has 56 runnable `@Test` methods. The historical
+incantation to remember — the current selector has 59 runnable `@Test` methods. The historical
 inventory below describes the pre-#1193 forty-four-method set; ignored methods are excluded from
 the current selector as described under the model and effort settings round trip. It covered ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
@@ -1972,7 +2004,14 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of 55 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
+The full selector includes
+`InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished` (#1783).
+Its bounded loopback hold/release fixture is started by `scripts/e2e-emulator.sh`; no separate
+fixture setup or focused live run is required. The dispatcher owns full-live execution and fresh
+XML proving this named method executed and passed, with executed/failed/skipped counts.
+Its deterministic `background-agent` twin supplements that proof without real Claude turns.
+
+`LIVE=1` runs a **curated set of 59 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -2350,6 +2389,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 
 | `SCENARIO` | asserts | raw fragment(s) | fragments |
 | --- | --- | --- | --- |
+| `background-agent` (#1783) | background lifecycle moves a loaded tool family, marker navigation opens its run, and finish settles it before later text | `background-agent-open.jsonl` + `background-agent-finish.jsonl` | **two** (release on second send) |
 | `selection-copy` (#1674) | finished assistant prose copies only the long-pressed word through Android’s system menu | `selection-copy.jsonl` | one |
 | `ping` (default) | a single-line reply renders | `ping.jsonl` | one |
 | `stream` | a multi-`assistant_delta` reply assembles into **one** message | `stream.jsonl` | one |
@@ -2364,6 +2404,14 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `refusal` (#1360) | a session-scoped `model_refusal_fallback` row offers "Switch back to Haiku" (the menu label, #1494); the tap writes `haiku` and the button disappears | `refusal.jsonl` | one |
 | `mcp-failed` (#1457) | the failed-MCP-server pill (#1345) renders and tapping it opens Channel info on its MCP servers section | `mcp-failed.jsonl` | one |
 | `context-overflow` (#1473) | the combined top-overlay context/Compact pill (#1603) renders after a `prompt_too_long` turn end, and tapping Compact reaches the daemon's child | `context-overflow.jsonl` | one |
+
+`background-agent` selects
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`
+and belongs to `python3 scripts/android-test-gate.py scripted-all`. The first raw fragment leaves a
+running background Agent family after its launching turn; a second phone send releases terminal
+lifecycle evidence followed by `after1783`. The test navigates from Running and Finished markers,
+opens the collapsed containing run and asserts the settled header is above the later reply.
+Run it with `python3 scripts/android-test-gate.py scripted background-agent`.
 
 `refusal` selects
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_refusalSwitchBackRestoresOriginalModel`
@@ -2548,8 +2596,8 @@ atomic `severAndRestoreLink()` is split into its two halves — `severLink()` (c
 `currentRepository == null`) and `restoreLink()` (connect + await `currentRepository != null`) — so the
 test can hold an offline window between them:
 
-1. **First fragment** (`replay-order-open.jsonl`, a `thinking`-only line) is emitted for the first user
-   turn → `turn_state(thinking)`, held open. The test asserts the spinner (the turn is
+1. **First fragment** (`replay-order-open.jsonl`, the initial `isReplay` user echo followed by
+   thinking) is emitted for the first user turn → `turn_state(thinking)`, held open. The test asserts the spinner (the turn is
    open at the moment we sever).
 2. **`severLink()`** — the phone goes offline. The test then holds for a bounded `OFFLINE_WINDOW_MS`.
 3. **Second fragment** (`replay-order.jsonl`, three ordered `assistant_delta` lines + `end_turn`) is
@@ -2570,7 +2618,13 @@ post-reconnect into the fresh repo and "no missing segment, in order" holds by c
 asserts reuse #476's one-deliberate-count exception: the **order** check matches the cross-delta-boundary
 concatenation `"alpha bravo charlie"` (present only if the deltas assembled in production order — a
 reordered replay breaks the substring), and `assertCountEquals(1)` on it is the dedup invariant on a
-genuinely buffered-during-outage re-delivery.
+genuinely buffered-during-outage re-delivery. Since #1783, the repository assertions also require
+exact final text `alpha bravo charlie`, delta identities `[0, 1, 2]`, and exactly one initial user
+before the single assistant reply. Visible substring/uniqueness alone could miss duplication inside
+one row. The opening fragment must replay that initial user before thinking: omitting it lets the
+daemon's idle-placement fallback insert the delayed user confirmation between reply deltas 1 and 2,
+splitting an otherwise ordered reply into two legitimate segments. This is a fixture correction;
+production replay and segment folding are unchanged.
 
 The disconnect release fence is wired as the overridable `DISCONNECT_TOKEN` / `DISCONNECT_LOG`, defaulting
 to `phone_unregistered` in `relay.log`, and baseline-counted so a stale connection-churn line cannot
@@ -2590,6 +2644,28 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+**Background Agent at the newest end (#1783, 2026-10-06).** The dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on `feature/1783`
+at `afa37181e9`, merged with `origin/main` at `39520003d4`. Fresh JUnit XML in
+`2026-10-05T22-36-14-415Z_real-claude-gate_#1783.log` confirms
+**59 executed, 58 passed, 1 failed, 0 errors, 0 skipped**, exit 1, and contains the passing,
+unskipped `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`.
+The unrelated `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain` failed once;
+its matching `real-claude-gate-rerun_#1783.log` reports **1 executed, 1 passed, 0 failed,
+0 errors, 0 skipped** on the same merged tree. The dispatcher accepted the gate after that rerun.
+Both XML reports were inspected in the agents repository's `logs/`; this is a background-agent
+pass in the full suite, with no separate focused background-agent live run claimed.
+See [dispatcher gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1783#issuecomment-6004961863).
+
+The fresh configured `scripted-all` gate reports **16 executed, 16 passed, 0 failed, 0 skipped**;
+the [verifier's inspected XML](https://github.com/pyrycode/pyrycode-mobile/pull/1821#issuecomment-6004571833)
+(`build/dispatcher-tests/scripted-all-h4g67tu4/dispatcher.xml`) includes passing
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`
+and `interactiveTurn_seededChannel_missedEventsReplayInOrderAfterReconnect`.
+The same verdict records **185 executed/passed, 0 failed, 1 skipped** in the UI gate, including
+passing `BackgroundTaskPanelCaptureTest.compactLargeTextKeepsScrolledContentAndCloseGlyphReachable`.
+These deterministic results use zero real Claude turns and do not replace the named live proof.
 
 **Android share intake (#1728, 2026-10-05).** Finished by hand. The full live gate,
 `automation-access op run --env-file=… -- env ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`,
@@ -3775,6 +3851,16 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Background-agent newest-end placement (#1783):**
+  `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished` passed
+  in the dispatcher full live suite; its `DeterministicInteractiveStreamE2ETest`
+  `interactiveTurn_seededChannel_backgroundAgentMovesAndSettles` twin passed in `scripted-all`.
+  Counted reports and the unrelated Stop-test failure/rerun are recorded in
+  [Verification status](#verification-status). Controlled tests cover multi-agent/history permutations,
+  late roster joins, retained finished knowledge and expansion restoration. No placement-coverage
+  follow-up remains; cache-only fallback is an explicit limit. The pre-ship command remains
+  `python3 scripts/android-test-gate.py live`.
 
 - **Combined recovery pill (#1603):** rung-4
   `DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_contextOverflowCompactReachesDaemon`

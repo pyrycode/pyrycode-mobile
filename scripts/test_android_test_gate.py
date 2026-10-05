@@ -194,6 +194,16 @@ class AndroidGateTest(unittest.TestCase):
         self.assertEqual("end_turn", records[0]["message"]["stop_reason"])
         self.assertEqual("success", records[-1]["subtype"])
 
+    def test_replay_order_echoes_the_initial_user_before_the_offline_reply(self):
+        fixtures = gate.ROOT / 'scripts/e2e-fixtures'
+        opening = [json.loads(line) for line in (fixtures / 'replay-order-open.jsonl').read_text().splitlines()]
+        # Real Claude replays the initial user before thinking. Omitting that echo lets the daemon's
+        # idle fallback place the confirmation between reply deltas, legitimately splitting the row.
+        self.assertEqual('user', opening[0]['type'])
+        self.assertTrue(opening[0]['isReplay'])
+        self.assertEqual([{'type': 'text', 'text': 'hello'}], opening[0]['message']['content'])
+        self.assertEqual('thinking', opening[1]['message']['content'][0]['type'])
+
     def test_live_floor_matches_the_curated_list(self):
         # #848: the floor is the curated list's size, so every listed method must execute.
         script = (Path(__file__).parent / "e2e-emulator.sh").read_text()
