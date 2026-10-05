@@ -305,6 +305,22 @@ class InteractiveStreamE2ETest {
     private val attachmentRetryLabel: String =
         InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_attachment_retry)
 
+    /** #1674: finished assistant prose copies only the long-pressed word via Android's real menu. */
+    @Test
+    fun interactiveTurn_finishedReply_systemCopyCopiesSelectedWord() {
+        awaitChannelList()
+        awaitConnected()
+        val serverId = requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID))
+        val before = hostConversationIds(serverId)
+        createChat()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+        val conversationId = newHostConversationId(serverId, before)
+        sendFromPhone(SELECTION_PROMPT)
+        composeTestRule.assertFinishedReplySystemCopy(hostRepository(serverId), conversationId, REPLY_TIMEOUT_MS)
+    }
+
     @Test
     fun interactiveTurn_pingPrompt_streamsPingReplyIntoThread() {
         // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).

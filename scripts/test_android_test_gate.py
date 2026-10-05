@@ -147,6 +147,19 @@ class AndroidGateTest(unittest.TestCase):
                         if result.startswith("below_floor"):
                             self.assertEqual(len(ET.fromstring(stdout.getvalue()).findall(".//skipped")), 2)
 
+    def test_selection_copy_is_registered_for_focused_and_all_scripted_runs(self):
+        self.assertIn("selection-copy", gate.SCENARIOS)
+        script = (gate.ROOT / "scripts/e2e-emulator.sh").read_text()
+        start = script.index('    selection-copy)')
+        arm = script[start:script.index('      ;;', start)]
+        self.assertIn('interactiveTurn_seededChannel_systemCopyCopiesSelectedWord', arm)
+        self.assertIn('selection-copy.jsonl', arm)
+        fixture = gate.ROOT / "scripts/e2e-fixtures/selection-copy.jsonl"
+        records = [json.loads(line) for line in fixture.read_text().splitlines()]
+        self.assertEqual("amber cobalt jade", records[0]["message"]["content"][0]["text"])
+        self.assertEqual("end_turn", records[0]["message"]["stop_reason"])
+        self.assertEqual("success", records[-1]["subtype"])
+
     def test_live_floor_matches_the_curated_list(self):
         # #848: the floor is the curated list's size, so every listed method must execute.
         script = (Path(__file__).parent / "e2e-emulator.sh").read_text()
