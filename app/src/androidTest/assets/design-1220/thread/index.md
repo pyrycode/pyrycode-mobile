@@ -52,7 +52,7 @@ the demo seed's, and timestamps follow the emulator's `en-US` locale ("5/10/26 -
 **Routed defects.** #1494 refusal model names (fixed; `620:1577` and `646:4707` retaken) · #1496 inset sheets and the task panel's Close · #1497 Run
 configuration (fixed; `600:1694` retaken) · #1498 workspace delimiter in the seed · #1499 Offline and usage-limit pills (usage copy fixed by #1519; `568:3139` retaken) · #1485 compact footer ·
 #1512 delimiter rule inset · #1513 photo above text and photo bubble width · #1603 turn outcome pill · #1604 failure
-pill · #1605 history tail gutter and spacing · #1606 stale Stop-variant comment · #1607 type-ahead row spacing ·
+pill · #1605 history tail gutter and spacing · #1606 Stop glyph and reference (fixed; verdict below) · #1607 type-ahead row spacing ·
 #1608 unrecognized and stopped-turn row spacing · #1614 expanded refusal row spacing and attribution weight ·
 #1615 switch-back button height and gaps, and its failure snackbar ·
 #1532 PDF tile not dimmed while disconnected · #1533 reader list indent · #1534 task panel spacing · #1118 agent switch
@@ -80,6 +80,16 @@ verdicts apply to each of those frames, which list only what differs.
 
 - **Routed:** #1532 for the PDF tile while disconnected. The compact footer is under "Keyboard open / Compact
   150%".
+
+### Stop button — `114:3549` (#1606)
+
+- **Reference:** [Message input button, `Action=Stop`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=114-3549), Desktop page of the Mobile file.
+- **Capture:** [stop-1606-412x892.png](stop-1606-412x892.png), captured 2026-10-05 by `ComposerFieldCaptureTest.typedAndStopAt412By892` with Connected, busy-turn, empty-draft state.
+- **Configuration:** [sidecar](stop-1606-412x892.png.txt): full `pixel8Api35`, API 35, 412×892, density 1.0, font scale 1.0, static dark, dynamic colour off; actual `decorView.draw` pixels.
+- **Focused test evidence:** [stop-1606-api35-results.xml](stop-1606-api35-results.xml) names `typedAndStopAt412By892` and records **1 executed, 1 passed, 0 failures, 0 errors, 0 skipped**. This was a separate focused device run, not a count inferred from the complete UI gate.
+- **Comparison assets:** [retained Figma export](figma-stop-114-3549.png), [48×48 button crop](stop-1606-button.png), [side-by-side](stop-1606-side-by-side.png), [overlay](stop-1606-overlay.png).
+- **Verdict:** match for silhouette, size, placement and primary tint. Both glyphs occupy `(10,10)-(38,38)` in the container-less 48×48 button, centered at `(24,24)`, with foreground RGB `(157,203,252)`. The full 28px circle and clear rounded-square cutout match. Three edge pixels differ at the 50% coverage threshold; rasterizer antialiasing and host backgrounds differ.
+- **Comparison limit:** the [verifier](https://github.com/pyrycode/pyrycode-mobile/pull/1792#issuecomment-5989365222) independently inspected the retained export and capture, but could not refresh the remote Figma frame. This verdict uses the retained export and the plan's inspected geometry.
 
 ### Conversation Thread — `16:8`
 
@@ -704,7 +714,7 @@ captures show what the app draws today, so those verdicts are expected mismatche
 
 ### No separate frame
 
-Decided on #1529 (2026-10-02); each state's reference is the node named. None is captured.
+Decided on #1529 (2026-10-02); each state's reference is the node named. Only the Stop variant has a later capture, recorded above for #1606.
 
 | State | Reference |
 |---|---|
@@ -712,7 +722,7 @@ Decided on #1529 (2026-10-02); each state's reference is the node named. None is
 | `Stalled` band arm | The same line in the error colour, the "Cxt high" label's colour |
 | `StoppedTurn` row | Thread notification, No details state, `620:1574`, with the stopped text; shown in context in `685:3992` above |
 | `CompactionBoundary` row | The rule row of the session delimiter frame `675:3682`, with the compaction label and no explanation line |
-| Send button's Stop variant | Message input button component `Action=Stop`, `114:3549`, on the Desktop page. `ThreadInputBar`'s comment that the component has no Stop variant is out of date (#1606) |
+| Send button's Stop variant | Message input button component `Action=Stop`, `114:3549`, on the Desktop page. #1606 corrected the comment and glyph; its fresh capture is compared above |
 | Top overlay Error pills: failed MCP server, and a usage-limit reading that is not a warning | Pill `347:6619`, Error state, X off, in the right-aligned top stack `568:3139` draws for the pairing error. Each pill's text is the app's string and the whole pill is the tap target. #1519 owns the usage-limit wording |
 
 ## Status bar
