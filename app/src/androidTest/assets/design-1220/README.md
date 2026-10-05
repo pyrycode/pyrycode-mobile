@@ -261,7 +261,7 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 | Markdown Reader | `553:2574` | audited, mismatch | `thread/index.md` › Markdown Reader | #1291 | #1533 |
 | Linked Markdown reader (`Routes.MARKDOWN_LINK`, `LinkedMarkdownReaderDestination`, opened by `ThreadNavigation.OpenLinkedMarkdown`) | `553:2574` | audited, mismatch | as Markdown Reader: it draws the same `MarkdownReaderScreen` | #1291 | #1533 |
 | Reader notices (save failed, saved, open failed) | `696:5101` | frame only | not audited | #1291 | #1539 |
-| Reader overflow menu | `675:5883` (decision on #1539) | no separate frame | not audited | #1291 | #1539 |
+| Reader overflow menu | `533:1958` (Juhana’s decision on #1667, supersedes #1539 / `675:5883`) | no separate frame | not audited | #1291 | #1667 |
 
 ### Archive
 

@@ -1,0 +1,27 @@
+<testsuite name="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" tests="22" skipped="0" failures="0" errors="0" timestamp="2026-10-05T03:25:37.103Z" time="9.854">
+  <properties />
+  <testcase name="theBackArrow_goesBack" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="6.117" />
+  <testcase name="theOverflow_opensTheSixItems_inOrder" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.145" />
+  <testcase name="showsTheNameInTheBar_andTheRenderedMarkdownBelow" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.093" />
+  <testcase name="aRetry_whileTheFailureNoticeShows_readsAgain" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.216" />
+  <testcase name="aCancelledPicker_writesNothing_andSaysNothing" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.102" />
+  <testcase name="saveToDevice_opensTheCreateDocumentPicker_withTheNotesNameAndMarkdownType" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.095" />
+  <testcase name="aSecondRefresh_whileOneIsReading_readsNothing" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.123" />
+  <testcase name="copyAsHtml_putsOneClip_withTheHtmlAndThePlainFallback" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.102" />
+  <testcase name="aFailedRefresh_keepsTheOldContent_andSaysItCouldNotOpen" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.123" />
+  <testcase name="aReadyMarkdownTap_goesToTheReader_whateverItsSource_andOtherFilesDoNot" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.227" />
+  <testcase name="aLinkedNote_opensInTheSameReader_andItsBackArrowGoesBack" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.099" />
+  <testcase name="openInAnotherApp_withNoAppForMarkdown_saysSo" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.166" />
+  <testcase name="copiesOfANoteAtTheReadersBound_areBounded" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.157" />
+  <testcase name="savingAfterRefreshWritesTheDisplayedDocument" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.327" />
+  <testcase name="copyAsPlainText_putsTheRenderedText" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.156" />
+  <testcase name="noLinkedNote_goesBackOnce_andDrawsNoReader" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.054" />
+  <testcase name="systemBackDismissesMenuWithoutLeavingReader" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.17" />
+  <testcase name="refresh_replacesTheContent_withANewRead" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.318" />
+  <testcase name="longContent_scrollsUnderAFixedBar" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.306" />
+  <testcase name="aPickedDocument_receivesTheTextOnScreen_andTheReaderSaysSaved" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.282" />
+  <testcase name="copyAsMarkdown_putsTheRawText_andShowsNoNotice" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.131" />
+  <testcase name="aFailedWrite_saysTheSaveFailed" classname="de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest" time="0.26" />
+  <system-out />
+  <system-err />
+</testsuite>

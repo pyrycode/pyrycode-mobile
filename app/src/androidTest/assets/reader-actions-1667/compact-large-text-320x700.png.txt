@@ -1,0 +1,1 @@
+api=33 sizeDp=320x700 density=1 fontScale=1.5 staticDark=true design=553:2574 menuDesign=533:1958 inspected=2026-10-05 menuComposite=false capturePixels=320x700
