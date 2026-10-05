@@ -252,6 +252,28 @@ The top bar's overflow menu — copy as markdown/plain text/HTML, Refresh, Open 
 
 ## Testing
 
+The current reader-menu captures are retained under
+[`reader-actions-1667/`](../../../app/src/androidTest/assets/reader-actions-1667/):
+`reference-412x892.png`, dark `menu-412x892.png`, `menu-light-412x892.png`,
+`compact-large-text-320x700.png`, `compact-menu-320x700.png` and `compact-scrolled-320x700.png`.
+[Device XML](../../../app/src/androidTest/assets/reader-actions-1667/device-results.xml)
+records 3 executed, 0 failed/errors, 0 skipped on API 33/pixel2Api33Atd.
+These root-View draws establish menu appearance and compact presentation, not hardware
+backdrop/chrome fidelity; title-shadow artifacts also occur in the closed-menu reference.
+The menu uses the shared Below Actions presentation described in [reader menu](markdown-reader-menu.md#presentation).
+Placement and pointer tests prove live anchoring, dismissal without tap-through and compact last-row
+activation; capture helpers await same-window column semantics rather than separate popup roots.
+
+The [dispatcher’s fresh full live gate for #1667](https://github.com/pyrycode/pyrycode-mobile/issues/1667#issuecomment-5987861689)
+on 2026-10-05 ran `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`
+against `fef53301e5` merged with main `90d395d1b1`, exit 0: **53 executed, 53 passed,
+0 failed, 0 skipped**. The retained dispatcher XML report
+`2026-10-05T03-45-19-511Z_real-claude-gate_#1667.log` explicitly contains the passing
+`InteractiveStreamE2ETest.interactiveTurn_markdownLink_opensLiveNoteInReader` testcase,
+with no failure/error/skip child. It reaches Refresh through the new menu. This is full-suite
+evidence, not a separate focused run; no new live scenario was added.
+
+
 The [reader chrome evidence](../../../app/src/androidTest/assets/reader-chrome-1647/README.txt)
 retains fresh Figma exports for `553:2574` and `731:6010`, resting and scrolled-under-bar
 hardware PNGs, [reader comparison](../../../app/src/androidTest/assets/reader-chrome-1647/reader-comparison.png),
@@ -402,8 +424,8 @@ is not involved, the same call #1068 made.
   [§ Link safety](markdown-text-internals.md#link-safety--scheme-allowlist) — `inlineText`, `MarkdownFlavour` and
   `isSafeLinkScheme`, all `internal` since #1067 so the copy-and-refresh menu's conversions share the renderer's
   own parse and allowlist rather than a second copy.
-- [Thread overflow menu](thread-overflow-menu.md) — `ThreadOverflowMenu`, the `DropdownMenu` +
-  `DropdownMenuItem` + dismiss-then-act shape [the reader's own menu](#copy-and-refresh-menu-since-1067) copies,
+- [Thread overflow menu](thread-overflow-menu.md) — `ThreadOverflowMenu`, the shared Below Actions overlay and
+  dismiss-then-act shape also used by [the reader's menu](#copy-and-refresh-menu-since-1067),
   per the operator's 2026-09-24 decision against a second dropdown style.
 - [MessageMetaRow § Meta row and copy control](message-bubble.md#meta-row-and-copy-control-messagemetarowkt-since-644) —
   `CopyTextControl` and `MAX_CLIPBOARD_CHARS` (now `internal`, shared with this reader's copies), and the

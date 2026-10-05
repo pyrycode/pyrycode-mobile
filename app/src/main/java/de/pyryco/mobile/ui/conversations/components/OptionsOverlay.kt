@@ -109,6 +109,7 @@ fun OptionsOverlay(
     onSelect: (String) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    columnModifier: Modifier = Modifier,
     actions: Boolean = false,
     placement: OptionsOverlayPlacement = OptionsOverlayPlacement.Above,
 ) {
@@ -136,6 +137,7 @@ fun OptionsOverlay(
                 notListed = notListed,
                 onSelect = onSelect,
                 actions = actions,
+                modifier = columnModifier,
             )
         }
     }
@@ -189,6 +191,7 @@ private fun OptionsColumn(
     notListed: Int,
     onSelect: (String) -> Unit,
     actions: Boolean,
+    modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
     val staticDark = LocalStaticDarkPalette.current
@@ -199,7 +202,7 @@ private fun OptionsColumn(
     ) {
         Column(
             modifier =
-                Modifier
+                modifier
                     .width(IntrinsicSize.Max)
                     .widthIn(min = OverlayMinWidth, max = OverlayMaxWidth)
                     .verticalScroll(rememberScrollState())
