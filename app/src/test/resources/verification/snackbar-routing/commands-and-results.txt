@@ -11,3 +11,7 @@ Exit 0; 11 executed/passed, 0 failures/errors/skips. 292 production source files
 Production-source-set negative control after the filter repair:
 ./gradlew testDebugUnitTest --tests 'de.pyryco.mobile.verification.SnackbarRoutingGuardTest.productionSourcesContainOnlyClassifiedNonErrorRoutes' --init-script app/src/test/resources/verification/snackbar-routing/production-source-set-control.gradle --console=plain
 Exit 1; 1 executed, 1 expected assertion failure, 0 errors/skips. The test-only init script adds the production build type latest and its test-resource error-route fixture. The repaired gate scans 293 files and rejects the new showSnackbar route. See source-set-negative.xml. Before the repair this command incorrectly passed after scanning only 292 files.
+
+Final main-merge blocker:
+./gradlew testDebugUnitTest --console=plain
+After merging main 39520003 (#1728), exit 1; 4,349 executed across 361 classes, 1 failure, 0 errors/skips. Only SnackbarRoutingGuardTest.productionSourcesContainOnlyClassifiedNonErrorRoutes fails. It checks 294 production files and rejects MainActivity's new share-error snackbar. Fix ticket #1824 is OPEN and linked as a native blocker of #1750. See main-share-error.xml. No production assertion is ignored or weakened.
