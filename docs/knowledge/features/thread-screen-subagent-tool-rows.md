@@ -8,12 +8,10 @@ cases and its links.
 
 ### Subagent tool-row nesting (#896)
 
-Beside `cutoffChronologicalIndex`, the same `else` arm computes `val toolDepths = remember(state.items) {
-toolNestingDepths(state.items) }` and the `ThreadItem.MessageItem` dispatch arm passes
-`toolNestingDepth = toolDepths[item.message.id] ?: 0` into `MessageBubble` — the only change #896 made to
-this file; the fold, the keys, the alpha wrap and every other arm are untouched. `toolNestingDepths` itself
-is `internal fun toolNestingDepths(items: List<ThreadItem>): Map<String, Int>`, declared in `ThreadRow.kt`
-beside `foldQueuedRows` (a pure derivation next to a pure derivation), not inside the screen.
+`ThreadScreen` derives `toolNestingDepths(state.items)` from repository items and passes each
+message's depth into `MessageBubble`. Nesting is independent of the display placement below:
+a moved background Agent family keeps the same parent relationships and indentation.
+`toolNestingDepths` is a pure derivation in `ThreadRow.kt`, beside the row folds.
 
 **What it computes.** A tool row's [`Message.id`](data-model.md) is its own `tool_use_id`; its
 [`ToolCall.parentToolUseId`](data-model.md) (#810) names the `Agent`/`Task` call whose subagent made it,
@@ -59,20 +57,70 @@ rendered row — lives in `ToolRowNestingTest` (`app/src/sharedTest/.../thread/`
 `ThreadScreen`; see [`MessageBubble` § Subagent nesting
 indent](message-bubble.md#subagent-nesting-indent-since-896) and [`ToolCallRow` § Subagent step
 description](tool-call-row.md#subagent-step-description-since-896) for what each level actually renders.
-No rung-3 scenario: this is a layout change over rows that already stream, and the live data path is
-unchanged.
+The original nesting change needed no rung-3 scenario. Background placement now has its own
+[live and deterministic proof](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
+
+### Background-agent lifecycle placement (#1783)
+
+`foldBackgroundAgentBlocks` runs after queued-row joining and before tool-run folding. It moves
+only a `local_agent` joined by tool-call id to a loaded `Agent` or `Task` whose input field
+`run_in_background` is exactly `"true"`. Foreground subagents also emit lifecycle frames;
+task type and join alone would incorrectly move them. Other task types, false/missing background
+inputs and unknown joins retain their existing rendering. No missing Agent or descendant is invented.
+Loaded tool-parent chains are memoised with a cycle guard; each claimed family moves once, in its
+original internal order, with its message keys and nesting intact. Repository arrival/history order
+never changes.
+
+The launch slot becomes a separately keyed `agent-start:<Agent message id>` marker: a Busy dot and
+“Agent started, still working”, or a Success dot and “Agent finished” for any terminal status,
+beside “Go to agent ↓”. The second line is an ellipsized launch description. The description is inert `Text`,
+bounded to 4096 characters and never logged. Tapping the marker opens a containing collapsed tool run,
+then a screen-owned effect scrolls to the Agent header in the reversed list. It leaves the tool body
+collapsed unless the reader had already opened it, and works before and after finish.
+
+Running families sit below every ordinary and queued row. Multiple families keep unknown launches
+in their roster slots and sort known launches within the remaining slots; once all start history is
+loaded, launch order is authoritative. The display copy of the Agent header stays Running despite
+its immediate “Async agent launched” result, and becomes Done for any task terminal status;
+descendant statuses and repository messages are unchanged.
+
+A terminal lifecycle entry supplies the settlement position relative to the original thread rows.
+Later ordinary rows appear below that block, while remaining running blocks stay at the newest end.
+Reload uses the terminal history position. Roster-before-start and terminal-before-launch pagination
+can join loaded tools later without duplicating a family or shifting an already-known finish position.
+Historical fields take precedence over roster hints.
+
+Join evidence, finished knowledge and terminal position are separate facts. `ThreadProjection`
+retains conversation-scoped, connection-local roster hints to fill absent fields in existing lifecycle
+entries; hints never create an entry or position and are removed with the conversation.
+`BackgroundTaskRoster.settledTasks` separately retains first-known finished records across empty or
+unrelated panel replacements, even with no loaded start/terminal history. Existing settled records
+learn absent joins from later roster records even when the panel now says running; only finished
+records create settled knowledge. Without terminal history, the finished family stays immediately
+after its launch marker until history supplies the authoritative position. Panel `tasks` and counts
+remain replacement state. A retained join alone cannot preserve a finish, and a regression that inserts
+an extra terminal frame can hide loss of roster-only finished knowledge.
+
+`BackgroundAgentBlocksTest` and `BackgroundTaskProjectionTest` exercise the production projections,
+including late joins through both replacement variants without an intervening terminal frame,
+multiple agents, pagination/reload, cycles, unknown joins and unchanged repository order.
+`BackgroundAgentBlocksScreenTest` covers marker navigation, placement and expansion transitions.
+See [cache-only limitations](thread-screen-previews-and-edge-cases.md#edge-cases--limitations)
+and [the live ladder](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
 
 ### Consecutive tool rows sit flush (#1577)
 
 Beside `toolDepths`, the same `ThreadItem.MessageItem` dispatch arm passes `joinsNextToolRow =
-rows.getOrNull(chronologicalIndex + 1).isToolRow()` into `MessageBubble`, which forwards it to
+row.joinsToolRow(rows.getOrNull(chronologicalIndex + 1))` into `MessageBubble`, which forwards it to
 [`ToolCallRow`](tool-call-row.md#consecutive-tool-rows-sit-flush-1577) as `joinsNextToolRow`. The
-private `ThreadRow?.isToolRow()` helper only returns `true` for a `ThreadRow.Delivered` row wrapping a
+`ThreadRow?.isToolRow()` helper only returns `true` for a `ThreadRow.Delivered` row wrapping a
 `ThreadItem.MessageItem` whose `message.role == Role.Tool` and `message.toolCall != null` — a queued
 row, a delimiter, a notice banner, and a delivered `Role.Tool` message with a null `toolCall` (which
 cannot render a row at all, per [`ToolCallRow` § Routing from `MessageBubble`](tool-call-row.md#routing-from-messagebubble))
-all read as `false`, so a tool row next to any of those keeps today's 12dp gap. The check looks only at
-the immediate next chronological row; a row that draws nothing between two tool rows (an empty banner,
+all read as `false`, so a tool row next to any of those keeps today's 12dp gap. The join also requires
+equal `agentBlockId` values, so separate background blocks and ordinary tools keep separate outlines.
+The check looks only at the immediate next display row; a row that draws nothing between two tool
+rows (an empty banner,
 for instance) still counts as a break and the gap returns even though nothing visible separates the
 two — rare, flagged as a known inconsistency in the #1577 verifier review, not fixed.
 
@@ -91,7 +139,7 @@ The message region's `LazyColumn` fills its weighted `Box`, with the top overlay
 
 **A scroll is any change to the anchor row's key or offset — not any change to its position.** `followStep` treats that as the rule: following is recomputed from whether the anchor is within `AtNewestEndTolerance` (4dp, desktop's `AT_BOTTOM_TOLERANCE_PX`) of index 0, offset 0. Under `reverseLayout`, inserting a row at index 0 moves the previous anchor's *index* but keeps its key and offset, so growth is never mistaken for a scroll; an older-history prepend and an overscroll that cannot move the list move neither key nor offset either, so following is untouched by both. A frame whose anchor key/offset are unchanged but whose index or content signature changed is growth, and pins only while already following (`following && (grew || anchorIndex != 0)`). Reading the recompute and the re-pin from the same collector, rather than two effects each watching the frame, was necessary: a slow drag within the tolerance seen by two separate collectors can read a stale `following = true` from one while the other is mid-update, and gets pulled back on every frame.
 
-**A pin refused under a resting finger is retried by the next frame that is not a scroll, not by a dedicated retry loop.** `pinToNewest` wraps every `scrollToItem(0)` in `try { … } catch (e: CancellationException) { currentCoroutineContext().ensureActive() }`, same as #981's guard, costing one scroll per refusal and still propagating a genuine cancellation. The first version of this rule retried on the next *visible* content change, which missed the case where the refused pin was for the reply that had just arrived: that reply sits at index 0, below the viewport, so its own streamed deltas changed no row the rule was watching, and it streamed out of sight until some other row arrived. The fix folds the newest row's own content into the growth signature (`newestRow`, passed down from `rows.lastOrNull()`) and adds `scrolling` (`isScrollInProgress`) to the frame, so the finger lifting is itself a frame that can retry the pin. While following, the list can only sit off index 0 because a pin was refused, so a successful pin always changes the anchor key — which reads as a scroll — and the retries end without a loop.
+**A pin refused under a resting finger is retried by the next frame that is not a scroll, not by a dedicated retry loop.** `pinToNewest` wraps every `scrollToItem(0)` in `try { … } catch (e: CancellationException) { currentCoroutineContext().ensureActive() }`, same as #981's guard, costing one scroll per refusal and still propagating a genuine cancellation. The first version of this rule retried on the next *visible* content change, which missed the case where the refused pin was for the reply that had just arrived: that reply sits at index 0, below the viewport, so its own streamed deltas changed no row the rule was watching, and it streamed out of sight until some other row arrived. The fix folds the newest row's own content into the growth signature (`newestRow`, containing the newest projected row and the moved tool-block content) and adds `scrolling` (`isScrollInProgress`) to the frame, so the finger lifting is itself a frame that can retry the pin. While following, the list can only sit off index 0 because a pin was refused, so a successful pin always changes the anchor key — which reads as a scroll — and the retries end without a loop.
 
 **While a question or permission card is mounted, row content and the anchor's size are masked from the growth signature (#1304).** `FollowNewestEnd`'s `promptPresent` parameter (`questionState != null || openRequest != null`) blanks `newestRow` and the anchor's size in `content` while true, so editing a field, the IME opening, or `BringIntoViewRequester` scrolling inside the card never reads as growth and never pulls a reader back down. A new prompt (`promptIdentity`, `shownQuestion?.generation to openRequest?.modalId`) still pins a reader who is following, the same as a new message row would — see [Thread screen — list and status row § Inline question rows and the newest-end reveal](thread-screen-how-it-works-list-and-status-row.md#inline-question-rows-and-the-newest-end-reveal-1305) and § *Inline permission rows and the shared reveal* there for the reveal's own history.
 
@@ -105,11 +153,16 @@ Covered by `ThreadListFollowTest` (`app/src/test/.../thread/`) for the pure rule
 
 A streamed delta in these screen tests is revealed by a clock-driven `produceState`, so an assertion taken right after `waitForIdle` can still see the previous text; the tests wait for the revealed text itself before checking list position.
 
+For background blocks, the growth signature includes all moved delivered tool rows, even when
+the newest row key stays unchanged or the run is collapsed. In-place output growth therefore pins
+a reader who is following; it leaves an older reader's keyed pixel anchor alone.
+`ThreadScreenFollowTest` covers expanded output growth and the older-reader anchor (#1783).
+
 ### Collapsing runs of consecutive tool rows (#1635)
 
-With `AppPreferences.collapseToolUses` (#1634, default on) true, `ThreadScreen` runs a third fold,
-`foldToolRuns`, after `foldQueuedRows`: a maximal run of two or more adjacent tool rows (sub-agent
-rows included — they are tool rows too) becomes one `ThreadRow.ToolRun(runId, tools, expanded)`
+With `AppPreferences.collapseToolUses` (#1634, default on) true, `ThreadScreen` runs
+`foldToolRuns` after queued joining and background-agent placement: a maximal run of two or more
+adjacent tool rows (sub-agent rows included — they are tool rows too) becomes one `ThreadRow.ToolRun(runId, tools, expanded)`
 header, "Using tools: N", with a down chevron. Tapping it expands to the header (now an up chevron)
 followed by the run's own tool rows, flush, keeping their sub-agent indent — the same flush join
 [#1577](#consecutive-tool-rows-sit-flush-1577) gives adjacent tool rows elsewhere. A lone tool row
@@ -117,7 +170,19 @@ with no tool neighbour, and every non-tool row (assistant text, a user message, 
 delimiter, a banner), passes through untouched and ends a run. `ThreadRow?.isToolRow()` moved from a
 private helper in `ThreadScreen.kt` to `internal` in `ThreadRow.kt` so this fold and the #1577
 neighbour check share one predicate. With the setting off, `foldToolRuns` is skipped and the thread
-draws exactly as before #1635.
+draws the projected rows without tool-run headers. Background-agent placement and block boundaries
+still apply with collapse off.
+
+Both run folding and flush joins stop when `agentBlockId` changes: a moved family cannot merge
+with another family or adjacent ordinary tools. On a late join or parent backfill, `carryRunExpansion`
+transfers expansion from previously open runs to every resulting run receiving their tools, including
+already-loaded descendants. A moved tool left alone retains pending opening intent until a child
+forms a run. Both `pendingOpenTools` and `expandedRuns` use conversation-scoped `rememberSaveable`,
+so recreation before that child arrives preserves intent and matching ids in another conversation
+cannot inherit it. Intent is spent when applied; ordinary updates and finish do not reopen a run the
+reader deliberately closed. Individual body expansion stays keyed to the original message id.
+JVM transition tests and screen restoration tests cover lone-Agent and parent-backfill splits,
+recreation before run formation, spent intent and conversation isolation.
 
 **The run's identity is its first tool row's message id**, so a run that gains new tool rows at its
 end keeps the same `runId` and, with it, its expanded state — a run never collapses just because
