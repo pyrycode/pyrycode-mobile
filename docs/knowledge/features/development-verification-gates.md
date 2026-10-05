@@ -121,6 +121,17 @@ density, so the root does not measure at the exact dp passed in —
 forced width fails on that rounding; compare within a pixel instead
 ([#1334](https://github.com/pyrycode/pyrycode-mobile/issues/1334)).
 
+The same rounding happens on the emulator, which is a Pixel 2 at density 2.625:
+28dp is 73.5px, lays out as 74px and reads back as 28.19dp. A shared test that
+checks a Figma dp value uses `assertDpEquals` or `pixelDp()` from
+`ui/PixelSnapping.kt`, which allow one device pixel there and nothing at
+Robolectric's density 1. Rows stacked down a screen add their roundings up, so
+check a row against its neighbour rather than against the top of the screen.
+The device also ignores `@Config` qualifiers and Robolectric's 320dp width,
+draws text with its own font, and runs at that density: a test that needs a
+412dp frame forces it with `ForcedSize`, scales pixel samples by the composition's
+density, and measures a layout box rather than the text inside it.
+
 A shared test class needs `@RunWith(AndroidJUnit4::class)`. The device runner
 does not require it, but without it the JVM runs the class outside Robolectric and
 every test fails on a null `Build.FINGERPRINT`.

@@ -4,13 +4,20 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.view.View
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.Conversation
@@ -37,10 +44,13 @@ class ChannelListColoursTest {
 
     private var rootView: View? = null
 
+    /** The density the screen was drawn at: the forced Figma frame changes it on the device. */
+    private var contentDensity = 0f
+
     @Test
     @Config(qualifiers = "w412dp-h892dp-mdpi")
     fun darkPanelAndBarDrawTheReferenceGlowWithOneBlueGreyRule() {
-        show(dark = true)
+        show(dark = true, figmaFrame = true)
         val bitmap = draw()
         assertGlow(bitmap, "populated")
         // The rule is translucent, so over the glow it shifts a few units across the width, as Figma's does.
@@ -60,13 +70,19 @@ class ChannelListColoursTest {
     @Test
     @Config(qualifiers = "w412dp-h892dp-mdpi")
     fun emptyDarkPanelDrawsTheSameGlowBehindItsBar() {
-        show(dark = true, empty = true)
+        show(dark = true, empty = true, figmaFrame = true)
         assertGlow(draw(), "empty")
     }
 
+    /**
+     * [figmaFrame] lays the screen out at Figma 15:8's 412 × 892 dp. The qualifier gives Robolectric that window
+     * at density 1; the device ignores it, so the forced size draws the same frame there at a density that fits.
+     */
+    @OptIn(ExperimentalTestApi::class)
     private fun show(
         dark: Boolean,
         empty: Boolean = false,
+        figmaFrame: Boolean = false,
     ) {
         val channel =
             Conversation(
@@ -99,10 +115,18 @@ class ChannelListColoursTest {
             } else {
                 HostChannelListState(hosts = listOf(host), selected = HostConversationTarget("host", "channel"))
             }
-        rule.setContent {
+        val screen: @Composable () -> Unit = {
             PyrycodeMobileTheme(darkTheme = dark) {
                 rootView = LocalView.current
+                contentDensity = LocalDensity.current.density
                 ChannelListScreen(hostState = state, onEvent = {})
+            }
+        }
+        rule.setContent {
+            if (figmaFrame) {
+                DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, 892.dp)), screen)
+            } else {
+                screen()
             }
         }
     }
@@ -131,7 +155,8 @@ class ChannelListColoursTest {
         name: String,
     ) {
         val bounds = rule.onNodeWithTag(CHANNEL_LIST_TEST_TAG).fetchSemanticsNode().boundsInRoot
-        assertEquals("412 × 892 at density 1.0", 412f to 892f, bounds.width to bounds.height)
+        assertEquals("412 dp wide", 412f, bounds.width / contentDensity, 0.5f)
+        assertEquals("892 dp tall", 892f, bounds.height / contentDensity, 0.5f)
         val file = File(System.getProperty("java.io.tmpdir"), "sidebar-1522-$name.png")
         file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         println("Sidebar glow render: ${file.absolutePath}")
@@ -145,7 +170,11 @@ class ChannelListColoursTest {
                 (200 to 700) to Color.rgb(11, 14, 17),
             )
         for ((point, expected) in reference) {
-            val actual = bitmap.getPixel(bounds.left.roundToInt() + point.first, bounds.top.roundToInt() + point.second)
+            val actual =
+                bitmap.getPixel(
+                    (bounds.left + point.first * contentDensity).roundToInt(),
+                    (bounds.top + point.second * contentDensity).roundToInt(),
+                )
             assertTrue(
                 "Glow at $point: expected ${hex(expected)}, was ${hex(actual)}",
                 closeColour(expected, actual, tolerance = 3),
@@ -161,16 +190,17 @@ class ChannelListColoursTest {
         tolerance: Int = 1,
     ) {
         // The toolbar rule spans the panel; text and selected rows cannot fill this entire horizontal band.
-        val left = (bitmap.width * 0.1f).roundToInt()
-        val right = (bitmap.width * 0.9f).roundToInt()
+        // Measured within the panel, which a forced Figma frame leaves narrower than the device window.
+        val panel = rule.onNodeWithTag(CHANNEL_LIST_TEST_TAG).fetchSemanticsNode().boundsInRoot
+        val left = (panel.left + panel.width * 0.1f).roundToInt()
+        val right = (panel.left + panel.width * 0.9f).roundToInt()
         val matchingRows =
             (0 until bitmap.height).filter { y ->
                 (left..right).all { x -> closeColour(expected, bitmap.getPixel(x, y), tolerance) }
             }
         val bands = matchingRows.filterIndexed { index, y -> index == 0 || y > matchingRows[index - 1] + 1 }
         assertEquals("One full-width toolbar rule", 1, bands.size)
-        val density = checkNotNull(rootView).resources.displayMetrics.density
-        val panel = rule.onNodeWithTag(CHANNEL_LIST_TEST_TAG).fetchSemanticsNode().boundsInRoot
+        val density = contentDensity
         val host =
             rule
                 .onAllNodesWithText("Host")
@@ -181,7 +211,10 @@ class ChannelListColoursTest {
         val firstRuleEnd = matchingRows.first { it + 1 !in matchingRows } + 1
         assertEquals("Divider thickness", 1f, (firstRuleEnd - bands.first()) / density, 0.5f)
         assertEquals("Divider to first row including list padding", 24f, (host.top - firstRuleEnd) / density, 0.5f)
-        val rulePixels = (0 until bitmap.width).filter { closeColour(expected, bitmap.getPixel(it, bands.first()), tolerance) }
+        val rulePixels =
+            (panel.left.roundToInt() until panel.right.roundToInt()).filter {
+                closeColour(expected, bitmap.getPixel(it, bands.first()), tolerance)
+            }
         assertEquals("Divider left gutter", 20f, (rulePixels.first() - panel.left) / density, 0.5f)
         assertEquals("Divider right gutter", 20f, (panel.right - rulePixels.last() - 1) / density, 0.5f)
         // The runner's temp directory survives Robolectric's per-test sandbox cleanup for visual review.
@@ -213,8 +246,9 @@ class ChannelListColoursTest {
                 .assertIsSelected()
                 .fetchSemanticsNode()
                 .boundsInRoot
-        val x = bounds.left.roundToInt() + 2
-        val y = bounds.top.roundToInt() + 2
+        // 2 dp in from the corner: inside the row's rounded clip at any density.
+        val x = (bounds.left + 2 * contentDensity).roundToInt()
+        val y = (bounds.top + 2 * contentDensity).roundToInt()
         assertEquals("Selected row uses Schemes/Primary Container", expected, bitmap.getPixel(x, y))
     }
 

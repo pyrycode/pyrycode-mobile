@@ -57,6 +57,7 @@ import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.assertRectEqualsWithinPixel
 import de.pyryco.mobile.ui.conversations.components.STATUS_GLYPH_TEST_TAG
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
@@ -188,9 +189,9 @@ class ThreadScreenModalTest {
         composeTestRule.onNode(hasScrollToIndexAction()).performScrollToIndex(15)
         val anchor = composeTestRule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot
         composeTestRule.runOnIdle { modal = openModal().copy(alwaysAllowRules = offeredRules) }
-        assertEquals(anchor, composeTestRule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot)
+        assertRectEqualsWithinPixel(anchor, composeTestRule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot)
         composeTestRule.runOnIdle { accepted = true }
-        assertEquals(anchor, composeTestRule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot)
+        assertRectEqualsWithinPixel(anchor, composeTestRule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot)
         composeTestRule.onNodeWithTag("permission-request-card").assertDoesNotExist()
         composeTestRule.onNode(hasScrollToIndexAction()).performScrollToIndex(31)
         // #1352: reaching the oldest row is not a pull, so it asks nothing.

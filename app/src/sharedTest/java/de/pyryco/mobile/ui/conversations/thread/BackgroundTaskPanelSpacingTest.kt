@@ -19,8 +19,8 @@ import org.robolectric.annotation.GraphicsMode
 
 /**
  * The panel's vertical rhythm against Populated `568:877` and Capped `568:932` (#1534), in content-relative
- * px at density 1. Every fixture field is one line, so each card height is the frame's formula for its shape.
- * A card's merged node sits inside its 12 px vertical padding.
+ * dp, which are the frame's px. Every fixture field is one line, so each card height is the frame's formula
+ * for its shape. A card's merged node sits inside its 12 px vertical padding.
  */
 @Config(qualifiers = "w412dp-h892dp-mdpi")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -79,7 +79,7 @@ class BackgroundTaskPanelSpacingTest {
         assertEquals("$text height", height, bounds.height, 1f)
     }
 
-    /** [text]'s node bounds relative to the top of the panel's scrolling content. */
+    /** [text]'s node bounds in dp relative to the top of the panel's scrolling content. */
     private fun contentBounds(
         text: String,
         useUnmergedTree: Boolean,
@@ -88,7 +88,9 @@ class BackgroundTaskPanelSpacingTest {
         val viewport =
             generateSequence(node.parent) { it.parent }
                 .first { it.config.contains(SemanticsProperties.VerticalScrollAxisRange) }
-        return node.boundsInRoot.translate(0f, -viewport.boundsInRoot.top)
+        val px = node.boundsInRoot.translate(0f, -viewport.boundsInRoot.top)
+        val density = rule.density.density
+        return Rect(px.left / density, px.top / density, px.right / density, px.bottom / density)
     }
 
     private companion object {

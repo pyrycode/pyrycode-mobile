@@ -152,7 +152,12 @@ class MessageBubbleSelectionTest {
         composeTestRule
             .onNodeWithText(word, substring = true, useUnmergedTree = true)
             .performTouchInput { longClick() }
-        composeTestRule.waitForIdle()
+        // Compose's smart selection asks the platform text classifier before it opens the toolbar. That runs off
+        // the main thread under Compose's own 300 ms and 200 ms limits, which idling does not wait for, so a
+        // classifier service still starting, as it is early in a full device run, opens the toolbar later.
+        composeTestRule.waitUntil("a long press on '$word' offers the system Copy action", TIMEOUT_MS) {
+            toolbar.copyAction() != null
+        }
         val copy = toolbar.copyAction()
         assertNotNull("a long press on '$word' must offer the system Copy action", copy)
         composeTestRule.runOnIdle { copy?.invoke() }
