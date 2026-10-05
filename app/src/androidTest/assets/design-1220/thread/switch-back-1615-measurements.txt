@@ -1,0 +1,43 @@
+Ticket #1615 evidence, recaptured 2026-10-05 after the PR #1794 overflow repair.
+The original plan was committed as 1d890de2 before implementation 6e69bd8c; rework retains its short-label geometry.
+Figma references refreshed 2026-10-05: 646:4694, 646:4700, 646:4707; armed row child 646:4725.
+Full Pixel 8/API 35 capture invocation required requireRealSystemBars=true.
+All four app frames: MainActivity; 412x892 px; density=1.0; fontScale=1.0; staticDark=true;
+hardwareAccelerated=true; syntheticBars=false; real status bar=24 px; IME=0.
+Real navigation bars: all four fresh frames=24 px.
+Row comparisons align row origins only: no scaling, geometry warping, bar synthesis or image recolouring.
+Crops use x=20..392; armed/pending y=564..660;
+settled-failed/immediate-failed y=544..660 (exclusive right/bottom).
+
+Measurements (row-relative, inclusive painted pixel rows):
+State                     App outline y    Figma outline y   App/Figma width
+armed                     56..87 (32 px)   56..87 (32 px)    150/151 px
+pending                   56..87 (32 px)   56..87 (32 px)    150/151 px
+failed immediate          56..87 (32 px)   56..87 (32 px)    150/151 px
+failed settled            56..87 (32 px)   56..87 (32 px)    150/151 px
+Show details bright painted pixels: y=35..43 in both app and Figma; 12 clear px before outline y=56.
+Failed text bright painted pixels: y=95..105 in both app and Figma; 7 clear px after outline y=87,
+8 px from the final outline pixel to the first error-text pixel.
+Body glyphs and label spans remain at the established inert model-text rendering boundary.
+Pending Surface alpha remains 0.38; nonuniform underlying thread glow explains small RGB differences
+from the isolated component background. Pending is disabled; physical taps do not toggle details.
+JVM and real-device pointer tests prove 48 dp touch bounds plus upper/lower extension routing.
+Immediate failure captured after the inline message first appears, with no timer advancement or dismissal.
+No run-configuration error text exists in the immediate failure assertion or capture.
+The older refusal-switch-back-failed-snackbar.* assets retain historical pre-fix evidence only.
+
+Focused rework JVM: 50 executed; 0 failed/errors; 0 skipped (switch-back-1615-rework-unit-results.xml).
+Focused rework full device: 20 executed; 0 failed/errors; 0 skipped (switch-back-1615-rework-device-results.xml).
+Rework deterministic refusal: 1 executed; 0 failed/errors; 0 skipped (switch-back-1615-rework-scripted-results.xml).
+Long unknown identifier (128 characters) and 2x font scale: native-font JVM and full-device assertions
+prove wrapped lines fit their text bounds and the growing outline, with the retry line below and pointer action intact.
+The 32 dp minimum and 8 dp vertical padding preserve the default short label while avoiding clipping.
+Original unit/device XML remains retained as historical first-pass evidence.
+Documentation handoff pending: index.md armed/pending/failed verdicts and measurements, immediate failure
+capture and inline-only feedback decision; use this evidence without a documentation-stage rerun.
+
+Evidence integrity:
+refusal-switch-back.png: 412x892, 4659 distinct RGB colours, SHA256=1ddb44a654053d5ecafae6dd196d31a9b8138bd98f80ddc4d20e03fc658c9544
+refusal-switch-back-pending.png: 412x892, 4694 distinct RGB colours, SHA256=115cb50a4041a3588c2f0a33942154012294acd069d3059609cbf5a980e76922
+refusal-switch-back-failed-immediate.png: 412x892, 5274 distinct RGB colours, SHA256=f679453de24921d08b9db534cd28b96d74074ff1db9a0bf34222154b03bfa5e4
+refusal-switch-back-failed.png: 412x892, 5274 distinct RGB colours, SHA256=f679453de24921d08b9db534cd28b96d74074ff1db9a0bf34222154b03bfa5e4

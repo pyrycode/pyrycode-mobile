@@ -1,0 +1,66 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<testsuites tests="48" failures="0" errors="0" skipped="0">
+  <testsuite name="de.pyryco.mobile.ui.conversations.components.ModelRefusalDisplayTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-05T05:45:57.757Z" hostname="Juhanas-Air" time="0.039">
+    <properties />
+    <testcase name="tabsAndLineBreaks_areStripped" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalDisplayTest" time="0.038" />
+    <testcase name="emptyOrBlankOrEscapeOnly_readsAsNoModel" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalDisplayTest" time="0.0" />
+    <testcase name="escapesAndControls_areStripped" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalDisplayTest" time="0.001" />
+    <testcase name="plainIdentifier_passesThroughUnchanged" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalDisplayTest" time="0.0" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.components.ModelRefusalModelLabelTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-05T05:45:57.801Z" hostname="Juhanas-Air" time="0.588">
+    <properties />
+    <testcase name="knownModels_readAsTheirMenuLabelsInTheBodyStyle_onOneLine" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalModelLabelTest" time="0.131" />
+    <testcase name="anIdentifierTheMenuDoesNotKnow_keepsItsMonospaceSpan" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalModelLabelTest" time="0.097" />
+    <testcase name="anAmbiguousMatch_keepsTheMonospaceSpan" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalModelLabelTest" time="0.103" />
+    <testcase name="aBlankIdentifier_stillReadsUnknownModel_evenWithAMenu" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalModelLabelTest" time="0.2" />
+    <testcase name="noMenu_keepsBothMonospaceSpans" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalModelLabelTest" time="0.052" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.components.ModelRefusalSwitchBackTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-05T05:45:47.094Z" hostname="Juhanas-Air" time="10.659">
+    <properties />
+    <testcase name="visibleOutline_matchesTheCollapsedDesign_andBothTouchExtensionsInvokeSwitchBack" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalSwitchBackTest" time="8.679" />
+    <testcase name="offered_showsAnEnabledButtonNamingTheStrippedOriginalModel_andATapCallsBackOnce" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalSwitchBackTest" time="0.109" />
+    <testcase name="withoutAnOffer_thereIsNoButton" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalSwitchBackTest" time="0.076" />
+    <testcase name="failed_keepsTheButtonEnabled_withTheRetryMessageBelow" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalSwitchBackTest" time="0.07" />
+    <testcase name="pending_disablesTheButton" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalSwitchBackTest" time="0.077" />
+    <testcase name="pendingTouchExtension_doesNotInvokeEitherAction" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalSwitchBackTest" time="0.084" />
+    <testcase name="inTheThread_onlyTheArmingRowShowsTheButton" classname="de.pyryco.mobile.ui.conversations.components.ModelRefusalSwitchBackTest" time="0.694" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelRefusalOfferTest" tests="18" skipped="0" failures="0" errors="0" timestamp="2026-10-05T05:45:58.501Z" hostname="Juhanas-Air" time="0.797">
+    <properties />
+    <testcase name="onlyScopeExactlySessionWithBothModels_arms" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelRefusalOfferTest" time="0.551" />
+    <testcase name="anAckForAnOlderOffer_leavesANewerOneArmed" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelRefusalOfferTest" time="0.028" />
+    <testcase name="arming_asksForAFreshReading_soAReadingFromBeforeTheSessionSpawnedIsReplaced" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelRefusalOfferTest" time="0.019" />
+    <testcase name="aTap_sendsTheOriginalModelVerbatimToTheReadingsSession_evenWhenTheReadingNamesIt" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelRefusalOfferTest" time="0.017" />
+    <testcase name="refusalRowsInTheThread_neverArm" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelRefusalOfferTest" time="0.009" />
+    <testcase name="aNewerQualifyingFallback_movesTheOfferToItsRow" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelRefusalOfferTest" time="0.009" />
+    <testcase name="aTap_sendsNothing_offlineOrWithoutASessionOrWithoutAnOffer" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelRefusalOfferTest" time="0.023" />
+    <testcase name="aNewerUnqualifiedFallback_clears_andANoFallbackLeavesTheOffer" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelRefusalOfferTest" time="0.006" />
+    <testcase name="aRefusedOrFailedWrite_keepsTheOfferMarkedFailed_untilTheNextTap" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelRefusalOfferTest" time="0.022" />
+    <testcase name="aModelWriteFromTheMenu_clears" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelRefusalOfferTest" time="0.048" />
+    <testcase name="aLiveSessionScopedFallback_armsAnOfferForItsRow" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelRefusalOfferTest" time="0.015" />
+    <testcase name="cancelledSwitchBack_doesNotRevertOrReportFailure" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelRefusalOfferTest" time="0.014" />
+    <testcase name="aReconnect_keepsTheOffer_andAbandonsAPendingWrite" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelRefusalOfferTest" time="0.008" />
+    <testcase name="aSessionTransition_clears" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelRefusalOfferTest" time="0.005" />
+    <testcase name="anAnnouncedModelOtherThanTheFallback_clears_theFallbackOrARepeatDoesNot" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelRefusalOfferTest" time="0.006" />
+    <testcase name="whileTheWriteIsOutstanding_theOfferIsPending_andASecondTapSendsNothing" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelRefusalOfferTest" time="0.004" />
+    <testcase name="ordinaryModelAndEffortFailures_stillEmitSharedFeedback" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelRefusalOfferTest" time="0.006" />
+    <testcase name="aPendingMenuWrite_disablesTheTap" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelRefusalOfferTest" time="0.005" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest" tests="14" skipped="0" failures="0" errors="0" timestamp="2026-10-05T05:45:59.307Z" hostname="Juhanas-Air" time="0.235">
+    <properties />
+    <testcase name="onModelSelected_rejectedChoiceDoesNotReplaceRememberedChoice" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest" time="0.017" />
+    <testcase name="onModelSelected_whenConnected_sendsOnlyModelFieldToTheSettingsReportedSession" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest" time="0.013" />
+    <testcase name="onModelSelected_whenServerError_restoresConfirmedStateAndSurfacesErrorWithoutLeakingMessage" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest" time="0.015" />
+    <testcase name="onModelSelected_cancelledBeforeAcknowledgementDoesNotReplaceRememberedChoice" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest" time="0.023" />
+    <testcase name="onModelSelected_sameAsCurrentValue_doesNotSend" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest" time="0.012" />
+    <testcase name="onEffortSelected_whenConnected_sendsOnlyEffortFieldVerbatim" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest" time="0.016" />
+    <testcase name="onModelSelected_passiveReadingAndNoChangeLeaveRememberedChoiceIntact" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest" time="0.018" />
+    <testcase name="onModelSelected_acknowledgedChoiceRemembersExactPublishedValue" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest" time="0.016" />
+    <testcase name="onEffortSelected_acknowledgedEffortDoesNotReplaceRememberedModel" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest" time="0.016" />
+    <testcase name="sessionSettings_scopeCancellationMidCall_isInertWithoutSurfacing" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest" time="0.028" />
+    <testcase name="onModelSelected_withEmptySessionId_isReadOnlyAndSendsNothing" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest" time="0.017" />
+    <testcase name="onModelSelected_connectionFailureDoesNotReplaceRememberedChoice" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest" time="0.014" />
+    <testcase name="onModelSelected_whileAWriteIsPending_doesNotSendASecondTime" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest" time="0.017" />
+    <testcase name="onModelSelected_settledWrite_staysPendingUntilAFreshReadingLands" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest" time="0.011" />
+  </testsuite>
+</testsuites>

@@ -29,6 +29,20 @@
 - **#1540 pass:** `main` at `2ce6beec` plus the test-only `refusalStateFramesAt412By892` (`1540-results.xml`, 1
   executed, 0 failures), for the refusal row's Expanded, Switch back pending and Switch back failed components
   (`620:1570`, `646:4694`, `646:4700`), exported on 2026-10-03. See "Refusal row states (#1540)".
+- **#1615 repair (2026-10-05):** the switch-back captures below replace the #1494/#1540
+  readings for armed, pending and failed offers. The final rework's full `pixel8Api35` selection ran with
+  `requireRealSystemBars=true`: [device XML](switch-back-1615-rework-device-results.xml), **20 executed/passed,
+  0 failed, 0 errors, 0 skipped**, including `ThreadDesignCaptureTest#threadNoticeFramesAt412By892` and
+  `#refusalStateFramesAt412By892`, both passed. All four nonblank frames are 412×892, density/font scale 1.0,
+  hardware accelerated, `syntheticBars=false`, with visible real 24 px status/navigation bars. See the
+  [measurements, crop coordinates and hashes](switch-back-1615-measurements.txt) and frame sidecars.
+  [Unit XML](switch-back-1615-rework-unit-results.xml) records **50 executed/passed, 0 failed/errors/skipped**;
+  [scripted XML](switch-back-1615-rework-scripted-results.xml) records **1 executed/passed, 0 failed/errors/skipped**,
+  `DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_refusalSwitchBackRestoresOriginalModel`.
+  The [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1794#issuecomment-5990057647) confirmed
+  current Figma exports for `646:4694`, `646:4700` and `646:4707` are pixel-identical to the retained references.
+  These are builder captures and verifier inspection; documentation ran no new tests. The unrelated UI focus
+  failure is tracked in #1797; the full dispatcher scripted sweep was not run and is not claimed green.
 - **Strict waits:** every frame state waits for its marker text ("Connecting…", "Offline · Retry", "Thinking",
   "2 tasks running", "Pairing error", "Switch back to", "Sonnet", "Manual approval", "Builder Pipeline Plan",
   "No background tasks", "No background-task report yet" and so on) and fails the run if it does not appear within 5 s. The bubble photo's decode gets 10 s. No capture is taken of a state that did not render.
@@ -54,7 +68,7 @@ configuration (fixed; `600:1694` retaken) · #1498 workspace delimiter in the se
 #1512 delimiter rule inset · #1513 photo above text and photo bubble width · #1603 turn outcome pill · #1604 failure
 pill · #1605 history tail gutter and spacing · #1606 Stop glyph and reference (fixed; verdict below) · #1607 type-ahead row spacing ·
 #1608 unrecognized and stopped-turn row spacing · #1614 expanded refusal row spacing and attribution weight ·
-#1615 switch-back button height and gaps, and its failure snackbar ·
+#1615 switch-back button height and gaps, and its failure snackbar (fixed; verdicts below) ·
 #1532 PDF tile not dimmed while disconnected · #1533 reader list indent · #1534 task panel spacing · #1118 agent switch
 (pending) · #1510 dark status-bar icons (fixed after these captures; see Status bar). #1493, #1495 and #1500 asked
 for these captures against the updated frames; their verdicts are below, and the states #1500 could not cover moved
@@ -164,18 +178,18 @@ verdicts apply to each of those frames, which list only what differs.
 
 ### Refusal switch back — `646:4707`
 
-- **Owning ticket:** #1360, #1494 (model names)
-- **Capture:** `refusal-switch-back.png` (412x892, 1.0), retaken for #1494 with the menu seeded
-  (`notice-1494-results.xml`, 1 executed, 0 failures)
+- **Owning ticket:** #1360, #1494 (model names), #1615 (geometry and inline feedback)
+- **Capture:** `refusal-switch-back.png` (412x892, 1.0), retaken after #1615 overflow repair with the menu seeded
+  (`switch-back-1615-rework-device-results.xml`, `threadNoticeFramesAt412By892` passed)
 - **Side-by-side:** `refusal-switch-back-side-by-side.png`
 - **Overlay:** `refusal-switch-back-overlay.png`
 - **Verdict:** match
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | match: one-line title; the button is about 150 px wide, as the frame's |
+| Geometry | match: one-line title; outline at row-relative y=56..87 (32 px), 150 px wide against Figma's 151 |
 | Padding | match: 16 px button side padding |
-| Spacing | match: 12 px from Show details to the button |
+| Spacing | match: 12 clear px after visible Show details pixels (y=35..43) before the outline at y=56 |
 | Typography | match: "Switch back to Opus" in the button's style, the menu label its own span (#1494) |
 | Colour | match: outlined primary button |
 | Borders | match: 1 px outline |
@@ -183,22 +197,18 @@ verdicts apply to each of those frames, which list only what differs.
 | Icon paths | match (none) |
 | Component state | match: offer armed, not pending |
 
-- **Routed:** none. The #1540 pass measured the button about 21 px below Show details and 28 px tall here too,
-  against the frame's 12 and 32; #1615 owns that and updates this verdict.
+- **Routed:** none. The 48 dp touch bounds extend beyond the visible outline without reserving extra layout
+  space. Upper/lower extension taps invoke switch-back independently of details; see the final device XML.
+  The 32 dp outline is a minimum: wrapped destinations and enlarged fonts grow it (overflow evidence below).
 
 ### Refusal row states (#1540)
 
-Three Thread notification states from the Components page's component set `620:1576`, captured by
-`refusalStateFramesAt412By892` in the notice frames' fixture (attachment strip, context usage, the four-model menu
-seeded) on `main` at `2ce6beec` plus the test-only method on `feature/1540`, on `pixel8Api35` with
-`requireRealSystemBars=true` (`1540-results.xml`, 1 executed, 0 failures). The pending and failed states hold the
-override's `setSessionSettings` on a test-owned gate, then fail it with an `IllegalStateException`. Each component is
-372 px wide with no frame around it, so each capture's row is cropped at x 20 to 392 from 12 px above the title's
-first glyph row (the component's 8 px top padding plus the title's line box), to the component's height, and that
-crop (`<name>-row.png`) goes into `scripts/design-compare.py` with the 1x export `figma-<node>.png`. The failed crop
-is 128 px tall to hold the app's lower failed line, and its export is padded to that height with the component's
-background (`figma-646-4700-padded.png`). Positions below are from the crop's top. Text colours were sampled per
-line and equal the export's.
+The expanded state below retains #1540's capture and verdict. Pending and failed switch-back states use the
+final #1615 builder rework captures and current retained 1× Figma component exports. Comparisons align row
+origins without scaling. Crops span x=20..392: armed/pending y=564..660 (96 px high), failed/immediate-failed
+y=544..660 (116 px high), with exclusive right/bottom coordinates. Positions below are relative to the row
+origin. The failed export is padded to the crop height in `figma-646-4700-padded.png`. This alignment excludes
+system chrome from component measurements; real bars remain visible in each full frame.
 
 ### Notification expanded — `620:1570`
 
@@ -225,18 +235,18 @@ line and equal the export's.
 
 ### Refusal switch back pending — `646:4694`
 
-- **Owning ticket:** #1360 (switch back, closed)
-- **Capture:** `refusal-switch-back-pending.png` (412x892, 1.0), row `refusal-switch-back-pending-row.png` (y 538 to 634)
+- **Owning ticket:** #1360 (switch back), #1615 (repair)
+- **Capture:** `refusal-switch-back-pending.png` (412x892, 1.0), row `refusal-switch-back-pending-row.png` (y 564 to 660)
 - **Side-by-side:** `refusal-switch-back-pending-side-by-side.png`
 - **Overlay:** `refusal-switch-back-pending-overlay.png`
-- **Verdict:** mismatch
+- **Verdict:** match
 - Taken after the tap, while the held write is outstanding; the test waits for the button to be disabled.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: the button's outline runs 64 to 91 px (28 px tall) against 56 to 87 (32 px); its 150 px width matches |
+| Geometry | match: outline y=56..87 (32 px) in both app and Figma; width 150 px against 151 |
 | Padding | match: 16 px button side padding |
-| Spacing | mismatch: about 21 px from Show details to the button's outline against 11. Show details sits 2 px higher, within tolerance |
+| Spacing | match: 12 clear px after visible Show details pixels (y=35..43) before the outline at y=56 |
 | Typography | match: "Switch back to Opus" in the button's style |
 | Colour | match: outline and label at the component's 38 % opacity |
 | Borders | match: 1 px outline |
@@ -244,33 +254,52 @@ line and equal the export's.
 | Icon paths | match (none) |
 | Component state | match: disabled while pending, no failed line |
 
-- **Routed:** #1615
+- **Routed:** none. Pending uses alpha 0.38; extension taps invoke neither switch-back nor details.
 
 ### Refusal switch back failed — `646:4700`
 
-- **Owning ticket:** #1360 (switch back, closed)
-- **Capture:** `refusal-switch-back-failed.png` (412x892, 1.0), row `refusal-switch-back-failed-row.png` (y 520 to 648),
-  taken after the snackbar below dismissed
+- **Owning ticket:** #1360 (switch back), #1615 (repair)
+- **Capture:** `refusal-switch-back-failed.png` (412x892, 1.0), row `refusal-switch-back-failed-row.png` (y 544 to 660),
+  retaken after #1615 repair; no snackbar dismissal is needed
 - **Side-by-side:** `refusal-switch-back-failed-side-by-side.png`
 - **Overlay:** `refusal-switch-back-failed-overlay.png`
-- **Verdict:** mismatch
-- The failed write also sends the run-configuration error. `refusal-switch-back-failed-snackbar.png` shows "Couldn't
-  update the run configuration. Try again." as a snackbar over the row for about four seconds, covering the button
-  and the failed line. The component draws only the inline line.
+- **Verdict:** match
+- **Immediate failure:** [full frame](refusal-switch-back-failed-immediate.png),
+  [row crop](refusal-switch-back-failed-immediate-row.png),
+  [side-by-side](refusal-switch-back-failed-immediate-side-by-side.png) and
+  [overlay](refusal-switch-back-failed-immediate-overlay.png). `refusalStateFramesAt412By892` asserts
+  the inline retry message and absence of the shared run-configuration snackbar before timer advancement
+  or dismissal. Immediate and settled frames have identical hashes.
+- **Feedback decision:** both relay refusal and connection/write failure retain an enabled, retryable offer
+  with “Could not change the model — try again.” immediately. Only switch-back suppresses the shared error
+  signal; ordinary model/effort edits retain snackbar feedback. Retry clears the inline failure while pending;
+  cancellation neither reverts nor reports. The final unit XML includes passing
+  `aRefusedOrFailedWrite_keepsTheOfferMarkedFailed_untilTheNextTap`,
+  `ordinaryModelAndEffortFailures_stillEmitSharedFeedback` and `cancelledSwitchBack_doesNotRevertOrReportFailure`.
+- **Historical evidence:** `refusal-switch-back-failed-snackbar.*` shows the duplicate snackbar before #1615;
+  it is not evidence of the current failure state.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: the button as in the pending state, 28 px tall at 64 px against 32 at 56 |
+| Geometry | match: outline y=56..87 (32 px); width 150 px against Figma's 151 |
 | Padding | match: 16 px button side padding |
-| Spacing | mismatch: the failed line starts at 108 px against 95, 17 px under the button's outline against 8; the button's gap under Show details as in the pending state |
+| Spacing | match: failed text pixels y=95..105, 8 px from the last outline pixel (7 clear px); 12 clear px after Show details before the outline |
 | Typography | match: the failed line in body-small, the button label in its style |
 | Colour | match: armed primary button, failed line in the error colour |
 | Borders | match: 1 px outline |
 | Radii | match |
 | Icon paths | match (none) |
-| Component state | mismatch: the run-configuration snackbar covers the row after the failure (see above); with it gone the state matches, button armed and failed line shown |
+| Component state | match: enabled retry button and inline failure immediately, without a duplicate snackbar |
 
-- **Routed:** #1615
+- **Routed:** none.
+- **Overflow repair:** 32 dp is the minimum visible height with 8 dp vertical label padding. Long unknown
+  destinations and enlarged fonts grow the outline and place the retry line below every label line. Final
+  unit/device XML both include passing `longUnknownModel_paintsEveryLineInsideTheOutline` (128-character
+  identifier) and `enlargedModelText_paintsEveryLineInsideTheOutline` (2× font scale), asserting no visual
+  overflow, last-line/outline containment and physical action routing. The row is pinned to 412 dp inside
+  its density provider with native fonts; semantics presence alone would miss the first implementation's
+  clipped destination. Short-label geometry and the independent 48 dp touch target remain covered by
+  `visibleOutline_matchesTheCollapsedDesign_andBothTouchExtensionsInvokeSwitchBack`.
 
 ### Session notice — `627:5466`
 
