@@ -59,6 +59,40 @@ class DevAgentsAuthTest(unittest.TestCase):
             self.assertEqual(gate.live_claude_environment({"PATH": "/bin"}), {"PATH": "/bin"})
         run.assert_not_called()
 
+    def hand_run(self, parent, result):
+        with tempfile.TemporaryDirectory() as bin_dir:
+            helper = Path(bin_dir) / "automation-access"
+            helper.write_text("#!/bin/sh\nexit 1\n")
+            helper.chmod(0o755)
+            stderr = io.StringIO()
+            with patch.object(gate.subprocess, "run", **({"side_effect": result} if isinstance(result, Exception)
+                                                         else {"return_value": result})) as run, \
+                    contextlib.redirect_stderr(stderr):
+                child = gate.live_claude_environment({"PATH": bin_dir, **parent})
+            return child, run, stderr.getvalue(), str(helper)
+
+    def test_a_hand_run_fetches_the_long_term_login_through_automation_access(self):
+        child, run, stderr, helper = self.hand_run({}, Mock(returncode=0, stdout="login-fixture"))
+        self.assertEqual(child["CLAUDE_CODE_OAUTH_TOKEN"], "login-fixture")
+        self.assertEqual(run.call_args.args[0], [helper, "op", "read", "--no-newline",
+                                                 "op://Automation/Claude long term token/password"])
+        self.assertIn("fetched the long-term Claude login", stderr)
+        self.assertNotIn("login-fixture", stderr)
+
+    def test_a_run_inside_the_dispatcher_never_fetches_the_automation_login(self):
+        child, run, _, _ = self.hand_run({"AGENTS_REPO_PATH": "/agents"}, Mock(returncode=0, stdout="login-fixture"))
+        run.assert_not_called()
+        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", child)
+
+    def test_a_failed_hand_run_fetch_falls_back_to_the_shells_own_login(self):
+        for result in [Mock(returncode=1, stdout="", stderr="login-fixture"), Mock(returncode=0, stdout=""),
+                       FileNotFoundError("login-fixture"), subprocess.TimeoutExpired("login-fixture", 60)]:
+            with self.subTest(result=type(result).__name__):
+                child, _, stderr, _ = self.hand_run({}, result)
+                self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", child)
+                self.assertIn("using this shell's own login", stderr)
+                self.assertNotIn("login-fixture", stderr)
+
     def test_missing_item_empty_login_missing_cli_and_timeout_are_sanitized_environment_errors(self):
         for result in [Mock(returncode=1, stdout="", stderr="restricted-fixture login-fixture"), Mock(returncode=0, stdout=""), FileNotFoundError("restricted-fixture"), subprocess.TimeoutExpired("login-fixture", 30)]:
             with self.subTest(result=type(result).__name__), patch.object(gate.subprocess, "run", **({"side_effect": result} if isinstance(result, Exception) else {"return_value": result})):

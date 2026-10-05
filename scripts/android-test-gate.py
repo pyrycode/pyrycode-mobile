@@ -59,12 +59,40 @@ class ClaudeEnvironmentError(RuntimeError):
     """A missing live-test credential is setup failure, not a test verdict."""
 
 
+AUTOMATION_LOGIN = "op://Automation/Claude long term token/password"
+
+
+def hand_run_login(env, parent):
+    """A run started by hand, outside the dispatcher, fetches the long-term login the dispatcher's launcher uses.
+
+    Before 2026-10-05 such a run fell back to the shell's own Claude login and stalled when it was missing or
+    expired. Inside the dispatcher (AGENTS_REPO_PATH set) nothing is fetched: agents get no Automation login.
+    A failed fetch leaves the shell's own login to the authentication check, as before.
+    """
+    helper = shutil.which("automation-access", path=parent.get("PATH"))
+    if parent.get("AGENTS_REPO_PATH") or helper is None:
+        return env
+    try:
+        result = subprocess.run([helper, "op", "read", "--no-newline", AUTOMATION_LOGIN],
+                                env=env, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        result = None
+    if result is None or result.returncode or not result.stdout.strip():
+        print("Android gate: could not fetch the long-term Claude login through automation-access; "
+              "using this shell's own login", file=sys.stderr)
+        return env
+    print("Android gate: fetched the long-term Claude login through automation-access", file=sys.stderr)
+    return {**env, "CLAUDE_CODE_OAUTH_TOKEN": result.stdout.rstrip("\n")}
+
+
 def live_claude_environment(parent):
     """Fetch the login in memory, strip account credentials from test children."""
     env = {key: value for key, value in parent.items() if not key.startswith("OP_") and key != "PYRY_DEV_AGENTS_TOKEN"}
     token = parent.get("OP_SERVICE_ACCOUNT_TOKEN")
-    if env.get("CLAUDE_CODE_OAUTH_TOKEN") or not token:
+    if env.get("CLAUDE_CODE_OAUTH_TOKEN"):
         return env
+    if not token:
+        return hand_run_login(env, parent)
     op_env = {**env, "OP_SERVICE_ACCOUNT_TOKEN": token, "OP_BIOMETRIC_UNLOCK_ENABLED": "false"}
     try:
         result = subprocess.run(

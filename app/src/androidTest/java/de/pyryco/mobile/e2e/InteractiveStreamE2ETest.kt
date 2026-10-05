@@ -2114,6 +2114,66 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /** #1775: host-wide prompt storage through the real Edit host controls; zero Claude turns. */
+    @Test
+    fun interactiveTurn_hostSystemPrompt_editsResetsAndCancels() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        awaitChannelList()
+        awaitConnected()
+
+        fun fresh() = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).requestHostSystemPrompt().getOrThrow() } }
+        val original = fresh().systemPrompt
+        val custom = "Host prompt e2e1775 " + System.currentTimeMillis() + "\nPreserve this second line."
+
+        fun openPrompt() {
+            composeTestRule.onNode(hasText(context.getString(R.string.host_prompt_title)) and hasClickAction()).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasTestTag(de.pyryco.mobile.ui.host.HOST_PROMPT_FIELD_TAG)).fetchSemanticsNodes().size == 1
+            }
+        }
+
+        fun ok() = composeTestRule.onNode(hasText(EDIT_HOST_OK) and hasClickAction()).performClick()
+
+        fun cancel() = composeTestRule.onNode(hasText(modalCancel) and hasClickAction()).performClick()
+        try {
+            openHostEditor(serverId)
+            openPrompt()
+            composeTestRule.onNodeWithTag(de.pyryco.mobile.ui.host.HOST_PROMPT_FIELD_TAG).performTextReplacement(custom)
+            ok()
+            awaitEditorTitle(context)
+            assertTrue("custom host prompt was not durably stored", fresh().systemPrompt == custom)
+            cancel()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { editorClosed(context) }
+            openHostEditor(serverId)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule
+                    .onAllNodes(
+                        hasTestTag(de.pyryco.mobile.ui.host.HOST_PROMPT_PREVIEW_TAG) and hasText(custom),
+                        useUnmergedTree = true,
+                    ).fetchSemanticsNodes()
+                    .size ==
+                    1
+            }
+            openPrompt()
+            composeTestRule.onNodeWithText(context.getString(R.string.host_prompt_reset)).performClick()
+            cancel()
+            awaitEditorTitle(context)
+            assertTrue("reset then Cancel changed host storage", fresh().systemPrompt == custom)
+            openPrompt()
+            composeTestRule.onNodeWithText(context.getString(R.string.host_prompt_reset)).performClick()
+            ok()
+            awaitEditorTitle(context)
+            val reset = fresh()
+            assertTrue("reset then OK did not store the daemon default", reset.systemPrompt == reset.defaultSystemPrompt)
+            cancel()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { editorClosed(context) }
+        } finally {
+            // Restore the isolated harness host even after an assertion fails. Never print its text.
+            runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).setHostSystemPrompt(original).getOrThrow() } }
+        }
+    }
+
     /**
      * The live registry returns each paired host's own complete diagnostic archive (#1252, rung 3). A's
      * daemon alone logs a newly muted discussion id; B's archive must not contain it even while B is selected.
@@ -3589,27 +3649,27 @@ class InteractiveStreamE2ETest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val args = InstrumentationRegistry.getArguments()
         args.getString(ARG_BYPASS_UNMET)?.let { throw AssertionError(bypassUnmetMessage(it)) }
-        val serverId = bypassArg(ARG_BYPASS_SERVER_ID)
-        val pairCode = bypassArg(ARG_BYPASS_PAIR_CODE)
+        awaitChannelList()
+        awaitConnected()
+        instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
+        val fixture = BypassPairingFixture.request()
+        val serverId = fixture.serverId
         val tokenFile = bypassArg(ARG_BYPASS_TOKEN_FILE)
         val token = bypassArg(ARG_BYPASS_TOKEN)
         val peer =
             SecondClientPeer(
                 PairedServer(
                     serverId = serverId,
-                    token = bypassArg(ARG_BYPASS_PEER_TOKEN),
+                    token = fixture.peerToken,
                     relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
-                    serverStaticPublicKey = bypassArg(ARG_BYPASS_SERVER_STATIC_PUBLIC_KEY),
+                    serverStaticPublicKey = fixture.serverStaticPublicKey,
                 ),
             )
         val bypass = PermissionModeOption.Bypass
         val manual = PermissionModeOption.Default
         try {
-            // 1. Pair the dedicated host by code, create a chat on it, and run one tool-free turn.
-            awaitChannelList()
-            awaitConnected()
-            instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
-            pairHostByCode(pairCode, BYPASS_HOST_NAME)
+            // 1. Pair the freshly minted dedicated host by code, create a chat, and run one tool-free turn.
+            pairHostByCode(fixture.pairCode, BYPASS_HOST_NAME)
             val name = BYPASS_CHAT_NAME_PREFIX + System.currentTimeMillis()
             val repository = hostRepository(serverId)
             val chat = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { repository.rename(repository.createDiscussion().id, name) } }
@@ -7899,10 +7959,6 @@ class InteractiveStreamE2ETest {
         // daemon is up, or ARG_BYPASS_UNMET naming the prerequisite it lacked. The pair code and the peer
         // token carry pairing tokens: never log them. The witness token authorizes nothing.
         const val ARG_BYPASS_UNMET = "bypassUnmet"
-        const val ARG_BYPASS_SERVER_ID = "bypassServerId"
-        const val ARG_BYPASS_PAIR_CODE = "bypassPairCode"
-        const val ARG_BYPASS_PEER_TOKEN = "bypassPeerToken"
-        const val ARG_BYPASS_SERVER_STATIC_PUBLIC_KEY = "bypassServerStaticPublicKey"
         const val ARG_BYPASS_TOKEN_FILE = "bypassTokenFile"
         const val ARG_BYPASS_TOKEN = "bypassToken"
 
@@ -7920,8 +7976,7 @@ class InteractiveStreamE2ETest {
                 "instance_name" to "the dedicated instance name is not a test instance name",
                 "isolated_home" to "the isolated HOME, its config or the token file could not be written",
                 "daemon_not_ready" to "the dedicated daemon did not answer `pyry status` within 15 s",
-                "pairing" to "the phone's pairing with the dedicated daemon could not be minted",
-                "peer_pairing" to "the peer's --allow-remote-permissions pairing could not be minted",
+                "pairing_fixture" to "the scenario-entry pairing fixture did not start",
             )
 
         // #966 answer daemon. The arguments scripts/e2e-emulator.sh passes once it is up, or ARG_ANSWER_UNMET

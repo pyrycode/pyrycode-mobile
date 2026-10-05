@@ -26,7 +26,8 @@
 #   * `pyrycode-relay` and `pyry` on PATH (override with RELAY_BIN / PYRY_BIN).
 #   * rung 3 only: the operator's claude is authenticated on this host — the daemon spawns real claude.
 #     The interactive path is Max-subscription covered, so this does NOT meter tokens.
-#   * LIVE mode only: the operator's claude authenticated (as rung 3); NO relay binary needed (the daemon
+#   * LIVE mode only: the operator's claude authenticated (as rung 3), or the long-term login, which a hand
+#     run with no CLAUDE_CODE_OAUTH_TOKEN fetches through scripts/with-claude-login.sh; NO relay binary needed (the daemon
 #     dials the production relay); the emulator needs outbound internet + DNS + a system-trusted TLS cert
 #     for the relay host. Mutually exclusive with DETERMINISTIC.
 #   * rung 4 only: either FAKE_CLAUDE_BIN (a prebuilt fakeclaude) or PYRYCODE_SRC (a local pyrycode
@@ -125,6 +126,11 @@ fi
 INTERACTIVE_RUNNER="${INTERACTIVE_RUNNER:-}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# A LIVE run started by hand fetches the long-term Claude login when it has none (2026-10-05), instead of
+# stalling on a missing or expired shell login. scripts/with-claude-login.sh explains when it fetches.
+if [ -n "${LIVE}" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "${E2E_LOGIN_TRIED:-}" ]; then
+  E2E_LOGIN_TRIED=1 exec "${REPO_ROOT}/scripts/with-claude-login.sh" bash "${BASH_SOURCE[0]}" "$@"
+fi
 GRADLEW="${REPO_ROOT}/gradlew"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pyry-e2e.XXXXXX")"
 RELAY_LOG="${WORK_DIR}/relay.log"
@@ -193,17 +199,14 @@ PYRY_NAME_BYPASS="${PYRY_NAME}-bypass"
 PAIR_NAME_BYPASS="${PAIR_NAME}-bypass"
 PAIR_NAME_BYPASS_PEER="${PAIR_NAME}-bypass-peer"
 DAEMON_BYPASS_LOG="${WORK_DIR}/daemon-bypass.log"
-PAIR_BYPASS_OUT="${WORK_DIR}/pair-bypass.out"
-PAIR_BYPASS_PEER_OUT="${WORK_DIR}/pair-bypass-peer.out"
 BYPASS_HOME=""
 BYPASS_PID=""
 BYPASS_UNMET=""
 BYPASS_TOKEN_FILE=""
 BYPASS_WITNESS=""
-SERVER_ID_BYPASS=""
-PAIR_CODE_BYPASS=""
-BYPASS_PEER_TOKEN=""
-BYPASS_PEER_SERVER_STATIC_PUBKEY=""
+BYPASS_FIXTURE_PID=""
+BYPASS_FIXTURE_PORT=""
+BYPASS_FIXTURE_AUTH=""
 
 # Dedicated answer daemon (#966), rung 3 / LIVE only: a fourth test daemon under its OWN isolated HOME, in
 # #687's shape but with no operator bypass, so claude's default mode asks. Its config turns on the stdio
@@ -227,6 +230,27 @@ ANSWER_PEER_SERVER_STATIC_PUBKEY=""
 
 log() { printf '\033[1;34m[e2e]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[e2e] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
+
+# #1775 needs the shipped daemon handlers, not just #2766's durable instructions store.
+# Check the binary's revision before starting the daemon; never silently skip the live scenario.
+require_host_prompt_daemon() {
+  local required="$1"
+  [ -n "${LIVE}" ] || return 0
+  if [ -n "${LIVE_TESTS:-}" ]; then
+    case ",${LIVE_TESTS}," in
+      *"#interactiveTurn_hostSystemPrompt_editsResetsAndCancels,"*) ;;
+      *) return 0 ;;
+    esac
+  fi
+  [[ "${DAEMON_REVISION}" =~ ^[0-9a-f]{7,64}$ ]] \
+    || die "host prompt prerequisite pyrycode#2768: daemon revision unavailable; rebuild a versioned daemon containing ${required}"
+  [ -n "${PYRYCODE_SRC}" ] \
+    && git -C "${PYRYCODE_SRC}" cat-file -e "${required}^{commit}" 2>/dev/null \
+    && git -C "${PYRYCODE_SRC}" cat-file -e "${DAEMON_REVISION}^{commit}" 2>/dev/null \
+    || die "host prompt prerequisite pyrycode#2768: set PYRYCODE_SRC to a checkout holding the required and binary revisions"
+  git -C "${PYRYCODE_SRC}" merge-base --is-ancestor "${required}" "${DAEMON_REVISION}" \
+    || die "host prompt prerequisite pyrycode#2768: daemon lacks the host prompt handlers; rebuild from ${required} or a descendant"
+}
 
 # resolve_runner_from_config <config-path> (#614)
 #   Echoes exactly one line, "<runner>\t<reason>". NEVER writes. NEVER exits non-zero — on the
@@ -501,18 +525,71 @@ run_installed_instrumentation() {
 }
 
 report_stale_pairing_codes() {
-  local stale="" entry name logfile
+  local stale="" entry name logfile count seen index=0
+  STALE_PAIRING=""
   for entry in "${PYRY_NAME}:${DAEMON_LOG}" "${PYRY_NAME_B}:${DAEMON_B_LOG}" \
       "${PYRY_NAME_BYPASS}:${DAEMON_BYPASS_LOG}" "${PYRY_NAME_ANSWER}:${DAEMON_ANSWER_LOG}"; do
     name="${entry%%:*}"
     logfile="${entry#*:}"
-    if [ -f "${logfile}" ] && grep -qF redemption_window_elapsed "${logfile}"; then
+    count=0
+    if [ -f "${logfile}" ]; then count="$(grep -cF redemption_window_elapsed "${logfile}" || true)"; fi
+    # Only rejections since the last report, so the retry's report names only what the retry hit.
+    seen="STALE_SEEN_${index}"
+    index=$((index + 1))
+    if [ "${count:-0}" -gt "${!seen:-0}" ]; then
       stale="${stale:+${stale}, }${name} ($(basename "${logfile}"))"
     fi
+    printf -v "${seen}" '%s' "${count:-0}"
   done
   if [ -n "${stale}" ]; then
+    STALE_PAIRING=1
     printf '\033[1;31m[e2e] ERROR:\033[0m pairing_codes_stale: %s rejected a handshake with redemption_window_elapsed; its pairing code outlived the 15-minute redemption window before the test redeemed it\n' "${stale}" >&2
   fi
+}
+
+# retry_with_fresh_codes (2026-10-05)
+#   Called once after a failed Gradle test task whose daemons rejected an expired pairing code. A long live run
+#   can reach the test that pairs after the 15-minute window, a failure outside the app (#993, #1668). Mints
+#   every pairing afresh, since the reinstalled app holds a new key, and reruns only the failed tests, once.
+#   e2e-rerun-report.py then folds the rerun's results into the first run's report, so the gate still counts
+#   every test. Returns 1 without rerunning on the installed-app path, after a retry already ran, or when the
+#   report names no failed test. Otherwise sets RETRY_STATUS to the rerun's status and returns 0.
+retry_with_fresh_codes() {
+  local results="${REPO_ROOT}/app/build/outputs/androidTest-results/managedDevice/debug/${DEVICE}"
+  local first="${WORK_DIR}/first-run-reports" failed="" arg rerun_flag="--rerun"
+  local args=()
+  if [ "${E2E_INSTALLED:-}" = "1" ] || [ -n "${RETRY_STATUS:-}" ]; then return 1; fi
+  failed="$(python3 "${REPO_ROOT}/scripts/e2e-rerun-report.py" failed "${results}" 2>/dev/null || true)"
+  if [ -z "${failed}" ]; then return 1; fi
+  log "a pairing code expired before its test redeemed it; minting fresh codes and retrying the failed tests once…"
+  mkdir -p "${first}"
+  mv "${results}"/TEST-*.xml "${first}/"
+  mint_pairings
+  # Every argument as before, with the fresh codes and only the failed tests. Never log a value.
+  for arg in "${GRADLE_TEST_ARGS[@]}"; do
+    case "${arg}" in
+      --rerun) rerun_flag="" ;;
+      -Pandroid.testInstrumentationRunnerArguments.class=*) arg="${arg%%=*}=${failed}" ;;
+      -Pandroid.testInstrumentationRunnerArguments.token=*) arg="${arg%%=*}=${TOKEN}" ;;
+      -Pandroid.testInstrumentationRunnerArguments.pairCodeB=*) arg="${arg%%=*}=${PAIR_CODE_B}" ;;
+      -Pandroid.testInstrumentationRunnerArguments.peerToken=*) arg="${arg%%=*}=${PEER_TOKEN}" ;;
+      -Pandroid.testInstrumentationRunnerArguments.bypassPairCode=*) arg="${arg%%=*}=${PAIR_CODE_BYPASS}" ;;
+      -Pandroid.testInstrumentationRunnerArguments.bypassPeerToken=*) arg="${arg%%=*}=${BYPASS_PEER_TOKEN}" ;;
+      -Pandroid.testInstrumentationRunnerArguments.answerPairCode=*) arg="${arg%%=*}=${PAIR_CODE_ANSWER}" ;;
+      -Pandroid.testInstrumentationRunnerArguments.answerPeerToken=*) arg="${arg%%=*}=${ANSWER_PEER_TOKEN}" ;;
+    esac
+    args+=("${arg}")
+  done
+  [ -z "${rerun_flag}" ] || args+=("${rerun_flag}")
+  RETRY_STATUS=0
+  "${GRADLEW}" -p "${REPO_ROOT}" "${DEVICE}DebugAndroidTest" "${args[@]}" --console=plain || RETRY_STATUS=$?
+  mkdir -p "${results}"
+  if ! python3 "${REPO_ROOT}/scripts/e2e-rerun-report.py" merge "${first}" "${results}" >/dev/null; then
+    mv "${first}"/TEST-*.xml "${results}/" 2>/dev/null || true
+    [ "${RETRY_STATUS}" -ne 0 ] || RETRY_STATUS=1
+  fi
+  log "retry of ${failed//,/, } exited ${RETRY_STATUS}"
+  return 0
 }
 
 # report_relay_link_drops (#1132)
@@ -555,6 +632,7 @@ cleanup() {
   [ -n "${WATCHER_PID}" ] && kill "${WATCHER_PID}" 2>/dev/null || true
   [ -n "${DAEMON_PID}" ] && kill "${DAEMON_PID}" 2>/dev/null || true
   [ -n "${DAEMON_B_PID:-}" ] && kill "${DAEMON_B_PID}" 2>/dev/null || true
+  [ -n "${BYPASS_FIXTURE_PID:-}" ] && kill "${BYPASS_FIXTURE_PID}" 2>/dev/null || true
   [ -n "${BYPASS_PID:-}" ] && kill "${BYPASS_PID}" 2>/dev/null || true
   [ -n "${ANSWER_PID:-}" ] && kill "${ANSWER_PID}" 2>/dev/null || true
   [ -n "${RELAY_PID}" ] && kill "${RELAY_PID}" 2>/dev/null || true
@@ -887,6 +965,7 @@ if command -v go >/dev/null 2>&1; then
   DAEMON_REVISION="$(go version -m "$(command -v "${PYRY_BIN}")" 2>/dev/null | sed -n 's/.*vcs.revision=//p' || true)"
 fi
 log "daemon revision: ${DAEMON_REVISION:-unavailable}; binary: ${PYRY_BIN}"
+require_host_prompt_daemon b3daa0432528188f2829b235877c60627afb8e43
 # Claude's own revision (#687), clamped to a plain charset: it is a binary's output, printed to the log.
 if [ -n "${DETERMINISTIC}" ]; then
   log "claude revision: scripted fakeclaude (no real claude on this rung)"
@@ -1031,7 +1110,7 @@ start_bypass_daemon() {
     fi
     sleep 0.1
   done
-  log "operator-bypass daemon (#687) ready; its codes are minted after the build"
+  log "operator-bypass daemon (#687) ready; its codes are minted at scenario entry"
 }
 if [ -z "${DETERMINISTIC}" ]; then
   start_bypass_daemon
@@ -1108,23 +1187,73 @@ else
     || die "the Gradle build of the app and test APKs failed (see the output above); no pairing code was minted"
 fi
 
+# ---- 4c. mint the operator-bypass and answer daemons' codes (rung 3 / LIVE only, #687 / #966) ----
+# After the build (#993): bypass minting waits for its scenario (#1756); answer codes are eager.
+# A daemon with an unmet prerequisite mints nothing.
+start_bypass_pairing_fixture() {
+  local config="${WORK_DIR}/bypass-pairing.json" parsed="" deadline
+  python3 "${REPO_ROOT}/scripts/e2e-bypass-pairing.py" --port-file "${config}" \
+    --pyry "${PYRY_BIN}" --home "${BYPASS_HOME}" --instance "${PYRY_NAME_BYPASS}" \
+    --phone-name "${PAIR_NAME_BYPASS}" --peer-name "${PAIR_NAME_BYPASS_PEER}" \
+    --daemon-relay "${DAEMON_RELAY_URL}" --phone-relay "${PHONE_RELAY_URL}" \
+    >"${WORK_DIR}/bypass-pairing.log" 2>&1 &
+  BYPASS_FIXTURE_PID=$!
+  deadline=$((SECONDS + 5))
+  until parsed="$(python3 - "${config}" 2>/dev/null <<'PYCONFIG'
+import json, shlex, sys
+with open(sys.argv[1]) as source:
+    config = json.load(source)
+print("BYPASS_FIXTURE_PORT=" + shlex.quote(str(config["port"])))
+print("BYPASS_FIXTURE_AUTH=" + shlex.quote(config["authorization"]))
+PYCONFIG
+)"; do
+    if ! kill -0 "${BYPASS_FIXTURE_PID}" 2>/dev/null || [ "${SECONDS}" -ge "${deadline}" ]; then
+      bypass_unmet pairing_fixture "the scenario-entry pairing fixture did not start"
+      return 0
+    fi
+    sleep 0.05
+  done
+  eval "${parsed}"
+  log "operator-bypass pairing fixture ready (minting waits for the scenario)"
+}
+mint_answer_pairing() {
+  local parsed=""
+  # Both the phone and the peer pair --allow-remote-permissions: the phone answers here. Never log either value.
+  env "HOME=${ANSWER_HOME}" "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME_ANSWER}" --name="${PAIR_NAME_ANSWER}" --allow-remote-permissions \
+    >"${PAIR_ANSWER_OUT}" 2>&1 \
+    && parsed="$(phone_pair_code "${PAIR_ANSWER_OUT}" "${PHONE_RELAY_URL}" ANSWER)" \
+    && eval "${parsed}" \
+    && [ -n "${SERVER_ID_ANSWER}" ] && [ -n "${PAIR_CODE_ANSWER}" ] \
+    || { answer_unmet pairing "the phone pairing could not be minted; see private log ${PAIR_ANSWER_OUT}"; return 0; }
+  env "HOME=${ANSWER_HOME}" "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME_ANSWER}" --name="${PAIR_NAME_ANSWER_PEER}" --allow-remote-permissions \
+    >"${PAIR_ANSWER_PEER_OUT}" 2>&1 \
+    && parsed="$(pair_token "${PAIR_ANSWER_PEER_OUT}" ANSWER_PEER)" \
+    && eval "${parsed}" \
+    && [ -n "${ANSWER_PEER_TOKEN}" ] && [ -n "${ANSWER_PEER_SERVER_STATIC_PUBKEY}" ] \
+    || { answer_unmet peer_pairing "the peer pairing could not be minted; see private log ${PAIR_ANSWER_PEER_OUT}"; return 0; }
+  log "answer daemon (#966) up: serverId=${SERVER_ID_ANSWER} (the test pairs it by code)"
+}
+
 # ---- pair against the running test daemon ---------------
 # `pyry pair` prints a QR plus one base64url-encoded JSON line: {server, relay, token,
 # server_static_pubkey}. We parse that line and ignore its `relay` (the daemon's loopback URL); the
 # phone must dial the 10.0.2.2 alias instead, so we override relayUrl below. In deterministic mode we
 # pair under the isolated HOME so the device identity and conversations.json live in the scratch
 # profile (and the daemon, also under that HOME, shares the same identity).
-log "minting device pairing token (name='${PAIR_NAME}', pyry-name='${PYRY_NAME}')…"
-if [ -n "${DETERMINISTIC}" ]; then
-  env "HOME=${ISO_HOME}" PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME}" --name="${PAIR_NAME}" \
-    >"${PAIR_OUT}" 2>&1 || die "pyry pair failed; see private log ${PAIR_OUT}"
-else
-  PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME}" --name="${PAIR_NAME}" \
-    >"${PAIR_OUT}" 2>&1 || die "pyry pair failed; see private log ${PAIR_OUT}"
-fi
+# mint_pairings: every pairing the run needs, minted after the build (#993). Called again, with fresh codes,
+# by retry_with_fresh_codes when a code expired before its test redeemed it.
+mint_pairings() {
+  log "minting device pairing token (name='${PAIR_NAME}', pyry-name='${PYRY_NAME}')…"
+  if [ -n "${DETERMINISTIC}" ]; then
+    env "HOME=${ISO_HOME}" PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME}" --name="${PAIR_NAME}" \
+      >"${PAIR_OUT}" 2>&1 || die "pyry pair failed; see private log ${PAIR_OUT}"
+  else
+    PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME}" --name="${PAIR_NAME}" \
+      >"${PAIR_OUT}" 2>&1 || die "pyry pair failed; see private log ${PAIR_OUT}"
+  fi
 
-# Parse the first line that base64url-decodes to a JSON object with the expected keys.
-PARSED="$(python3 - "${PAIR_OUT}" <<'PY'
+  # Parse the first line that base64url-decodes to a JSON object with the expected keys.
+  PARSED="$(python3 - "${PAIR_OUT}" <<'PY'
 import sys, json, base64, shlex
 def b64url(s):
     s = s.strip()
@@ -1149,75 +1278,40 @@ print("SERVER_ID=" + shlex.quote(payload["server"]))
 print("TOKEN=" + shlex.quote(payload["token"]))
 print("SERVER_STATIC_PUBKEY=" + shlex.quote(payload["server_static_pubkey"]))
 PY
-)" || die "failed to parse pairing payload; see private log ${PAIR_OUT}"
-eval "${PARSED}"
-[ -n "${SERVER_ID:-}" ] && [ -n "${TOKEN:-}" ] && [ -n "${SERVER_STATIC_PUBKEY:-}" ] || die "empty pairing fields"
-log "paired: serverId=${SERVER_ID}"
+  )" || die "failed to parse pairing payload; see private log ${PAIR_OUT}"
+  eval "${PARSED}"
+  [ -n "${SERVER_ID:-}" ] && [ -n "${TOKEN:-}" ] && [ -n "${SERVER_STATIC_PUBKEY:-}" ] || die "empty pairing fields"
+  log "paired: serverId=${SERVER_ID}"
 
-# The second host (#847) is paired by the test itself, through the app's paste-a-code flow, so here we
-# only mint its code. Never log PAIR_CODE_B: it carries the pairing token.
-if [ -z "${DETERMINISTIC}" ]; then
-  log "minting second pairing token (name='${PAIR_NAME_B}', pyry-name='${PYRY_NAME_B}')…"
-  PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME_B}" --name="${PAIR_NAME_B}" \
-    >"${PAIR_B_OUT}" 2>&1 || die "second pyry pair failed; see private log ${PAIR_B_OUT}"
-  PARSED_B="$(phone_pair_code "${PAIR_B_OUT}" "${PHONE_RELAY_URL}")" \
-    || die "failed to parse the second pairing payload; see private log ${PAIR_B_OUT}"
-  eval "${PARSED_B}"
-  [ -n "${SERVER_ID_B}" ] && [ -n "${PAIR_CODE_B}" ] || die "empty second pairing fields"
-  log "second host minted: serverId=${SERVER_ID_B} (the test pairs it by code)"
+  # The second host (#847) is paired by the test itself, through the app's paste-a-code flow, so here we
+  # only mint its code. Never log PAIR_CODE_B: it carries the pairing token.
+  if [ -z "${DETERMINISTIC}" ]; then
+    log "minting second pairing token (name='${PAIR_NAME_B}', pyry-name='${PYRY_NAME_B}')…"
+    PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME_B}" --name="${PAIR_NAME_B}" \
+      >"${PAIR_B_OUT}" 2>&1 || die "second pyry pair failed; see private log ${PAIR_B_OUT}"
+    PARSED_B="$(phone_pair_code "${PAIR_B_OUT}" "${PHONE_RELAY_URL}")" \
+      || die "failed to parse the second pairing payload; see private log ${PAIR_B_OUT}"
+    eval "${PARSED_B}"
+    [ -n "${SERVER_ID_B}" ] && [ -n "${PAIR_CODE_B}" ] || die "empty second pairing fields"
+    log "second host minted: serverId=${SERVER_ID_B} (the test pairs it by code)"
 
-  # The second-client peer's own device token on host A (#848). Never log PEER_TOKEN.
-  log "minting second-client peer token (name='${PAIR_NAME_PEER}', pyry-name='${PYRY_NAME}')…"
-  PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME}" --name="${PAIR_NAME_PEER}" --allow-remote-permissions \
-    >"${PAIR_PEER_OUT}" 2>&1 || die "peer pyry pair failed; see private log ${PAIR_PEER_OUT}"
-  PARSED_PEER="$(pair_token "${PAIR_PEER_OUT}")" \
-    || die "failed to parse the peer pairing payload; see private log ${PAIR_PEER_OUT}"
-  eval "${PARSED_PEER}"
-  [ -n "${PEER_TOKEN}" ] || die "empty peer pairing token"
-  log "second-client peer minted on serverId=${SERVER_ID}"
-fi
-
-# ---- 4c. mint the operator-bypass and answer daemons' codes (rung 3 / LIVE only, #687 / #966) ----
-# After the build, like the host codes above (#993). A daemon with an unmet prerequisite mints nothing.
-mint_bypass_pairing() {
-  local parsed=""
-  # The phone pairs unprivileged, by code; the peer pairs --allow-remote-permissions. Never log either value.
-  env "HOME=${BYPASS_HOME}" "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME_BYPASS}" --name="${PAIR_NAME_BYPASS}" \
-    >"${PAIR_BYPASS_OUT}" 2>&1 \
-    && parsed="$(phone_pair_code "${PAIR_BYPASS_OUT}" "${PHONE_RELAY_URL}" BYPASS)" \
-    && eval "${parsed}" \
-    && [ -n "${SERVER_ID_BYPASS}" ] && [ -n "${PAIR_CODE_BYPASS}" ] \
-    || { bypass_unmet pairing "the phone pairing could not be minted; see private log ${PAIR_BYPASS_OUT}"; return 0; }
-  env "HOME=${BYPASS_HOME}" "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME_BYPASS}" --name="${PAIR_NAME_BYPASS_PEER}" --allow-remote-permissions \
-    >"${PAIR_BYPASS_PEER_OUT}" 2>&1 \
-    && parsed="$(pair_token "${PAIR_BYPASS_PEER_OUT}" BYPASS_PEER)" \
-    && eval "${parsed}" \
-    && [ -n "${BYPASS_PEER_TOKEN}" ] && [ -n "${BYPASS_PEER_SERVER_STATIC_PUBKEY}" ] \
-    || { bypass_unmet peer_pairing "the peer pairing could not be minted; see private log ${PAIR_BYPASS_PEER_OUT}"; return 0; }
-  log "operator-bypass daemon (#687) up: serverId=${SERVER_ID_BYPASS} (the test pairs it by code)"
+    # The second-client peer's own device token on host A (#848). Never log PEER_TOKEN.
+    log "minting second-client peer token (name='${PAIR_NAME_PEER}', pyry-name='${PYRY_NAME}')…"
+    PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME}" --name="${PAIR_NAME_PEER}" --allow-remote-permissions \
+      >"${PAIR_PEER_OUT}" 2>&1 || die "peer pyry pair failed; see private log ${PAIR_PEER_OUT}"
+    PARSED_PEER="$(pair_token "${PAIR_PEER_OUT}")" \
+      || die "failed to parse the peer pairing payload; see private log ${PAIR_PEER_OUT}"
+    eval "${PARSED_PEER}"
+    [ -n "${PEER_TOKEN}" ] || die "empty peer pairing token"
+    log "second-client peer minted on serverId=${SERVER_ID}"
+  fi
+  if [ -z "${DETERMINISTIC}" ] && [ -z "${ANSWER_UNMET}" ]; then
+    mint_answer_pairing
+  fi
 }
-mint_answer_pairing() {
-  local parsed=""
-  # Both the phone and the peer pair --allow-remote-permissions: the phone answers here. Never log either value.
-  env "HOME=${ANSWER_HOME}" "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME_ANSWER}" --name="${PAIR_NAME_ANSWER}" --allow-remote-permissions \
-    >"${PAIR_ANSWER_OUT}" 2>&1 \
-    && parsed="$(phone_pair_code "${PAIR_ANSWER_OUT}" "${PHONE_RELAY_URL}" ANSWER)" \
-    && eval "${parsed}" \
-    && [ -n "${SERVER_ID_ANSWER}" ] && [ -n "${PAIR_CODE_ANSWER}" ] \
-    || { answer_unmet pairing "the phone pairing could not be minted; see private log ${PAIR_ANSWER_OUT}"; return 0; }
-  env "HOME=${ANSWER_HOME}" "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME_ANSWER}" --name="${PAIR_NAME_ANSWER_PEER}" --allow-remote-permissions \
-    >"${PAIR_ANSWER_PEER_OUT}" 2>&1 \
-    && parsed="$(pair_token "${PAIR_ANSWER_PEER_OUT}" ANSWER_PEER)" \
-    && eval "${parsed}" \
-    && [ -n "${ANSWER_PEER_TOKEN}" ] && [ -n "${ANSWER_PEER_SERVER_STATIC_PUBKEY}" ] \
-    || { answer_unmet peer_pairing "the peer pairing could not be minted; see private log ${PAIR_ANSWER_PEER_OUT}"; return 0; }
-  log "answer daemon (#966) up: serverId=${SERVER_ID_ANSWER} (the test pairs it by code)"
-}
+mint_pairings
 if [ -z "${DETERMINISTIC}" ] && [ -z "${BYPASS_UNMET}" ]; then
-  mint_bypass_pairing
-fi
-if [ -z "${DETERMINISTIC}" ] && [ -z "${ANSWER_UNMET}" ]; then
-  mint_answer_pairing
+  start_bypass_pairing_fixture
 fi
 
 # #1642: only the isolated harness daemon can release the live Bash hold. The tool
@@ -1325,6 +1419,7 @@ elif [ -n "${LIVE}" ]; then
   # #1085: the second host's rename and unpair from its Edit host modal joins at no turn cost (pairing,
   # rename and a phone-local unpair), so the list holds 38 methods and 39 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_secondHostRenameAndUnpair_leavesFirstHostUntouched"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_hostSystemPrompt_editsResetsAndCancels"
   # #1252: registry requests complete diagnostic archives for both paired hosts; only A's contains A's
   # daemon-log marker. No Settings export or picker is involved, and it spends no Claude turn.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_diagnosticBundles_stayOnTheirOwningHosts"
@@ -1406,15 +1501,13 @@ fi
 if [ -n "${PEER_TOKEN:-}" ]; then
   GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.peerToken="${PEER_TOKEN}")
 fi
-# The operator-bypass daemon (#687): its unmet prerequisite, or the pairing, the peer and the witness.
+# The operator-bypass daemon: its unmet prerequisite, or its scenario-entry fixture and witness.
 if [ -n "${BYPASS_UNMET:-}" ]; then
   GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.bypassUnmet="${BYPASS_UNMET}")
-elif [ -n "${BYPASS_PEER_TOKEN:-}" ]; then
+elif [ -n "${BYPASS_FIXTURE_PORT:-}" ]; then
   GRADLE_TEST_ARGS+=(
-    -Pandroid.testInstrumentationRunnerArguments.bypassServerId="${SERVER_ID_BYPASS}"
-    -Pandroid.testInstrumentationRunnerArguments.bypassPairCode="${PAIR_CODE_BYPASS}"
-    -Pandroid.testInstrumentationRunnerArguments.bypassPeerToken="${BYPASS_PEER_TOKEN}"
-    -Pandroid.testInstrumentationRunnerArguments.bypassServerStaticPublicKey="${BYPASS_PEER_SERVER_STATIC_PUBKEY}"
+    -Pandroid.testInstrumentationRunnerArguments.bypassFixturePort="${BYPASS_FIXTURE_PORT}"
+    -Pandroid.testInstrumentationRunnerArguments.bypassFixtureAuthorization="${BYPASS_FIXTURE_AUTH}"
     -Pandroid.testInstrumentationRunnerArguments.bypassTokenFile="${BYPASS_TOKEN_FILE}"
     -Pandroid.testInstrumentationRunnerArguments.bypassToken="${BYPASS_WITNESS}"
   )
@@ -1455,7 +1548,12 @@ fi
 if [ "${TEST_STATUS}" -ne 0 ]; then
   report_stale_pairing_codes
   report_relay_link_drops
-  exit "${TEST_STATUS}"
+  # One retry of the failed tests with fresh codes when a pairing code expired before its test used it.
+  if [ -n "${STALE_PAIRING}" ] && retry_with_fresh_codes; then
+    TEST_STATUS="${RETRY_STATUS}"
+    [ "${TEST_STATUS}" -eq 0 ] || report_stale_pairing_codes
+  fi
+  [ "${TEST_STATUS}" -eq 0 ] || exit "${TEST_STATUS}"
 fi
 
 if [ -n "${DETERMINISTIC}" ]; then

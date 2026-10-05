@@ -255,6 +255,20 @@ task's own `--rerun` (`PYRY_FORCE_TEST_RUN=1`): that flag reruns only the test t
 itself, not its dependencies, so the compile and package tasks the split build
 already ran still report `UP-TO-DATE` in the test task's `--console=plain` output.
 
+Build-before-mint still leaves earlier suite scenarios inside the credential lifetime. The
+operator-bypass fixture (#1756) now starts after APK build but mints only when its live method reaches
+pairing. Its fake-clock regression advances 16 minutes after actual shell setup and before requesting
+the fixture: a focused live pass cannot exercise that delay. Preserve the daemon's 15-minute expiry,
+unprivileged phone/privileged peer split and one-shot consumption after both success and failure;
+the general stale-code rerun cannot restart this fixture. See [operator-bypass coverage and full-suite
+evidence](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
+
+A client socket deadline does not bound the server's pre-authentication reads. The single-threaded
+`e2e-bypass-pairing.py` server currently has no accepted-socket read timeout; an incomplete
+unauthenticated request can prevent a legitimate request from reaching minting. PR #1798's verifier
+recorded finite accepted-socket timeouts and an incomplete-request-then-valid-request regression as
+nonblocking hardening still to do. Do not describe the client's bounded wait as server-side protection.
+
 The Android gate must search only the report path selected by `DEVICE`:
 `connected/debug` for `connected`, otherwise `managedDevice/debug/<DEVICE>`, under
 `app/build/outputs/androidTest-results`. Freshness alone is insufficient: a fresh

@@ -1,0 +1,1 @@
+412x892 density=1.0 staticDark=true capture=dialogDecorView.draw fixture=synthetic
