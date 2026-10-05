@@ -524,4 +524,13 @@
     <string name="thread_attention_waiting_count">%1$d conversations need you</string>
     <string name="thread_attention_finished">%1$s finished</string>
     <string name="cd_thread_queued_send_now">Send now</string>
+    <string name="share_to_title">Share to…</string>
+    <plurals name="share_images">
+        <item quantity="one">%d image</item>
+        <item quantity="other">%d images</item>
+    </plurals>
+    <plurals name="share_files">
+        <item quantity="one">%d file</item>
+        <item quantity="other">%d files</item>
+    </plurals>
 </resources>

@@ -139,6 +139,43 @@ internal suspend fun capturePastedImage(
     }
 }
 
+/** Share intake accepts arbitrary foreign files; paste retains its separate image-only validator. */
+internal suspend fun captureSharedAttachment(
+    resolver: ContentResolver,
+    uri: Uri,
+    ownPackage: String,
+    root: File,
+    onFailure: (AttachmentSendFailure) -> Unit,
+    reader: AttachmentReader = ContentResolverAttachmentReader(resolver, ownPackage),
+    io: CoroutineDispatcher = Dispatchers.IO,
+): PickedAttachment? {
+    val described = describePickedAttachment(resolver, uri, ownPackage)
+    if (described == null) {
+        RelayLog.d { "event=share_capture outcome=refused_uri" }
+        onFailure(AttachmentSendFailure.UNREADABLE)
+        return null
+    }
+    return when (val result = OwnedPasteCopy.capture(root, reader, described.uri, io)) {
+        is PasteCopyCapture.Captured ->
+            described.copy(
+                displayName = clampProviderText(described.displayName),
+                mimeType = clampProviderText(described.mimeType),
+                size = result.size,
+                ownedPaste = result.copy,
+            )
+        PasteCopyCapture.TooLarge -> {
+            RelayLog.d { "event=share_capture outcome=too_large" }
+            onFailure(AttachmentSendFailure.TOO_LARGE)
+            null
+        }
+        PasteCopyCapture.Unreadable -> {
+            RelayLog.d { "event=share_capture outcome=unreadable" }
+            onFailure(AttachmentSendFailure.UNREADABLE)
+            null
+        }
+    }
+}
+
 /** Transfer one completed capture at a time, so refused entries never accumulate private files. */
 internal suspend fun captureAndPublishPastedImages(
     uris: List<Uri>,

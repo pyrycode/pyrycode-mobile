@@ -28,6 +28,7 @@ import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasAnyDescendant
@@ -5031,6 +5032,84 @@ class InteractiveStreamE2ETest {
             assertEquals("user messages in the other conversation", 0, userMessages(runBlocking { peer.history(chatY, THREAD_TIMEOUT_MS) }))
         } finally {
             instrumentation.removeMonitor(stub)
+            deleteFixtures(inserted)
+            peer.close()
+        }
+    }
+
+    /** Android share intake captures both sources before destination selection; one real Claude turn. */
+    @Test
+    fun interactiveTurn_sharedContentFromAndroid_arrivesAtPeerWithItsBytes() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer = runningToolPeer()
+        val inserted = mutableListOf<Uri>()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        try {
+            val stamp = System.currentTimeMillis()
+            val png = pngFixture()
+            val document = documentFixture("shared-$stamp")
+            val pngName = ATTACH_FILE_PREFIX + "shared-$stamp.png"
+            val documentName = ATTACH_FILE_PREFIX + "shared-$stamp.txt"
+            val sources =
+                arrayListOf(
+                    insertDownload(pngName, "image/png", png, inserted),
+                    insertDownload(documentName, TEXT_MIME, document, inserted),
+                )
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val (chatX, nameX) = answerChat(serverId, ATTACH_CHAT_NAME_PREFIX)
+            val (chatY, _) = answerChat(serverId, ATTACH_OTHER_NAME_PREFIX)
+            assertPeerAnswers(peer, chatX)
+            val context = instrumentation.targetContext
+            composeTestRule.runOnUiThread {
+                context.startActivity(
+                    Intent(context, MainActivity::class.java).apply {
+                        action = Intent.ACTION_SEND_MULTIPLE
+                        type = "*/*"
+                        putExtra(Intent.EXTRA_TEXT, PING_PROMPT)
+                        putParcelableArrayListExtra(Intent.EXTRA_STREAM, sources)
+                        clipData = ClipData.newRawUri("share", sources.first()).apply { addItem(ClipData.Item(sources.last())) }
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    },
+                )
+            }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasText("2 files")).fetchSemanticsNodes().isNotEmpty()
+            }
+            // Readiness, not only the progressive preview: wait for capture to finish before tapping.
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasTestTag("share-ready")).fetchSemanticsNodes().isNotEmpty()
+            }
+            deleteFixtures(inserted)
+            sources.forEach { uri ->
+                assertTrue(
+                    "the original share source must be unreadable",
+                    runCatching { context.contentResolver.openInputStream(uri)?.use { it.read() } }.getOrNull() == null,
+                )
+            }
+            openChatRow(nameX)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                listOf(
+                    pngName,
+                    documentName,
+                ).all { composeTestRule.onAllNodes(hasContentDescription(it)).fetchSemanticsNodes().isNotEmpty() }
+            }
+            composeTestRule.onNode(hasSetTextAction()).assertTextContains(PING_PROMPT)
+            assertEquals("no automatic send in X", 0, userMessages(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) }))
+            composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the shared-content turn in X did not end") { it.type == "turn_end" }
+            val history = runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) }
+            val named = userMessageAttachmentIds(history)
+            assertEquals("user messages in X", 1, named.size)
+            val ids = named.single()
+            assertEquals("attachment ids in X", 2, ids.distinct().size)
+            val digests = ids.map { sha256(runBlocking { peer.retrieveAttachment(chatX, it, REPLY_TIMEOUT_MS) }.bytes) }
+            assertEquals(setOf(sha256(png), sha256(document)), digests.toSet())
+            val payload = history.single { it.isUserMessage() }.payload as JsonObject
+            assertEquals("peer received the shared text", PING_PROMPT, payload["text"]?.jsonPrimitive?.content)
+            assertEquals("messages in Y", 0, userMessages(runBlocking { peer.history(chatY, THREAD_TIMEOUT_MS) }))
+        } finally {
             deleteFixtures(inserted)
             peer.close()
         }

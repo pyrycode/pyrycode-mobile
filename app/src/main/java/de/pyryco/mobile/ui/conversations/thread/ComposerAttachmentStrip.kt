@@ -244,7 +244,7 @@ private fun FileTile(
  * so a provider that stalls holds nothing past that.
  */
 @Composable
-private fun rememberThumbnail(attachment: PendingAttachment): ImageBitmap? {
+internal fun rememberThumbnail(attachment: PendingAttachment): ImageBitmap? {
     val uri = attachment.uri
     val context = LocalContext.current
     val sizePx = with(LocalDensity.current) { Size(TileHeight.roundToPx(), TileHeight.roundToPx()) }

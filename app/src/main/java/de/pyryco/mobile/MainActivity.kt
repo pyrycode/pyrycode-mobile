@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -20,6 +21,8 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -50,6 +53,7 @@ import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.parsePairingPayload
 import de.pyryco.mobile.data.network.serverKeyFingerprint
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.data.repository.AttachmentUploadLimit
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.di.ThreadDestinationFactory
@@ -72,6 +76,7 @@ import de.pyryco.mobile.ui.conversations.thread.ThreadNavigation
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.conversations.thread.UsageLimitDismissals
+import de.pyryco.mobile.ui.conversations.thread.formatMegabytes
 import de.pyryco.mobile.ui.conversations.thread.readLinkedMarkdown
 import de.pyryco.mobile.ui.conversations.thread.rememberThreadAttention
 import de.pyryco.mobile.ui.onboarding.CameraPreview
@@ -91,18 +96,61 @@ import de.pyryco.mobile.ui.settings.ArchivedDiscussionsScreen
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
 import de.pyryco.mobile.ui.settings.SettingsScreen
 import de.pyryco.mobile.ui.settings.SettingsViewModel
+import de.pyryco.mobile.ui.share.ShareIntakeViewModel
+import de.pyryco.mobile.ui.share.SharePayload
+import de.pyryco.mobile.ui.share.SharePickerHeader
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.androidx.compose.koinViewModel
+import org.koin.androidx.viewmodel.ext.android.viewModel
 import org.koin.compose.koinInject
 import kotlin.time.Duration.Companion.seconds
 
 class MainActivity : ComponentActivity() {
+    private val shareIntake: ShareIntakeViewModel by viewModel()
+    private var externalTarget by mutableStateOf<HostConversationTarget?>(null)
+    private var externalTargetVersion by mutableStateOf(0L)
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        val payload = SharePayload.from(intent)
+        if (payload != null) {
+            externalTarget = null
+            shareIntake.accept(payload)
+        } else {
+            NotificationTap.target(intent)?.let {
+                shareIntake.cancel()
+                externalTarget = it
+                externalTargetVersion++
+            }
+        }
+    }
+
+    private fun cancelShare() {
+        shareIntake.cancel()
+        finish()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        // Also covers startup before storage loading has composed the navigation graph.
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    if (shareIntake.state.value != null) {
+                        cancelShare()
+                    } else {
+                        isEnabled = false
+                        onBackPressedDispatcher.onBackPressed()
+                        isEnabled = true
+                    }
+                }
+            },
+        )
         // #1510: the app always draws its static dark theme, so the bar icons stay light whatever the
         // phone's own night mode; the default SystemBarStyle.auto would follow the phone instead.
         enableEdgeToEdge(
@@ -111,14 +159,37 @@ class MainActivity : ComponentActivity() {
         )
         // #685: a notification tap's target, read once. A recreated activity keeps its intent, so reading
         // it again after a rotation would re-open the thread over wherever the operator went since.
-        val openTarget = if (savedInstanceState == null) NotificationTap.target(intent) else null
+        if (savedInstanceState == null) {
+            val payload = SharePayload.from(intent)
+            if (payload != null) {
+                shareIntake.accept(payload)
+            } else {
+                externalTarget = NotificationTap.target(intent)
+            }
+        }
         // Test builds only: a hands-on check's pairing code, read once for the same reason.
         val pairingPrefill = if (savedInstanceState == null) PairingPrefill.from(intent, BuildConfig.DEBUG) else null
         setContent {
             val appPreferences = koinInject<AppPreferences>()
             val pairedServerStore = koinInject<PairedServerCollectionStore>()
+            val snackbar = remember { SnackbarHostState() }
+            LaunchedEffect(shareIntake) {
+                shareIntake.notices.collect { (message, count) ->
+                    val text =
+                        when {
+                            count > 0 -> resources.getQuantityString(message, count, count)
+                            message == R.string.thread_attachment_send_too_large ->
+                                resources.getString(
+                                    message,
+                                    formatMegabytes(AttachmentUploadLimit.MAX_BYTES),
+                                )
+                            else -> resources.getString(message)
+                        }
+                    snackbar.showSnackbar(text)
+                }
+            }
             PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+                Scaffold(modifier = Modifier.fillMaxSize(), snackbarHost = { SnackbarHost(snackbar) }) { innerPadding ->
                     val paired: Boolean? by produceState<Boolean?>(
                         initialValue = null,
                         pairedServerStore,
@@ -146,7 +217,10 @@ class MainActivity : ComponentActivity() {
                             PyryNavHost(
                                 startDestination = if (v) Routes.CHANNEL_LIST else Routes.WELCOME,
                                 modifier = Modifier.padding(innerPadding).consumeWindowInsets(innerPadding),
-                                openTarget = openTarget.takeIf { v },
+                                openTarget = externalTarget.takeIf { v },
+                                openTargetVersion = externalTargetVersion,
+                                shareIntake = shareIntake,
+                                onCancelShare = ::cancelShare,
                                 pairingPrefill = pairingPrefill,
                             )
                     }
@@ -162,11 +236,24 @@ internal fun PyryNavHost(
     modifier: Modifier = Modifier,
     navController: NavHostController = rememberNavController(),
     openTarget: HostConversationTarget? = null,
+    openTargetVersion: Long = 0,
     pairingPrefill: PairingPrefill? = null,
+    shareIntake: ShareIntakeViewModel? = null,
+    onCancelShare: () -> Unit = {},
 ) {
     val destinations = koinInject<ThreadDestinationFactory>()
     val appPreferences = koinInject<AppPreferences>()
     val conversations = koinInject<HostConversationSource>()
+    val shared = shareIntake?.state?.collectAsStateWithLifecycle()?.value
+    BackHandler(enabled = shared != null, onBack = onCancelShare)
+    LaunchedEffect(shared?.generation) {
+        if (shared != null) {
+            navController.navigate(Routes.CHANNEL_LIST) {
+                popUpTo(navController.graph.id) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
+    }
     // Held in memory only, never saved state: it carries the pairing token. Cleared once the screen has it.
     var pendingPrefill by remember { mutableStateOf(pairingPrefill) }
     NavHost(
@@ -326,7 +413,8 @@ internal fun PyryNavHost(
             val requestNotifications = rememberNotificationPermissionRequest(appPreferences)
             // #685: asked at most once from here, and only while the Settings switch is on.
             LaunchedEffect(Unit) {
-                if (shouldAskNotificationPermission(
+                if (shared == null &&
+                    shouldAskNotificationPermission(
                         enabled = appPreferences.notificationsEnabled.first(),
                         granted = notificationsPermitted(context),
                         asked = appPreferences.notificationPermissionAsked.first(),
@@ -343,11 +431,14 @@ internal fun PyryNavHost(
             }
             ChannelListScreen(
                 hostState = hostState,
+                shareHeader = shared?.let { batch -> { SharePickerHeader(batch, onCancelShare) } },
                 onEvent = { event ->
                     when (event) {
                         // The row carries its own host: the tree draws rows from every host, so the
                         // selected-host adapter would open the wrong one (#731).
-                        is ChannelListEvent.TreeRowTapped -> vm.onHostRowTapped(event.target)
+                        is ChannelListEvent.TreeRowTapped -> {
+                            if (shared == null || shareIntake?.select(event.target) == true) vm.onHostRowTapped(event.target)
+                        }
                         is ChannelListEvent.TreeFoldToggled -> vm.onFoldToggled(event.key)
                         // The gear captures the current host once, here, the way a row tap
                         // captures its own (#749). The destination owns that exact id from then
@@ -692,7 +783,7 @@ internal fun PyryNavHost(
     // loaded yet from rows without the target, so the tap waits a bounded time for the row to appear and
     // otherwise stays on the list, never opening a conversation it could not check. A row that arrives
     // after the user has left the list opens nothing.
-    LaunchedEffect(openTarget) {
+    LaunchedEffect(openTarget, openTargetVersion) {
         val target = openTarget ?: return@LaunchedEffect
         if (!destinations.isSavedHost(target.serverId)) {
             RelayLog.d { "event=notification_tap_rejected code=unknown_host" }

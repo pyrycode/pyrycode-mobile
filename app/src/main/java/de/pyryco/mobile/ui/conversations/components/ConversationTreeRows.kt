@@ -199,7 +199,7 @@ fun TreeHostRow(
     connectionStatus: ConnectionStatus,
     expanded: Boolean,
     onToggleExpanded: () -> Unit,
-    onEditTapped: () -> Unit,
+    onEditTapped: (() -> Unit)?,
     modifier: Modifier = Modifier,
     onReconnectTapped: () -> Unit = {},
 ) {
@@ -240,14 +240,16 @@ fun TreeHostRow(
                     height = TreeBandHeight,
                 )
             }
-            TreeRowControl(
-                // The supplied pen path, visible on mobile without hover.
-                painter = painterResource(R.drawable.ic_tree_edit),
-                contentDescription = stringResource(R.string.cd_tree_host_edit, bounded),
-                onClick = onEditTapped,
-                modifier = Modifier.testTag(treeHostEditTestTag(serverId)),
-                height = TreeBandHeight,
-            )
+            if (onEditTapped != null) {
+                TreeRowControl(
+                    // The supplied pen path, visible on mobile without hover.
+                    painter = painterResource(R.drawable.ic_tree_edit),
+                    contentDescription = stringResource(R.string.cd_tree_host_edit, bounded),
+                    onClick = onEditTapped,
+                    modifier = Modifier.testTag(treeHostEditTestTag(serverId)),
+                    height = TreeBandHeight,
+                )
+            }
         }
         if (update != null) {
             // Inside the host's own item, so folding the host, which drops only the rows below it, keeps it.

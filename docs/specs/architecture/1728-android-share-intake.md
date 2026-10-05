@@ -64,6 +64,14 @@ Malformed/unsupported intents do not replace state or edit drafts. Foreign-URI r
 
 None; process death intentionally drops share state, as it drops composer drafts.
 
+## Revisions
+
+- 2026-10-05: the activity test exposed Back during startup before the navigation graph is composed. Install an activity Back callback as well as the picker handler so cancellation releases copies immediately even while saved-host loading is pending. Reuse `rememberThumbnail` internally for the share preview rather than duplicating orientation-aware decoding; make the host edit callback nullable to hide its control without changing existing callers.
+
+- 2026-10-05: use single-task delivery for the app’s sole activity so shares from another app replace the retained batch even when the existing task is backgrounded. New notification intents carry a monotonic navigation version so repeated taps on the same target still navigate. Skip the optional notification-permission prompt while choosing a share destination.
+
+- 2026-10-05: a replacement-share pixel test exposed thumbnail reuse when a provider reuses its URI. Key preview decoding by generation and captured capability so replacement content resets immediately. Inject the generic capture’s IO dispatcher for deterministic completion tests.
+
 ## Documentation handoff
 
 Pending for the documentation stage: `docs/knowledge/features/thread-screen-composer-drafts-and-attachments.md`, Composer pending attachments — describe share intake and ownership transfer; `docs/knowledge/features/navigation.md`, incoming navigation — fresh/new intents, cancellation and process-local recreation behavior; `docs/knowledge/features/channel-list-screen.md`, destination picker mode; `docs/e2e-interactive-stream.md`, rung-3/full live suite — new named scenario and fresh executed/failed/skipped counts, confirming it ran and passed. Documentation must wait for dispatcher live evidence.
