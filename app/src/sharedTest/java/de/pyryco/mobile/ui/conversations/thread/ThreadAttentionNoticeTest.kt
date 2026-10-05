@@ -14,11 +14,16 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.TextLayoutResult
@@ -103,6 +108,23 @@ class ThreadAttentionNoticeTest {
             assertEquals(3, taps)
         }
         compose.onAllNodesWithTag("thread_attention_pill").assertCountEquals(1)
+    }
+
+    @Test fun attentionTargetContainsItsLabelAndDescription_forEveryVariant() {
+        screen()
+
+        fun assertTarget(label: String) {
+            compose
+                .onNode(hasTestTag("thread_attention_pill") and hasText(label) and hasContentDescription(label) and hasClickAction())
+                .assertIsDisplayed()
+            compose.onAllNodes(hasText(label)).assertCountEquals(1)
+            compose.onAllNodes(hasContentDescription(label)).assertCountEquals(1)
+        }
+        assertTarget("Other needs your answer")
+        compose.runOnIdle { attention = ThreadAttention(0, target, "Other") }
+        assertTarget("Other finished")
+        compose.runOnIdle { attention = ThreadAttention(2) }
+        assertTarget("2 conversations need you")
     }
 
     @Test fun attentionIsFirstAboveUsageMcpConnectionAndSessionError_withTwelveDpGaps() {
@@ -206,8 +228,10 @@ class ThreadAttentionNoticeTest {
         assertTrue(result.isLineEllipsized(1))
         assertEquals(2, result.layoutInput.maxLines)
         val bounds = compose.onNodeWithTag("thread_attention_surface", useUnmergedTree = true).getUnclippedBoundsInRoot()
-        assertTrue(bounds.left >= 20.dp)
-        assertTrue(bounds.width <= 280.dp)
+        val thread = compose.onRoot().getUnclippedBoundsInRoot()
+        // Both 20dp gutters must hold on Robolectric's 320dp viewport and wider device screens.
+        assertTrue(bounds.left >= thread.left + 20.dp)
+        assertTrue(bounds.right <= thread.right - 20.dp)
         node.performTouchInput { click(center) }
         compose.runOnIdle { assertEquals(target, clicked) }
     }

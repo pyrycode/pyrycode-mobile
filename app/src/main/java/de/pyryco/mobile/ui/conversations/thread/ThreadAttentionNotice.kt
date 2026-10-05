@@ -54,6 +54,8 @@ internal fun ThreadAttentionNotice(
             isError = false,
             modifier = Modifier.heightIn(min = 24.dp).testTag("thread_attention_surface"),
             maxLines = 2,
+            // The outer 48dp button owns the label; a nested merging node would hide it from that target.
+            mergeDescendants = false,
             containerColor =
                 if (waiting) MaterialTheme.colorScheme.attentionWaitingContainer else MaterialTheme.colorScheme.attentionFinishedContainer,
             contentColor = if (waiting) MaterialTheme.colorScheme.warning else MaterialTheme.colorScheme.success,

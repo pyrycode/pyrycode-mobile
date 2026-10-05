@@ -54,6 +54,7 @@ private val PillShadow = 4.dp
  * `error`, as Figma paints it) never does. [onClick] makes the whole pill a button. The pill's merged
  * content description is [contentDescription], its visible label by default; the X is its own button.
  * [shadowElevation] is the overlay's drop shadow; a pill laid out in the page, not over it, passes none.
+ * Set [mergeDescendants] to false when a parent click target owns the merged label and description.
  */
 @Composable
 internal fun NoticePill(
@@ -68,6 +69,7 @@ internal fun NoticePill(
     maxLines: Int = Int.MAX_VALUE,
     containerColor: Color = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer,
     contentColor: Color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer,
+    mergeDescendants: Boolean = true,
 ) {
     val container = containerColor
     val content = contentColor
@@ -105,7 +107,7 @@ internal fun NoticePill(
             }
         }
     }
-    val described = modifier.semantics(mergeDescendants = true) { this.contentDescription = contentDescription }
+    val described = modifier.semantics(mergeDescendants = mergeDescendants) { this.contentDescription = contentDescription }
     val shape = RoundedCornerShape(PillRadius)
     if (onClick != null) {
         Surface(
