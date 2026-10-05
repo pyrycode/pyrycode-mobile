@@ -51,3 +51,30 @@ Pending dispatcher execution: fresh full `python3 scripts/android-test-gate.py l
 ## Documentation handoff
 
 Pending for the documentation stage after diagnosis and repair: `docs/e2e-interactive-stream.md`, question-answer scenario and Verification status; `docs/knowledge/features/development-verification-emulator-evidence.md`, Emulator and real evidence. Describe the identified operation, diagnostic labels and fresh live counts without copying private logs.
+
+## Revisions
+
+### 2026-10-05 — Repair the occluded phone answer target
+
+The dispatcher’s fresh full gate on mobile `55e6b11f477fa25ce1e5cb824b0b6ac4d6f988c4`, merged with main `6bd48bc3cb52deb744c7522ba019bc2dffba8903`, ran 53 methods: 51 passed, 2 failed, 0 skipped. The named question-answer method failed at `AwaitPhoneDismissal`: `await phone answer's question_dismissed on peer`, after 30000 ms, with `session open (link 1, replaced 0×)`. The base comparison on main ran this method alone and failed (1 executed, 1 failed, 0 skipped), with an unnamed 30000 ms coroutine timeout. Both used daemon `65df98859f32e49ba59a42c4446d650b7625cf62` and Claude 2.1.280. The separate stop-running-turn failure passed on a same-tree rerun and is outside this ticket.
+
+Evidence sources are the retained `2026-10-04T23-15-21-659Z_real-claude-gate_#1703.stderr.log` and its base counterpart. The branch answer-daemon log shows both handshakes accepted and no resolved question answer before teardown. The gate worktree and copied per-test phone logcat are absent, so those records do not establish the historical tap coordinates or distinguish an unsent answer from a daemon no-op on their own.
+
+The focused short-thread reproduction establishes a mobile harness failure on the same submit path: after selection and the scenario's actions reveal plus final `performScrollToNode`, enabled Continue has bounds `(170, 443)-(228, 494)` with composer top `461` in the JVM fixture. Its tap center is `468.5`, inside composer chrome; an actual pointer tap emits no Continue event. One test executed and failed both on the missing submit event and on the explicit geometry assertion before the fix. This is the implicated test behavior repaired here; attribution of the retained live occurrence to this geometry is an inference, to be checked by the next fresh full live gate.
+
+Additional files read:
+
+- `app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/QuestionBatchModalTest.kt`: `readableTextNode` and `large_text_actions_stack_and_pointer_edges_submit_only_this_batch` already account for the list drawing beneath header/composer chrome. Mirror that test-only positioning contract.
+- `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/ThreadInlineQuestionTest.kt`: `selected_option_can_reach_continue_when_the_actions_row_is_uncomposed` covers #1702's reveal, but its long empty-thread fixture does not expose the short-thread occlusion.
+- `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt`: `ThreadMessageList` uses the full drawing viewport; the header and composer overlays delimit the usable pointer region.
+- `docs/knowledge/features/question-batch-modal.md`: inline placement and prompt protection stay unchanged.
+
+Add `ComposeTestRule.questionAnswerTarget` in shared test code. It scrolls to the requested control, measures header and composer bounds, applies one `ScrollBy` adjustment when needed, and asserts that the pointer's center is within that readable band. It returns the target for a real pointer tap at that center. It neither invokes the control's semantic click nor retries a tap. The live scenario uses it for phone selection and Continue; #1702's container reveal and enabled wait remain. The short-thread regression uses this same helper and verifies selection, readable Continue tap geometry and exactly one submit event with the held generation. The list's newest resting position can leave a button edge beneath chrome, so requiring its full rectangle to clear chrome is unnecessary; the actual tap must clear it. No production code, UI design, wire fields, timeout or existing assertions change.
+
+The remaining failure is later than #1702's enabled-Continue Compose wait, which already succeeds in the captured run. It is also later than #1686's identity fault: the peer open completed, the session stayed open with no replacement, and both retained daemon logs show accepted handshakes rather than key-binding rejects. Neither earlier repair is reverted or duplicated.
+
+Updated forecast: roughly 450 written lines across the original diagnostic change, this revision, the positioning helper and regression; two internal test seams and one enum, no production files or signature migration. Overlaps #1735 and #1775 add separate live methods; the earlier listed overlaps remain local to other scenarios. No dependency blocks these edits.
+
+Validation: run the new regression with the existing inline-question class and the original diagnostic/peer unit classes, compile device tests, lint, assemble and forced formatting checks. Run the new shared method on the managed device, plus one zero-Claude scripted scenario. The original long-fixture method's device tiebreaker stops before the tap at its existing uncomposed-row assertion; that Android/Robolectric composition difference is outside this repair and its JVM coverage remains unchanged.
+
+The diagnostic-only handoff is superseded by this causal harness repair and committed sanitized operation record. After verification the dispatcher must run the fresh full live suite, record executed/failed/skipped counts and explicitly confirm the named method ran and passed. No builder claim is made that the fresh live acceptance already passed, and a same-tree rerun remains insufficient.

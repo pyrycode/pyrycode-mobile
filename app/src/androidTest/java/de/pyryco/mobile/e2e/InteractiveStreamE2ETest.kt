@@ -3850,14 +3850,10 @@ class InteractiveStreamE2ETest {
             // 2. AC-3: the phone picks one option and continues; the daemon takes it as this batch's answer.
             val mark = peer.recorded(chat).size
             step(QuestionAnswerStage.SubmitPhoneAnswer) {
-                composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(
-                    hasText(QUESTION_PICK, substring = true) and hasClickAction(),
-                )
                 composeTestRule
-                    .onAllNodes(
+                    .questionAnswerTarget(
                         hasText(QUESTION_PICK, substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("thread-question-row")),
-                    ).onFirst()
-                    .performClick()
+                    ).performTouchInput { click(center) }
                 val continueButton =
                     hasText(string(R.string.question_continue)) and hasClickAction() and isEnabled() and
                         hasAnyAncestor(hasTestTag("question-batch-actions"))
@@ -3866,8 +3862,7 @@ class InteractiveStreamE2ETest {
                 composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                     composeTestRule.onAllNodes(continueButton).fetchSemanticsNodes().isNotEmpty()
                 }
-                composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(continueButton)
-                composeTestRule.onNode(continueButton).performClick()
+                composeTestRule.questionAnswerTarget(continueButton).performTouchInput { click(center) }
             }
             val dismissed =
                 step(QuestionAnswerStage.AwaitPhoneDismissal) { runBlocking { peer.awaitQuestionDismissed(batchId, THREAD_TIMEOUT_MS) } }
