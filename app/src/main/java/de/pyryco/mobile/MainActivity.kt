@@ -388,6 +388,7 @@ internal fun PyryNavHost(
                         ChannelListEvent.TreeHostUpdateTapped -> uriHandler.openUri(PLAY_STORE_URL)
                         is ChannelListEvent.HostEditNameSubmitted -> vm.submitHostName(event.name)
                         ChannelListEvent.HostEditDismissed -> vm.dismissHostEditor()
+                        is ChannelListEvent.HostPrompt -> vm.onHostPromptEvent(event.event)
                         ChannelListEvent.HostUnpairRequested -> vm.requestHostUnpair()
                         ChannelListEvent.HostUnpairConfirmed -> vm.confirmHostUnpair()
                         ChannelListEvent.HostUnpairDeclined -> vm.declineHostUnpair()

@@ -71,7 +71,7 @@ Text present wins over an in-flight turn **deliberately**: sending while the age
 
 `buttonEnabled = enabled && (stopping || (!sending && text.isNotBlank()))`: pending attachments alone no longer enable Send — [#1328](https://github.com/pyrycode/pyrycode-mobile/issues/1328) — so a blank draft with files attached leaves Send disabled and the IME send action sends nothing, keeping the files for the next send. `sending` — true for as long as [`ThreadViewModel.sendWithAttachments`](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments) is uploading and sending — disables Send even when text is present, so a second tap during an in-flight attachment send does nothing. The leading `enabled &&` ([#1319](https://github.com/pyrycode/pyrycode-mobile/issues/1319)) disables both Send and the Stop variant together while the host is not connected, and they re-enable the moment `ThreadScreen`'s `connected` flips back — no navigation, no reset of `text`.
 
-Both states draw a filled-circle silhouette inside the same container-less 48dp `IconButton`. Send uses the 28dp `ic_composer_send` vector traced from Figma node `113:3543`; Stop retains `Icons.Filled.StopCircle` because the inspected components define no Stop asset. `IconButtonDefaults.iconButtonColors` supplies `colorScheme.primary` when enabled and primary at 0.38 alpha when disabled. The icon inherits that content colour, so its appearance follows the actual button enabled condition, including attachment sending. Figma defines neither a Stop nor a disabled Send variant; those appearances are app choices. A semantics-only enabled assertion would miss a wrong icon path or full-strength disabled tint, so `ThreadInputBarStyleTest` also samples rendered pixels.
+Both states draw a filled-circle silhouette inside the same container-less 48dp `IconButton`. Send uses the 28dp `ic_composer_send` vector traced from Figma node `113:3543`; Stop uses the 28dp `ic_composer_stop` vector from [Message input button, `Action=Stop`, `114:3549`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=114-3549) on the Desktop page. Its circle fills the viewport and has a rounded-square cutout; Material `StopCircle` has an inset silhouette and does not match this reference. `IconButtonDefaults.iconButtonColors` supplies `colorScheme.primary` when enabled and primary at 0.38 alpha when disabled. The icon inherits that content colour, so its appearance follows the actual button enabled condition, including attachment sending. The disabled Send appearance remains an app choice. A semantics-only enabled assertion would miss a wrong icon path or full-strength disabled tint, so `ThreadInputBarStyleTest` also samples rendered pixels.
 
 ## How it works
 
@@ -413,7 +413,7 @@ compositing over the host background, not the raw navy RGB value. Check both
 placeholder and entered `TextLayoutResult` styles for 14sp/20sp; a correct theme
 token alone does not prove the field uses it. The suite also checks the 52dp
 minimum, 48dp send target, wrapping and unchanged height between five and six
-lines. Send/stop, draft and paste coverage below protects the existing behaviour.
+lines. `stopMatchesFullCircleAndRoundedCutoutInCentered48DpButton` samples the circle edges, clear centre, rounded cutout corners and background outside the glyph: semantics and a 28dp painter size alone would still pass with the inset Material icon. The [Stop capture verdict](../../../app/src/androidTest/assets/design-1220/thread/index.md#stop-button--1143549-1606) records the device comparison. Send/stop, draft and paste coverage below protects the existing behaviour.
 
 ViewModel unit tests live in
 `app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModelTest.kt`.
@@ -449,7 +449,7 @@ Five `@Preview`s at the bottom of `ThreadInputBar.kt`, all calling the **statele
 - `InputBar — Light, Filled` (`darkTheme = false`, `text = "Drafting a reply…"`)
 - `InputBar — Dark, Empty` (`darkTheme = true`, `text = ""`)
 - `InputBar — Dark, Filled` (`darkTheme = true`, `text = "Drafting a reply…"`)
-- `InputBar — Dark, Stop variant` (`darkTheme = true`, `text = ""`, `isBusy = true`) — added in #643 for the `StopCircle` glyph.
+- `InputBar — Dark, Stop variant` (`darkTheme = true`, `text = ""`, `isBusy = true`) — the `ic_composer_stop` glyph matching `Action=Stop` (`114:3549`).
 
 These previews retain light and wallpaper examples, but the app's visual target is fixed dark. The 2026-09-29 inspection of Figma nodes `533:1957`, `347:6446`, and `113:3543` confirms the existing 6dp corners, 52dp field height, 16dp leading inset, 14sp/20sp text, centered 28dp icon, and 48dp button target. The [412 × 892 Pixel 8 comparison](../../../app/src/androidTest/assets/composer-1205/comparison.png) places actual emulator pixels beside the Figma render; with the 372 × 52 field tops aligned, mean RGB channel difference is 1.69/255. The full-frame fixture omits the separately owned status and attachment bands, leaving its field 12dp higher than the Figma frame. Compact large-text, keyboard, and menu captures are in the same evidence directory.
 
