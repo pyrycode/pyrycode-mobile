@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.verification.SnackbarRoutingGuardTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-10-05T19:47:02.960Z" hostname="Juhanas-Air" time="7.619">
+  <properties/>
+  <testcase name="reversedOrWidenedSavedGuardFails" classname="de.pyryco.mobile.verification.SnackbarRoutingGuardTest" time="1.318"/>
+  <testcase name="interpolatedStringCannotHideARoute" classname="de.pyryco.mobile.verification.SnackbarRoutingGuardTest" time="0.036"/>
+  <testcase name="referencesAliasesImplicitReceiversAndBackticksFail" classname="de.pyryco.mobile.verification.SnackbarRoutingGuardTest" time="0.501"/>
+  <testcase name="errorAddedBesideAnApprovedRouteFails" classname="de.pyryco.mobile.verification.SnackbarRoutingGuardTest" time="0.08"/>
+  <testcase name="addedErrorRouteWithNoErrorKeywordsFails" classname="de.pyryco.mobile.verification.SnackbarRoutingGuardTest" time="0.15"/>
+  <testcase name="approvedSnippetInAnotherScreenOrFunctionFails" classname="de.pyryco.mobile.verification.SnackbarRoutingGuardTest" time="0.078"/>
+  <testcase name="permittedNonErrorRoutesPass" classname="de.pyryco.mobile.verification.SnackbarRoutingGuardTest" time="0.063"/>
+  <testcase name="alternateSnackbarApisAlsoRequireClassification" classname="de.pyryco.mobile.verification.SnackbarRoutingGuardTest" time="0.073"/>
+  <testcase name="productionSourcesContainOnlyClassifiedNonErrorRoutes" classname="de.pyryco.mobile.verification.SnackbarRoutingGuardTest" time="5.169"/>
+  <testcase name="commentsAndFormattingDoNotChangeClassification" classname="de.pyryco.mobile.verification.SnackbarRoutingGuardTest" time="0.072"/>
+  <testcase name="changedMessageDerivationOrSuccessBranchFails" classname="de.pyryco.mobile.verification.SnackbarRoutingGuardTest" time="0.053"/>
+  <system-out><![CDATA[Negative control: production gate rejected an added error route
+Snackbar routing guard: checked 292 production sources; 0 unclassified routes
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

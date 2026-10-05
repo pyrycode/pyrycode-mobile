@@ -1,0 +1,9 @@
+#1750 retained routing-gate evidence, 2026-10-05
+
+Red before implementation:
+./gradlew testDebugUnitTest --tests 'de.pyryco.mobile.verification.SnackbarRoutingGuardTest.addedErrorRouteWithNoErrorKeywordsFails' --console=plain
+Exit 1; 1 executed, 1 expected failure, 0 errors/skips. The permissive stub silently accepted the added route. See red.xml.
+
+Final focused verification:
+./gradlew testDebugUnitTest --tests 'de.pyryco.mobile.verification.SnackbarRoutingGuardTest' lint assembleDebug --console=plain
+Exit 0; 11 executed/passed, 0 failures/errors/skips. 292 production source files checked, 0 unclassified routes. The same production assertion rejected the added error-route negative control. Lint and assembleDebug passed. See green.xml.

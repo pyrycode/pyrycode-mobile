@@ -44,3 +44,8 @@ None.
 ## Documentation handoff
 
 Pending for the documentation stage: document how the guard runs, its permitted routes, and how a new notice is classified in `docs/knowledge/features/development-verification-gates.md` under “Gradle and source checks”.
+
+## Revisions
+
+- 2026-10-05: source review showed that checking only `showSnackbar` would leave classic Android `Snackbar.make` and direct Compose `Snackbar` content unchecked. Reject unclassified `Snackbar` references as well, with Kotlin and Java controls. Java uses the compiler's Java PSI parser so comments and string literals cannot become false routes.
+- 2026-10-05: use project-relative source roots and relative input path sensitivity with an explicit test working directory. Absolute root properties would make otherwise identical test results miss the shared build cache across worktrees.

@@ -1,8 +1,10 @@
 import com.android.build.api.variant.BuildConfigField
 import org.gradle.api.provider.ValueSource
 import org.gradle.api.provider.ValueSourceParameters
+import org.gradle.api.tasks.PathSensitivity
 import org.gradle.process.ExecOperations
 import java.io.ByteArrayOutputStream
+import java.io.File
 import javax.inject.Inject
 
 plugins {
@@ -160,6 +162,21 @@ android {
             it.jvmArgs("--add-opens=java.base/java.io=ALL-UNNAMED", "--add-exports=java.base/jdk.internal.access=ALL-UNNAMED")
             // Independent expectation lets the binding test catch an incorrectly generated flag.
             it.systemProperty("expectedUseRelayRepository", providers.gradleProperty("useRelayRepository").orElse("true").get())
+            // Source-routing checks must rerun even when a source edit does not change bytecode.
+            val productionRoots =
+                sourceSets
+                    .filter { sourceSet -> !sourceSet.name.contains("test", ignoreCase = true) }
+                    .flatMap { sourceSet -> sourceSet.java.directories + sourceSet.kotlin.directories }
+                    .distinct()
+            it.workingDir(projectDir)
+            it.systemProperty(
+                "snackbarProductionSourceRoots",
+                productionRoots.joinToString(File.pathSeparator) { root -> file(root).relativeTo(projectDir).invariantSeparatorsPath },
+            )
+            it.inputs
+                .files(productionRoots.map { root -> fileTree(root) { include("**/*.kt", "**/*.kts", "**/*.java") } })
+                .withPropertyName("snackbarProductionSources")
+                .withPathSensitivity(PathSensitivity.RELATIVE)
         }
         managedDevices {
             // Headless Automated Test Device (ATD): GPU off, no window. Generates the Gradle task
@@ -255,6 +272,8 @@ dependencies {
     implementation(libs.snipme.highlights)
     lintChecks(libs.compose.lint.checks)
     testImplementation(libs.junit)
+    // Test-only PSI parser for the fail-closed snackbar routing contract (#1750).
+    testImplementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:${libs.versions.kotlin.get()}")
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.robolectric)
