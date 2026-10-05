@@ -21,3 +21,14 @@ Map the displayed type in `TaskRow` before `boundedText`: exact `local_agent` be
 ## Testing strategy
 
 Add screen assertions beside existing panel tests for required labels, empty input, one-prefix removal and preservation of remaining case; prove raw types are retained, command description remains monospace, and fallback labels still filter controls and respect display bounds and daemon/client cut markers. Update existing raw-label expectations, including the Figma size assertion. Observe new tests fail before implementation. Run all four shared panel test classes for readings, layout, spacing, insets and interactions, plus lint, assembleDebug, androidTest Kotlin compilation and forced spotlessCheck. This changes text in an existing read-only flow without adding an operator action, transport or stream scenario.
+
+## Revisions
+
+### 2026-10-05 — verifier rework
+
+The verifier found that `InteractiveStreamE2ETest.interactiveTurn_backgroundTask_countsInActionsMenuAndPanel` still matched the raw type against displayed text. Expand test scope to that existing device-only scenario: assert the decoded payload remains `local_bash`, and independently expect `Command` from both panel entry points. The scenario needs a host daemon and real Claude, so its execution remains with the dispatcher live gate, along with `interactiveTurn_backgroundAgentProgress_showsOnRunningCard`. Compile androidTest Kotlin and rerun the four shared panel classes and required build, lint and formatting checks locally; no production contract changes.
+
+## Documentation handoff
+
+- Pending for the documentation stage: `docs/knowledge/features/mobile-modal-callers.md`, background-task panel — replace the raw `taskType` display description with Agent/Command and fallback rules; preserve the distinction from raw wire/state values and the raw `local_bash` description-style check, filtering, bounds and markers.
+- Pending for the documentation stage: `docs/e2e-interactive-stream.md`, background-task verification guidance — record the repaired live scenario and subsequent dispatcher evidence.

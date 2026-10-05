@@ -4280,7 +4280,7 @@ class InteractiveStreamE2ETest {
                         "background_task_started"
                 }
             val started = MobileJson.decodeFromJsonElement(BackgroundTaskStartedPayloadDto.serializer(), startedFrame.payload)
-            assertTrue("the started task names no type", started.taskType.isNotBlank())
+            assertEquals("the background shell task must retain its raw wire type", "local_bash", started.taskType)
 
             // 2. The live thread pill opens the panel while the task is running.
             val taskPill =
@@ -4297,7 +4297,7 @@ class InteractiveStreamE2ETest {
                 composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_title))).fetchSemanticsNodes().isNotEmpty()
             }
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasText(started.taskType) and inBackgroundPanel()).fetchSemanticsNodes().isNotEmpty()
+                composeTestRule.onAllNodes(hasText("Command") and inBackgroundPanel()).fetchSemanticsNodes().isNotEmpty()
             }
             closeBackgroundTasks()
 
@@ -4309,7 +4309,7 @@ class InteractiveStreamE2ETest {
             Espresso.pressBack()
             openBackgroundTasks()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasText(started.taskType) and inBackgroundPanel()).fetchSemanticsNodes().isNotEmpty()
+                composeTestRule.onAllNodes(hasText("Command") and inBackgroundPanel()).fetchSemanticsNodes().isNotEmpty()
             }
             composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_unreported))).assertCountEquals(0)
             composeTestRule.onAllNodes(hasText(string(R.string.background_tasks_empty))).assertCountEquals(0)
