@@ -10193,6 +10193,7 @@ class RemoteConversationRepositoryTest {
                 is ThreadItem.Banner -> "banner:${it.level}"
                 is ThreadItem.CompactionBoundary -> "compaction:${it.preTokens}->${it.postTokens}:${it.manual}"
                 is ThreadItem.ModelRefusal -> if (it.fallbackModel != null) "refusal:fallback" else "refusal:no-fallback"
+                is ThreadItem.BackgroundTaskLifecycle -> "task:${it.taskId}"
                 is ThreadItem.StoppedTurn -> "stopped:${it.reason}"
             }
         }

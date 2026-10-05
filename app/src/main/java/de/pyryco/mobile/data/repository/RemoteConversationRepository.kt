@@ -909,10 +909,11 @@ class RemoteConversationRepository(
             -> {
                 // Background work claude left running past its turn (#677, progress #1042): see
                 // [BackgroundTaskProjection.apply].
-                // Same `interactive` gate as the question arm. Daemon state, not turn content: no thread row, and
-                // it clears no stall. Drop silently: the command lines and summaries are never logged.
+                // The panel remains replacing state; scalar frames also retain invisible lifecycle positions.
+                // No stall is cleared and command lines/summaries are never logged.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     backgroundTaskProjection.apply(envelope)
+                    threadProjection.applyBackgroundTaskLifecycle(envelope)
                 }
             }
             TYPE_RESYNC -> {

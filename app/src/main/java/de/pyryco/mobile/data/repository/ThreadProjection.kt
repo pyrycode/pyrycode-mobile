@@ -5,6 +5,8 @@ import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.data.network.BackgroundTaskStartedPayloadDto
+import de.pyryco.mobile.data.network.BackgroundTaskUpdatedPayloadDto
 import de.pyryco.mobile.data.network.BannerPayloadDto
 import de.pyryco.mobile.data.network.CompactingPayloadDto
 import de.pyryco.mobile.data.network.CompactionBoundaryPayloadDto
@@ -47,6 +49,32 @@ import java.util.concurrent.atomic.AtomicLong
 internal class ThreadProjection(
     private val trail: MessageTrail = MessageTrail(),
 ) {
+    /** Scalar lifecycle evidence shares history's folds; roster/progress never create a position. */
+    fun applyBackgroundTaskLifecycle(envelope: Envelope) {
+        try {
+            val timestamp = Instant.parse(envelope.ts)
+            when (envelope.type) {
+                RemoteConversationRepository.TYPE_BACKGROUND_TASK_STARTED -> {
+                    val dto = MobileJson.decodeFromJsonElement<BackgroundTaskStartedPayloadDto>(envelope.payload)
+                    if (dto.conversationId.isEmpty() || dto.taskId.isEmpty()) return
+                    threadByConversation.update { current ->
+                        current + (dto.conversationId to current[dto.conversationId].orEmpty().withBackgroundTaskStarted(dto, timestamp))
+                    }
+                }
+                RemoteConversationRepository.TYPE_BACKGROUND_TASK_UPDATED -> {
+                    val dto = MobileJson.decodeFromJsonElement<BackgroundTaskUpdatedPayloadDto>(envelope.payload)
+                    if (dto.conversationId.isEmpty() || dto.taskId.isEmpty() || dto.status.isEmpty()) return
+                    threadByConversation.update { current ->
+                        current + (dto.conversationId to current[dto.conversationId].orEmpty().withBackgroundTaskUpdated(dto, timestamp))
+                    }
+                }
+            }
+        } catch (e: IllegalArgumentException) {
+            // Decode errors can quote daemon text; discard them unread.
+            return
+        }
+    }
+
     /**
      * `conversationId -> ordered thread rows` ([ThreadItem.MessageItem] + [ThreadItem.SessionBoundary])
      * for the conversation — backfilled history (`message_chunk`) plus live user `message`s and structured
@@ -750,7 +778,7 @@ internal class ThreadProjection(
     fun observeRowCounts(): Flow<Map<String, Int>> =
         threadByConversation
             .map { threads ->
-                threads.mapValues { it.value.size }
+                threads.mapValues { (_, rows) -> rows.count { it !is ThreadItem.BackgroundTaskLifecycle } }
             }.distinctUntilChanged()
 
     /**

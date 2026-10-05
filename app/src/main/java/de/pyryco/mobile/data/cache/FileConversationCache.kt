@@ -655,6 +655,7 @@ private fun ThreadItem.toRecord(): CachedThreadRow =
                 refusal = CachedRefusal(originalModel, fallbackModel, banner, bannerTruncated, occurredAt.toString()),
             )
         is ThreadItem.StoppedTurn -> CachedThreadRow(stopped = CachedStoppedTurn(turnId, reason, category, occurredAt.toString()))
+        is ThreadItem.BackgroundTaskLifecycle -> throw IllegalStateException("lifecycle evidence is never cached")
         is ThreadItem.UnrecognizedMessage -> throw IllegalStateException("unrecognized rows are never cached")
     }
 

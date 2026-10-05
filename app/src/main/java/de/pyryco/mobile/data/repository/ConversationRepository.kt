@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.model.BackgroundTaskUpdate
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
@@ -882,6 +883,24 @@ enum class ConversationFilter { All, Channels, Discussions, Archived }
  * rows above the latest delimiter.
  */
 sealed interface ThreadItem {
+    /**
+     * Invisible, in-memory lifecycle position (#1782), ordered alongside ordinary thread entries.
+     * Identity within a conversation is `(taskId, terminal != null)`, stable across pagination/replay.
+     * A null [terminal] denotes launch; a non-null one denotes finish, even before the launch is known.
+     * Launch fields are backfilled by task id without moving this marker. [toolCallId] joins the launching
+     * tool row whenever it loads; it never rewrites that row's parent link. Text remains inert and unlogged.
+     * Render and cache consumers must exclude this evidence.
+     */
+    data class BackgroundTaskLifecycle(
+        val taskId: String,
+        val occurredAt: Instant,
+        val toolCallId: String? = null,
+        val description: String? = null,
+        val taskType: String? = null,
+        val truncatedFields: List<String>? = null,
+        val terminal: BackgroundTaskUpdate? = null,
+    ) : ThreadItem
+
     data class MessageItem(
         val message: Message,
     ) : ThreadItem

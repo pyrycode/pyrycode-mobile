@@ -15,6 +15,25 @@ import org.junit.Test
  */
 class BackgroundTaskPayloadsTest {
     @Test
+    fun rosterAdditiveJoin_decodesPopulatedEmptyAndMissingValues() {
+        val row = "\"task_id\":\"t1\",\"task_type\":\"local_agent\",\"description\":\"label\",\"truncated_fields\":null"
+
+        fun read(extra: String) =
+            MobileJson
+                .decodeFromJsonElement<BackgroundTaskRosterPayloadDto>(
+                    MobileJson.parseToJsonElement(
+                        """{"conversation_id":"c1","tasks":[{$row$extra}],"dropped_tasks":0}""",
+                    ),
+                ).tasks
+                .single()
+                .toolCallId
+        assertEquals("toolu_1", read(",\"tool_call_id\":\"toolu_1\""))
+        assertEquals("", read(",\"tool_call_id\":\"\""))
+        assertEquals("", read(""))
+        assertThrows(SerializationException::class.java) { read(",\"tool_call_id\":{}") }
+    }
+
+    @Test
     fun startedFixture_decodesEveryField() {
         val dto = decode<BackgroundTaskStartedPayloadDto>(STARTED)
 

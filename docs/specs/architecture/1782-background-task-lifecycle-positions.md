@@ -6,7 +6,7 @@
 - `app/src/main/java/de/pyryco/mobile/data/model/BackgroundTask.kt`: `BackgroundTask` retains panel descriptions, update slots and progress.
 - `app/src/main/java/de/pyryco/mobile/data/repository/BackgroundTaskProjection.kt`: `applyStarted`, `applyRoster` and `rowTask` implement replacement truth and started-description precedence.
 - `app/src/main/java/de/pyryco/mobile/data/repository/ConversationRepository.kt`: `ThreadItem` is the ordered consumer contract.
-- `app/src/main/java/de/pyryco/mobile/data/repository/HistoryPageReducer.kt`: `withHistoryEntry`, `mergeHistoryRows`, `joinIdentity`, `withAssistantDelta` and `withJoinedSegments` govern history order, overlap and ordinary assistant segments.
+- `app/src/main/java/de/pyryco/mobile/data/repository/HistoryPageReducer.kt`: `withHistoryEntry`, `mergeHistoryRows`, `joinIdentity`, `withAssistantDelta`, `withOnlyLastRowStreaming` and `withJoinedSegments` govern history order, overlap and ordinary assistant segments.
 - `app/src/main/java/de/pyryco/mobile/data/repository/ThreadProjection.kt`: `threadByConversation`, `observe` and `mergeHistoryPage` preserve atomic conversation-local folds.
 - `app/src/main/java/de/pyryco/mobile/data/repository/RemoteConversationRepository.kt`: the background-task arm in `onInbound` owns capability gating.
 - `app/src/main/java/de/pyryco/mobile/data/cache/ConversationCache.kt` and `FileConversationCache.kt`: `cacheableThreadRows` and `toRecord` define the unchanged persistence boundary.
@@ -67,3 +67,7 @@ None.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-05
+
+## Revisions
+
+- 2026-10-05: Inspection of `CachingConversationRepository.observeMessages` showed reconnect also merges a retained in-memory thread with `mergeCachedRows`. Apply the same lifecycle backfill to that seam; disk persistence still excludes all markers. Inspection of `ThreadProjection.observeRowCounts` also showed its visible-growth signal must exclude evidence, so lifecycle-only updates do not count as rendered thread growth. Tests cover both contracts.
