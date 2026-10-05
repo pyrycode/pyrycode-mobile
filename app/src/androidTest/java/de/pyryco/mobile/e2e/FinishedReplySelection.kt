@@ -41,7 +41,8 @@ internal fun ComposeTestRule.assertFinishedReplySystemCopy(
                 repository.observeMessages(conversationId).first { rows ->
                     rows.filterIsInstance<ThreadItem.MessageItem>().any {
                         it.message.role == Role.Assistant &&
-                            !it.message.isStreaming && it.message.content == SELECTION_REPLY
+                            !it.message.isStreaming &&
+                            it.message.content == SELECTION_REPLY
                     }
                 }
             }
