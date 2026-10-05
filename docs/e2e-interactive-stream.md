@@ -2340,7 +2340,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `replay-order` (#477) | events produced **entirely while offline** replay **in order, each exactly once** | `replay-order-open.jsonl` + `replay-order.jsonl` | **two** (release on disconnect) |
 | `refusal` (#1360) | a session-scoped `model_refusal_fallback` row offers "Switch back to Haiku" (the menu label, #1494); the tap writes `haiku` and the button disappears | `refusal.jsonl` | one |
 | `mcp-failed` (#1457) | the failed-MCP-server pill (#1345) renders and tapping it opens Channel info on its MCP servers section | `mcp-failed.jsonl` | one |
-| `context-overflow` (#1473) | the context notice and Compact pill (#1357) render after a `prompt_too_long` turn end, and tapping Compact reaches the daemon's child | `context-overflow.jsonl` | one |
+| `context-overflow` (#1473) | the combined top-overlay context/Compact pill (#1603) renders after a `prompt_too_long` turn end, and tapping Compact reaches the daemon's child | `context-overflow.jsonl` | one |
 
 `refusal` selects
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_refusalSwitchBackRestoresOriginalModel`
@@ -2376,7 +2376,7 @@ DETERMINISTIC=1 SCENARIO=reconnect    PYRYCODE_SRC=~/Workspace/Projects/pyrycode
 DETERMINISTIC=1 SCENARIO=replay-order PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # post-reconnect replay ordering
 DETERMINISTIC=1 SCENARIO=refusal      PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # refusal switch-back
 DETERMINISTIC=1 SCENARIO=mcp-failed   PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # failed MCP server pill
-DETERMINISTIC=1 SCENARIO=context-overflow PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # context notice + Compact pill
+DETERMINISTIC=1 SCENARIO=context-overflow PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # combined context/Compact pill
 ```
 
 `mcp-failed` selects
@@ -2397,8 +2397,8 @@ the daemon side instead.
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_contextOverflowCompactReachesDaemon`
 and belongs to `python3 scripts/android-test-gate.py scripted-all`. `context-overflow.jsonl`'s first
 turn replays an assistant line then a `result` with `is_error` true and `terminal_reason`
-`prompt_too_long`; the test waits for the status area's [context notice and Compact pill
-(#1357)](knowledge/features/turn-outcome-indicator.md), then taps Compact, which calls
+`prompt_too_long`; the test waits for the top overlay's [combined context/Compact pill
+(#1603)](knowledge/features/turn-outcome-indicator.md), then physically taps the whole pill, which calls
 `ThreadViewModel.onComposerCommand` and sends `/compact` as an ordinary message (the daemon only
 intercepts `/clear`). Fakeclaude's canned `initializeCommands` publishes `compact`, which is what keeps
 the pill clickable; every later turn gets fakeclaude's built-in echo-plus-`success` reply, so the test
@@ -3745,6 +3745,18 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Combined recovery pill (#1603):** rung-4
+  `DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_contextOverflowCompactReachesDaemon`
+  proves the combined top-overlay tap delivers `/compact` and clears the notice. It passed
+  in the dispatcher 2026-10-05 `scripted-all` run: 15 executed/passed, 0 failed, 0 skipped.
+  The existing rung-3 `InteractiveStreamE2ETest#interactiveTurn_reconnect_slashCommandsAndCompactStillWork`
+  executed and passed in the fresh full live suite, run `2026-10-05T18-11-46-185Z` on
+  `5eeeeb8254`: 57 executed/passed, 0 failed, 0 skipped. Issue gate evidence and the
+  dispatcher per-method report confirm it; no separate focused live run or new live
+  scenario is claimed. The pre-ship `python3 scripts/android-test-gate.py live` command
+  remains unchanged.
+
 
 - **Finished-reply system Copy (#1674):** the live method
   `InteractiveStreamE2ETest#interactiveTurn_finishedReply_systemCopyCopiesSelectedWord` and

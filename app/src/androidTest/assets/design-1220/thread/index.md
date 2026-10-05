@@ -597,30 +597,46 @@ filler bubbles and are not compared. Composer and footer verdicts are as in "Com
 
 Three frames draw designs Juhana changed on 2026-10-02 (turn outcome, failure notice, history tail gutter). The
 captures show what the app draws today, so those verdicts are expected mismatches with their own tickets. #1747
-has since moved the failure notice to the design.
+has since moved the failure notice to the design, and #1603 moved turn recovery to the top overlay.
 
 ### Turn outcome — `685:3992`
 
-- **Owning ticket:** #1357 (recovery advice), #1356 (stopped-turn row)
-- **Capture:** `turn-outcome.png` (412x892, 1.0)
+- **Owning ticket:** #1603 (overlay recovery), #1357 (copy/classification), #1356 (stopped-turn row)
+- **Capture:** `turn-outcome.png` (412x892, 1.0, real system bars, API 35)
 - **Side-by-side:** `turn-outcome-side-by-side.png`
 - **Overlay:** `turn-outcome-overlay.png`
-- **Verdict:** mismatch (changed design)
+- **Verdict:** pill matches, with a 4px platform text-metric difference; stopped-row spacing remains mismatched
 - A `TurnEnd` with `isError` and `terminalReason` `prompt_too_long`, and the matching `StoppedTurn` row.
+- Fresh hardware capture at revision `e047e9c0`, 2026-10-05; `turn-outcome.txt` confirms
+  density/font scale 1.0 and `syntheticBars=false`. Retained `turn-outcome-1603-results.xml`
+  records `ThreadDesignCaptureTest#rowAndNoticeFramesAt412By892`: 1 executed/passed,
+  0 failed, 0 skipped, timestamp `2026-10-05T17:22:34`. Comparisons were regenerated.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: the outcome sits in the status band beside the snowflake; the frame moves it to a pill in the top overlay's right-aligned stack, under the header, and leaves the band at the snowflake alone. The stopped-turn row has 20 px from the bubble above to its text; the frame has 30 |
-| Padding | match: stopped-turn row at the 20 px gutter |
-| Spacing | mismatch: the stopped-turn row's 10 px (see geometry) |
-| Typography | mismatch: the band pill reads "Context too long. Compact or reset the session." on two lines plus a separate "Compact" pill; the frame's pill reads "Context too long - Compact" on one line. The stopped-turn row's text and style match |
-| Colour | match: error-container pill |
-| Borders | match |
-| Radii | match: pill radius |
-| Icon paths | mismatch: the band pill has a leading error icon; the frame's pill has none |
-| Component state | mismatch: Compact is its own pill; in the frame the whole pill runs Compact |
+| Geometry | pill match: right-aligned top overlay, 176×24px at x=216..391/y=121..144; removing the real 24px status bar gives top 97px and a 20px right gutter. Figma width is 172px; shared Android typography hugs the complete copy 4px wider. No message space reserved; idle band keeps the snowflake. Stopped-row mismatch: 20px above its text against 30px in the frame |
+| Padding | match: pill 8px horizontal/4px vertical; stopped row at 20px gutter |
+| Spacing | pill match: 12dp visible gap with preceding notices and following transient error, measured independently of expanded action bounds. Stopped-row 10px discrepancy remains #1608 |
+| Typography | match: exact “Context too long - Compact”, one line in shared body-small; stopped-row text/style match. Retain shared typography rather than force the Figma width |
+| Colour | match: error-container background and error text |
+| Borders | match: none |
+| Radii | match: 6dp corners |
+| Icon paths | match: no leading icon, X or separate Compact pill |
+| Component state | match: the whole context pill invokes existing Compact once when published, with a merged at-least-48dp target extending downward. Otherwise inert; billing/sign-in retain agent-specific inert copy. Following transient pixels cannot dispatch Compact |
 
-- **Routed:** #1603 (the pill), #1608 (the stopped-turn row's spacing)
+Whole-pill action and coexistence are supported by native geometry/pointer tests;
+`turn-outcome-1603-scripted-results.xml` records 1 executed/passed, 0 failed/skipped for
+`DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_contextOverflowCompactReachesDaemon`,
+proving daemon `/compact` delivery and notice clearing. The final dispatcher scripted-all
+run also passed that method (15 executed/passed, 0 failed/skipped).
+
+Dispatcher full live suite on `5eeeeb8254`, run `2026-10-05T18-11-46-185Z`: 57 executed,
+57 passed, 0 failed, 0 skipped. The gate report confirms
+`InteractiveStreamE2ETest#interactiveTurn_reconnect_slashCommandsAndCompactStillWork`
+executed and passed, covering the shared Compact path. This is full-suite evidence,
+not a separate focused run; the deterministic scenario proves this pill's tap path.
+
+- **Routed:** #1608 (stopped-turn row spacing). Other captures' owning-ticket verdicts remain unchanged.
 
 ### Unrecognized message — `685:4112`
 

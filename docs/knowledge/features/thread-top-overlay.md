@@ -2,7 +2,7 @@
 
 The **notice surface** for the thread ([#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002)):
 other conversations' attention, claude's usage-limit report, a failed MCP server ([#1345](https://github.com/pyrycode/pyrycode-mobile/issues/1345)),
-the pairing-error notice, Offline Retry and conversation session errors, drawn as a right-aligned stack of
+the pairing-error notice, Offline Retry, conversation session errors and stopped-turn recovery, drawn as a right-aligned stack of
 [`NoticePill`](notice-pill.md)s pinned over the top of the message area — replacing the two arms they used
 to share with live turn status inside `ThreadStatusArea`.
 
@@ -41,6 +41,10 @@ internal fun ThreadTopOverlay(
     onOpenMcpFailure: () -> Unit = {},
     sessionError: String? = null,
     agent: ConversationAgent = ConversationAgent.Claude,
+    turnOutcome: TurnRecoveryNotice? = null,
+    onCompact: (() -> Unit)? = null,
+    transientError: String? = null,
+    transientErrorOccurrence: Long = 0L,
     attentionPill: (@Composable () -> Unit)? = null,
 )
 ```
@@ -49,7 +53,7 @@ The usage lead no longer names the agent ([Usage-limit indicator](usage-limit-in
 Since #1678, `agent = state.agent` selects the session-error copy independently of usage copy.
 
 Emits nothing when there is no pill to show (`usageLimit == null || usageLimitDismissed`, `mcpFailure == null`,
-`!showRePair`, `connectionState != Offline`, `sessionError == null`, and `attentionPill == null`) — the overlay is an overlap (`Box` alignment, not a layout slot), so an empty overlay costs
+`!showRePair`, `connectionState != Offline`, `sessionError == null`, `turnOutcome == null`, `transientError == null`, and `attentionPill == null`) — the overlay is an overlap (`Box` alignment, not a layout slot), so an empty overlay costs
 nothing and the message area draws exactly as if it were absent. Otherwise a `Column(horizontalAlignment =
 End, verticalArrangement = spacedBy(12.dp))` — Figma `541:2446`'s 12dp pill gap — with, top to bottom:
 
@@ -125,8 +129,7 @@ Usage sits above the lower action, matching Figma `533:1956`. When `connectionSt
 
 Every non-null `sessionError`, including an empty or unknown code, shows an inert
 Error `NoticePill` after the existing persistent usage/MCP/pairing/offline notices.
-It has no click, dismiss control, leading icon or timeout; long copy wraps. The
-transient error pill below follows it. Repository clearing alone removes this pill.
+It has no click, dismiss control, leading icon or timeout; long copy wraps. Recovery advice follows it before the transient error pill. Repository clearing alone removes this pill.
 
 Exact code matches select client resources; neither raw codes nor daemon prose
 reach visible text or accessibility semantics:
@@ -141,10 +144,24 @@ Blocked delivery has abandoned the backlog; child crashing retains the queued
 message. Showing an error never resends it. See [repository clearing rules](remote-conversation-repository-state-errors-and-handoff.md#conversation-session-errors-1677)
 and [destination observation](thread-screen-how-it-works-state.md#session-errors-and-local-send-settlement-1678).
 
+### The stopped-turn recovery pill (#1603)
+
+[TurnOutcomeIndicator](turn-outcome-indicator.md) follows session errors as one icon-free,
+X-free Error pill. Context reads “Context too long - Compact”; its whole surface invokes
+the published Compact command once. Unavailable Compact and agent-specific billing/sign-in
+are inert. Status remains independent, with the idle snowflake when connected and idle.
+
+The visible pill keeps the design's 24dp height and 12dp neighbor gaps, while Compact's
+merged action target extends down to at least 48dp. A following transient notice is
+measured from the visible pill, and consumes taps on its inert surface where it overlaps
+that target. Reserving the target height in the stack would incorrectly make the visible
+gap 36dp. Native geometry and physical pointer tests cover both preceding and following
+neighbors, including Offline and Re-pair.
+
 ### The transient error pill (#1747)
 
 The thread's local failures show as the last pill in the stack, below every persistent notice and the
-session error, with the same 12 dp gap. These are new-session, archive, workspace and run-configuration
+session error and recovery pill, with the same 12 dp gap. These are new-session, archive, workspace and run-configuration
 failures, attachment size and count refusals, attachment-send failures, refused pasted or keyboard-inserted
 images, markdown-open failures, and the attachment no-app, open-failed and save-failed outcomes. Each shows
 its existing client-owned sentence in an inert Error pill (`TransientErrorPill`): no X, no tap action, a 24 dp

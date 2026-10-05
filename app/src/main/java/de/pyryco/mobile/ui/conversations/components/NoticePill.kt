@@ -47,15 +47,14 @@ private val PillShadow = 4.dp
 
 /**
  * Shared thread pill, Figma `347:6617`: hugs its right-aligned label and wraps it when it would be wider
- * than the space it is given. The Top overlay uses it for notices; turn outcomes use its error treatment
- * inside the input status area with a leading icon and a two-line limit.
+ * than the space it is given. The Top overlay uses it for notices, including stopped-turn recovery advice.
  *
  * The **Default** variant (`primaryContainer` / `onPrimaryContainer`) is a notice the operator may hide
  * and carries a trailing X when [onDismiss] is set. The **Error** variant ([isError], `errorContainer` /
  * `error`, as Figma paints it) never does. [onClick] makes the whole pill a button. The pill's merged
  * content description is [contentDescription], its visible label by default; the X is its own button.
+ * Set [mergeDescendants] to false when an enclosing touch target owns the merged label and action.
  * [shadowElevation] is the overlay's drop shadow; a pill laid out in the page, not over it, passes none.
- * Set [mergeDescendants] to false when a parent click target owns the merged label and description.
  */
 @Composable
 internal fun NoticePill(

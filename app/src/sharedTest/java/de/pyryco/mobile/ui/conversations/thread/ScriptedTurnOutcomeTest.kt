@@ -37,8 +37,6 @@ class ScriptedTurnOutcomeTest {
 
     private val contextNotice: String = string(R.string.thread_recovery_context)
 
-    private val compactPill: String = string(R.string.thread_recovery_compact)
-
     @Before
     fun setUp() {
         harness = ScriptedThreadHarness(composeRule)
@@ -61,7 +59,6 @@ class ScriptedTurnOutcomeTest {
         harness.pushTurnEnd("t1", outcome = "success", isError = true, terminalReason = "prompt_too_long")
 
         awaitDisplayed(contextNotice)
-        awaitDisplayed(compactPill)
         composeRule.onNodeWithContentDescription(thinkingDescription).assertDoesNotExist()
         awaitGone(interruptDescription)
     }
@@ -72,7 +69,6 @@ class ScriptedTurnOutcomeTest {
         harness.pushTurnEnd("t1", isError = true, errorCategory = "billing_error")
 
         awaitDisplayed(string(R.string.thread_recovery_billing, string(R.string.agent_name_claude)))
-        composeRule.onNodeWithContentDescription(compactPill).assertDoesNotExist()
     }
 
     // The advice clears when the next turn starts.
@@ -97,19 +93,18 @@ class ScriptedTurnOutcomeTest {
 
         awaitDisplayed(thinkingDescription)
         composeRule.onNodeWithContentDescription(contextNotice).assertDoesNotExist()
-        composeRule.onNodeWithContentDescription(compactPill).assertDoesNotExist()
     }
 
-    // Ladder: compaction outranks the advice; the two never stack.
+    // Compaction remains in the band while the advice stays in the independent overlay.
     @Test
-    fun compaction_winsTheSlotOverTheNotice() {
+    fun compactionAndNotice_remainVisibleInTheirOwnSurfaces() {
         harness.pushTurnEnd("t1", outcome = "success", isError = true, terminalReason = "prompt_too_long")
         awaitDisplayed(contextNotice)
 
         harness.pushCompacting(active = true)
 
         awaitDisplayed(compactingDescription)
-        composeRule.onNodeWithContentDescription(contextNotice).assertDoesNotExist()
+        composeRule.onNodeWithContentDescription(contextNotice).assertIsDisplayed()
     }
 
     private fun string(

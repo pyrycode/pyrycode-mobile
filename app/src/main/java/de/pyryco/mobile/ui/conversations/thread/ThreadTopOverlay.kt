@@ -29,6 +29,8 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.conversations.components.NoticePill
+import de.pyryco.mobile.ui.conversations.components.TurnOutcomeIndicator
+import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
 import de.pyryco.mobile.ui.conversations.components.boundMcpText
 import de.pyryco.mobile.ui.conversations.components.usageLimitIsWarning
 import de.pyryco.mobile.ui.conversations.components.usageLimitLabel
@@ -46,8 +48,8 @@ private val OverlayPillGap = 12.dp
  * report is a Default pill with an X only when [usageLimitIsWarning] says so, and it is left out once
  * [usageLimitDismissed]; any other reading is an Error pill that cannot be hidden. Pairing failure takes
  * precedence over the offline pill because a network retry cannot repair a rejected pairing. With none of
- * them, nothing is emitted. Session errors follow these persistent notices; [transientError] follows
- * all persistent notices and expires independently under the screen's queue.
+ * them, nothing is emitted. Session errors and stopped-turn recovery advice follow these persistent
+ * notices; [transientError] follows all persistent notices and expires independently under the screen's queue.
  *
  * [mcpFailure] (#1345) is the Claude-authored name of a failed MCP server: an Error pill with no X whose tap
  * runs [onOpenMcpFailure]. It is never drawn beside the pairing or offline pill.
@@ -66,6 +68,8 @@ internal fun ThreadTopOverlay(
     onOpenMcpFailure: () -> Unit = {},
     sessionError: String? = null,
     agent: ConversationAgent = ConversationAgent.Claude,
+    turnOutcome: TurnRecoveryNotice? = null,
+    onCompact: (() -> Unit)? = null,
     transientError: String? = null,
     transientErrorOccurrence: Long = 0L,
     attentionPill: (@Composable () -> Unit)? = null,
@@ -79,6 +83,7 @@ internal fun ThreadTopOverlay(
         !showRePair &&
         !showOffline &&
         sessionError == null &&
+        turnOutcome == null &&
         transientError == null
     ) {
         return
@@ -102,9 +107,15 @@ internal fun ThreadTopOverlay(
             if (sessionError != null) {
                 NoticePill(text = sessionErrorLabel(sessionError, agent), isError = true)
             }
-            transientError?.let { text ->
-                key(transientErrorOccurrence) { TransientErrorPill(text) }
-            }
+            TurnOutcomeIndicator(
+                notice = turnOutcome,
+                agent = agent,
+                onCompact = onCompact,
+                followingNotice =
+                    transientError?.let { text ->
+                        { key(transientErrorOccurrence) { TransientErrorPill(text) } }
+                    },
+            )
         }
         Column(
             modifier = modifier.fillMaxWidth(),

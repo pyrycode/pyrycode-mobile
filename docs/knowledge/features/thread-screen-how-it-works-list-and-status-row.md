@@ -328,8 +328,7 @@ The band is the first content in the measured composer, after its 16dp top paddi
 The full-width composer owns its translucent background and blur; list reservations
 follow its measured height without counting IME padding. Ordinary messages rest
 12dp above the band at the newest end, as described in the reverse-list section.
-One shape-following Default shadow wraps the status band; in-band `NoticePill` and
-outcome-pill shadows stay disabled to avoid stacking. See
+One shape-following Default shadow wraps the status band; in-band `NoticePill` shadows stay disabled to avoid stacking. See
 [chrome treatment](thread-screen-how-it-works-overlays-and-app-bar.md#threadtopappbar--figma-168-chrome).
 
 Not to be confused with the retired `ThreadStatusRow` above (`model · effort`) — this is `ThreadStatusArea`,
@@ -339,10 +338,11 @@ this order).
 [#1311](https://github.com/pyrycode/pyrycode-mobile/issues/1311) ported desktop's `workingIndicatorState`
 so the band keeps a reading throughout a running turn. `statusArm` beside `StatusReading` selects one
 arm. The current order, first match wins, is connection, Reset session, api-retry, compaction, stall,
-turn outcome (only with no local window), running tool while busy, daemon thinking, working while busy,
+running tool while busy, daemon thinking, working while busy,
 Sending, Waiting, None. Offline selects None because the top overlay owns Retry. Permission and question
 readings override this ladder in `ThreadStatusArea`. Sending during a running turn therefore keeps its
-running-tool, thinking or working reading. Both local stages suppress a previous outcome; connection,
+running-tool, thinking or working reading. Recovery moved to the independent top overlay in #1603; the existing send/activity
+lifecycle clears it. Connected idle shows the snowflake without recovery text. Connection,
 reset, retry, compaction and stall retain their precedence.
 
 `openToolCall` selects the last running **main-thread** tool in chronological `state.items`
