@@ -128,6 +128,7 @@ internal class PendingMarkdown(
         protect(node)
         val open = mutableMapOf<Pair<Char, Int>, ArrayDeque<IntRange>>()
         val brackets = ArrayDeque<Int>()
+        var lastImageMarker = -1
         var i = node.startOffset
         while (i < node.endOffset) {
             scannedCharacters++
@@ -146,10 +147,13 @@ internal class PendingMarkdown(
                 for (index in end until node.endOffset) literal[index] = true
                 break
             }
+            // Escaped bangs are skipped above; even backslash runs leave the bang to this scan.
+            if (c == '!') lastImageMarker = i
             if (c == '[') brackets.addLast(i)
             if (c == ']' && brackets.isNotEmpty()) {
                 val labelStart = brackets.removeLast()
-                if (source.getOrNull(labelStart - 1) != '!' && source.getOrNull(i + 1) == '(') {
+                val isImage = labelStart > 0 && labelStart - 1 == lastImageMarker
+                if (!isImage && source.getOrNull(i + 1) == '(') {
                     // Complete links were protected by the AST; only a pending destination reaches here.
                     hide(labelStart, labelStart + 1)
                     hide(i, node.endOffset)
@@ -223,7 +227,7 @@ internal class PendingMarkdown(
             val separatorCells = tableCells(separator, structuralPipes(separator))
             val lineClosed = text.indexOf('\n', header.length + 1) >= 0 || source.getOrNull(node.endOffset) == '\n'
             val valid = separatorCells.size == cells.size && separatorCells.all { it.trim().matches(Regex(":?-+:?")) }
-            if (lineClosed || (separator.trimEnd().endsWith('|') && valid)) return false
+            if (lineClosed || (valid && (node.type == GFMElementTypes.TABLE || separator.trimEnd().endsWith('|')))) return false
         }
         val arrivedCells =
             cells.map { cell ->

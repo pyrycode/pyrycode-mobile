@@ -12,11 +12,13 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performFirstLinkClick
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.Message
@@ -141,7 +143,7 @@ class StreamingMarkdownComposeTest {
         show("- first\n\n- second")
         change("- first\n\n- second\n- third")
         compose.onNodeWithText("third").assertExists()
-        change("| A | B |\n| --- | --")
+        change("| A | B |\n| --- | :")
         assertEquals(listOf("A B"), texts().map { it.text })
         change("| A | B |\n| --- | --- |\n| one | two |\n")
         compose.onNodeWithText("A").assertExists()
@@ -284,5 +286,89 @@ class StreamingMarkdownComposeTest {
         assertTrue(texts().any { it.text.contains("| A | B |") })
         assertTrue(texts().any { it.text.contains("next") })
         settleAndCompare()
+    }
+
+    @Test fun validTablesAtEofKeepCellLayoutAndFormattingThroughSettlement() {
+        show("")
+        for (header in listOf("| **A** | `B` |", "**A** | `B`")) {
+            for (separator in listOf("--- | ---", "| --- | ---", "--- | --- |", "| --- | --- |", "--- | --")) {
+                compose.runOnIdle { streaming.value = true }
+                change("$header\n$separator")
+                assertEquals(listOf("A", "B"), texts().map { it.text })
+                assertTrue(annotated("A").spanStyles.any { it.item.fontWeight == FontWeight.Bold })
+                assertTrue(annotated("B").spanStyles.any { it.item.fontFamily == FontFamily.Monospace })
+                val bounds = listOf("A", "B").map { compose.onNodeWithText(it).fetchSemanticsNode().boundsInRoot }
+                settleAndCompare()
+                assertEquals(bounds, listOf("A", "B").map { compose.onNodeWithText(it).fetchSemanticsNode().boundsInRoot })
+            }
+        }
+    }
+
+    @Test fun pendingCodeOverridesFormattingDelimitersThenActualClosureRestoresStyles() {
+        show("")
+        for (delimiter in listOf("**", "*", "_", "__", "~~", "~")) {
+            compose.runOnIdle { streaming.value = true }
+            val prefix = "${delimiter}foo `bar$delimiter"
+            change(prefix)
+            val pending = annotated("foo bar$delimiter")
+            assertTrue(delimiter, pending.spanStyles.isEmpty())
+            val closedCode = "$prefix baz`"
+            change(closedCode)
+            val codeOnly = annotated("foo bar$delimiter baz")
+            assertTrue(delimiter, codeOnly.spanStyles.any { it.item.fontFamily == FontFamily.Monospace })
+            assertFalse(
+                delimiter,
+                codeOnly.spanStyles.any {
+                    it.item.fontWeight == FontWeight.Bold ||
+                        it.item.fontStyle == FontStyle.Italic ||
+                        it.item.textDecoration == TextDecoration.LineThrough
+                },
+            )
+            change("$closedCode$delimiter")
+            val complete = annotated("foo bar$delimiter baz")
+            assertTrue(delimiter, complete.spanStyles.any { it.item.fontFamily == FontFamily.Monospace })
+            assertTrue(
+                delimiter,
+                complete.spanStyles.any {
+                    when (delimiter) {
+                        "**", "__" -> it.item.fontWeight == FontWeight.Bold
+                        "*", "_" -> it.item.fontStyle == FontStyle.Italic
+                        else -> it.item.textDecoration == TextDecoration.LineThrough
+                    }
+                },
+            )
+            settleAndCompare()
+        }
+        compose.runOnIdle { streaming.value = true }
+        change("lead `a ~bar~")
+        assertTrue(annotated("lead a ~bar~").spanStyles.isEmpty())
+    }
+
+    @Test fun escapedBangsKeepPendingLinksInertAndOnlyRealCompletedTargetsTap() {
+        show("")
+        for (slashes in 0..4) {
+            compose.runOnIdle { streaming.value = true }
+            val prefix = "\\".repeat(slashes) + "!"
+            val arrived = "$prefix[text](https://exa"
+            change(arrived)
+            val pending = texts().single()
+            if (slashes % 2 == 1) {
+                assertTrue(pending.text.endsWith("!text"))
+                assertFalse(pending.text.contains("https://"))
+            } else {
+                assertEquals(arrived, pending.text)
+            }
+            assertTrue(pending.getLinkAnnotations(0, pending.length).isEmpty())
+            compose.onNodeWithText(pending.text).performClick()
+            assertEquals(slashes, taps.size)
+            change("$prefix[text](https://example.com)")
+            val complete = texts().single()
+            val links = complete.getLinkAnnotations(0, complete.length)
+            assertEquals("https://example.com", (links.single().item as LinkAnnotation.Url).url)
+            assertEquals("text", complete.subSequence(links.single().start, links.single().end).text)
+            compose.onNodeWithText(complete.text).performFirstLinkClick()
+            assertEquals(List(slashes + 1) { "https://example.com" }, taps)
+            settleAndCompare()
+        }
     }
 }

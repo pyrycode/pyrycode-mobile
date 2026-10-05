@@ -1103,6 +1103,22 @@ private fun AnnotatedString.Builder.appendInline(
         append(pending.text(node))
         return
     }
+    val delimiter =
+        when (node.type) {
+            MarkdownElementTypes.EMPH, MarkdownElementTypes.STRONG -> MarkdownTokenTypes.EMPH
+            GFMElementTypes.STRIKETHROUGH -> GFMTokenTypes.TILDE
+            else -> null
+        }
+    if (pending != null && delimiter != null && node.children.any { it.type == delimiter && pending.isLiteral(it) }) {
+        // A closer inside unfinished code is literal; its temporary parent cannot supply formatting.
+        appendInlineChildren(
+            node.children.filter { it.type != delimiter || pending.isLiteral(it) },
+            source,
+            uriHandler,
+            colors,
+        )
+        return
+    }
     when (node.type) {
         MarkdownElementTypes.EMPH ->
             withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
@@ -1212,7 +1228,9 @@ private fun AnnotatedString.Builder.appendInlineChildren(
     val runs =
         singleTildeRuns(children, source).filter { (open, close) ->
             colors.pending?.isHidden(children[open]) != true &&
-                colors.pending?.isHidden(children[close]) != true
+                colors.pending?.isHidden(children[close]) != true &&
+                colors.pending?.isLiteral(children[open]) != true &&
+                colors.pending?.isLiteral(children[close]) != true
         }
     var index = 0
     while (index < children.size) {

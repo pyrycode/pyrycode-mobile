@@ -60,7 +60,7 @@ class StreamingMarkdownTest {
     }
 
     @Test fun pendingHeaderHidesPipesAndPartialSeparatorOnly() {
-        listOf("| A | B |\n", "| A | B |\n| --- |", "| A | B |\n| --- | --").forEach {
+        listOf("| A | B |\n", "| A | B |\n| --- |", "| A | B |\n| --- | :").forEach {
             val root = MarkdownParser(MarkdownFlavour).buildMarkdownTreeFromString(it)
             assertEquals(it, "A B", PendingMarkdown(it, root).blockText(root.children.first { node -> node.children.isNotEmpty() }))
         }
@@ -183,7 +183,7 @@ class StreamingMarkdownTest {
     }
 
     @Test fun separatorWithoutOuterPipesIsPendingEvenWhenParsedAsSetext() {
-        listOf("| A | B |\n-", "| A | B |\n---", "| A | B |\n--- | --").forEach { source ->
+        listOf("| A | B |\n-", "| A | B |\n---", "| A | B |\n--- | :").forEach { source ->
             val root = MarkdownParser(MarkdownFlavour).buildMarkdownTreeFromString(source)
             assertEquals(source, "A B", PendingMarkdown(source, root).blockText(root.children.first { it.children.isNotEmpty() }))
         }
@@ -228,6 +228,49 @@ class StreamingMarkdownTest {
             val root = MarkdownParser(MarkdownFlavour).buildMarkdownTreeFromString(source)
             val first = root.children.first { it.children.isNotEmpty() }
             assertEquals(source, null, PendingMarkdown(source, root).blockText(first))
+        }
+    }
+
+    @Test fun actualTablesAtEofReleaseWithEveryOuterPipeCombinationAndStayMutable() {
+        for (header in listOf("| A | B |", "A | B", "| A | B", "A | B |")) {
+            for (separator in listOf("--- | ---", "| --- | ---", "--- | --- |", "| --- | --- |", "--- | --")) {
+                val source = "$header\n$separator"
+                val cache = StreamingMarkdownCache()
+                for (length in 1..source.length) cache.update(source.take(length))
+                val table = cache.update(source).single()
+                assertEquals(source, GFMElementTypes.TABLE, table.node.type)
+                assertEquals(source, null, table.pending.blockText(table.node))
+                val extended = cache.update("$source\n| one | two |").single()
+                assertEquals(source, GFMElementTypes.TABLE, extended.node.type)
+                assertTrue(extended.node.getTextInNode(extended.source).contains("one"))
+            }
+        }
+    }
+
+    @Test fun pendingCodeInsideFormattingKeepsLiteralClosingPunctuationUntilCodeCloses() {
+        for (delimiter in listOf("**", "*", "_", "__", "~~", "~")) {
+            val prefix = "${delimiter}foo `bar$delimiter"
+            assertEquals(prefix, "foo bar$delimiter", text(prefix))
+            val closedCode = "$prefix baz`"
+            assertEquals(closedCode, "foo bar$delimiter baz", text(closedCode))
+            val complete = "$closedCode$delimiter"
+            val root = MarkdownParser(MarkdownFlavour).buildMarkdownTreeFromString(complete)
+            assertEquals(complete, "foo bar$delimiter baz", text(complete))
+            assertEquals(inlineText(root.children.single().children, complete), text(complete))
+        }
+        assertEquals("lead a ~bar~", text("lead `a ~bar~"))
+    }
+
+    @Test fun escapedBangBeforePendingLinkUsesBackslashParityAndRetainsLiteralPrefix() {
+        for (slashes in 0..4) {
+            val prefix = "\\".repeat(slashes) + "!"
+            val source = "$prefix[text](https://exa"
+            val prefixRoot = MarkdownParser(MarkdownFlavour).buildMarkdownTreeFromString(prefix)
+            val literalPrefix = inlineText(prefixRoot.children.single().children, prefix)
+            assertEquals(source, if (slashes % 2 == 1) literalPrefix + "text" else source, text(source))
+            val complete = "$source)"
+            val root = MarkdownParser(MarkdownFlavour).buildMarkdownTreeFromString(complete)
+            assertEquals(complete, inlineText(root.children.single().children, complete), text(complete))
         }
     }
 }
