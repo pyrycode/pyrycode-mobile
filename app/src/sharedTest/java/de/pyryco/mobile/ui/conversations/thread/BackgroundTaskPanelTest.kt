@@ -3,6 +3,7 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
@@ -14,6 +15,9 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.font.FontFamily
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.BackgroundTask
@@ -22,6 +26,7 @@ import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.BackgroundTaskUpdate
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -227,6 +232,61 @@ class BackgroundTaskPanelTest {
     }
 
     @Test
+    fun taskTypes_showReadableLabels_withoutChangingRawValues() {
+        val current = mutableStateOf(task())
+        composeTestRule.setContent {
+            PyrycodeMobileTheme { BackgroundTaskPanel(roster(current.value), onDismiss = {}) }
+        }
+        listOf(
+            "local_agent" to "Agent",
+            "local_bash" to "Command",
+            "remote_agent" to "Remote agent",
+            "local_custom_task" to "Custom task",
+            "" to "",
+            "local_local_custom_TASK" to "Local custom TASK",
+        ).forEach { (raw, label) ->
+            composeTestRule.runOnIdle { current.value = task(taskType = raw) }
+            composeTestRule.onNodeWithText(label, useUnmergedTree = true).assertExists()
+            composeTestRule.runOnIdle { assertEquals(raw, current.value.taskType) }
+        }
+    }
+
+    @Test
+    fun readableCommandLabel_keepsRawTypeDescriptionStyling() {
+        setPanel(
+            roster(task(description = "command description"), task(id = "t2", taskType = "Command", description = "other description")),
+        )
+        listOf("command description" to FontFamily.Monospace, "other description" to FontFamily.SansSerif).forEach { (text, font) ->
+            val layouts = mutableListOf<TextLayoutResult>()
+            composeTestRule
+                .onNodeWithText(text, useUnmergedTree = true)
+                .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            assertEquals(
+                font,
+                layouts
+                    .single()
+                    .layoutInput.style.fontFamily,
+            )
+        }
+    }
+
+    @Test
+    fun mappedTypes_keepPrintableFiltering_bounds_andCutMarkers() {
+        val current = mutableStateOf(task(taskType = "local_custom_\u001Btask", truncatedFields = listOf("task_type")))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme { BackgroundTaskPanel(roster(current.value), onDismiss = {}) }
+        }
+        composeTestRule.onNodeWithText("Custom task", useUnmergedTree = true).assertIsDisplayed()
+        markers().assertCountEquals(1)
+        composeTestRule.runOnIdle { current.value = task(taskType = "local_" + "a".repeat(4096)) }
+        composeTestRule.onNodeWithText("A" + "a".repeat(4095), useUnmergedTree = true).assertExists()
+        markers().assertCountEquals(0)
+        composeTestRule.runOnIdle { current.value = task(taskType = "local_" + "a".repeat(4097)) }
+        composeTestRule.onNodeWithText("A" + "a".repeat(4095), useUnmergedTree = true).assertExists()
+        markers().assertCountEquals(1)
+    }
+
+    @Test
     fun populatedRoster_listsEachTaskWithItsType() {
         setPanel(
             roster = roster(task(description = "npm run dev"), task(id = "t2", description = "tail -f log", taskType = "remote_agent")),
@@ -234,7 +294,7 @@ class BackgroundTaskPanelTest {
 
         composeTestRule.onNodeWithText("npm run dev").assertIsDisplayed()
         composeTestRule.onNodeWithText("tail -f log").assertIsDisplayed()
-        composeTestRule.onNodeWithText("remote_agent").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Remote agent").assertIsDisplayed()
         composeTestRule.onNodeWithText(EMPTY).assertDoesNotExist()
         composeTestRule.onNodeWithText(UNREPORTED).assertDoesNotExist()
         markers().assertCountEquals(0)
@@ -431,7 +491,7 @@ class BackgroundTaskPanelTest {
                 ),
         )
 
-        listOf("rm -rf /tmp/x", "local_bash", "{}", "summary text", "Completed").forEach {
+        listOf("rm -rf /tmp/x", "Command", "{}", "summary text", "Completed").forEach {
             composeTestRule.onNodeWithText(it, useUnmergedTree = true).assertHasNoClickAction()
         }
     }
