@@ -384,14 +384,25 @@ question rows).
   **1 executed, 1 passed, 0 failed, 0 errors, 0 skipped**, exit 0, one shard and disabled animations
   ([XML](../../../app/src/androidTest/assets/focus-1797/focused-api33.xml),
   [command/revision record](../../../app/src/androidTest/assets/focus-1797/focused-run.json)).
-  The dispatcher sweep at `b4875016` also executed and passed this method (1.79 s):
-  **183 executed, 183 passed, 0 failed, 0 errors, 1 skipped**; the unrelated skip was
-  `RenameDialogCaptureTest#renameAtFigmaViewport`. Its logcat still recorded a native emulator
-  Bluetooth SIGABRT, with no Pyrycode app crash, ANR or focus-failure markers found. Credit the
-  mitigation for permitting these assertions to complete, without claiming Bluetooth crashes
-  were eliminated. See [verification evidence](development-verification-emulator-evidence.md#emulator-and-real-evidence)
-  for the recorded sweep command and its unverified force flag, and the
-  [verifier record](https://github.com/pyrycode/pyrycode-mobile/pull/1800#issuecomment-5990798074).
+  The required forced sweep subsequently ran with
+  `UI_GATE_FULL=1 ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui`
+  at `b608f49bc1177ec64477c02428ca20337989ee5b`, exit 0: **183 executed, 183 passed,
+  0 failed, 0 errors, 1 skipped**. Fresh device and dispatcher XML in
+  `build/dispatcher-tests/ui-k8ql88ff/` confirm this method passed in 2.715 s with no
+  failure/error/skipped child. This fulfills the builder plan/PR's pending sweep handoff;
+  see the [operator record](https://github.com/pyrycode/pyrycode-mobile/pull/1800#issuecomment-5993306258).
+  After newer main was merged, the sweep at `22d2bb2faf24c17e9cc3ff197f2617952d1f549d`
+  corroborated it: **184 executed, 184 passed, 0 failed, 0 errors, 1 skipped**, exit 0;
+  the method passed in 1.811 s. Both sweeps skipped only
+  `RenameDialogCaptureTest#renameAtFigmaViewport`. The test and its harness were unchanged
+  between these revisions. The original `b4875016` sweep and the current-head sweep each
+  recorded a native emulator Bluetooth SIGABRT during this passing method, with no Pyrycode
+  app crash, ANR or focus-failure markers found; the forced run had no such crash markers.
+  Credit the mitigation for permitting these assertions to complete, without claiming
+  Bluetooth crashes were eliminated or universal focus reliability. See
+  [verification evidence](development-verification-emulator-evidence.md#emulator-and-real-evidence)
+  for the counted XML and retained command/revision records, and the
+  [final verifier record](https://github.com/pyrycode/pyrycode-mobile/pull/1800#issuecomment-5994141618).
 - **`QuestionBatchModalCaptureTest`** (androidTest): adapted from the dialog's own secure-window bitmap
   capture to the activity view with `FLAG_SECURE` still set — normal 412×892, compact 320×700 at 150% text,
   and a real keyboard open. Static fixture text only; captures at

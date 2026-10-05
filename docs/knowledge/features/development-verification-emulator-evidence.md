@@ -65,23 +65,41 @@ Bluetooth service crash. The unchanged
 passed separately at `de584470` on `pixel2Api33Atd`, one shard with disabled animations:
 **1 executed, 1 passed, 0 failed, 0 errors, 0 skipped**, exit 0
 ([retained XML and command/revision metadata](../../../app/src/androidTest/assets/focus-1797/README.md)).
-At `b4875016d6da445064d5d6b8e9b96655b24e724f`, the recorded dispatcher command was
-`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui`, exit 0.
-Fresh `build/dispatcher-tests/ui-wrsrro5i/dispatcher.xml` and
-`0-TEST-pixel2Api33Atd_0-_app-.xml` list 184 cases: **183 executed, 183 passed,
-0 failed, 0 errors, 1 skipped** (`RenameDialogCaptureTest#renameAtFigmaViewport`).
-The exact earlier-Other method is present and passed in 1.79 s with no failure/error/skipped
-child. This is fresh sweep execution following the builder's pending handoff. Its per-test
-logcat recorded a native `com.android.bluetooth` SIGABRT while the method passed; the verifier
-found no Pyrycode app crash, ANR or focus-failure markers. Preserve crash evidence even when
-system dialogs are hidden, and retain the initial focus and real-inset assertions.
 
-The [verifier record](https://github.com/pyrycode/pyrycode-mobile/pull/1800#issuecomment-5990798074)
-links that sweep to the revision and retains XML, command/exit metadata, gate log and named-method
-logcat together under `/tmp/verifier-1800/`. The requested `UI_GATE_FULL=1` setting is absent
-from the recorded command and remains unverified. Counted XML proves the sweep ran, but does
-not prove that environment setting; keep this acceptance-evidence gap visible rather than
-claiming the exact requested command ran. No live-Claude scenario changed.
+The required forced sweep ran with
+`UI_GATE_FULL=1 ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui`
+at `b608f49bc1177ec64477c02428ca20337989ee5b`, exit 0. Fresh
+`build/dispatcher-tests/ui-k8ql88ff/dispatcher.xml` and
+`0-TEST-pixel2Api33Atd_0-_app-.xml` agree: **183 executed, 183 passed, 0 failed,
+0 errors, 1 skipped** (184 listed). The exact earlier-Other method passed on
+`pixel2Api33Atd_0` in 2.715 s with no failure/error/skipped child. The
+[operator record](https://github.com/pyrycode/pyrycode-mobile/pull/1800#issuecomment-5993306258)
+retains the exact command, start time, revision, exit status and XML checksums;
+its gate log and XML are copied under `/tmp/operator-1797/`. This fulfills the builder
+plan/PR's pending dispatcher handoff and resolves the earlier missing force-flag evidence.
+
+After merging newer main, the dispatcher ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui` at
+`22d2bb2faf24c17e9cc3ff197f2617952d1f549d`, exit 0. Fresh
+`build/dispatcher-tests/ui-0zkz3qmy/dispatcher.xml` and device XML agree:
+**184 executed, 184 passed, 0 failed, 0 errors, 1 skipped** (185 listed).
+The named method passed again in 1.811 s with no failure/error/skipped child.
+Both sweeps skipped only `RenameDialogCaptureTest#renameAtFigmaViewport`. The test,
+runner, focus listener, Gradle wiring and gate script were unchanged between the
+qualifying revision and reviewed head. The
+[final verifier record](https://github.com/pyrycode/pyrycode-mobile/pull/1800#issuecomment-5994141618)
+links both sweeps to their revisions; XML, command/revision/exit records, full
+named-method logcats and a SHA-256 manifest are retained together under
+`/tmp/verifier-1800/recheck-22d2bb2f/`.
+
+The first sweep at `b4875016` and the current-head sweep each recorded a native
+`com.android.bluetooth` SIGABRT during the passing method. The verifier found no
+Pyrycode app crash, ANR or focus-failure markers. The qualifying forced run's
+named-method logcat had no such crash markers. Credit the shipped mitigation for
+permitting the unchanged assertions to complete; these passes do not establish
+that Bluetooth service crashes are eliminated or guarantee future focus reliability.
+Preserve crash evidence even when system dialogs are hidden, and retain the initial
+focus and real-inset assertions. No live-Claude scenario changed.
 
 For a multi-operation live scenario, name each failing wait before attributing it to an older
 repair. The question-answer scenario's `QuestionAnswerStage` / `questionAnswerStep` diagnostic
