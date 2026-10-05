@@ -83,6 +83,13 @@ The five transient readings in the composer's [status band](thread-screen-how-it
 
 The running-task pill shares the reading's 24 dp band at normal text scale, or sits at its right end alone. Only this thread caller gives the shared primary-container `NoticePill` a 24 dp minimum height (no minimum width since [#1628](https://github.com/pyrycode/pyrycode-mobile/issues/1628)); its 6 dp corners, `bodySmall` label and 8/4 dp padding follow the inspected Figma task-pill node `568:3162`, whose 104 × 24 dp frame is the hug width of "2 tasks running", not a width floor. The band and pill can grow for larger text. A zero count removes the pill; a live count uses the client-owned singular or plural label. Tapping it opens the same background-task panel as the count-free top menu. The [status-band layout](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643) covers its interaction with readings and nearby controls.
 
+The [model-refusal row's switch-back offer](model-refusal-row.md#switch-back-1360) owns its failure
+feedback inline. A refused or failed write leaves an enabled retry button and its retry line immediately;
+only this caller suppresses the shared run-configuration snackbar, while ordinary model/effort edits
+still report there (#1615). Retry clears the inline failure during pending. The visible outline is a
+32 dp minimum independent of the 48 dp touch target; wrapped destinations and enlarged text grow it so
+the retry line stays below all label lines. Button extensions invoke switch-back without toggling details.
+
 ## Wiring
 
 ### Koin binding
