@@ -280,8 +280,12 @@ for why that ask shares a daemon worker with sending a message and can stall beh
   text-only checks can pass while a nested merging node leaves the button unlabelled.
   Width assertions use measured thread bounds and both 20dp gutters, rather than Robolectric's
   default 320dp viewport. `ThreadAttentionNavigationTest` covers colliding ids, list taps, covered
-  entries and background/resume. The new rung-3 scenario and pending full-suite pass evidence are
-  recorded in the [live ladder](../../e2e-interactive-stream.md#verification-status).
+  entries and background/resume. In instrumented coverage the composition-owned expiry delay uses
+  the Compose rule's virtual clock. Advance it explicitly before checking expiry: `waitUntil`
+  advances only one frame per poll, so slow full-suite polling can exhaust a wall-clock timeout
+  while the five virtual seconds have not elapsed. The rung-3 scenario advances by 5,100ms and
+  checks disappearance and no replay on reopening; its named full-suite pass is recorded in the
+  [live ladder](../../e2e-interactive-stream.md#verification-status).
 - **Robolectric** `ThreadTopOverlayTest` (`app/src/sharedTest/.../thread/`):
   - no reading and no re-pair → no pill nodes, no dismiss X;
   - an `allowed_warning` reading → a pill with the label and an X; tapping the X (against a test-held
