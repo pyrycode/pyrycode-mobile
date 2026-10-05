@@ -46,7 +46,6 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
-import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -459,7 +458,6 @@ class MarkdownReaderScreenTest {
     }
 
     @Test
-    @Ignore("blocked on #1759: reader-bound note exhausts device memory before clipboard assertions")
     fun copiesOfANoteAtTheReadersBound_areBounded() {
         show(MarkdownDocument("Big.md", "a".repeat(MAX_MARKDOWN_READER_BYTES)))
 
