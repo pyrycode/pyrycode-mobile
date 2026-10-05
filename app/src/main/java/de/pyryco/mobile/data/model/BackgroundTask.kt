@@ -72,6 +72,11 @@ data class BackgroundTask(
 data class BackgroundTaskRoster(
     val tasks: List<BackgroundTask>,
     val droppedTasks: Int,
+    /**
+     * Connection-local finished knowledge for thread placement, independent of the replacing [tasks].
+     * These records carry no history position and never contribute to the panel or [liveCount].
+     */
+    val settledTasks: List<BackgroundTask> = emptyList(),
 ) {
     /**
      * Tasks with no terminal status plus [droppedTasks], saturating at [Int.MAX_VALUE] so a

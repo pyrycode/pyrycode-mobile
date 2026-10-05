@@ -247,6 +247,7 @@ class ThreadRowsTest {
             when (val row = withBacklog[index]) {
                 is ThreadRow.Delivered -> assertEquals(item, row.item)
                 is ThreadRow.Queued -> assertEquals((item as ThreadItem.MessageItem).message.id, row.echoId)
+                is ThreadRow.AgentStartMarker -> error("queued fold never emits an agent marker")
                 is ThreadRow.ToolRun -> error("the queued fold never emits a tool run (#1635)")
             }
         }

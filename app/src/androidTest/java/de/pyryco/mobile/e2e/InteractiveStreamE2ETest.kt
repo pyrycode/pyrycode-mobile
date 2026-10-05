@@ -4634,6 +4634,124 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /** #1783: a real background local_agent outlives its launching turn and follows newer phone messages. */
+    @Test
+    fun interactiveTurn_backgroundAgent_followsBottomUntilFinished() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val fixture = twoHostArg("backgroundAgentFixtureUrl")
+        require(fixture.matches(Regex("http://127\\.0\\.0\\.1:[0-9]+"))) { "invalid background Agent fixture" }
+        val peer = runningToolPeer()
+        val allowed = mutableSetOf<String>()
+        try {
+            awaitChannelList()
+            awaitConnected()
+            val (chat, name) = answerChat(serverId, "e2e1783-agent-")
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            openChatRow(name)
+            val hold = "curl --max-time 180 --silent --show-error $fixture/hold"
+            sendFromPhone(
+                "Use Agent once with run_in_background=true, subagent_type=general-purpose and description=Held background agent. " +
+                    "Give it exactly these instructions: first make two separate foreground Bash calls, " +
+                    "each running printf agent1783_ready. Then run Bash with timeout 180000 in the foreground: $hold . " +
+                    "Wait for that command to finish, then reply done. Do not use any other tool yourself or wait for the agent. " +
+                    "End your own turn immediately with exactly: launched1783.",
+            )
+            val launched =
+                allowPromptsUntil(
+                    peer,
+                    chat,
+                    REPLY_TIMEOUT_MS,
+                    "no background local_agent started",
+                    allowed,
+                    frame = "background_task_started",
+                ) { frame ->
+                    frame.type == "background_task_started" && peer.field(frame, "task_type") == "local_agent"
+                }
+            val task = MobileJson.decodeFromJsonElement(BackgroundTaskStartedPayloadDto.serializer(), launched.payload)
+            val agentId = task.toolCallId
+            require(agentId.isNotEmpty()) { "background task omitted its Agent join" }
+            allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "launching turn did not end", allowed) { it.type == "turn_end" }
+            allowPromptsUntil(
+                peer,
+                chat,
+                REPLY_TIMEOUT_MS,
+                "background Agent did not keep working after its launch",
+                allowed,
+                frame = "background_task_progress",
+            ) {
+                it.type == "background_task_progress" && peer.field(it, "task_id") == task.taskId
+            }
+            assertTrue(
+                "Agent finished before the newer phone message",
+                peer.recorded(chat).none {
+                    it.type == "background_task_updated" &&
+                        peer.field(it, "task_id") == task.taskId &&
+                        !peer.field(it, "status").isNullOrEmpty()
+                },
+            )
+            val newer = "Reply exactly newer1783. Leave the background agent running."
+            val priorEnds = peer.recorded(chat).count { it.type == "turn_end" }
+            sendFromPhone(newer)
+            allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "newer phone turn did not finish", allowed) {
+                it.type == "turn_end" && peer.recorded(chat).count { frame -> frame.type == "turn_end" } > priorEnds
+            }
+            val go = string(R.string.agent_go_to)
+            val marker = hasText(go) and hasClickAction()
+            val header = hasTestTag("background-agent:$agentId")
+            composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(marker)
+            composeTestRule.onNode(marker).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
+            composeTestRule.onNode(header).assertIsDisplayed()
+            val user = composeTestRule.onNode(inThreadList(newer), useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            val agent = composeTestRule.onNode(header).fetchSemanticsNode().boundsInRoot
+            assertTrue("newer phone message must render above the live Agent", user.bottom <= agent.top)
+            assertTrue(
+                "Agent finished before marker navigation",
+                peer.recorded(chat).none {
+                    it.type == "background_task_updated" &&
+                        peer.field(it, "task_id") == task.taskId &&
+                        !peer.field(it, "status").isNullOrEmpty()
+                },
+            )
+            sendFromPhone(
+                "Run exactly this Bash command in the foreground: curl --silent --show-error $fixture/release . Then reply released1783.",
+            )
+            allowPromptsUntil(
+                peer,
+                chat,
+                BACKGROUND_FINISH_TIMEOUT_MS,
+                "background Agent did not finish after release",
+                allowed,
+                frame = "background_task_updated",
+            ) {
+                it.type == "background_task_updated" &&
+                    peer.field(it, "task_id") == task.taskId &&
+                    !peer.field(it, "status").isNullOrEmpty()
+            }
+            awaitNoPromptDialog("permission still covers finished Agent")
+            composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(marker)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(string(R.string.agent_finished)).fetchSemanticsNodes().isNotEmpty()
+            }
+            val later = "Reply exactly later1783."
+            sendFromPhone(later)
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(inThreadList("later1783"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(marker)
+            composeTestRule.onNodeWithText(string(R.string.agent_finished)).assertIsDisplayed()
+            composeTestRule.onNode(marker).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
+            composeTestRule.onNode(header).assertIsDisplayed()
+            composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(inThreadList(later))
+            val settled = composeTestRule.onNode(header).fetchSemanticsNode().boundsInRoot
+            val after = composeTestRule.onNode(inThreadList(later), useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            assertTrue("later phone message must render below the settled Agent", settled.bottom <= after.top)
+        } finally {
+            peer.close()
+        }
+    }
+
     /**
      * A running background task's progress shows on its panel card (#1076, #1044). Real claude starts a
      * `general-purpose` subagent, a `local_agent` task the daemon reports with the background-task frames. The

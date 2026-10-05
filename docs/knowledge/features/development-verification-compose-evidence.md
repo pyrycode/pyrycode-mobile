@@ -151,6 +151,12 @@ unchanged otherwise. `MarkdownReaderCaptureTest` and other androidTest capture
 classes still carry their own copy of the rule; moving them onto the shared
 rule is separate work.
 
+`BackgroundTaskPanelCaptureTest.compactLargeTextKeepsScrolledContentAndCloseGlyphReachable`
+(#1783) likewise uses the outer shared `ViewportRule` and a method-level 320x640 viewport,
+so setup precedes Activity launch and restoration follows teardown. A failed capture with
+“No compose hierarchies found” and destroyed Activities does not establish a panel-layout defect;
+keep the width, scroll and close assertions while repairing viewport execution order.
+
 `AttachmentVisualCaptureTest` (#1555) moved onto the shared rule too, but its
 geometry test needed two different viewports (412x892 and 320x640), so it
 split into one `@Viewport`-annotated method per size, each calling a shared
