@@ -15,6 +15,9 @@ data class Message(
     val attachments: List<MessageAttachment> = emptyList(),
     /** Non-null exactly on an assistant row folded from `assistant_delta`s (#1350); see [AssistantSegment]. */
     val segment: AssistantSegment? = null,
+    /** Assistant parent attribution, verbatim inert grouping data; never authority, a path or a log field.
+     * Empty for main/unknown/cache-only rows. Tool attribution stays on [ToolCall.parentToolUseId]. */
+    val parentToolUseId: String = "",
 )
 
 enum class Role { User, Assistant, Tool }
