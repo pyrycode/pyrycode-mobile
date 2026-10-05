@@ -1,0 +1,2 @@
+10-05 10:52:13.219  2898  2950 I TestRunner: started: ime_keeps_an_earlier_other_clear_of_chrome_on_open_dismiss_and_reopen(de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest)
+10-05 10:52:15.656  2898  2950 I TestRunner: finished: ime_keeps_an_earlier_other_clear_of_chrome_on_open_dismiss_and_reopen(de.pyryco.mobile.ui.conversations.thread.QuestionBatchModalTest)
