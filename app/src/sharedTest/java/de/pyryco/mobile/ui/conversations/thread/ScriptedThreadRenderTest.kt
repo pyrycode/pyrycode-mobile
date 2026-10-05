@@ -10,8 +10,12 @@ import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.e2e.renderedReplyText
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -76,6 +80,51 @@ class ScriptedThreadRenderTest {
         composeRule.onNodeWithText(STREAMING_CARET, substring = true).assertDoesNotExist()
     }
 
+    // Reproduce the failed replay-order history shape without a host daemon or emulator.
+    @Test
+    fun replayReply_interleavedUserEcho_retainsVisibleOrderAcrossSegments() {
+        harness.pushAssistantDelta("t1", 0, "alpha ")
+        harness.pushAssistantDelta("t1", 1, "bravo ")
+        harness.pushEnvelope(
+            Envelope(
+                id = 3L,
+                type = "message",
+                ts = "2026-10-06T10:00:00Z",
+                payload =
+                    MobileJson.parseToJsonElement(
+                        """{"conversation_id":"c1","message_id":"echo","role":"user","text":"hello"}""",
+                    ),
+            ),
+        )
+        harness.pushAssistantDelta("t1", 2, "charlie")
+        harness.pushTurnEnd("t1")
+        composeRule.waitUntil(timeoutMillis = TIMEOUT_MS) {
+            composeRule.renderedReplyText(ORDERED_REPLY) == ORDERED_REPLY
+        }
+        composeRule.onNodeWithText("alpha bravo", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("charlie", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("alpha bravo charlie", substring = true).assertDoesNotExist()
+        assertEquals(ORDERED_REPLY, composeRule.renderedReplyText(ORDERED_REPLY))
+    }
+
+    @Test
+    fun replayReply_duplicateTextInOneBubble_isRejected() = assertIncorrectReplay("alpha alpha bravo charlie")
+
+    @Test
+    fun replayReply_reorderedText_isRejected() = assertIncorrectReplay("bravo alpha charlie")
+
+    @Test
+    fun replayReply_missingText_isRejected() = assertIncorrectReplay("alpha charlie")
+
+    private fun assertIncorrectReplay(text: String) {
+        harness.pushAssistantDelta("t1", 0, text)
+        harness.pushTurnEnd("t1")
+        composeRule.waitUntil(timeoutMillis = TIMEOUT_MS) {
+            composeRule.renderedReplyText(ORDERED_REPLY) == text
+        }
+        assertNotEquals(ORDERED_REPLY, composeRule.renderedReplyText(ORDERED_REPLY))
+    }
+
     // Spinner case: open a turn (thinking) → the thinking indicator shows; end it → the indicator is
     // gone. isThinking tracks the `thinking` phase only (thinkingTransition: responding/idle/turn_end →
     // false), so the turn is opened with `thinking` specifically.
@@ -136,6 +185,7 @@ class ScriptedThreadRenderTest {
 
     private companion object {
         const val TIMEOUT_MS = 5_000L
+        const val ORDERED_REPLY = "alpha bravo charlie"
 
         // MessageBubble.STREAMING_CARET_GLYPH — the caret present only on a streaming (non-finalized) row.
         const val STREAMING_CARET = "▎"

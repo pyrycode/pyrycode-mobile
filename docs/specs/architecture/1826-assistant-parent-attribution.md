@@ -11,6 +11,7 @@
 - `data/repository/CachingConversationRepository.kt`: `observeMessages` retains reconciled rows in memory across reconnect.
 - `data/cache/FileConversationCache.kt`: `CachedSegment.toDomain` and message serialization deliberately omit attribution.
 - `data/network/ToolPayloadsTest.kt`, `data/repository/AssistantSegmentTest.kt`, `HistoryReconciliationTest.kt`, `RemoteConversationRepositoryTest.kt`: defaults, segment seams, cache and repository test patterns.
+- `e2e/DeterministicInteractiveStreamE2ETest.kt`, `ui/conversations/thread/ScriptedThreadRenderTest.kt` and `ScriptedThreadHarness.kt`: reconnect replay selection and deterministic real-repository/render probes for its assertion.
 - `docs/knowledge/INDEX.md`, `features/data-model.md`, `features/conversation-cache.md`, `features/remote-conversation-repository.md`: ownership and compatibility conventions.
 - `docs/knowledge/decisions/0007-assistant-reply-segment-key-and-seam-join.md` and `features/remote-conversation-repository-assistant-reply-segments.md`: never key by parent or rely on segment adjacency alone for duplicate identity. Current reducer splits to delta atoms before rejoining.
 - Wire SSOT: `../pyrycode/docs/protocol-mobile.md`, `assistant_delta` and `Security model`, read from the dispatcher-provided `PYRYCODE_SRC` checkout.
@@ -71,6 +72,7 @@ None. Representation and conflict precedence are settled above.
 ## Revisions
 
 - 2026-10-06, verifier finding 1: `withAssistantParents` filled only empty hints, so an older conflicting incoming opener or non-recoverable legacy replacement could discard the held parent. Apply the selected turn hint to every held and incoming candidate before atomization. The first non-empty held hint wins; only a turn with no held hint takes incoming evidence. Conflict probes cover older openers, prefix/suffix/middle overlap, legacy replacement and replay through both history and cache merges, preserving text, keys and held-row order. This tightens implementation of the existing precedence contract; attribution remains inert and conversation-local, with no new logging or storage.
+- 2026-10-06, verifier finding 2: the failed scripted run's durable history put the user `message` between assistant seq 1 and 2. All three ordered fixture deltas had the same wire turn and empty parent; the valid separator splits the reply into two rows. `interactiveTurn_seededChannel_missedEventsReplayInOrderAfterReconnect` must check final visible fixture text in top-to-bottom order across segments, rather than require the phrase in one node. The test-only `renderedReplyText` helper in `sharedTest/e2e` shares the selector with `ScriptedThreadRenderTest`; a real repository/render probe reproduces the split and negative controls reject missing, reordered or duplicated text. Keep the production segment/echo rules unchanged. The existing device scenario needs the real daemon, relay and reconnect; run its focused `scripted replay-order` selection with fresh counted XML. The dispatcher retains the full scripted gate.
 
 ## Documentation handoff
 
@@ -79,3 +81,4 @@ Pending for the documentation stage, as requested by the verifier:
 - `docs/knowledge/features/data-model.md`, `Message`, and `docs/knowledge/features/mobile-protocol-v2-wire-layer-application-payloads.md`, assistant payloads: document DTO/event/message attribution, absent versus null decoding and conversation-local inert handling.
 - `docs/knowledge/features/remote-conversation-repository-assistant-reply-segments.md`, seam join and merge: document held-parent precedence and conflict probes. Selecting a winner is insufficient unless every reconstruction or replacement candidate receives it.
 - `docs/knowledge/features/conversation-cache.md`, thread document: unchanged disk serialization, cache-only unknown attribution and in-memory enrichment/reconnect retention.
+- `docs/e2e-interactive-stream.md`, replay-order scenario: the exactly-once ordered-text assertion spans legitimate assistant segments when the durable user echo interleaves the deltas.
