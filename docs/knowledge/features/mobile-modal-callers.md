@@ -303,7 +303,7 @@ in the composition tree does not affect what it draws over. See
 (#678, #1041) uses `MobileReadOnlyModal` inside `ThreadScreen`, with conversation-keyed visibility
 toggled by the count-free [top menu](thread-overflow-menu.md) or running-task pill (#1668).
 See [panel placement](thread-screen-how-it-works-overlays-and-app-bar.md#background-tasks-panel-placement-post-678).
-It lists the conversation's `BackgroundTaskRoster?` read-only, with three
+It lists the conversation's `BackgroundTaskRoster?`, with three
 readings: `null` draws a dashed ring, "No background-task report yet" and "The daemon has not reported on
 this conversation since the app connected."; an empty roster draws a solid ring, "No background tasks" and
 "Claude has nothing running in the background for this conversation."; a listed roster splits `tasks` into a
@@ -358,6 +358,35 @@ The local dark styling uses 13/19sp group labels, 14dp horizontal and 12dp verti
 card padding, 8dp row gaps, 2dp progress gaps, 13sp description and progress text, and
 a 12/17sp latest-update label. The tag uses a 10dp corner, a 6dp dot and an 11/16sp
 medium label, with its existing 160dp width cap.
+
+Running rows open independently when the thread's connection echoes `stop_background_task`
+(#1830). A row tap only toggles expansion: all description, progress, latest-update and cut-marker
+content stays visible when closed. A decorative 28dp round chevron follows the status tag with an
+8dp gap, pointing down when closed and up when open. Finished and unsupported rows have neither
+chevron nor toggle. Opening adds the small Secondary “Stop task” button at the foot; it sends the
+row's opaque task id with the destination's conversation id, without a dialog. The
+[composer Stop](interrupt-affordance.md) still interrupts the current reply separately.
+
+Expansion and pending sets belong to `ThreadViewModel`, in memory per task id on its captured
+host/conversation. Closing the panel retains them. Pending is inserted synchronously before
+launching the send, so repeated taps send once and collapse/reopen cannot enable another stop.
+Only that task's correlated refusal or local send failure releases its pending action; neither
+changes the roster. Attempt identity prevents an old send failure from releasing a newer attempt
+if a task disappears and reappears. Roster, count and capability are collected for the ViewModel's
+lifetime even without screen subscribers. Finish, omission, null roster on disconnect or capability
+loss clears both expansion and pending for ineligible ids. There is no success reply: a stopped
+update renders the existing tag/summary, while roster omission removes the row without inventing
+a terminal tag. See the [live completion proof](../../e2e-interactive-stream.md#verification-status).
+
+The text and closed-card padding form one merged toggle node with client-owned expanded/collapsed
+state. The separate Stop button exposes its enabled state and sits outside that toggle subtree,
+with an 8dp gap for its touch extension. A clickable card surrounding a nested disabled button lets
+extension taps reach the ancestor toggle; test enabled and pending button surfaces and neighboring
+edges with real pointer input. `BackgroundTaskStopPanelTest` covers this routing and merged semantics;
+manual TalkBack exploration was not part of the recorded verification. Task/conversation ids never
+enter accessibility descriptions or logs, and daemon fields keep the bounded plain-text path below.
+The [synthetic open-row capture](../../../app/src/androidTest/assets/task-stop-1830/emulator-stop-open-412x892.png)
+and its sidecar match Figma `568:890`; they establish appearance, not live completion.
 
 Every panel and tag text style carries `TextStyle.untrimmedLineBox()` (#1534,
 `BackgroundTaskPanel.kt` and `TaskStatusTag.kt`): `copy(lineHeightStyle =
