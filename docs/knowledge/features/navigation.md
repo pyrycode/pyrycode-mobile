@@ -330,6 +330,11 @@ failed writes retain in-memory state. Diagnostics contain static outcomes/counts
 shared content. `SharingShortcutsTest`, `RecentShareTargetsTest` and the real-Keystore
 `SharingShortcutStoreFailureTest` cover these authority and recovery seams; `SharingShortcutsDeviceTest`
 checks Android publication, category/MIME data, label, resource icon and stored launcher activation.
+The stored launcher intent uses `FLAG_ACTIVITY_CLEAR_TASK`, so replacement can briefly leave no
+Compose roots. Its positive composer wait permits that interval with
+`atLeastOneRootRequired = false` while still requiring the composer within ten seconds, then checking
+that no share picker appears and the existing draft is unchanged (#1850). An immediate root query
+can fail before the replacement activity composes.
 
 ## Adding a route
 
