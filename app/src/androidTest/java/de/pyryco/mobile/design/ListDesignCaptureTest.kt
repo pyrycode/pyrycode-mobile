@@ -284,7 +284,7 @@ class ListDesignCaptureTest {
             rule.onNodeWithText("Cancel").performClick()
             assertDeleteDismissed()
             reopenDelete()
-            Espresso.pressBack()
+            shell("input keyevent KEYCODE_BACK")
             assertDeleteDismissed()
             reopenDelete()
             shell("input tap 8 100")
@@ -315,6 +315,7 @@ class ListDesignCaptureTest {
         awaitText("About")
         rule.onNodeWithText("Delete").performScrollTo().performClick()
         awaitText("Delete conversation?")
+        awaitModalFocus(rule.onNodeWithText("Delete conversation?"))
     }
 
     private fun assertDeleteDismissed() {
