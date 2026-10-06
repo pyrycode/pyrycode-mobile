@@ -16,6 +16,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
@@ -92,6 +93,37 @@ class SlashCommandTypeAheadScreenTest {
     private fun type(text: String) {
         field().performTextReplacement(text)
         composeTestRule.waitForIdle()
+    }
+
+    // #1607: Figma 685:4232's rows draw the label and the description in their full line boxes; the
+    // theme's bodySmall default trims both to their glyphs, shortening every row by a few px against the
+    // frame and tightening the label-to-description gap.
+    @Test
+    fun rowLabelAndDescriptionKeepTheirFullLineBoxes() {
+        setThread()
+        type("/cl")
+
+        val results = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        composeTestRule
+            .onNode(hasText("Start a new session"))
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(results) }
+        assertEquals(
+            androidx.compose.ui.text.style.LineHeightStyle.Trim.None,
+            results
+                .single()
+                .layoutInput.style.lineHeightStyle
+                ?.trim,
+        )
+
+        val labelResults = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        suggestion("/clear").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(labelResults) }
+        assertEquals(
+            androidx.compose.ui.text.style.LineHeightStyle.Trim.None,
+            labelResults
+                .single()
+                .layoutInput.style.lineHeightStyle
+                ?.trim,
+        )
     }
 
     @Test

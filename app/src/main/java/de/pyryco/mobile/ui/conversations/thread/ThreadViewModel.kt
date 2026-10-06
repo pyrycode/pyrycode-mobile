@@ -2881,7 +2881,13 @@ class ThreadViewModel(
                 closeChannelInfo()
                 sendArchive()
             }
-            ThreadEvent.Delete -> pendingDeleteConfirm.value = true
+            ThreadEvent.Delete -> {
+                // Close the Channel Info Sheet if Delete was tapped from it (#1651), the same precedent
+                // Archive follows above: Figma draws the confirmation over the canvas, with no sheet behind
+                // the scrim.
+                closeChannelInfo()
+                pendingDeleteConfirm.value = true
+            }
             ThreadEvent.DeleteConfirm -> {
                 pendingDeleteConfirm.value = false
                 closeChannelInfo()

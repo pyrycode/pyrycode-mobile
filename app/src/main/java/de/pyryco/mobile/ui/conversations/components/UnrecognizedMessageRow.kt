@@ -28,6 +28,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
@@ -38,7 +39,9 @@ import de.pyryco.mobile.data.repository.UnrecognizedSite
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 
-private val UnrecognizedRowVerticalSpacing = 12.dp
+// #1608: the standard `Message area` gap-16 rhythm every other stream row keeps, not a tighter one of its
+// own — Figma 685:4112 leaves the same 16dp to the row below this one that it leaves everywhere else.
+private val UnrecognizedRowVerticalSpacing = MessageAreaRowSpacing
 private val UnrecognizedCornerRadius = 12.dp
 private val UnrecognizedHorizontalPadding = 12.dp
 private val UnrecognizedVerticalPadding = 8.dp
@@ -47,6 +50,10 @@ private val UnrecognizedIconSize = 18.dp
 private val UnrecognizedBorderWidth = 1.dp
 private val UnrecognizedExpandedTopPadding = 8.dp
 private val UnrecognizedExpandedGap = 8.dp
+
+// Figma draws the summary line and the expanded payload/truncated lines in their full line boxes; the
+// theme's defaults would otherwise trim them to their glyphs, shortening both states against the frame.
+private val UnrecognizedLineBox = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
 
 /** Client-owned separator between the summary's spans. Never daemon-supplied. */
 private const val SUMMARY_SEPARATOR = " · "
@@ -161,7 +168,7 @@ private fun CollapsedHeaderRow(item: ThreadItem.UnrecognizedMessage) {
         Text(
             text = buildSummaryAnnotated(item),
             modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodySmall.copy(lineHeightStyle = UnrecognizedLineBox),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -232,6 +239,7 @@ private fun ExpandedBody(item: ThreadItem.UnrecognizedMessage) {
             style =
                 MaterialTheme.typography.bodySmall.copy(
                     fontFamily = FontFamily.Monospace,
+                    lineHeightStyle = UnrecognizedLineBox,
                 ),
             color = MaterialTheme.colorScheme.onSurface,
         )
@@ -241,7 +249,7 @@ private fun ExpandedBody(item: ThreadItem.UnrecognizedMessage) {
         if (item.truncated) {
             Text(
                 text = stringResource(R.string.thread_unrecognized_truncated),
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.labelSmall.copy(lineHeightStyle = UnrecognizedLineBox),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
