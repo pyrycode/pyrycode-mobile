@@ -588,6 +588,25 @@ The **stop-running-turn** scenario (#965 —
 Since [#1357](knowledge/features/turn-outcome-indicator.md) a cancelled turn shows nothing in the status
 area, so the method no longer asserts an Interrupted label there — only that the Stop control itself
 leaves once the `cancelled` `turn_end` arrives; the method name is kept because other docs reference it.
+Since [#1721](https://github.com/pyrycode/pyrycode-mobile/issues/1721), this scenario alone captures
+the isolated harness host's exact daemon-wide instructions, writes an empty value and confirms it
+with a fresh read before creating the session. `withClearedHostInstructions` restores the captured
+value and confirms exact equality after success, setup failure or assertion failure; empty and
+whitespace-bearing originals round-trip unchanged. An initial read failure prevents mutation.
+Restoration failure fails a successful body, or is suppressed onto the original failure when both
+fail. Peer cleanup remains outside this guard. This makes host-prompt scenario order irrelevant
+without changing the operator's production daemon or the other live scenarios' instructions.
+See [host instruction semantics](knowledge/features/host-editor.md#shape).
+
+The [cause investigation](https://github.com/pyrycode/pyrycode-mobile/issues/1721#issuecomment-6009758089)
+found Claude refusing the foreground hold before any permission prompt: four refusals conflicted
+with the keep-the-foreground-free daemon defaults introduced in pyrycode `30fa13d6`; the earlier
+\#1689 refusal predated those defaults and interpreted the request as possible injection.
+`STOP_HOLD_PROMPT` now explains the controlled interrupt exercise on an isolated host, the peer's
+once-only permission approval and the phone's forthcoming Stop tap. Clearing the instructions
+removes the default conflict; explaining the exercise addresses the earlier missing context.
+The test still requires a real tool call and has no refusal retry or extended deadline.
+
 It holds a turn
 open on a command that cannot end on its own — `STOP_HOLD_PROMPT` asks claude to run, in the foreground,
 `python3 -c "import threading; threading.Event().wait()"` and then reply with a fixed token
@@ -616,10 +635,9 @@ pairing, then opens its observing peer. Both must settle through the handshake a
 `list_conversations` probe. This catches per-instance identity rotation even when the method runs
 alone, without spending another Claude turn. See [the handshake regression](knowledge/features/development-verification-test-scheduling.md#test-scheduling-and-harnesses).
 
-The fresh dispatcher full suite on 2026-10-04 explicitly passed
+The fresh dispatcher full suite on 2026-10-06 after #1721 explicitly passed
 `InteractiveStreamE2ETest#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`:
-**53 executed, 52 passed, 1 failed, 0 skipped**. The unrelated question-answer failure passed
-on a focused same-tree rerun; Stop passed in the original full run. See
+**62 executed, 62 passed, 0 failed, 0 skipped**. See
 [Verification status](#verification-status) for the revisions and retained reports.
 
 The **delete-conversation** scenario (#554) is likewise **always-on** (not `@Ignore`d): both post-conditions
@@ -2789,6 +2807,20 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
+**Stop instruction isolation (#1721, 2026-10-06).** After verification, the dispatcher ran a fresh
+full `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against
+`feature/1721` at `774413a890bcab61d60aed12da131ba24557cfa8`, merged with `origin/main` at
+`3435397e7f` in a detached worktree. The supplied JUnit-XML-derived gate report for
+`2026-10-06T21-07-04-821Z` records **62 executed, 62 passed, 0 failed, 0 skipped** and explicitly
+confirms `InteractiveStreamE2ETest#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`
+and `InteractiveStreamE2ETest#interactiveTurn_hostSystemPrompt_editsResetsAndCancels` executed
+and passed. This is fresh full-suite repair evidence, with no focused or same-tree retry claimed.
+The [issue gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1721#issuecomment-6025713570)
+records the revisions, counts and retained report:
+`2026-10-06T21-07-04-821Z_real-claude-gate_#1721.log` under the dispatcher repository's `logs/`,
+with the matching `.stderr.log` diagnostic report. Named results and XML counts come from the
+supplied dispatcher gate report; documentation did not run live tests.
+
 **Word reveal (#1765):** at PR head `128f94e47f`, the verifier's fresh
 `scripted-all` XML records **19 executed, 19 passed, 0 failed, 0 skipped**.
 `stream-0-TEST-installed.xml` explicitly contains
@@ -4330,6 +4362,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
   [Test scheduling and harnesses](knowledge/features/development-verification-test-scheduling.md#test-scheduling-and-harnesses).
   The named live method remains enabled and curated with unchanged recovery assertions and deadlines,
   and passed in the fresh full suite recorded in [Verification status](#verification-status).
+
+- **Coverage — hardened:** [#1721](https://github.com/pyrycode/pyrycode-mobile/issues/1721) isolates
+  `InteractiveStreamE2ETest#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`
+  from daemon-wide foreground guidance by confirming a local empty clear before session creation
+  and restoring the exact captured instructions on success or failure. The hold request explains
+  the intentional permission-and-Stop exercise; real permission, cancellation and same-thread
+  follow-up assertions remain. No new `DeterministicInteractiveStreamE2ETest` twin is added.
+  The fresh full live suite passed the named method with **62 executed, 0 failed, 0 skipped**;
+  see [Verification status](#verification-status).
 
 - **Coverage — hardened:** [#1696](https://github.com/pyrycode/pyrycode-mobile/issues/1696) makes
   `InteractiveStreamE2ETest#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`
