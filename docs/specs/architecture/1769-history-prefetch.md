@@ -53,7 +53,7 @@ None. Estimated total written work is 750–1000 lines across three production f
 
 ## Documentation handoff
 
-Pending for the documentation stage: update `docs/knowledge/features/thread-screen-oldest-end-history-demand.md`, “The oldest-end history demand”, for position-based two-viewport prefetch and 200-entry thread pages. Record fresh full live-gate executed/failed/skipped counts and confirmation that the named attachment history-reload method ran and passed, in the ticket evidence documentation. Also record dispatcher `./gradlew check` counts for `ThreadScreenHistoryTest`.
+Completed: `docs/knowledge/features/thread-screen-oldest-end-history-demand.md`, “The oldest-end history demand”, covers position-based two-viewport prefetch, 200-entry thread pages and retained gap selection. The Documentation evidence section below records fresh full live-gate counts and the named attachment history-reload pass, the counted live rerun, and dispatcher `./gradlew check` counts for `ThreadScreenHistoryTest`.
 
 ## Revisions
 
@@ -75,17 +75,32 @@ as executed and passed in that full suite; this was not a separate focused run.
 The [issue's live-gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1769#issuecomment-6023826810)
 identifies branch `408305c720` merged with `origin/main` at `369823ade0` and the command
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`.
-The two failures were the finished-reply system-copy and stop-running-turn methods;
-the dispatcher reports both passed on rerun on the same merged tree and accepted the gate.
-The full run itself still had two failures; no counted rerun result is supplied here.
+The two failures were
+`InteractiveStreamE2ETest.interactiveTurn_finishedReply_systemCopyCopiesSelectedWord` and
+`InteractiveStreamE2ETest.interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`.
+The [latest verifier verdict](https://github.com/pyrycode/pyrycode-mobile/pull/1839#issuecomment-6024497888)
+records its independent reading of the counted same-tree rerun JUnit report:
+**2 executed, 2 passed, 0 failed, 0 skipped**, with both methods executed and passed.
+The dispatcher accepted the rerun and removed `needs-real-claude`. The original full run
+still had two failures; the rerun does not change its counts or supply a separate focused
+attachment history-reload run.
 
-**Unfinished: fresh dispatcher `./gradlew check` counts for `ThreadScreenHistoryTest`.**
-The [latest verifier verdict](https://github.com/pyrycode/pyrycode-mobile/pull/1839#issuecomment-6023294091)
-records compiler OOM before unit execution on `408305c720`, with no fresh class XML.
-The prompt's recorded passing gate on `11e0321d7554e020dd76936cb8e36c28226deed4`
-is an earlier tree, before the four gap-selection regressions. Its 19 executed/passed,
-0 failed, 0 skipped history-screen methods do not verify the repair. The builder's
-23-method passing unit result is not dispatcher `check` evidence either. Verification
-must supply a fresh completed dispatcher `./gradlew check` run and class XML counts,
-including the four controlled-response gap-selection regressions. Documentation remains
-unfinished until that evidence is available; no tests were run by documentation.
+**Fresh dispatcher `./gradlew check` evidence is complete.** The same verifier verdict
+records the fresh report
+`app/build/test-results/testDebugUnitTest/TEST-de.pyryco.mobile.ui.conversations.thread.ThreadScreenHistoryTest.xml`,
+timestamp `2026-10-06T19:38:17.021Z`: **24 executed, 24 passed, 0 failed, 0 skipped**.
+All four controlled-response gap-selection regressions each executed once and passed,
+without failures or skips:
+
+- `gapPageRemovingItsMarkerKeepsTheHeldDragOnTheSelectedWalk`
+- `gapPageSettlingThenDraggingPastItsMarkerKeepsTheSelectedWalk`
+- `gapPageRemovingItsMarkerKeepsTheContinuingFlingOnTheSelectedWalk`
+- `gapPageSettlingThenFlingingPastItsMarkerKeepsTheSelectedWalk`
+
+The dispatcher pass record names commit `a904157f76665e54f228f3152982e0494b00f30e`
+and completion at `2026-10-06T20:04:27.056Z`; `./gradlew check` exited 0.
+The full unit/shared XML totals **4,506 executed and passed, 0 failed, 0 skipped**
+across 374 classes. This fresh dispatcher evidence resolves the previous compiler-OOM
+gap and supersedes the earlier 19-method gate and builder-reported 23-method result
+for this handoff. Documentation records the dispatcher report and verifier's counted
+evidence; no unit, device or live tests were run by documentation.
