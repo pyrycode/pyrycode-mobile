@@ -532,4 +532,7 @@
         <item quantity="one">%d file</item>
         <item quantity="other">%d files</item>
     </plurals>
+    <string name="background_tasks_stop">Stop task</string>
+    <string name="background_tasks_expanded">Expanded</string>
+    <string name="background_tasks_collapsed">Collapsed</string>
 </resources>

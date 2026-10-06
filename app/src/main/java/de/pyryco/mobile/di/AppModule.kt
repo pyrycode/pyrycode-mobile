@@ -453,6 +453,12 @@ internal class ThreadDestinationFactory(
             // #678: the open host's roster and live count; the demo early-return above keeps the defaults.
             backgroundTasks = { id -> bundle?.coordinator?.observeBackgroundTasks(id) ?: flowOf(null) },
             backgroundTaskCount = { id -> bundle?.coordinator?.observeLiveBackgroundTaskCount(id) ?: flowOf(0) },
+            backgroundTaskStopSupported = bundle?.coordinator?.supportsBackgroundTaskStop ?: flowOf(false),
+            backgroundTaskStopRefusals = { id -> bundle?.coordinator?.observeBackgroundTaskStopRefusals(id) ?: emptyFlow() },
+            stopBackgroundTask = { id, task ->
+                bundle?.coordinator?.stopBackgroundTask(id, task)
+                    ?: Result.failure(IllegalStateException("Background task stop unavailable"))
+            },
             // #861: the walk restart waits for the published repository, not the socket — the supervisor's
             // Connected precedes the handshake that publishes it.
             repositoryAvailable = bundle?.coordinator?.currentRepository?.map { it != null } ?: flowOf(false),

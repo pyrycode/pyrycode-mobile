@@ -485,6 +485,15 @@ settles (`ComposerFileTileTintTest`, #1532). Drawing `LocalView.current` into a
 way `ConversationTreeRowsTest` does, samples the same real pixels without
 going through `forceRedraw` at all.
 
+Shared geometry assertions must convert `boundsInRoot` pixels through the composition's
+`LocalDensity` before comparing with dp specifications, and use `assertDpEquals`/`pixelDp`
+for edge snapping. `BackgroundTaskStopPanelTest` (#1830) originally passed at Robolectric density 1
+while comparing a 28dp chevron directly with pixels; the managed Pixel 2's density 2.625 measured
+about 74 pixels. The corrected named method and full five-test class passed on Pixel 2 and
+Robolectric. A density-1 pass alone cannot establish portable geometry. See the
+[background-task control contract](mobile-modal-callers.md#callers) and
+[retained Pixel 2 report](../../../app/src/androidTest/assets/task-stop-1830/pixel2-panel-rework-green.xml).
+
 Shared JVM/device pixel fixtures using fixed pixel offsets must pin Compose density
 as well as Robolectric's qualifier. `@Config(qualifiers = "xxxhdpi")` does not configure device density, so a
 fixed ring-region pixel offset can sample a different part of a 1dp stroke on the
