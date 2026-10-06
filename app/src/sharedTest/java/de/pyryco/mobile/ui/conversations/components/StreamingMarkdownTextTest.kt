@@ -465,7 +465,8 @@ class StreamingMarkdownTextTest {
                 "| Key | Value |\n| --- | --- |\n| a | b |\n\nDone *now*"
         bubbleMessage.value = message(reply, isStreaming = true)
         renderBubble()
-        composeTestRule.mainClock.advanceTimeBy(STREAMING_REVEAL_STEP_MS * (STREAMING_CATCH_UP_TICKS + 1))
+        // Caught up after 16 ticks; at 1100 ms the caret's second toggle has turned it back on.
+        composeTestRule.mainClock.advanceTimeBy(1_100)
         val streaming = drawn(BUBBLE_TAG)
         assertTrue("still streaming, so the caret is drawn", streaming.any { it.hadCaret })
         settle(reply)

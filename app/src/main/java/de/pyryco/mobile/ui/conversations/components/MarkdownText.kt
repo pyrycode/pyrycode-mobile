@@ -1074,13 +1074,13 @@ private fun AnnotatedString.Builder.appendLeaf(
     if (tail != null && tail.caretTarget === node) appendStreamingCaret(streaming.caretVisible)
 }
 
-/** Always present while streaming, transparent when blinked off, so a blink never re-wraps the line. */
+/**
+ * Present only while the blink is on, as before #1766. A blink-off frame then draws exactly the arrived text, which
+ * the live tests' exact-text waits rely on: an always-present transparent glyph delayed every such wait until the
+ * turn settled, and that shifted the reset scenario's timing until it failed every time.
+ */
 private fun AnnotatedString.Builder.appendStreamingCaret(visible: Boolean) {
-    if (visible) {
-        append(STREAMING_CARET_GLYPH)
-    } else {
-        withStyle(SpanStyle(color = Color.Transparent)) { append(STREAMING_CARET_GLYPH) }
-    }
+    if (visible) append(STREAMING_CARET_GLYPH)
 }
 
 private val MarkdownTextStyle.reader: Boolean get() = presentation == MarkdownPresentation.Reader
