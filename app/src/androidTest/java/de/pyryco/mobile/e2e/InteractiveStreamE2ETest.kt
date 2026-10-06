@@ -470,7 +470,9 @@ class InteractiveStreamE2ETest {
                                 .filterIsInstance<ThreadItem.MessageItem>()
                                 .map { it.message }
                                 .firstOrNull {
-                                    it.role == Role.Assistant && it.isStreaming && it.content.trim().contains(' ') &&
+                                    it.role == Role.Assistant &&
+                                        it.isStreaming &&
+                                        it.content.trim().contains(' ') &&
                                         !prompt.contains(it.content.trim(), ignoreCase = true)
                                 }
                         }.filterNotNull()
