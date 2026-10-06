@@ -779,11 +779,6 @@ class DeterministicInteractiveStreamE2ETest {
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
             composeTestRule.renderedReplyText(ORDERED_REPLY_SUBSTRING) == ORDERED_REPLY_SUBSTRING
         }
-        assertEquals(ORDERED_REPLY_SUBSTRING, composeTestRule.renderedReplyText(ORDERED_REPLY_SUBSTRING))
-        // In order: the cross-delta-boundary concatenation is present (a reordering breaks the substring).
-        // Exactly once: it renders in a single node — no segment lost, no row duplicated.
-        composeTestRule.onAllNodesWithText(ORDERED_REPLY_SUBSTRING, substring = true).assertCountEquals(1)
-
         // Prove exact text and per-delta identity too: a duplicated sequence within one row must fail.
         val rows =
             runBlocking {
@@ -801,23 +796,10 @@ class DeterministicInteractiveStreamE2ETest {
                             .first { conversations -> conversations.any { it.name == SEED_CHANNEL_NAME } }
                             .single { it.name == SEED_CHANNEL_NAME }
                             .id
-                    repository.observeMessages(conversationId).first { items ->
-                        items.filterIsInstance<ThreadItem.MessageItem>().any {
-                            it.message.role == Role.Assistant && !it.message.isStreaming && ORDERED_REPLY_SUBSTRING in it.message.content
-                        }
-                    }
+                    repository.observeMessages(conversationId).first { it.hasCompletedReplay(ORDERED_REPLY_SUBSTRING) }
                 }
-            }.filterIsInstance<ThreadItem.MessageItem>()
-        val reply = rows.single { it.message.role == Role.Assistant }
-        assertEquals(ORDERED_REPLY_SUBSTRING, reply.message.content)
-        assertEquals(
-            listOf(0, 1, 2),
-            reply.message.segment
-                ?.deltas
-                ?.map { it.seq },
-        )
-        val user = rows.single { it.message.role == Role.User && it.message.content == SEND_PROMPT }
-        assertTrue("initial user must precede the complete ordered reply", rows.indexOf(user) < rows.indexOf(reply))
+            }
+        composeTestRule.assertOrderedReplay(rows, ORDERED_REPLY_SUBSTRING, SEND_PROMPT)
     }
 
     /**

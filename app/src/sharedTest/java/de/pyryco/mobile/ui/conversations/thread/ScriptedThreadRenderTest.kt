@@ -10,12 +10,22 @@ import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.model.SegmentDelta
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.e2e.assertOrderedReplay
+import de.pyryco.mobile.e2e.hasCompletedReplay
 import de.pyryco.mobile.e2e.renderedReplyText
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -83,8 +93,44 @@ class ScriptedThreadRenderTest {
     // Reproduce the failed replay-order history shape without a host daemon or emulator.
     @Test
     fun replayReply_interleavedUserEcho_retainsVisibleOrderAcrossSegments() {
+        pushOrderedReplay(split = true)
+        val rows = replayRows()
+        composeRule.waitUntil(timeoutMillis = TIMEOUT_MS) {
+            composeRule.renderedReplyText(ORDERED_REPLY) == ORDERED_REPLY
+        }
+        composeRule.onNodeWithText("alpha bravo", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("charlie", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText(ORDERED_REPLY, substring = true).assertDoesNotExist()
+        composeRule.assertOrderedReplay(rows, ORDERED_REPLY, REPLAY_PROMPT)
+    }
+
+    @Test
+    fun replayReply_interleavedUserEcho_repositoryWaitAcceptsSegments() {
+        pushOrderedReplay(split = true)
+        assertTrue(replayRows().hasCompletedReplay(ORDERED_REPLY))
+    }
+
+    @Test
+    fun replayReply_unsplit_acceptsCompleteDeviceAssertions() {
+        pushOrderedReplay(split = false)
+        val rows = replayRows()
+        composeRule.waitUntil(timeoutMillis = TIMEOUT_MS) {
+            composeRule.renderedReplyText(ORDERED_REPLY) == ORDERED_REPLY
+        }
+        assertTrue(rows.hasCompletedReplay(ORDERED_REPLY))
+        composeRule.assertOrderedReplay(rows, ORDERED_REPLY, REPLAY_PROMPT)
+    }
+
+    private fun pushOrderedReplay(split: Boolean) {
+        if (!split) pushReplayUser()
         harness.pushAssistantDelta("t1", 0, "alpha ")
         harness.pushAssistantDelta("t1", 1, "bravo ")
+        if (split) pushReplayUser()
+        harness.pushAssistantDelta("t1", 2, "charlie")
+        harness.pushTurnEnd("t1")
+    }
+
+    private fun pushReplayUser() {
         harness.pushEnvelope(
             Envelope(
                 id = 3L,
@@ -92,19 +138,10 @@ class ScriptedThreadRenderTest {
                 ts = "2026-10-06T10:00:00Z",
                 payload =
                     MobileJson.parseToJsonElement(
-                        """{"conversation_id":"c1","message_id":"echo","role":"user","text":"hello"}""",
+                        """{"conversation_id":"c1","message_id":"echo","role":"user","text":"$REPLAY_PROMPT"}""",
                     ),
             ),
         )
-        harness.pushAssistantDelta("t1", 2, "charlie")
-        harness.pushTurnEnd("t1")
-        composeRule.waitUntil(timeoutMillis = TIMEOUT_MS) {
-            composeRule.renderedReplyText(ORDERED_REPLY) == ORDERED_REPLY
-        }
-        composeRule.onNodeWithText("alpha bravo", substring = true).assertIsDisplayed()
-        composeRule.onNodeWithText("charlie", substring = true).assertIsDisplayed()
-        composeRule.onNodeWithText("alpha bravo charlie", substring = true).assertDoesNotExist()
-        assertEquals(ORDERED_REPLY, composeRule.renderedReplyText(ORDERED_REPLY))
     }
 
     @Test
@@ -117,13 +154,74 @@ class ScriptedThreadRenderTest {
     fun replayReply_missingText_isRejected() = assertIncorrectReplay("alpha charlie")
 
     private fun assertIncorrectReplay(text: String) {
+        pushReplayUser()
         harness.pushAssistantDelta("t1", 0, text)
         harness.pushTurnEnd("t1")
+        val rows = replayRows(text)
         composeRule.waitUntil(timeoutMillis = TIMEOUT_MS) {
             composeRule.renderedReplyText(ORDERED_REPLY) == text
         }
-        assertNotEquals(ORDERED_REPLY, composeRule.renderedReplyText(ORDERED_REPLY))
+        assertFalse(rows.hasCompletedReplay(ORDERED_REPLY))
+        assertThrows(AssertionError::class.java) {
+            composeRule.assertOrderedReplay(rows, ORDERED_REPLY, REPLAY_PROMPT)
+        }
     }
+
+    @Test
+    fun replayReply_correctTextWithMissingSequence_isRejected() = assertIncorrectSequences(listOf(0, 2))
+
+    @Test
+    fun replayReply_correctTextWithReorderedSequences_isRejected() = assertIncorrectSequences(listOf(1, 0, 2))
+
+    @Test
+    fun replayReply_correctTextWithDuplicateSequence_isRejected() = assertIncorrectSequences(listOf(0, 1, 1, 2))
+
+    private fun assertIncorrectSequences(sequences: List<Int>) {
+        assertIncorrectRows { rows ->
+            rows.map { row ->
+                if (row is ThreadItem.MessageItem && row.message.role == Role.Assistant) {
+                    val segment = requireNotNull(row.message.segment)
+                    row.copy(message = row.message.copy(segment = segment.copy(deltas = sequences.map { SegmentDelta(it, 0) })))
+                } else {
+                    row
+                }
+            }
+        }
+    }
+
+    @Test
+    fun replayReply_duplicateRetainedSegment_isRejected() =
+        assertIncorrectRows { rows -> rows + rows.filterIsInstance<ThreadItem.MessageItem>().last { it.message.role == Role.Assistant } }
+
+    @Test
+    fun replayReply_userAfterCompleteReply_isRejected() =
+        assertIncorrectRows { rows ->
+            val user = rows.filterIsInstance<ThreadItem.MessageItem>().single { it.message.role == Role.User }
+            rows.filterNot { it == user } + user
+        }
+
+    private fun assertIncorrectRows(change: (List<ThreadItem>) -> List<ThreadItem>) {
+        pushOrderedReplay(split = false)
+        val rows = replayRows()
+        composeRule.waitUntil(timeoutMillis = TIMEOUT_MS) {
+            composeRule.renderedReplyText(ORDERED_REPLY) == ORDERED_REPLY
+        }
+        assertThrows(AssertionError::class.java) {
+            composeRule.assertOrderedReplay(change(rows), ORDERED_REPLY, REPLAY_PROMPT)
+        }
+    }
+
+    private fun replayRows(text: String = ORDERED_REPLY): List<ThreadItem> =
+        runBlocking {
+            withTimeout(TIMEOUT_MS) {
+                harness.observeMessages().first { items ->
+                    val replies = items.filterIsInstance<ThreadItem.MessageItem>().filter { it.message.role == Role.Assistant }
+                    replies.isNotEmpty() &&
+                        replies.all { !it.message.isStreaming } &&
+                        replies.joinToString("") { it.message.content } == text
+                }
+            }
+        }
 
     // Spinner case: open a turn (thinking) → the thinking indicator shows; end it → the indicator is
     // gone. isThinking tracks the `thinking` phase only (thinkingTransition: responding/idle/turn_end →
@@ -186,6 +284,7 @@ class ScriptedThreadRenderTest {
     private companion object {
         const val TIMEOUT_MS = 5_000L
         const val ORDERED_REPLY = "alpha bravo charlie"
+        const val REPLAY_PROMPT = "hello"
 
         // MessageBubble.STREAMING_CARET_GLYPH — the caret present only on a streaming (non-finalized) row.
         const val STREAMING_CARET = "▎"
