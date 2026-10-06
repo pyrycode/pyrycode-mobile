@@ -1007,6 +1007,12 @@ if [ -n "${DETERMINISTIC}" ]; then
     REPLAY_ENV+=("PYRY_FAKE_CLAUDE_STREAM_REPLAY_SECOND=${FIXTURE_FILE_2}"
       "PYRY_FAKE_CLAUDE_STREAM_REPLAY_RELEASE=${REPLAY_RELEASE}")
   fi
+  if [ "${SCENARIO}" = "reopen-stream" ]; then
+    # #1762: let the suffix compose while still streaming; result delivery needs enqueue #3.
+    E2E_HELD_RESULT_RELEASE="${WORK_DIR}/release-terminal-result"
+    REPLAY_ENV+=("E2E_HELD_RESULT_CHILD=${FAKE_BIN}" "E2E_HELD_RESULT_RELEASE=${E2E_HELD_RESULT_RELEASE}")
+    FAKE_BIN="${REPO_ROOT}/scripts/e2e-held-result.py"
+  fi
   DAEMON_COMMAND+=("HOME=${ISO_HOME}" PYRY_ALLOW_INSECURE_RELAY=1 PYRY_MOBILE_V2=1
     "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${REPLAY_ENV[@]}" "${PYRY_BIN}"
     "-pyry-name=${PYRY_NAME}" "-pyry-claude=${FAKE_BIN}" "-pyry-workdir=${ISO_HOME}")
@@ -1385,6 +1391,11 @@ if [ -n "${DETERMINISTIC}" ] && [ -n "${FIXTURE_FILE_2}" ]; then
     fi
     touch "${REPLAY_RELEASE}"
     log "released second stream fragment"
+    if [ "${SCENARIO}" = "reopen-stream" ]; then
+      while [ "$(grep -cF 'send_message.enqueued' "${DAEMON_LOG}" 2>/dev/null || true)" -lt 3 ]; do sleep 0.2; done
+      touch "${E2E_HELD_RESULT_RELEASE}"
+      log "released terminal result after third enqueue"
+    fi
   ) &
   WATCHER_PID=$!
 fi

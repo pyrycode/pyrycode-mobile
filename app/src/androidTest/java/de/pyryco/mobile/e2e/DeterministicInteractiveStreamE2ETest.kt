@@ -412,10 +412,12 @@ class DeterministicInteractiveStreamE2ETest {
                 .map { it.message }
                 .filter { it.role == Role.Assistant }
 
-        fun assertOpenPrefix() {
-            val row = assistantRows().single()
-            assertEquals(REOPEN_PREFIX, row.content)
-            assertTrue("the prefix must still be streaming at reopen", row.isStreaming)
+        fun assertOpenReply(expected: String) {
+            val rows = assistantRows()
+            assertEquals("only the held reply may exist before completion", 1, rows.size)
+            val row = rows.single()
+            assertEquals(expected, row.content)
+            assertTrue("the reply must remain streaming at the display checkpoint", row.isStreaming)
             assertNotEquals(LiveSessionEvent.TurnState.Phase.Idle, runBlocking { repository.observeTurnPhase(conversationId).first() })
         }
         val inBubble = hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
@@ -433,7 +435,7 @@ class DeterministicInteractiveStreamE2ETest {
                 1
         }
         composeTestRule.onNode(prefix, useUnmergedTree = true).assertIsDisplayed()
-        assertOpenPrefix()
+        assertOpenReply(REOPEN_PREFIX)
         composeTestRule.onNodeWithContentDescription("Back").performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isNotEmpty()
@@ -444,16 +446,44 @@ class DeterministicInteractiveStreamE2ETest {
             composeTestRule.onAllNodesWithText(SEED_CHANNEL_NAME).onFirst().performClick()
             awaitFirstReopenedStreamingBody()
             // No text-based retry: inspect the first composed streaming body before reveal catch-up.
-            assertOpenPrefix()
+            assertOpenReply(REOPEN_PREFIX)
             composeTestRule.onNode(prefix, useUnmergedTree = true).assertIsDisplayed()
             composeTestRule.onAllNodes(prefix, useUnmergedTree = true).assertCountEquals(1)
             composeTestRule.onAllNodesWithText(REOPEN_SUFFIX, substring = true).assertCountEquals(0)
-            assertOpenPrefix()
+            assertOpenReply(REOPEN_PREFIX)
+            // Prepare the enqueue while paused: one frame makes the composer's send action ready.
+            composeTestRule.onNode(hasSetTextAction()).performTextInput(SECOND_PROMPT)
+            composeTestRule.mainClock.advanceTimeByFrame()
+            composeTestRule.waitForIdle()
+            composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+            val combined = REOPEN_PREFIX + REOPEN_SUFFIX
+            runBlocking {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    repository.observeMessages(conversationId).first { rows ->
+                        rows.filterIsInstance<ThreadItem.MessageItem>().any { it.message.content == combined }
+                    }
+                }
+            }
+            assertOpenReply(combined)
+            // Witness the updated body, not just the repository: the first suffix word was absent
+            // before drop B. A reset cannot retype the 26-word prefix within this 128 ms budget.
+            val appendedWord = hasText(" and", substring = true) and inBubble
+            val start = composeTestRule.mainClock.currentTime
+            while (composeTestRule.onAllNodes(appendedWord, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()) {
+                check(composeTestRule.mainClock.currentTime - start < 128) { "suffix did not compose while retaining the arrived prefix" }
+                runBlocking { delay(250) }
+                composeTestRule.mainClock.advanceTimeByFrame()
+                composeTestRule.waitForIdle()
+            }
+            composeTestRule.onNode(appendedWord, useUnmergedTree = true).assertIsDisplayed()
+            composeTestRule.onNode(prefix, useUnmergedTree = true).assertIsDisplayed()
+            composeTestRule.onAllNodes(prefix, useUnmergedTree = true).assertCountEquals(1)
+            assertOpenReply(combined)
         } finally {
             composeTestRule.mainClock.autoAdvance = true
         }
-        // The existing host watcher observes this enqueue and releases the suffix/result fragment.
-        typeAndSend(SECOND_PROMPT)
+        // Completion is fenced separately, after the still-open suffix-arrival display checkpoint.
+        typeAndSend("finish")
         val combined = REOPEN_PREFIX + REOPEN_SUFFIX
         val fullReply = hasText(combined, substring = true) and inBubble
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
