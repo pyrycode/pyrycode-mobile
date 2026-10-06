@@ -14,6 +14,7 @@ import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.model.batchFor
 import de.pyryco.mobile.data.model.reconnected
 import de.pyryco.mobile.data.model.reduce
+import de.pyryco.mobile.data.network.CAPABILITY_STOP_BACKGROUND_TASK
 import de.pyryco.mobile.data.network.PumpState
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.RelayTransport
@@ -300,6 +301,32 @@ class RelayRepositoryCoordinator(
             .flatMapLatest { conn -> conn?.repo?.backgroundTasks ?: flowOf(emptyMap()) }
             .stateIn(scope, SharingStarted.Eagerly, emptyMap())
 
+    /** Detection from this host's current hello_ack, never a grant retained across connections. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val supportsBackgroundTaskStop: StateFlow<Boolean> =
+        activeConnection
+            .flatMapLatest { conn ->
+                conn?.pump?.state?.map { state ->
+                    state is PumpState.Open && CAPABILITY_STOP_BACKGROUND_TASK in state.capabilities
+                } ?: flowOf(false)
+            }.stateIn(scope, SharingStarted.Eagerly, false)
+
+    /** Subscription follows this host across reconnects; no old connection events are replayed. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun observeBackgroundTaskStopRefusals(conversationId: String): Flow<String> =
+        activeConnection.flatMapLatest { conn -> conn?.repo?.observeBackgroundTaskStopRefusals(conversationId) ?: emptyFlow() }
+
+    /** Sends on this host only. The concrete repository rechecks support at call entry. */
+    suspend fun stopBackgroundTask(
+        conversationId: String,
+        taskId: String,
+    ): Result<Unit> {
+        val repo =
+            activeConnection.value?.repo
+                ?: return Result.failure(IllegalStateException("Background task stop not connected"))
+        return repo.stopBackgroundTask(conversationId, taskId)
+    }
+
     /** The background tasks [conversationId] holds on this host, or null when nothing has been reported (#677). */
     fun observeBackgroundTasks(conversationId: String): Flow<BackgroundTaskRoster?> =
         backgroundTasks.map { it[conversationId] }.distinctUntilChanged()
@@ -405,6 +432,7 @@ class RelayRepositoryCoordinator(
     private fun teardownActive() {
         val current = activeConnection.value ?: return
         activeConnection.value = null
+        current.repo.endBackgroundTaskStops()
         current.repo.endDebugBundle()
         current.scope.cancel()
         current.pump.close()

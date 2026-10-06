@@ -1,4 +1,4 @@
-# Remote conversation repository — the Phase 4 `ConversationRepository` — screen snapshot, dequeue, interrupt and new session
+# Remote conversation repository — the Phase 4 `ConversationRepository` — screen snapshot, dequeue, interrupt, task stop and new session
 
 Split out of [Remote conversation repository — the Phase 4 `ConversationRepository`](remote-conversation-repository.md) on 2026-09-05 to keep that document under the 50000-byte size cap the docs guard enforces. Every section below moved here verbatim and kept its heading, so its anchors are unchanged. Part of [Remote conversation repository — the Phase 4 `ConversationRepository`](remote-conversation-repository.md); see that document for what it does, its edge cases and its links.
 
@@ -238,6 +238,51 @@ private fun interruptRequest(conversationId: String): Envelope = Envelope(
   fixture and unchanged messages in both threads. The
   [send-path tests](interrupt-send-path.md#testing) cover the other boundaries;
   cross-device live proof remains with #679.
+
+## Per-task stop support, send and refusal (#1829)
+
+`RemoteConversationRepository` exposes `supportsBackgroundTaskStop: Boolean`,
+`suspend fun stopBackgroundTask(conversationId: String, taskId: String): Result<Unit>`
+and `observeBackgroundTaskStopRefusals(conversationId: String): Flow<String>`.
+These concrete APIs stay outside `ConversationRepository`; the
+[coordinator passthrough](relay-repository-coordinator-seams-and-passthroughs.md#outbound-background-task-stop-passthrough-1829)
+selects the owning host's connection. The task-panel consumer belongs to
+[#1830](https://github.com/pyrycode/pyrycode-mobile/issues/1830).
+
+The phone advertises `stop_background_task` in `HelloClientPayload` defaults.
+Support requires that detection string in the current open connection's negotiated
+`hello_ack` capabilities. Detection grants no authorization: the daemon's
+`interactive` gate remains authoritative. The wire authority is upstream's
+[Stop background task (v2)](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md#stop-background-task-v2).
+
+`BackgroundTaskStops` registers the originating conversation/task pair before
+calling the pump's raw send once. The envelope has a fresh connection request id
+from `RelayRequests.nextRequestId`, a timestamp, and verbatim JSON string fields
+`conversation_id` and `task_id`. It creates no reply waiter, interrupt, retry or
+optimistic mutation of messages, turn state or task status. `Result.success(Unit)`
+means only send acceptance: there is no success reply to await, and completion
+comes from a terminal task update or a subsequent roster omitting the task.
+
+Subscribe to the refusal flow and establish collection **before invoking the
+send**. It is a replay-free shared event flow with a 64-event buffer and
+`DROP_OLDEST`; an event without a subscriber is not retained. A refusal may arrive
+during send, and remains an asynchronous event even if the send returns success.
+Each value is the locally registered opaque task id for the requested conversation,
+never daemon text. The existing single inbound collector offers errors to this
+independent ledger alongside reply waiters and ask ledgers. Correlation and
+[retirement rules](relay-repository-coordinator-seams-and-passthroughs.md#outbound-background-task-stop-passthrough-1829)
+prevent reflected ids or old attempts from selecting a target.
+
+Unsupported or ended repositories return a failed `Result` containing
+`IllegalStateException("Background task stop unsupported")`. A rejected send or
+ordinary send exception returns `IllegalStateException("Background task stop not sent")`,
+without preserving exception text. Cancellation retires the attempt and rethrows
+`CancellationException`. These failures establish no task outcome.
+
+`RemoteConversationRepositoryStopTaskTest` pins the exact envelope and unchanged
+state without a reply fixture, plus a refusal injected during send. Tests also
+exercise conflicting reflected ids, malformed errors and retirement; merely
+emitting a refusal after send would miss the registration race.
 
 <a id="startnewsession--the-bare-v2-new_session-control-send-539"></a>
 
