@@ -7,6 +7,7 @@
 - `ui/conversations/thread/ThreadFold.kt`: `StreamingTurn`, `reduceDelta` and `render` create the transient assistant row.
 - `ui/conversations/thread/ThreadViewModel.kt`: `threadItems` merges repository snapshots and live events through that fold.
 - `ui/conversations/thread/ThreadScreen.kt`: queued/Agent/run projections, `MessageBubble` and `FollowNewestEnd` consume moved rows.
+- `ui/conversations/thread/ThreadHistoryRows.kt`: `foldHistoryToolRuns` and `historyMarkersFor` keep gap anchors visible through collapse; the oldest-end history overview requires gaps to remain pullable without an automatic ask.
 - `ui/conversations/components/MessageBubble.kt`: `AssistantMessage` already provides the assistant renderer and accepts a modifier.
 - `data/repository/HistoryPageReducer.kt` and `ThreadProjection.kt`: #1826 retains parent hints by existing lane identity, including history overlap.
 - `docs/knowledge/features/thread-screen.md` and `thread-screen-subagent-tool-rows.md`: #1783 separates join evidence, finished knowledge and finish position; do not invent a position from a roster.
@@ -68,9 +69,14 @@ None.
 
 2026-10-06 (second live gate rework): The fresh two-method live rerun reproduced a timeout waiting for child semantics after opening the Agent run, while the unchanged attention-pill method passed. Scroll the attributed paragraph into the lazy viewport before waiting for nested ownership. On close, wait for the owned header's existing Expand action and absent prose together, so offscreen disposal alone cannot pass the collapse assertion and transient composition cannot fail it. A long-block shared-screen probe checks an early paragraph disposed at the newest end, scrolling it back into view, closing and lossless setting changes. Production grouping, identity and visual treatment are unchanged. Security re-review: these test-only changes consume existing semantic labels and tags; no new trust boundary, input authority, network endpoint, secret sink or production state is introduced.
 
+2026-10-06 (history-gap invariant): `historyGapBeforeChildDoesNotLetItsProseEscapeAClosedAgentRun` failed on the real display fold: the gap boundary forced child prose outside its Agent run. Preserve joined blocks across gap boundaries in `foldHistoryToolRuns`. A display-only marker projection moves markers attached to hidden block rows onto the closed run header, retaining their original anchor/cursor identity; expanded blocks and ordinary rows keep original marker placement. Gap lookup accepts the run header's first tool identity. Screen and pure probes verify closed/open/closed prose, marker visibility and lossless restoration. This adds one internal helper, no types or signature migrations, and stays below 1600 written lines. Security re-review PASS: only existing public row/history identities participate in local equality joins; no content, IO, authority, log sink, coroutine or persistence changes.
+
+2026-10-06 (physical tap evidence): Content-free live diagnostics showed the run still offered Expand after an opening tap, with no composed child. The existing Compose evidence topic documents that semantics scrolling uses the full drawing viewport and can leave a tap under chrome. Reuse `questionAnswerTarget` to move the Agent control's physical tap center between the header and composer before opening/closing, and to check prose readability there. The helper's existing geometry contract is unchanged; the long-block shared probe uses the same path. Temporary diagnostic counters were removed. No production expansion state or pointer geometry changes are required.
+
 ## Documentation handoff
 
 - Pending documentation stage: `docs/knowledge/features/thread-screen.md` or owning linked topic, attribution/fallback and collapse behavior.
+- Pending documentation stage: owning oldest-end history topic, gap markers remain on closed Agent run headers and return to their child rows when expanded.
 - Pending documentation stage: `docs/e2e-interactive-stream.md`, new scenario and dispatcher-produced live evidence. Documentation records evidence and does not execute the live proof.
 
 ## Security review

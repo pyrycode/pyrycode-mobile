@@ -10,6 +10,7 @@ import de.pyryco.mobile.data.repository.HistoryEntry
 import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadProjection
+import de.pyryco.mobile.data.repository.historyKeys
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
@@ -97,6 +98,33 @@ class BackgroundAgentProseTest {
             listOf(listOf("a", "read"), listOf("b")),
             foldToolRuns(rows, emptySet()).filterIsInstance<ThreadRow.ToolRun>().map { it.tools.map(Message::id) },
         )
+    }
+
+    @Test fun historyGapBeforeChildDoesNotLetItsProseEscapeAClosedAgentRun() {
+        val child = text("child", "a")
+        val items = listOf(tool("a"), start("a"), text("main"), child, tool("read", "a", "Read"))
+        val rows = project(items)
+        val markers = listOf(ThreadHistoryMarker(1, child.historyKeys().first()))
+        val closed = foldHistoryToolRuns(rows, emptySet(), markers)
+        assertEquals(listOf("main"), ids(closed))
+        assertEquals(listOf("a"), closed.filterIsInstance<ThreadRow.ToolRun>().map { it.runId })
+        val projected = foldedAgentHistoryMarkers(rows, closed, markers)
+        assertEquals(listOf(1L), projected.map { it.anchor })
+        assertEquals(projected, historyMarkersFor(closed.filterIsInstance<ThreadRow.ToolRun>().single(), projected))
+        val open = foldHistoryToolRuns(rows, setOf("a"), markers)
+        assertEquals(ids(rows), ids(open))
+        assertEquals(markers, foldedAgentHistoryMarkers(rows, open, markers))
+        assertEquals(
+            markers,
+            historyMarkersFor(
+                open.filterIsInstance<ThreadRow.Delivered>().first {
+                    (it.item as? ThreadItem.MessageItem)?.message?.id == "child"
+                },
+                markers,
+            ),
+        )
+        assertUnique(closed)
+        assertUnique(open)
     }
 
     @Test fun emptyUnknownUntrackedAndCyclicParentsRetainOrdinaryText() {

@@ -4891,21 +4891,26 @@ class InteractiveStreamE2ETest {
                     SemanticsMatcher("closed owned Agent run") {
                         it.config.getOrNull(SemanticsActions.OnClick)?.label == expandLabel
                     }
+            val collapseLabel = string(R.string.tool_run_collapse)
+            val openedRun =
+                run and
+                    SemanticsMatcher("opened owned Agent run") {
+                        it.config.getOrNull(SemanticsActions.OnClick)?.label == collapseLabel
+                    }
             val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
             list.performScrollToNode(run)
             composeTestRule.onNode(closedRun).assertExists()
             composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(0)
-            composeTestRule.onNode(run).performClick()
-            // Expansion can put this early paragraph outside the lazy viewport as later tool rows arrive.
-            // Bring it into composition before waiting for its ownership and display assertions.
+            // ScrollTo uses the drawing viewport; reveal the actual tap center between the chrome bars.
+            composeTestRule.questionAnswerTarget(closedRun).performClick()
+            // Expansion can put this early paragraph outside composition as later tool rows arrive.
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 runCatching { list.performScrollToNode(reply) }.isSuccess &&
                     composeTestRule.onAllNodes(reply and hasAnyAncestor(child), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
-            composeTestRule.onNode(reply and hasAnyAncestor(child), useUnmergedTree = true).assertIsDisplayed()
+            composeTestRule.questionAnswerTarget(reply and hasAnyAncestor(child)).assertIsDisplayed()
             composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(1)
-            list.performScrollToNode(run)
-            composeTestRule.onNode(run).performClick()
+            composeTestRule.questionAnswerTarget(openedRun).performClick()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 runCatching { list.performScrollToNode(closedRun) }.isSuccess &&
                     composeTestRule.onAllNodes(reply, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()

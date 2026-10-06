@@ -124,8 +124,46 @@ internal fun historyMarkersFor(
     row: ThreadRow,
     markers: List<ThreadHistoryMarker>,
 ): List<ThreadHistoryMarker> {
-    val keys = (row as? ThreadRow.Delivered)?.item?.historyKeys().orEmpty()
+    val keys =
+        when (row) {
+            is ThreadRow.Delivered -> row.item.historyKeys()
+            is ThreadRow.ToolRun ->
+                row.tools
+                    .firstOrNull()
+                    ?.let { ThreadItem.MessageItem(it).historyKeys() }
+                    .orEmpty()
+            else -> emptyList()
+        }
     return markers.filter { it.beforeRow in keys }
+}
+
+/** Hidden block gaps stay pullable at their run header; opening restores their original child anchors. */
+internal fun foldedAgentHistoryMarkers(
+    original: List<ThreadRow>,
+    folded: List<ThreadRow>,
+    markers: List<ThreadHistoryMarker>,
+): List<ThreadHistoryMarker> {
+    val blockByTool =
+        original
+            .filterIsInstance<ThreadRow.Delivered>()
+            .filter { it.isToolRow() }
+            .associate { (it.item as ThreadItem.MessageItem).message.id to it.agentBlockId }
+    val closed =
+        folded
+            .filterIsInstance<ThreadRow.ToolRun>()
+            .filter { !it.expanded }
+            .mapNotNull { run ->
+                blockByTool[run.runId]?.let { block -> block to ThreadItem.MessageItem(run.tools.first()).historyKeys().first() }
+            }.toMap()
+    if (closed.isEmpty()) return markers
+    val targets =
+        buildMap {
+            original.filterIsInstance<ThreadRow.Delivered>().forEach { row ->
+                val target = closed[row.agentBlockId] ?: return@forEach
+                row.item.historyKeys().forEach { put(it, target) }
+            }
+        }
+    return markers.map { marker -> marker.copy(beforeRow = targets[marker.beforeRow] ?: marker.beforeRow) }
 }
 
 /** A marker's first newer tool stays visible; unrelated runs keep their existing collapse policy. */
@@ -137,7 +175,7 @@ internal fun foldHistoryToolRuns(
     buildList {
         var start = 0
         rows.forEachIndexed { index, row ->
-            if (historyMarkersFor(row, markers).isNotEmpty()) {
+            if ((row as? ThreadRow.Delivered)?.agentBlockId == null && historyMarkersFor(row, markers).isNotEmpty()) {
                 addAll(foldToolRuns(rows.subList(start, index), expanded))
                 add(row)
                 start = index + 1

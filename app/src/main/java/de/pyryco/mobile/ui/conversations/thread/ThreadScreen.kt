@@ -600,6 +600,10 @@ fun ThreadScreen(
                     remember(agentRows, collapseToolUses, retainedExpandedRuns, state.historyMarkers) {
                         if (collapseToolUses) foldHistoryToolRuns(agentRows, retainedExpandedRuns, state.historyMarkers) else agentRows
                     }
+                val displayedHistoryMarkers =
+                    remember(agentRows, rows, state.historyMarkers) {
+                        foldedAgentHistoryMarkers(agentRows, rows, state.historyMarkers)
+                    }
                 // A backlog item this device minted no echo for is a row of its own, so the empty state
                 // must yield to it (#782 AC #3). When an item *is* matched its echo is a MessageItem, so
                 // hasMessages already covers that case.
@@ -610,7 +614,7 @@ fun ThreadScreen(
                     // loading, so a second pull sends nothing; the ViewModel still decides the rest.
                     val demandOlderHistory by rememberUpdatedState(onDemandOlderHistory)
                     val demandHistoryGap by rememberUpdatedState(onDemandHistoryGap)
-                    val gapMarkers by rememberUpdatedState(state.historyMarkers)
+                    val gapMarkers by rememberUpdatedState(displayedHistoryMarkers)
                     val gapHeights = remember(state.conversationId) { mutableStateMapOf<Long, Int>() }
                     val historyLoading by rememberUpdatedState(state.historyTail == ThreadHistoryTail.Loading)
                     val pullForOlderHistory = { if (!historyLoading) demandOlderHistory() }

@@ -26,6 +26,8 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.historyKeys
+import de.pyryco.mobile.e2e.questionAnswerTarget
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -39,6 +41,7 @@ class BackgroundAgentProseScreenTest {
     private val ts = Instant.parse("2026-10-06T10:00:00Z")
     private var collapse by mutableStateOf(true)
     private var items by mutableStateOf<List<ThreadItem>>(emptyList())
+    private var markers by mutableStateOf<List<ThreadHistoryMarker>>(emptyList())
 
     private fun prose(
         id: String,
@@ -83,7 +86,7 @@ class BackgroundAgentProseScreenTest {
         compose.setContent {
             PyrycodeMobileTheme {
                 ThreadScreen(
-                    state = ThreadUiState("c", "Channel", items = items, hasMessages = true),
+                    state = ThreadUiState("c", "Channel", items = items, hasMessages = true, historyMarkers = markers),
                     onBack = {},
                     onSendMessage = {},
                     connectionState = ConnectionState.Connected,
@@ -197,15 +200,14 @@ class BackgroundAgentProseScreenTest {
         mount(true, true)
         compose.runOnIdle { items = items + (0 until 30).map { prose("Later child $it", "a") } }
         val ownedRun = hasText("Using tools: 2", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:a"))
-        compose.onNode(ownedRun).performClick()
+        compose.questionAnswerTarget(ownedRun).performClick()
         reveal("Later child 29")
         // A loaded child can be outside composition; ownership is checked after scrolling it into view.
         compose.onNodeWithText("Child").assertDoesNotExist()
         reveal("Child")
         compose.onNode(hasText("Child") and hasAnyAncestor(hasTestTag("background-agent-child:a"))).assertIsDisplayed()
         compose.onAllNodesWithText("Child").assertCountEquals(1)
-        compose.onNode(hasScrollToIndexAction()).performScrollToNode(ownedRun)
-        compose.onNode(ownedRun).performClick()
+        compose.questionAnswerTarget(ownedRun).performClick()
         compose.onNodeWithText("Child").assertDoesNotExist()
         compose.onNodeWithText("Later child 29").assertDoesNotExist()
         // Collapse preserves every loaded paragraph; disabling it reveals the same child again.
@@ -214,6 +216,28 @@ class BackgroundAgentProseScreenTest {
         compose.onAllNodesWithText("Child").assertCountEquals(1)
         reveal("Later child 29")
         compose.onNodeWithText("Later child 29").assertIsDisplayed()
+    }
+
+    @Test fun childGapStaysVisibleAtClosedHeaderAndReturnsToProseWhenOpened() {
+        mount(false, true)
+        compose.runOnIdle {
+            val child = items.filterIsInstance<ThreadItem.MessageItem>().first { it.message.id == "Child" }
+            markers = listOf(ThreadHistoryMarker(1, child.historyKeys().first()))
+        }
+        compose.onNodeWithText("Child").assertDoesNotExist()
+        compose.onNodeWithTag("history-gap:1").assertIsDisplayed()
+        run(1).performClick()
+        compose.onNodeWithText("Child").assertIsDisplayed()
+        compose.onNodeWithTag("history-gap:1").assertIsDisplayed()
+        val gap = compose.onNodeWithTag("history-gap:1").getUnclippedBoundsInRoot()
+        val prose = compose.onNodeWithText("Child").getUnclippedBoundsInRoot()
+        org.junit.Assert.assertTrue(gap.bottom <= prose.top)
+        run(1).performClick()
+        compose.onNodeWithText("Child").assertDoesNotExist()
+        compose.onNodeWithTag("history-gap:1").assertIsDisplayed()
+        compose.runOnIdle { collapse = false }
+        compose.onNodeWithText("Child").assertIsDisplayed()
+        compose.onNodeWithTag("history-gap:1").assertIsDisplayed()
     }
 
     @Test fun finishAndLaterMainReplyKeepProseNestedAndCollapseStillControlsVisibility() {
