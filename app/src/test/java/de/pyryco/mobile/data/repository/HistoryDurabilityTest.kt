@@ -59,6 +59,59 @@ class HistoryDurabilityTest {
 
     private fun rows(page: HistoryPage) = reduceHistoryPage(page.entries, true)
 
+    @Test fun discardedToolRowsInvalidateBothUseAndResultEntries() {
+        val use =
+            HistoryEntry(
+                1,
+                "tool_use",
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"c","turn_id":"t","tool_use_id":"tool","name":"Bash","input_summary":"ls"}""",
+                ),
+                Instant.fromEpochSeconds(1),
+            )
+        val result =
+            HistoryEntry(
+                2,
+                "tool_result",
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"c","turn_id":"t","tool_use_id":"tool","is_error":false,"result_summary":"ok"}""",
+                ),
+                Instant.fromEpochSeconds(2),
+            )
+        val page = HistoryPage(listOf(result, use), "", true)
+        val state = HistoryCoverage().received(page).boundTo(rows(page))
+        assertEquals(listOf(HistorySpan(1, 2)), state.spans)
+        assertTrue(state.retainedBy(emptyList()).spans.isEmpty())
+    }
+
+    @Test fun aToolUseWithoutItsStoredResultCannotCertifyResultCoverage() {
+        val use =
+            HistoryEntry(
+                1,
+                "tool_use",
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"c","turn_id":"t","tool_use_id":"tool","name":"Bash","input_summary":"ls"}""",
+                ),
+                Instant.fromEpochSeconds(1),
+            )
+        val result =
+            HistoryEntry(
+                2,
+                "tool_result",
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"c","turn_id":"t","tool_use_id":"tool","is_error":false,"result_summary":"ok"}""",
+                ),
+                Instant.fromEpochSeconds(2),
+            )
+        val page = HistoryPage(listOf(result, use), "", true)
+        val state = HistoryCoverage().received(page).boundTo(rows(page))
+        val withoutOutput =
+            rows(page).filterIsInstance<ThreadItem.MessageItem>().map {
+                it.copy(message = it.message.copy(toolCall = it.message.toolCall?.copy(output = "")))
+            }
+        assertTrue(state.retainedBy(withoutOutput).spans.isEmpty())
+    }
+
     @Test fun oneLegacyOccurrenceCannotCertifyTwoReceivedDeltas_andTextIsNotPersisted() {
         val text = "unique legacy fragment"
         val legacy = listOf(ThreadItem.MessageItem(Message("t", "s", Role.Assistant, text, Instant.fromEpochSeconds(1), false)))

@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.cache.cacheableThreadRows
+import de.pyryco.mobile.data.cache.cachedThreadRowProof
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 import java.security.MessageDigest
@@ -27,6 +28,7 @@ data class HistoryCoverage(
     val unknown: Boolean = false,
     val newestCursor: String? = null,
     val rowOrder: Map<String, Long> = emptyMap(),
+    val rowEntries: Map<String, Set<Long>> = emptyMap(),
     val proofs: Map<String, String> = emptyMap(),
     val legacyKeys: Map<String, String> = emptyMap(),
     val legacyOffsets: Map<String, Int> = emptyMap(),
@@ -84,6 +86,7 @@ data class HistoryCoverage(
             reduced.order.entries
                 .associate { historyIdentity(it.key) to it.value }
                 .filterKeys { it in retainedKeys }
+        val claims = reduced.claims.mapKeys { historyIdentity(it.key) }.filterKeys { it in retainedKeys }
         val texts = HashMap<String, String>()
         val aliases = HashMap<String, String>()
         reduced.rows.filterIsInstance<ThreadItem.MessageItem>().forEach { row ->
@@ -111,6 +114,10 @@ data class HistoryCoverage(
             unknown = unknown && !page.atStart,
             newestCursor = if (newest) page.cursor else newestCursor,
             rowOrder = order + rowOrder,
+            rowEntries =
+                (rowEntries.keys + order.keys).associateWith { key ->
+                    rowEntries[key].orEmpty() + claims[key].orEmpty()
+                },
             legacyKeys = aliases + legacyKeys,
             deltaText = texts + deltaText,
             deltaLengths = texts.mapValues { it.value.length } + deltaLengths,
@@ -179,7 +186,7 @@ data class HistoryCoverage(
 
     private fun withoutRows(missing: Set<String>): HistoryCoverage {
         if (missing.isEmpty()) return this
-        val removed = missing.mapNotNull(rowOrder::get).toSet()
+        val removed = missing.flatMap { rowEntries[it]?.takeIf { ids -> ids.isNotEmpty() } ?: listOfNotNull(rowOrder[it]) }.toSet()
         val kept =
             spans.flatMap { span ->
                 var start = span.first
@@ -196,6 +203,7 @@ data class HistoryCoverage(
             gaps = kept.zipWithNext { a, b -> HistoryGap(a.last, b.first) },
             unknown = true,
             rowOrder = rowOrder - missing,
+            rowEntries = rowEntries - missing,
             proofs = proofs - missing,
             legacyKeys = legacyKeys - missing,
             legacyOffsets = legacyOffsets - missing,
@@ -288,7 +296,7 @@ internal fun historyRowProofs(rows: List<ThreadItem>): Map<String, String> =
                     offset = end
                 }
             } else {
-                put(historyIdentity(row.mergeIdentity()), historyHash(message?.content.orEmpty()))
+                put(historyIdentity(row.mergeIdentity()), cachedThreadRowProof(row))
             }
         }
     }
