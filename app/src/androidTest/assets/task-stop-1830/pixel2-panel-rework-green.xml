@@ -1,0 +1,15 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="5" failures="0" errors="0" skipped="0" time="10.975" timestamp="2026-10-06T01:20:29" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.BackgroundTaskStopPanelTest" tests="5" failures="0" errors="0" skipped="0" time="10.345" timestamp="2026-10-06T01:20:29" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="chevronHasCloseControlVisibleSizeAndTagGap_andCardPaddingTogglesOnly" classname="de.pyryco.mobile.ui.conversations.thread.BackgroundTaskStopPanelTest" time="2.78" />
+    <testcase name="closedOpenRowsKeepAllText_andButtonDoesNotToggle" classname="de.pyryco.mobile.ui.conversations.thread.BackgroundTaskStopPanelTest" time="2.134" />
+    <testcase name="rowsOpenIndependently" classname="de.pyryco.mobile.ui.conversations.thread.BackgroundTaskStopPanelTest" time="1.998" />
+    <testcase name="finishedRowsKeepSummaryAndHaveNoAction" classname="de.pyryco.mobile.ui.conversations.thread.BackgroundTaskStopPanelTest" time="1.831" />
+    <testcase name="unsupportedRowsHaveNoActionOrExpandedState" classname="de.pyryco.mobile.ui.conversations.thread.BackgroundTaskStopPanelTest" time="1.602" />
+  </testsuite>
+</testsuites>

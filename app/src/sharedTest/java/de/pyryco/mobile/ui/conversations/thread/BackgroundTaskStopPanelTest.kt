@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
@@ -21,10 +22,13 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.BackgroundTask
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.BackgroundTaskUpdate
+import de.pyryco.mobile.ui.assertDpEquals
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -39,6 +43,7 @@ class BackgroundTaskStopPanelTest {
     private var expanded by mutableStateOf(emptySet<String>())
     private var pending by mutableStateOf(emptySet<String>())
     private val events = mutableListOf<ThreadEvent>()
+    private lateinit var density: Density
 
     private fun setPanel(
         supported: Boolean = true,
@@ -47,6 +52,7 @@ class BackgroundTaskStopPanelTest {
         val tasks = listOf(task("a", "first", finished), task("b", "second", finished))
         rule.setContent {
             PyrycodeMobileTheme {
+                density = LocalDensity.current
                 BackgroundTaskPanel(
                     roster = BackgroundTaskRoster(tasks, 0),
                     onDismiss = {},
@@ -109,10 +115,12 @@ class BackgroundTaskStopPanelTest {
                 .fetchSemanticsNodes()
                 .first()
                 .boundsInRoot
-        assertEquals(28f, icon.width, 0.1f)
-        assertEquals(28f, icon.height, 0.1f)
-        // The pill adds its own 10dp end padding after the label.
-        assertEquals(18f, icon.left - tag.right, 0.1f)
+        with(density) {
+            assertDpEquals(28.dp, icon.width.toDp())
+            assertDpEquals(28.dp, icon.height.toDp())
+            // The pill adds its own 10dp end padding after the label.
+            assertDpEquals(18.dp, (icon.left - tag.right).toDp())
+        }
         row("first").performTouchInput { click(Offset(2f, 2f)) }
         assertEquals(setOf("a"), expanded)
         assertFalse(events.any { it is ThreadEvent.BackgroundTaskStop })
