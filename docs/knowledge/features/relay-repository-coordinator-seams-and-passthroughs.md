@@ -345,6 +345,16 @@ survive a reconnect.
   background-task panel and running-task pill count that read this seam are [#678](https://github.com/pyrycode/pyrycode-mobile/issues/678);
   this seam is data only.
 
+Per-task stop tracking follows the decoded roster lifecycle, independently of the
+rendering fold (#1829). A terminal `background_task_updated` (any nonempty `status`)
+retires that conversation/task pair even if the task has no visible row. A decoded
+roster retires requests for task ids it omits, only in its own conversation.
+Malformed frames and nonterminal updates retire nothing. Hooking only visible-row
+changes would leave an unlisted finished task's request eligible for a stale
+refusal. These callbacks preserve the existing rendering data and finished-id
+carry-over; the [stop ledger](#outbound-background-task-stop-passthrough-1829)
+itself never survives reconnect.
+
 ## Outbound modal-send passthrough (#451)
 
 The **outbound mirror** of the inbound `modalEvents` seam: where `modalEvents` surfaces decoded modals *up*
@@ -407,6 +417,60 @@ suspend fun interrupt(conversationId: String) {
   conversation. The consumer is [`ThreadViewModel.onInterrupt` / `sendInterrupt`](interrupt-send-path.md);
   unlike `sendCancel` its failure catches are **empty** (no error channel or log).
   `CancellationException` is rethrown before the failure catches.
+
+## Outbound background-task stop passthrough (#1829)
+
+The coordinator exposes `supportsBackgroundTaskStop: StateFlow<Boolean>`,
+`suspend fun stopBackgroundTask(conversationId: String, taskId: String): Result<Unit>`
+and `observeBackgroundTaskStopRefusals(conversationId: String): Flow<String>`.
+The send captures `activeConnection.value?.repo` once and forwards both opaque keys
+unchanged. No connection returns a failed `Result` with the static
+`IllegalStateException("Background task stop not connected")`. The
+[concrete send contract](remote-conversation-repository-control-sends.md#per-task-stop-support-send-and-refusal-1829)
+defines acceptance, static failures, cancellation and subscribing before send.
+
+Support is eagerly derived by switching to the current pump's state: true only
+for `PumpState.Open` whose negotiated capabilities contain `stop_background_task`.
+Absent capability, handshaking, closed and disconnected states report false.
+Another host's grant and an earlier connection's grant cannot supply support.
+The concrete repository rechecks its lazy capability supplier at send entry;
+the asynchronously republished support value is not a send gate. Detection grants
+no access; daemon `interactive` enforcement still decides whether it can act.
+
+Refusal observation is a cold `activeConnection.flatMapLatest` flow, switching
+to the current repository's per-conversation events and to `emptyFlow()` between
+connections. Each host owns a separate coordinator and connection ledger, even
+when conversation, task and request ids coincide across hosts.
+
+Only an `error` with code exactly `stop_background_task.refused` and an
+`in_reply_to` matching a pending local stop emits its registered task id to its
+originating conversation. The reflected payload `conversation_id` asserts no
+membership and has no routing authority. Before decoding `ErrorPayload`, require
+JSON strings for `code` and `message`, and an unquoted JSON boolean for `retryable`.
+The serializer can coerce primitives into strings, so typed decoding alone is
+insufficient. Missing or wrong required field types, malformed payloads and other
+codes emit nothing and leave valid pending correlation intact. Unknown, missing,
+stale and duplicate request correlations also emit nothing.
+
+Registration precedes send. A synchronized ledger consumes a matched refusal once,
+atomically with emission, and a newer attempt for the same conversation/task pair
+supersedes its old entry. Terminal updates and roster omission retire matching
+entries as described [above](#background-task-roster-677). Failed or cancelled
+sends remove only their own request id, preserving a concurrent newer attempt.
+Coordinator teardown ends admission and clears tracking before cancellation;
+inbound collector termination also ends it. Nothing is replayed or persisted on
+reconnect, so an old refusal cannot affect a later request.
+
+Stop diagnostics contain only fixed event names and static result codes. Never
+log daemon or local identifiers, reflected conversation ids, raw frames, daemon
+message text or exception messages. This differs from the roster's absence of
+logging without weakening its content boundary.
+
+`RemoteConversationRepositoryStopTaskTest` and `RelayRepositoryCoordinatorTest`
+cover these races, lifecycle edges and host isolation. In particular, test a
+terminal update for an unlisted task, an older send failing during a newer attempt,
+and identical ids on independent hosts; a visible-row-only or single-host fixture
+would miss those failures.
 
 ## Outbound question-answer / refuse passthrough (#825)
 
