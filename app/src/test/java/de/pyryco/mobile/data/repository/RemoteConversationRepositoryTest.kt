@@ -4178,6 +4178,151 @@ class RemoteConversationRepositoryTest {
         }
 
     @Test
+    fun queuedDelivery_delayedDrainPastWholeReply_preservesEveryEmission() = runTest { assertDelayedEntrySnapshots(removeFirst = false) }
+
+    @Test
+    fun queuedDelivery_removalBeforePush_preservesEachAnsweringTurnOpening() = runTest { assertDelayedEntrySnapshots(removeFirst = true) }
+
+    private fun TestScope.assertDelayedEntrySnapshots(removeFirst: Boolean) {
+        val pump = FakeSessionPump()
+        val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+        val thread = collectMessages(repo, "c-1")
+        val other = collectMessages(repo, "c-other")
+        runCurrent()
+        pump.push(turnStateEnvelope("c-1", "responding"))
+        pump.push(assistantDeltaEnvelope("c-1", "turn-1", 0, "First"))
+        runCurrent()
+        val b = sendAndAck(repo, pump, "c-1", "B")
+        val c = sendAndAck(repo, pump, "c-1", "C")
+        val originals = thread.last().filterIsInstance<ThreadItem.MessageItem>().filter { it.message.id in setOf(b, c) }
+        val entries = listOf(QueuedFixture(41L, "B", TS, b), QueuedFixture(42L, "C", TS, c))
+        pump.push(queueStateEnvelope("c-1", entries))
+        pump.push(toolUseEnvelope("c-1", "turn-1", "tool-1", "Bash", "held tool"))
+        pump.push(toolResultEnvelope("c-1", "turn-1", "tool-1", false, "done"))
+        pump.push(assistantDeltaEnvelope("c-1", "turn-1", 1, "Done"))
+        pump.push(turnEndEnvelope("c-1", "turn-1", "end_turn"))
+
+        fun expect(vararg expected: String) {
+            runCurrent()
+            assertEquals(expected.toList(), messageIds(thread.last()))
+            for (rows in thread) {
+                val queued = messageIds(rows).filter { it in setOf(b, c) }
+                if (queued.size == 2) assertEquals(listOf(b, c), queued)
+                assertTrue(messageIds(rows).none { it.startsWith("turn-2#") || it.startsWith("turn-3#") })
+            }
+        }
+        expect("turn-1", "tool-1", "turn-1#1", b, c)
+        if (removeFirst) pump.push(queueStateEnvelope("c-1", entries.drop(1)))
+        pump.push(deliveredEntryEnvelope("c-1", b, 41L))
+        pump.push(turnStateEnvelope("c-1", "responding"))
+        pump.push(assistantDeltaEnvelope("c-1", "turn-2", 0, "B0"))
+        pump.push(queueStateEnvelope("c-other", emptyList()))
+        pump.push(queueStateEnvelope("c-1", entries))
+        pump.push(assistantDeltaEnvelope("c-1", "turn-2", 1, "B1"))
+        pump.push(turnEndEnvelope("c-1", "turn-2", "end_turn"))
+        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c)
+        if (removeFirst) pump.push(queueStateEnvelope("c-1", emptyList()))
+        pump.push(deliveredEntryEnvelope("c-1", c, 42L))
+        pump.push(assistantDeltaEnvelope("c-1", "turn-3", 0, "C0"))
+        pump.push(assistantDeltaEnvelope("c-1", "turn-3", 1, "C1"))
+        pump.push(queueStateEnvelope("c-1", entries.drop(1))) // B drain delayed into C reply.
+        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c, "turn-3")
+        pump.push(deliveredEntryEnvelope("c-1", b, 41L))
+        pump.push(deliveredEntryEnvelope("c-1", c, 42L))
+        pump.push(queueStateEnvelope("c-1", emptyList()))
+        pump.push(queueStateEnvelope("c-1", entries))
+        pump.push(assistantDeltaEnvelope("c-1", "turn-3", 2, "C2"))
+        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c, "turn-3")
+        assertEquals(originals, thread.last().filterIsInstance<ThreadItem.MessageItem>().filter { it.message.id in setOf(b, c) })
+        assertEquals("B0B1", (thread.last()[4] as ThreadItem.MessageItem).message.content)
+        assertEquals("C0C1C2", (thread.last()[6] as ThreadItem.MessageItem).message.content)
+        assertEquals(
+            listOf(0, 1, 2),
+            (thread.last()[6] as ThreadItem.MessageItem)
+                .message.segment
+                ?.deltas
+                ?.map { it.seq },
+        )
+        assertEquals(emptyList<ThreadItem>(), other.last())
+    }
+
+    @Test
+    fun queuedDelivery_malformedEntryIdentityDropsOnlyThatFrame_withoutSettlingOwnEcho() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val thread = collectMessages(repo, "c-1")
+            runCurrent()
+            pump.push(turnStateEnvelope("c-1", "responding"))
+            pump.push(assistantDeltaEnvelope("c-1", "turn-1", 0, "Before"))
+            runCurrent()
+            val own = sendAndAck(repo, pump, "c-1", "own")
+            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "own", TS, own))))
+            pump.push(toolUseEnvelope("c-1", "turn-1", "tool-1", "Bash", "tool"))
+            runCurrent()
+            val before = thread.last()
+            for (raw in listOf("true", "1.5", "{}", "[]", "\"bad\"", "9223372036854775808")) {
+                val valid = messageEnvelope("c-1", own, "user", "bad copy", TS)
+                pump.push(
+                    valid.copy(payload = JsonObject(valid.payload.jsonObject + ("queued_msg_id" to MobileJson.parseToJsonElement(raw)))),
+                )
+                runCurrent()
+                assertEquals(before, thread.last())
+            }
+            pump.push(turnEndEnvelope("c-1", "turn-1", "end_turn"))
+            pump.push(deliveredEntryEnvelope("c-1", own, 42L))
+            pump.push(assistantDeltaEnvelope("c-1", "turn-2", 0, "Reply"))
+            runCurrent()
+            assertEquals(listOf("turn-1", "tool-1", own, "turn-2"), messageIds(thread.last()))
+        }
+
+    @Test
+    fun queuedDelivery_distinctPeerEntriesSharingMessageId_keepLaterOwnEchoBehindBothReplies() =
+        runTest { assertEntryIdentityWithDuplicateRows(reuseOwnId = false) }
+
+    @Test
+    fun queuedDelivery_entryReusingDeliveredOwnId_keepsLaterOwnEchoBehindItsReply() =
+        runTest { assertEntryIdentityWithDuplicateRows(reuseOwnId = true) }
+
+    private fun TestScope.assertEntryIdentityWithDuplicateRows(reuseOwnId: Boolean) {
+        val pump = FakeSessionPump()
+        val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+        val thread = collectMessages(repo, "c-1")
+        runCurrent()
+        pump.push(turnStateEnvelope("c-1", "responding"))
+        pump.push(assistantDeltaEnvelope("c-1", "turn-1", 0, "First"))
+        runCurrent()
+        val shared = if (reuseOwnId) sendAndAck(repo, pump, "c-1", "first own") else "peer"
+        val own = sendAndAck(repo, pump, "c-1", "later own")
+        val entries = listOf(QueuedFixture(41L, "a", TS, shared), QueuedFixture(42L, "b", TS, shared), QueuedFixture(43L, "c", TS, own))
+        pump.push(queueStateEnvelope("c-1", entries))
+        pump.push(turnEndEnvelope("c-1", "turn-1", "end_turn"))
+        pump.push(deliveredEntryEnvelope("c-1", shared, 41L))
+        pump.push(assistantDeltaEnvelope("c-1", "turn-2", 0, "Reply A"))
+        pump.push(queueStateEnvelope("c-1", entries.drop(1)))
+        pump.push(turnEndEnvelope("c-1", "turn-2", "end_turn"))
+        pump.push(deliveredEntryEnvelope("c-1", shared, 42L))
+        pump.push(assistantDeltaEnvelope("c-1", "turn-3", 0, "Reply B"))
+        pump.push(turnEndEnvelope("c-1", "turn-3", "end_turn"))
+        pump.push(deliveredEntryEnvelope("c-1", own, 43L))
+        pump.push(assistantDeltaEnvelope("c-1", "turn-4", 0, "Reply C"))
+        pump.push(deliveredEntryEnvelope("c-1", shared, 41L))
+        pump.push(queueStateEnvelope("c-1", entries))
+        runCurrent()
+        assertEquals(listOf("turn-1", shared, "turn-2", "turn-3", own, "turn-4"), messageIds(thread.last()))
+        assertEquals(1, messageIds(thread.last()).count { it == shared })
+    }
+
+    private fun deliveredEntryEnvelope(
+        conversationId: String,
+        messageId: String,
+        entryId: Long,
+    ): Envelope {
+        val envelope = messageEnvelope(conversationId, messageId, "user", "daemon copy", TS)
+        return envelope.copy(payload = JsonObject(envelope.payload.jsonObject + ("queued_msg_id" to JsonPrimitive(entryId))))
+    }
+
+    @Test
     fun parkedOwnEcho_confirmationDuringNextOpenTurn_preservesItsSlotAndReply() =
         runTest {
             for (drainFirst in listOf(false, true)) {

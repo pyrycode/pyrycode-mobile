@@ -463,28 +463,27 @@ class RemoteConversationRepository(
                 // survives. `sessionId = ""` — the payload carries none and the last-message preview
                 // never reads it (list-tier placeholder, as #312 uses for currentSessionId). Drop
                 // silently: message content may be sensitive, so nothing here logs the payload.
-                val (conversationId, message, sentNow) =
-                    try {
-                        val dto = MobileJson.decodeFromJsonElement<MessagePayloadDto>(envelope.payload)
-                        val message = dto.toMessage(envelope, sessionId = "")
-                        Triple(
-                            dto.conversationId,
-                            if (message.role == Role.User) {
-                                message.copy(attachments = storedAttachmentReferences(dto.attachmentIds))
-                            } else {
-                                message
-                            },
-                            dto.sentNow,
-                        )
-                    } catch (e: IllegalArgumentException) {
-                        return
-                    }
+                val dto: MessagePayloadDto
+                val message: Message
+                try {
+                    dto = MobileJson.decodeFromJsonElement<MessagePayloadDto>(envelope.payload)
+                    val decoded = dto.toMessage(envelope, sessionId = "")
+                    message =
+                        if (decoded.role == Role.User) {
+                            decoded.copy(attachments = storedAttachmentReferences(dto.attachmentIds))
+                        } else {
+                            decoded
+                        }
+                } catch (e: IllegalArgumentException) {
+                    return
+                }
+                val conversationId = dto.conversationId
                 // Keep the most-recent by timestamp (the strictly-greater fold below). Only a user
                 // message is a thread row (#1351), as on desktop: the v2 path mints `message` for the
                 // operator's delivered turn alone, and assistant output arrives as structured events.
                 // A held id — the phone's own confirmed send among them — is kept, not replaced.
                 conversationListProjection.recordLastMessage(conversationId, message)
-                if (message.role == Role.User) threadProjection.appendLiveMessage(conversationId, message, sentNow)
+                if (message.role == Role.User) threadProjection.appendLiveMessage(conversationId, message, dto.sentNow, dto.queuedMsgId)
             }
             TYPE_MESSAGE_CHUNK -> {
                 // The `backfill_since` response (#313): a batch of finished messages, each carrying

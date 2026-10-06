@@ -19,6 +19,259 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class ThreadProjectionTest {
     @Test
+    fun modernDelivery_delayedDrainsAcrossBothReplies_preserveFifoAndSegments() =
+        runTest { assertModernDeliverySequence(removeBeforePush = false) }
+
+    @Test
+    fun modernDelivery_removalBeforeEachPush_preservesStreamPlacement() = runTest { assertModernDeliverySequence(removeBeforePush = true) }
+
+    private fun TestScope.assertModernDeliverySequence(removeBeforePush: Boolean) {
+        val projection = ThreadProjection()
+        val queue = QueueProjection()
+        val thread = collect(projection, "c1")
+        val first = startQueuedTurn(projection, queue)
+        val second = sendOwn(projection, "second", "second text")
+        projection.onQueueState(queue, 42L to "mine", 43L to "second")
+        projection.applyAssistantDelta(delta("turn-1", 1, "Done"))
+        projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-1", "end_turn"))
+
+        fun expect(vararg expected: String) {
+            runCurrent()
+            assertEquals(expected.toList(), ids(thread.last()))
+            for (rows in thread) {
+                val pending = ids(rows).filter { it in setOf("mine", "second") }
+                if (pending.size == 2) assertEquals(listOf("mine", "second"), pending)
+                for (id in listOf("turn-2", "turn-3")) {
+                    assertEquals("split $id: ${ids(rows)}", 0, ids(rows).count { it.startsWith("$id#") })
+                }
+            }
+        }
+        expect("turn-1", "tool-1", "turn-1#1", "mine", "second")
+        if (removeBeforePush) projection.onQueueState(queue, 43L to "second", turnOpen = false)
+        projection.appendLiveMessage("c1", userMessage("mine", "daemon copy", PUSHED_AT), queuedMessageId = 42L)
+        projection.applyAssistantDelta(delta("turn-2", 0, "B0"))
+        expect("turn-1", "tool-1", "turn-1#1", "mine", "turn-2", "second")
+        projection.onQueueState(queue, 42L to "mine", 43L to "second")
+        projection.settleQueuedEchoes(queue) { true } // Another conversation's unchanged snapshot.
+        projection.applyAssistantDelta(delta("turn-2", 1, "B1"))
+        projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-2", "end_turn"))
+        expect("turn-1", "tool-1", "turn-1#1", "mine", "turn-2", "second")
+        if (removeBeforePush) projection.onQueueState(queue, turnOpen = false)
+        projection.appendLiveMessage("c1", userMessage("second", "daemon copy", PUSHED_AT), queuedMessageId = 43L)
+        projection.applyAssistantDelta(delta("turn-3", 0, "C0"))
+        projection.applyAssistantDelta(delta("turn-3", 1, "C1"))
+        projection.onQueueState(queue, 43L to "second") // B's late drain, during C's reply.
+        expect("turn-1", "tool-1", "turn-1#1", "mine", "turn-2", "second", "turn-3")
+        projection.onQueueState(queue)
+        projection.onQueueState(queue, 42L to "mine", 43L to "second") // Stale reassertion after absence.
+        projection.appendLiveMessage("c1", userMessage("mine", "duplicate", PUSHED_AT), queuedMessageId = 42L)
+        projection.appendLiveMessage("c1", userMessage("second", "duplicate", PUSHED_AT), queuedMessageId = 43L)
+        projection.applyAssistantDelta(delta("turn-3", 2, "C2"))
+        projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-3", "end_turn"))
+        expect("turn-1", "tool-1", "turn-1#1", "mine", "turn-2", "second", "turn-3")
+        assertEquals(ThreadItem.MessageItem(first), thread.last()[3])
+        assertEquals(ThreadItem.MessageItem(second), thread.last()[5])
+        assertEquals("B0B1", (thread.last()[4] as ThreadItem.MessageItem).message.content)
+        val reply = (thread.last()[6] as ThreadItem.MessageItem).message
+        assertEquals("C0C1C2", reply.content)
+        assertEquals(listOf(0, 1, 2), reply.segment?.deltas?.map { it.seq })
+    }
+
+    @Test
+    fun modernDelivery_noEchoTimingUsesReceivedPositionOnce() =
+        runTest {
+            val projection = ThreadProjection()
+            val queue = QueueProjection()
+            val thread = collect(projection, "c1")
+            val own = startQueuedTurn(projection, queue)
+            projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-1", "end_turn"))
+            projection.applyAssistantDelta(delta("turn-2", 0, "Before"))
+            projection.applyAssistantDelta(delta("turn-2", 1, " delivery"))
+            projection.appendLiveMessage("c1", userMessage("mine", "copy", PUSHED_AT), queuedMessageId = 42L)
+            projection.applyAssistantDelta(delta("turn-2", 2, "After"))
+            projection.appendLiveMessage("c1", userMessage("mine", "copy", PUSHED_AT), queuedMessageId = 42L)
+            projection.onQueueState(queue)
+            runCurrent()
+            assertEquals(listOf("turn-1", "tool-1", "turn-2", "mine", "turn-2#2"), ids(thread.last()))
+            assertEquals(ThreadItem.MessageItem(own), thread.last()[3])
+        }
+
+    @Test
+    fun modernConsumption_duplicatePeerIdsDoNotSpendTheNextEntry_evenAfterAbsentSnapshots() =
+        runTest {
+            for (reuseOwn in listOf(false, true)) {
+                val projection = ThreadProjection()
+                val queue = QueueProjection()
+                val thread = collect(projection, "c1")
+                projection.applyAssistantDelta(delta("turn-1", 0, "First"))
+                if (reuseOwn) sendOwn(projection, "same", "original")
+                sendOwn(projection, "mine", "last")
+                projection.onQueueState(queue, 41L to "same", 42L to "same", 43L to "mine")
+                projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-1", "end_turn"))
+                projection.appendLiveMessage("c1", userMessage("same", "copy", PUSHED_AT), queuedMessageId = 41L)
+                projection.applyAssistantDelta(delta("turn-2", 0, "A"))
+                projection.onQueueState(queue, 42L to "same", 43L to "mine")
+                projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-2", "end_turn"))
+                projection.appendLiveMessage("c1", userMessage("same", "copy", PUSHED_AT), queuedMessageId = 42L)
+                projection.applyAssistantDelta(delta("turn-3", 0, "B"))
+                projection.onQueueState(queue, 43L to "mine")
+                projection.onQueueState(queue, 41L to "same", 42L to "same", 43L to "mine")
+                projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-3", "end_turn"))
+                projection.applyAssistantDelta(delta("turn-4", 0, "C0"))
+                // Mixed/legacy delivery uses reservation, exposing consumption independently of modern relocation.
+                projection.appendLiveMessage("c1", userMessage("mine", "copy", PUSHED_AT))
+                projection.applyAssistantDelta(delta("turn-4", 1, "C1"))
+                runCurrent()
+                assertEquals(listOf("turn-1", "same", "turn-2", "turn-3", "mine", "turn-4"), ids(thread.last()))
+                assertEquals("C0C1", (thread.last().last() as ThreadItem.MessageItem).message.content)
+            }
+        }
+
+    @Test
+    fun modernDelivery_foreignAndNonUserRowsNeverRelocate_andConfirmedDropsStaySpent() =
+        runTest {
+            for (kind in listOf("foreign", "non-user", "dropped")) {
+                val projection = ThreadProjection()
+                val queue = QueueProjection()
+                val thread = collect(projection, "c1")
+                val held = userMessage("mine", "original", SENT_AT).copy(role = if (kind == "non-user") Role.Assistant else Role.User)
+                projection.appendMessages(listOf("c1" to held))
+                if (kind != "foreign") projection.recordMinted("c1", "mine")
+                projection.applyAssistantDelta(delta("turn-1", 0, "First"))
+                projection.onQueueState(queue, 42L to "mine")
+                if (kind == "dropped") {
+                    projection.recordDrop("c1", 42L, "mine")
+                    projection.onQueueState(queue)
+                    projection.onQueueState(queue, 42L to "mine")
+                    projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-1", "end_turn"))
+                    projection.onQueueState(queue)
+                    runCurrent()
+                    assertEquals(listOf("turn-1"), ids(thread.last()))
+                } else {
+                    projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-1", "end_turn"))
+                    projection.appendLiveMessage("c1", userMessage("mine", "copy", PUSHED_AT), queuedMessageId = 42L)
+                    projection.onQueueState(queue)
+                    runCurrent()
+                    assertEquals(listOf("mine", "turn-1"), ids(thread.last()))
+                    assertEquals(ThreadItem.MessageItem(held), thread.last().first())
+                }
+            }
+        }
+
+    @Test
+    fun modernDelivery_idleEchoKeepsTapTime_andSendNowUsesItsPushPosition() =
+        runTest {
+            for ((idle, localIntent) in listOf(true to false, false to true, false to false)) {
+                val projection = ThreadProjection()
+                val queue = QueueProjection()
+                val thread = collect(projection, "c1")
+                if (!idle) projection.applyAssistantDelta(delta("turn-1", 0, "First"))
+                val held = sendOwn(projection, "mine", "original")
+                projection.onQueueState(queue, 42L to "mine", turnOpen = !idle)
+                projection.applyAssistantDelta(delta("turn-1", if (idle) 0 else 1, "Before"))
+                if (localIntent) projection.recordSendNow("c1", "mine")
+                projection.onQueueState(queue)
+                projection.applyToolUse(toolUse("turn-1", "tool-1"))
+                projection.appendLiveMessage("c1", userMessage("mine", "copy", PUSHED_AT), sentNow = !idle, queuedMessageId = 42L)
+                projection.applyAssistantDelta(delta("turn-1", 2, "After"))
+                runCurrent()
+                val expected = if (idle) listOf("mine", "turn-1", "tool-1", "turn-1#2") else listOf("turn-1", "tool-1", "mine", "turn-1#2")
+                assertEquals(expected, ids(thread.last()))
+                assertEquals(ThreadItem.MessageItem(held), thread.last()[if (idle) 0 else 2])
+            }
+        }
+
+    @Test
+    fun modernConsumption_isConversationAndConnectionLocal_andReplayBeforeSnapshotStaysConsumed() =
+        runTest {
+            for (replayed in listOf(false, true)) {
+                val projection = ThreadProjection() // Fresh connection must not inherit the preceding iteration.
+                val queue = QueueProjection()
+                val thread = collect(projection, "c1")
+                projection.applyAssistantDelta(delta("turn-1", 0, "First"))
+                sendOwn(projection, "mine", "last")
+                projection.appendLiveMessage("other", userMessage("peer", "other", PUSHED_AT), queuedMessageId = 41L)
+                if (replayed) {
+                    projection.appendLiveMessage("c1", userMessage("peer", "replayed", PUSHED_AT), queuedMessageId = 41L)
+                }
+                projection.onQueueState(queue, 41L to "peer", 42L to "mine")
+                projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-1", "end_turn"))
+                if (!replayed) projection.appendLiveMessage("c1", userMessage("peer", "live", PUSHED_AT), queuedMessageId = 41L)
+                projection.applyAssistantDelta(delta("turn-2", 0, "Peer reply"))
+                projection.onQueueState(queue, 41L to "peer", 42L to "mine")
+                projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-2", "end_turn"))
+                projection.applyAssistantDelta(delta("turn-3", 0, "Own reply"))
+                projection.appendLiveMessage("c1", userMessage("mine", "legacy confirmation", PUSHED_AT))
+                runCurrent()
+                val expected =
+                    if (replayed) {
+                        listOf(
+                            "turn-1",
+                            "peer",
+                            "mine",
+                            "turn-2",
+                            "turn-3",
+                        )
+                    } else {
+                        listOf("turn-1", "peer", "turn-2", "mine", "turn-3")
+                    }
+                assertEquals(expected, ids(thread.last()))
+            }
+        }
+
+    @Test
+    fun modernDelivery_historyOverlapOnEitherSide_keepsHeldMetadataAndReplayIdentity() =
+        runTest {
+            for (historyFirst in listOf(false, true)) {
+                val projection = ThreadProjection()
+                val queue = QueueProjection()
+                val thread = collect(projection, "c1")
+                val held = startQueuedTurn(projection, queue)
+                val entry =
+                    HistoryEntry(
+                        10L,
+                        "message",
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"c1","message_id":"mine","role":"user","text":"history copy","queued_msg_id":42,"attachment_ids":["$ATTACHMENT_ID"]}""",
+                        ),
+                        PUSHED_AT,
+                    )
+                val page = HistoryPage(listOf(entry), cursor = "", atStart = true)
+                projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-1", "end_turn"))
+                if (historyFirst) projection.mergeHistoryPage("c1", page, interactive = true)
+                projection.appendLiveMessage("c1", userMessage("mine", "push copy", PUSHED_AT), queuedMessageId = 42L)
+                projection.applyAssistantDelta(delta("turn-2", 0, "Reply"))
+                projection.mergeHistoryPage("c1", page, interactive = true)
+                projection.appendLiveMessage("c1", userMessage("mine", "replay copy", PUSHED_AT), queuedMessageId = 42L)
+                projection.applyAssistantDelta(delta("turn-2", 0, "Reply")) // Replayed delta does not duplicate text.
+                projection.applyAssistantDelta(delta("turn-2", 1, " done"))
+                projection.onQueueState(queue, 42L to "mine")
+                runCurrent()
+                assertEquals(listOf("turn-1", "tool-1", "mine", "turn-2"), ids(thread.last()))
+                assertEquals(ThreadItem.MessageItem(held), thread.last()[2])
+                assertEquals("Reply done", (thread.last()[3] as ThreadItem.MessageItem).message.content)
+                val fresh = ThreadProjection()
+                val replayedThread = collect(fresh, "c1")
+                fresh.mergeHistoryPage("c1", page, interactive = true)
+                fresh.appendLiveMessage("c1", userMessage("mine", "replay copy", PUSHED_AT), queuedMessageId = 42L)
+                fresh.appendLiveMessage("c1", userMessage("mine", "duplicate", PUSHED_AT), queuedMessageId = 42L)
+                runCurrent()
+                assertEquals(
+                    listOf(
+                        ThreadItem.MessageItem(
+                            held.copy(
+                                content = "history copy",
+                                timestamp = PUSHED_AT,
+                                attachments = listOf(MessageAttachment(ATTACHMENT_ID)),
+                            ),
+                        ),
+                    ),
+                    replayedThread.last(),
+                )
+            }
+        }
+
+    @Test
     fun sendNow_pendingPushDoesNotSplitRunningAssistantDeltas() =
         runTest {
             val projection = ThreadProjection()

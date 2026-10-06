@@ -31,7 +31,9 @@ import kotlinx.serialization.Serializable
  * [attachmentIds] (#1020) is the optional fifth field a stored `role: "user"` history entry carries when
  * the turn named files (pyrycode#2596), with [SendMessagePayloadDto.attachmentIds]'s name and shape. Absent
  * everywhere else, so [toMessage] ignores it; the history reducer and the live `message` arm read it
- * (#1351), and only on a user row.
+ * (#1351), and only on a user row. [queuedMsgId] names the delivered queue entry (#1655), matching
+ * `protocol-mobile.md` Application message types (`message`) and Queue (v2). It is delivery metadata,
+ * not persisted domain state; history mapping ignores it and legacy payloads omit it.
  */
 @Serializable
 data class MessagePayloadDto(
@@ -42,6 +44,8 @@ data class MessagePayloadDto(
     @SerialName("attachment_ids") val attachmentIds: List<String>? = null,
     /** True only for delivery through Send now; ordinary delivery omits it. */
     @SerialName("sent_now") val sentNow: Boolean = false,
+    /** Queue entry identity; placement follows the delivered push, not the queue callback. */
+    @SerialName("queued_msg_id") val queuedMsgId: Long? = null,
 )
 
 /**
