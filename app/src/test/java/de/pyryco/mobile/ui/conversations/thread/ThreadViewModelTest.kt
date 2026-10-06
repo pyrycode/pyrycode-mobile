@@ -4262,6 +4262,7 @@ class ThreadViewModelTest {
             )
             assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
             collector.cancel()
+            assertEquals(List(repo.asks.size) { 200 }, repo.limits)
         }
 
     @Test
@@ -4290,10 +4291,11 @@ class ThreadViewModelTest {
                 List<HistoryPosition?>(3) { HistoryPosition("c1", atStart = false) },
                 repo.positionWrites.map { it?.copy(coverage = null) },
             )
+            assertEquals(List(repo.asks.size) { 200 }, repo.limits)
         }
 
     @Test
-    fun history_aPullBeforeTheOpeningAskClaimsTheSlot_isTheOnlyAsk() =
+    fun history_aPullBeforePositionSeedingIsDropped_andOnlyTheOpeningAskRuns() =
         runTest {
             val gate = CompletableDeferred<Unit>()
             val available = MutableStateFlow(true)
@@ -4303,7 +4305,7 @@ class ThreadViewModelTest {
             vm.onDemandOlderHistory()
             gate.complete(Unit)
             advanceUntilIdle()
-            // One ask from the newest; the opening ask found the walk already started and asked nothing.
+            // The pull is dropped while seeding; opening asks once from the newest after the seed arrives.
             assertEquals(listOf(""), repo.asks)
         }
 
@@ -4320,6 +4322,7 @@ class ThreadViewModelTest {
             advanceUntilIdle()
             // Echoed unexamined — the VM never parses or rebuilds what the daemon handed back.
             assertEquals(listOf("", "c1"), repo.asks)
+            assertEquals(List(repo.asks.size) { 200 }, repo.limits)
         }
 
     @Test
@@ -4450,6 +4453,7 @@ class ThreadViewModelTest {
             assertEquals(listOf("m1"), messageIds(vm))
             assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
             collector.cancel()
+            assertEquals(List(repo.asks.size) { 200 }, repo.limits)
         }
 
     @Test
@@ -4834,9 +4838,8 @@ class ThreadViewModelTest {
             gate.complete(Unit)
             advanceUntilIdle()
 
-            // #1572: the opening newest-page ask, waiting on the same read, claims the slot first and the
-            // waiting pulls are dropped under the single-request rule. No ask carried the empty cursor as
-            // the walk's: the next pull asks with the saved one.
+            // Prefetch during seeding was dropped. Only the opening newest-page ask waited for
+            // the seed; the next actual pull asks with the saved backwards cursor.
             assertEquals(listOf(""), repo.asks)
             assertEquals(listOf<HistoryPosition?>(repo.saved?.copy(coverage = null)), repo.positionWrites.map { it?.copy(coverage = null) })
             vm.onDemandOlderHistory()
@@ -5127,6 +5130,7 @@ class ThreadViewModelTest {
             assertEquals("oldest", repo.saved?.cursor)
             assertTrue(repo.saved?.atStart == true)
             assertTrue(logs.none { it.contains("seven") || it.contains("opaque-cursor-secret") })
+            assertEquals(List(repo.asks.size) { 200 }, repo.limits)
         }
 
     @Test
@@ -5219,6 +5223,7 @@ class ThreadViewModelTest {
         private val answer: suspend (String) -> HistoryPage,
     ) : ConversationRepository by delegate {
         val asks = mutableListOf<String>()
+        val limits = mutableListOf<Int>()
         val messages = MutableStateFlow<List<ThreadItem>>(emptyList())
 
         /** Every position write, in order; `null` is a clear. */
@@ -5245,6 +5250,7 @@ class ThreadViewModelTest {
             limit: Int,
         ): HistoryPage {
             asks += cursor
+            limits += limit
             return answer(cursor)
         }
     }
