@@ -28,6 +28,23 @@ The third landed in [#318](../codebase/318.md): `ConversationResponseDto` (`Conv
 - **One DTO models multiple `type`-strings when they share a shape.** `conversation_created` and `conversation_updated` carry the *identical* field set (`id`, `is_promoted`, `name?`, `cwd`, `last_used_at`, `workspace_label?` since #720; server SSOT `conversations_write.go`, #274) and differ only in `cwd`↔`name` key order — and kotlinx decodes by name, not position — so one `ConversationResponseDto` decodes both losslessly. The `_created`/`_updated` distinction is a `type`-string routing concern at the `Envelope.type` layer, not a shape concern at decode. It's a **bare object** (like #317, unlike #316's wrapper) and carries no `last_message_ts` — exactly one timestamp, validated at decode like #316 (so the mapper is a total, throw-free field copy — the #316 posture, not #317's map-time throw). It reuses #316's wire-absent-field rule **verbatim** (four list-tier placeholders, cross-referenced, no shared helper extracted — deferred until a third consumer of *that rule* appears).
 - **A single-class payload file is named after its class.** ktlint `standard:filename` (spotless) forces a file with exactly one top-level class to be named after it, so the file is `ConversationResponseDto.kt`, **not** the spec's proposed `ConversationResponsePayload.kt`. The siblings escape only because each holds two declarations (#316: wrapper + row DTO; #317: DTO + `WireRole` enum). Name future single-DTO payload files after the DTO. See [[ktlint-filename-rule-single-class]].
 
+### Assistant parent attribution (#1826)
+
+`AssistantDeltaPayloadDto` in `InteractivePayloads.kt` retains
+`@SerialName("parent_tool_use_id") val parentToolUseId: String = ""`.
+`toEvent` copies it verbatim into `LiveSessionEvent.AssistantDelta`; live and history reduction
+retain it on [`Message.parentToolUseId`](data-model.md#message). An absent field or explicit empty
+string decodes as empty; explicit JSON `null` rejects the payload at the existing strict decode/drop
+boundary, matching the sibling tool DTOs. `AssistantDeltaPayloadsTest` checks these cases with real
+JSON and a hostile-looking value whose whitespace and contents must survive unchanged.
+
+The hint stays inert and conversation-local, grants no authority and must never be logged or
+interpreted as a path, command or URL. It does not replace wire `turn_id` or `seq` as identity:
+main and child lanes keep distinct turn ids and independent sequences. No new lane or completion
+protocol is introduced. The wire SSOT remains pyrycode's `docs/protocol-mobile.md`, `assistant_delta`;
+[segment reconciliation](remote-conversation-repository-assistant-reply-segments.md#parent-attribution-through-seams-and-merges-1826)
+owns retaining known hints when later frames omit them.
+
 ### Background-task payloads (#1782)
 
 `BackgroundTaskPayloads.kt` groups the scalar lifecycle, roster and progress DTOs used by the
