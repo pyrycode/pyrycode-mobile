@@ -255,6 +255,36 @@ class StreamingMarkdownComposeTest {
         }
     }
 
+    @Test fun eofInterrupterSiblingsRejoinParagraphsListsAndQuotesThroughSettlement() {
+        show("")
+        for (lead in listOf("before", "- before", "1. before", "> before", "> - before")) {
+            for ((opener, ending) in listOf("#" to "tag", "######" to "#tag", "***" to "tag***", "___" to "tag___", "``` " to "code```")) {
+                compose.runOnIdle { streaming.value = true }
+                change("")
+                val prefix = "$lead\n$opener"
+                change(prefix)
+                change(prefix + ending)
+                settleAndCompare()
+            }
+        }
+    }
+
+    @Test fun newlineEstablishedBoundaryReusesEarlierBlockOnAppendAndBlink() {
+        show("**earlier**\n#\n")
+        val count = compositions[0]
+        change("**earlier**\n#\ntail")
+        assertEquals(count, compositions[0])
+        assertEquals("#\ntail".length, parsedLengths.last())
+        val parseCount = parses
+        val afterAppend = compositions.toMap()
+        compose.runOnIdle { caret.value = false }
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(512)
+        compose.waitForIdle()
+        assertEquals(parseCount, parses)
+        assertEquals(afterAppend, compositions)
+    }
+
     @Test fun actualTableWithCodePipeUsesSharedParserCellsAtEofAndSettlement() {
         show("| `A|B` |\n| --- | --- |")
         assertEquals(listOf("`A", "B`"), texts().map { it.text })

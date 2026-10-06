@@ -160,6 +160,42 @@ class StreamingMarkdownTest {
         }
     }
 
+    @Test fun eofInterruptersRetainTheirPredecessorsAcrossEveryRevealedPrefix() {
+        for (lead in listOf("before", "- before", "1. before", "> before", "> - before")) {
+            for (ending in listOf("#tag", "#######tag", "***tag***", "___tag___", "``` code```")) {
+                val source = "$lead\n$ending"
+                val cache = StreamingMarkdownCache()
+                for (length in 1..source.length) {
+                    val prefix = source.take(length)
+                    val expected =
+                        MarkdownParser(MarkdownFlavour)
+                            .buildMarkdownTreeFromString(prefix)
+                            .children
+                            .filter { it.type != MarkdownTokenTypes.EOL && it.type != MarkdownTokenTypes.WHITE_SPACE }
+                            .map { it.type to it.getTextInNode(prefix).toString() }
+                    val actual = cache.update(prefix).map { it.node.type to it.node.getTextInNode(it.source).toString() }
+                    assertEquals(prefix, expected, actual)
+                }
+            }
+        }
+    }
+
+    @Test fun closedInterrupterLinesAndBlankParagraphBoundariesAllowCompletedBlockReuse() {
+        for (lead in listOf("before", "- before", "1. before", "> before")) {
+            for (opener in listOf("#", "######", "***", "___", "```")) {
+                val prefix = "$lead\n$opener\n"
+                val parsed = mutableListOf<String>()
+                val cache = StreamingMarkdownCache { parsed += it }
+                val before = cache.update(prefix).first()
+                assertSame(prefix, before, cache.update(prefix + "body").first())
+                assertEquals(prefix, "$opener\nbody", parsed.last())
+            }
+        }
+        val cache = StreamingMarkdownCache()
+        val before = cache.update("before\n\n#").first()
+        assertSame(before, cache.update("before\n\n#tag").first())
+    }
+
     @Test fun unsupportedLiteralRegionsKeepTheirPunctuation() {
         listOf("https://example.com/~user", "<em title=\"~user\">x</em>", "<em title=\"**user\">x</em>", "\$`literal`").forEach {
             val root = MarkdownParser(MarkdownFlavour).buildMarkdownTreeFromString(it)

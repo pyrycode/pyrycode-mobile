@@ -18,7 +18,7 @@ internal class StreamingMarkdownBlock(
     val pending: PendingMarkdown,
 )
 
-/** The last block and any predecessor a partial list marker may rejoin stay in the mutable suffix. */
+/** The last block and any predecessor an unfinished interrupting line may rejoin stay mutable. */
 internal class StreamingMarkdownCache(
     private val onParse: (String) -> Unit = {},
 ) {
@@ -45,12 +45,42 @@ internal class StreamingMarkdownCache(
             val predecessor = next[next.lastIndex - 1].node
             val trailing = next.last().node
             val partialMarker = trailing.getTextInNode(tail).toString()
-            // An EOF rule can become another item when text is appended on the same line.
-            val provisionalRule = trailing.type == MarkdownTokenTypes.HORIZONTAL_RULE && trailing.endOffset == tail.length
+            val pendingListMarker = partialMarker.matches(Regex(" {0,3}(?:[0-9]{1,9}[.)]?|[-+*])[ \t]*"))
+            val eofLine = trailing.startOffset > tail.lastIndexOf('\n')
+            // EOF markers, headings, rules and fence openers can become paragraph content again.
+            val provisionalInterrupter =
+                eofLine &&
+                    (
+                        pendingListMarker ||
+                            trailing.type in
+                            setOf(
+                                MarkdownElementTypes.ATX_1,
+                                MarkdownElementTypes.ATX_2,
+                                MarkdownElementTypes.ATX_3,
+                                MarkdownElementTypes.ATX_4,
+                                MarkdownElementTypes.ATX_5,
+                                MarkdownElementTypes.ATX_6,
+                                MarkdownTokenTypes.HORIZONTAL_RULE,
+                                MarkdownElementTypes.CODE_FENCE,
+                            )
+                    )
+            val blankBoundary = tail.substring(predecessor.endOffset, trailing.startOffset).contains(Regex("\n[ \t\r]*\n"))
+            val mayRejoinPredecessor =
+                provisionalInterrupter &&
+                    !blankBoundary &&
+                    predecessor.type in
+                    setOf(
+                        MarkdownElementTypes.PARAGRAPH,
+                        MarkdownElementTypes.ORDERED_LIST,
+                        MarkdownElementTypes.UNORDERED_LIST,
+                        MarkdownElementTypes.BLOCK_QUOTE,
+                    )
+            // Rules and partial markers can continue a list even across a blank line.
+            val provisionalRule = eofLine && trailing.type == MarkdownTokenTypes.HORIZONTAL_RULE
             val mayRejoinList =
                 predecessor.type in setOf(MarkdownElementTypes.ORDERED_LIST, MarkdownElementTypes.UNORDERED_LIST) &&
-                    (provisionalRule || partialMarker.matches(Regex(" {0,3}(?:[0-9]{1,9}[.)]?|[-+*])[ \t]*")))
-            val mutableIndex = next.lastIndex - if (mayRejoinList) 1 else 0
+                    (provisionalRule || pendingListMarker)
+            val mutableIndex = next.lastIndex - if (mayRejoinList || mayRejoinPredecessor) 1 else 0
             completed += next.take(mutableIndex)
             consumed += next[mutableIndex].node.startOffset
         }
