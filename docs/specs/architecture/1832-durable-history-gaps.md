@@ -84,3 +84,13 @@ Pending for the documentation stage:
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-06
+
+## Revisions
+
+2026-10-06: A middle-page probe exposed two remaining holes inheriting one anchor. Preserve an old anchor only within its immediately older merged span; each resulting hole remains independently targetable. Assistant deltas on both sides of a hole require display-only fragments so a marker can sit between them without changing retained repository rows. Non-rendering newer spans use a standalone marker at the newest content edge. Marker targeting uses measured visible marker bounds.
+
+2026-10-06: A partial legacy-turn probe showed a received delta can already exist inside a retained whole-turn row without sequence metadata. Bind received delta claims to ordered, non-overlapping text offsets and the retained whole-row hash. Persist hashes, offsets and lengths only; received delta text is transient and never serialized. Restored bindings remain valid only while that retained content matches. This proves retention, never legacy completeness; unknown coverage still closes only on `at_start`. Trimming also resets the independent backwards position while retaining conservative gap metadata.
+
+2026-10-06: Inspection of backwards cursor refusal found its old whole-position clear would discard persisted gaps. Reset only backwards cursor/stop when durable coverage exists; preserve gaps/cursors for later targeted demand. Empty legacy-free positions retain the previous clear behavior.
+
+Final sizing: approximately 1400 written lines including the plan, four exported model types, one screen callback consumer, four acceptance criteria and fewer than ten request rejection branches. All hard boundaries hold.

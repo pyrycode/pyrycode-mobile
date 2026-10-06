@@ -1,4 +1,5 @@
 <resources>
+    <string name="thread_history_gap_label">Load earlier messages</string>
     <string name="host_prompt_title">Host system prompt</string>
     <string name="host_prompt_empty">Empty</string>
     <string name="host_prompt_loading">Loading…</string>

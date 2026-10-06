@@ -8,7 +8,10 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.RelayLog
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
@@ -71,6 +74,8 @@ class CachingConversationRepository(
     // Ids this destination deleted. The thread that issued the delete keeps collecting until its PopBack,
     // and a write from that collector after the removal would put the rows straight back.
     private val deleted = ConcurrentHashMap.newKeySet<String>()
+    private val historyWrites = Mutex()
+    private val drawnThreads = ConcurrentHashMap<String, List<ThreadItem>>()
 
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
         flow {
@@ -93,13 +98,18 @@ class CachingConversationRepository(
                     }
                 val drawn = live.mergeCachedRows(restored)
                 lastDrawn = drawn
+                drawnThreads[conversationId] = drawn
                 emit(drawn)
                 val cacheable = cacheableThreadRows(drawn)
                 if (cacheable != lastWritten && conversationId !in deleted) {
                     // A failed write leaves lastWritten behind, so the next change retries it. The cache is
                     // handed the drawn rows, not the already-trimmed cacheable ones, so it can see a trim at
                     // MAX_CACHED_THREAD_ROWS and drop the saved history position (#1354).
-                    if (cache.writeThread(serverId, conversationId, drawn).isSuccess) {
+                    if (historyWrites
+                            .withLock {
+                                if (conversationId in deleted) Result.success(Unit) else cache.writeThread(serverId, conversationId, drawn)
+                            }.isSuccess
+                    ) {
                         lastWritten = cacheable
                     } else {
                         RelayLog.d { "event=thread_cache_write_failed" }
@@ -109,7 +119,19 @@ class CachingConversationRepository(
         }
 
     /** This thread's saved history position (#1354), under this wrapper's own [serverId]. */
-    override suspend fun readHistoryPosition(conversationId: String): HistoryPosition? = cache.readHistoryPosition(serverId, conversationId)
+    override suspend fun readHistoryPosition(conversationId: String): HistoryPosition? {
+        val saved = cache.readHistoryPosition(serverId, conversationId)
+        val empty = cache.readThread(serverId, conversationId).isEmpty()
+        if (saved?.coverage != null) {
+            return if (empty && saved.coverage.spans.isEmpty()) {
+                saved.copy(coverage = saved.coverage.copy(unknown = false))
+            } else {
+                saved
+            }
+        }
+        if (empty) return saved
+        return (saved ?: HistoryPosition("", false)).copy(coverage = HistoryCoverage(unknown = true))
+    }
 
     /**
      * Saves [position] beside the thread's cached rows (#1354). Skipped for a conversation this destination
@@ -120,10 +142,31 @@ class CachingConversationRepository(
         conversationId: String,
         position: HistoryPosition?,
     ) {
-        if (conversationId in deleted) return
-        cache
-            .writeHistoryPosition(serverId, conversationId, position)
-            .onFailure { RelayLog.d { "event=history_position_write_failed" } }
+        if (position?.coverage == null) {
+            if (conversationId !in deleted) {
+                cache
+                    .writeHistoryPosition(serverId, conversationId, position)
+                    .onFailure { RelayLog.d { "event=history_position_write_failed" } }
+            }
+            return
+        }
+        val snapshot = delegate.threadSnapshots(conversationId).first()
+        historyWrites.withLock {
+            if (conversationId in deleted) return@withLock
+            val base = drawnThreads[conversationId] ?: cache.readThread(serverId, conversationId)
+            val restored =
+                base.filterNot {
+                    it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.id in snapshot.suppressedUserMessageIds
+                }
+            val rows = snapshot.rows.mergeCachedRows(restored)
+            if (cache.writeThread(serverId, conversationId, rows).isFailure) {
+                RelayLog.d { "event=history_rows_write_failed" }
+                return@withLock
+            }
+            cache
+                .writeHistoryPosition(serverId, conversationId, position.copy(coverage = position.coverage.boundTo(rows)))
+                .onFailure { RelayLog.d { "event=history_position_write_failed" } }
+        }
     }
 
     override suspend fun retrieveAttachment(

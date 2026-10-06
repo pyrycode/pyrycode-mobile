@@ -516,12 +516,16 @@ class CachingConversationRepositoryTest {
             live.value = listOf(message("m0"), message("m1"))
             assertEquals(listOf(message("m0"), message("m1")), cache.readThread("server-a", "conv-1"))
 
-            assertEquals(position, repository.readHistoryPosition("conv-1"))
-            assertEquals(position, CachingConversationRepository(delegate, cache, "server-a").readHistoryPosition("conv-1"))
-            assertEquals(null, CachingConversationRepository(delegate, cache, "server-b").readHistoryPosition("conv-1"))
+            assertEquals(position, repository.readHistoryPosition("conv-1")?.copy(coverage = null))
+            assertEquals(
+                position,
+                CachingConversationRepository(delegate, cache, "server-a").readHistoryPosition("conv-1")?.copy(coverage = null),
+            )
+            assertEquals("", CachingConversationRepository(delegate, cache, "server-b").readHistoryPosition("conv-1")?.cursor)
+            assertTrue(CachingConversationRepository(delegate, cache, "server-b").readHistoryPosition("conv-1")?.coverage?.unknown == true)
 
             repository.writeHistoryPosition("conv-1", null)
-            assertEquals(null, repository.readHistoryPosition("conv-1"))
+            assertTrue(repository.readHistoryPosition("conv-1")?.coverage?.unknown == true)
             assertEquals(listOf(message("m0"), message("m1")), cache.readThread("server-a", "conv-1"))
             job.cancel()
         }
@@ -538,11 +542,11 @@ class CachingConversationRepositoryTest {
 
             live.value = atLimit
             // Exactly at the limit nothing was trimmed, so the oldest saved row still matches the position.
-            assertEquals(position, repository.readHistoryPosition("conv-1"))
+            assertEquals(position, repository.readHistoryPosition("conv-1")?.copy(coverage = null))
 
             live.value = atLimit + message("newest")
             assertEquals(MAX_CACHED_THREAD_ROWS, cache.readThread("server-a", "conv-1").size)
-            assertEquals(null, repository.readHistoryPosition("conv-1"))
+            assertTrue(repository.readHistoryPosition("conv-1")?.coverage?.unknown == true)
             job.cancel()
         }
 

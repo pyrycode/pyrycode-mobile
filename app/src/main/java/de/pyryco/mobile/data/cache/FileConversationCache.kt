@@ -12,6 +12,7 @@ import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.BoundaryReason
+import de.pyryco.mobile.data.repository.HistoryCoverage
 import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.coroutines.CoroutineDispatcher
@@ -113,7 +114,17 @@ class FileConversationCache(
                     settledThreadRows(rows).count {
                         it !is ThreadItem.UnrecognizedMessage && it !is ThreadItem.BackgroundTaskLifecycle
                     }
-            val history = if (trimmed) null else storedHistoryOrNull(document)
+            val saved = storedHistoryOrNull(document)
+            val history =
+                if (trimmed && saved?.coverage == null) {
+                    null
+                } else {
+                    saved?.copy(
+                        cursor = if (trimmed) "" else saved.cursor,
+                        atStart = if (trimmed) false else saved.atStart,
+                        coverage = saved.coverage?.retainedBy(kept),
+                    )
+                }
             val record = CachedThread(VERSION, kept.map { it.toRecord() }, history)
             writeAtomically(document, MobileJson.encodeToString(record))
         }
@@ -155,7 +166,8 @@ class FileConversationCache(
                     RelayLog.d { "conversation_cache operation=write_history_read status=failed code=$code" }
                     emptyList()
                 }
-            val record = CachedThread(VERSION, rows, position?.let { CachedHistoryPosition(it.cursor, it.atStart) })
+            val coverage = position?.coverage?.retainedBy(rows.map { it.toDomain() })?.boundTo(rows.map { it.toDomain() })
+            val record = CachedThread(VERSION, rows, position?.let { CachedHistoryPosition(it.cursor, it.atStart, coverage) })
             writeAtomically(document, MobileJson.encodeToString(record))
         }
 
@@ -507,8 +519,9 @@ private data class CachedThreadHeader(
 private data class CachedHistoryPosition(
     val cursor: String,
     val atStart: Boolean,
+    val coverage: HistoryCoverage? = null,
 ) {
-    fun toDomain() = HistoryPosition(cursor, atStart)
+    fun toDomain() = HistoryPosition(cursor, atStart, coverage)
 
     override fun toString(): String = "CachedHistoryPosition(atStart=$atStart)"
 }
