@@ -31,6 +31,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -47,6 +48,10 @@ internal const val CHANNEL_PROMPT_FIELD_TAG: String = "channel-form-prompt"
 // The frame's 8dp label/field gap and 12dp gap between the two blocks.
 private val FieldLabelGap = 8.dp
 private val FieldGap = 12.dp
+
+// Figma 671:5558 draws each field's label in its full line box; the theme's default trims it to its
+// glyphs, which pulls the next block's label a couple of px closer than the frame (#1651).
+private val FieldLabelLineBox = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
 
 // The prompt well opens tall enough to read as a paragraph box; the shell scrolls beyond that.
 // Channel info's System prompt well (#1342) borrows both, so the two wells stay one size.
@@ -161,7 +166,7 @@ private fun LabelledField(
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.labelLarge,
+            style = MaterialTheme.typography.labelLarge.copy(lineHeightStyle = FieldLabelLineBox),
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onPrimaryContainer,
         )
