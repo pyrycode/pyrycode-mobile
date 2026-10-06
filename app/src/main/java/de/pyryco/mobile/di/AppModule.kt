@@ -50,7 +50,6 @@ import de.pyryco.mobile.push.PushTokenRefresher
 import de.pyryco.mobile.push.PushTokenSink
 import de.pyryco.mobile.push.PushTokenSource
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
-import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.conversations.share.ShareIntakeViewModel
 import de.pyryco.mobile.ui.conversations.share.SharingShortcuts
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
@@ -253,7 +252,6 @@ val appModule =
         }
         // The third dependency is the paired-server store the Edit host modal reads and writes (#744).
         viewModel { ChannelListViewModel(get(), get(), get()) }
-        viewModel { DiscussionListViewModel(get(), get()) }
         viewModel { get<ThreadDestinationFactory>().settings(get(), get()) }
         viewModel { get<ThreadDestinationFactory>().archive(get()) }
         viewModel {

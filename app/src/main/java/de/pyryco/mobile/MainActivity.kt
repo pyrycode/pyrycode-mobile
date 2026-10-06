@@ -62,13 +62,8 @@ import de.pyryco.mobile.ui.conversations.components.LocalWorkspacePickerReposito
 import de.pyryco.mobile.ui.conversations.list.ChannelListEvent
 import de.pyryco.mobile.ui.conversations.list.ChannelListScreen
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
-import de.pyryco.mobile.ui.conversations.list.DiscussionListEvent
-import de.pyryco.mobile.ui.conversations.list.DiscussionListScreen
-import de.pyryco.mobile.ui.conversations.list.DiscussionListUiState
-import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import de.pyryco.mobile.ui.conversations.list.PLAY_STORE_URL
-import de.pyryco.mobile.ui.conversations.list.PendingPromotion
 import de.pyryco.mobile.ui.conversations.share.ShareIntakeViewModel
 import de.pyryco.mobile.ui.conversations.share.SharePayload
 import de.pyryco.mobile.ui.conversations.share.SharePickerHeader
@@ -537,37 +532,6 @@ internal fun PyryNavHost(
                 },
             )
         }
-        composable(Routes.DISCUSSION_LIST) {
-            val vm = koinViewModel<DiscussionListViewModel>()
-            val flatState by vm.state.collectAsStateWithLifecycle()
-            val hostState by vm.hostState.collectAsStateWithLifecycle()
-            val state =
-                (flatState as? DiscussionListUiState.Loaded)?.copy(
-                    pendingPromotion = hostState.pendingPromotion?.let { PendingPromotion(it.target.conversationId, it.sourceName) },
-                ) ?: flatState
-            LaunchedEffect(vm) {
-                vm.hostNavigationEvents.collect { navController.openThread(it) }
-            }
-            DiscussionListScreen(
-                state = state,
-                onEvent = { event ->
-                    when (event) {
-                        is DiscussionListEvent.RowTapped ->
-                            destinations.selectedServerId()?.let { vm.onHostRowTapped(HostConversationTarget(it, event.conversationId)) }
-                        is DiscussionListEvent.SaveAsChannelRequested ->
-                            destinations.selectedServerId()?.let {
-                                vm.requestHostPromotion(
-                                    HostConversationTarget(it, event.conversationId),
-                                )
-                            }
-                        DiscussionListEvent.PromoteConfirmed -> vm.confirmHostPromotion()
-                        DiscussionListEvent.PromoteCancelled -> vm.cancelHostPromotion()
-                        DiscussionListEvent.BackTapped ->
-                            navController.popBackStack()
-                    }
-                },
-            )
-        }
         composable(
             route = Routes.CONVERSATION_THREAD,
             arguments = Routes.hostArguments(),
@@ -919,7 +883,6 @@ internal object Routes {
      */
     const val PAIR_CODE_ROUTE = "pair_code?serverId={serverId}"
     const val CHANNEL_LIST = "channel_list"
-    const val DISCUSSION_LIST = "discussions"
     const val CONVERSATION_THREAD = "conversation_thread/{serverId}/{conversationId}"
 
     /** A thread's markdown attachment in the reader (#1027): the thread's two ids plus the attachment's. */

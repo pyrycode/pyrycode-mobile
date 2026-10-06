@@ -11,8 +11,6 @@
     <string name="cd_open_menu">Open menu</string>
     <string name="cd_pair_another_host">Pair another host</string>
     <string name="channel_list_empty">To pair a host, tap Pair another host at the top right.</string>
-    <string name="discussion_list_title">Recent discussions</string>
-    <string name="discussion_list_empty">No discussions yet</string>
     <string name="cd_back">Back</string>
     <string name="cd_more_actions">More actions</string>
     <string name="save_as_channel_action">Save as channel…</string>
@@ -53,10 +51,6 @@
     <string name="unnamed_host">Unnamed host</string>
     <string name="settings_title">Settings</string>
     <string name="cd_add_memory_plugin">Add memory plugin</string>
-    <string name="promote_dialog_title">Save as channel?</string>
-    <string name="promote_dialog_body">Save \"%1$s\" as a channel?</string>
-    <string name="promote_dialog_confirm">Save as channel</string>
-    <string name="promote_dialog_cancel">Cancel</string>
     <string name="delete_dialog_title">Delete conversation?</string>
     <string name="delete_dialog_body">This permanently deletes \"%1$s\" and all its sessions and messages. This can’t be undone.</string>
     <string name="delete_dialog_confirm">Delete</string>
