@@ -181,15 +181,15 @@ private fun ModelSection(
         )
         return
     }
-    Column(modifier = Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        choices.forEach { choice ->
-            ModelRow(
-                choice = choice,
-                selected = choice.value == selectedModel,
-                enabled = enabled,
-                onClick = { onModelSelected(choice.value) },
-            )
-        }
+    // Two to a row, the same layout and 12 dp gaps the effort list below uses.
+    TwoColumnRadioRows(items = choices, modifier = Modifier.selectableGroup()) { choice, cellModifier ->
+        ModelRow(
+            choice = choice,
+            selected = choice.value == selectedModel,
+            enabled = enabled,
+            onClick = { onModelSelected(choice.value) },
+            modifier = cellModifier,
+        )
     }
     // Reported, never recomputed from choices.size — which is what lets this say "3 of 47" instead of
     // presenting a shortened menu as complete.
@@ -214,11 +214,11 @@ private fun ModelRow(
     selected: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier.fillMaxWidth(),
 ) {
     Row(
         modifier =
-            Modifier
-                .fillMaxWidth()
+            modifier
                 .selectable(
                     selected = selected,
                     enabled = enabled,
@@ -257,35 +257,45 @@ private fun EffortRadioRows(
         UnavailableNote(text = "No effort levels published for this model.")
         return
     }
-    Column(
-        modifier = Modifier.fillMaxWidth().selectableGroup(),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        effortChoices.chunked(2).forEach { pair ->
+    TwoColumnRadioRows(items = effortChoices, modifier = Modifier.fillMaxWidth().selectableGroup()) { effort, cellModifier ->
+        Row(
+            modifier =
+                cellModifier
+                    .selectable(
+                        selected = effort.value == selectedEffort,
+                        enabled = enabled,
+                        role = Role.RadioButton,
+                        onClick = { onEffortSelected(effort.value) },
+                    ).heightIn(min = 22.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RadioMark(selected = effort.value == selectedEffort, enabled = enabled)
+            Spacer(modifier = Modifier.width(12.dp))
+            // #1497: 600:1694 reads the published level capitalised; the write stays effort.value.
+            Text(
+                text = effort.label.replaceFirstChar { it.uppercaseChar() },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+        }
+    }
+}
+
+/**
+ * Shared two-column radio layout: [items] taken in pairs, left to right then down, each cell the same
+ * width with the 12 dp gap the effort list established between cells and between rows. An odd final
+ * item leaves the row's right-hand cell blank rather than stretching the lone cell full width.
+ */
+@Composable
+private fun <T> TwoColumnRadioRows(
+    items: List<T>,
+    modifier: Modifier = Modifier,
+    cell: @Composable (item: T, cellModifier: Modifier) -> Unit,
+) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        items.chunked(2).forEach { pair ->
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                pair.forEach { effort ->
-                    Row(
-                        modifier =
-                            Modifier
-                                .weight(1f)
-                                .selectable(
-                                    selected = effort.value == selectedEffort,
-                                    enabled = enabled,
-                                    role = Role.RadioButton,
-                                    onClick = { onEffortSelected(effort.value) },
-                                ).heightIn(min = 22.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioMark(selected = effort.value == selectedEffort, enabled = enabled)
-                        Spacer(modifier = Modifier.width(12.dp))
-                        // #1497: 600:1694 reads the published level capitalised; the write stays effort.value.
-                        Text(
-                            text = effort.label.replaceFirstChar { it.uppercaseChar() },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onBackground,
-                        )
-                    }
-                }
+                pair.forEach { item -> cell(item, Modifier.weight(1f)) }
                 if (pair.size == 1) Spacer(modifier = Modifier.weight(1f))
             }
         }
