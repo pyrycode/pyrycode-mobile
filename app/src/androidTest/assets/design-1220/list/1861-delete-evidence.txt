@@ -1,0 +1,43 @@
+Ticket #1861: Default Delete comparison to Figma 673:3665
+Captured 2026-10-07 (local date), final XML timestamp 2026-10-06T23:19:25 UTC.
+Implementation/test revision: b8ca50d1 (full revision below).
+Configured device: pixel8Api35, Pixel 8 profile, API 35, google_apis_playstore arm64-v8a, image revision 9, extension level 13.
+Runtime model: sdk_gphone64_arm64 (see original capture sidecars).
+Command:
+./gradlew :app:pixel8Api35DebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.design.ListDesignCaptureTest#listFramesAt412By892,de.pyryco.mobile.design.ListDesignCaptureTest#listFramesAt320By700LargeText' -Pandroid.testInstrumentationRunnerArguments.requireRealSystemBars=true --console=plain
+Exit 0. Fresh XML: 2 executed, 2 passed, 0 failed, 0 errors, 0 skipped.
+Named methods: listFramesAt412By892 and listFramesAt320By700LargeText, both passed.
+Both walks reach Delete through Channel Info. They verify Cancel, actual device Back and outside dismissal without reopening Channel Info. The fake remains named kitchenclaw refactor after dismissal.
+
+Default measurements (density 1, font scale 1, static dark, real 24 px top/bottom bars):
+Surface screen bounds: x=48..363, y=336..555 (316x220).
+After removing the 24 px status inset: top-left (48,312), 316x220, exactly the reference.
+Surface fill RGB (39,42,47) / surfaceContainerHigh, matching the reference.
+Corners: 28 dp MaterialTheme.shapes.extraLarge; app and reference solid-fill corner profiles differ by at most 1 px over the first 28 rows.
+Content padding 24 dp, title/body gap 16 dp, body/actions gap 24 dp, action gap 8 dp, asserted by native shared geometry tests within 1 dp.
+Three body lines, headlineSmall 24/32, bodyMedium 14/20 and labelLarge 14/20, theme onSurface / onSurfaceVariant / primary tokens. Native text line boxes are untrimmed to reproduce full reference line heights.
+Actions retain at least 48 dp touch targets. Physical taps in their invisible extensions prove exactly one confirm/dismiss event in shared tests.
+Verdict: surface size/position and corner profile PASS within 2 dp; internal spacing PASS within 1 dp; colour/type role tokens MATCH. Platform font rasterization produces small glyph differences in the comparison; typography roles remain the frame's values.
+
+Compact: 320x700, actual font scale 1.5, static dark, real bars; body has no visual overflow, each action is a complete unellipsized line whose rendered edges fit its text box, both actions are displayed and targets are at least 48 dp. Fresh compact capture retained for readability evidence; the complete Figma audit covers only Default Delete.
+
+Comparison: 1861-delete-surface-side-by-side.png (Figma left, app right), 1861-delete-surface-overlay.png. Crops use the measured 316x220 app surface and Figma's (48,312)..(364,532) surface. Full raw app/Figma frames and original sidecars are retained separately. The populated fake thread behind the scrim is fixture content; Channel Info is absent.
+Figma screenshot fetched via get_screenshot on 2026-10-07.
+Generation command:
+python3 scripts/design-compare.py app/src/androidTest/assets/design-1220/list/1861-app-delete-surface.png app/src/androidTest/assets/design-1220/list/1861-figma-delete-surface.png app/src/androidTest/assets/design-1220/list/1861-delete-surface
+
+Pending dispatcher acceptance: full live suite must execute and pass de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_deleteConversation_removesFromListAndClosesThread, with fresh executed/failed/skipped counts and explicit named-method confirmation. No focused builder live run was requested.
+Pending documentation: list/index.md, Delete confirmation 673:3665 entry, new measurements, tolerance verdict and this provenance.
+Full captured revision: b8ca50d1d9b5ae0d5b8dabaad512576fb4810feb
+
+SHA-256:
+fcffcc493dc69ec8c92d2744753d47cd9c29313736102879d9d7725ebe4da769  1861-app-delete-surface.png
+5c8db7593afd319f2ef50208f8eb320655637fe0574033398ae6d48367a4b3e2  1861-delete-confirmation-compact.png
+968d0321be21bd432b76e29e6d23f1795b9c45c9e71984798ec4580dc8823252  1861-delete-confirmation-compact.txt
+bbf7c4cb25e7f9c4b75d1eba170722f837a424ee96f70930c623b5d91be48486  1861-delete-confirmation.png
+01124a2777df13ce69e7ab187eeb54ddded2ba8d11031af2a9a8d8ab12ce21d8  1861-delete-confirmation.txt
+cd66fd9d8b96fd5c66d765f97730dcf2dd8022b0c988e1b5e9cae0ba2add4a1d  1861-delete-results.xml
+63fa10c30d5ee6104ede4fd99595dc9702b71f2ff9bf37c8486361536f8ec4c6  1861-delete-surface-overlay.png
+519b1def30446d8db648d4db72a625e60427be4af929f46967aa3fea6d4f25c7  1861-delete-surface-side-by-side.png
+2ea2c7ce7124b0980f075daec50421fbdcec881253a5a16848f9bc52fb9bd7b4  1861-figma-673-3665.png
+05ab17b5b1e2223985c1ad9d34a2c8d2f3fc80bea539ccdac3a332486fc23b95  1861-figma-delete-surface.png
