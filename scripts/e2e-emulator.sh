@@ -1529,6 +1529,9 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_sendQueuedNow_reachesRunningTurn"
   # #1674: finished reply partial selection through Android's system Copy menu. One Claude turn.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_finishedReply_systemCopyCopiesSelectedWord"
+  # #1766: a real reply with emphasis, inline code, a fenced block and a table streams through the parser-led
+  # body and settles formatted with no lost text. One Claude turn.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_markdownReply_rendersFormattedBody"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi

@@ -354,6 +354,16 @@ Both run on a device without substituted menu/clipboard providers or production 
 The live method is in the curated full suite; run the focused deterministic scenario with
 `python3 scripts/android-test-gate.py scripted selection-copy`. `scripted-all` includes it too.
 
+**Formatted streaming markdown (#1766).**
+`InteractiveStreamE2ETest#interactiveTurn_markdownReply_rendersFormattedBody` asks real Claude for a
+reply holding emphasis, inline code, a fenced block and a table, waits for the settled bubble, and
+checks the bold and monospace spans, every code and table marker, and that the reply arrived with no
+lost source text. It is in the curated full suite. Pending syntax, block reuse, pacing and equal-width
+settlement are proved without a device by `StreamingMarkdownTextTest` and the prefix replay in
+`StreamingMarkdownTest`. Live result: the method passed on 2026-10-05 against PR #1810's earlier
+implementation. The parser-led implementation that replaced it has no live result yet, so a fresh
+passing full curated live run, reporting executed, failed and skipped counts, is still owed.
+
 
 The rung-3 coverage also includes
 `InteractiveStreamE2ETest.interactiveTurn_otherConversationAttentionPills_waitingAndFinished`
@@ -1927,7 +1937,7 @@ host-prompt handlers. Scripted runs and unrelated live subsets retain their exis
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the current selector has 60 runnable `@Test` methods. The historical
+incantation to remember — the current selector has 61 runnable `@Test` methods. The historical
 inventory below describes the pre-#1193 forty-four-method set; ignored methods are excluded from
 the current selector as described under the model and effort settings round trip. It covered ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;

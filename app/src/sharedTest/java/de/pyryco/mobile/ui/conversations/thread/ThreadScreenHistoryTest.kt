@@ -3,9 +3,12 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasScrollToIndexAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -16,6 +19,7 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.height
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
@@ -303,6 +307,42 @@ class ThreadScreenHistoryTest {
                 ),
             )
         }
+
+    // #1605: Figma 689:4330 draws the Retry row's label in its full line box, and every history tail row
+    // now leaves the stream's standard 16dp gap below it, which this row previously had none of at all.
+    // The row's own reported height (its 44dp content plus its own trailing gutter) grows from 44dp to 60dp.
+    @Test
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    fun retryRow_keepsItsLabelsFullLineBox_andLeavesTheStandard16dpGapBelowIt() {
+        composeRule.setContent {
+            PyrycodeMobileTheme {
+                androidx.compose.foundation.layout.Box(
+                    androidx.compose.ui.Modifier
+                        .testTag("retry-row"),
+                ) {
+                    HistoryRetryRow(onRetry = {})
+                }
+            }
+        }
+
+        val results = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        composeRule
+            .onNode(
+                androidx.compose.ui.test
+                    .hasText("Try again", substring = true),
+                useUnmergedTree = true,
+            ).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+        assertEquals(
+            androidx.compose.ui.text.style.LineHeightStyle.Trim.None,
+            results
+                .single()
+                .layoutInput.style.lineHeightStyle
+                ?.trim,
+        )
+
+        val retry = composeRule.onNodeWithTag("retry-row").getUnclippedBoundsInRoot()
+        assertEquals(60f, retry.height.value, 0.5f)
+    }
 
     private companion object {
         const val HISTORY_LOADING_DESCRIPTION = "Loading earlier messages in this conversation"

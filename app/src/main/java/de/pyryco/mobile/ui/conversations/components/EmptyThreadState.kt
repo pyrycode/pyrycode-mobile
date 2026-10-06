@@ -23,7 +23,8 @@ fun EmptyThreadState(modifier: Modifier = Modifier) {
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
         Text(
             text = stringResource(R.string.thread_empty_state),
-            style = MaterialTheme.typography.bodyMedium,
+            // Figma 696:4989 draws this line in bodySmall, not bodyMedium (#1625).
+            style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )

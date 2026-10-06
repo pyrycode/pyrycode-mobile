@@ -68,7 +68,6 @@ private val ToolNestingIndent = MessageAreaRowSpacing
 // Surface is the only node that moves when the hug regresses.
 internal const val MESSAGE_BUBBLE_TEST_TAG = "message-bubble"
 
-private const val STREAMING_CARET_GLYPH = "▎"
 private val UserParagraphBreak = Regex("\\r?\\n[\\t ]*\\r?\\n")
 private const val STREAMING_REVEAL_WORDS_PER_SECOND = 30
 internal const val STREAMING_REVEAL_STEP_MS: Long = 1000L / STREAMING_REVEAL_WORDS_PER_SECOND
@@ -436,8 +435,14 @@ private fun StreamingAssistantBodyView(
     onOpenMarkdownLink: ((String) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
-    val displayText = if (caretVisible) revealedText + STREAMING_CARET_GLYPH else revealedText
-    MarkdownText(markdown = displayText, modifier = modifier, onOpenMarkdownPath = onOpenMarkdownLink)
+    // The caret is drawn beside the parsed text, never appended to it (#1766): a glyph inside the source became
+    // code content, a link destination or a closing delimiter's neighbour.
+    StreamingMarkdownText(
+        source = revealedText,
+        caretVisible = caretVisible,
+        modifier = modifier,
+        onOpenMarkdownPath = onOpenMarkdownLink,
+    )
 }
 
 // Pinned rather than Clock.System.now() so the meta row renders a stable, reviewable timestamp — the
