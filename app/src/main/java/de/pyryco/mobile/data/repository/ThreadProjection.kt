@@ -941,7 +941,7 @@ internal class ThreadProjection(
                                 row
                             }
                         }.withParkedEchoesLast(echoes?.parked.orEmpty())
-                ThreadSnapshot(rows, suppressed)
+                ThreadSnapshot(rows, suppressed, current.historyOrder[conversationId].orEmpty())
             }.distinctUntilChanged()
 
     /** This thread as [observe] reads it: [parkedIds] user rows last, the rest through [withOnlyLastRowStreaming]. */

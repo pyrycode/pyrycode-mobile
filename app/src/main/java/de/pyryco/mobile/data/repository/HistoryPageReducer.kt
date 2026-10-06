@@ -489,6 +489,7 @@ internal fun reduceHistoryPage(
 internal class ReducedHistoryPage(
     val rows: List<ThreadItem>,
     val order: Map<Any, Long>,
+    val claims: Map<Any, Set<Long>>,
 )
 
 /** Order belongs to the contextual fold: a falling compaction edge needs its earlier rising edge. */
@@ -498,6 +499,7 @@ internal fun reduceOrderedHistoryPage(
 ): ReducedHistoryPage {
     var compaction = CompactionFold()
     val order = HashMap<Any, Long>()
+    val claims = HashMap<Any, MutableSet<Long>>()
     val rows =
         entries.asReversed().fold(emptyList<ThreadItem>()) { rows, entry ->
             val next =
@@ -523,14 +525,31 @@ internal fun reduceOrderedHistoryPage(
                     val segment = (row as? ThreadItem.MessageItem)?.message?.segment
                     if (segment == null) {
                         order.putIfAbsent(row.mergeIdentity(), logId)
+                        val ids = claims.getOrPut(row.mergeIdentity()) { HashSet() }
+                        if (previous is ThreadItem.CompactionBoundary && previous.mergeIdentity() != row.mergeIdentity()) {
+                            ids.addAll(claims.remove(previous.mergeIdentity()).orEmpty())
+                        }
+                        ids.add(entry.id)
                     } else {
-                        segment.deltas.forEach { delta -> order.putIfAbsent(listOf("delta", segment.turnId, delta.seq), logId) }
+                        val before =
+                            (previous as? ThreadItem.MessageItem)
+                                ?.message
+                                ?.segment
+                                ?.takeIf { it.turnId == segment.turnId }
+                                ?.deltas
+                                .orEmpty()
+                                .map { it.seq }
+                        segment.deltas.forEach { delta ->
+                            val key = listOf("delta", segment.turnId, delta.seq)
+                            order.putIfAbsent(key, logId)
+                            if (delta.seq !in before) claims.getOrPut(key) { HashSet() }.add(entry.id)
+                        }
                     }
                 }
             }
             next
         }
-    return ReducedHistoryPage(rows, order)
+    return ReducedHistoryPage(rows, order, claims)
 }
 
 /**
@@ -821,8 +840,23 @@ private fun List<ThreadItem>.withHistoryLifecyclePositions(
 }
 
 /** Cache-only rows stay beside their retained neighbours, using the same delta reconciliation as pages. */
-internal fun List<ThreadItem>.mergeCachedRows(cached: List<ThreadItem>): List<ThreadItem> =
-    mergeRows(cached, emptyMap(), cacheRestore = true)
+internal fun List<ThreadItem>.mergeCachedRows(
+    cached: List<ThreadItem>,
+    order: Map<Any, Long> = emptyMap(),
+): List<ThreadItem> = mergeRows(cached, order, cacheRestore = true)
+
+/** Resolve persisted hashes once when restoring a base, rather than on every live delta emission. */
+internal fun List<ThreadItem>.receivedHistoryOrder(positions: Map<String, Long>): Map<Any, Long> =
+    if (positions.isEmpty()) {
+        emptyMap()
+    } else {
+        buildMap {
+            this@receivedHistoryOrder.deltaRows().forEach { row ->
+                val identity = row.mergeIdentity()
+                positions[historyIdentity(identity)]?.let { put(identity, it) }
+            }
+        }
+    }
 
 /** Single-delta identities survive different segment boundaries on the history, live and cache lanes. */
 internal fun ThreadItem.mergeIdentity(): Any {

@@ -26,6 +26,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -34,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.historyKeys
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
 
 // #777: the oldest-end loading row, sized to ThinkingIndicator's shipped spinner-and-label idiom and
@@ -108,6 +110,84 @@ internal fun Modifier.olderHistoryPull(gesture: OlderHistoryGesture): Modifier =
             gesture.onGestureStart()
         }
     }.nestedScroll(gesture)
+
+internal fun historyMarkersFor(
+    row: ThreadRow,
+    markers: List<ThreadHistoryMarker>,
+): List<ThreadHistoryMarker> {
+    val keys = (row as? ThreadRow.Delivered)?.item?.historyKeys().orEmpty()
+    return markers.filter { it.beforeRow in keys }
+}
+
+/** A marker's first newer tool stays visible; unrelated runs keep their existing collapse policy. */
+internal fun foldHistoryToolRuns(
+    rows: List<ThreadRow>,
+    expanded: Set<String>,
+    markers: List<ThreadHistoryMarker>,
+): List<ThreadRow> =
+    buildList {
+        var start = 0
+        rows.forEachIndexed { index, row ->
+            if (historyMarkersFor(row, markers).isNotEmpty()) {
+                addAll(foldToolRuns(rows.subList(start, index), expanded))
+                add(row)
+                start = index + 1
+            }
+        }
+        addAll(foldToolRuns(rows.subList(start, rows.size), expanded))
+    }
+
+internal const val HISTORY_NEWEST_GAPS_KEY = "history-newest-gaps"
+
+internal fun visibleHistoryMarker(
+    layout: LazyListLayoutInfo,
+    rows: List<ThreadRow>,
+    promptRows: Int,
+    markers: List<ThreadHistoryMarker>,
+    heights: Map<Long, Int> = emptyMap(),
+): ThreadHistoryMarker? =
+    layout.visibleItemsInfo.sortedBy { it.index }.firstNotNullOfOrNull { item ->
+        val row = rows.getOrNull(rows.lastIndex - (item.index - promptRows))
+        var edge = item.offset + item.size
+        val attached =
+            if (item.key == HISTORY_NEWEST_GAPS_KEY) {
+                markers.filter { it.beforeRow.isEmpty() }
+            } else {
+                row?.let { historyMarkersFor(it, markers) }.orEmpty()
+            }
+        attached
+            .mapNotNull { marker ->
+                val height = heights[marker.anchor] ?: 0
+                val visible =
+                    edge - height < layout.viewportEndOffset &&
+                        edge > layout.viewportStartOffset ||
+                        height == 0 &&
+                        edge <= layout.viewportEndOffset
+                edge -= height
+                marker.takeIf { visible }
+            }.lastOrNull()
+    }
+
+@Composable
+internal fun HistoryGapRow(
+    anchor: Long,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .padding(horizontal = HistoryLoadingGutter, vertical = HistoryLoadingVerticalPadding)
+                .testTag("history-gap:$anchor"),
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            stringResource(R.string.thread_history_gap_label),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
 
 /**
  * Whether the reversed thread list sits at, or within [bandPx] of, its oldest end (#1352). [oldestIndex] is

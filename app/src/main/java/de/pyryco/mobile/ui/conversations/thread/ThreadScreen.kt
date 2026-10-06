@@ -243,6 +243,7 @@ fun ThreadScreen(
     // #1352: the reader pulled toward older messages at the thread's oldest end — ask for the next page
     // back. Wired by MainActivity → vm::onDemandOlderHistory, which decides whether the ask is sent.
     onDemandOlderHistory: () -> Unit = {},
+    onDemandHistoryGap: (Long) -> Unit = {},
     // #778: the reader pressed the oldest-end retry affordance. Wired by MainActivity →
     // vm::onRetryOlderHistory, and inert unless the walk stopped on a retryable failure.
     onRetryOlderHistory: () -> Unit = {},
@@ -596,8 +597,8 @@ fun ThreadScreen(
                     previousAgentRows = agentRows
                 }
                 val rows =
-                    remember(agentRows, collapseToolUses, retainedExpandedRuns) {
-                        if (collapseToolUses) foldToolRuns(agentRows, retainedExpandedRuns) else agentRows
+                    remember(agentRows, collapseToolUses, retainedExpandedRuns, state.historyMarkers) {
+                        if (collapseToolUses) foldHistoryToolRuns(agentRows, retainedExpandedRuns, state.historyMarkers) else agentRows
                     }
                 // A backlog item this device minted no echo for is a row of its own, so the empty state
                 // must yield to it (#782 AC #3). When an item *is* matched its echo is a MessageItem, so
@@ -608,9 +609,13 @@ fun ThreadScreen(
                     // #1352: a pull toward older messages is the only history ask. Inert while a page is
                     // loading, so a second pull sends nothing; the ViewModel still decides the rest.
                     val demandOlderHistory by rememberUpdatedState(onDemandOlderHistory)
+                    val demandHistoryGap by rememberUpdatedState(onDemandHistoryGap)
+                    val gapMarkers by rememberUpdatedState(state.historyMarkers)
+                    val gapHeights = remember(state.conversationId) { mutableStateMapOf<Long, Int>() }
                     val historyLoading by rememberUpdatedState(state.historyTail == ThreadHistoryTail.Loading)
                     val pullForOlderHistory = { if (!historyLoading) demandOlderHistory() }
                     if (!state.hasMessages &&
+                        state.historyMarkers.isEmpty() &&
                         state.queuedMessages.isEmpty() &&
                         shownQuestion == null &&
                         openRequest == null &&
@@ -635,6 +640,7 @@ fun ThreadScreen(
                         val listState = rememberLazyListState()
                         val promptRowCount =
                             (shownQuestion?.let { it.batch.questions.size + 2 } ?: 0) +
+                                (if (state.historyMarkers.any { it.beforeRow.isEmpty() }) 1 else 0) +
                                 (if (openRequest != null) PERMISSION_ROW_COUNT else 0) +
                                 (if (answerRejected) 1 else 0)
                         LaunchedEffect(goToAgent, rows, promptRowCount) {
@@ -684,11 +690,35 @@ fun ThreadScreen(
                         // history, so the oldest thread row sits after them.
                         val oldestRowIndex by rememberUpdatedState(if (rows.isEmpty()) -1 else rows.size + promptRowCount - 1)
                         val askBandPx by rememberUpdatedState(with(LocalDensity.current) { HistoryAskBand.toPx() })
+                        val currentHistoryRows by rememberUpdatedState(rows)
+                        val historyPromptRows by rememberUpdatedState(promptRowCount)
                         val listPull =
                             remember(listState) {
                                 OlderHistoryGesture(
-                                    nearOldestEnd = { listState.layoutInfo.isNearOldestEnd(oldestRowIndex, askBandPx) },
-                                    onDemand = pullForOlderHistory,
+                                    nearOldestEnd = {
+                                        visibleHistoryMarker(
+                                            listState.layoutInfo,
+                                            currentHistoryRows,
+                                            historyPromptRows,
+                                            gapMarkers,
+                                            gapHeights,
+                                        ) !=
+                                            null ||
+                                            listState.layoutInfo.isNearOldestEnd(oldestRowIndex, askBandPx)
+                                    },
+                                    onDemand = {
+                                        if (!historyLoading) {
+                                            val marker =
+                                                visibleHistoryMarker(
+                                                    listState.layoutInfo,
+                                                    currentHistoryRows,
+                                                    historyPromptRows,
+                                                    gapMarkers,
+                                                    gapHeights,
+                                                )
+                                            if (marker != null) demandHistoryGap(marker.anchor) else demandOlderHistory()
+                                        }
+                                    },
                                 )
                             }
                         // #1314: one following state, derived from position on every scroll as desktop's
@@ -801,6 +831,15 @@ fun ThreadScreen(
                                     Box(gutter) { QuestionBatchTitle(pending) }
                                 }
                             }
+                            if (state.historyMarkers.any { it.beforeRow.isEmpty() }) {
+                                item(key = HISTORY_NEWEST_GAPS_KEY) {
+                                    Column {
+                                        gapMarkers.filter { it.beforeRow.isEmpty() }.forEach { marker ->
+                                            HistoryGapRow(marker.anchor, Modifier.onSizeChanged { gapHeights[marker.anchor] = it.height })
+                                        }
+                                    }
+                                }
+                            }
                             itemsIndexed(
                                 items = reversedRows,
                                 // The key derivation and its uniqueness argument live beside the fold, in
@@ -810,6 +849,9 @@ fun ThreadScreen(
                             ) { reversedIndex, row ->
                                 val chronologicalIndex = rows.size - 1 - reversedIndex
                                 ThreadRowContent(rowRelocationSpec) {
+                                    historyMarkersFor(row, gapMarkers).forEach { marker ->
+                                        HistoryGapRow(marker.anchor, Modifier.onSizeChanged { gapHeights[marker.anchor] = it.height })
+                                    }
                                     when (row) {
                                         is ThreadRow.Delivered ->
                                             when (val item = row.item) {
@@ -1161,7 +1203,7 @@ private fun ThreadRowContent(
     relocationSpec: BringIntoViewSpec,
     content: @Composable () -> Unit,
 ) {
-    CompositionLocalProvider(LocalBringIntoViewSpec provides relocationSpec) { Box { content() } }
+    CompositionLocalProvider(LocalBringIntoViewSpec provides relocationSpec) { Column { content() } }
 }
 
 /** Keep the drawing viewport full size while relocating focus between the measured chrome surfaces. */
