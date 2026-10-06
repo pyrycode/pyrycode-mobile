@@ -5,11 +5,14 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHasNoClickAction
+import androidx.compose.ui.test.assertTouchHeightIsEqualTo
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -37,6 +40,7 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -216,10 +220,19 @@ class MessageAttachmentsTest {
 
     @Test
     fun enlargedText_longFileNameAndRetryStayInsideTheCompactBubble() {
+        assertEnlargedRetryIsUnclipped(fontScale = 1.5f)
+    }
+
+    @Test
+    fun doubledText_longFileNameAndRetryStayInsideTheCompactBubble() {
+        assertEnlargedRetryIsUnclipped(fontScale = 2f)
+    }
+
+    private fun assertEnlargedRetryIsUnclipped(fontScale: Float) {
         val name = "Filename of the Best file attachment that the assistant generated.pdf"
         render(
             message(MessageAttachment(A1, name, "application/pdf")),
-            fontScale = 1.5f,
+            fontScale = fontScale,
             states = { mapOf(A1 to AttachmentViewState.Failed) },
         )
 
@@ -230,6 +243,19 @@ class MessageAttachmentsTest {
         assertTrue(row.left >= bubble.left && row.right <= bubble.right)
         assertTrue(nameBounds.right <= bubble.right)
         assertTrue(retry.right <= bubble.right && retry.bottom <= bubble.bottom)
+        val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        composeTestRule
+            .onNodeWithText("Retry", useUnmergedTree = true)
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        val layout = layouts.single()
+        assertFalse(
+            "Retry must paint its entire paragraph at fontScale $fontScale: size=${layout.size}, " +
+                "paragraph=${layout.multiParagraph.width}x${layout.multiParagraph.height}, " +
+                "widthOverflow=${layout.didOverflowWidth}, heightOverflow=${layout.didOverflowHeight}",
+            layout.hasVisualOverflow,
+        )
+        assertTrue("Retry paragraph exceeds its allocated height", layout.multiParagraph.height <= layout.size.height)
+        composeTestRule.onNodeWithText("Retry").assertTouchHeightIsEqualTo(maxOf(48.dp, retry.height))
     }
 
     @Test
@@ -320,6 +346,42 @@ class MessageAttachmentsTest {
         composeTestRule.onNodeWithText("Retry").assertExists()
         composeTestRule.onNodeWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG).assertHasNoClickAction()
         assertEquals(emptyList<Any>(), acted)
+    }
+
+    @Test
+    fun failedRetry_keepsFortyDpLayoutHeight_andFortyEightDpTouchTarget() {
+        val retried = mutableListOf<String>()
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                Surface {
+                    MessageAttachments(
+                        attachments =
+                            listOf(
+                                MessageAttachment(A1, "notes.txt", "text/plain"),
+                                MessageAttachment(A2, "gone.yaml", "application/yaml"),
+                            ),
+                        states = mapOf(A1 to AttachmentViewState.Failed, A2 to AttachmentViewState.NotFound),
+                        onShown = {},
+                        onRetry = { retried += it },
+                    )
+                }
+            }
+        }
+
+        val retry = composeTestRule.onNodeWithText("Retry")
+        val retryBounds = retry.getUnclippedBoundsInRoot()
+        assertEquals(40f, retryBounds.height.value, 0.5f)
+        val rows = composeTestRule.onAllNodesWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG)
+        val failed = rows[0].getUnclippedBoundsInRoot()
+        val next = rows[1].getUnclippedBoundsInRoot()
+        assertEquals(72f, failed.height.value, 0.5f)
+        assertEquals(84f, (next.top - failed.top).value, 0.5f)
+        retry.assertTouchHeightIsEqualTo(48.dp)
+
+        // Real pointer taps in the expanded target, 2dp beyond each visible edge.
+        retry.performTouchInput { click(Offset(center.x, -height / 20f)) }
+        retry.performTouchInput { click(Offset(center.x, height + height / 20f)) }
+        assertEquals(listOf(A1, A1), retried)
     }
 
     @Test

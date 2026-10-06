@@ -131,7 +131,10 @@ class SharingShortcutsDeviceTest {
                 )
         }
         compose.runOnUiThread { context.startActivity(requireNotNull(shortcut.intent)) }
-        compose.waitUntil(10_000) { compose.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
+        // CLEAR_TASK replaces the activity; an empty root set is expected until the new UI composes.
+        compose.waitUntil(10_000) {
+            compose.onAllNodes(hasSetTextAction()).fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
+        }
         compose.onAllNodes(hasText("Share to…")).assertCountEquals(0)
         assertEquals("unchanged", drafts.draftFor(target.serverId, target.conversationId))
         runBlocking { store.remove("demo") }
