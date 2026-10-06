@@ -177,6 +177,11 @@ fun cacheableThreadRows(rows: List<ThreadItem>): List<ThreadItem> =
         .filterNot { it is ThreadItem.UnrecognizedMessage || it is ThreadItem.BackgroundTaskLifecycle }
         .takeLast(MAX_CACHED_THREAD_ROWS)
 
+/** Use the cache policy's exclusions when deciding whether a backwards position was discarded. */
+internal fun threadRowsWereTrimmed(rows: List<ThreadItem>): Boolean =
+    settledThreadRows(rows).count { it !is ThreadItem.UnrecognizedMessage && it !is ThreadItem.BackgroundTaskLifecycle } >
+        MAX_CACHED_THREAD_ROWS
+
 /**
  * [rows] without its in-flight rows — a streaming message or a running tool call — which only a live
  * connection can settle. Unbounded and keeps unrecognized rows: it is what a thread may keep drawing

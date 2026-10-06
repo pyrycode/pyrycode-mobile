@@ -1686,7 +1686,9 @@ class ThreadViewModel(
             claimHistorySlot {
                 val coverage = historyCoverage.value
                 walkPage = it.newestPageAdvancesWalk ||
-                    it.stoppedBy == HistoryWalkStop.AtStart && coverage.spans.isEmpty() && coverage.newestCursor == ""
+                    it.stoppedBy == HistoryWalkStop.AtStart &&
+                    coverage.spans.isEmpty() &&
+                    coverage.newestCursor == ""
                 when {
                     walkPage -> it.asking()
                     !it.inFlight -> it.askingNewest()

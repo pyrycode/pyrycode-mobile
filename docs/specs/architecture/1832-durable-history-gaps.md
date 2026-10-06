@@ -5,6 +5,7 @@
 - `data/repository/ConversationRepository.kt`: `HistoryPosition`, `HistoryPage` and the default-tolerant history contract.
 - `data/repository/HistoryPageReducer.kt`: `reduceOrderedHistoryPage`, delta identities and the shared live/cache reconciliation introduced by #1786.
 - `data/repository/ThreadProjection.kt`: `mergeHistoryPage` atomically preserves held rows and durable ordering evidence.
+- `data/repository/ThreadSnapshotSource.kt`: `ThreadSnapshot` forwards received durable order in the same generation as rows and suppression.
 - `data/repository/CachingConversationRepository.kt`: `observeMessages`, deletion guards and the separate row/position writers.
 - `data/repository/StableConversationRepository.kt`: destination-bound history forwarding.
 - `data/cache/ConversationCache.kt`: `cacheableThreadRows` excludes transient and raw-envelope rows.
@@ -43,7 +44,9 @@ Newest availability arrivals are queued behind the single outstanding history re
 
 Coverage is a `StateFlow` owned by the conversation's ViewModel and seeded once from its destination-bound repository. Page state changes and claims run in `viewModelScope`; row reconciliation remains in the projection's atomic update. The request slot serializes ordinary, newest and gap asks. Availability counting does not originate retries or catch-up loops.
 
-The caching wrapper writes the latest reconciled cacheable rows before coverage state. Persist only numeric spans, opaque cursors, identity/order metadata and content-free row proofs; no excluded envelopes. File state writes validate proofs against retained rows. Later row writes invalidate claims whose proofs disappear, including trimming. Process death between writes leaves older conservative state. Storage keeps its existing mutex, I/O dispatcher, atomic rename, host namespace and delete guards.
+The caching wrapper writes the latest reconciled cacheable rows before coverage state. Both cache merges combine restored coverage ordering with the live projection's durable ordering, delivered atomically with rows and suppression through `ThreadSnapshot`. Persist only numeric spans, opaque cursors, identity/order metadata and content-free row proofs; no excluded envelopes. File state writes validate proofs against retained rows. Later row writes invalidate claims whose proofs disappear, including trimming; the following state write also resets the backwards cursor/stop when these rows exceeded the cache limit. Process death between writes leaves older conservative state.
+
+The wrapper's `historyWrites` mutex serializes observer writes, coverage-null state writes, the entire rows-before-state operation and confirmed deletion. Deletion marks its tombstone after daemon success, then waits non-cancellably for this mutex before removing disk state and held metadata. Suspended writers cannot recreate content after removal returns. Lock order is wrapper mutex then file-cache mutex; neither cache calls back into the wrapper. Storage retains its I/O dispatcher, atomic rename and host namespace.
 
 ## Error handling
 
@@ -74,13 +77,13 @@ Pending for the documentation stage:
 
 - Trust boundaries: authenticated decoded history supplies durable ids; live/ring ids and legacy row identities cannot create spans. Cache restore validates row retention before accepting claims.
 - Tokens: no credential lifecycle or storage changes; cursors remain opaque and are never credentials, paths or logged values.
-- Files/storage: reuse app-private `noBackupFilesDir`, hashed host/conversation paths and atomic replacement. MUST FIX addressed in design: rows must land before state and state must be invalidated when required retained rows disappear. Existing plaintext message cache policy is unchanged; excluded envelopes remain excluded.
+- Files/storage: reuse app-private `noBackupFilesDir`, hashed host/conversation paths and atomic replacement. MUST FIX addressed in design: rows must land before state, missing retained rows invalidate claims, and the subsequent state write must preserve trimming's backwards-position reset. Existing plaintext message cache policy is unchanged; excluded envelopes remain excluded.
 - Android surface: no components, intents, providers, links or WebViews are added. Markers contain only a bounded local resource string.
 - Cryptography: keep the vendored Noise IK handshake, key stores and transport unchanged.
 - Network/I/O: existing frame/page bounds and request limit remain; each pull costs at most one request, with no automatic retry or forward read.
 - Logs: static lifecycle/error events only; no opaque cursor, envelope, row content or proof is printed.
 - Retention: mutable rows bind every producing entry id to a proof of the exact cache-policy record; absent tool output or attachments cannot certify their entries. Assistant delta proofs bind retained fragments. Legacy text is transient; only hashes, lengths and offsets persist.
-- Concurrency: ViewModel cancellation owns all requests; preserve atomic projection merges and file mutex operations. Deletion guards apply to both writes.
+- Concurrency: ViewModel cancellation owns all requests; preserve atomic projection merges and file mutex operations. MUST FIX from verifier rework: a tombstone check before suspending I/O alone cannot prevent recreation. Confirmed removal shares `historyWrites` with observer writes, coverage-null writes and the complete row/state operation, inside non-cancellable cleanup. Tombstones guard every writer under that mutex; deletion waits for in-flight writes, then removes their results. Lock order is wrapper then file cache.
 - Threat model: a malicious relay can delay/drop but cannot forge authenticated entries. A hostile daemon cannot turn cursors or text into executable UI/storage paths. Rooted-device extraction and screenshot/accessibility/keyboard leakage are unchanged and owned by existing key-storage and UI policies.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
@@ -101,3 +104,7 @@ Final sizing: approximately 1520 written lines including the plan, four exported
 2026-10-06: Tool-use/result retention probes failed because a row's earliest order id and message text did not cover every producer or its stored result. The reducer now records all producing entry ids; ordinary row proofs hash the exact cache-policy record, including retained tool output and attachments. Dropping or changing a retained row invalidates all its producer claims. Delta proofs remain fragment-specific. This closes the security review's row-before-state MUST FIX for mutable rows as well.
 
 2026-10-06: Empty uncovered caches ignore old cursor/stop metadata. An earlier verified empty terminal page also allows the next availability newest page to seed a fresh backwards walk. Neither case creates a conservative marker; both preserve oldest-end reader demand once entries arrive.
+
+2026-10-06 (verifier rework): Both caching merges must consume restored and live durable order; snapshots carry the projection's received order with their rows. A disjoint older-gap page stays between its older/newer cached anchors through reconnect and fresh restore. The rows-before-state writer resets backwards cursor/stop whenever that row operation trims, so newest asks cannot restore a discarded position. Confirmed deletion shares the complete write mutex, including observer and coverage-null paths, preventing suspended reads or between-write interleavings from recreating removed data. Regressions exercise all three production paths with a real file cache; the concurrency/security contracts above replace the insufficient pre-I/O guard claim.
+
+Rework sizing: approximately 1,945 written lines after formatting, including seven regression methods and their shared fixtures. Four new model types, one screen callback consumer and four acceptance criteria remain unchanged; additive/defaulted ordering parameters require only three production caller updates. No new in-flight overlap was found. Verified lineage remains #1832 → #1787 → #1681, so the grandchild depth rule and existing sole-consumer floor require building through the line overage. `needs-human:sizing` and the issue comment record it. Persisted hashes are resolved once per restored base, avoiding repeated hashing on live delta emissions.

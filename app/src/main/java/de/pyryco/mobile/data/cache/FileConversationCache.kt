@@ -109,11 +109,7 @@ class FileConversationCache(
             val document = threadDocumentFor(serverId, conversationId)
             val kept = cacheableThreadRows(rows)
             // #1354: keep the saved history position, unless trimming moved the oldest row away from it.
-            val trimmed =
-                kept.size <
-                    settledThreadRows(rows).count {
-                        it !is ThreadItem.UnrecognizedMessage && it !is ThreadItem.BackgroundTaskLifecycle
-                    }
+            val trimmed = threadRowsWereTrimmed(rows)
             val saved = storedHistoryOrNull(document)
             val history =
                 if (trimmed && saved?.coverage == null) {

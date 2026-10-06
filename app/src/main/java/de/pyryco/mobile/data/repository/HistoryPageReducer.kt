@@ -840,8 +840,23 @@ private fun List<ThreadItem>.withHistoryLifecyclePositions(
 }
 
 /** Cache-only rows stay beside their retained neighbours, using the same delta reconciliation as pages. */
-internal fun List<ThreadItem>.mergeCachedRows(cached: List<ThreadItem>): List<ThreadItem> =
-    mergeRows(cached, emptyMap(), cacheRestore = true)
+internal fun List<ThreadItem>.mergeCachedRows(
+    cached: List<ThreadItem>,
+    order: Map<Any, Long> = emptyMap(),
+): List<ThreadItem> = mergeRows(cached, order, cacheRestore = true)
+
+/** Resolve persisted hashes once when restoring a base, rather than on every live delta emission. */
+internal fun List<ThreadItem>.receivedHistoryOrder(positions: Map<String, Long>): Map<Any, Long> =
+    if (positions.isEmpty()) {
+        emptyMap()
+    } else {
+        buildMap {
+            this@receivedHistoryOrder.deltaRows().forEach { row ->
+                val identity = row.mergeIdentity()
+                positions[historyIdentity(identity)]?.let { put(identity, it) }
+            }
+        }
+    }
 
 /** Single-delta identities survive different segment boundaries on the history, live and cache lanes. */
 internal fun ThreadItem.mergeIdentity(): Any {
