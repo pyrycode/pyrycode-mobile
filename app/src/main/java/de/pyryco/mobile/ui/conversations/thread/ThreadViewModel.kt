@@ -98,6 +98,8 @@ import kotlinx.datetime.Instant
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.floor
 
+private const val THREAD_HISTORY_PAGE_SIZE = 200
+
 /**
  * The one `history.*` wire code this screen branches on (#778) — the daemon refused the cursor, so the
  * walk's next ask starts from the newest page instead of surfacing a dead end (#1352). Every other code,
@@ -663,8 +665,8 @@ class ThreadViewModel(
     /**
      * Restores the history position saved when this thread was last open (#1354), so the first pull asks
      * past the rows the cache already drew instead of re-fetching the newest page. Reading asks nothing.
-     * [onDemandOlderHistory] and the `init` block's newest-page ask (#1572) wait for it, so no walk ask can
-     * carry the opening empty cursor once a saved one exists.
+     * Reader demand is dropped until this finishes; the `init` block's newest-page ask waits for it.
+     * No walk ask can carry the opening empty cursor once a saved one exists.
      */
     private val historySeed: Job =
         viewModelScope.launch {
@@ -1635,11 +1637,8 @@ class ThreadViewModel(
      */
     fun onDemandOlderHistory() {
         if (!historySeed.isCompleted) {
-            // #1354: a pull while the saved position is still being read asks once it has been.
-            viewModelScope.launch {
-                historySeed.join()
-                onDemandOlderHistory()
-            }
+            // Prefetch is movement-gated: completing the seed cannot replay an earlier movement.
+            RelayLog.d { "event=history_ask_skipped reason=seeding" }
             return
         }
         if (!hostAvailable.value) {
@@ -1716,7 +1715,7 @@ class ThreadViewModel(
     private fun launchNewestPageSideAsk() {
         viewModelScope.launch {
             try {
-                val page = repository.requestHistory(conversationId, cursor = "")
+                val page = repository.requestHistory(conversationId, cursor = "", limit = THREAD_HISTORY_PAGE_SIZE)
                 recordCoverage(page, newest = true)
             } catch (e: CancellationException) {
                 throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
@@ -1779,7 +1778,11 @@ class ThreadViewModel(
         val cursor = coverage.cursorFor(anchor)
         viewModelScope.launch {
             try {
-                recordCoverage(repository.requestHistory(conversationId, cursor), newest = cursor.isEmpty(), target = anchor)
+                recordCoverage(
+                    repository.requestHistory(conversationId, cursor, limit = THREAD_HISTORY_PAGE_SIZE),
+                    newest = cursor.isEmpty(),
+                    target = anchor,
+                )
                 RelayLog.d { "event=history_gap_page_received" }
             } catch (error: CancellationException) {
                 throw error
@@ -1809,7 +1812,7 @@ class ThreadViewModel(
     /** Ask for the page at [claimed]'s cursor, or settle the failure and return `null`. */
     private suspend fun fetchHistoryPage(claimed: ThreadHistoryDemand): HistoryPage? {
         try {
-            return repository.requestHistory(conversationId, claimed.cursor)
+            return repository.requestHistory(conversationId, claimed.cursor, limit = THREAD_HISTORY_PAGE_SIZE)
         } catch (e: CancellationException) {
             throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
         } catch (e: RelayErrorException) {

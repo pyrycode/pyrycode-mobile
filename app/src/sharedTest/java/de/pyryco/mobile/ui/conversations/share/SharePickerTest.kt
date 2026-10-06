@@ -293,6 +293,51 @@ class SharePickerTest {
         compose.runOnIdle { assertEquals("existing draft\nshared text", drafts.draftFor(target.serverId, target.conversationId)) }
     }
 
+    @Test fun directShareWaitsForCaptureAndMergesTheExactDraftWithoutPickerOrReplay() {
+        val drafts = GlobalContext.get().get<ComposerDraftStore>()
+        val target = HostConversationTarget("demo", "seed-channel-personal")
+        val publisher = GlobalContext.get().get<SharingShortcuts>()
+        runBlocking { publisher.opened(target) }
+        val id = RecentShareTargets(4).id(target)
+        drafts.setDraft(target.serverId, target.conversationId, "existing")
+        val capture = CompletableDeferred<PickedAttachment>()
+        val intake = ShareIntakeViewModel(drafts, { _, _ -> capture.await() }, Dispatchers.Main.immediate)
+        lateinit var nav: NavHostController
+        compose.setContent {
+            nav = rememberNavController()
+            PyrycodeMobileTheme { PyryNavHost(Routes.CHANNEL_LIST, navController = nav, shareIntake = intake) }
+        }
+        compose.runOnIdle { intake.accept(SharePayload("direct", listOf(Uri.parse("content://foreign/file")), id)) }
+        compose.onAllNodes(hasText("Share to…")).assertCountEquals(0)
+        compose.runOnIdle {
+            assertEquals("existing", drafts.draftFor(target.serverId, target.conversationId))
+            capture.complete(file("direct.pdf", "application/pdf"))
+        }
+        compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.CONVERSATION_THREAD }
+        compose.runOnIdle {
+            assertEquals(target, Routes.target(nav.currentBackStackEntry?.arguments))
+            assertEquals("existing\ndirect", drafts.draftFor(target.serverId, target.conversationId))
+            assertEquals(1, drafts.attachmentsFor(target.serverId, target.conversationId).size)
+            assertEquals(false, intake.select(target))
+        }
+        compose.onAllNodes(hasText("Share to…")).assertCountEquals(0)
+        compose.onNode(hasSetTextAction()).assertTextContains("existing\ndirect")
+    }
+
+    @Test fun unknownDirectShareFallsBackWithCapturedBatchAndDraftUnchanged() {
+        val drafts = GlobalContext.get().get<ComposerDraftStore>()
+        val intake = ShareIntakeViewModel(drafts, { _, _ -> null }, Dispatchers.Main.immediate)
+        compose.setContent { PyrycodeMobileTheme { PyryNavHost(Routes.CHANNEL_LIST, shareIntake = intake) } }
+        compose.runOnIdle { intake.accept(SharePayload("keep this", emptyList(), "unknown")) }
+        compose.waitUntil(5_000) { intake.state.value?.shortcutId == null }
+        compose.onNodeWithText("Share to…").assertIsDisplayed()
+        compose.onNodeWithText("keep this").assertIsDisplayed()
+        compose.runOnIdle {
+            assertEquals("keep this", intake.state.value?.text)
+            assertEquals("", drafts.draftFor("demo", "seed-channel-personal"))
+        }
+    }
+
     private fun file(
         name: String,
         mime: String,

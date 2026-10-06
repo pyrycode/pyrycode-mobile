@@ -13,6 +13,7 @@ import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,6 +32,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -41,6 +43,8 @@ data class HostConversationSnapshot(
     val connectionStatus: ConnectionStatus,
     val channels: List<Conversation> = emptyList(),
     val chats: List<Conversation> = emptyList(),
+    /** Only an accepted live list establishes absence; startup and cache restoration do not. */
+    val rowsLoaded: Boolean = false,
 )
 
 /**
@@ -182,15 +186,20 @@ class HostConversationSource internal constructor(
                 launchAttention(entry)
                 scope.launch(entry.job) {
                     connection.repositories.collectLatest { repository ->
-                        repository
-                            ?.observeConversations(ConversationFilter.All)
+                        val rows =
+                            when (repository) {
+                                is RemoteConversationRepository -> repository.observeConversationSnapshots(ConversationFilter.All)
+                                null -> null
+                                else -> repository.observeConversations(ConversationFilter.All).map { it to true }
+                            }
+                        rows
                             ?.catch { RelayLog.d { "event=host_snapshot_list_failed" } }
-                            ?.collect { rows ->
+                            ?.collect { (rows, loaded) ->
                                 // Only a list the guards accepted is cached, so a superseded generation
                                 // cannot reach disk after being rejected for the snapshot. What is stored is
                                 // the daemon's list verbatim, archived rows included: the document mirrors
                                 // what was reported and `withRows` filters both sides of it identically.
-                                if (update(entry, repository) { it.withRows(rows) }) {
+                                if (update(entry, repository, rowsLoaded = loaded) { it.withRows(rows) }) {
                                     cache
                                         ?.writeConversations(connection.serverId, rows)
                                         ?.onFailure { RelayLog.d { "event=host_snapshot_cache_write_failed" } }
@@ -336,6 +345,7 @@ class HostConversationSource internal constructor(
         entry: Held,
         repository: ConversationRepository? = null,
         restore: Boolean = false,
+        rowsLoaded: Boolean = true,
         transform: (HostConversationSnapshot) -> HostConversationSnapshot,
     ): Boolean {
         val connection = entry.connection
@@ -349,7 +359,7 @@ class HostConversationSource internal constructor(
             return false
         }
         if (repository != null) entry.live = true
-        entry.snapshot = transform(entry.snapshot)
+        entry.snapshot = transform(entry.snapshot).let { if (repository != null) it.copy(rowsLoaded = rowsLoaded) else it }
         publish()
         return true
     }

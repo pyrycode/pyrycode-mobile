@@ -259,7 +259,8 @@ A fresh launch reads its intent only when `savedInstanceState` is null, as the n
 notification target. A notification tap cancels a pending share instead. Each new tap bumps
 `openTargetVersion`, so tapping the same notification twice still navigates. While a share is pending,
 `PyryNavHost` resets the stack to `channel_list` for each new batch generation and draws the picker
-there; it also skips the notification-permission prompt. Selecting a row first transfers the batch,
+for ordinary shares. Direct Share conceals it during capture and target lookup; both paths skip the
+notification-permission prompt. Selecting a row first transfers the batch,
 then calls `onHostRowTapped` with the row's own target, so the exact host and conversation open.
 
 System Back and the header's back arrow both cancel. They release the captured copies, leave every
@@ -268,6 +269,67 @@ startup, before the navigation graph has composed. Activity recreation keeps a p
 ViewModel and never replays a consumed one. Process death drops it, as it drops drafts. Ownership and
 limits are in [Composer pending attachments](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments).
 `ShareActivityTest` covers fresh and new intents, recreation, both Back paths and an ordinary launch.
+
+Since [#1729](../../specs/architecture/1729-direct-share-shortcuts.md), opening an active thread from a
+list row, notification, launcher shortcut or direct share records the exact host/conversation pair in
+`SharingShortcuts`. Its atomic ledger under `noBackupFilesDir` retains at most four targets globally,
+limited further by Android's per-activity shortcut cap, across restart. Identity hashes the
+length-prefixed pair, never the name: equal conversation ids on different hosts stay distinct, and
+rename keeps the id. An open moves that pair to the front once while preserving the others' order;
+snapshot relabeling does not report usage or change recency. Labels reuse `notificationTitle`: remove
+control characters, truncate to 80 code points without splitting surrogate pairs, trim and fall back
+to the app name. The icon is `ic_launcher`.
+
+These are normal dynamic shortcuts, eligible for Direct Share and the launcher's shortcut menu.
+The manifest-linked `res/xml/shortcuts.xml` declares the matching conversation-share category for
+`text/plain`, `image/*` and `*/*`. No static or pinned shortcuts are requested, and new targets are
+not long-lived. Do not exclude the launcher surface: that prevents normal dynamic publication.
+Android owns masking, visibility and prediction order; tests assert publication and launch contracts,
+not a guaranteed Sharesheet position.
+
+For `ACTION_SEND` or `ACTION_SEND_MULTIPLE`, `SharePayload.from` retains only a strictly typed,
+nonblank shortcut id of at most 256 characters. Malformed shortcut extras leave the otherwise valid
+share intact. After private-copy capture completes, Direct Share resolves that id only through the
+retained ledger's unique match, validates both pair ids with `NotificationTap`'s nonblank/256-character
+bounds, checks the saved host and waits up to five seconds for its active row. A valid target merges
+into that exact host's existing draft through the same synchronous `select` path as the picker, then
+opens the thread. Nothing uploads or sends before Send. Unknown, malformed, archived, deleted,
+unpaired or timed-out targets clear direct routing and show the picker with the captured batch and
+all drafts intact. Replacement, cancellation and consumption fence lookup by generation; recreation
+can retry an unconsumed lookup but cannot replay a transfer.
+
+Launcher activation uses the shortcut's stored explicit `NotificationTap` intent with the exact pair,
+without a share payload. The same saved-host and active-row checks and five-second readiness window
+apply; unavailable targets stay on the channel list and drafts remain unchanged. Notification and
+direct-share routing finish every suspending host read before explicitly entering
+`Dispatchers.Main.immediate`. In that final non-suspending turn they recheck the **current** active
+snapshot and route; direct sharing also checks generation and transfers the draft before navigating.
+A row observed before a second host lookup can be deleted or archived during that suspension, so the
+earlier readiness result cannot authorize navigation. Main-only fake stores conceal worker-thread
+continuation failures: `NotificationTapNavigationTest` uses suspending IO lookups, asserts the actual
+destination callback's main Looper, and holds the final lookup while publishing deletion/archive to
+verify the list and existing drafts survive.
+
+Reconciliation is application-owned and starts through `startApplicationGraph`, even without an
+activity; selector-only dependency resolution stays lazy and Android-free. Opens, restore, lookup,
+reconciliation and writes share one mutex. Startup, cached rows, partial upserts and disconnected or
+reconnecting hosts do not establish deletion. `HostConversationSnapshot.rowsLoaded` establishes
+absence only after a full conversation snapshot; even a full list equal to an earlier partial list
+must emit its readiness edge. A loaded list can remove an absent/archived target, and a successful
+saved-host read can establish unpairing. Snapshots can relabel retained targets but cannot insert or
+resurrect one without a new open. See [host conversation source](dependency-injection-host-conversation-source.md).
+
+Classified host-store failures preserve the last successful host set, or unknown startup state.
+`sharingShortcutHosts` retries each second without requiring a pairing mutation; a newer revision
+cancels obsolete recovery, and disposal cancels it entirely. Recovery reconciles the latest rows
+before releasing waiting opens/lookups. A conflated revision is not a removal-event queue: confirmed
+unpair awaits non-cancellable `forgetRemovedHost` shortcut cleanup under the same mutex, so immediate
+re-pair cannot retain the old target. Archive, deletion, unpair and eviction remove both dynamic and
+system-cached copies while preserving other hosts' targets. Unreadable ledger storage starts empty;
+failed writes retain in-memory state. Diagnostics contain static outcomes/counts, never names, ids or
+shared content. `SharingShortcutsTest`, `RecentShareTargetsTest` and the real-Keystore
+`SharingShortcutStoreFailureTest` cover these authority and recovery seams; `SharingShortcutsDeviceTest`
+checks Android publication, category/MIME data, label, resource icon and stored launcher activation.
 
 ## Adding a route
 

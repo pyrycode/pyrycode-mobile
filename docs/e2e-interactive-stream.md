@@ -6,6 +6,13 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
 
 ## The ladder (reliable → flaky)
 
+Recent-conversation Direct Share (#1729) is covered at rung 3 by
+`InteractiveStreamE2ETest.interactiveTurn_directShareShortcut_arrivesAtPeerWithItsBytes` and at rung 4
+by `DeterministicInteractiveStreamE2ETest.interactiveTurn_directShareShortcut_stagesBeforeExplicitSend`
+(`direct-share`, using `ping.jsonl`). The deterministic twin holds unsent text staging; the live
+scenario also proves private PNG/document bytes and conversation isolation. Ordinary Android-share
+picker coverage remains `InteractiveStreamE2ETest.interactiveTurn_sharedContentFromAndroid_arrivesAtPeerWithItsBytes`.
+
 Background-agent placement (#1783) is covered at rung 3 by
 `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`
 and at rung 4 by
@@ -1491,6 +1498,16 @@ and had to rework around (see [Verification status](#verification-status)). That
 [#1020](https://github.com/pyrycode/pyrycode-mobile/issues/1020); once it landed, this method went back
 to reading the peer's history and `awaitCachedSentAttachmentIds` was deleted.
 
+`InteractiveStreamE2ETest.interactiveTurn_directShareShortcut_arrivesAtPeerWithItsBytes`
+([#1729](https://github.com/pyrycode/pyrycode-mobile/issues/1729)) opens chat X, obtains its published
+dynamic shortcut id and delivers text, a PNG and a document through `ACTION_SEND_MULTIPLE` with
+`EXTRA_SHORTCUT_ID`. It requires staged files/text in X, no picker and no automatic send, then deletes
+the originals to establish private-copy ownership. After explicit Send, peer history contains one
+user message in X with the shared text and two distinct attachment ids; retrieved bytes match both
+fixture digests, and Y has no user message. This proves the shortcut launch contract, not Android's
+prediction ranking. The rung-4 `direct-share` twin stages text through a published id, verifies no
+user message before Send, then sends and receives the scripted ping.
+
 `InteractiveStreamE2ETest.interactiveTurn_sharedContentFromAndroid_arrivesAtPeerWithItsBytes`
 ([#1728](https://github.com/pyrycode/pyrycode-mobile/issues/1728)) covers Android share intake. It inserts
 a PNG and a text document as `MediaStore` downloads and starts `MainActivity` with an
@@ -1937,7 +1954,7 @@ host-prompt handlers. Scripted runs and unrelated live subsets retain their exis
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the current selector has 61 runnable `@Test` methods. The historical
+incantation to remember — the current selector has 62 runnable `@Test` methods. The historical
 inventory below describes the pre-#1193 forty-four-method set; ignored methods are excluded from
 the current selector as described under the model and effort settings round trip. It covered ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
@@ -2445,6 +2462,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `stop-background-task` (#1830) | opening the retained running row and tapping Stop removes its row/count | existing fakeclaude canned-roster rider and `stop_task` handler | no replay fragments or second-message release |
 | `background-agent` (#1783) | background lifecycle moves a loaded tool family, marker navigation opens its run, and finish settles it before later text | `background-agent-open.jsonl` + `background-agent-finish.jsonl` | **two** (release on second send) |
 | `selection-copy` (#1674) | finished assistant prose copies only the long-pressed word through Android’s system menu | `selection-copy.jsonl` | one |
+| `direct-share` (#1729) | published shortcut stages text in its thread without a picker or send; explicit Send receives ping | `ping.jsonl` | one |
 | `ping` (default) | a single-line reply renders | `ping.jsonl` | one |
 | `reopen-stream` (#1762) | arrived prefix is immediate on reopen and retained when a suffix composes while the turn stays open; one final combined reply | `reopen-stream-open.jsonl` + `reopen-stream-done.jsonl` | **two** (suffix on second send, terminal result on third) |
 | `stream` | a multi-`assistant_delta` reply assembles into **one** message | `stream.jsonl` | one |
@@ -2736,6 +2754,20 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+**Recent-conversation Direct Share (#1729, 2026-10-06).** The dispatcher-owned full live command
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` reported **62 executed,
+62 passed, 0 failed, 0 skipped**, exit 0, against `feature/1729` at `b2e3d7d72d` merged with
+`origin/main` at `369823ade0`. The [issue's live gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1729#issuecomment-6024244801)
+records the counts. The supplied dispatcher gate report for `2026-10-06T19-27-27-728Z`, extracted
+from JUnit XML, explicitly confirms
+`InteractiveStreamE2ETest.interactiveTurn_directShareShortcut_arrivesAtPeerWithItsBytes` and
+`InteractiveStreamE2ETest.interactiveTurn_sharedContentFromAndroid_arrivesAtPeerWithItsBytes`
+executed and passed. This is full-suite evidence, not a separate focused run. The new method proves
+explicit-Send text/byte delivery and X/Y isolation; system ranking remains outside its assertions.
+The [PR's focused scripted evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1835)
+records `DeterministicInteractiveStreamE2ETest.interactiveTurn_directShareShortcut_stagesBeforeExplicitSend`
+passing under `scripted direct-share`: **1 executed, 1 passed, 0 failed, 0 skipped**.
 
 **Ongoing-reply reopen (#1762, 2026-10-06).** The repaired focused command
 `ANDROID_GATE_WAIT_SECONDS=1800 python3 scripts/android-test-gate.py scripted reopen-stream`
@@ -3996,6 +4028,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Recent-conversation Direct Share (#1729):**
+  `InteractiveStreamE2ETest.interactiveTurn_directShareShortcut_arrivesAtPeerWithItsBytes` passed in
+  the fresh full live suite, alongside the preserved ordinary-share method. Its rung-4 twin is
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_directShareShortcut_stagesBeforeExplicitSend`,
+  selected by `direct-share` with the existing ping fixture. It proves unsent staging without a picker;
+  live coverage adds both file digests and X/Y isolation. Counts and evidence scope are in
+  [Verification status](#verification-status). No coverage follow-up remains. The pre-ship command
+  stays `python3 scripts/android-test-gate.py live`; ranking and launcher placement stay system-controlled.
 
 - **Ongoing-reply reopen (#1762):**
   `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately`

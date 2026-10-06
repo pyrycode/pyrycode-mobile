@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Close
@@ -29,17 +30,16 @@ import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.theme.userBubbleContainer
 
-// Sit on the same gutter as the message rows around it (MessageBubble.kt's MessageContentGutter).
+// Half of the frame's 16dp inter-row gap; preserve the 8dp bottom rest compensation in ThreadScreen.
 private val QueuedRowVerticalPadding = 8.dp
 
 // The bubble geometry is *consumed* from MessageBubble.kt (BubbleShape, BubbleHorizontalPadding,
 // BubbleVerticalPadding, MessageRoleInset — `internal`, same package) rather than copied here. A queued
 // row and a sent one are one bubble family and there is nothing left to drift.
 //
-// The row takes MessageRoleInset so it occupies the same user-side lane a sent bubble does. Its bubble
-// then ends up narrower than a sent one, because the waiting glyph and the drop button share that lane
-// with it — which is the honest reading. Dropping the old 320dp cap without taking the inset would have
-// let a long queued bubble grow *wider* than a sent one, which is the one outcome that breaks family.
+// Figma `696:4677` caps queued bubbles at 200dp. Weight reserves the action targets first and lets
+// the bubble shrink within the user-side lane when Send now is present.
+private val QueuedBubbleMaxWidth = 200.dp
 private val WaitingGlyphSize = 16.dp
 private val WaitingGlyphGap = 8.dp
 
@@ -87,6 +87,7 @@ fun QueuedMessageRow(
                 .padding(
                     start = MessageContentGutter + MessageRoleInset,
                     end = MessageContentGutter,
+                    top = QueuedRowVerticalPadding,
                     bottom = QueuedRowVerticalPadding,
                 ).alpha(QUEUED_ALPHA)
                 .semantics(mergeDescendants = true) { stateDescription = queuedState },
@@ -104,7 +105,7 @@ fun QueuedMessageRow(
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Surface(
-            modifier = Modifier.weight(1f, fill = false),
+            modifier = Modifier.weight(1f, fill = false).widthIn(max = QueuedBubbleMaxWidth),
             shape = BubbleShape,
             color = MaterialTheme.colorScheme.userBubbleContainer,
         ) {
