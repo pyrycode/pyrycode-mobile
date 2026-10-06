@@ -45,7 +45,17 @@ class ThreadDeleteGeometryTest {
         }
     }
 
-    private fun textBounds(text: String): Rect = rule.onNodeWithText(text, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+    private fun Rect.inDp(): Rect {
+        val density = rule.density.density
+        return Rect(left / density, top / density, right / density, bottom / density)
+    }
+
+    private fun textBounds(text: String): Rect =
+        rule
+            .onNodeWithText(text, useUnmergedTree = true)
+            .fetchSemanticsNode()
+            .boundsInRoot
+            .inDp()
 
     private fun layout(text: String): TextLayoutResult {
         val results = mutableListOf<TextLayoutResult>()
@@ -60,7 +70,12 @@ class ThreadDeleteGeometryTest {
         show()
         // Check the real content width before relying on implementation-owned tags.
         assertEquals(268f, textBounds(body(name)).width, 1f)
-        val surface = rule.onNodeWithTag("delete-dialog-surface").fetchSemanticsNode().boundsInRoot
+        val surface =
+            rule
+                .onNodeWithTag("delete-dialog-surface")
+                .fetchSemanticsNode()
+                .boundsInRoot
+                .inDp()
         val title = textBounds("Delete conversation?")
         val body = textBounds(body(name))
         val cancelLabel = textBounds("Cancel")
@@ -107,7 +122,12 @@ class ThreadDeleteGeometryTest {
             assertTrue(!result.isLineEllipsized(0))
             assertTrue(!result.didOverflowHeight)
             assertEquals(1, result.lineCount)
-            val target = rule.onNodeWithText(label).fetchSemanticsNode().touchBoundsInRoot
+            val target =
+                rule
+                    .onNodeWithText(label)
+                    .fetchSemanticsNode()
+                    .touchBoundsInRoot
+                    .inDp()
             assertTrue("$label target must be 48 dp high: $target", target.height >= 48f)
             assertTrue("$label target must be 48 dp wide: $target", target.width >= 48f)
         }
@@ -146,7 +166,12 @@ class ThreadDeleteGeometryTest {
     @Test fun long_name_grows_surface_without_clipping_body() {
         val longName = "A long channel name that wraps over many lines while retaining every word"
         show(longName)
-        val surface = rule.onNodeWithTag("delete-dialog-surface").fetchSemanticsNode().boundsInRoot
+        val surface =
+            rule
+                .onNodeWithTag("delete-dialog-surface")
+                .fetchSemanticsNode()
+                .boundsInRoot
+                .inDp()
         assertTrue(surface.height > 220f)
         assertTrue(!layout(body(longName)).hasVisualOverflow)
         rule.onNodeWithText("Cancel").assertIsDisplayed()
