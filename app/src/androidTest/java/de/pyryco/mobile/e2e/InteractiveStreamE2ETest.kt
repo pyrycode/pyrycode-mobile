@@ -437,6 +437,90 @@ class InteractiveStreamE2ETest {
         composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
     }
 
+    /**
+     * #1765 manual: observe arrived words in a still-streaming reply, then its complete final body.
+     * Un-ignore only for a named isolated-harness run and restore the ignore afterward. Claude may
+     * finish before the display checkpoint; that fails this observation. Routine curated live runs
+     * do not select it and supply no manual reveal evidence. No delta cadence or deadline is asserted.
+     */
+    @Ignore("manual — transient word reveal; un-ignore for a named observation, see KDoc")
+    @Test
+    fun interactiveTurn_wordReveal_displaysArrivedTextBeforeFinalReply() {
+        awaitChannelList()
+        awaitConnected()
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val (conversationId, name) = answerChat(serverId, "word-reveal-")
+        openChatRow(name)
+        val repository = hostRepository(serverId)
+        // Topic instructions never quote the reply matcher, which comes from the assistant row.
+        val prompt =
+            "Write one plain paragraph of at least 150 words describing a quiet seaside village. " +
+                "Use ordinary prose only, no markdown, headings, lists or tools. Begin writing immediately."
+        sendFromPhone(prompt)
+        val captured =
+            runBlocking {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    repository
+                        .observeMessages(conversationId)
+                        .map { rows ->
+                            rows
+                                .filterIsInstance<ThreadItem.MessageItem>()
+                                .map { it.message }
+                                .firstOrNull {
+                                    it.role == Role.Assistant && it.isStreaming && it.content.trim().contains(' ') &&
+                                        !prompt.contains(it.content.trim(), ignoreCase = true)
+                                }
+                        }.filterNotNull()
+                        .first()
+                }
+            }
+        val prefix = captured.content.trimEnd()
+        assertTrue("the observation needs nonempty assistant text", prefix.isNotBlank())
+        val inBubble = hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+        val displayedPrefix =
+            hasText(prefix, substring = true) and
+                hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG) and !hasClickAction())
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(displayedPrefix, useUnmergedTree = true).fetchSemanticsNodes().size == 1
+        }
+        composeTestRule.onNode(displayedPrefix, useUnmergedTree = true).assertIsDisplayed()
+        val atDisplay =
+            runBlocking { repository.observeMessages(conversationId).first() }
+                .filterIsInstance<ThreadItem.MessageItem>()
+                .single { it.message.id == captured.id }
+                .message
+        assertTrue("the displayed prefix must still belong to the streaming reply", atDisplay.isStreaming)
+        assertNotEquals(LiveSessionEvent.TurnState.Phase.Idle, runBlocking { repository.observeTurnPhase(conversationId).first() })
+
+        val finished =
+            runBlocking {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    val rows =
+                        repository.observeMessages(conversationId).first { rows ->
+                            rows.filterIsInstance<ThreadItem.MessageItem>().any { it.message.id == captured.id && !it.message.isStreaming }
+                        }
+                    repository.observeTurnPhase(conversationId).first { it == LiveSessionEvent.TurnState.Phase.Idle }
+                    assertTrue(
+                        "the observation must use a tool-free turn",
+                        rows.none {
+                            it is ThreadItem.MessageItem &&
+                                it.message.role == Role.Tool
+                        },
+                    )
+                    rows.filterIsInstance<ThreadItem.MessageItem>().single { it.message.id == captured.id }.message
+                }
+            }
+        assertTrue("the completed reply retains the observed prefix", finished.content.startsWith(prefix))
+        val finalBody = hasText(finished.content.trim()) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG) and hasClickAction())
+        val caret = hasText("▎", substring = true) and inBubble
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(finalBody, useUnmergedTree = true).fetchSemanticsNodes().size == 1 &&
+                composeTestRule.onAllNodes(caret, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+        }
+        composeTestRule.onNode(finalBody, useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onAllNodes(caret, useUnmergedTree = true).assertCountEquals(0)
+    }
+
     /** #1766: one real reply streams through the parser-led streaming body and settles into the same GFM renderer. */
     @Test
     fun interactiveTurn_markdownReply_rendersFormattedBody() {
