@@ -70,6 +70,7 @@ import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
 import de.pyryco.mobile.ui.settings.SettingsHost
 import de.pyryco.mobile.ui.settings.SettingsViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -77,7 +78,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.transformLatest
 import okhttp3.WebSocket
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.module.Module
@@ -302,10 +303,7 @@ fun hostConversationModule(
             val saved =
                 if (useRelay) {
                     val store = get<ObservablePairedServerStore>()
-                    store.revision.mapNotNull {
-                        val snapshot = store.readSnapshot().getOrNull()
-                        snapshot?.map { it.record.serverId }?.toSet()
-                    }
+                    store.sharingShortcutHosts()
                 } else {
                     kotlinx.coroutines.flow.flowOf(setOf(HostConversationSource.DEMO_SERVER_ID))
                 }
@@ -337,6 +335,21 @@ fun hostConversationModule(
             }
         } onClose { it?.dispose() }
     }
+
+/** Unknown storage never authorizes removal; recover even if no pairing mutation follows the failure. */
+@OptIn(ExperimentalCoroutinesApi::class)
+internal fun ObservablePairedServerStore.sharingShortcutHosts(): Flow<Set<String>> =
+    revision
+        .transformLatest {
+            while (true) {
+                val snapshot = readSnapshot().getOrNull()
+                if (snapshot != null) {
+                    emit(snapshot.map { it.record.serverId }.toSet())
+                    return@transformLatest
+                }
+                delay(1_000)
+            }
+        }.distinctUntilChanged()
 
 /**
  * Whether the saved host [serverId] names is in the rejected-pairing state (#843), for the thread's

@@ -106,9 +106,10 @@ class SharingShortcutStoreFailureTest {
                     delay(50)
                     assertEquals(persisted, file.readText())
                     assertEquals(system, projection())
+                    val unchangedRevision = store.revision.value
                     failure.set(null)
-                    store.setDisplayName("demo", "recovered")
                     assertEquals(targets.first(), withTimeout(10_000) { publisher.resolve(RecentShareTargets(4).id(targets.first())) })
+                    assertEquals(unchangedRevision, store.revision.value)
                     assertEquals(targets.reversed(), RecentShareTargets(4, file.readText()).entries.map { it.target })
                 }
             } finally {

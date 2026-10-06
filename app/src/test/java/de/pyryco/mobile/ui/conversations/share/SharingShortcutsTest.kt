@@ -17,15 +17,20 @@ import de.pyryco.mobile.di.InertConversationCache
 import de.pyryco.mobile.di.ObservablePairedServerStore
 import de.pyryco.mobile.di.forgetRemovedHost
 import de.pyryco.mobile.di.hostConversationModule
+import de.pyryco.mobile.di.sharingShortcutHosts
 import de.pyryco.mobile.notifications.NotificationTap
 import de.pyryco.mobile.startApplicationGraph
 import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
 import de.pyryco.mobile.ui.conversations.thread.McpFailureAcknowledgements
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
@@ -51,6 +56,116 @@ import java.io.File
 @Config(application = android.app.Application::class)
 class SharingShortcutsTest {
     @get:Rule val folder = TemporaryFolder()
+
+    @Test fun failedStartupRecoversWithoutRevisionAndReconcilesLatestRowsBeforeOpening() =
+        runTest {
+            val context = ApplicationProvider.getApplicationContext<Context>()
+            val manager = context.getSystemService(ShortcutManager::class.java)
+            val dispatcher = StandardTestDispatcher(testScheduler)
+            val kept = HostConversationTarget("a", "same")
+            val removed = HostConversationTarget("b", "same")
+            val opened = HostConversationTarget("a", "new")
+            val snapshots = MutableStateFlow(listOf(host("a", listOf(row("same"))), host("b", listOf(row("same")))))
+            val file = folder.newFile("recover")
+            file.writeText(
+                RecentShareTargets(4)
+                    .apply {
+                        open(kept, "old")
+                        open(removed, "old")
+                    }.encode(),
+            )
+            var publisher = SharingShortcuts(context, snapshots, MutableStateFlow(setOf("a", "b")), file, dispatcher)
+            runCurrent()
+            publisher.dispose()
+            val persisted = file.readText()
+            val published = manager.dynamicShortcuts.map { Triple(it.id, it.rank, it.shortLabel.toString()) }
+            val raw = RecoveringHostStore()
+            var failed = true
+            raw.read = { if (failed) Result.failure(Exception("unavailable")) else Result.success(raw.list()) }
+            val store = ObservablePairedServerStore(raw) { }
+            publisher = SharingShortcuts(context, snapshots, store.sharingShortcutHosts(), file, dispatcher)
+            try {
+                val opening = backgroundScope.async(dispatcher) { publisher.opened(opened) }
+                runCurrent()
+                snapshots.value = listOf(host("a", listOf(row("same", " renamed\u0000 "), row("new"))), host("b", emptyList()))
+                advanceTimeBy(1_000)
+                runCurrent()
+                assertEquals(2, raw.reads)
+                assertEquals(persisted, file.readText())
+                assertEquals(published, manager.dynamicShortcuts.map { Triple(it.id, it.rank, it.shortLabel.toString()) })
+                assertTrue(!opening.isCompleted)
+
+                failed = false
+                advanceTimeBy(1_000)
+                runCurrent()
+                assertTrue(opening.isCompleted)
+                opening.await()
+                assertEquals(0L, store.revision.value)
+                val ledger = RecentShareTargets(4, file.readText())
+                assertEquals(listOf(opened, kept), ledger.entries.map { it.target })
+                assertEquals("renamed", ledger.entries.last().label)
+                assertEquals(kept, publisher.resolve(ledger.id(kept)))
+                assertEquals(opened, publisher.resolve(ledger.id(opened)))
+                assertNull(publisher.resolve(ledger.id(removed)))
+                assertEquals(
+                    listOf(opened, kept),
+                    manager.dynamicShortcuts.sortedBy { it.rank }.map { NotificationTap.target(it.intent) },
+                )
+                advanceTimeBy(10_000)
+                runCurrent()
+                assertEquals(3, raw.reads)
+            } finally {
+                publisher.dispose()
+            }
+        }
+
+    @Test fun newRevisionCancelsObsoleteReadAndRetryWhileDisposalStopsRecovery() =
+        runTest {
+            val raw = RecoveringHostStore()
+            var cancelledReads = 0
+            var failed = true
+            raw.read = {
+                if (raw.reads == 1) {
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        cancelledReads++
+                    }
+                }
+                if (failed) Result.failure(Exception("unavailable")) else Result.success(raw.list())
+            }
+            val store = ObservablePairedServerStore(raw) { }
+            val emissions = mutableListOf<Set<String>>()
+            val collection = backgroundScope.launch { store.sharingShortcutHosts().collect { emissions += it } }
+            runCurrent()
+            assertEquals(1, raw.reads)
+            store.setDisplayName("a", "revision")
+            runCurrent()
+            assertEquals(1, cancelledReads)
+            assertEquals(2, raw.reads)
+            assertTrue(emissions.isEmpty())
+            advanceTimeBy(999)
+            runCurrent()
+            assertEquals(2, raw.reads)
+            failed = false
+            store.setDisplayName("a", "next revision")
+            runCurrent()
+            assertEquals(3, raw.reads)
+            assertEquals(listOf(setOf("a", "b")), emissions)
+            advanceTimeBy(10_000)
+            runCurrent()
+            assertEquals(3, raw.reads)
+            failed = true
+            store.setDisplayName("a", "failed revision")
+            runCurrent()
+            assertEquals(4, raw.reads)
+            assertEquals(listOf(setOf("a", "b")), emissions)
+            collection.cancel()
+            runCurrent()
+            advanceTimeBy(10_000)
+            runCurrent()
+            assertEquals(4, raw.reads)
+        }
 
     @Config(shadows = [RecordingShortcutManager::class])
     @Test
@@ -268,6 +383,31 @@ class SharingShortcutsTest {
         channels = rows,
         rowsLoaded = loaded,
     )
+
+    private class RecoveringHostStore : PairedServerCollectionStore {
+        var reads = 0
+        var read: suspend () -> Result<List<PairedServerEntry>> = { Result.success(list()) }
+
+        override suspend fun readSnapshot(): Result<List<PairedServerEntry>> {
+            reads++
+            return read()
+        }
+
+        override suspend fun list() = listOf("a", "b").map { PairedServerEntry(PairedServer(it, "", "", "")) }
+
+        override suspend fun load() = list().last().record
+
+        override suspend fun loadById(serverId: String) = list().find { it.record.serverId == serverId }
+
+        override suspend fun save(record: PairedServer) = Unit
+
+        override suspend fun remove(serverId: String) = Unit
+
+        override suspend fun setDisplayName(
+            serverId: String,
+            displayName: String?,
+        ) = Unit
+    }
 }
 
 @Implements(ShortcutManager::class)
