@@ -337,8 +337,9 @@ class ListDesignCaptureTest {
             val actionLayouts = mutableListOf<TextLayoutResult>()
             action.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(actionLayouts) }
             val layout = actionLayouts.single()
-            assertEquals(androidx.compose.ui.text.style.TextOverflow.Visible, layout.layoutInput.overflow)
-            assertTrue("$label must fit its padded action", layout.multiParagraph.width <= layout.size.width + 1f)
+            assertTrue("$label lineRight=${layout.getLineRight(0)} size=${layout.size}", layout.getLineRight(0) <= layout.size.width + 1f)
+            assertTrue(layout.getLineLeft(0) >= -1f)
+            assertTrue(!layout.isLineEllipsized(0))
             assertTrue(!layout.didOverflowHeight)
             assertEquals(1, layout.lineCount)
             assertTrue(action.fetchSemanticsNode().touchBoundsInRoot.height >= 48f)

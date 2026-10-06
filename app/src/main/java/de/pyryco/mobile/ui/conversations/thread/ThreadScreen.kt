@@ -73,7 +73,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.LineHeightStyle
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -1551,7 +1550,6 @@ private fun DeleteConfirmationDialog(
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                 ) {
                     // Figma 673:3672 reserves 40 dp; the 48 dp targets extend into the blank gaps.
-                    // Fractional glyph widths may exceed the rounded text box; render them into the 12 dp padding.
                     TextButton(
                         onClick = onDismiss,
                         modifier = Modifier.frameHeightWithTouchOverflow(top = 4.dp, bottom = 4.dp),
@@ -1559,7 +1557,6 @@ private fun DeleteConfirmationDialog(
                     ) {
                         Text(
                             stringResource(R.string.delete_dialog_cancel),
-                            overflow = TextOverflow.Visible,
                             style = MaterialTheme.typography.labelLarge.copy(lineHeightStyle = lineHeight),
                         )
                     }
@@ -1570,7 +1567,6 @@ private fun DeleteConfirmationDialog(
                     ) {
                         Text(
                             stringResource(R.string.delete_dialog_confirm),
-                            overflow = TextOverflow.Visible,
                             style = MaterialTheme.typography.labelLarge.copy(lineHeightStyle = lineHeight),
                         )
                     }

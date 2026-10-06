@@ -102,8 +102,9 @@ class ThreadDeleteGeometryTest {
         rule.onNodeWithText("About").assertDoesNotExist()
         for (label in listOf("Cancel", "Delete")) {
             val result = layout(label)
-            assertEquals(androidx.compose.ui.text.style.TextOverflow.Visible, result.layoutInput.overflow)
-            assertTrue("$label must fit its padded action", result.multiParagraph.width <= result.size.width + 1f)
+            assertTrue("$label lineRight=${result.getLineRight(0)} size=${result.size}", result.getLineRight(0) <= result.size.width + 1f)
+            assertTrue(result.getLineLeft(0) >= -1f)
+            assertTrue(!result.isLineEllipsized(0))
             assertTrue(!result.didOverflowHeight)
             assertEquals(1, result.lineCount)
             val target = rule.onNodeWithText(label).fetchSemanticsNode().touchBoundsInRoot
