@@ -34,3 +34,9 @@ Focused lint/build/Android-test compilation and forced Spotless checks precede t
 ## Documentation handoff
 
 Pending for the documentation stage: update `app/src/androidTest/assets/design-1220/list/index.md`, “Delete confirmation — 673:3665”, with the fresh measurements, tolerance verdict and run provenance. Builder retains the evidence and reports measurements in the PR; documentation does not run captures.
+
+## Revisions
+
+2026-10-07: Native text measurement showed Compose trims the bodyMedium line box to 56 dp for three lines. Use untrimmed line boxes while preserving all theme typography values to reproduce the frame's 60 dp body and 220 dp surface. Robolectric's separate Dialog window did not inherit either LocalDensity or DeviceConfigurationOverride font scale (measured 1.0 after requesting 1.5); compact large-text assertions therefore run in the existing real-device walk at its actual 320×700 / 1.5× configuration. Shared checks use touchBoundsInRoot for invisible targets and physical taps beyond the visible action edges.
+
+2026-10-07: Both real-device viewports and native graphics exposed action labels whose fractional intrinsic width was rounded down by the button's content constraints (`Cancel`: 46 px layout, width overflow). An unbounded-width measurement retained the same rounded paragraph width. Render labels with TextOverflow.Visible so fractional glyph edges are not clipped; tests require one complete line, no height overflow and paragraph width within one pixel of its layout, safely inside the surrounding 12 dp padding. Device surface position assertions translate dialog-root bounds to screen coordinates before subtracting the Activity status inset.

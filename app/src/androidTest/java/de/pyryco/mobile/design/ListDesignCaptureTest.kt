@@ -2,6 +2,7 @@ package de.pyryco.mobile.design
 
 import android.view.View
 import android.view.WindowInsets
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -17,6 +18,7 @@ import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -49,6 +51,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -264,10 +267,32 @@ class ListDesignCaptureTest {
         rule.onNodeWithText("Channel info").performClick()
         awaitText("About")
         design.capture(FOLDER, "channel-info$suffix", "668:5355")
-        // Delete sits below the sheet's fold.
-        rule.onNodeWithText("Delete").performScrollTo().performClick()
-        awaitText("Delete conversation?")
-        design.capture(FOLDER, "delete-confirmation$suffix", "673:3665")
+        val thread = checkNotNull(design.inputs.thread.value)
+        val originalName = thread.state.value.displayName
+        val fake = GlobalContext.get().get<FakeConversationRepository>()
+        // Only Default Delete uses the frame's name; earlier modal captures keep their existing fixture.
+        runBlocking { fake.rename(thread.state.value.conversationId, "kitchenclaw refactor") }
+        try {
+            awaitText("kitchenclaw refactor")
+            // Delete sits below the sheet's fold.
+            rule.onNodeWithText("Delete").performScrollTo().performClick()
+            awaitText("Delete conversation?")
+            rule.onNodeWithText("About").assertDoesNotExist()
+            design.capture(FOLDER, "delete-confirmation$suffix", "673:3665")
+            assertDeleteGeometry(compact = suffix.isNotEmpty())
+            // Real dialog-window dismissal: none of these routes reopens the sheet or deletes the channel.
+            rule.onNodeWithText("Cancel").performClick()
+            assertDeleteDismissed()
+            reopenDelete()
+            Espresso.pressBack()
+            assertDeleteDismissed()
+            reopenDelete()
+            shell("input tap 8 100")
+            assertDeleteDismissed()
+            assertEquals("kitchenclaw refactor", thread.state.value.displayName)
+        } finally {
+            runBlocking { fake.rename(thread.state.value.conversationId, originalName) }
+        }
 
         hostStates {
             relaunch()
@@ -281,6 +306,61 @@ class ListDesignCaptureTest {
             }
             tree.performScrollToIndex(0)
             design.capture(FOLDER, "host-rows$suffix", "672:3493")
+        }
+    }
+
+    private fun reopenDelete() {
+        design.openHeaderMenu()
+        rule.onNodeWithText("Channel info").performClick()
+        awaitText("About")
+        rule.onNodeWithText("Delete").performScrollTo().performClick()
+        awaitText("Delete conversation?")
+    }
+
+    private fun assertDeleteDismissed() {
+        rule.waitUntil(5_000) { rule.onAllNodes(hasText("Delete conversation?")).fetchSemanticsNodes().isEmpty() }
+        rule.onNodeWithText("About").assertDoesNotExist()
+        assertTrue(!checkNotNull(design.inputs.thread.value).state.value.deleteConfirmVisible)
+    }
+
+    private fun assertDeleteGeometry(compact: Boolean) {
+        val node = rule.onNodeWithTag("delete-dialog-surface").fetchSemanticsNode()
+        val location = IntArray(2)
+        (checkNotNull(node.root) as ViewRootForTest).view.getLocationOnScreen(location)
+        val surface = node.boundsInRoot.translate(Offset(location[0].toFloat(), location[1].toFloat()))
+        val body = rule.onNodeWithText("This permanently deletes", substring = true)
+        val layouts = mutableListOf<TextLayoutResult>()
+        body.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        assertTrue(!layouts.single().hasVisualOverflow)
+        for (label in listOf("Cancel", "Delete")) {
+            val action = rule.onNodeWithText(label).assertIsDisplayed()
+            val actionLayouts = mutableListOf<TextLayoutResult>()
+            action.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(actionLayouts) }
+            val layout = actionLayouts.single()
+            assertEquals(androidx.compose.ui.text.style.TextOverflow.Visible, layout.layoutInput.overflow)
+            assertTrue("$label must fit its padded action", layout.multiParagraph.width <= layout.size.width + 1f)
+            assertTrue(!layout.didOverflowHeight)
+            assertEquals(1, layout.lineCount)
+            assertTrue(action.fetchSemanticsNode().touchBoundsInRoot.height >= 48f)
+        }
+        if (compact) {
+            assertEquals(
+                1.5f,
+                layouts
+                    .single()
+                    .layoutInput.density.fontScale,
+                0f,
+            )
+            assertTrue(surface.width <= 320f)
+            assertTrue(surface.height > 220f && surface.height < 700f)
+        } else {
+            assertEquals(316f, surface.width, 2f)
+            assertEquals(220f, surface.height, 2f)
+            assertEquals(48f, surface.left, 2f)
+            // Dialog windows use screen coordinates; remove the real Activity status-bar inset.
+            val topInset = ViewCompat.getRootWindowInsets(design.view)?.getInsets(WindowInsetsCompat.Type.statusBars())?.top ?: 0
+            assertEquals(312f, surface.top - topInset, 2f)
+            assertEquals(3, layouts.single().lineCount)
         }
     }
 
