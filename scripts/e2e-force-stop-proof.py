@@ -81,7 +81,10 @@ def owned_worker(port, app_revision, daemon_revision, evidence):
             time.sleep(0.3)
         raise RuntimeError("synthetic post did not appear without scrolling")
 
-    record = {"app_revision": app_revision, "daemon_revision": daemon_revision,
+    record = {"started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+              "device_sdk": adb("shell", "getprop", "ro.build.version.sdk"),
+              "device_image": adb("shell", "getprop", "ro.build.fingerprint"),
+              "app_revision": app_revision, "daemon_revision": daemon_revision,
               "daemon_version": subprocess.check_output([env["PYRY_BIN"], "version"], text=True).strip(),
               "conversation_id": conversation, "synthetic_post_id": prefix,
               "synthetic_post_text": prefix + "-new-000", "result": "FAIL"}
@@ -95,6 +98,7 @@ def owned_worker(port, app_revision, daemon_revision, evidence):
         if pid():
             raise RuntimeError("app process survived force-stop")
         record["process_stopped"] = True
+        record["stopped_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         control("posts", {"name": name, "prefix": prefix + "-new", "count": 1})
         control("stop")
         control("start")
@@ -102,7 +106,8 @@ def owned_worker(port, app_revision, daemon_revision, evidence):
         after = pid()
         if not after or before == after:
             raise RuntimeError("app process did not relaunch")
-        record.update(pid_after=after, process_relaunched=True, post_count=1, scrolling=False, result="PASS")
+        record.update(pid_after=after, process_relaunched=True, post_count=1, scrolling=False, result="PASS",
+                      relaunched_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
     finally:
         Path(evidence).write_text(json.dumps(record, indent=2) + "\n")
     print("Force-stop proof: PASS; actual process stopped/relaunched; synthetic post once; no scrolling")
@@ -144,7 +149,14 @@ def main():
             if granted is None or not gate.reset_app(env, serial, granted):
                 raise RuntimeError("owned emulator installation failed")
             env.update(ANDROID_SERIAL=serial, DEVICE="connected", E2E_INSTALLED="1", E2E_APKS_BUILT="1")
+            started = time.time_ns()
             result = subprocess.run(["bash", str(ROOT / "scripts/e2e-emulator.sh")], env=env, cwd=ROOT)
+            reports = gate.fresh_reports(ROOT / "app/build/outputs/androidTest-results/connected/debug", started)
+            xml, passed, executed = gate.combine_reports(reports, gate.E2E_PACKAGE + ".DeterministicInteractiveStreamE2ETest")
+            (folder / "preparation.xml").write_text(xml + "\n")
+            print(f"Force-stop preparation: {executed} executed; passed={passed}; process exit {result.returncode}")
+            if executed != 1 or not passed:
+                return 1
             print("Force-stop evidence: " + str(folder / "evidence.json"))
             return result.returncode
         finally:
