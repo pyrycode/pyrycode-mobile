@@ -54,3 +54,7 @@ None. Estimated total written work is 750–1000 lines across three production f
 ## Documentation handoff
 
 Pending for the documentation stage: update `docs/knowledge/features/thread-screen-oldest-end-history-demand.md`, “The oldest-end history demand”, for position-based two-viewport prefetch and 200-entry thread pages. Record fresh full live-gate executed/failed/skipped counts and confirmation that the named attachment history-reload method ran and passed, in the ticket evidence documentation. Also record dispatcher `./gradlew check` counts for `ThreadScreenHistoryTest`.
+
+## Revisions
+
+- 2026-10-06 — Verifier finding 1 exposed a gap-to-backwards fallthrough after the selected gap's marker disappeared or left the viewport. The per-touch gap latch now gates every history demand before marker lookup, retaining the selected walk throughout the drag and its continuing fling until a fresh touch resets it. Four controlled-response `ThreadScreenHistoryTest` cases cover marker removal and movement offscreen during both a held drag and a continuing fling, and prove a fresh touch can request again. All four first failed by issuing a backwards page after the gap settled. Ordinary oldest-end prefetch still allows subsequent movement to ask after settlement when the gesture has not selected a gap. No geometry, request-slot or repository changes are needed.

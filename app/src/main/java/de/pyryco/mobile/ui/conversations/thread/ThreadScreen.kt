@@ -709,7 +709,8 @@ fun ThreadScreen(
                                             )
                                     },
                                     onDemand = {
-                                        if (!historyLoading) {
+                                        // A selected gap owns this touch and its fling even after its marker disappears.
+                                        if (!historyLoading && !gapDemanded) {
                                             val marker =
                                                 visibleHistoryMarker(
                                                     listState.layoutInfo,
@@ -719,10 +720,8 @@ fun ThreadScreen(
                                                     gapHeights,
                                                 )
                                             if (marker != null) {
-                                                if (!gapDemanded) {
-                                                    gapDemanded = true
-                                                    demandHistoryGap(marker.anchor)
-                                                }
+                                                gapDemanded = true
+                                                demandHistoryGap(marker.anchor)
                                             } else {
                                                 demandOlderHistory()
                                             }

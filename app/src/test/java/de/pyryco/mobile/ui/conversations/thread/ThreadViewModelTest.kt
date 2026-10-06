@@ -4293,7 +4293,7 @@ class ThreadViewModelTest {
         }
 
     @Test
-    fun history_aPullBeforeTheOpeningAskClaimsTheSlot_isTheOnlyAsk() =
+    fun history_aPullBeforePositionSeedingIsDropped_andOnlyTheOpeningAskRuns() =
         runTest {
             val gate = CompletableDeferred<Unit>()
             val available = MutableStateFlow(true)
@@ -4303,7 +4303,7 @@ class ThreadViewModelTest {
             vm.onDemandOlderHistory()
             gate.complete(Unit)
             advanceUntilIdle()
-            // One ask from the newest; the opening ask found the walk already started and asked nothing.
+            // The pull is dropped while seeding; opening asks once from the newest after the seed arrives.
             assertEquals(listOf(""), repo.asks)
         }
 
