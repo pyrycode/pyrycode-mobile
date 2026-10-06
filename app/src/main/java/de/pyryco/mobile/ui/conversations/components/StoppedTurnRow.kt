@@ -10,7 +10,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -41,11 +43,21 @@ fun StoppedTurnRow(
         modifier =
             modifier
                 .fillMaxWidth()
-                .padding(start = MessageContentGutter, end = MessageContentGutter, bottom = MessageAreaRowSpacing),
-        style = MaterialTheme.typography.bodyMedium,
+                // Figma 685:3992's `Stopped turn` node wraps the line in an 8dp top-and-bottom pad of its own,
+                // on top of the stream's standard 16dp row gap (#1608).
+                .padding(
+                    start = MessageContentGutter,
+                    end = MessageContentGutter,
+                    top = StoppedTurnTopPadding,
+                    bottom = MessageAreaRowSpacing,
+                ),
+        style = MaterialTheme.typography.bodyMedium.copy(lineHeightStyle = StoppedTurnLineBox),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
+
+private val StoppedTurnTopPadding = 8.dp
+private val StoppedTurnLineBox = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
 
 /**
  * [item]'s text, desktop's `stoppedTurnText` copy: the reason picks the fixed phrase, an unknown reason

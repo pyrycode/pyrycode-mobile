@@ -16,11 +16,13 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -105,6 +107,45 @@ class MessageAttachmentsTest {
         name: String?,
         mime: String?,
     ) = AttachmentViewState.Ready(AttachmentSource.Kept(File("/kept/$A1")), name, mime)
+
+    // #1624: Figma 696:4913 draws the type label at regular weight, and the file's name at the bubble's
+    // full content colour — only the state line beneath it is dimmed. The theme drew the type label at
+    // medium weight and dimmed the name along with the state line.
+    @Test
+    fun fileRow_keepsTheNameAtFullStrength_andTheTypeLabelAtRegularWeight() {
+        render(message(MessageAttachment(A1, "notes.txt", "text/plain"))) { mapOf(A1 to AttachmentViewState.Failed) }
+
+        val typeResults = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        composeTestRule
+            .onNodeWithText("TXT")
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(typeResults) }
+        assertEquals(
+            androidx.compose.ui.text.font.FontWeight.Normal,
+            typeResults
+                .single()
+                .layoutInput.style.fontWeight,
+        )
+
+        val nameResults = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        composeTestRule
+            .onNodeWithText("notes.txt")
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(nameResults) }
+        val statusResults = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        composeTestRule
+            .onAllNodesWithText(InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_attachment_failed))
+            .onFirst()
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(statusResults) }
+
+        val nameAlpha =
+            nameResults
+                .single()
+                .layoutInput.style.color.alpha
+        val statusAlpha =
+            statusResults
+                .single()
+                .layoutInput.style.color.alpha
+        assertTrue("the name must be less dimmed than the state line below it", nameAlpha > statusAlpha)
+    }
 
     @Test
     fun decodedImage_showsTheThumbnail_describedByItsName() {

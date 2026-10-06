@@ -1,19 +1,27 @@
 package de.pyryco.mobile.ui.conversations.components
 
+import androidx.compose.foundation.layout.Column
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.height
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UnrecognizedSite
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.GraphicsMode
 
 /**
  * Deterministic Compose coverage for the unrecognized-message row (#608).
@@ -168,5 +176,22 @@ class UnrecognizedMessageRowTest {
         restorationTester.emulateSavedInstanceStateRestore()
 
         composeTestRule.onNodeWithText(shortRaw).assertIsDisplayed()
+    }
+
+    // #1608: Figma 685:4112 leaves the stream's standard 16dp `Message area` gap below this row, the same
+    // rhythm every other row keeps, not the 12dp this row used on its own — so the collapsed row's own
+    // reported height (its 34dp content plus its own trailing gutter) grows from 46dp to 50dp.
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun collapsed_row_height_includes_the_standard_16dp_trailing_gutter() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                Column { UnrecognizedMessageRow(item = unrecognized(), modifier = Modifier.testTag("row-1")) }
+            }
+        }
+
+        val row = composeTestRule.onNodeWithTag("row-1").getUnclippedBoundsInRoot()
+
+        assertEquals(50f, row.height.value, 0.5f)
     }
 }

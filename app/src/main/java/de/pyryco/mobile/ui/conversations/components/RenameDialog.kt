@@ -32,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
@@ -40,6 +41,8 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.theme.modalControl
 import de.pyryco.mobile.ui.theme.modalFieldContainer
 import de.pyryco.mobile.ui.theme.modalFieldText
+
+private val RenameLabelLineBox = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
 
 @Composable
 fun RenameDialog(
@@ -92,7 +95,9 @@ private fun RenameDialogInternal(
         Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
                 text = label,
-                style = MaterialTheme.typography.labelLarge,
+                // Figma 671:5664 draws this label in its full line box; the theme's default trims it to its
+                // glyphs, which pulls the field below a couple of px closer than the frame (#1651).
+                style = MaterialTheme.typography.labelLarge.copy(lineHeightStyle = RenameLabelLineBox),
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
