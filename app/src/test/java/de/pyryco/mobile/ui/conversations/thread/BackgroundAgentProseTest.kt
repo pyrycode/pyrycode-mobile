@@ -101,30 +101,38 @@ class BackgroundAgentProseTest {
     }
 
     @Test fun historyGapBeforeChildDoesNotLetItsProseEscapeAClosedAgentRun() {
+        val agent = tool("a")
         val child = text("child", "a")
-        val items = listOf(tool("a"), start("a"), text("main"), child, tool("read", "a", "Read"))
+        val items = listOf(agent, start("a"), text("main"), child, tool("read", "a", "Read"))
         val rows = project(items)
-        val markers = listOf(ThreadHistoryMarker(1, child.historyKeys().first()))
+        val markers =
+            listOf(
+                ThreadHistoryMarker(1, child.historyKeys().first()),
+                ThreadHistoryMarker(2, agent.historyKeys().first()),
+            )
         val closed = foldHistoryToolRuns(rows, emptySet(), markers)
-        assertEquals(listOf("main"), ids(closed))
-        assertEquals(listOf("a"), closed.filterIsInstance<ThreadRow.ToolRun>().map { it.runId })
-        val projected = foldedAgentHistoryMarkers(rows, closed, markers)
-        assertEquals(listOf(1L), projected.map { it.anchor })
-        assertEquals(projected, historyMarkersFor(closed.filterIsInstance<ThreadRow.ToolRun>().single(), projected))
         val open = foldHistoryToolRuns(rows, setOf("a"), markers)
-        assertEquals(ids(rows), ids(open))
-        assertEquals(markers, foldedAgentHistoryMarkers(rows, open, markers))
-        assertEquals(
-            markers,
-            historyMarkersFor(
-                open.filterIsInstance<ThreadRow.Delivered>().first {
-                    (it.item as? ThreadItem.MessageItem)?.message?.id == "child"
-                },
-                markers,
-            ),
-        )
-        assertUnique(closed)
-        assertUnique(open)
+        val reclosed = foldHistoryToolRuns(rows, emptySet(), markers)
+        // Check every row: expanded runs retain both their header and the original first tool.
+        for (display in listOf(closed, open, reclosed, rows)) {
+            val projected = foldedAgentHistoryMarkers(rows, display, markers)
+            assertEquals(listOf(1L, 2L), display.flatMap { historyMarkersFor(it, projected) }.map { it.anchor }.sorted())
+            assertUnique(display)
+            val run = display.filterIsInstance<ThreadRow.ToolRun>().singleOrNull()
+            if (run != null && !run.expanded) {
+                assertEquals(listOf("main"), ids(display))
+                assertEquals("a", run.runId)
+                assertEquals(projected, historyMarkersFor(run, projected))
+            } else {
+                assertEquals(ids(rows), ids(display))
+                assertEquals(markers, projected)
+                if (run != null) assertEquals(emptyList<ThreadHistoryMarker>(), historyMarkersFor(run, projected))
+                for ((id, marker) in listOf("child" to markers[0], "a" to markers[1])) {
+                    val row = delivered(display).single { (it.item as? ThreadItem.MessageItem)?.message?.id == id }
+                    assertEquals(listOf(marker), historyMarkersFor(row, projected))
+                }
+            }
+        }
     }
 
     @Test fun emptyUnknownUntrackedAndCyclicParentsRetainOrdinaryText() {

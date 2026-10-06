@@ -142,6 +142,7 @@ internal fun historyMarkersFor(
     row: ThreadRow,
     markers: List<ThreadHistoryMarker>,
 ): List<ThreadHistoryMarker> {
+    if (row is ThreadRow.ToolRun && row.expanded) return emptyList()
     val keys =
         when (row) {
             is ThreadRow.Delivered -> row.item.historyKeys()

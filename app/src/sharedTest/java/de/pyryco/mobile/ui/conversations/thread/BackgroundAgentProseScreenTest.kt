@@ -12,6 +12,7 @@ import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -222,22 +223,34 @@ class BackgroundAgentProseScreenTest {
         mount(false, true)
         compose.runOnIdle {
             val child = items.filterIsInstance<ThreadItem.MessageItem>().first { it.message.id == "Child" }
-            markers = listOf(ThreadHistoryMarker(1, child.historyKeys().first()))
+            val agent = items.filterIsInstance<ThreadItem.MessageItem>().first { it.message.id == "a" }
+            markers =
+                listOf(
+                    ThreadHistoryMarker(1, child.historyKeys().first()),
+                    ThreadHistoryMarker(2, agent.historyKeys().first()),
+                )
+        }
+
+        fun assertEachGapOnce() {
+            for (anchor in listOf(1, 2)) {
+                compose.onAllNodesWithTag("history-gap:$anchor").assertCountEquals(1)
+                compose.onNodeWithTag("history-gap:$anchor").assertIsDisplayed()
+            }
         }
         compose.onNodeWithText("Child").assertDoesNotExist()
-        compose.onNodeWithTag("history-gap:1").assertIsDisplayed()
+        assertEachGapOnce()
         run(1).performClick()
         compose.onNodeWithText("Child").assertIsDisplayed()
-        compose.onNodeWithTag("history-gap:1").assertIsDisplayed()
+        assertEachGapOnce()
         val gap = compose.onNodeWithTag("history-gap:1").getUnclippedBoundsInRoot()
         val prose = compose.onNodeWithText("Child").getUnclippedBoundsInRoot()
         org.junit.Assert.assertTrue(gap.bottom <= prose.top)
         run(1).performClick()
         compose.onNodeWithText("Child").assertDoesNotExist()
-        compose.onNodeWithTag("history-gap:1").assertIsDisplayed()
+        assertEachGapOnce()
         compose.runOnIdle { collapse = false }
         compose.onNodeWithText("Child").assertIsDisplayed()
-        compose.onNodeWithTag("history-gap:1").assertIsDisplayed()
+        assertEachGapOnce()
     }
 
     @Test fun finishAndLaterMainReplyKeepProseNestedAndCollapseStillControlsVisibility() {
