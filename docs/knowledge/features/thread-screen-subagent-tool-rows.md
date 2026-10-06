@@ -156,7 +156,8 @@ A streamed delta in these screen tests is revealed by a clock-driven `produceSta
 For background blocks, the growth signature includes all moved delivered tool rows, even when
 the newest row key stays unchanged or the run is collapsed. In-place output growth therefore pins
 a reader who is following; it leaves an older reader's keyed pixel anchor alone.
-`ThreadScreenFollowTest` covers expanded output growth and the older-reader anchor (#1783).
+`BackgroundAgentBlocksScreenTest.inPlaceBlockGrowthPinsFollowerAndKeepsHistoryAnchor`
+covers expanded output growth and the older-reader anchor (#1783).
 
 ### Collapsing runs of consecutive tool rows (#1635)
 
