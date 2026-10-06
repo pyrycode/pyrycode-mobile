@@ -225,6 +225,16 @@ epoch millis. `occurredAt` is also each of the three new kinds' dedupe key — t
 `ThreadRow.listKey()`, `HistoryPageReducer`'s `holdsBanner`/`holdsCompactionBoundary`/
 `holdsModelRefusal` and `decodeThread` below all join on.
 
+Assistant attribution (`Message.parentToolUseId`, #1826) is also absent from disk serialization;
+`CachedMessage`/`CachedSegment` and the document version are unchanged. Cache-only assistant rows
+therefore restore with unknown (empty) attribution. Same-conversation wire/history evidence enriches
+those rows in memory through `mergeCachedRows`, including legacy rows without recoverable segment
+records. The wrapper retains reconciled rows across reconnect, so a later unattributed cache copy
+cannot erase a known parent. A process restart can lose that hint until fresh evidence arrives.
+See [parent precedence through seams and merges](remote-conversation-repository-assistant-reply-segments.md#parent-attribution-through-seams-and-merges-1826)
+for conflict handling. File-cache round-trip and wrapper probes verify omission from stored bytes,
+restoration as empty, enrichment and reconnect retention without a cache migration.
+
 `CachedAttachment(attachmentId, displayName: String? = null, mimeType: String? = null)` (#983) maps
 `Message.attachments` 1:1; `explicitNulls = false` omits a `null` hint on encode rather than writing
 `"displayName":null`, and a document written before this field existed decodes with `attachments =

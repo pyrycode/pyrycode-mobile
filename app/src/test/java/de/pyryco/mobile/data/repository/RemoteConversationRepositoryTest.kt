@@ -4748,6 +4748,40 @@ class RemoteConversationRepositoryTest {
             assertEquals(listOf(LiveSessionEvent.AssistantDelta("c1", "t1", 0, "hel")), events)
         }
 
+    @Test
+    fun assistantParent_reachesObservableRowsAndEvents_withoutLoggingIt() =
+        runTest {
+            val logs = mutableListOf<String>()
+            RelayLog.sink = { _, _, message -> logs += message }
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectLiveEvents(repo)
+            runCurrent()
+            val parent = "private-agent-parent-1826"
+            val envelope = assistantDeltaEnvelope("c1", "child", 0, "reply")
+            pump.push(
+                envelope.copy(
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"c1","turn_id":"child","seq":0,"text":"reply","parent_tool_use_id":"$parent"}""",
+                        ),
+                ),
+            )
+            runCurrent()
+            assertEquals(listOf(LiveSessionEvent.AssistantDelta("c1", "child", 0, "reply", parent)), events)
+            val row =
+                repo
+                    .observeMessages("c1")
+                    .first()
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .single()
+                    .message
+            assertEquals(parent, row.parentToolUseId)
+            assertEquals("child", row.id)
+            assertTrue(logs.none { parent in it })
+            assertTrue(repo.observeMessages("other").first().isEmpty())
+        }
+
     // AC #1: tool_use decodes every field.
     @Test
     fun liveEvents_toolUse_decodesAllFields() =

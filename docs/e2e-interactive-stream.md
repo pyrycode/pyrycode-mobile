@@ -2410,7 +2410,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `tool-progress` (#950) | the status area's running-tool label adds claude's elapsed reading after a `tool_progress` heartbeat, then clears once the call's `tool_result` lands while the turn stays busy | `tool-progress-open.jsonl` + `tool-progress-result.jsonl` | **two** |
 | `reconnect` (#476) | an in-flight reply **survives a mid-turn link drop** and renders exactly once | `reconnect-open.jsonl` + `reconnect-done.jsonl` | **two** |
 | `offline-retry` (#1286) | actual Offline pill retries the same host and a new reply renders | `ping.jsonl` | one |
-| `replay-order` (#477) | events produced **entirely while offline** replay **in order, each exactly once** | `replay-order-open.jsonl` + `replay-order.jsonl` | **two** (release on disconnect) |
+| `replay-order` (#477) | events produced **entirely while offline** replay **in order, each exactly once**, across valid reply segments (#1826) | `replay-order-open.jsonl` + `replay-order.jsonl` | **two** (release on disconnect) |
 | `refusal` (#1360) | a session-scoped `model_refusal_fallback` row offers "Switch back to Haiku" (the menu label, #1494); the tap writes `haiku` and the button disappears | `refusal.jsonl` | one |
 | `mcp-failed` (#1457) | the failed-MCP-server pill (#1345) renders and tapping it opens Channel info on its MCP servers section | `mcp-failed.jsonl` | one |
 | `context-overflow` (#1473) | the combined top-overlay context/Compact pill (#1603) renders after a `prompt_too_long` turn end, and tapping Compact reaches the daemon's child | `context-overflow.jsonl` | one |
@@ -2625,18 +2625,24 @@ exactly-once asserts hold whether the deltas arrive as pure replay (window long 
 mix (window short) — a too-short window only *under-exercises* "entirely offline", never false-greens
 (a reordering still breaks the substring) nor false-reds. The window is a determinism quality knob.
 
-The first fragment carries **no** partial text by design (same as #476), so the **whole** ordered sequence arrives
-post-reconnect into the fresh repo and "no missing segment, in order" holds by construction. The closing
-asserts reuse #476's one-deliberate-count exception: the **order** check matches the cross-delta-boundary
-concatenation `"alpha bravo charlie"` (present only if the deltas assembled in production order — a
-reordered replay breaks the substring), and `assertCountEquals(1)` on it is the dedup invariant on a
-genuinely buffered-during-outage re-delivery. Since #1783, the repository assertions also require
-exact final text `alpha bravo charlie`, delta identities `[0, 1, 2]`, and exactly one initial user
-before the single assistant reply. Visible substring/uniqueness alone could miss duplication inside
-one row. The opening fragment must replay that initial user before thinking: omitting it lets the
-daemon's idle-placement fallback insert the delayed user confirmation between reply deltas 1 and 2,
-splitting an otherwise ordered reply into two legitimate segments. This is a fixture correction;
-production replay and segment folding are unchanged.
+The first fragment carries **no** partial text by design (same as #476), so the **whole** ordered sequence
+arrives post-reconnect. Durable history can place the user echo between assistant deltas 1 and 2,
+splitting the ordered reply into legitimate segments. The scenario accepts that shape as well as an
+unsplit reply; production replay, segment folding and echo placement are unchanged (#1826).
+
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_missedEventsReplayInOrderAfterReconnect`
+shares `hasCompletedReplay` and `assertOrderedReplay` with `ScriptedThreadRenderTest`'s real-repository/render
+probes. Readiness requires non-empty settled assistant segments with exact combined text
+`alpha bravo charlie`. The complete assertion checks visible text top-to-bottom, exact retained combined
+text, flattened delta identities `[0, 1, 2]` from one finalized wire turn, and exactly one prompt echo
+before reply completion. The echo may precede all text or separate segments. Retained rows and sequences
+must not be sorted: sorting can conceal a reordered replay. Requiring one node containing the whole
+phrase or one assistant row would reject valid split replies.
+
+Split and unsplit success probes exercise the complete device assertion path. Negative controls reject
+missing, reordered or duplicated text, missing/reordered/duplicate sequence identities, duplicate retained
+segments and a late echo. A shared visible-text selector alone does not validate its caller's later
+repository, identity or echo assertions.
 
 The disconnect release fence is wired as the overridable `DISCONNECT_TOKEN` / `DISCONNECT_LOG`, defaulting
 to `phone_unregistered` in `relay.log`, and baseline-counted so a stale connection-churn line cannot
@@ -3896,6 +3902,18 @@ The remaining checks here are specific to a real relay or real Claude execution:
   The explicit fresh passing full-live result remains pending with verification;
   accepting a focused flake rerun does not supply that full-run evidence.
   The pre-ship command remains `python3 scripts/android-test-gate.py live`.
+
+- **Segment-aware replay-order assertions (#1826):**
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_missedEventsReplayInOrderAfterReconnect`
+  shares complete readiness and final assertions with deterministic split/unsplit screen probes
+  (see [replay-order](#scenarios-454)). No assertion-coverage follow-up remains. On `67635cdc`, the
+  dispatcher full `scripted-all` gate executed/passed 16 tests, 0 failed, 0 skipped; its per-method
+  report confirms this method passed. The fresh focused `scripted replay-order` XML at
+  `/tmp/builder-1826/evidence-67635cdc/dispatcher.xml` and its original report record the same method:
+  1 executed/passed, 0 failed, 0 skipped, timestamp `2026-10-06T00:48:46`. The verifier's PASS on
+  [PR #1828](https://github.com/pyrycode/pyrycode-mobile/pull/1828) confirms both reports. This is
+  rung-4 scripted evidence with no real-Claude run required; the pre-ship live command remains
+  `python3 scripts/android-test-gate.py live`.
 
 - **Background-agent newest-end placement (#1783):**
   `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished` passed
