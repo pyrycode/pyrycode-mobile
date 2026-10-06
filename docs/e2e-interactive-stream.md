@@ -181,7 +181,9 @@ Controlled projection/Compose fixtures separately cover multiple agents and hist
    [#1357](knowledge/features/turn-outcome-indicator.md) dropped its Interrupted-label assertion) holds a
    turn open on a command that never returns on its own, taps the composer's Stop, and asserts the stopped
    turn's `cancelled` `stop_reason` and a real reply to a same-thread follow-up — covered in its own
-   paragraph below, after the reset scenario. The **model
+   paragraph below, after the reset scenario. The **stop-background-task** scenario (#1830) separately
+   opens a held background row, stops it, proves terminal update or roster omission, and obtains
+   a same-conversation reply; its detailed coverage is below. The **model
    and effort settings round trip** (#545 — `interactiveTurn_modelChange_roundTripsAndStaysPerConversation`,
    `interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn`,
    `interactiveTurn_chosenEffort_appliesFromTheFirstTurn`,
@@ -494,6 +496,19 @@ KDoc that the turn ran only "when handoff notes are enabled". The **restarting**
 the kill and respawn in `startFreshRunner`, has no lever to hold it open live and stays proven only by
 `ScriptedResettingTest` (`app/src/sharedTest/.../ScriptedResettingTest.kt`). Cost is unchanged: the ping
 turn plus the daemon's reset wrap-up turn.
+
+The **stop-background-task** scenario (#1830 —
+`InteractiveStreamE2ETest.interactiveTurn_stopBackgroundTask_completesThenRepliesAgain`)
+is in the curated full live suite. Real Claude launches one background Bash command against a
+scenario-local loopback hold with no natural release timer. Exact `command` and
+`run_in_background=true` tool input, start metadata and the latest retained roster identify the
+held task; description text never selects it. The fixture must report arrival and remain held,
+with no prior terminal update and retained membership, before the phone opens the row and taps
+Stop task. Only a matching stopped update or a later uncapped roster omitting that id after the
+tap proves completion. A capped roster cannot prove absence. The phone must clear the running
+row/count and Stop button, then display a real reply in the same conversation. Silence or local
+control acceptance cannot pass. Teardown releases the hold even on failure. Counted full-suite
+proof is recorded in [Verification status](#verification-status).
 
 The **stop-running-turn** scenario (#965 —
 `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`) is likewise **always-on** (not
@@ -1884,7 +1899,7 @@ host-prompt handlers. Scripted runs and unrelated live subsets retain their exis
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the current selector has 59 runnable `@Test` methods. The historical
+incantation to remember — the current selector has 60 runnable `@Test` methods. The historical
 inventory below describes the pre-#1193 forty-four-method set; ignored methods are excluded from
 the current selector as described under the model and effort settings round trip. It covered ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
@@ -2389,6 +2404,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 
 | `SCENARIO` | asserts | raw fragment(s) | fragments |
 | --- | --- | --- | --- |
+| `stop-background-task` (#1830) | opening the retained running row and tapping Stop removes its row/count | existing fakeclaude canned-roster rider and `stop_task` handler | no replay fragments or second-message release |
 | `background-agent` (#1783) | background lifecycle moves a loaded tool family, marker navigation opens its run, and finish settles it before later text | `background-agent-open.jsonl` + `background-agent-finish.jsonl` | **two** (release on second send) |
 | `selection-copy` (#1674) | finished assistant prose copies only the long-pressed word through Android’s system menu | `selection-copy.jsonl` | one |
 | `ping` (default) | a single-line reply renders | `ping.jsonl` | one |
@@ -2650,6 +2666,26 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+**Stop background task (#1830, 2026-10-06).** The dispatcher full live gate ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on `feature/1830`
+at `9882658130`, merged with `origin/main` at `09c4eb9a1e`: **60 executed, 60 passed,
+0 failed, 0 skipped**, exit 0. The fresh JUnit report
+`2026-10-06T01-52-48-028Z_real-claude-gate_#1830.log` contains the passing, unskipped
+`InteractiveStreamE2ETest.interactiveTurn_stopBackgroundTask_completesThenRepliesAgain`;
+the dispatcher's per-method gate report agrees. This is full-suite evidence, with no separate
+focused live run claimed. See [dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1830#issuecomment-6007855580).
+Documentation records this result without executing the test.
+
+The [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1834#issuecomment-6007698046)
+records the fresh `scripted-all` XML (`build/dispatcher-tests/scripted-all-34fi_kdr/dispatcher.xml`):
+**17 executed/passed, 0 failed, 0 skipped**, including
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_stopBackgroundTaskRemovesRunningRow`.
+The retained [focused scripted XML](../app/src/androidTest/assets/task-stop-1830/scripted-focused-green.xml)
+also contains that passing method: **1 executed/passed, 0 failed, 0 skipped**. These are rung-4
+proofs with zero real Claude turns. The verifier's UI gate reports **187 executed/passed,
+0 failed, 1 skipped**, including all three `BackgroundTaskPanelCaptureTest` methods;
+synthetic captures establish appearance separately from live completion.
 
 **Background Agent at the newest end (#1783, 2026-10-06).** The dispatcher ran
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on `feature/1783`
@@ -3857,6 +3893,16 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Guarded background-task stop (#1830):**
+  `InteractiveStreamE2ETest.interactiveTurn_stopBackgroundTask_completesThenRepliesAgain`
+  proves held-task completion and a real same-conversation follow-up. Its rung-4 twin,
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_stopBackgroundTaskRemovesRunningRow`,
+  uses the existing fakeclaude retained-roster rider: the replay path does not populate the
+  stop-control lookup. The phone Stop drives the existing handler without a second-message
+  release. Both methods passed in their full configured suites; counts are in
+  [Verification status](#verification-status). No coverage follow-up remains. The pre-ship
+  command stays `python3 scripts/android-test-gate.py live`, with no new gate flags.
 
 - **Segment-aware replay-order assertions (#1826):**
   `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_missedEventsReplayInOrderAfterReconnect`

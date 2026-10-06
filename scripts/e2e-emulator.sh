@@ -630,6 +630,7 @@ cleanup() {
   local code=$?
   log "tearing down…"
   [ -n "${BACKGROUND_AGENT_FIXTURE_PID:-}" ] && kill "${BACKGROUND_AGENT_FIXTURE_PID}" 2>/dev/null || true
+  [ -n "${STOP_TASK_FIXTURE_PID:-}" ] && kill "${STOP_TASK_FIXTURE_PID}" 2>/dev/null || true
   [ -n "${WATCHER_PID}" ] && kill "${WATCHER_PID}" 2>/dev/null || true
   [ -n "${DAEMON_PID}" ] && kill "${DAEMON_PID}" 2>/dev/null || true
   [ -n "${DAEMON_B_PID:-}" ] && kill "${DAEMON_B_PID}" 2>/dev/null || true
@@ -756,6 +757,10 @@ if [ -n "${DETERMINISTIC}" ]; then
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/tool-open.jsonl}"
       FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/send-now-delivered.jsonl}"
       DROP_B_FENCE="send-now"
+      ;;
+    stop-background-task)
+      TEST_METHOD="interactiveTurn_seededChannel_stopBackgroundTaskRemovesRunningRow"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/ping.jsonl}"
       ;;
     background-agent)
       TEST_METHOD="interactiveTurn_seededChannel_backgroundAgentMovesAndSettles"
@@ -989,6 +994,10 @@ if [ -n "${DETERMINISTIC}" ]; then
   # the fake answers mcp_status only under this knob.
   REPLAY_ENV=(PYRY_FAKE_CLAUDE_STREAM_JSON=1 PYRY_FAKE_CLAUDE_MCP_STATUS=1
     "PYRY_FAKE_CLAUDE_STREAM_REPLAY_FIRST=${FIXTURE_FILE}")
+  if [ "${SCENARIO}" = "stop-background-task" ]; then
+    # Existing canned roster rider owns retained task state and the stop_task control response.
+    REPLAY_ENV=(PYRY_FAKE_CLAUDE_STREAM_JSON=1 PYRY_FAKE_CLAUDE_MCP_STATUS=1 PYRY_FAKE_CLAUDE_STREAM_ROSTER=1)
+  fi
   if [ -n "${FIXTURE_FILE_2}" ]; then
     REPLAY_ENV+=("PYRY_FAKE_CLAUDE_STREAM_REPLAY_SECOND=${FIXTURE_FILE_2}"
       "PYRY_FAKE_CLAUDE_STREAM_REPLAY_RELEASE=${REPLAY_RELEASE}")
@@ -1323,6 +1332,17 @@ fi
 # #1642: only the isolated harness daemon can release the live Bash hold. The tool
 # cannot finish until send-now delivery is logged; no wall-clock sleep releases it.
 if [ -z "${DETERMINISTIC}" ]; then
+  # #1830: a keyed Bash hold, released by scenario teardown even on assertion failure.
+  STOP_TASK_PORT_FILE="${WORK_DIR}/stop-task-port"
+  python3 "${REPO_ROOT}/scripts/stop-task-fixture.py" "${STOP_TASK_PORT_FILE}" &
+  STOP_TASK_FIXTURE_PID=$!
+  stop_task_deadline=$((SECONDS + 10))
+  until [ -s "${STOP_TASK_PORT_FILE}" ]; do
+    kill -0 "${STOP_TASK_FIXTURE_PID}" 2>/dev/null || die "Stop task fixture exited"
+    [ "${SECONDS}" -lt "${stop_task_deadline}" ] || die "Stop task fixture did not start"
+    sleep 0.1
+  done
+  STOP_TASK_URL="http://127.0.0.1:$(cat "${STOP_TASK_PORT_FILE}")"
   # #1783: hold a real background Agent until the phone's release command.
   BACKGROUND_AGENT_PORT_FILE="${WORK_DIR}/background-agent-port"
   python3 "${REPO_ROOT}/scripts/background-agent-fixture.py" "${BACKGROUND_AGENT_PORT_FILE}" &
@@ -1408,6 +1428,7 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_reconnect_slashCommandsAndCompactStillWork"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundTask_countsInActionsMenuAndPanel"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_stopBackgroundTask_completesThenRepliesAgain"
   # #955: the push scenarios join (one turn each): a turn that ends while the app is in the background, and
   # a prompt that surfaces while it is, each alerted through a real FCM push from the production relay.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread"
@@ -1496,6 +1517,9 @@ fi
 log "running ${DEVICE}DebugAndroidTest (headless emulator: boot → install → ${TEST_TARGET} → teardown)…"
 log "  phone relayUrl = ${PHONE_RELAY_URL}"
 GRADLE_TEST_ARGS=(-PuseRelayRepository=true)
+if [ -n "${STOP_TASK_URL:-}" ]; then
+  GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.stopTaskFixtureUrl="${STOP_TASK_URL}")
+fi
 if [ -n "${BACKGROUND_AGENT_URL:-}" ]; then
   GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.backgroundAgentFixtureUrl="${BACKGROUND_AGENT_URL}")
 fi
