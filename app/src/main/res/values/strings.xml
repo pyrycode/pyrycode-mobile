@@ -1,4 +1,5 @@
 <resources>
+    <string name="thread_history_gap_label">Load earlier messages</string>
     <string name="host_prompt_title">Host system prompt</string>
     <string name="host_prompt_empty">Empty</string>
     <string name="host_prompt_loading">Loading…</string>
@@ -10,8 +11,6 @@
     <string name="cd_open_menu">Open menu</string>
     <string name="cd_pair_another_host">Pair another host</string>
     <string name="channel_list_empty">To pair a host, tap Pair another host at the top right.</string>
-    <string name="discussion_list_title">Recent discussions</string>
-    <string name="discussion_list_empty">No discussions yet</string>
     <string name="cd_back">Back</string>
     <string name="cd_more_actions">More actions</string>
     <string name="save_as_channel_action">Save as channel…</string>
@@ -36,10 +35,6 @@
     <string name="cd_tree_host_update">Update Pyrycode to use %1$s</string>
     <string name="tree_host_update_required">Update Pyrycode to use this host.</string>
     <string name="tree_host_update_required_version">Update Pyrycode to version %1$s or newer to use this host.</string>
-    <!-- A Chats row's pencil (#827); %1$s is the chat's (clamped) name or the untitled fallback. -->
-    <string name="cd_tree_chat_edit">Edit chat %1$s</string>
-    <!-- A Channels row's pencil (#667); %1$s is the channel's (clamped) name or the untitled fallback. -->
-    <string name="cd_tree_channel_edit">Edit channel %1$s</string>
     <!-- A workspace row's pencil (#905), in both sections; %1$s is the workspace's (clamped) shown name. -->
     <string name="cd_tree_workspace_edit">Edit workspace %1$s</string>
     <string name="cd_tree_workspace_new_channel">New channel in %1$s</string>
@@ -56,10 +51,6 @@
     <string name="unnamed_host">Unnamed host</string>
     <string name="settings_title">Settings</string>
     <string name="cd_add_memory_plugin">Add memory plugin</string>
-    <string name="promote_dialog_title">Save as channel?</string>
-    <string name="promote_dialog_body">Save \"%1$s\" as a channel?</string>
-    <string name="promote_dialog_confirm">Save as channel</string>
-    <string name="promote_dialog_cancel">Cancel</string>
     <string name="delete_dialog_title">Delete conversation?</string>
     <string name="delete_dialog_body">This permanently deletes \"%1$s\" and all its sessions and messages. This can’t be undone.</string>
     <string name="delete_dialog_confirm">Delete</string>
@@ -205,10 +196,9 @@
     <string name="thread_usage_limit_resets_on">", resets %1$s at %2$s"</string>
     <!-- #1357: recovery advice after a stopped turn, desktop's copy. %1$s is the conversation's agent name, so an
          account state reads as the agent's report, never the app's own finding. -->
-    <string name="thread_recovery_context">Context too long. Compact or reset the session.</string>
+    <string name="thread_recovery_context">Context too long - Compact</string>
     <string name="thread_recovery_billing">%1$s reported a billing error. Check %1$s billing on this server.</string>
     <string name="thread_recovery_auth">%1$s reported an authentication failure. Check %1$s sign-in on this server.</string>
-    <string name="thread_recovery_compact">Compact</string>
     <string name="thread_history_loading_label">Loading earlier messages</string>
     <string name="cd_thread_history_loading">Loading earlier messages in this conversation</string>
     <string name="thread_history_retry_label">Couldn\'t load earlier messages</string>
@@ -520,5 +510,23 @@
     <string name="markdown_reader_open_in_app">Open in another app</string>
     <string name="markdown_reader_save_to_device">Save to device</string>
     <string name="markdown_reader_clip_label">Note</string>
+    <string name="thread_attention_waiting">%1$s needs your answer</string>
+    <string name="thread_attention_waiting_count">%1$d conversations need you</string>
+    <string name="thread_attention_finished">%1$s finished</string>
     <string name="cd_thread_queued_send_now">Send now</string>
+    <string name="agent_still_working">Agent started, still working</string>
+    <string name="agent_finished">Agent finished</string>
+    <string name="agent_go_to">Go to agent ↓</string>
+    <string name="share_to_title">Share to…</string>
+    <plurals name="share_images">
+        <item quantity="one">%d image</item>
+        <item quantity="other">%d images</item>
+    </plurals>
+    <plurals name="share_files">
+        <item quantity="one">%d file</item>
+        <item quantity="other">%d files</item>
+    </plurals>
+    <string name="background_tasks_stop">Stop task</string>
+    <string name="background_tasks_expanded">Expanded</string>
+    <string name="background_tasks_collapsed">Collapsed</string>
 </resources>

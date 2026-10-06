@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -20,6 +21,8 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -50,6 +53,7 @@ import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.parsePairingPayload
 import de.pyryco.mobile.data.network.serverKeyFingerprint
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.data.repository.AttachmentUploadLimit
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.di.ThreadDestinationFactory
@@ -58,20 +62,22 @@ import de.pyryco.mobile.ui.conversations.components.LocalWorkspacePickerReposito
 import de.pyryco.mobile.ui.conversations.list.ChannelListEvent
 import de.pyryco.mobile.ui.conversations.list.ChannelListScreen
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
-import de.pyryco.mobile.ui.conversations.list.DiscussionListEvent
-import de.pyryco.mobile.ui.conversations.list.DiscussionListScreen
-import de.pyryco.mobile.ui.conversations.list.DiscussionListUiState
-import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import de.pyryco.mobile.ui.conversations.list.PLAY_STORE_URL
-import de.pyryco.mobile.ui.conversations.list.PendingPromotion
+import de.pyryco.mobile.ui.conversations.share.ShareIntakeViewModel
+import de.pyryco.mobile.ui.conversations.share.SharePayload
+import de.pyryco.mobile.ui.conversations.share.SharePickerHeader
+import de.pyryco.mobile.ui.conversations.share.SharingShortcuts
 import de.pyryco.mobile.ui.conversations.thread.LinkedMarkdownReaderDestination
 import de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDestination
+import de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNotice
 import de.pyryco.mobile.ui.conversations.thread.ThreadNavigation
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.conversations.thread.UsageLimitDismissals
+import de.pyryco.mobile.ui.conversations.thread.formatMegabytes
 import de.pyryco.mobile.ui.conversations.thread.readLinkedMarkdown
+import de.pyryco.mobile.ui.conversations.thread.rememberThreadAttention
 import de.pyryco.mobile.ui.onboarding.CameraPreview
 import de.pyryco.mobile.ui.onboarding.PairCodeEvent
 import de.pyryco.mobile.ui.onboarding.PairCodePhase
@@ -90,17 +96,60 @@ import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
 import de.pyryco.mobile.ui.settings.SettingsScreen
 import de.pyryco.mobile.ui.settings.SettingsViewModel
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.androidx.compose.koinViewModel
+import org.koin.androidx.viewmodel.ext.android.viewModel
 import org.koin.compose.koinInject
+import org.koin.core.parameter.parametersOf
 import kotlin.time.Duration.Companion.seconds
 
 class MainActivity : ComponentActivity() {
+    private val shareIntake: ShareIntakeViewModel by viewModel()
+    private var externalTarget by mutableStateOf<HostConversationTarget?>(null)
+    private var externalTargetVersion by mutableStateOf(0L)
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        val payload = SharePayload.from(intent)
+        if (payload != null) {
+            externalTarget = null
+            shareIntake.accept(payload)
+        } else {
+            NotificationTap.target(intent)?.let {
+                shareIntake.cancel()
+                externalTarget = it
+                externalTargetVersion++
+            }
+        }
+    }
+
+    private fun cancelShare() {
+        shareIntake.cancel()
+        finish()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        // Also covers startup before storage loading has composed the navigation graph.
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    if (shareIntake.state.value != null) {
+                        cancelShare()
+                    } else {
+                        isEnabled = false
+                        onBackPressedDispatcher.onBackPressed()
+                        isEnabled = true
+                    }
+                }
+            },
+        )
         // #1510: the app always draws its static dark theme, so the bar icons stay light whatever the
         // phone's own night mode; the default SystemBarStyle.auto would follow the phone instead.
         enableEdgeToEdge(
@@ -109,14 +158,37 @@ class MainActivity : ComponentActivity() {
         )
         // #685: a notification tap's target, read once. A recreated activity keeps its intent, so reading
         // it again after a rotation would re-open the thread over wherever the operator went since.
-        val openTarget = if (savedInstanceState == null) NotificationTap.target(intent) else null
+        if (savedInstanceState == null) {
+            val payload = SharePayload.from(intent)
+            if (payload != null) {
+                shareIntake.accept(payload)
+            } else {
+                externalTarget = NotificationTap.target(intent)
+            }
+        }
         // Test builds only: a hands-on check's pairing code, read once for the same reason.
         val pairingPrefill = if (savedInstanceState == null) PairingPrefill.from(intent, BuildConfig.DEBUG) else null
         setContent {
             val appPreferences = koinInject<AppPreferences>()
             val pairedServerStore = koinInject<PairedServerCollectionStore>()
+            val snackbar = remember { SnackbarHostState() }
+            LaunchedEffect(shareIntake) {
+                shareIntake.notices.collect { (message, count) ->
+                    val text =
+                        when {
+                            count > 0 -> resources.getQuantityString(message, count, count)
+                            message == R.string.thread_attachment_send_too_large ->
+                                resources.getString(
+                                    message,
+                                    formatMegabytes(AttachmentUploadLimit.MAX_BYTES),
+                                )
+                            else -> resources.getString(message)
+                        }
+                    snackbar.showSnackbar(text)
+                }
+            }
             PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+                Scaffold(modifier = Modifier.fillMaxSize(), snackbarHost = { SnackbarHost(snackbar) }) { innerPadding ->
                     val paired: Boolean? by produceState<Boolean?>(
                         initialValue = null,
                         pairedServerStore,
@@ -144,7 +216,10 @@ class MainActivity : ComponentActivity() {
                             PyryNavHost(
                                 startDestination = if (v) Routes.CHANNEL_LIST else Routes.WELCOME,
                                 modifier = Modifier.padding(innerPadding).consumeWindowInsets(innerPadding),
-                                openTarget = openTarget.takeIf { v },
+                                openTarget = externalTarget.takeIf { v },
+                                openTargetVersion = externalTargetVersion,
+                                shareIntake = shareIntake,
+                                onCancelShare = ::cancelShare,
                                 pairingPrefill = pairingPrefill,
                             )
                     }
@@ -160,11 +235,52 @@ internal fun PyryNavHost(
     modifier: Modifier = Modifier,
     navController: NavHostController = rememberNavController(),
     openTarget: HostConversationTarget? = null,
+    openTargetVersion: Long = 0,
     pairingPrefill: PairingPrefill? = null,
+    shareIntake: ShareIntakeViewModel? = null,
+    onCancelShare: () -> Unit = {},
 ) {
     val destinations = koinInject<ThreadDestinationFactory>()
     val appPreferences = koinInject<AppPreferences>()
     val conversations = koinInject<HostConversationSource>()
+    val shortcutContext = LocalContext.current.applicationContext
+    val shortcuts = koinInject<SharingShortcuts>(parameters = { parametersOf(shortcutContext) })
+    val shared = shareIntake?.state?.collectAsStateWithLifecycle()?.value
+    BackHandler(enabled = shared != null, onBack = onCancelShare)
+    LaunchedEffect(shared?.generation) {
+        if (shared != null) {
+            navController.navigate(Routes.CHANNEL_LIST) {
+                popUpTo(navController.graph.id) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
+    }
+    LaunchedEffect(shared?.generation, shared?.capturing, shared?.shortcutId) {
+        val batch = shared?.takeUnless { it.capturing } ?: return@LaunchedEffect
+        val id = batch.shortcutId ?: return@LaunchedEffect
+        val target =
+            withTimeoutOrNull(NOTIFICATION_TAP_ROW_WAIT) {
+                val candidate = shortcuts.resolve(id) ?: return@withTimeoutOrNull null
+                if (!destinations.isSavedHost(candidate.serverId)) return@withTimeoutOrNull null
+                conversations.snapshots.first { it.holdsActive(candidate) }
+                candidate
+            }
+        val savedHost = target != null && destinations.isSavedHost(target.serverId)
+        withContext(Dispatchers.Main.immediate) {
+            // Finish suspending host reads before entering the single Main turn for transfer/navigation.
+            if (target != null &&
+                savedHost &&
+                conversations.snapshots.value.holdsActive(target) &&
+                navController.currentDestination?.route == Routes.CHANNEL_LIST &&
+                shareIntake?.select(target, batch.generation) == true
+            ) {
+                RelayLog.d { "event=share_shortcut_accepted" }
+                navController.openThread(target)
+            } else {
+                shareIntake?.fallback(batch.generation)
+            }
+        }
+    }
     // Held in memory only, never saved state: it carries the pairing token. Cleared once the screen has it.
     var pendingPrefill by remember { mutableStateOf(pairingPrefill) }
     NavHost(
@@ -324,7 +440,8 @@ internal fun PyryNavHost(
             val requestNotifications = rememberNotificationPermissionRequest(appPreferences)
             // #685: asked at most once from here, and only while the Settings switch is on.
             LaunchedEffect(Unit) {
-                if (shouldAskNotificationPermission(
+                if (shared == null &&
+                    shouldAskNotificationPermission(
                         enabled = appPreferences.notificationsEnabled.first(),
                         granted = notificationsPermitted(context),
                         asked = appPreferences.notificationPermissionAsked.first(),
@@ -339,13 +456,21 @@ internal fun PyryNavHost(
             LaunchedEffect(vm) {
                 vm.lastHostUnpaired.collect { navController.returnToWelcome() }
             }
+            if (shared?.shortcutId != null) {
+                Surface(modifier = Modifier.fillMaxSize()) {}
+                return@composable
+            }
             ChannelListScreen(
                 hostState = hostState,
+                shareHeader = shared?.let { batch -> { SharePickerHeader(batch, onCancelShare) } },
+                conversationSelectionEnabled = shared?.capturing != true,
                 onEvent = { event ->
                     when (event) {
                         // The row carries its own host: the tree draws rows from every host, so the
                         // selected-host adapter would open the wrong one (#731).
-                        is ChannelListEvent.TreeRowTapped -> vm.onHostRowTapped(event.target)
+                        is ChannelListEvent.TreeRowTapped -> {
+                            if (shared == null || shareIntake?.select(event.target) == true) vm.onHostRowTapped(event.target)
+                        }
                         is ChannelListEvent.TreeFoldToggled -> vm.onFoldToggled(event.key)
                         // The gear captures the current host once, here, the way a row tap
                         // captures its own (#749). The destination owns that exact id from then
@@ -390,11 +515,6 @@ internal fun PyryNavHost(
                         ChannelListEvent.HostUnpairRequested -> vm.requestHostUnpair()
                         ChannelListEvent.HostUnpairConfirmed -> vm.confirmHostUnpair()
                         ChannelListEvent.HostUnpairDeclined -> vm.declineHostUnpair()
-                        // And for renaming a chat (#827): the pencil's own host and conversation.
-                        is ChannelListEvent.TreeChatEditTapped -> vm.openChatEditor(event.target)
-                        is ChannelListEvent.ChatEditNameSubmitted -> vm.submitChatName(event.name)
-                        ChannelListEvent.ChatEditDismissed -> vm.dismissChatEditor()
-                        ChannelListEvent.ChatArchiveRequested -> vm.archiveChat()
                         is ChannelListEvent.AddWorkspaceSelected -> vm.selectAddWorkspaceFolder(event.path)
                         is ChannelListEvent.AddWorkspaceFolderCreateRequested -> vm.createAddWorkspaceFolder(event.name)
                         ChannelListEvent.AddWorkspaceSubmitted -> vm.submitAddWorkspace()
@@ -408,42 +528,6 @@ internal fun PyryNavHost(
                         is ChannelListEvent.TreeHostChannelAddTapped -> vm.openCreateChannel(event.serverId)
                         is ChannelListEvent.CreateChannelSubmitted -> vm.submitCreateChannel(event.name, event.systemPrompt)
                         ChannelListEvent.CreateChannelDismissed -> vm.dismissCreateChannel()
-                        // And for editing a channel (#667): the pen's own host and conversation.
-                        is ChannelListEvent.TreeChannelEditTapped -> vm.openChannelEditor(event.target)
-                        is ChannelListEvent.ChannelEditSubmitted -> vm.submitChannelEdit(event.name, event.systemPrompt, event.muted)
-                        ChannelListEvent.ChannelArchiveRequested -> vm.archiveChannel()
-                        ChannelListEvent.ChannelEditDismissed -> vm.dismissChannelEditor()
-                    }
-                },
-            )
-        }
-        composable(Routes.DISCUSSION_LIST) {
-            val vm = koinViewModel<DiscussionListViewModel>()
-            val flatState by vm.state.collectAsStateWithLifecycle()
-            val hostState by vm.hostState.collectAsStateWithLifecycle()
-            val state =
-                (flatState as? DiscussionListUiState.Loaded)?.copy(
-                    pendingPromotion = hostState.pendingPromotion?.let { PendingPromotion(it.target.conversationId, it.sourceName) },
-                ) ?: flatState
-            LaunchedEffect(vm) {
-                vm.hostNavigationEvents.collect { navController.openThread(it) }
-            }
-            DiscussionListScreen(
-                state = state,
-                onEvent = { event ->
-                    when (event) {
-                        is DiscussionListEvent.RowTapped ->
-                            destinations.selectedServerId()?.let { vm.onHostRowTapped(HostConversationTarget(it, event.conversationId)) }
-                        is DiscussionListEvent.SaveAsChannelRequested ->
-                            destinations.selectedServerId()?.let {
-                                vm.requestHostPromotion(
-                                    HostConversationTarget(it, event.conversationId),
-                                )
-                            }
-                        DiscussionListEvent.PromoteConfirmed -> vm.confirmHostPromotion()
-                        DiscussionListEvent.PromoteCancelled -> vm.cancelHostPromotion()
-                        DiscussionListEvent.BackTapped ->
-                            navController.popBackStack()
                     }
                 },
             )
@@ -454,6 +538,10 @@ internal fun PyryNavHost(
         ) { backStackEntry ->
             val target = Routes.target(backStackEntry.arguments)
             HostDestination(target.serverId, destinations, navController) {
+                LaunchedEffect(backStackEntry) {
+                    conversations.snapshots.first { it.holdsActive(target) }
+                    shortcuts.opened(target)
+                }
                 val vm = koinViewModel<ThreadViewModel>()
                 val state by vm.state.collectAsStateWithLifecycle()
                 val connectionState by vm.connectionState.collectAsStateWithLifecycle()
@@ -503,8 +591,16 @@ internal fun PyryNavHost(
                         }
                     }
                 }
+                val attention by rememberThreadAttention(
+                    target,
+                    conversations.snapshots,
+                    conversations.attention,
+                    conversations.alerts,
+                    backStackEntry.lifecycle,
+                )
                 val questionModal by vm.questionModal.collectAsStateWithLifecycle()
                 ThreadScreen(
+                    attentionPill = attention?.let { reading -> { ThreadAttentionNotice(reading, navController::openAttentionTarget) } },
                     collapseToolUses = collapseToolUses,
                     questionState = questionModal,
                     onQuestionEvent = { event, generation -> vm.onQuestionEvent(event, generation) },
@@ -550,6 +646,7 @@ internal fun PyryNavHost(
                     onWorkspacePicked = vm::onWorkspacePicked,
                     onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,
                     onDemandOlderHistory = vm::onDemandOlderHistory,
+                    onDemandHistoryGap = vm::onDemandHistoryGap,
                     onRetryOlderHistory = vm::onRetryOlderHistory,
                     draft = draft,
                     onDraftChange = vm::onDraftChange,
@@ -682,21 +779,27 @@ internal fun PyryNavHost(
     // loaded yet from rows without the target, so the tap waits a bounded time for the row to appear and
     // otherwise stays on the list, never opening a conversation it could not check. A row that arrives
     // after the user has left the list opens nothing.
-    LaunchedEffect(openTarget) {
+    LaunchedEffect(openTarget, openTargetVersion) {
         val target = openTarget ?: return@LaunchedEffect
         if (!destinations.isSavedHost(target.serverId)) {
             RelayLog.d { "event=notification_tap_rejected code=unknown_host" }
             return@LaunchedEffect
         }
         val active = withTimeoutOrNull(NOTIFICATION_TAP_ROW_WAIT) { conversations.snapshots.first { it.holdsActive(target) } }
-        when {
-            active == null -> RelayLog.d { "event=notification_tap_rejected code=inactive_conversation" }
-            // The user moved on during the wait; a late row must not push a thread over where they went.
-            navController.currentDestination?.route != Routes.CHANNEL_LIST ->
-                RelayLog.d { "event=notification_tap_rejected code=navigated_away" }
-            else -> {
-                RelayLog.d { "event=notification_tap_accepted" }
-                navController.openThread(target)
+        val savedHost = destinations.isSavedHost(target.serverId)
+        withContext(Dispatchers.Main.immediate) {
+            when {
+                shareIntake?.state?.value != null -> RelayLog.d { "event=notification_tap_rejected code=share_pending" }
+                !savedHost -> RelayLog.d { "event=notification_tap_rejected code=unknown_host" }
+                active == null || !conversations.snapshots.value.holdsActive(target) ->
+                    RelayLog.d { "event=notification_tap_rejected code=inactive_conversation" }
+                // The user moved on during the wait; a late row must not push a thread over where they went.
+                navController.currentDestination?.route != Routes.CHANNEL_LIST ->
+                    RelayLog.d { "event=notification_tap_rejected code=navigated_away" }
+                else -> {
+                    RelayLog.d { "event=notification_tap_accepted" }
+                    navController.openThread(target)
+                }
             }
         }
     }
@@ -780,7 +883,6 @@ internal object Routes {
      */
     const val PAIR_CODE_ROUTE = "pair_code?serverId={serverId}"
     const val CHANNEL_LIST = "channel_list"
-    const val DISCUSSION_LIST = "discussions"
     const val CONVERSATION_THREAD = "conversation_thread/{serverId}/{conversationId}"
 
     /** A thread's markdown attachment in the reader (#1027): the thread's two ids plus the attachment's. */
@@ -908,4 +1010,16 @@ private fun List<HostConversationSnapshot>.holdsActive(target: HostConversationT
 private fun NavHostController.openThread(target: HostConversationTarget) {
     if (currentDestination?.route == Routes.CONVERSATION_THREAD && Routes.target(currentBackStackEntry?.arguments) == target) return
     navigate(Routes.thread(target))
+}
+
+/** A pill opens an existing route only; permission and command actions remain on their own controls. */
+internal fun NavHostController.openAttentionTarget(target: HostConversationTarget?) {
+    if (target != null) {
+        openThread(target)
+    } else {
+        navigate(Routes.CHANNEL_LIST) {
+            popUpTo(Routes.CHANNEL_LIST)
+            launchSingleTop = true
+        }
+    }
 }

@@ -64,23 +64,23 @@ replace**, like `writeConversations` is a whole-host replace, and it always stor
 `cacheableThreadRows(rows)` — never the caller's raw list — so no caller can persist an
 unrecognized, streaming or in-flight-tool row by constructing a `ThreadItem` list itself.
 
-**The saved history position (#1354).** `readHistoryPosition`/`writeHistoryPosition` share
-`writeThread`'s graceful-read, reporting-mutation, default-bodied shape, but they are not a
-fourth family with its own file: `HistoryPosition(cursor, atStart)` — the daemon's opaque
-cursor and whether that page reached the start of history — lives **inside the thread
-document**, beside the rows #797 already stores there. Only a received `requestHistory` page
-sets it, even an empty one; the row count never implies it, and a thread fed only by the live
-projection stores none. The row writer (`CachingConversationRepository.observeMessages`, see
-[Caching conversation repository](caching-conversation-repository.md)) and the position writer
-(`ThreadViewModel`, written only when a `requestHistory` ask **settles** — a failed ask never
-calls it, so the cache never sees a position change for one, and a cursor the daemon refuses with
-`history.invalid_cursor` writes `null` through this same path to clear it) therefore touch the
-same document from two different callers, and each must read and keep the other's half rather
-than overwrite it — see
-§ The thread document below for how `writeThread` and `writeHistoryPosition` each do that, and
-§ Concurrency for why they cannot interleave. Storing the position inside the thread document
-rather than beside it means `removeConversation` and `removeHost` remove it for free, the same
-reasoning #797's thread family gives for filing under the host directory.
+**The saved history position (#1354, extended by #1832).** `HistoryPosition(cursor, atStart,
+coverage = null)` lives inside the thread document beside its rows, under the same host and
+conversation namespace. `coverage` stores received durable spans, known gaps, unknown legacy
+coverage, page-edge/per-gap/newest cursors and content-free row identity/order/retention metadata.
+High-water is derived from the highest retained span; live/ring ids and legacy row identities
+never certify durable ids. No raw excluded envelopes are persisted. Removal of the thread or host
+also removes this metadata. Cursors and entry content never reach logs or exception prose.
+
+The [caching wrapper](caching-conversation-repository.md#the-saved-history-position-1354) restores
+old nonempty documents without coverage as unknown, even with saved `atStart`; their rows stay
+readable. After the newest page a conservative marker tracks the verified span's older edge.
+Matching legacy rows or verified overlap proves deduplication, never completeness: unknown
+coverage without an older durable anchor closes only on `at_start`, including an empty terminal
+page. An empty uncovered cache ignores old backwards metadata and gets no conservative marker.
+Known holes require continuous received coverage joining their older anchor. See
+[resuming history](remote-conversation-repository-reads-and-thread-store-history-paging.md#resuming-from-the-saved-position-1354)
+for lazy demand and marker/cursor behavior.
 
 **The read-position family (#877).** `readReadPositions`/`writeReadPositions` follow the same
 graceful-read, reporting-mutation, default-bodied shape as the other two families, over
@@ -225,6 +225,16 @@ epoch millis. `occurredAt` is also each of the three new kinds' dedupe key — t
 `ThreadRow.listKey()`, `HistoryPageReducer`'s `holdsBanner`/`holdsCompactionBoundary`/
 `holdsModelRefusal` and `decodeThread` below all join on.
 
+Assistant attribution (`Message.parentToolUseId`, #1826) is also absent from disk serialization;
+`CachedMessage`/`CachedSegment` and the document version are unchanged. Cache-only assistant rows
+therefore restore with unknown (empty) attribution. Same-conversation wire/history evidence enriches
+those rows in memory through `mergeCachedRows`, including legacy rows without recoverable segment
+records. The wrapper retains reconciled rows across reconnect, so a later unattributed cache copy
+cannot erase a known parent. A process restart can lose that hint until fresh evidence arrives.
+See [parent precedence through seams and merges](remote-conversation-repository-assistant-reply-segments.md#parent-attribution-through-seams-and-merges-1826)
+for conflict handling. File-cache round-trip and wrapper probes verify omission from stored bytes,
+restoration as empty, enrichment and reconnect retention without a cache migration.
+
 `CachedAttachment(attachmentId, displayName: String? = null, mimeType: String? = null)` (#983) maps
 `Message.attachments` 1:1; `explicitNulls = false` omits a `null` hint on encode rather than writing
 `"displayName":null`, and a document written before this field existed decodes with `attachments =
@@ -234,41 +244,46 @@ field has used. Like `MessageAttachment`, its generated `toString` is overridden
 `Message`](data-model.md#message)) and this file-private class is exactly the kind of type a stray
 log call could otherwise reach.
 
-`CachedHistoryPosition(cursor: String, atStart: Boolean)` (#1354) mirrors `HistoryPosition` and
-defaults to `null` on `CachedThread`, so a document written before this ticket reads as rows with
-no position. Its `toString` is overridden to print only `atStart` — the cursor is the daemon's
-opaque value and `ConversationRepository`'s `HistoryPosition` KDoc forbids logging it, so the
-cache-local mirror repeats the same discipline rather than relying on the domain type's override
-surviving the copy.
+`CachedHistoryPosition(cursor, atStart, coverage = null)` mirrors the domain position without a
+schema-version change. `CachedThread.history` still defaults to null, and older position records
+decode with null coverage. Its `toString` prints only `atStart`; `HistoryCoverage.toString` prints
+span/gap counts and the unknown flag, never opaque cursors, identity proofs or entry content.
 
 ### The thread document's two writers (#1354)
 
-`writeThread` (the row writer, called from `CachingConversationRepository.observeMessages` on
-every settled change) and `writeHistoryPosition` (the position writer, called from
-`ThreadViewModel` when a history ask settles) both rewrite the same file, and each keeps the
-half it does not own:
+Both writers rewrite one thread document under the file cache's `Mutex`, preserving the other
+half. Since #1832 they also validate durable claims against the rows actually retained:
 
-- **`writeThread` keeps the stored position**, read through a header-only decode
-  (`CachedThreadHeader(version, history)`, ignoring the rows) rather than the full validated
-  decode `readThread` uses — a row writer runs on every settled change, so decoding the whole
-  document there would double the cost of each write at up to 100000 rows. **Unless the rows it
-  is about to write were trimmed at `MAX_CACHED_THREAD_ROWS`**, in which case it writes no
-  position: the oldest row the trim just dropped no longer matches the saved cursor, and keeping
-  it would silently create a permanent gap in a long-lived thread's history walk. This only
-  triggers when the caller passes the **untrimmed** drawn rows — `writeThread`'s own KDoc now
-  says so, because `cacheableThreadRows` is what actually trims, and a caller that trims first
-  (as `CachingConversationRepository.observeMessages` originally did, see
-  [Caching conversation repository](caching-conversation-repository.md)) hides every trim from
-  this check.
-- **`writeHistoryPosition` keeps the stored rows**, read through the same validated
-  `decodeThread` path `readThread` uses, so a document whose rows are already unreadable reads
-  back as no rows rather than resurrecting them. Clearing a position (`null`) for a document that
-  was never written is a no-op — a clear never conjures a file, matching the no-op rule
-  `removeConversation`/`removeHost` already apply to an unknown id.
+- **`writeThread`** receives untrimmed drawn rows, applies `cacheableThreadRows`, reads the stored
+  position through the header-only decode, and calls `coverage.retainedBy(kept)`. Changed or removed
+  row proofs invalidate every associated producing entry id, including tool-use/result producers.
+  Row-limit trimming resets backwards cursor/`atStart` while preserving conservative gap metadata.
+  Without coverage it retains #1354's trim behavior of dropping the position altogether.
+- **`writeHistoryPosition`** reads the stored rows through the validated decode and checks/binds
+  coverage against them before replacement. A corrupt row document supplies no retained rows;
+  a null clear of a never-written document remains a no-op. The wrapper must have written rows
+  first: the file lock prevents torn read-modify-write, but does not by itself order two caller
+  operations. Its [rows-before-state mutex](caching-conversation-repository.md#the-saved-history-position-1354)
+  supplies that ordering and preserves the trim reset in the subsequent state write.
 
-Both run inside one `mutate` call, holding the instance's single `Mutex` across the whole
-read-modify-write, so a row write and a position write landing at the same time can never
-interleave and drop each other's half — see § Concurrency below.
+Ordinary row proofs hash the exact cache-policy record, including retained tool output and
+attachments; an earliest order id or message text alone cannot prove all mutable producers.
+Assistant deltas use fragment-specific proofs. A received delta already present inside a legacy
+whole-turn row binds to ordered, non-overlapping text offsets and the retained whole-row hash.
+Only hashes, offsets and lengths persist; received delta text remains transient. Such a match
+proves retention, never legacy completeness. Missing or changed proofs remove claims, so cache
+policy exclusions cannot silently certify discarded cacheable content. Received non-rendering
+entries can still establish spans without storing their raw envelopes.
+
+`BackgroundTaskLifecycle` stays excluded before the row limit and serialization and adds no
+persisted record. It survives only in the [wrapper's in-memory connection base](caching-conversation-repository.md#how-the-restore-merges-with-live-rows).
+
+**Trim accounting must use serialization's exclusions.** `threadRowsWereTrimmed` compares the
+kept count with settled rows excluding `UnrecognizedMessage` and `BackgroundTaskLifecycle`.
+Counting excluded markers would falsely clear cursor/stop below the cap. Pre-trimming in a caller
+would instead hide genuine loss. Test the complete wrapper row/state operation through a fresh
+file-cache restore: testing `writeThread` alone can pass while a later state write restores the
+cursor or `atStart` that trimming just invalidated.
 
 ### Read positions (#877)
 
@@ -527,7 +542,8 @@ also carries #1354's position cases: a round trip through a fresh instance; a ro
 existing position and a position write keeping existing rows; a thread fed only live rows storing
 none; a literal pre-#1354 document (rows, no `history` key) still reading as rows with no
 position; `null` clearing a stored position; a write trimmed at `MAX_CACHED_THREAD_ROWS` dropping
-the position; `removeConversation` and `removeHost` removing it along with the rows; and no cursor
+a legacy position (coverage-bearing positions reset backwards state and invalidate lost claims);
+`removeConversation` and `removeHost` removing it along with the rows; and no cursor
 reaching `RelayLog` on either the read or the write-side re-read failure path.
 
 [`CachingConversationRepositoryTest.kt`](../../../app/src/test/java/de/pyryco/mobile/data/repository/CachingConversationRepositoryTest.kt)
@@ -536,12 +552,20 @@ written through `writeHistoryPosition` survives a concurrent row write from `obs
 reads back under the wrapper's own `serverId`; a deleted conversation's position write is skipped,
 the same guard the row writer already has; and — added after the first verifier pass flagged that
 the production path never exercised the trim rule — a drawn thread trimmed at
-`MAX_CACHED_THREAD_ROWS` drops the saved position when written through
+`MAX_CACHED_THREAD_ROWS` drops a legacy saved position when written through
 `CachingConversationRepository.observeMessages` itself, not only through a direct call to the
 cache. See [Caching conversation repository](caching-conversation-repository.md) for why
 `observeMessages` now hands `writeThread` the untrimmed drawn rows rather than pre-trimming them.
 
-No Compose UI test and no emulator scenario for either family — #796's restored conversation rows
+`HistoryDurabilityTest` (#1832) covers fresh-instance coverage/high-water and cursor restore,
+partial fills, conservative legacy migration, cache exclusions, failed row writes and interruption
+between row/state writes. `HistoryCacheReworkTest` exercises complete production paths for durable
+order, saved cursor/stop trim reset and deletion during suspended writers; see
+[wrapper testing](caching-conversation-repository.md#testing). Independent live/force-stop evidence
+belongs to [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833), not these JVM probes.
+
+No Compose UI test and no emulator scenario for the original two storage families — #796's
+restored conversation rows
 and #797's restored thread rows both draw through the same composables a live row does, so the
 screen needs no cache-specific coverage. See [dependency injection §
 Testing](dependency-injection.md#testing) for `HostConversationSourceTest`'s restore/live-race

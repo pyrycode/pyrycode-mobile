@@ -29,6 +29,71 @@ class BackgroundTaskProjectionTest {
     ): BackgroundTask = checkNotNull(roster(conversationId)).tasks.single { it.taskId == taskId }
 
     @Test
+    fun startBeforeEnrichedRoster_keepsItsJoinDescriptionAndCutReport() {
+        projection.apply(started("t1", description = "full", truncated = listOf("description")))
+        val enriched = row("t1", description = "short").replace("\"task_type\"", "\"tool_call_id\":\"other\",\"task_type\"")
+        projection.apply(rosterFrame(rows = listOf(enriched)))
+        assertEquals("toolu_t1", task("t1").toolCallId)
+        assertEquals("full", task("t1").description)
+        assertEquals(listOf("description"), task("t1").truncatedFields)
+        projection.apply(rosterFrame(rows = listOf(row("t1"))))
+        assertEquals("toolu_t1", task("t1").toolCallId)
+    }
+
+    @Test
+    fun startWithUnknownJoin_keepsStartedDescriptionAndAcceptsRosterJoin() {
+        val start =
+            started("t1", description = "full").copy(
+                payload =
+                    MobileJson.parseToJsonElement(
+                        """{"conversation_id":"c1","task_id":"t1","tool_call_id":"","description":"full","task_type":"local_bash","truncated_fields":null}""",
+                    ),
+            )
+        projection.apply(start)
+        assertNull(task("t1").toolCallId)
+        val enriched = row("t1", description = "short").replace("\"task_type\"", "\"tool_call_id\":\"toolu_t1\",\"task_type\"")
+        projection.apply(rosterFrame(rows = listOf(enriched)))
+        assertEquals("toolu_t1", task("t1").toolCallId)
+        assertEquals("full", task("t1").description)
+    }
+
+    @Test
+    fun replacementRoster_prunesStartedOriginAndAcceptsANewRosterJoin() {
+        projection.apply(started("t1", description = "previous lifetime"))
+        projection.apply(rosterFrame(emptyList()))
+        val enriched = row("t1", description = "new lifetime").replace("\"task_type\"", "\"tool_call_id\":\"new_tool\",\"task_type\"")
+        projection.apply(rosterFrame(listOf(enriched)))
+        assertEquals("new_tool", task("t1").toolCallId)
+        assertEquals("new lifetime", task("t1").description)
+        projection.apply(rosterFrame(listOf(enriched.replace("new_tool", "enriched_again"))))
+        assertEquals("enriched_again", task("t1").toolCallId)
+    }
+
+    @Test
+    fun enrichedRosterBeforeStart_populatesJoinAndKeepsStartedDescriptionAfterwards() {
+        val enriched = row("t1", description = "short").replace("\"task_type\"", "\"tool_call_id\":\"toolu_t1\",\"task_type\"")
+        projection.apply(rosterFrame(rows = listOf(enriched)))
+        assertEquals("toolu_t1", task("t1").toolCallId)
+
+        projection.apply(started("t1", description = "full description"))
+        projection.apply(rosterFrame(rows = listOf(enriched)))
+        assertEquals("full description", task("t1").description)
+    }
+
+    @Test
+    fun enrichedRosterJoinSurvivesUnknownRowsWhileRosterDescriptionsStillReplace() {
+        val enriched = row("t1").replace("\"task_type\"", "\"tool_call_id\":\"toolu_t1\",\"task_type\"")
+        projection.apply(rosterFrame(rows = listOf(enriched)))
+        projection.apply(rosterFrame(rows = listOf(row("t1", description = "new roster label"))))
+        assertEquals("toolu_t1", task("t1").toolCallId)
+        assertEquals("new roster label", task("t1").description)
+
+        val unknown = row("t1").replace("\"task_type\"", "\"tool_call_id\":\"\",\"task_type\"")
+        projection.apply(rosterFrame(rows = listOf(unknown)))
+        assertEquals("toolu_t1", task("t1").toolCallId)
+    }
+
+    @Test
     fun startThenComplete_finishesTheTaskAndKeepsStatusAndSummary() {
         projection.apply(started("t1"))
         assertEquals(1, roster()?.liveCount)
@@ -105,6 +170,34 @@ class BackgroundTaskProjectionTest {
                 .getValue("c1")
                 .liveCount,
         )
+    }
+
+    @Test
+    fun retainedFinishedEvidenceEnrichesUnknownJoinWithoutChangingReplacementPanel() {
+        finished.mark("c1", "t1")
+        projection.apply(rosterFrame(listOf(row("t1"))))
+        val known = checkNotNull(roster()).settledTasks.single()
+        assertTrue(known.isFinished)
+        assertNull(known.toolCallId)
+        assertNull(known.finish)
+        projection.apply(rosterFrame(emptyList()))
+        assertTrue(checkNotNull(roster()).tasks.isEmpty())
+        assertEquals(listOf(known), roster()?.settledTasks)
+        assertEquals(0, roster()?.liveCount)
+
+        val joined = row("t1").replace("\"task_type\"", "\"tool_call_id\":\"a\",\"task_type\"")
+        projection.apply(rosterFrame(listOf(joined)))
+        assertFalse(task("t1").isFinished)
+        assertEquals(1, roster()?.liveCount)
+        assertEquals("a", checkNotNull(roster()).settledTasks.single().toolCallId)
+        assertEquals(known.copy(toolCallId = "a"), checkNotNull(roster()).settledTasks.single())
+        projection.apply(rosterFrame(listOf(row("t2")), droppedTasks = 2))
+        assertEquals(listOf("t2"), roster()?.tasks?.map { it.taskId })
+        assertEquals(3, roster()?.liveCount)
+        assertEquals(listOf("t1"), roster()?.settledTasks?.map { it.taskId })
+        assertEquals(known.copy(toolCallId = "a"), checkNotNull(roster()).settledTasks.single())
+        projection.apply(rosterFrame(emptyList(), conversationId = "c2"))
+        assertTrue(checkNotNull(roster("c2")).settledTasks.isEmpty())
     }
 
     @Test

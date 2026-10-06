@@ -19,95 +19,100 @@ trigger, copying desktop's rule: older pages load only on a reader's own pull to
 both apps, and never because a screen opened, a connection returned, a page arrived, or a row scrolled
 into view.
 
-**[#1572](https://github.com/pyrycode/pyrycode-mobile/issues/1572): an open thread asks for the newest
-history page every time its host becomes available — at open, and again after every reconnect while it
-stays open — not only the first time.** This replaces #1569's never-loaded-only opening ask below. A
-reply the daemon had stored while the thread was off-screen was never cached (`observeMessages` only
-writes to the cache while a thread is collected — see [Caching conversation repository §
-Why it exists](caching-conversation-repository.md#why-it-exists)), and a reconnect discarded the
-connection-scoped projection that held it; replay does not resend it, so nothing else brought it back.
-`ThreadViewModel.historySeed` is a `Job` an `init` coroutine awaits before collecting
-`repositoryAvailable.distinctUntilChanged().filter { it }`, calling `askForNewestPage(reconnect = opened)`
-on every arrival — the same shape as the #1410 context-usage collector. Waiting for the seed first means
-every claim sees the restored position (#1354) rather than racing it.
+**[#1572](https://github.com/pyrycode/pyrycode-mobile/issues/1572): one newest page at open and
+on each host-availability arrival while the thread stays open.** The collector waits for the saved
+position seed and repository availability, so offline open asks nothing until the host arrives.
+Since [#1832](../../specs/architecture/1832-durable-history-gaps.md), an arrival behind an older
+request is counted and deferred until the shared request slot releases, rather than lost. A failed
+newest ask consumes its arrival without retry. Closing the ViewModel cancels pending work.
 
-`askForNewestPage` claims the walk's single outstanding-request slot (`claimHistorySlot`), so it is
-dropped, with a static log, while a pull or a retry is out, and a pull or retry that arrives while it is
-out is dropped in turn. Two outcomes follow, chosen by `ThreadHistoryDemand.newestPageAdvancesWalk`
-(`canAsk && cursor.isEmpty()`):
+The newest reply now retains durable entry coverage and page-edge cursors. A side ask leaves the
+independent backwards cursor/stop untouched; a newest page that is also that walk's next page seeds
+it normally. High-water and known/unknown gaps survive restore and reconnect. Coverage concerns
+received entry ids, including non-rendering envelopes, never row ids or live frames. Overlap or
+adjacency creates no hole; overlap elsewhere never erases a known hole. A known marker closes only
+when coverage joins its older durable anchor. Nonempty legacy caches remain unknown despite saved
+`atStart`, matching rows or verified overlap; only `at_start`, including an empty terminal page,
+closes that unknown region. Empty uncovered caches get no conservative marker. See
+[Resuming from the saved position](remote-conversation-repository-reads-and-thread-store-history-paging.md#resuming-from-the-saved-position-1354)
+for the coverage and migration contract.
 
-- **The newest page is the walk's own next page** for a never-loaded thread (#1569's original case), a
-  walk whose cursor the daemon refused, or a walk whose previous newest-page ask failed. The ask then
-  goes through the ordinary `asking()`/`launchHistoryAsk` path: the page settles into the walk and its
-  position is saved, exactly as a pull from the newest would.
-- **Otherwise it is a side ask** (`ThreadHistoryDemand.askingNewest()`/`newestSettled()`) that claims and
-  releases the slot without touching the cursor, the page count or the stop reason. The reply's `cursor`
-  and `atStart` are never read, so a saved cursor keeps driving the next *older* pull and a saved
-  `AtStart` keeps reading as fully loaded. The rows still reach the thread, because `requestHistory` has
-  already merged them into `observeMessages` through `mergeHistoryRows` and `mergeCachedRows` regardless
-  of why the page was asked for. A failed side ask logs a static event and changes nothing else; the next
-  host arrival asks again.
+**Gap markers reuse the oldest-end loading label style.** `HistoryGapRow` shows “Load earlier
+messages”, centred in `bodySmall` / `onSurfaceVariant` with the same gutter and padding, without a
+count. Entries are not messages: one assistant reply can span many envelopes. Markers sit before
+their newer content, between held older/newer rows. Display-only assistant fragments allow a marker
+inside a split turn; tool folding keeps the first newer tool row visible. Non-rendering spans can
+place a standalone marker at the newest content edge, including a thread with no message rows.
 
-A thread opened offline asks nothing until the host arrives, then asks once; a later drop and return
-asks again each time, unlike #1569's one-shot collector. **A known, unfixed quirk (verifier SHOULD FIX,
-PR #1585, non-blocking):** `ThreadHistoryDemand.tail(connected)` checks `inFlight` before the stop
-reason, so a side ask's `inFlight = true` shows the oldest-end `Loading` row even on an already fully
-loaded (`AtStart`) thread, for as long as the side ask is out. This happens on every open and every
-reconnect of a long-lived, fully-loaded channel, not only on a never-loaded one — a transient visual
-regression against this ticket's own "no visual change" claim and against the third acceptance
-criterion's "a saved `atStart` still shows the thread as fully loaded." The fix path, if taken, is a
-second in-flight flag that gates `canAsk`/`canRetry` without feeding `tail`; it was accepted as a
-non-blocking NIT rather than fixed in #1572.
+A real reader pull toward a visible marker calls the defaulted `onDemandHistoryGap(anchor)`
+callback, wired by `MainActivity` to `ThreadViewModel.onDemandHistoryGap`. Measured marker bounds
+select the first marker crossed toward older content when several are visible, before considering
+ordinary oldest-end demand. Merely revealing a marker, semantics scrolling or receiving a page
+asks nothing. Each pull costs at most one page, including cursorless walks that reread a covered
+page. Each gap keeps its own opaque cursor and leaves the backwards walk's cursor/stop alone;
+saved `AtStart` cannot block gap demand. A refused cursor retains its marker and waits for the next
+pull, using the latest usable newest-page cursor or empty cursor. Once a touch selects a gap,
+its latch gates every further history demand through that drag and its continuing fling, before
+consulting marker visibility. Page settlement can remove the marker, and movement can take it
+offscreen; neither may redirect the same touch into the independent backwards walk. A fresh
+touch resets selection. Four controlled-response `ThreadScreenHistoryTest` regressions cover
+marker removal and movement offscreen during both drag and fling; keeping the marker present
+throughout a test would miss this fallthrough.
 
-**`OlderHistoryGesture` and `Modifier.olderHistoryPull`** (`ThreadHistoryRows.kt`) replace the #777
-scroll-position `snapshotFlow` entirely. `OlderHistoryGesture` is a `NestedScrollConnection` constructed
-with `nearOldestEnd: () -> Boolean` and `onDemand: () -> Unit`; `olderHistoryPull(gesture)` attaches it
-with `Modifier.nestedScroll(gesture)` and, ahead of that, runs `awaitEachGesture { awaitFirstDown(…, pass =
-PointerEventPass.Initial) }` to call `gesture.onGestureStart()` on every touch gesture's first pointer
-down, without consuming it. `onGestureStart()` records `armed = nearOldestEnd()` — whether *this* gesture
-began at, or within `HistoryAskBand` (200dp) of, the oldest end. `onPreScroll` then calls `onDemand()`
-exactly once, the first time an `armed` gesture reports a `NestedScrollSource.UserInput` delta with
-`available.y > 0f` (toward older content: under `reverseLayout = true` older content lies at the top, so a
-pull toward it moves the finger down), clearing `armed` so the same gesture cannot ask twice.
-`onPreFling`, which Compose calls at the end of every drag including a zero-velocity one, also clears
-`armed`, closing the gesture whether or not it asked. The connection consumes nothing (`onPreScroll`
-always returns `Offset.Zero`), so attaching it changes no scrolling behaviour, and a list that cannot
-scroll still dispatches its drags through nested scroll — a short thread's pull asks exactly as desktop's
-wheel does.
+The shared `inFlight` flag still drives the oldest-end Loading row during newest/gap asks, even
+when the independent backwards walk is at `AtStart`; this is the existing #1572 visual quirk.
+Independent live and force-stop proof remains with [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833).
 
-**The gesture had to start on the pointer down, not on the first scroll delta, because a semantics
-scroll looks like a drag but never ends like one.** The plan's first design armed the gesture on a nested
-scroll's first delta and disarmed it on `onPreFling`. A Robolectric run then showed `LazyColumn`'s
-semantics `ScrollBy` action reaches a parent `NestedScrollConnection` as ordinary `UserInput` deltas with
-no fling afterward — so a semantics-driven scroll (as a screen test, TalkBack, or an accessibility service
-might issue) armed the gesture and left it armed, and the *next* real drag then asked, regardless of where
-that drag started. Arming on `awaitFirstDown` instead ties the gesture to an actual finger touching the
-screen, which a semantics action never does, so a scroll with no finger behind it can never open an armed
-window for a later unrelated drag to abuse. This is recorded under the plan's Revisions
-(`docs/specs/architecture/1352-history-on-user-demand.md`).
+**Two current viewports of older loaded content trigger prefetch during reader movement**
+([#1769](https://github.com/pyrycode/pyrycode-mobile/issues/1769)). `OlderHistoryGesture` and
+`Modifier.olderHistoryPull` replace the old gesture-start-only 200dp band. Each qualifying
+`onPostScroll` checks current geometry after the list consumes movement, using
+`consumed.y + available.y > 0f` for the reversed list's older direction. A drag or fling can
+enter the threshold after starting outside it. The observer consumes nothing, and an end
+pull still qualifies when the list itself consumes no distance. Subsequent actual movement
+can ask again after a page settles during the same drag or fling, unless that touch selected
+a gap. Prefetch reduces spinner stalls but cannot prevent them when the response is slower
+than the reader.
 
-**`isNearOldestEnd` reads `LazyListLayoutInfo` under `reverseLayout = true`, where an item's offset runs
-from the viewport's bottom, not its top.** `internal fun LazyListLayoutInfo.isNearOldestEnd(oldestIndex:
-Int, bandPx: Float): Boolean` treats an empty thread (`oldestIndex < 0`) as always at the end; otherwise it
-finds the oldest row in `visibleItemsInfo` and checks `offset + size + afterContentPadding -
-viewportEndOffset <= bandPx` — the part of that row still hidden past the viewport's far edge.
-[#1562](https://github.com/pyrycode/pyrycode-mobile/issues/1562) added the `afterContentPadding` term: the
-`LazyColumn`'s top `contentPadding` (`MessageAreaTopInset`, 28dp — see [overlays and app
-bar](thread-screen-how-it-works-overlays-and-app-bar.md#thread-top-overlay-placement-post-1002)) is
-after-content padding at this reversed list's oldest end and is folded into `viewportEndOffset`, so without
-adding it back the ask band would arm 228dp from the oldest end instead of the documented 200dp —
-`ThreadOldestEndBandTest` drives a fake `LazyListLayoutInfo` to pin the corrected formula; a screen-level
-probe can't tell 200dp from 228dp apart because by ~214dp the oldest row has already left `visibleItemsInfo`
-and both counts treat it as out of band. **A row not laid out at all — because it is
-further away than a screenful, or because it is short and fully scrolled past — counts as further away
-than the band**, by construction of `firstOrNull { it.index == oldestIndex } ?: return false`; the function
-has no way to measure a row it cannot see. The plan names this limitation explicitly, and the verifier
-flagged it as a SHOULD FIX (non-blocking): a reader 150dp short of the oldest end, whose fully-hidden
-oldest bubble is short enough to have scrolled out of `visibleItemsInfo` already, pulls and only scrolls —
-the effective band in that case is `min(200dp, the visible part of the oldest row)`. The regression test
-(`ThreadScreenHistoryTest.the_ask_band_is_200dp_from_the_oldest_end`) passes its 300dp (too-far) case only
-because that row is fully off screen, not because the 200dp comparison itself was exercised at the
-boundary — the 200dp threshold is documented but not pinned by a test.
+**Touch provenance must survive only the touch's own fling.** The pointer modifier observes a
+real `PointerType.Touch` down without consuming it; pointer completion closes the drag window,
+and cancellation clears all provenance. `UserInput` checks require an active touch. A touch
+that produced movement can transfer provenance through a positive-velocity `onPreFling`;
+only that attributed fling accepts `SideEffect` movement, and `onPostFling` clears it.
+Semantics `ScrollBy` can emit `UserInput` without a pointer or a later fling, so the nested-scroll
+source alone cannot identify reader movement. Programmatic and semantics scrolling, idle
+page arrival, relayout and request-slot release never initiate or queue prefetch. Movement
+toward newer content does not ask.
+
+**`isNearOldestEnd` estimates hidden history rather than requiring the oldest row to be laid out.**
+Under `reverseLayout = true`, item offsets run from the viewport's bottom. The threshold passed
+by `ThreadScreen` is `layoutInfo.viewportSize.height * 2f`, read on each movement. For the highest
+visible history index, the remaining distance is:
+
+```text
+edge.offset + edge.size + afterContentPadding - viewportEndOffset
+    + unseenRows * (meanVisibleHistoryRowHeight + mainAxisItemSpacing)
+```
+
+When the oldest row is visible, `unseenRows` is zero and its edge gives the exact distance.
+Otherwise the mean measured history-row height estimates unseen mixed-height content. Prompt
+and tail rows are excluded from those measurements; no visible history row means no estimate
+and no ask. Empty history is always at its end. The after-content padding term retains the
+correction from [#1562](https://github.com/pyrycode/pyrycode-mobile/issues/1562): reversed-list top
+padding is folded into `viewportEndOffset` and must be added back. `ThreadOldestEndBandTest`
+pins hidden-row estimation, spacing/padding, prompt/tail exclusion and viewport changes;
+screen coverage exercises real drags/flings entering the range and page-arrival anchoring.
+
+**Every thread history request supplies `limit = 200`.** The private
+`THREAD_HISTORY_PAGE_SIZE` constant covers backwards pages and Retry, opening/reconnect newest
+side asks, and gap pages. Server-clamped, short or empty pages keep the existing cursor and
+`atStart` termination rules; requesting 200 does not imply receiving 200. The ViewModel's shared
+slot allows at most one request in flight per conversation. Offline and terminally stopped
+backwards walks cannot ask, and prefetch before saved-position seeding completes is dropped
+rather than replayed when seeding finishes. Opening/reconnect newest asks still wait for that
+seed; explicit Retry retains its existing failure and availability gates. See
+[history paging](remote-conversation-repository-reads-and-thread-store-history-paging.md) for
+merge, cursor and reconnect ownership.
 
 **The oldest thread row's index still skips the prompt rows, same reasoning as #1305/#1306's row-count
 fixes** (§ *Inline question rows* and § *Inline permission rows* in the parent document). `oldestRowIndex`
@@ -125,7 +130,9 @@ non-scrolling empty surface reach nested scroll at all; `emptyThreadPull`'s `nea
 always treats an empty thread as being at its oldest end, so a pull there always asks (this is also the
 ticket's explicit "including an empty thread" requirement). The non-empty branch applies the same
 `olderHistoryPull(listPull)` to the `LazyColumn` itself, where `listPull`'s `nearOldestEnd` reads
-`listState.layoutInfo.isNearOldestEnd(oldestRowIndex, askBandPx)`.
+`visibleHistoryMarker(...)` first, then
+`listState.layoutInfo.isNearOldestEnd(oldestRowIndex, viewportSize.height * 2f, promptRowCount)`
+when no marker is visible.
 
 **The screen, not only the ViewModel, gates against a pull while a page is loading.** `pullForOlderHistory
 = { if (!historyLoading) demandOlderHistory() }` reads `state.historyTail == ThreadHistoryTail.Loading`
@@ -147,7 +154,7 @@ failed; it only shows `EmptyThreadState`. Before #1352 this was a one-round-trip
 \#1352 removed the opening ask entirely, and [#1569](https://github.com/pyrycode/pyrycode-mobile/issues/1569)
 brought one back for the never-loaded case, which [#1572](https://github.com/pyrycode/pyrycode-mobile/issues/1572)
 widened to every host arrival, so the gap now also covers every one of those asks: a thread with no
-messages drawn renders `EmptyThreadState` with no loading feedback while a newest-page ask is in flight,
+messages or gap markers drawn renders `EmptyThreadState` with no loading feedback while a newest-page ask is in flight,
 exactly as a reader's own pull on an empty thread does. Still open.
 
 ### The oldest-end history retry and restart (#778)
@@ -193,8 +200,8 @@ for why #1352 removed both.
   `thread_history_dead_end_label`, `thread_history_offline_label`, plus their content-description twins)
   with no interpolation — the same "nothing daemon-authored reaches this row" posture `HistoryLoadingRow`
   already had.
-- **The demand trigger is a gesture now, not a scroll predicate, and the oldest-end slot's own presence
-  still cannot move it.** § *The oldest-end history demand* above replaced the #777/#778 scroll-position
+- **The demand trigger checks position only during reader movement, and the oldest-end slot's own
+  presence cannot initiate it.** § *The oldest-end history demand* above replaced the #777/#778 scroll-position
   predicate with `OlderHistoryGesture`/`olderHistoryPull`, which reads `LazyListLayoutInfo` live rather than
   a cached row count — mounting or unmounting the oldest-end slot changes the list's total item count but
   never changes where the *oldest thread row* sits, so the slot's own appearance still cannot retrigger the

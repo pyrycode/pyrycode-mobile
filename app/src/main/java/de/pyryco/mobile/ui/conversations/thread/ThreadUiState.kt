@@ -16,6 +16,18 @@ import de.pyryco.mobile.ui.conversations.list.ChannelEditorState
 import kotlinx.datetime.Instant
 
 sealed interface ThreadEvent {
+    data class BackgroundTaskToggle(
+        val taskId: String,
+    ) : ThreadEvent {
+        override fun toString(): String = "BackgroundTaskToggle(taskId=<redacted>)"
+    }
+
+    data class BackgroundTaskStop(
+        val taskId: String,
+    ) : ThreadEvent {
+        override fun toString(): String = "BackgroundTaskStop(taskId=<redacted>)"
+    }
+
     data object NewSession : ThreadEvent
 
     data object Rename : ThreadEvent
@@ -161,6 +173,7 @@ data class ThreadUiState(
     // its failures: the screen asks, the VM decides whether the ask is honoured, and a second copy of that
     // decision in Compose would be a second place to get it wrong.
     val historyTail: ThreadHistoryTail = ThreadHistoryTail.None,
+    val historyMarkers: List<ThreadHistoryMarker> = emptyList(),
     // #884: the Actions menu's commands this conversation's published slash-command menu proves absent,
     // greyed out in the menu.
     val absentActions: Set<ComposerAction> = emptySet(),
@@ -168,6 +181,9 @@ data class ThreadUiState(
     // reported — and its live count (unfinished tasks plus dropped ones), which the Actions row shows.
     val backgroundTasks: BackgroundTaskRoster? = null,
     val backgroundTaskCount: Int = 0,
+    val backgroundTaskStopSupported: Boolean = false,
+    val expandedBackgroundTaskIds: Set<String> = emptySet(),
+    val pendingBackgroundTaskIds: Set<String> = emptySet(),
     // #885: this conversation's published slash commands, verbatim and in daemon order, or null while no
     // menu has been received. The composer's type-ahead reads them. They are workspace-authored, so they
     // reach the screen only through slashCommandOptions' inert display text, and a pick inserts the name.

@@ -840,7 +840,7 @@ class ThreadProjectionTest {
                 )
             projection.mergeHistoryPage("c1", page, interactive = true)
             runCurrent()
-            assertEquals(listOf(counted(BOUNDARY), divider(FALL)), thread.last())
+            assertEquals(listOf(divider(FALL), counted(BOUNDARY)), thread.last())
 
             projection.applyCompactionBoundary(boundary(ts = BOUNDARY))
             runCurrent()

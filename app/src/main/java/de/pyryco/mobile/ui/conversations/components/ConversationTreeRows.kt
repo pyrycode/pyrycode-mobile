@@ -1,7 +1,6 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
-import androidx.annotation.StringRes
 import androidx.compose.animation.core.EaseInOut
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -199,7 +198,7 @@ fun TreeHostRow(
     connectionStatus: ConnectionStatus,
     expanded: Boolean,
     onToggleExpanded: () -> Unit,
-    onEditTapped: () -> Unit,
+    onEditTapped: (() -> Unit)?,
     modifier: Modifier = Modifier,
     onReconnectTapped: () -> Unit = {},
 ) {
@@ -240,14 +239,16 @@ fun TreeHostRow(
                     height = TreeBandHeight,
                 )
             }
-            TreeRowControl(
-                // The supplied pen path, visible on mobile without hover.
-                painter = painterResource(R.drawable.ic_tree_edit),
-                contentDescription = stringResource(R.string.cd_tree_host_edit, bounded),
-                onClick = onEditTapped,
-                modifier = Modifier.testTag(treeHostEditTestTag(serverId)),
-                height = TreeBandHeight,
-            )
+            if (onEditTapped != null) {
+                TreeRowControl(
+                    // The supplied pen path, visible on mobile without hover.
+                    painter = painterResource(R.drawable.ic_tree_edit),
+                    contentDescription = stringResource(R.string.cd_tree_host_edit, bounded),
+                    onClick = onEditTapped,
+                    modifier = Modifier.testTag(treeHostEditTestTag(serverId)),
+                    height = TreeBandHeight,
+                )
+            }
         }
         if (update != null) {
             // Inside the host's own item, so folding the host, which drops only the rows below it, keeps it.
@@ -292,6 +293,11 @@ fun treeHostChatAddTestTag(serverId: String): String = "tree-host-chat-add:${bou
  * Fixed Channels or Chats section under one host, each with its own create control. The supplied sidebar
  * frame shows only Channels' plus; #1190's later product decision gives Chats the matching control. A null
  * [onAddTapped] draws no plus: the caller passes null while the host is not connected (#1336).
+ *
+ * Carries no extra end padding of its own. #1203 measured a 10dp trailing inset here against an earlier
+ * revision of Figma `15:8`; the frame has since moved the plus flush with the host row's pencil column —
+ * every pen and plus glyph in the current frame shares one right edge, 2px from the row's content edge —
+ * so this row fills width exactly as [TreeHostRow] does.
  */
 @Composable
 fun TreeHostSectionRow(
@@ -316,7 +322,7 @@ fun TreeHostSectionRow(
         startIndent = HostSectionIndent,
         expanded = expanded,
         onToggleExpanded = onToggleExpanded,
-        modifier = modifier.padding(end = 10.dp),
+        modifier = modifier,
     ) {
         if (onAddTapped != null) {
             TreeRowControl(
@@ -422,11 +428,6 @@ fun TreeWorkspaceRow(
  * The leading status dot draws [attention], the row's one state that #877 resolves by precedence (#878).
  * Under the static dark palette, [selected] draws 15:8's `Hover` fill (`primary-container`) and a pressed
  * row its darker `on-primary` fill (#1523).
- *
- * A non-null [onEditTapped] draws the design's hover pencil at the trailing edge, named through
- * [editDescription]: Edit chat on Chats rows, Edit channel on Channels rows (#667). It is a
- * [TreeRowControl], so a tap on it edits the row without opening it or moving the highlight. No caller
- * passes it since #1563, which matches 15:8's pen-free rows; #1582 removes it.
  */
 @Composable
 fun TreeConversationRow(
@@ -434,11 +435,10 @@ fun TreeConversationRow(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    onEditTapped: (() -> Unit)? = null,
-    @StringRes editDescription: Int = R.string.cd_tree_chat_edit,
     attention: ConversationAttention = ConversationAttention.Idle,
+    enabled: Boolean = true,
 ) {
-    // Clamped once and reused for the name and the pencil's label, as the host row does.
+    // Clamp daemon-authored text before layout, as the host row does.
     val bounded = boundedRowText(conversationName)
     val interactionSource = remember { MutableInteractionSource() }
     val pressed = interactionSource.collectIsPressedAsState().value
@@ -450,7 +450,7 @@ fun TreeConversationRow(
             } else {
                 MaterialTheme.colorScheme.primaryContainer.copy(alpha = SELECTED_FILL_ALPHA)
             }
-        } else if (pressed) {
+        } else if (enabled && pressed) {
             if (staticDark) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primaryContainer
         } else {
             Color.Transparent
@@ -473,6 +473,7 @@ fun TreeConversationRow(
                     .heightIn(min = ConversationBandHeight)
                     .selectable(
                         selected = selected,
+                        enabled = enabled,
                         interactionSource = interactionSource,
                         indication = null,
                         role = Role.Button,
@@ -489,14 +490,6 @@ fun TreeConversationRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
-            )
-        }
-        if (onEditTapped != null) {
-            TreeRowControl(
-                painter = painterResource(R.drawable.ic_tree_edit),
-                contentDescription = stringResource(editDescription, bounded),
-                onClick = onEditTapped,
-                height = ConversationBandHeight,
             )
         }
     }
@@ -711,7 +704,6 @@ private fun TreeRowsPreviewMatrix() {
                 conversationName = "pyrycode discord integration",
                 selected = true,
                 onClick = {},
-                onEditTapped = {},
             )
             TreeConversationRow(conversationName = "rocd-thinking", selected = false, onClick = {})
             ConversationAttention.entries.forEach { state ->

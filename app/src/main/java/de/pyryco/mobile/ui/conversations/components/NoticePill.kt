@@ -16,6 +16,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
@@ -46,13 +47,13 @@ private val PillShadow = 4.dp
 
 /**
  * Shared thread pill, Figma `347:6617`: hugs its right-aligned label and wraps it when it would be wider
- * than the space it is given. The Top overlay uses it for notices; turn outcomes use its error treatment
- * inside the input status area with a leading icon and a two-line limit.
+ * than the space it is given. The Top overlay uses it for notices, including stopped-turn recovery advice.
  *
  * The **Default** variant (`primaryContainer` / `onPrimaryContainer`) is a notice the operator may hide
  * and carries a trailing X when [onDismiss] is set. The **Error** variant ([isError], `errorContainer` /
  * `error`, as Figma paints it) never does. [onClick] makes the whole pill a button. The pill's merged
  * content description is [contentDescription], its visible label by default; the X is its own button.
+ * Set [mergeDescendants] to false when an enclosing touch target owns the merged label and action.
  * [shadowElevation] is the overlay's drop shadow; a pill laid out in the page, not over it, passes none.
  */
 @Composable
@@ -66,9 +67,12 @@ internal fun NoticePill(
     shadowElevation: Dp = PillShadow,
     leadingIcon: ImageVector? = null,
     maxLines: Int = Int.MAX_VALUE,
+    containerColor: Color = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer,
+    contentColor: Color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer,
+    mergeDescendants: Boolean = true,
 ) {
-    val container = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
-    val content = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer
+    val container = containerColor
+    val content = contentColor
     val body: @Composable () -> Unit = {
         Row(
             modifier = Modifier.padding(horizontal = PillHorizontalPadding, vertical = PillVerticalPadding),
@@ -106,7 +110,7 @@ internal fun NoticePill(
             }
         }
     }
-    val described = modifier.semantics(mergeDescendants = true) { this.contentDescription = contentDescription }
+    val described = modifier.semantics(mergeDescendants = mergeDescendants) { this.contentDescription = contentDescription }
     val shape = RoundedCornerShape(PillRadius)
     if (onClick != null) {
         Surface(

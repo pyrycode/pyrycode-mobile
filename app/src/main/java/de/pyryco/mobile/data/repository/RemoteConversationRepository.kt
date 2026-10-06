@@ -409,13 +409,21 @@ class RemoteConversationRepository(
         )
     val questionBatches: StateFlow<List<QuestionBatch>> = questionBatchProjection.batches
 
+    /** Independent stop-refusal ledger; IDs come from the same counter as ordinary reply waiters. */
+    private val backgroundTaskStops = BackgroundTaskStops(relayRequests, pump::send, negotiatedCapabilities)
+
     /**
      * The background tasks each conversation holds on **this connection** (#677), keyed by conversation id; a
      * missing key means nothing has been reported. Folded by [BackgroundTaskProjection] from the three
      * `background_task_*` frames; only the finished marks in [finishedBackgroundTasks] predate this
      * connection. On the concrete repository only, like [questionBatches].
      */
-    private val backgroundTaskProjection = BackgroundTaskProjection(finishedBackgroundTasks)
+    private val backgroundTaskProjection =
+        BackgroundTaskProjection(
+            finishedBackgroundTasks,
+            onTaskFinished = backgroundTaskStops::taskFinished,
+            onRosterReported = backgroundTaskStops::rosterReported,
+        )
     val backgroundTasks: StateFlow<Map<String, BackgroundTaskRoster>> = backgroundTaskProjection.rosters
 
     init {
@@ -428,6 +436,7 @@ class RemoteConversationRepository(
             try {
                 pump.inbound.collect { envelope -> onInbound(envelope) }
             } finally {
+                endBackgroundTaskStops()
                 sessionErrorProjection.reset()
                 endDebugBundle()
                 messageCommands.endAttachmentUploads()
@@ -599,6 +608,7 @@ class RemoteConversationRepository(
                     modelMenuProjection.applyRefusal(id, envelope.payload)
                     // The MCP asks (#1343) register in their own ledger, disjoint by the same one counter.
                     mcpStatusProjection.applyRefusal(id, envelope.payload)
+                    backgroundTaskStops.applyRefusal(id, envelope.payload)
                 }
             TYPE_TURN_STATE, TYPE_ASSISTANT_DELTA, TYPE_TOOL_USE, TYPE_TOOL_RESULT, TYPE_TURN_END -> {
                 // A v2 structured live-session envelope (#385). AC #2: gate on the negotiated
@@ -913,10 +923,11 @@ class RemoteConversationRepository(
             -> {
                 // Background work claude left running past its turn (#677, progress #1042): see
                 // [BackgroundTaskProjection.apply].
-                // Same `interactive` gate as the question arm. Daemon state, not turn content: no thread row, and
-                // it clears no stall. Drop silently: the command lines and summaries are never logged.
+                // The panel remains replacing state; scalar frames also retain invisible lifecycle positions.
+                // No stall is cleared and command lines/summaries are never logged.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     backgroundTaskProjection.apply(envelope)
+                    threadProjection.applyBackgroundTaskLifecycle(envelope)
                 }
             }
             TYPE_RESYNC -> {
@@ -1064,6 +1075,13 @@ class RemoteConversationRepository(
             // false and is dropped — the coordinator (#302) wires this against an Open pump.
             pump.send(listConversationsRequest())
             emitAll(conversationListProjection.observe(filter))
+        }
+
+    /** Host snapshots retain the distinction between early upserts and a fully loaded list. */
+    internal fun observeConversationSnapshots(filter: ConversationFilter): Flow<Pair<List<Conversation>, Boolean>> =
+        flow {
+            pump.send(listConversationsRequest())
+            emitAll(conversationListProjection.observeSnapshots(filter))
         }
 
     private fun listConversationsRequest(): Envelope =
@@ -1353,6 +1371,20 @@ class RemoteConversationRepository(
 
     /** Cancel the surfaced modal (#438); see [ConversationCommands.cancelModal]. */
     suspend fun cancelModal(modalId: String): Unit = conversationCommands.cancelModal(modalId)
+
+    /** Current connection's detection capability, disabled permanently on collector termination. */
+    val supportsBackgroundTaskStop: Boolean get() = backgroundTaskStops.supported
+
+    /** Returns after send, without claiming task completion. No task or turn projection is changed. */
+    suspend fun stopBackgroundTask(
+        conversationId: String,
+        taskId: String,
+    ): Result<Unit> = backgroundTaskStops.stop(conversationId, taskId)
+
+    /** Subscribe before invoking a stop; emits only originating opaque task keys for this conversation. */
+    fun observeBackgroundTaskStopRefusals(conversationId: String): Flow<String> = backgroundTaskStops.observeRefusals(conversationId)
+
+    internal fun endBackgroundTaskStops() = backgroundTaskStops.end()
 
     /** Stop the named conversation over fire-and-forget `interrupt`; see [ConversationCommands.interrupt]. */
     suspend fun interrupt(conversationId: String): Unit = conversationCommands.interrupt(conversationId)

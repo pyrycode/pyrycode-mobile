@@ -74,6 +74,11 @@ pill · #1605 history tail gutter and spacing · #1606 Stop glyph and reference 
 for these captures against the updated frames; their verdicts are below, and the states #1500 could not cover moved
 to #1529.
 
+**#1619 routed defects (Reachable states, #1539).** #1622 queued-row spacing (drop-button loss already fixed by
+#1642) · #1623 (closed) / #1626 nested tool rows' Stop-vs-Send and path shortening, both frame-side questions ·
+#1624 (closed, fixed by #1848) / #1850 attachment Retry row's residual 8 px · #1625 (closed, fixed by #1848) ·
+#1851 the dismissal notice and the thread/reader Saved confirmations' move to a top-overlay Default pill.
+
 ## Composer and footer
 
 The status band, input and footer appear on every thread frame, and the four-tile attachment strip on `16:8`,
@@ -596,30 +601,47 @@ waits strictly for its marker ("Payload truncated by the daemon.", "Stopped: con
 filler bubbles and are not compared. Composer and footer verdicts are as in "Composer and footer".
 
 Three frames draw designs Juhana changed on 2026-10-02 (turn outcome, failure notice, history tail gutter). The
-captures show what the app draws today, so those verdicts are expected mismatches with their own tickets.
+captures show what the app draws today, so those verdicts are expected mismatches with their own tickets. #1747
+has since moved the failure notice to the design, and #1603 moved turn recovery to the top overlay.
 
 ### Turn outcome — `685:3992`
 
-- **Owning ticket:** #1357 (recovery advice), #1356 (stopped-turn row)
-- **Capture:** `turn-outcome.png` (412x892, 1.0)
+- **Owning ticket:** #1603 (overlay recovery), #1357 (copy/classification), #1356 (stopped-turn row)
+- **Capture:** `turn-outcome.png` (412x892, 1.0, real system bars, API 35)
 - **Side-by-side:** `turn-outcome-side-by-side.png`
 - **Overlay:** `turn-outcome-overlay.png`
-- **Verdict:** mismatch (changed design)
+- **Verdict:** pill matches, with a 4px platform text-metric difference; stopped-row spacing remains mismatched
 - A `TurnEnd` with `isError` and `terminalReason` `prompt_too_long`, and the matching `StoppedTurn` row.
+- Fresh hardware capture at revision `e047e9c0`, 2026-10-05; `turn-outcome.txt` confirms
+  density/font scale 1.0 and `syntheticBars=false`. Retained `turn-outcome-1603-results.xml`
+  records `ThreadDesignCaptureTest#rowAndNoticeFramesAt412By892`: 1 executed/passed,
+  0 failed, 0 skipped, timestamp `2026-10-05T17:22:34`. Comparisons were regenerated.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: the outcome sits in the status band beside the snowflake; the frame moves it to a pill in the top overlay's right-aligned stack, under the header, and leaves the band at the snowflake alone. The stopped-turn row has 20 px from the bubble above to its text; the frame has 30 |
-| Padding | match: stopped-turn row at the 20 px gutter |
-| Spacing | mismatch: the stopped-turn row's 10 px (see geometry) |
-| Typography | mismatch: the band pill reads "Context too long. Compact or reset the session." on two lines plus a separate "Compact" pill; the frame's pill reads "Context too long - Compact" on one line. The stopped-turn row's text and style match |
-| Colour | match: error-container pill |
-| Borders | match |
-| Radii | match: pill radius |
-| Icon paths | mismatch: the band pill has a leading error icon; the frame's pill has none |
-| Component state | mismatch: Compact is its own pill; in the frame the whole pill runs Compact |
+| Geometry | pill match: right-aligned top overlay, 176×24px at x=216..391/y=121..144; removing the real 24px status bar gives top 97px and a 20px right gutter. Figma width is 172px; shared Android typography hugs the complete copy 4px wider. No message space reserved; idle band keeps the snowflake. Stopped-row mismatch: 20px above its text against 30px in the frame |
+| Padding | match: pill 8px horizontal/4px vertical; stopped row at 20px gutter |
+| Spacing | pill match: 12dp visible gap with preceding notices and following transient error, measured independently of expanded action bounds. Stopped-row 10px discrepancy remains #1608 |
+| Typography | match: exact “Context too long - Compact”, one line in shared body-small; stopped-row text/style match. Retain shared typography rather than force the Figma width |
+| Colour | match: error-container background and error text |
+| Borders | match: none |
+| Radii | match: 6dp corners |
+| Icon paths | match: no leading icon, X or separate Compact pill |
+| Component state | match: the whole context pill invokes existing Compact once when published, with a merged at-least-48dp target extending downward. Otherwise inert; billing/sign-in retain agent-specific inert copy. Following transient pixels cannot dispatch Compact |
 
-- **Routed:** #1603 (the pill), #1608 (the stopped-turn row's spacing)
+Whole-pill action and coexistence are supported by native geometry/pointer tests;
+`turn-outcome-1603-scripted-results.xml` records 1 executed/passed, 0 failed/skipped for
+`DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_contextOverflowCompactReachesDaemon`,
+proving daemon `/compact` delivery and notice clearing. The final dispatcher scripted-all
+run also passed that method (15 executed/passed, 0 failed/skipped).
+
+Dispatcher full live suite on `5eeeeb8254`, run `2026-10-05T18-11-46-185Z`: 57 executed,
+57 passed, 0 failed, 0 skipped. The gate report confirms
+`InteractiveStreamE2ETest#interactiveTurn_reconnect_slashCommandsAndCompactStillWork`
+executed and passed, covering the shared Compact path. This is full-suite evidence,
+not a separate focused run; the deterministic scenario proves this pill's tap path.
+
+- **Routed:** #1608 (stopped-turn row spacing). Other captures' owning-ticket verdicts remain unchanged.
 
 ### Unrecognized message — `685:4112`
 
@@ -671,26 +693,53 @@ captures show what the app draws today, so those verdicts are expected mismatche
 
 ### Failure notice — `685:4337`
 
-- **Owning ticket:** #556 (archive failure)
-- **Capture:** `failure-notice.png` (412x892, 1.0)
+- **Owning ticket:** #556 (archive failure), #1747 (Error pill migration)
+- **Capture:** `failure-notice.png` (412x892, 1.0, real system bars, API 35)
 - **Side-by-side:** `failure-notice-side-by-side.png`
 - **Overlay:** `failure-notice-overlay.png`
-- **Verdict:** mismatch (changed design)
-- Archive from the overflow menu, failing in the override.
+- **Verdict:** match, with one font-metric difference
+- Archive from the overflow menu, failing in the override. Recaptured by #1747 after the move from the bottom
+  snackbar to the top overlay's Error pill.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: a 388 px bottom snackbar above the band; the frame draws a pill hugging its text at the right of the top overlay, under the header |
-| Padding | mismatch: snackbar insets, not the pill's |
-| Spacing | mismatch: see geometry |
-| Typography | match: "Couldn't archive this conversation. Try again." The snackbar's body style is larger than the pill's |
-| Colour | mismatch: inverse-surface snackbar; the frame's pill is error-container |
+| Geometry | match: the pill hugs its text at the right of the top overlay, ending at the 20 px gutter, 97 px below the app-area top, which is 28 px under the measured header through its rule. It is 24 px tall, as in the frame. The text-hug width is 6 px wider than the frame's with the app's shared typography |
+| Padding | match: 8 px horizontal, 4 px vertical |
+| Spacing | match: below every persistent notice, with the overlay's 12 px gap when one is present |
+| Typography | match: body-small "Couldn't archive this conversation. Try again.", right-aligned |
+| Colour | match: error-container surface, error text |
 | Borders | match (none) |
-| Radii | mismatch: snackbar corners, not the pill's |
+| Radii | match: 6 px corners |
 | Icon paths | match (none, no X) |
-| Component state | match: hides itself after the snackbar's duration (waited for) |
+| Component state | match: inert, no tap action; expires after the Short snackbar time, adjusted for accessibility |
 
-- **Routed:** #1604
+- **Routed:** none. The width difference is the shared typography's, not this notice's.
+
+### Reader error — `696:5101`
+
+- **Owning ticket:** #1747
+- **Capture:** `reader-error.png` (412x892, 1.0, real system bars, API 35)
+- **Side-by-side:** `reader-error-side-by-side.png`
+- **Overlay:** `reader-error-overlay.png`
+- **Verdict:** match, with a copy difference
+- The reader's Refresh failing through the production reader. The frame draws the Save failure; the capture
+  shows the reachable Refresh failure, whose client-owned copy is "Couldn't open file". The same pill and
+  placement serve both.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | match: right-aligned at the 20 px gutter, 28 px under the measured reader bar through its rule; the body does not move |
+| Padding | match: 8 px horizontal, 4 px vertical |
+| Spacing | match |
+| Typography | mismatch by design: "Couldn't open file" against the frame's "Couldn't save file"; same body-small style |
+| Colour | match: error-container surface, error text |
+| Borders | match (none) |
+| Radii | match: 6 px corners |
+| Icon paths | match (none, no X) |
+| Component state | match: inert, expires like the thread pill. Saved still uses the bottom snackbar |
+
+- **Routed:** none. The unresolved Saved and dismissed-elsewhere differences, and #1619's non-error scope
+  conflict, stay open; this entry does not settle them.
 
 ### History tail — Loading `689:4281`, Retry `689:4330`, Dead end `689:4379`, Offline `689:4427`
 
@@ -740,6 +789,187 @@ captures show what the app draws today, so those verdicts are expected mismatche
 | Component state | match: sending, Send disabled |
 
 - **Routed:** none
+
+### Reachable states (#1539)
+
+Six frames in section *Reachable states · #1539 · 2026-10-02* (`696:4676`), captured and compared against `main`
+at `59eecec1` (includes #1848, which fixed the attachment tile colours/weights, the empty-thread text size and
+the last-row-to-band gap) with `ThreadDesignCaptureTest#queuedAndToolRowFramesAt412By892`,
+`#attachmentAndEmptyFramesAt412By892` and `#dismissalNoticeFrameAt412By892` on the full `pixel8Api35` image,
+`requireRealSystemBars=true`: 412x892 px, density/font scale 1.0, real 24 px bars, hardware accelerated. Every
+frame was re-exported with `get_screenshot` on 2026-10-06; the capture test rounds on the fake graph's demo
+seed, so the chat history visible above each row is not compared, only the state under audit. `1619-pixel8-results.xml`
+records 3 executed, 0 failures. The reader's "Couldn't open file" arm of `696:5101` is not recaptured here: it
+already has its own verdict above, taken by #1747. Earlier pipeline rounds on this ticket (PR #1627, since
+closed unmerged) captured these same six frames against an older `main`; this pass replaces that evidence with
+fresh captures against current `main`, per the rework instruction to judge against current `main` rather than
+older captures.
+
+### Queued message row — `696:4677`
+
+- **Owning ticket:** #1622; #1642 supplied the weighted action reservation that repaired the disappearing drop button.
+- **Capture:** `queued-messages.png`, plus `queued-long.png` (a third, longer row added as evidence) (412x892, 1.0)
+- **Side-by-side:** `queued-messages-side-by-side.png`, `queued-long-side-by-side.png`
+- **Overlay:** `queued-messages-overlay.png`, `queued-long-overlay.png`
+- **Verdict:** match (queued-row geometry and spacing)
+- #1622 refreshed both captures on full `pixel8Api35`, API 35, with hardware rendering, density/font scale
+  1.0 and real 24 px status/navigation bars (`syntheticBars=false` in both sidecars). The focused command was
+  `./gradlew :app:pixel8Api35DebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.design.ThreadDesignCaptureTest#queuedAndToolRowFramesAt412By892' -Pandroid.testInstrumentationRunnerArguments.requireRealSystemBars=true --console=plain`.
+  [1622-results.xml](1622-results.xml) records 1 executed/passed, 0 failures/errors and 0 skipped;
+  `queuedAndToolRowFramesAt412By892` is present and passed. This replaces the queued captures from the
+  three-method #1619 audit above, without replacing its other states.
+- Wrapping bubbles measure 200 px and successive bubbles have a 16 px gap. Close glyph ink spans
+  x=361–374, centred at x=368. #1642's `weight(1f, fill = false)` reserves action space; #1622 adds the
+  explicit 200 dp cap and symmetric 8 dp row padding while preserving the thread's 8 dp bottom compensation.
+  `QueuedMessageRowGeometryTest` additionally checks 20/16 dp bubble padding, 48 dp drop bounds and one
+  callback per centre/edge tap for short, wrapping and long unbroken text. Its 600 dp viewport case proves
+  the cap independently of the available width at 412 dp.
+- The [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1853#issuecomment-6024329699)
+  confirmed the retained comparisons and reference pixels. It did not independently refresh remote Figma;
+  the builder reports its fresh export was byte-identical to retained `figma-696-4677.png`.
+  Seeded history and surrounding chrome differ from the frame and are outside this queued-row verdict;
+  their existing audit ownership remains unchanged. Live queue/drop coverage remains #849.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | match: wrapping bubbles capped at 200 dp; drop has a 48 dp target ending at the 20 dp gutter, centred at x=368, including the long wrapping row |
+| Padding | match: 20 dp horizontal/16 dp vertical bubble padding |
+| Spacing | match: 16 px between queued bubbles |
+| Typography | match |
+| Colour | match |
+| Borders | match |
+| Radii | match |
+| Icon paths | match: waiting glyph, close X |
+| Component state | match: no Send-now button drawn. #1642's Send-now action is gated on the session reporting `capabilities.mid_turn_input: true`, absent on the capture's seeded session; its absence here is the approved, decided behaviour this README's "Approved additions without a separate frame" already records, not a mismatch |
+
+- **Routed:** none for the queued row; #1622 resolves its width/spacing contract and pins drop reachability.
+
+### Sub-agent tool rows — `696:4795`
+
+- **Owning ticket:** #1623 (closed, "change done in figma"); #1626 (open, frame-side questions)
+- **Capture:** `tool-rows-nested.png` (412x892, 1.0)
+- **Side-by-side:** `tool-rows-nested-side-by-side.png`
+- **Overlay:** `tool-rows-nested-overlay.png`
+- **Verdict:** match (row spacing); two aspects remain routed to #1626
+- #1623 closed on 2026-10-03 as a Figma-side change, but a same-day follow-up found the exported frame still
+  drew the rows 12 px apart. The frame exported fresh today draws every row joined with no gap, the same
+  `joinsNextToolRow` style the app draws (#1577): #1623's frame edit landed, just later than its own closure
+  comment implied.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | match: rows joined with shared/overlapping borders in both the app and the frame; row heights, the 16 px indent per nesting level and the 20 px right gutter match |
+| Padding | match |
+| Spacing | match: 0 px between rows in both, across the nesting-depth change from the Read failure to the second Agent call |
+| Typography | mismatch by design, routed #1626: the failed Read row's path keeps four segments (`shortenToolPath`); the frame shortens it to two |
+| Colour | match: statuses, the Grep result count, the elapsed reading |
+| Borders | match |
+| Radii | match |
+| Icon paths | match: running spinner, done check, failed outline |
+| Component state | mismatch by design, routed #1626: the frame shows Stop while the composer holds text; the app's rule shows Send with text (`ThreadInputBar`, #643). The status band's own wording ("Running Agent…") follows the app's strings per the existing `RunningTool` band-arm decision below ("No separate frame"), which is not a new mismatch |
+
+- **Routed:** #1626 (both remaining differences already tracked there; no new ticket needed)
+
+### Message attachment states — `696:4913`
+
+- **Owning ticket:** #1624 (closed, fixed by #1848); #1850 (Retry spacing fixed)
+- **Capture:** `attachment-states.png` (412x892, 1.0)
+- **Side-by-side:** `attachment-states-side-by-side.png`
+- **Overlay:** `attachment-states-overlay.png`
+- **Verdict:** match (Retry spacing corrected by #1850)
+- Fresh post-rework `ThreadDesignCaptureTest#attachmentAndEmptyFramesAt412By892` capture on 2026-10-07, full pixel8Api35,
+  real 24px bars, 412x892, density/font scale 1.0. `attachment-retry-1850-green.xml` records 1 executed/passed,
+  0 failures/errors/skips. The fresh Figma export is pixel-identical to `figma-696-4913.png`.
+- #1850 reduces Retry's layout allocation from 48dp to the frame's 40dp. The shared regression measures the
+  failed row at 72dp and its next-row top at 84dp, and proves the 48dp touch target with pointer taps beyond
+  both visible edges. In the hardware capture the glyph tops are 460/538/616px; Figma's are 436/514/592px.
+  Accounting for the app's 24px status bar, all three align exactly, with 78px tile-top pitch on both sides
+  of Retry. These consistent top-edge measurements supersede the earlier audit's 58/106/98px
+  pitch figures. #1848's colour, weight and name/state-dimming fixes remain in place.
+- Rework preserves the same normal-size pixels below the status bar while allowing Retry to grow with
+  enlarged text. Native-graphics shared tests at font scales 1.5 and 2 require a fully allocated paragraph
+  without visual overflow, compact-bubble containment and a touch target of at least 48dp.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | match: placeholder/spinner and bubble outer size within 2 px |
+| Padding | match: the name-to-state gap is 5 px in both, for every tile |
+| Spacing | match: 40dp Retry layout, 78px glyph-top pitch in app and frame; 48dp touch target retained |
+| Typography | match: type label regular weight |
+| Colour | match: tile glyph/outline/type label in the primary colour, file name at full on-secondary-container strength, only the state line dimmed |
+| Borders | match |
+| Radii | match |
+| Icon paths | match |
+| Component state | match: Loading, Couldn't load file with Retry, File not found |
+
+- **Routed:** none (residual Retry spacing fixed by #1850)
+
+### Empty thread — `696:4989`
+
+- **Owning ticket:** #1625 (closed, fixed by #1848)
+- **Capture:** `empty-thread.png` (412x892, 1.0)
+- **Side-by-side:** `empty-thread-side-by-side.png`
+- **Overlay:** `empty-thread-overlay.png`
+- **Verdict:** match
+- #1848's switch from `bodyMedium` to `bodySmall` lands exactly on the frame: the side-by-side shows no
+  visible difference and the overlay shows no ghosting on "Send a message to get started".
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | match |
+| Padding | match |
+| Spacing | match |
+| Typography | match: body-small |
+| Colour | match: on-surface-variant |
+| Borders | match (none) |
+| Radii | match (none) |
+| Icon paths | match (none) |
+| Component state | match |
+
+- **Routed:** none
+
+### Prompt resolved elsewhere (dismissal notice) — `696:5065`
+
+- **Owning ticket:** none before this audit; #1851 (new)
+- **Capture:** `prompt-resolved-elsewhere.png` (412x892, 1.0)
+- **Side-by-side:** `prompt-resolved-elsewhere-side-by-side.png`
+- **Overlay:** `prompt-resolved-elsewhere-overlay.png`
+- **Verdict:** mismatch — Juhana's call: the app's bottom snackbar is a gap to own, not a match, against the
+  frame's top-overlay pill
+- `ThreadScreen`'s `ModalUiState.Dismissed` branch still calls `snackbarHostState.showSnackbar(reason)`. #1604
+  moved every *error* notice on this screen to the top-overlay stack but explicitly excluded this non-error
+  dismissal from its scope, and closed before any successor picked it up; #1619's own routing record flagged
+  the conflict as unresolved. The frame draws "Resolved on another device" as a Default pill, right-aligned in
+  the top overlay under the header.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | mismatch: bottom-anchored, near-full-width snackbar against a right-aligned top-overlay pill |
+| Padding | mismatch: snackbar's own padding against the pill's 8/4 px |
+| Spacing | mismatch: no relation to the overlay stack's 12 px gap, since it is not in that stack |
+| Typography | match: same string, `dismissReasonText("remote")` → "Resolved on another device" |
+| Colour | mismatch: default snackbar surface against primary-container/on-primary-container |
+| Borders | match (none) |
+| Radii | mismatch: snackbar's own radius against the pill's 6 px |
+| Icon paths | match (none, no X on either) |
+| Component state | match: inert, auto-dismisses |
+
+- **Routed:** #1851
+
+### Reader notices — `696:5101` (Saved arm)
+
+- **Owning ticket:** #1747 (closed; see "Reader error — `696:5101`" above for the error arm, which matches);
+  #1851 (new, this arm)
+- **Capture:** none; not recaptured by this pass
+- **Verdict:** unverified for Save failed, mismatch for Saved (Juhana's call)
+- The error arm ("Couldn't open file") already has a match verdict above, taken by #1747. Save failed and
+  Saved settle only after the system's create-document picker returns; the harness cannot drive that picker
+  without a new test dependency, the same limitation the original #1619 pipeline round recorded. Save failed
+  shares the error pill and placement already verified; Saved is a Default (non-error) pill the app does not
+  yet draw, the same gap as the dismissal notice above.
+
+- **Routed:** #1851 (Saved); Save failed stays unverified, no new ticket — it shares #1747's already-verified
+  error treatment
 
 ### No separate frame
 

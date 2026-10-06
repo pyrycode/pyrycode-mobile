@@ -151,6 +151,12 @@ unchanged otherwise. `MarkdownReaderCaptureTest` and other androidTest capture
 classes still carry their own copy of the rule; moving them onto the shared
 rule is separate work.
 
+`BackgroundTaskPanelCaptureTest.compactLargeTextKeepsScrolledContentAndCloseGlyphReachable`
+(#1783) likewise uses the outer shared `ViewportRule` and a method-level 320x640 viewport,
+so setup precedes Activity launch and restoration follows teardown. A failed capture with
+“No compose hierarchies found” and destroyed Activities does not establish a panel-layout defect;
+keep the width, scroll and close assertions while repairing viewport execution order.
+
 `AttachmentVisualCaptureTest` (#1555) moved onto the shared rule too, but its
 geometry test needed two different viewports (412x892 and 320x640), so it
 split into one `@Viewport`-annotated method per size, each calling a shared
@@ -478,6 +484,15 @@ settles (`ComposerFileTileTintTest`, #1532). Drawing `LocalView.current` into a
 — and cropping to the target node's `fetchSemanticsNode().boundsInRoot`, the
 way `ConversationTreeRowsTest` does, samples the same real pixels without
 going through `forceRedraw` at all.
+
+Shared geometry assertions must convert `boundsInRoot` pixels through the composition's
+`LocalDensity` before comparing with dp specifications, and use `assertDpEquals`/`pixelDp`
+for edge snapping. `BackgroundTaskStopPanelTest` (#1830) originally passed at Robolectric density 1
+while comparing a 28dp chevron directly with pixels; the managed Pixel 2's density 2.625 measured
+about 74 pixels. The corrected named method and full five-test class passed on Pixel 2 and
+Robolectric. A density-1 pass alone cannot establish portable geometry. See the
+[background-task control contract](mobile-modal-callers.md#callers) and
+[retained Pixel 2 report](../../../app/src/androidTest/assets/task-stop-1830/pixel2-panel-rework-green.xml).
 
 Shared JVM/device pixel fixtures using fixed pixel offsets must pin Compose density
 as well as Robolectric's qualifier. `@Config(qualifiers = "xxxhdpi")` does not configure device density, so a

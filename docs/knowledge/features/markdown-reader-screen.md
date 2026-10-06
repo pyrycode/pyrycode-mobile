@@ -68,10 +68,12 @@ the app's resolved mode even when it differs from the system; global Material ro
 See [thread canvas and header](thread-screen-how-it-works-overlays-and-app-bar.md#threadtopappbar--figma-168-chrome)
 and the [palette plan](../../specs/architecture/1162-thread-reader-canvas.md).
 
-Reader notices currently remain bottom snackbars. When #1604 introduces the top-overlay
-Error pill from frame `696:5101`, its placement must be rechecked at 28dp below the actual
-measured bar-through-rule height. That notice migration and capture are not proven by the
-chrome evidence here.
+Reader failures show as an inert Error pill from frame `696:5101` (#1747): right-aligned with 20dp
+gutters, 28dp below the measured bar through its rule, over the body without moving it. A failed
+Refresh, a failed open in another app and a failed save share one queue with the thread's rules: first in,
+first out, the full accessibility-adjusted Short time each, cancelled when the reader closes. Saved still
+shows in the bottom snackbar. Copy has no failure notice. The capture is `reader-error.png` in the
+[design-1220 thread index](../../../app/src/androidTest/assets/design-1220/thread/index.md).
 
 ## Routing a tap to the reader
 
@@ -105,8 +107,8 @@ navigating, on the thread side:
   `PopBack → popBackStack()` arm.
 - `ThreadScreen` gained `onOpenMarkdownAttachment: (String) -> Unit = {}` (passed into
   `rememberAttachmentActions`) and `markdownOpenFailures: Flow<Unit> = emptyFlow()` (shown as
-  `AttachmentNotice.OPEN_FAILED`'s string via `snackbarHostState`, the same `LaunchedEffect(flow,
-  snackbarHostState)` shape `archiveErrors` uses).
+  `AttachmentNotice.OPEN_FAILED`'s string; since #1747 it joins the thread's transient Error pill queue,
+  like `archiveErrors`).
 
 `readMarkdownAttachment(repository, conversationId, attachmentId, ioDispatcher)` is the one loader both the
 thread and the reader call:
@@ -131,6 +133,26 @@ budget for the fetch; `MarkdownText` parses the text during composition and lays
 non-lazy column, so a large `.md` well within the retrieval bound could still freeze the UI. 256 KiB is far
 above any realistic workspace note.
 
+**A run with no whitespace gets a line break every `MAX_UNBROKEN_RUN` (1024) characters in the reader's
+drawn text (2026-10-05).** Android's text engine shapes a space-separated word at a time, and a word wider
+than the line costs native memory far faster than linearly: on the test emulator a 64 KB word took about
+220 MB and a 256 KB one got the process killed by the low-memory killer. A zero-width space or a slash does
+not end the engine's word; a line break does. `withBreaksInLongRuns` applies it to the reader's paragraphs,
+headings, list items, quotes and fallback blocks, keeping styles and links. Chat bubbles are untouched,
+since their text is selectable and a copied selection would carry the breaks. Copies read the note, not
+the drawn text. Code blocks do not wrap and are not changed.
+
+`MarkdownReaderMemoryTest.noteAtSupportedBound_scrollsCopiesAndReturnsWithoutTermination`
+(`app/src/androidTest/…/thread/`, #1759) guards this on Android's native text engine;
+Robolectric does not reproduce the allocation failure. It opens `Big.md` with exactly
+262,144 original `a` characters, advances the body's scroll offset, keeps the fixed title
+and overflow usable, and uses the Back arrow to unmount the reader and show the return
+surface. Copy as Markdown and HTML both produce exactly `MAX_CLIPBOARD_CHARS` original
+`a` characters in their plain text, with no display-only breaks; HTML is present and no
+longer than that clipboard bound. `device_only_classes` discovers this non-e2e class
+under `app/src/androidTest` automatically for the routine UI gate. The reader byte bound
+remains unchanged. See [native verification evidence](#native-memory-regression-evidence-1759).
+
 `MarkdownDocument(name, text)` overrides `toString()` to print lengths only
 (`MarkdownDocument(name=7, text=482)`), the same redaction discipline `AttachmentSource` and `Ready` use in
 [MessageBubble — attachment slot](message-bubble-attachment-slot.md#view-state-keyed-by-attachment-id).
@@ -153,8 +175,9 @@ the saved-state bundle.
 `Surface` with explicit `contentColor = MaterialTheme.colorScheme.onSurface`, holding `MarkdownReaderTopBar`
 then the scrolling body. The custom canvas is not a global Material role, so automatic content-colour lookup
 cannot select its foreground; retaining `onSurface` explicitly keeps `MarkdownText`'s text colour intact. It has
-a `SnackbarHost` docked to the bottom for a failed refresh. `onRefresh` and `snackbarHostState` both default to
-inert values, so every existing caller and preview still compiles; `RefreshableMarkdownReader` is the one real
+a `SnackbarHost` docked to the bottom for Saved only; failures, including a failed refresh, go to the
+`errorNotices: TransientErrorNoticeState` pill the caller shares (#1747). `onRefresh`, `snackbarHostState` and
+`errorNotices` all default to inert values, so every existing caller and preview still compiles; `RefreshableMarkdownReader` is the one real
 caller. `MarkdownReaderTopBar` reuses `ThreadTopAppBar`'s bar-metric constants (`BarGlyphSize`, `BarTouchSize`,
 `BarTouchSlack`, `BarGutter`, `BarTopGap`, `BarRuleGap`, `BarBottomGap`, `BAR_RULE_ALPHA`) — promoted from
 `private` to `internal` in `ThreadTopAppBar.kt` by #1027, visibility-only, so both bars share one set of numbers
@@ -205,7 +228,7 @@ shows.
   LinkedMarkdown?` (a plain `var`, not a `StateFlow`; **since #1067** — before that it held only the
   `MarkdownDocument`) and sends `ThreadNavigation.OpenLinkedMarkdown` (a `data object`; the note itself never
   travels in the event); failure sends on the shared `markdownOpenFailures`, so a failed link tap shows the
-  same "Couldn't open file" snackbar the attachment path uses. `linkedMarkdown(): LinkedMarkdown?` reads the
+  same "Couldn't open file" Error pill the attachment path uses. `linkedMarkdown(): LinkedMarkdown?` reads the
   held note once; `releaseLinkedMarkdown()` drops it. Logs `event=thread_markdown_link_open outcome=reader|failed`
   only — no path, name or text, ever.
 - `class LinkedMarkdown(val path: String, val document: MarkdownDocument)` (in `MarkdownReaderScreen.kt`, #1067)
@@ -251,6 +274,38 @@ shows.
 The top bar's overflow menu — copy as markdown/plain text/HTML, Refresh, Open in another app (since #1068) and Save to device (since #1069), plus their logging — moved to [Markdown reader menu](markdown-reader-menu.md) under the docs guard's size cap (#1533).
 
 ## Testing
+
+### Native memory regression evidence (#1759)
+
+The [accepted verifier record](https://github.com/pyrycode/pyrycode-mobile/pull/1825#issuecomment-6006058557)
+on 2026-10-06 reviewed commit `1d9aff52949227e2559216e96a40218f6a32df82`
+and the preserved native XML on `pixel2Api33Atd` (Android 13 Google ATD):
+
+- Routine `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui`:
+  **186 executed, 186 passed, 0 failed, 1 skipped** in
+  `build/dispatcher-tests/ui-sygy1igf/dispatcher.xml`.
+  `MarkdownReaderMemoryTest.noteAtSupportedBound_scrollsCopiesAndReturnsWithoutTermination`
+  is present and passed unskipped. The unrelated skip is
+  `RenameDialogCaptureTest.renameAtFigmaViewport`.
+- Separate full native `MarkdownReaderScreenTest` class run with
+  `./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun`
+  and instrumentation arguments `class=de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest`
+  and `notPackage=de.pyryco.mobile.e2e`: **25 executed, 25 passed, 0 failed, 0 skipped**.
+  `/tmp/builder-1759/rework-evidence/reader-screen-20261006.xml` explicitly contains
+  the enabled, passing `copiesOfANoteAtTheReadersBound_areBounded` method. Routine UI
+  selection excludes `app/src/sharedTest` classes, so its total cannot prove this method
+  ran on the native engine; retain the separate whole-class evidence.
+- Initial focused native `MarkdownReaderMemoryTest` run: **1 executed, 1 passed,
+  0 failed, 0 skipped**. The builder's temporary pre-`ef587984` renderer negative
+  control: **1 executed, 0 passed, 1 failed, 0 skipped**, exit 1 with instrumentation
+  `Process crashed`. The focused and negative XML copies are named
+  `builder-1759-focused-TEST-pixel2Api33Atd-_app-.xml` and
+  `builder-1759-negative-TEST-pixel2Api33Atd-_app-.xml` under
+  `/tmp/verifier-1825/review-1d9aff52/`. XML establishes termination; the temporary
+  renderer selection and allocation diagnosis are builder-reported. The repaired
+  renderer was restored before green runs, with no production reader diff.
+
+### Reader presentation and earlier coverage
 
 The current reader-menu captures are retained under
 [`reader-actions-1667/`](../../../app/src/androidTest/assets/reader-actions-1667/):

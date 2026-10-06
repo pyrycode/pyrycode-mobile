@@ -57,6 +57,7 @@ import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.assertRectEqualsWithinPixel
 import de.pyryco.mobile.ui.conversations.components.STATUS_GLYPH_TEST_TAG
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
@@ -188,9 +189,9 @@ class ThreadScreenModalTest {
         composeTestRule.onNode(hasScrollToIndexAction()).performScrollToIndex(15)
         val anchor = composeTestRule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot
         composeTestRule.runOnIdle { modal = openModal().copy(alwaysAllowRules = offeredRules) }
-        assertEquals(anchor, composeTestRule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot)
+        assertRectEqualsWithinPixel(anchor, composeTestRule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot)
         composeTestRule.runOnIdle { accepted = true }
-        assertEquals(anchor, composeTestRule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot)
+        assertRectEqualsWithinPixel(anchor, composeTestRule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot)
         composeTestRule.onNodeWithTag("permission-request-card").assertDoesNotExist()
         composeTestRule.onNode(hasScrollToIndexAction()).performScrollToIndex(31)
         // #1352: reaching the oldest row is not a pull, so it asks nothing.
@@ -809,6 +810,19 @@ class ThreadScreenModalTest {
         assertTrue("the title sits above the prompt", top("Permission required") < top(openModal().prompt))
     }
 
+    // #1601: Figma 668:3186 draws the card flush on the stream's own top inset, the same y 97 the pill
+    // (#1599) and ThreadMessageAreaTopTest's offline pill keep, with no extra top gutter of its own.
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w412dp-h892dp")
+    fun open_request_card_sits_flush_on_the_stream_top() {
+        setContent(openModal())
+
+        val card = composeTestRule.onNodeWithTag("permission-request-card").getUnclippedBoundsInRoot()
+
+        assertEquals("card top matches the frame's y 97", 97f, card.top.value, 0.5f)
+    }
+
     @Test
     fun cancel_is_start_aligned_with_the_card() {
         setContent(openModal())
@@ -913,5 +927,21 @@ class ThreadScreenModalTest {
 
         composeTestRule.onNodeWithTag(PERMISSION_REJECTION_TEST_TAG).assertDoesNotExist()
         composeTestRule.onNodeWithText(string(R.string.permission_answer_rejected)).assertDoesNotExist()
+    }
+
+    // #1599: Figma 668:3054 draws the pill flush on the stream's own top inset (y 97 in the 412x892
+    // reference frame, as ThreadMessageAreaTopTest's offline pill also pins), 24dp tall — the item's own
+    // gutter must add no further top gap, and the pill's line-height-centred text must not get trimmed
+    // short of its 4+4dp padding plus bodySmall's 16dp line.
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w412dp-h892dp")
+    fun answer_rejected_pill_sits_flush_on_the_stream_top_at_its_frame_height() {
+        setContent(modalState = ModalUiState.Hidden, answerRejected = true)
+
+        val pill = composeTestRule.onNodeWithTag(PERMISSION_REJECTION_TEST_TAG).getUnclippedBoundsInRoot()
+
+        assertEquals("pill top matches the frame's y 97", 97f, pill.top.value, 0.5f)
+        assertEquals("pill height matches the frame's 24dp", 24f, pill.height.value, 0.5f)
     }
 }

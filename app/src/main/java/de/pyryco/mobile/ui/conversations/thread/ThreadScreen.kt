@@ -41,6 +41,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -86,6 +87,7 @@ import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.components.EditChannelModal
 import de.pyryco.mobile.ui.components.chromeBackdrop
 import de.pyryco.mobile.ui.components.defaultChromeShadow
+import de.pyryco.mobile.ui.conversations.components.AgentStartMarker
 import de.pyryco.mobile.ui.conversations.components.ApiRetryIndicator
 import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
@@ -114,7 +116,6 @@ import de.pyryco.mobile.ui.conversations.components.SystemPromptEditorState
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
 import de.pyryco.mobile.ui.conversations.components.ThreadStatusGlyph
 import de.pyryco.mobile.ui.conversations.components.ToolRunRow
-import de.pyryco.mobile.ui.conversations.components.TurnOutcomeIndicator
 import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
 import de.pyryco.mobile.ui.conversations.components.UnrecognizedMessageRow
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
@@ -192,7 +193,7 @@ fun ThreadScreen(
     usageLimit: UsageLimitReading? = null, // #804: claude's usage-limit report; #1002 draws it in the Top overlay
     resetting: ResetStatus? = null, // #872: Reset session's phase, below usage limit and above compaction
     isCompacting: Boolean = false, // #597: claude is auto-compacting its context, replaces the spinner
-    turnOutcome: TurnRecoveryNotice? = null, // #1357: recovery advice after a stopped turn, above thinking
+    turnOutcome: TurnRecoveryNotice? = null, // #1603: recovery advice after a stopped turn in the top overlay
     thinkingProgress: ThinkingProgress? = null, // #803: claude's live token reading, decorates the thinking arm
     isBusy: Boolean = false, // #459: a turn is in flight (thinking OR responding) → show the interrupt affordance
     isStalled: Boolean = false, // #1311: the daemon reported a stall; the band's stall arm
@@ -240,6 +241,7 @@ fun ThreadScreen(
     // #1352: the reader pulled toward older messages at the thread's oldest end — ask for the next page
     // back. Wired by MainActivity → vm::onDemandOlderHistory, which decides whether the ask is sent.
     onDemandOlderHistory: () -> Unit = {},
+    onDemandHistoryGap: (Long) -> Unit = {},
     // #778: the reader pressed the oldest-end retry affordance. Wired by MainActivity →
     // vm::onRetryOlderHistory, and inert unless the walk stopped on a retryable failure.
     onRetryOlderHistory: () -> Unit = {},
@@ -299,7 +301,18 @@ fun ThreadScreen(
     // #1050: a tapped link to a workspace markdown note in an assistant reply, by its path. Bound by
     // MainActivity → vm::onOpenMarkdownLink; a failed read reuses [markdownOpenFailures].
     onOpenMarkdownLink: (String) -> Unit = {},
+    attentionPill: (@Composable () -> Unit)? = null,
 ) {
+    // #1357: the context notice's Compact pill takes the Actions menu's path, and no tap while
+    // the published menu proves the command absent.
+    val onCompact =
+        remember(state.absentActions, onComposerCommand) {
+            if (ComposerAction.CompactSession in state.absentActions) {
+                null
+            } else {
+                { onComposerCommand(ComposerAction.CompactSession) }
+            }
+        }
     val threadOpenedAt = remember(state.conversationId) { Clock.System.now() }
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
@@ -310,52 +323,42 @@ fun ThreadScreen(
     // #1306: one call site for both prompt kinds, so a question → permission hand-over keeps one owner.
     if (questionState != null || openRequest != null) QuestionPromptProtection()
     val snackbarHostState = remember { SnackbarHostState() }
-    // #540: surface a failed "New session" send as a transient snackbar. Payload-free (Unit) one-shot
-    // idiom — the fixed local string keeps anything exception-derived out of the
-    // un-secured Activity window the snackbar draws in.
+    val errorNotices = rememberTransientErrorNoticeState(state.conversationId)
+    // Payload-free signals and local resources keep exception and daemon text out of notices. Each collector
+    // queues its notice and returns, so signals keep their arrival order across routes.
     val newSessionFailedMessage = stringResource(R.string.new_session_failed)
-    LaunchedEffect(newSessionErrors, snackbarHostState) {
-        newSessionErrors.collect { snackbarHostState.showSnackbar(newSessionFailedMessage) }
+    LaunchedEffect(newSessionErrors, errorNotices) {
+        newSessionErrors.collect { errorNotices.enqueue(this, newSessionFailedMessage) }
     }
-    // #556: surface a failed "Archive" as a transient snackbar. Same payload-free (Unit) one-shot idiom;
-    // the fixed local string keeps the server-supplied RelayErrorException.message out of the un-secured
-    // Activity window the snackbar draws in.
     val archiveFailedMessage = stringResource(R.string.archive_failed)
-    LaunchedEffect(archiveErrors, snackbarHostState) {
-        archiveErrors.collect { snackbarHostState.showSnackbar(archiveFailedMessage) }
+    LaunchedEffect(archiveErrors, errorNotices) {
+        archiveErrors.collect { errorNotices.enqueue(this, archiveFailedMessage) }
     }
-    // #561: surface a failed workspace change as a transient snackbar. Same payload-free (Unit) one-shot
-    // idiom; the fixed local string keeps the server-supplied RelayErrorException.message out of the
-    // un-secured Activity window the snackbar draws in.
     val changeWorkspaceFailedMessage = stringResource(R.string.change_workspace_failed)
-    LaunchedEffect(changeWorkspaceErrors, snackbarHostState) {
-        changeWorkspaceErrors.collect { snackbarHostState.showSnackbar(changeWorkspaceFailedMessage) }
+    LaunchedEffect(changeWorkspaceErrors, errorNotices) {
+        changeWorkspaceErrors.collect { errorNotices.enqueue(this, changeWorkspaceFailedMessage) }
     }
-    // #544: surface a failed run-configuration change (model / effort / permission mode) as a transient snackbar. Same
-    // payload-free (Unit) one-shot idiom; the fixed local string keeps the server-supplied
-    // RelayErrorException.message out of the un-secured Activity window the snackbar draws in. The control
-    // reverts in the ViewModel, so the sheet never settles on a value the daemon did not confirm.
     val sessionSettingsFailedMessage = stringResource(R.string.session_settings_failed)
-    LaunchedEffect(sessionSettingsErrors, snackbarHostState) {
-        sessionSettingsErrors.collect { snackbarHostState.showSnackbar(sessionSettingsFailedMessage) }
+    LaunchedEffect(sessionSettingsErrors, errorNotices) {
+        sessionSettingsErrors.collect { errorNotices.enqueue(this, sessionSettingsFailedMessage) }
     }
     // #933: a pick with refused entries names how many, per reason — counts only, never a file name.
     val resources = LocalContext.current.resources
-    LaunchedEffect(attachmentRefusals, snackbarHostState) {
+    LaunchedEffect(attachmentRefusals, errorNotices) {
         attachmentRefusals.collect { refusal ->
             if (refusal.tooLarge > 0) {
                 val text = resources.getQuantityString(R.plurals.thread_attachments_too_large, refusal.tooLarge, refusal.tooLarge)
-                snackbarHostState.showSnackbar(text)
+                errorNotices.enqueue(this, text)
             }
             if (refusal.tooMany > 0) {
                 val text = resources.getQuantityString(R.plurals.thread_attachments_too_many, refusal.tooMany, refusal.tooMany)
-                snackbarHostState.showSnackbar(text)
+                errorNotices.enqueue(this, text)
             }
         }
     }
     // #1325: a send that stopped at a file says why in one fixed sentence — never a name or the daemon's code.
-    LaunchedEffect(attachmentSendFailures, snackbarHostState) {
-        attachmentSendFailures.collect { failure -> snackbarHostState.showSnackbar(failure.text(resources)) }
+    LaunchedEffect(attachmentSendFailures, errorNotices) {
+        attachmentSendFailures.collect { failure -> errorNotices.enqueue(this, failure.text(resources)) }
     }
     val openAttachmentPicker = rememberAttachmentPicker(onAttachmentsPicked)
     // #985: a ready message attachment opens in another app or saves to a picked document; each outcome the
@@ -363,16 +366,25 @@ fun ThreadScreen(
     val noticeScope = rememberCoroutineScope()
     val attachmentActions =
         rememberAttachmentActions(attachmentStates, onOpenMarkdownAttachment) { notice ->
-            noticeScope.launch { snackbarHostState.showSnackbar(resources.getString(notice.message)) }
+            noticeScope.launch {
+                val text = resources.getString(notice.message)
+                if (notice == AttachmentNotice.SAVED) snackbarHostState.showSnackbar(text) else errorNotices.show(text)
+            }
         }
     // #1329: a tapped file that loaded ready opens or saves once, through the same actions as a ready row.
     LaunchedEffect(attachmentLoads, attachmentActions) { attachmentLoads.collect(attachmentActions.loaded) }
     // #1027: a markdown file that cannot be read says what any failed open says.
-    LaunchedEffect(markdownOpenFailures, snackbarHostState) {
-        markdownOpenFailures.collect { snackbarHostState.showSnackbar(resources.getString(AttachmentNotice.OPEN_FAILED.message)) }
+    LaunchedEffect(markdownOpenFailures, errorNotices) {
+        markdownOpenFailures.collect { errorNotices.enqueue(this, resources.getString(AttachmentNotice.OPEN_FAILED.message)) }
     }
-    // #934: a pasted image joins the chat's strip through the same sink as a picked one.
-    val onImagesPasted = rememberPastedImageReceiver(onAttachmentsPicked)
+    // #934: a pasted image joins the chat's strip through the same sink as a picked one. A refused
+    // paste or keyboard insertion queues its Error pill like any other attachment failure (#1747).
+    val onImagesPasted =
+        key(state.conversationId) {
+            rememberPastedImageReceiver(onAttachmentsPicked) { failure ->
+                errorNotices.enqueue(noticeScope, failure.text(resources))
+            }
+        }
     // #808: the footer's open option overlay. Plain `remember`, keyed on the conversation, and never
     // `rememberSaveable`: a back-stack return or another conversation must open with every overlay
     // closed. The open menu is re-derived from the live run configuration on every pass, so the overlay
@@ -436,7 +448,7 @@ fun ThreadScreen(
             modifier = Modifier.fillMaxSize(),
             containerColor = if (frameColors.glow == null) frameColors.background else Color.Transparent,
             contentColor = MaterialTheme.colorScheme.onBackground,
-            snackbarHost = { SnackbarHost(snackbarHostState) },
+            snackbarHost = { SnackbarHost(snackbarHostState, Modifier.testTag("thread_confirmation_snackbar")) },
             topBar = {
                 ThreadTopAppBar(
                     title = state.displayName,
@@ -468,23 +480,11 @@ fun ThreadScreen(
                 ) {
                     // #897: the open tool call names itself in the thinking arm's slot, only while a turn runs.
                     val openTool = remember(state.items) { openToolCall(state.items) }
-                    // #1357: the context notice's Compact pill takes the Actions menu's path, and no tap while
-                    // the published menu proves the command absent.
-                    val onCompact =
-                        remember(state.absentActions, onComposerCommand) {
-                            if (ComposerAction.CompactSession in state.absentActions) {
-                                null
-                            } else {
-                                { onComposerCommand(ComposerAction.CompactSession) }
-                            }
-                        }
                     ThreadStatusArea(
                         apiRetry = apiRetry,
                         resetting = resetting,
                         isCompacting = isCompacting,
                         isStalled = isStalled,
-                        turnOutcome = turnOutcome,
-                        onCompact = onCompact,
                         isThinking = isThinking,
                         isBusy = isBusy,
                         localSendStage = localSendStage,
@@ -569,16 +569,34 @@ fun ThreadScreen(
                     remember(state.items, state.queuedMessages) {
                         foldQueuedRows(state.items, state.queuedMessages)
                     }
+                val agentRows =
+                    remember(queuedRows, state.items, state.backgroundTasks) {
+                        foldBackgroundAgentBlocks(queuedRows, state.items, state.backgroundTasks)
+                    }
+                var goToAgent by remember(state.conversationId) { mutableStateOf<String?>(null) }
                 // #1621: the one message whose meta row (timestamp + copy) shows; every other bubble hides it
                 // until tapped. UI-local, keyed by message id so it follows the message as rows arrive.
                 var metaRowMessageId by rememberSaveable { mutableStateOf<String?>(null) }
                 // #1635: with the setting on, each run of adjacent tool rows draws as one header the reader
                 // can open. Which runs are open is UI-local, keyed by each run's first row, and saveable so a
                 // rotation or back-stack return keeps them open, as the tool rows inside keep theirs.
-                var expandedRuns by rememberSaveable { mutableStateOf(emptySet<String>()) }
+                var expandedRuns by rememberSaveable(state.conversationId) { mutableStateOf(emptySet<String>()) }
+                var previousAgentRows by remember(state.conversationId) { mutableStateOf(agentRows) }
+                var pendingOpenTools by rememberSaveable(state.conversationId) { mutableStateOf(emptySet<String>()) }
+                // A late join or parent backfill moves tools between runs. Carry an open run's expansion with them.
+                val carried =
+                    remember(agentRows, previousAgentRows, expandedRuns, pendingOpenTools) {
+                        carryRunExpansion(previousAgentRows, agentRows, expandedRuns, pendingOpenTools)
+                    }
+                val retainedExpandedRuns = carried.expandedRuns
+                SideEffect {
+                    expandedRuns = retainedExpandedRuns
+                    pendingOpenTools = carried.pending
+                    previousAgentRows = agentRows
+                }
                 val rows =
-                    remember(queuedRows, collapseToolUses, expandedRuns) {
-                        if (collapseToolUses) foldToolRuns(queuedRows, expandedRuns) else queuedRows
+                    remember(agentRows, collapseToolUses, retainedExpandedRuns, state.historyMarkers) {
+                        if (collapseToolUses) foldHistoryToolRuns(agentRows, retainedExpandedRuns, state.historyMarkers) else agentRows
                     }
                 // A backlog item this device minted no echo for is a row of its own, so the empty state
                 // must yield to it (#782 AC #3). When an item *is* matched its echo is a MessageItem, so
@@ -586,12 +604,16 @@ fun ThreadScreen(
                 // #1002: the message area, with the Top overlay pinned over its top edge while the messages
                 // scroll beneath it.
                 Box(modifier = Modifier.fillMaxWidth().weight(1f).testTag("thread-message-region")) {
-                    // #1352: a pull toward older messages is the only history ask. Inert while a page is
-                    // loading, so a second pull sends nothing; the ViewModel still decides the rest.
+                    // Movement can prefetch after a page settles; arrival alone never asks.
+                    // The ViewModel remains the authoritative single-flight and termination gate.
                     val demandOlderHistory by rememberUpdatedState(onDemandOlderHistory)
+                    val demandHistoryGap by rememberUpdatedState(onDemandHistoryGap)
+                    val gapMarkers by rememberUpdatedState(state.historyMarkers)
+                    val gapHeights = remember(state.conversationId) { mutableStateMapOf<Long, Int>() }
                     val historyLoading by rememberUpdatedState(state.historyTail == ThreadHistoryTail.Loading)
                     val pullForOlderHistory = { if (!historyLoading) demandOlderHistory() }
                     if (!state.hasMessages &&
+                        state.historyMarkers.isEmpty() &&
                         state.queuedMessages.isEmpty() &&
                         shownQuestion == null &&
                         openRequest == null &&
@@ -616,8 +638,25 @@ fun ThreadScreen(
                         val listState = rememberLazyListState()
                         val promptRowCount =
                             (shownQuestion?.let { it.batch.questions.size + 2 } ?: 0) +
+                                (if (state.historyMarkers.any { it.beforeRow.isEmpty() }) 1 else 0) +
                                 (if (openRequest != null) PERMISSION_ROW_COUNT else 0) +
                                 (if (answerRejected) 1 else 0)
+                        LaunchedEffect(goToAgent, rows, promptRowCount) {
+                            val agentId = goToAgent ?: return@LaunchedEffect
+                            val run = rows.filterIsInstance<ThreadRow.ToolRun>().firstOrNull { row -> row.tools.any { it.id == agentId } }
+                            if (run != null && !run.expanded) {
+                                expandedRuns = expandedRuns + run.runId
+                            } else {
+                                val index =
+                                    reversedRows.indexOfFirst { row ->
+                                        ((row as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)?.message?.id == agentId
+                                    }
+                                if (index >= 0) {
+                                    listState.scrollToItem(index + promptRowCount)
+                                    goToAgent = null
+                                }
+                            }
+                        }
                         // Info banners retain their keys but render nothing; spacing follows the visible row.
                         val newestRenderedRow =
                             rows.lastOrNull { row ->
@@ -648,12 +687,47 @@ fun ThreadScreen(
                         // #1352: prompt rows take the lowest indices of the reversed list and are never
                         // history, so the oldest thread row sits after them.
                         val oldestRowIndex by rememberUpdatedState(if (rows.isEmpty()) -1 else rows.size + promptRowCount - 1)
-                        val askBandPx by rememberUpdatedState(with(LocalDensity.current) { HistoryAskBand.toPx() })
+                        val currentHistoryRows by rememberUpdatedState(rows)
+                        val historyPromptRows by rememberUpdatedState(promptRowCount)
                         val listPull =
                             remember(listState) {
+                                var gapDemanded = false
                                 OlderHistoryGesture(
-                                    nearOldestEnd = { listState.layoutInfo.isNearOldestEnd(oldestRowIndex, askBandPx) },
-                                    onDemand = pullForOlderHistory,
+                                    nearOldestEnd = {
+                                        visibleHistoryMarker(
+                                            listState.layoutInfo,
+                                            currentHistoryRows,
+                                            historyPromptRows,
+                                            gapMarkers,
+                                            gapHeights,
+                                        ) !=
+                                            null ||
+                                            listState.layoutInfo.isNearOldestEnd(
+                                                oldestRowIndex,
+                                                listState.layoutInfo.viewportSize.height * 2f,
+                                                historyPromptRows,
+                                            )
+                                    },
+                                    onDemand = {
+                                        // A selected gap owns this touch and its fling even after its marker disappears.
+                                        if (!historyLoading && !gapDemanded) {
+                                            val marker =
+                                                visibleHistoryMarker(
+                                                    listState.layoutInfo,
+                                                    currentHistoryRows,
+                                                    historyPromptRows,
+                                                    gapMarkers,
+                                                    gapHeights,
+                                                )
+                                            if (marker != null) {
+                                                gapDemanded = true
+                                                demandHistoryGap(marker.anchor)
+                                            } else {
+                                                demandOlderHistory()
+                                            }
+                                        }
+                                    },
+                                    onStart = { gapDemanded = false },
                                 )
                             }
                         // #1314: one following state, derived from position on every scroll as desktop's
@@ -664,7 +738,16 @@ fun ThreadScreen(
                         FollowNewestEnd(
                             listState = listState,
                             newestRowKey = rows.lastOrNull()?.listKey(rows.lastIndex),
-                            newestRow = rows.lastOrNull(),
+                            newestRow =
+                                remember(rows, agentRows) {
+                                    listOf(
+                                        rows.lastOrNull(),
+                                        agentRows.filterIsInstance<ThreadRow.Delivered>().filter {
+                                            it.agentBlockId !=
+                                                null
+                                        },
+                                    )
+                                },
                             promptIdentity = promptIdentity,
                             promptPresent = questionState != null || openRequest != null,
                             promptRows = promptRowCount,
@@ -710,17 +793,19 @@ fun ThreadScreen(
                                     onCancel = onModalCancel,
                                     alwaysAllowAccepted = alwaysAllowAccepted,
                                     onAlwaysAllowChanged = onAlwaysAllowChanged,
-                                    gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerGutter, vertical = 4.dp),
+                                    gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerGutter),
                                 )
                             }
                             // #1340: a refused answer stays in the slot its card held, above any newer card, until
                             // its X. No frame draws it: Figma 347:6617's Default pill, laid in the page unshadowed.
+                            // Figma 668:3054: the pill sits flush on the stream's own top inset, with no extra
+                            // gutter above it (#1599) — only a bottom gutter separates it from what follows.
                             if (answerRejected) {
                                 item(key = "permission-rejection") {
                                     Box(
                                         Modifier
                                             .fillMaxWidth()
-                                            .padding(horizontal = ComposerGutter, vertical = 4.dp)
+                                            .padding(start = ComposerGutter, end = ComposerGutter, bottom = 4.dp)
                                             .testTag(PERMISSION_REJECTION_TEST_TAG),
                                     ) {
                                         NoticePill(
@@ -757,6 +842,15 @@ fun ThreadScreen(
                                     Box(gutter) { QuestionBatchTitle(pending) }
                                 }
                             }
+                            if (state.historyMarkers.any { it.beforeRow.isEmpty() }) {
+                                item(key = HISTORY_NEWEST_GAPS_KEY) {
+                                    Column {
+                                        gapMarkers.filter { it.beforeRow.isEmpty() }.forEach { marker ->
+                                            HistoryGapRow(marker.anchor, Modifier.onSizeChanged { gapHeights[marker.anchor] = it.height })
+                                        }
+                                    }
+                                }
+                            }
                             itemsIndexed(
                                 items = reversedRows,
                                 // The key derivation and its uniqueness argument live beside the fold, in
@@ -766,15 +860,26 @@ fun ThreadScreen(
                             ) { reversedIndex, row ->
                                 val chronologicalIndex = rows.size - 1 - reversedIndex
                                 ThreadRowContent(rowRelocationSpec) {
+                                    historyMarkersFor(row, gapMarkers).forEach { marker ->
+                                        HistoryGapRow(marker.anchor, Modifier.onSizeChanged { gapHeights[marker.anchor] = it.height })
+                                    }
                                     when (row) {
                                         is ThreadRow.Delivered ->
                                             when (val item = row.item) {
                                                 is ThreadItem.MessageItem ->
                                                     MessageBubble(
                                                         message = item.message,
+                                                        modifier =
+                                                            if (row.agentBlockId ==
+                                                                item.message.id
+                                                            ) {
+                                                                Modifier.testTag("background-agent:${item.message.id}")
+                                                            } else {
+                                                                Modifier
+                                                            },
                                                         threadOpenedAt = threadOpenedAt,
                                                         toolNestingDepth = toolDepths[item.message.id] ?: 0,
-                                                        joinsNextToolRow = rows.getOrNull(chronologicalIndex + 1).isToolRow(),
+                                                        joinsNextToolRow = row.joinsToolRow(rows.getOrNull(chronologicalIndex + 1)),
                                                         attachmentStates = attachmentStates,
                                                         onAttachmentShown = onAttachmentShown,
                                                         onRetryAttachment = onRetryAttachment,
@@ -816,6 +921,7 @@ fun ThreadScreen(
                                                         // #1494: a model the menu knows reads as its menu label.
                                                         knownModelLabel = state.runConfig::knownModelLabel,
                                                     )
+                                                is ThreadItem.BackgroundTaskLifecycle -> Unit
                                                 is ThreadItem.StoppedTurn -> StoppedTurnRow(item = item, agent = state.agent)
                                             }
                                         // One render path for both kinds of queued row — the one the echo
@@ -833,6 +939,8 @@ fun ThreadScreen(
                                                         null
                                                     },
                                             )
+                                        is ThreadRow.AgentStartMarker ->
+                                            AgentStartMarker(row.description, row.finished, onGoToAgent = { goToAgent = row.agentId })
                                         is ThreadRow.ToolRun ->
                                             ToolRunRow(
                                                 toolCalls = remember(row.tools) { row.tools.mapNotNull { it.toolCall } },
@@ -861,6 +969,7 @@ fun ThreadScreen(
                         }
                     }
                     ThreadTopOverlay(
+                        attentionPill = attentionPill,
                         usageLimit = usageLimit,
                         usageLimitDismissed = usageLimit?.dismissalKey() in dismissedUsageLimits,
                         onDismissUsageLimit = { usageLimit?.let(onDismissUsageLimit) },
@@ -876,6 +985,10 @@ fun ThreadScreen(
                         onOpenMcpFailure = onOpenMcpFailure,
                         sessionError = sessionError,
                         agent = state.agent,
+                        turnOutcome = turnOutcome,
+                        onCompact = onCompact,
+                        transientError = errorNotices.currentMessage,
+                        transientErrorOccurrence = errorNotices.currentOccurrence,
                     )
                 }
             }
@@ -936,7 +1049,14 @@ fun ThreadScreen(
         )
     }
     if (backgroundTasksOpen) {
-        BackgroundTaskPanel(roster = state.backgroundTasks, onDismiss = { backgroundTasksOpen = false })
+        BackgroundTaskPanel(
+            roster = state.backgroundTasks,
+            onDismiss = { backgroundTasksOpen = false },
+            stopSupported = state.backgroundTaskStopSupported,
+            expandedTaskIds = state.expandedBackgroundTaskIds,
+            pendingTaskIds = state.pendingBackgroundTaskIds,
+            onEvent = onOverflowEvent,
+        )
     }
     WorkspacePicker(
         visible = state.workspacePickerVisible,
@@ -1085,7 +1205,7 @@ private fun ThreadRowContent(
     relocationSpec: BringIntoViewSpec,
     content: @Composable () -> Unit,
 ) {
-    CompositionLocalProvider(LocalBringIntoViewSpec provides relocationSpec) { Box { content() } }
+    CompositionLocalProvider(LocalBringIntoViewSpec provides relocationSpec) { Column { content() } }
 }
 
 /** Keep the drawing viewport full size while relocating focus between the measured chrome surfaces. */
@@ -1135,7 +1255,7 @@ private fun ThreadMessageList(
  * signal is current (#643 moved this block here from the foot of the content `Column`).
  *
  * One status slot, top wins, decided by [statusArm] (#1311): connecting / reconnecting → resetting →
- * api-retry → compaction → stall → turn outcome → thinking / working / running tool. While a turn runs the
+ * api-retry → compaction → stall → thinking / working / running tool. While a turn runs the
  * band always has a reading, as desktop's `workingIndicatorState` keeps one up. While the link is
  * unavailable, turn readings cannot be refreshed; Offline is instead shown in the Top overlay as a retry
  * pill.
@@ -1145,8 +1265,7 @@ private fun ThreadMessageList(
  *
  * A running Reset session's phase (#872) is the top turn arm, above api-retry since #1311 as on desktop:
  * the wrap-up is itself a claude turn, so without this ordering the reset the user started would read as
- * generic thinking or as a compaction inside it, and it outranks a turn outcome lingering from before the
- * reset. api-retry (#594) is the "something is going wrong" signal, and the benign affordances below must
+ * generic thinking or as a compaction inside it. api-retry (#594) is the "something is going wrong" signal, and the benign affordances below must
  * never mask it. A stall (#395, #1311) is client-owned copy in the error colour; it clears on the next live
  * event through `StallProjection`, and outranks every reading of the running turn. A phase
  * change replaces the reading in this one arm; the falling edge and the session transition clear it
@@ -1179,8 +1298,6 @@ private fun ThreadStatusArea(
     resetting: ResetStatus?,
     isCompacting: Boolean,
     isStalled: Boolean,
-    turnOutcome: TurnRecoveryNotice?,
-    onCompact: (() -> Unit)?,
     isThinking: Boolean,
     isBusy: Boolean,
     localSendStage: LocalSendStage,
@@ -1235,7 +1352,6 @@ private fun ThreadStatusArea(
                             apiRetrying = apiRetry != ApiRetryStatus.NotRetrying,
                             isCompacting = isCompacting,
                             isStalled = isStalled,
-                            hasTurnOutcome = turnOutcome != null,
                             isThinking = isThinking,
                             isBusy = isBusy,
                             localSendStage = localSendStage,
@@ -1243,8 +1359,6 @@ private fun ThreadStatusArea(
                         ),
                     apiRetry = apiRetry,
                     resetting = resetting,
-                    turnOutcome = turnOutcome,
-                    onCompact = onCompact,
                     isThinking = isThinking,
                     thinkingProgress = thinkingProgress,
                     runningTool = runningTool,
@@ -1272,13 +1386,27 @@ private fun ThreadStatusArea(
     }
 }
 
-/** Account only for ordinary BubbleFrame trailing space; other row kinds own their resting gap (#1630). */
-private fun ordinaryMessageRestAdjustment(
+/**
+ * The extra trailing space under the newest row to drop from the composer's bottom content padding, so the
+ * gap to the status band reads as the frames' 16dp regardless of which row kind sits last (#1630). A plain
+ * `BubbleFrame` rests at 4dp over that baseline; a nested tool row, a bubble carrying attachments, and a
+ * queued row each rest further over it (12dp, 16dp, 8dp) by their own extra bottom space, which this backs
+ * back out. Only the newest rendered row matters — anything behind it does not touch the band.
+ */
+internal fun ordinaryMessageRestAdjustment(
     row: ThreadRow?,
     promptRows: Int,
 ): Dp {
-    val message = ((row as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)?.message
-    return if (promptRows == 0 && message != null && message.toolCall == null && message.attachments.isEmpty()) 4.dp else 0.dp
+    if (promptRows != 0) return 0.dp
+    if (row is ThreadRow.Queued) return 8.dp
+    val delivered = (row as? ThreadRow.Delivered) ?: return 0.dp
+    val message = (delivered.item as? ThreadItem.MessageItem)?.message ?: return 0.dp
+    return when {
+        message.attachments.isNotEmpty() -> 16.dp
+        message.toolCall != null && delivered.agentBlockId != null -> 12.dp
+        message.toolCall == null -> 4.dp
+        else -> 0.dp
+    }
 }
 
 /** Which one reading the status band shows (#1311); see [statusArm]. */
@@ -1289,7 +1417,6 @@ internal enum class StatusArm {
     ApiRetry,
     Compacting,
     Stalled,
-    TurnOutcome,
     Thinking,
     Working,
     RunningTool,
@@ -1299,14 +1426,12 @@ internal enum class StatusArm {
 
 /**
  * The status band's one arm order (#1311), desktop's `workingIndicatorState` and
- * `workingIndicatorStateWithLocalSend` with Mobile's connection arm at the top and its turn-outcome arm
- * above the turn's own readings. Top wins: connection, Reset session, api-retry, compaction, stall, turn
- * outcome, then the running turn — an open tool while busy, else thinking, else working — and last the
+ * `workingIndicatorStateWithLocalSend` with Mobile's connection arm at the top. Top wins: connection,
+ * Reset session, api-retry, compaction, stall, then the running turn — an open tool while busy, else thinking, else working — and last the
  * local-send window, which reads Sending or Waiting for the conversation's agent. Offline
  * returns [StatusArm.None]: the Top overlay's retry pill owns it.
  *
- * A pending local send hides a turn outcome: that outcome belongs to the turn before the send, and the new
- * turn's first `thinking` / `responding` would clear it anyway. Since #1357 the send itself clears it too.
+ * Turn outcomes live in the top overlay and do not take part in status selection (#1603).
  */
 internal fun statusArm(
     connectionState: ConnectionState,
@@ -1314,7 +1439,6 @@ internal fun statusArm(
     apiRetrying: Boolean,
     isCompacting: Boolean,
     isStalled: Boolean,
-    hasTurnOutcome: Boolean,
     isThinking: Boolean,
     isBusy: Boolean,
     localSendStage: LocalSendStage,
@@ -1327,7 +1451,6 @@ internal fun statusArm(
         apiRetrying -> StatusArm.ApiRetry
         isCompacting -> StatusArm.Compacting
         isStalled -> StatusArm.Stalled
-        hasTurnOutcome && localSendStage == LocalSendStage.None -> StatusArm.TurnOutcome
         isBusy && hasOpenTool -> StatusArm.RunningTool
         isThinking -> StatusArm.Thinking
         isBusy -> StatusArm.Working
@@ -1342,8 +1465,6 @@ private fun StatusReading(
     arm: StatusArm,
     apiRetry: ApiRetryStatus,
     resetting: ResetStatus?,
-    turnOutcome: TurnRecoveryNotice?,
-    onCompact: (() -> Unit)?,
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
     runningTool: ToolCall?,
@@ -1370,7 +1491,6 @@ private fun StatusReading(
         StatusArm.Resetting -> ResettingIndicator(status = resetting, modifier = modifier, agent = agent)
         StatusArm.ApiRetry -> ApiRetryIndicator(status = apiRetry, modifier = modifier, agent = agent)
         StatusArm.Compacting -> CompactingIndicator(isCompacting = true, modifier = modifier, agent = agent)
-        StatusArm.TurnOutcome -> TurnOutcomeIndicator(notice = turnOutcome, agent = agent, onCompact = onCompact, modifier = modifier)
         StatusArm.Stalled, StatusArm.Thinking, StatusArm.Working, StatusArm.RunningTool ->
             ThinkingIndicator(
                 isThinking = arm == StatusArm.Thinking,
@@ -1416,6 +1536,7 @@ private fun ThreadItem.timestamp(): Instant =
         is ThreadItem.Banner -> occurredAt
         is ThreadItem.CompactionBoundary -> occurredAt
         is ThreadItem.ModelRefusal -> occurredAt
+        is ThreadItem.BackgroundTaskLifecycle -> occurredAt
         is ThreadItem.StoppedTurn -> occurredAt
     }
 
@@ -1423,7 +1544,8 @@ internal fun ThreadUiState.toChannelInfoUiModel(now: Instant = Clock.System.now(
     ChannelInfoUiModel(
         conversationName = displayName,
         workspacePath = workspacePath,
-        createdLabel = items.firstOrNull()?.let { formatRelativeTime(it.timestamp(), now) } ?: "—",
+        createdLabel =
+            items.firstOrNull { it !is ThreadItem.BackgroundTaskLifecycle }?.let { formatRelativeTime(it.timestamp(), now) } ?: "—",
         lastActivityLabel = lastUsedAt?.let { formatRelativeTime(it, now) } ?: "—",
         sessionCount = sessionCount,
         messageCount = items.count { it is ThreadItem.MessageItem },

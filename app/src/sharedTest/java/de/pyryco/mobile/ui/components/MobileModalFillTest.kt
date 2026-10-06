@@ -24,6 +24,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
@@ -94,8 +95,14 @@ class MobileModalFillTest {
         val dividerX = bitmap.width / 2
         val navy = Color(0xFF001D34).toArgb()
         val dividerY = (titleTop.toInt() until (titleTop + 100 * density).toInt()).first { bitmap.getPixel(dividerX, it) != navy }
-        // The text node starts 2 dp inside its 28 dp line; the divider follows the row by 12 dp.
-        assertEquals(38f, (dividerY - titleTop) / density, 1f)
+        // The divider follows the 28 dp header row by 12 dp. The close glyph fills that row, so its top is the
+        // row's top; the title text's own top depends on the font, sitting lower in Robolectric's than on a device.
+        val rowTop =
+            rule
+                .onNodeWithContentDescription("Close", useUnmergedTree = true)
+                .fetchSemanticsNode()
+                .boundsInRoot.top
+        assertEquals(40f, (dividerY - rowTop) / density, 1f)
 
         val primary = Color(0xFF9DCBFC).toArgb()
         val actionRows =

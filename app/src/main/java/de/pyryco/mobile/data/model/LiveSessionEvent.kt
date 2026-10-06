@@ -43,13 +43,15 @@ sealed interface LiveSessionEvent {
         enum class Phase { Thinking, Responding, Idle }
     }
 
-    /** Incremental, coalesced assistant text for a turn (`assistant_delta`). [seq] is the per-turn,
-     *  non-negative ordering counter (a consumer concern; this seam does not order or accumulate). */
+    /** Incremental assistant text (`assistant_delta`). [turnId] and [seq] identify one lane; each lane
+     * starts its counter independently. [parentToolUseId] is verbatim inert grouping data, empty for the
+     * main lane. It grants no authority and must never be logged or interpreted as a path or command. */
     data class AssistantDelta(
         override val conversationId: String,
         val turnId: String,
         val seq: Int,
         val text: String,
+        val parentToolUseId: String = "",
     ) : LiveSessionEvent
 
     /**

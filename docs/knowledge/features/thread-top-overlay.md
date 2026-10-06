@@ -1,8 +1,8 @@
 # Thread top overlay — `ThreadTopOverlay`
 
 The **notice surface** for the thread ([#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002)):
-claude's usage-limit report, a failed MCP server ([#1345](https://github.com/pyrycode/pyrycode-mobile/issues/1345)),
-the pairing-error notice, Offline Retry and conversation session errors, drawn as a right-aligned stack of
+other conversations' attention, claude's usage-limit report, a failed MCP server ([#1345](https://github.com/pyrycode/pyrycode-mobile/issues/1345)),
+the pairing-error notice, Offline Retry, conversation session errors and stopped-turn recovery, drawn as a right-aligned stack of
 [`NoticePill`](notice-pill.md)s pinned over the top of the message area — replacing the two arms they used
 to share with live turn status inside `ThreadStatusArea`.
 
@@ -41,6 +41,11 @@ internal fun ThreadTopOverlay(
     onOpenMcpFailure: () -> Unit = {},
     sessionError: String? = null,
     agent: ConversationAgent = ConversationAgent.Claude,
+    turnOutcome: TurnRecoveryNotice? = null,
+    onCompact: (() -> Unit)? = null,
+    transientError: String? = null,
+    transientErrorOccurrence: Long = 0L,
+    attentionPill: (@Composable () -> Unit)? = null,
 )
 ```
 
@@ -48,9 +53,34 @@ The usage lead no longer names the agent ([Usage-limit indicator](usage-limit-in
 Since #1678, `agent = state.agent` selects the session-error copy independently of usage copy.
 
 Emits nothing when there is no pill to show (`usageLimit == null || usageLimitDismissed`, `mcpFailure == null`,
-`!showRePair`, `connectionState != Offline`, and `sessionError == null`) — the overlay is an overlap (`Box` alignment, not a layout slot), so an empty overlay costs
+`!showRePair`, `connectionState != Offline`, `sessionError == null`, `turnOutcome == null`, `transientError == null`, and `attentionPill == null`) — the overlay is an overlap (`Box` alignment, not a layout slot), so an empty overlay costs
 nothing and the message area draws exactly as if it were absent. Otherwise a `Column(horizontalAlignment =
 End, verticalArrangement = spacedBy(12.dp))` — Figma `541:2446`'s 12dp pill gap — with, top to bottom:
+
+### The attention pill (#1735)
+
+The optional `attentionPill` slot comes first, above usage, MCP, connection and session-error
+notices. `ThreadAttentionNotice` renders at most one pill without an X: gold Waiting or green
+Finished. One other unmuted waiting conversation shows "<name> needs your answer"; two or more
+show "<n> conversations need you". Waiting aggregates every host, excludes only the current
+host/conversation pair, and follows current attention, mute state and names. An equal conversation
+id on another host still counts. A new `TurnCompleted` alert from another unmuted pair shows "<name> finished" for five seconds.
+Waiting clears Finished and discards completions received while it shows, without replay afterward.
+See [attention navigation](navigation.md#what-it-does) for single and count targets.
+
+Names use `notificationTitle`: remove controls, retain at most 80 Unicode code points without
+splitting surrogate pairs, trim, and use the app name when empty or unavailable. Plain `Text` keeps
+host-authored names inert; two-line ellipsis bounds the label within the thread's 20dp gutters.
+Static-dark Waiting uses `#3D3215` / `#D8B85A`; Finished uses `#0F3313` / `#2FC038`.
+Light/dynamic containers are tonal colors composed over the theme surface.
+
+The visible shared pill keeps bodySmall text, 6dp corners, 8dp horizontal / 4dp vertical padding,
+hug width and a 24dp minimum height. Its separate clickable wrapper adds 24dp invisible space
+upward into the overlay's top clearance, yielding a minimum 48dp target. It reports only the
+visible height to the stack: the 12dp gap below and the neighboring usage X target stay intact.
+Longer labels grow both heights. The target ends at the visible pill's bottom.
+The wrapper owns one labelled accessible button; the inner `NoticePill` uses
+`mergeDescendants = false` so text and description merge into that parent.
 
 ### The usage pill
 
@@ -93,15 +123,21 @@ rejected-pairing state; `onRePair` is bound at `MainActivity` to
 `navController.navigate(Routes.pairCode(target.serverId))`. This pill has no dismiss X — a rejected pairing
 is never hideable, unlike a warning reading.
 
+Re-pair alone overrides the vertical minimum touch size to `0.dp`, so its target follows
+its measured visible surface height, including native text and font scaling. The usage
+X retains a 36dp vertical minimum; both inherit the platform horizontal minimum
+(48dp on the tested devices). The stack still measures a 12dp gap between visible
+surfaces. Do not assume both pills render at 24dp or give both targets symmetric
+36dp expansion: separate semantic bounds do not guarantee that an expanded edge
+can actually receive input. See [Notice pill caller contracts](notice-pill.md#caller-contracts).
+
 Usage sits above the lower action, matching Figma `533:1956`. When `connectionState` is Offline and `showRePair` is false, the lower action is the error-toned [Retry pill](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=627-4910). Its 48 dp clickable box extends below the visible pill, preserving the 12 dp gap and avoiding the usage dismiss target. Since [#1499](https://github.com/pyrycode/pyrycode-mobile/issues/1499), the visible pill no longer fills that box: it hugs "Offline · Retry" (94dp under Robolectric — the label plus 8dp padding on each side) at the box's top-right corner, which the box's `Alignment.TopEnd` places at the overlay's right edge, matching frame `627:4910`. The 144 x 48 dp box itself is unchanged from [#1283](https://github.com/pyrycode/pyrycode-mobile/issues/1283) — only the drawn pill's width changed, not the touch target. `showRePair` wins when pairing is rejected, since a network retry cannot repair that state.
 
 ### The session-error pill (#1678)
 
 Every non-null `sessionError`, including an empty or unknown code, shows an inert
 Error `NoticePill` after the existing persistent usage/MCP/pairing/offline notices.
-It has no click, dismiss control, leading icon or timeout; long copy wraps. Reserve
-placement below it for #1604's future transient failure notice; that notice is not
-implemented here. Repository clearing alone removes this pill.
+It has no click, dismiss control, leading icon or timeout; long copy wraps. Recovery advice follows it before the transient error pill. Repository clearing alone removes this pill.
 
 Exact code matches select client resources; neither raw codes nor daemon prose
 reach visible text or accessibility semantics:
@@ -116,6 +152,38 @@ Blocked delivery has abandoned the backlog; child crashing retains the queued
 message. Showing an error never resends it. See [repository clearing rules](remote-conversation-repository-state-errors-and-handoff.md#conversation-session-errors-1677)
 and [destination observation](thread-screen-how-it-works-state.md#session-errors-and-local-send-settlement-1678).
 
+### The stopped-turn recovery pill (#1603)
+
+[TurnOutcomeIndicator](turn-outcome-indicator.md) follows session errors as one icon-free,
+X-free Error pill. Context reads “Context too long - Compact”; its whole surface invokes
+the published Compact command once. Unavailable Compact and agent-specific billing/sign-in
+are inert. Status remains independent, with the idle snowflake when connected and idle.
+
+The visible pill keeps the design's 24dp height and 12dp neighbor gaps, while Compact's
+merged action target extends down to at least 48dp. A following transient notice is
+measured from the visible pill, and consumes taps on its inert surface where it overlaps
+that target. Reserving the target height in the stack would incorrectly make the visible
+gap 36dp. Native geometry and physical pointer tests cover both preceding and following
+neighbors, including Offline and Re-pair.
+
+### The transient error pill (#1747)
+
+The thread's local failures show as the last pill in the stack, below every persistent notice and the
+session error and recovery pill, with the same 12 dp gap. These are new-session, archive, workspace and run-configuration
+failures, attachment size and count refusals, attachment-send failures, refused pasted or keyboard-inserted
+images, markdown-open failures, and the attachment no-app, open-failed and save-failed outcomes. Each shows
+its existing client-owned sentence in an inert Error pill (`TransientErrorPill`): no X, no tap action, a 24 dp
+minimum height and a polite live region. It overlays the list without moving it. Under an Offline pill,
+spacing follows the visible pill, not Retry's 48 dp target, and the error draws above that target so tapping
+it cannot run Retry.
+
+`TransientErrorNoticeState` (`TransientErrorNotice.kt`), remembered per conversation, owns the queue. Every
+failure joins one first-in, first-out queue in the order it happened, whichever route it came from, and each
+pill stays for the full Material Short time of 4 s, adjusted by the accessibility manager as a snackbar's would
+be. Expiry removes only that pill. Each occurrence has its own identity, so a repeated identical failure is
+announced again. Leaving the screen or switching conversation cancels the shown and queued pills. Saved
+confirmations and the dismissed-elsewhere prompt keep the bottom snackbar.
+
 ## Placement in `ThreadScreen`
 
 The message area — either `EmptyThreadState` or the `LazyColumn` — is wrapped in a `Box(Modifier
@@ -129,7 +197,8 @@ content at the y it held before that region moved, matching Figma `533:1956` / `
 rather than a `Column` child is load-bearing: the overlay draws *over* the scrolling messages, so it never
 reserves layout space and the list never reflows as pills appear or clear.
 
-`ThreadScreen` gains two new defaulted parameters that feed the overlay:
+`ThreadScreen` passes its optional `attentionPill` slot through unchanged. Its default-null slot
+keeps other callers compatible. Two defaulted usage parameters also feed the overlay:
 
 ```kotlin
 dismissedUsageLimits: Set<UsageLimitDismissals.Key> = emptySet(),
@@ -213,6 +282,24 @@ acknowledgements for that host; other hosts' entries are untouched.
 
 ## State + concurrency model
 
+`rememberThreadAttention` collects the cold `observeThreadAttention` flow only inside the
+back-stack entry's `repeatOnLifecycle(RESUMED)`. A covered thread may stay composed, so composition
+lifetime alone cannot own this surface. Leaving, covering or backgrounding cancels collectors and
+the expiry job and clears presentation. Resuming reads current Waiting with no old Finished.
+`HostConversationSource.attention` supplies waiting; its non-replayed `alerts` supplies only
+`TurnCompleted`, independently of the system notifier's ledger. `Unread` and prompt alerts cannot
+create Finished.
+
+A newer eligible finish replaces the target and restarts its five-second delay. Snapshot renames
+update the label without extending expiry; muting that target clears it. Callbacks read current
+attention and snapshot values, with no suspension between eligibility, mutation and publication.
+Waiting cancels the finish timer. Parent cancellation cancels every child collector and delay.
+
+`conflate()` directly on the `channelFlow`, before `distinctUntilChanged()`, retains the latest
+projection under delayed consumption. A default-buffered `trySend` can reject a new target or clear
+while the local timer advances, leaving stale UI. Intermediate presentations are replaceable;
+non-suspending publication must retain the latest one. Logs contain only static reasons and counts.
+
 No coroutine is launched by either holder. `UsageLimitDismissals` and `McpFailureAcknowledgements` each hold
 one `MutableStateFlow`, mutated only with `update` (compare-and-set) — the former on the main thread from a
 click, the latter from `onMcpFailureTapped` and from `forgetRemovedHost`'s unpair path, so a concurrent
@@ -226,6 +313,61 @@ for why that ask shares a daemon worker with sending a message and can stall beh
 
 ## Testing
 
+`ThreadTopOverlayTest.theUsagePill_sitsAboveThePairingPill_whichStartsRePair`
+uses physical center and facing-edge taps for both controls, checks exactly one
+intended callback per tap and dismissal state, and measures the 12dp visible gap,
+nonoverlapping touch bounds and retained horizontal widths. Usage's facing-edge
+tap stays inside the Surface's visible clip; advertised dismiss expansion outside
+that clip cannot be treated as tappable. After #1757's line-height repair, the
+native red did not reproduce the original 3.5px overlap: it failed because the
+advertised expanded upper Re-pair edge was untappable (1 executed, 1 failed,
+0 skipped in [native-red.xml](../../../app/src/androidTest/assets/touch-1760/native-red.xml)).
+Semantic clicks or nonoverlap assertions alone would miss that defect.
+
+Retained 2026-10-05 evidence confirms the named method passed without an ignore:
+
+- Managed Android 13: `./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun
+  '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest'
+  -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain`.
+  The [post-merge native XML](../../../app/src/androidTest/assets/touch-1760/merge-native-class-green.xml)
+  records 14 executed/passed, 0 failed/errors/skipped, including the named method
+  at `2026-10-05T18:04:20`. The earlier separate method run records 1 executed/passed,
+  0 failed/errors/skipped in [native-method-green.xml](../../../app/src/androidTest/assets/touch-1760/native-method-green.xml).
+- JVM: `./gradlew testDebugUnitTest --tests
+  'de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest' --tests
+  'de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNoticeTest' --tests
+  'de.pyryco.mobile.ui.conversations.components.NoticePillTest' assembleDebug --console=plain`.
+  [Focused post-merge XML](../../../app/src/androidTest/assets/touch-1760/merge-jvm/)
+  records 26 executed/passed (14 overlay, 10 attention, 2 component), 0 failed/errors/skipped.
+  The final `./gradlew testDebugUnitTest assembleDebug --console=plain` run records
+  4,309 executed/passed, 0 failed/errors/skipped in the
+  [summary](../../../app/src/androidTest/assets/touch-1760/merge-final-jvm-summary.xml);
+  its [overlay XML](../../../app/src/androidTest/assets/touch-1760/merge-final-jvm-overlay.xml)
+  confirms the named method passed among 14 tests.
+
+[Initial commands](../../../app/src/androidTest/assets/touch-1760/commands-and-results.txt)
+and [post-merge commands/counts](../../../app/src/androidTest/assets/touch-1760/merge-commands-and-results.txt)
+retain the exact selections and results. The default device-only UI gate does not
+select this shared test; the targeted managed-device evidence establishes its native pass.
+Removing main's temporary #1760 ignore deliberately restores this regression;
+the neighboring Offline Retry regression remains runnable.
+
+
+- **Attention (#1735):** `ThreadAttentionTest` uses a controlled clock for replacement, expiry,
+  precedence, mute/name changes and cancellation/no replay. Delayed-consumer cases hold consumption
+  beyond the old buffer capacity, deliver 100 finishes and waiting updates, and independently prove
+  upstream delivery; ignored `tryEmit` results could otherwise hide the race.
+  `ThreadAttentionNoticeTest` checks native-graphics colors, stacking, hostile names, both target
+  boundaries and the usage X neighbor. Assert tag, text, description and click action together:
+  text-only checks can pass while a nested merging node leaves the button unlabelled.
+  Width assertions use measured thread bounds and both 20dp gutters, rather than Robolectric's
+  default 320dp viewport. `ThreadAttentionNavigationTest` covers colliding ids, list taps, covered
+  entries and background/resume. In instrumented coverage the composition-owned expiry delay uses
+  the Compose rule's virtual clock. Advance it explicitly before checking expiry: `waitUntil`
+  advances only one frame per poll, so slow full-suite polling can exhaust a wall-clock timeout
+  while the five virtual seconds have not elapsed. The rung-3 scenario advances by 5,100ms and
+  checks disappearance and no replay on reopening; its named full-suite pass is recorded in the
+  [live ladder](../../e2e-interactive-stream.md#verification-status).
 - **Robolectric** `ThreadTopOverlayTest` (`app/src/sharedTest/.../thread/`):
   - no reading and no re-pair → no pill nodes, no dismiss X;
   - an `allowed_warning` reading → a pill with the label and an X; tapping the X (against a test-held
@@ -261,7 +403,7 @@ for why that ask shares a daemon worker with sending a message and can stall beh
   text and clicks it, still checks the connection banner is withheld — the test needed no change because it
   asserts by text, not by composable identity, so it holds whether the notice is a status-row button or a
   Top-overlay pill.
-- **Rung 3 (live):** no new scripted or e2e scenario of its own. The acceptance proof is that the three
+- **Original overlay placement, rung 3 (live):** #1002 added no scenario of its own. The acceptance proof is that the three
   `InteractiveStreamE2ETest` methods named in [Why this moved](#why-this-moved-1002) pass again under
   `python3 scripts/android-test-gate.py live` while the account's usage reading is `allowed_warning` — they
   needed no code change, since moving the reading off the status slot they assert against is the whole fix.
@@ -279,8 +421,8 @@ see [Usage-limit indicator § Security](usage-limit-indicator.md#security)), and
 status, recognised or not, is an Error pill that cannot be hidden, so a hostile daemon gains nothing by
 sending `"allowed_warning"` that it could not already do with the benign `"allowed"`. `UsageLimitDismissals`
 is heap-only (see [Dismissal](#dismissal--usagelimitdismissals) above) — no disk, no backup-eligible state,
-no log. No intent, deep link, provider or WebView is added; the overlay's only actions are hiding a notice
-locally or opening the existing re-pair screen the user already had one tap away. Dismissal tells the
+no log. No intent, deep link, provider or WebView is added; the overlay's actions hide a notice locally or navigate to existing screens. Attention taps
+use typed host/conversation targets, never names, and cannot answer prompts or send commands. Dismissal tells the
 daemon nothing.
 
 **#1345's MCP pill** adds no new trust boundary either: the server name already reaches this screen through

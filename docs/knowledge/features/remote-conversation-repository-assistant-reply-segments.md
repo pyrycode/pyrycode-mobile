@@ -120,6 +120,33 @@ that assumption structurally (the client decides when its own echo appears; the 
 when it logs the same turn), so any future per-turn join here needs a receiver-owns-the-prefix rule like
 `olderThan`/`segmentHeads`, not a positional one.
 
+### Parent attribution through seams and merges (#1826)
+
+`Message.parentToolUseId` is retained metadata, independent of segment keys and `(turnId, seq)`
+identity. `withAssistantDelta` selects the first non-empty held parent for the same wire turn,
+otherwise the incoming non-empty hint. It applies that value before sequence/key guards, so even a
+duplicate replay can enrich unknown attribution without duplicating text or moving rows. Append and
+new segments inherit it when later deltas omit the hint. Main and two child lanes starting at seq zero
+remain separate; sharing a parent never merges two wire turns.
+
+Before `mergeRows` atomizes either list, it selects the first non-empty held hint per turn; only a
+turn without held attribution takes the first non-empty incoming hint. It applies the winner to
+**every held and incoming reconstruction or replacement candidate**, including conflicting non-empty
+hints. Selecting a winner in a lookup but filling only empty candidates loses the held parent when an
+older incoming opener becomes the reconstructed row, or a legacy whole-turn row replaces it.
+The lookup uses `segment.turnId`, falling back to the bare assistant message id for a legacy row,
+and is local to this conversation's merge. Atom copies and `withJoinedSegments` retain the hint;
+an unattributed opener cannot erase a known parent on rejoin. These copies change attribution only,
+leaving text, duplicate identity, row keys and held-row relative order to the existing merge rules.
+
+`AssistantParentAttributionTest` probes both history and cache paths: conflicting older openers,
+prefix/middle/suffix overlap in both arrival directions, non-recoverable legacy replacement and
+repeated merges. Assertions cover parent, text, keys and held separators/order, alongside older-page
+prepend, duplicate live replay and conversation isolation. Comparing the attributed script with its
+parentless counterpart catches accidental changes to identity or placement. See
+[the cache thread document](conversation-cache.md#layout) for disk-only unknown attribution and
+in-memory reconnect retention.
+
 ### The cache's segment record
 
 `FileConversationCache`'s `CachedMessage` gains `segment: CachedSegment? = null` (`turnId`, `seqs: List<Int>`,

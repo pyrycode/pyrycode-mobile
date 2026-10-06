@@ -1,0 +1,23 @@
+Ticket #1747, repeated identical error occurrence rework, 2026-10-05.
+
+The screen-local queue assigns a new occurrence identity on each acquired caller. Both consumers key only the transient pill by that identity. Identical client-owned text now creates a distinct rendered semantics node at the queued timeout boundary; persistent notices, geometry, FIFO order, full accessibility-adjusted Short duration and cancellation remain unchanged.
+
+Test-first red command:
+./gradlew testDebugUnitTest --tests '*ThreadTransientErrorTest.identicalArchiveFailures*' --tests '*MarkdownReaderScreenTest.identicalRefreshFailures*' --console=plain
+Exit 1: 2 executed, 2 failed, 0 errors/skips. Both failures were assertNotEquals on unchanged pill node identity. The reader fixture uses the existing synchronized menu helper before pausing the clock; preliminary unsynchronized menu attempts are not occurrence evidence. XML: transient-errors-1747-identical-red-results.xml.
+
+Focused JVM command:
+./gradlew spotlessApply testDebugUnitTest --tests '*ThreadTransientErrorTest' --tests '*MarkdownReaderScreenTest' --tests '*ThreadTopOverlayTest' --tests '*TransientErrorNoticeStateTest' --tests '*ThreadChromeTest' --tests '*MarkdownReaderDesignTest' --tests '*ThreadScreenAttachmentLoadTest' --console=plain
+Exit 0: 73 passed, 0 failures/errors, 2 known skips (75 selected). Both repeated-occurrence regressions passed. Existing queue/cancellation/accessibility, safe-copy routing, confirmation and persistent-notice coexistence, reader isolation, native Offline pointer geometry and screen chrome coverage passed. XML: transient-errors-1747-identical-unit-results.xml.
+
+Known skips remain tracked by #1759 (pre-existing reader-bound rendering memory kill) and #1760 (pre-existing pairing/usage native touch overlap). Neither is a passing test.
+
+This rework changes no geometry or capture fixture. The requested failure-notice and reader-error PNGs, comparisons, Figma exports, inset/viewport metadata and pixel8Api35 capture XML remain intact; see transient-errors-1747-evidence.txt for the two passing real-bar captures and disclosed text/font differences. Documentation stage owns index verdicts and feature topics, including the unresolved Saved/dismissed-elsewhere discrepancies.
+
+Device/build command:
+./gradlew lint assembleDebug compileDebugAndroidTestKotlin :app:pixel2Api33AtdDebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.thread.MarkdownReaderScreenTest,de.pyryco.mobile.ui.conversations.thread.ThreadTransientErrorTest,de.pyryco.mobile.ui.conversations.thread.ThreadTopOverlayTest' -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain
+Exit 0: lint, debug APK assembly and instrumentation compilation passed. Fresh device XML reports 45 passed, 0 failures/errors, 2 known skips (47 selected). Both identical Archive and reader Refresh regressions executed and passed. Complete reader class and overlay/transient classes ran. XML: transient-errors-1747-identical-device-results.xml. Gradle's console inflates the finished count to 49 by counting skips twice; the reported counts here come from XML.
+
+./gradlew spotlessCheck --rerun-tasks --console=plain: exit 0, all seven tasks executed. bash scripts/docs-guard.sh: exit 0.
+
+ANDROID_GATE_WAIT_SECONDS=900 python3 scripts/android-test-gate.py scripted offline-retry: exit 0; fresh dispatcher XML confirms 1 executed/passed, 0 failures/errors/skips, interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply. XML: transient-errors-1747-identical-scripted-results.xml. Device free after 30s waiting. Initial default-wait attempt exited busy (75) after 300s without executing tests; it is not counted as a pass.

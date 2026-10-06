@@ -1,6 +1,6 @@
 # Notice pill — `NoticePill`
 
-The shared pill shape for [`ThreadTopOverlay`](thread-top-overlay.md)'s usage, MCP,
+The shared pill shape for [`ThreadTopOverlay`](thread-top-overlay.md)'s attention, usage, MCP,
 pairing, Offline Retry and session-error notices. [#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043) added the task-count caller,
 the thread status band's task-count pill, hosted on `ThreadScreen` itself rather than the overlay. Figma
 `347:6617`'s `Pill` component set, variants **Default** and **Error**.
@@ -22,6 +22,9 @@ internal fun NoticePill(
     shadowElevation: Dp = PillShadow,
     leadingIcon: ImageVector? = null,
     maxLines: Int = Int.MAX_VALUE,
+    containerColor: Color = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer,
+    contentColor: Color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer,
+    mergeDescendants: Boolean = true,
 )
 ```
 
@@ -35,7 +38,8 @@ A `Surface` (6dp `RoundedCornerShape`, `shadowElevation` for the overlay's drop 
 `Modifier.weight(1f, fill = false)` — so the pill hugs short text and wraps long text while a trailing X
 stays visible — and, when `onDismiss != null`, an 8dp exported close image as its own clickable node
 (`Role.Button`, `contentDescription = R.string.thread_notice_dismiss`, "Dismiss notice"). Compose's minimum
-touch-target expansion gives the X a 48dp tap area without growing the pill's drawn size — a deliberate
+touch-target expansion gives the X the platform minimum tap area (normally 48dp
+in each axis; the overlay overrides the vertical minimum to 36dp) without growing the pill's drawn size — a deliberate
 divergence from the usual 48dp `IconButton` wrapper, kept to match Figma's compact pill height.
 
 The themed `bodySmall` (12/16sp) style uses `LineHeightStyle.Alignment.Center`
@@ -47,24 +51,37 @@ caller's `maxLines` and ellipsis. See [shared typography](shared-typography.md).
 
 **Two variants, colours from `MaterialTheme.colorScheme`:** Default is `primaryContainer` /
 `onPrimaryContainer`; Error is `errorContainer` / `error`, as Figma paints it. `isError` selects between
-them; there is no third state. Semantics: `Modifier.semantics(mergeDescendants = true) { contentDescription
+them by default; callers may override `containerColor` and `contentColor` without changing geometry
+or unrelated callers. Semantics: `Modifier.semantics(mergeDescendants = mergeDescendants) { contentDescription
 = contentDescription }` on the outer `Surface`, defaulting to the visible `text` — the merged node reads as
-one TalkBack stop, the same "wording has one source" idiom every status-row indicator already uses (see
+one TalkBack stop with the default `mergeDescendants = true`, the same "wording has one source" idiom every status-row indicator already uses (see
 [Usage-limit indicator](usage-limit-indicator.md), [Resetting indicator](resetting-indicator.md)). When
 `onClick != null` the whole pill is a clickable `Surface(onClick = onClick, ...)`; otherwise a plain
 `Surface`.
 
 ## Caller contracts
 
+- **Attention pill** ([Thread top overlay](thread-top-overlay.md#the-attention-pill-1735)):
+  overrides container/content colors for Waiting and Finished, keeps the overlay shadow and uses
+  two-line ellipsis without an X. The inert inner surface has a 24dp minimum height; a separate
+  parent button adds 24dp touch space upward while reporting only visible height to the stack.
+  This preserves the 12dp gap below and the neighboring dismiss action. `mergeDescendants = false`
+  lets that parent own the label and description as one accessible button. A nested merging surface
+  would hide them from the clickable target even while text and pointer tests passed.
 - **Usage pill** ([`ThreadTopOverlay`](thread-top-overlay.md#the-usage-pill)): `onDismiss` is non-`null`
   only when [`usageLimitIsWarning`](usage-limit-indicator.md#shape) is true for the reading being shown —
   every other reading, including an unrecognised `status`, gets `onDismiss = null` and cannot be hidden.
-  `onClick` is always `null` here; tapping the pill's body does nothing. Default `shadowElevation`.
+  `onClick` is always `null` here; tapping the pill's body does nothing. The overlay retains
+  a 36dp vertical dismiss minimum and inherits the platform horizontal width. Physical
+  edge taps must remain inside the usage Surface's visible clip. Default `shadowElevation`.
 - **Pairing pill** ([`ThreadTopOverlay`](thread-top-overlay.md#the-pairing-or-offline-pill)): `onClick` starts the same
   re-pair flow the pre-#1002 `RePairButton` started (`onRePair`, bound at `MainActivity` to
   `navController.navigate(Routes.pairCode(target.serverId))`); `onDismiss` is always `null` — a rejected
   pairing is never hideable, matching the ticket's "never dismissible" requirement for anything that is not
-  the one named warning status. Default `shadowElevation`.
+  the one named warning status. Re-pair overrides only the vertical minimum to `0.dp`:
+  its target follows the measured visible surface height rather than assuming a 24dp
+  rendered pill. Horizontal minimum width stays inherited, usage-dismiss keeps its
+  36dp vertical minimum, and the visible stack gap remains 12dp. Default `shadowElevation`.
 - **Task-count pill** ([Thread screen § Thinking-indicator placement](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643),
   [#1043](https://github.com/pyrycode/pyrycode-mobile/issues/1043)): drawn inside `ThreadStatusArea` in the
   `bottomBar`, not by `ThreadTopOverlay`. `onClick` opens the
@@ -84,6 +101,26 @@ The component itself does not know which caller it serves. Its error flag, callb
 shadow, optional leading icon and line limit let the outcome reuse the same shape.
 
 ## Testing
+
+The shared `ThreadTopOverlayTest.theUsagePill_sitsAboveThePairingPill_whichStartsRePair`
+regression measures visible and touch bounds separately and uses physical center/facing-edge
+input, exact callback counts and dismissal-state checks. Usage edge input stays inside
+its Surface clip. After #1757, the native red exposed an untappable advertised Re-pair
+upper edge rather than the original 3.5px overlap; semantic clicks and nonoverlap alone
+would miss it. The [overlay testing section](thread-top-overlay.md#testing) records the
+exact native/JVM commands and retained XML: post-merge managed Android 13 had 14
+executed/passed; focused JVM overlay/attention/component coverage had 26 executed/passed;
+the final full JVM run had 4,309 executed/passed. All had 0 failed/errors/skipped,
+and both native and JVM XML confirm the named method passed without an ignore.
+The earlier separate native method run had 1 executed/passed, 0 failed/errors/skipped;
+the red run had 1 executed, 1 failed, 0 skipped. Exact commands and counts remain in
+[the retained log](../../../app/src/androidTest/assets/touch-1760/merge-commands-and-results.txt).
+
+`ThreadAttentionNoticeTest` verifies default-compatible color customization through the attention
+caller, native-graphics surface and target bounds, two-line sanitized names and stacking.
+Its combined selector requires the parent tag, bounded text, description and click action together
+for Waiting, Finished and count variants. Test actual touch bounds separately from visible bounds,
+including the adjacent usage dismiss target. Measure width against the actual viewport's gutters.
 
 [`NoticePillTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/NoticePillTest.kt)
 uses native graphics to measure both text-only variants: 16dp text, 24dp background
@@ -126,15 +163,15 @@ coverage remains described in [Thread screen § Thinking-indicator placement](th
 
 ## Security
 
-No daemon-authored text reaches this file directly — its call sites pass already-sanitised text
-(`usageLimitLabel(reading)`, the local `R.string.thread_re_pair` resource, or the client-owned plural
+Call sites own sanitization before text reaches this file
+(`notificationTitle` for attention names, `usageLimitLabel(reading)`, the local `R.string.thread_re_pair` resource, or the client-owned plural
 `R.plurals.thread_task_count` formatted against a device-side `Int` count, or the turn-outcome arm's
 client-owned recovery copy, `turnRecoveryNotice`, which compares daemon tokens but never renders them,
 [#1357](turn-outcome-indicator.md)). `NoticePill` renders `text`
 as a plain `Text` argument only, same as every sibling status-row indicator; it performs no further
 sanitisation of its own; see [Usage-limit indicator § Security](usage-limit-indicator.md#security) for why
-the caller's sanitisation bound is the one that matters (the pill wraps instead of `maxLines`-capping, so
-the caller, not this file, must keep the text short).
+the caller's sanitisation bound is the one that matters (the default line limit permits wrapping, so callers must bound hostile text and choose
+a suitable `maxLines`).
 
 ## Related
 

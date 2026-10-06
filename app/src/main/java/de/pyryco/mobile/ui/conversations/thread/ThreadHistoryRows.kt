@@ -25,15 +25,20 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.historyKeys
+import de.pyryco.mobile.ui.conversations.components.MessageAreaRowSpacing
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
 
 // #777: the oldest-end loading row, sized to ThinkingIndicator's shipped spinner-and-label idiom and
@@ -48,83 +53,188 @@ private val HistoryLoadingLabelGap = 8.dp
 // not read as a message bubble.
 private val HistoryTailRowPadding = 12.dp
 
-/**
- * How close to the oldest end a pull must start to ask for older history (#1352), desktop's
- * `HISTORY_ASK_BAND_PX` in `threadScrollPosition.ts`.
- */
-internal val HistoryAskBand = 200.dp
+// #1605: every history tail row leaves the standard 16dp `Message area` gap to the oldest message below
+// it, the same rhythm every other stream row keeps (`MessageAreaRowSpacing`); the Figma frames also draw
+// a label or action in its full line box, which the theme's defaults would otherwise trim to its glyphs
+// and shave a couple of px off each row's height.
+private val HistoryTailBottomGap = MessageAreaRowSpacing
+private val HistoryTailLineBox = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
 
 /**
- * The reader's pull toward older messages (#1352), desktop's `demandHistory`: a touch drag toward older
- * content that **starts** with the thread at, or within [HistoryAskBand] of, its oldest end calls
- * [onDemand] once. A drag that starts further away only scrolls. Apply it with [olderHistoryPull].
- *
- * The start is read on the gesture's first pointer down, and the drag is seen as a nested scroll before
- * the list consumes it, so only a user's drag asks: a page arriving, a programmatic or semantics scroll,
- * or the oldest row coming into view never does. It consumes nothing, so a list that cannot scroll — a
- * short thread — still reports the pull, as desktop's wheel does.
- *
- * The thread's list uses `reverseLayout = true`, so older content lies at the top and a pull toward it moves
- * the finger down: a positive `y` delta.
+ * Observe real touch movement toward older content, including that touch's continuing fling.
+ * Position is checked after each movement; layout and page arrival never initiate demand.
+ * The reversed thread's older direction is a positive nested-scroll y delta.
  */
 internal class OlderHistoryGesture(
     private val nearOldestEnd: () -> Boolean,
     private val onDemand: () -> Unit,
+    private val onStart: () -> Unit = {},
 ) : NestedScrollConnection {
-    // Whether the current touch gesture started near the oldest end and has not asked yet. Set on the
-    // first pointer down; cleared by the ask and by the fling that ends every drag.
-    private var armed = false
+    private var touching = false
+    private var flingEligible = false
+    private var flinging = false
 
     fun onGestureStart() {
-        armed = nearOldestEnd()
+        touching = true
+        flingEligible = false
+        flinging = false
+        onStart()
     }
 
-    override fun onPreScroll(
+    fun onGestureEnd() {
+        touching = false
+    }
+
+    fun onGestureCancel() {
+        touching = false
+        flingEligible = false
+        flinging = false
+    }
+
+    override fun onPostScroll(
+        consumed: Offset,
         available: Offset,
         source: NestedScrollSource,
     ): Offset {
-        if (armed && source == NestedScrollSource.UserInput && available.y > 0f) {
-            armed = false
-            onDemand()
-        }
+        val touchMovement = touching && source == NestedScrollSource.UserInput
+        if (touchMovement) flingEligible = true
+        val readerMovement = touchMovement || flinging && source == NestedScrollSource.SideEffect
+        if (readerMovement && consumed.y + available.y > 0f && nearOldestEnd()) onDemand()
         return Offset.Zero
     }
 
-    // A drag's fling dispatch, at zero velocity too, follows its last delta, so this ends the gesture.
     override suspend fun onPreFling(available: Velocity): Velocity {
-        armed = false
+        flinging = flingEligible && available.y > 0f
+        touching = false
+        flingEligible = false
+        return Velocity.Zero
+    }
+
+    override suspend fun onPostFling(
+        consumed: Velocity,
+        available: Velocity,
+    ): Velocity {
+        flinging = false
         return Velocity.Zero
     }
 }
 
-/**
- * Attach [gesture] to a scrollable thread surface (#1352): observe each gesture's first pointer down without
- * consuming it, and receive the surface's drag deltas as its nested-scroll parent.
- */
+/** Observe pointer lifetime without consuming the list's input. */
 internal fun Modifier.olderHistoryPull(gesture: OlderHistoryGesture): Modifier =
     pointerInput(gesture) {
-        awaitEachGesture {
-            awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-            gesture.onGestureStart()
+        try {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                if (down.type == PointerType.Touch) {
+                    gesture.onGestureStart()
+                    do {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                    } while (event.changes.any { it.pressed })
+                    gesture.onGestureEnd()
+                }
+            }
+        } finally {
+            gesture.onGestureCancel()
         }
     }.nestedScroll(gesture)
 
+internal fun historyMarkersFor(
+    row: ThreadRow,
+    markers: List<ThreadHistoryMarker>,
+): List<ThreadHistoryMarker> {
+    val keys = (row as? ThreadRow.Delivered)?.item?.historyKeys().orEmpty()
+    return markers.filter { it.beforeRow in keys }
+}
+
+/** A marker's first newer tool stays visible; unrelated runs keep their existing collapse policy. */
+internal fun foldHistoryToolRuns(
+    rows: List<ThreadRow>,
+    expanded: Set<String>,
+    markers: List<ThreadHistoryMarker>,
+): List<ThreadRow> =
+    buildList {
+        var start = 0
+        rows.forEachIndexed { index, row ->
+            if (historyMarkersFor(row, markers).isNotEmpty()) {
+                addAll(foldToolRuns(rows.subList(start, index), expanded))
+                add(row)
+                start = index + 1
+            }
+        }
+        addAll(foldToolRuns(rows.subList(start, rows.size), expanded))
+    }
+
+internal const val HISTORY_NEWEST_GAPS_KEY = "history-newest-gaps"
+
+internal fun visibleHistoryMarker(
+    layout: LazyListLayoutInfo,
+    rows: List<ThreadRow>,
+    promptRows: Int,
+    markers: List<ThreadHistoryMarker>,
+    heights: Map<Long, Int> = emptyMap(),
+): ThreadHistoryMarker? =
+    layout.visibleItemsInfo.sortedBy { it.index }.firstNotNullOfOrNull { item ->
+        val row = rows.getOrNull(rows.lastIndex - (item.index - promptRows))
+        var edge = item.offset + item.size
+        val attached =
+            if (item.key == HISTORY_NEWEST_GAPS_KEY) {
+                markers.filter { it.beforeRow.isEmpty() }
+            } else {
+                row?.let { historyMarkersFor(it, markers) }.orEmpty()
+            }
+        attached
+            .mapNotNull { marker ->
+                val height = heights[marker.anchor] ?: 0
+                val visible =
+                    edge - height < layout.viewportEndOffset &&
+                        edge > layout.viewportStartOffset ||
+                        height == 0 &&
+                        edge <= layout.viewportEndOffset
+                edge -= height
+                marker.takeIf { visible }
+            }.lastOrNull()
+    }
+
+@Composable
+internal fun HistoryGapRow(
+    anchor: Long,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .padding(horizontal = HistoryLoadingGutter, vertical = HistoryLoadingVerticalPadding)
+                .testTag("history-gap:$anchor"),
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            stringResource(R.string.thread_history_gap_label),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
 /**
- * Whether the reversed thread list sits at, or within [bandPx] of, its oldest end (#1352). [oldestIndex] is
- * the oldest thread row's list index, or negative when the thread has no rows, which counts as at the end.
- *
- * Under `reverseLayout` an item's offset runs from the viewport's bottom, so the part of the oldest row
- * still hidden above the viewport is `offset + size - viewportEndOffset`. The list's top content padding
- * (#1562) is after-content padding there and lies past the oldest row, so it is added back to measure the
- * distance from the scroll's oldest end. A row not laid out yet counts as further away than the band.
+ * Estimate loaded distance above the reversed viewport, even when its oldest row is not laid out.
+ * Measured history rows supply an average height for unseen rows. Prompt and tail rows are excluded.
+ * The visible oldest edge is exact; after-content padding remains part of the loaded distance.
  */
 internal fun LazyListLayoutInfo.isNearOldestEnd(
     oldestIndex: Int,
     bandPx: Float,
+    firstHistoryIndex: Int = 0,
 ): Boolean {
     if (oldestIndex < 0) return true
-    val oldest = visibleItemsInfo.firstOrNull { it.index == oldestIndex } ?: return false
-    return oldest.offset + oldest.size + afterContentPadding - viewportEndOffset <= bandPx
+    val history = visibleItemsInfo.filter { it.index in firstHistoryIndex..oldestIndex }
+    val edge = history.maxByOrNull { it.index } ?: return false
+    val unseenRows = oldestIndex - edge.index
+    val averageHeight = history.sumOf { it.size.toLong() }.toFloat() / history.size
+    val distance =
+        edge.offset.toFloat() + edge.size + afterContentPadding - viewportEndOffset +
+            unseenRows.toFloat() * (averageHeight + mainAxisItemSpacing)
+    return distance <= bandPx
 }
 
 /**
@@ -144,6 +254,7 @@ internal fun HistoryLoadingRow() {
         modifier =
             Modifier
                 .fillMaxWidth()
+                .padding(bottom = HistoryTailBottomGap)
                 .padding(horizontal = HistoryLoadingGutter, vertical = HistoryLoadingVerticalPadding)
                 .semantics(mergeDescendants = true) { contentDescription = description },
         verticalAlignment = Alignment.CenterVertically,
@@ -155,7 +266,7 @@ internal fun HistoryLoadingRow() {
         )
         Text(
             text = stringResource(R.string.thread_history_loading_label),
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodySmall.copy(lineHeightStyle = HistoryTailLineBox),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
@@ -184,19 +295,19 @@ internal fun HistoryRetryRow(onRetry: () -> Unit) {
                     .fillMaxWidth()
                     // Fully qualified: a bare `Role` here is the message-author Role already imported.
                     .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onRetry)
-                    .padding(horizontal = HistoryLoadingGutter, vertical = HistoryTailRowPadding)
+                    .padding(vertical = HistoryTailRowPadding)
                     .semantics(mergeDescendants = true) { contentDescription = description },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(HistoryLoadingLabelGap),
         ) {
             Text(
                 text = stringResource(R.string.thread_history_retry_label),
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.copy(lineHeightStyle = HistoryTailLineBox),
                 modifier = Modifier.weight(1f),
             )
             Text(
                 text = stringResource(R.string.thread_history_retry_action),
-                style = MaterialTheme.typography.labelLarge,
+                style = MaterialTheme.typography.labelLarge.copy(lineHeightStyle = HistoryTailLineBox),
             )
         }
     }
@@ -239,21 +350,30 @@ private fun HistoryNoticeRow(
     HistoryTailSurface {
         Text(
             text = label,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodySmall.copy(lineHeightStyle = HistoryTailLineBox),
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = HistoryLoadingGutter, vertical = HistoryTailRowPadding)
+                    .padding(vertical = HistoryTailRowPadding)
                     .semantics(mergeDescendants = true) { contentDescription = description },
         )
     }
 }
 
-/** The shared error-toned surface behind the oldest-end failure rows (#778) and the offline notice (#1352). */
+/**
+ * The shared error-toned surface behind the oldest-end failure rows (#778) and the offline notice (#1352).
+ * Figma `689:4330`–`689:4427` inset the tinted surface itself in the thread's 20dp content gutter, like
+ * every other stream row, rather than only the text inside it (#1605) — so the gutter sits here, outside
+ * the coloured surface, with the standard 16dp gap to the oldest message below it.
+ */
 @Composable
 private fun HistoryTailSurface(content: @Composable () -> Unit) {
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = HistoryLoadingGutter)
+                .padding(bottom = HistoryTailBottomGap),
         color = MaterialTheme.colorScheme.errorContainer,
         contentColor = MaterialTheme.colorScheme.onErrorContainer,
         shape = MaterialTheme.shapes.small,

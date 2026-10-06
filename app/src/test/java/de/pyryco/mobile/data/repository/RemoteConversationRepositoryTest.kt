@@ -2701,10 +2701,10 @@ class RemoteConversationRepositoryTest {
     // ---- exhaustively and without a relay in HistoryPageReducerTest; this block owns the WIRING —
     // ---- that the fold happens at all, where it lands, and what it leaves alone -------------------
 
-    // AC #1: a page's rows reach observeMessages, oldest-first and ahead of what is already there,
+    // A newer page reaches observeMessages in daemon order after the older live row,
     // and the page is still returned to the caller for its cursor / at_start.
     @Test
-    fun requestHistory_foldsThePageAheadOfTheLiveThreadAndStillReturnsIt() =
+    fun requestHistory_foldsNewerPageAfterOlderLiveRowsAndStillReturnsIt() =
         runTest {
             val pump = FakeSessionPump()
             val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
@@ -2730,7 +2730,7 @@ class RemoteConversationRepositoryTest {
             )
             runCurrent()
 
-            assertEquals(listOf("h1", "h2", "live-1"), messageIds(thread.last()))
+            assertEquals(listOf("live-1", "h1", "h2"), messageIds(thread.last()))
             assertEquals(CURSOR, page().getOrThrow().cursor)
         }
 
@@ -4793,6 +4793,40 @@ class RemoteConversationRepositoryTest {
             runCurrent()
 
             assertEquals(listOf(LiveSessionEvent.AssistantDelta("c1", "t1", 0, "hel")), events)
+        }
+
+    @Test
+    fun assistantParent_reachesObservableRowsAndEvents_withoutLoggingIt() =
+        runTest {
+            val logs = mutableListOf<String>()
+            RelayLog.sink = { _, _, message -> logs += message }
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectLiveEvents(repo)
+            runCurrent()
+            val parent = "private-agent-parent-1826"
+            val envelope = assistantDeltaEnvelope("c1", "child", 0, "reply")
+            pump.push(
+                envelope.copy(
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"c1","turn_id":"child","seq":0,"text":"reply","parent_tool_use_id":"$parent"}""",
+                        ),
+                ),
+            )
+            runCurrent()
+            assertEquals(listOf(LiveSessionEvent.AssistantDelta("c1", "child", 0, "reply", parent)), events)
+            val row =
+                repo
+                    .observeMessages("c1")
+                    .first()
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .single()
+                    .message
+            assertEquals(parent, row.parentToolUseId)
+            assertEquals("child", row.id)
+            assertTrue(logs.none { parent in it })
+            assertTrue(repo.observeMessages("other").first().isEmpty())
         }
 
     // AC #1: tool_use decodes every field.
@@ -10488,6 +10522,7 @@ class RemoteConversationRepositoryTest {
                 is ThreadItem.Banner -> "banner:${it.level}"
                 is ThreadItem.CompactionBoundary -> "compaction:${it.preTokens}->${it.postTokens}:${it.manual}"
                 is ThreadItem.ModelRefusal -> if (it.fallbackModel != null) "refusal:fallback" else "refusal:no-fallback"
+                is ThreadItem.BackgroundTaskLifecycle -> "task:${it.taskId}"
                 is ThreadItem.StoppedTurn -> "stopped:${it.reason}"
             }
         }

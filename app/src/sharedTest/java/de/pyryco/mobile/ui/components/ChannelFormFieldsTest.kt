@@ -14,6 +14,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.text.input.TextFieldValue
@@ -70,17 +71,41 @@ class ChannelFormFieldsTest {
 
         fun close(
             actual: Float,
-            expectedDp: Int,
+            expectedDp: Float,
         ) {
             assertTrue("expected ${expectedDp}dp, got ${actual / density}dp", abs(actual / density - expectedDp) < 1.5f)
         }
-        close(nameWell.height, 52)
-        close(promptWell.height, 112)
-        close(nameWell.top - nameLabel.bottom, 8)
-        close(promptLabel.top - nameWell.bottom, 12)
-        close(promptWell.top - promptLabel.bottom, 8)
-        close(nameWell.width, 320)
-        close(promptWell.width, 320)
+        close(nameWell.height, 52f)
+        close(promptWell.height, 112f)
+        close(nameWell.top - nameLabel.bottom, 8f)
+        close(promptLabel.top - nameWell.bottom, 12f)
+        close(promptWell.top - promptLabel.bottom, 8f)
+        // The wells span the width they are given: Robolectric's 320 dp window, the emulator's 411 dp one.
+        val width =
+            rule
+                .onRoot()
+                .fetchSemanticsNode()
+                .boundsInRoot.width / density
+        close(nameWell.width, width)
+        close(promptWell.width, width)
+    }
+
+    // #1651: Figma 671:5558 leaves 39dp from the name well's bottom to the prompt well's top — the 12dp
+    // gap between the two fields, plus the prompt label's own full line box, plus the 8dp label-to-field
+    // gap. The theme's default would trim that label to its glyphs and pull the two wells 3dp closer.
+    @Test fun nameWellToPromptWellMatchesTheFrame() {
+        show()
+        val nameWell = rule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).fetchSemanticsNode().boundsInRoot
+        val promptWell = rule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).fetchSemanticsNode().boundsInRoot
+        val density =
+            InstrumentationRegistry
+                .getInstrumentation()
+                .targetContext.resources.displayMetrics.density
+
+        assertTrue(
+            "expected 39dp, got ${(promptWell.top - nameWell.bottom) / density}dp",
+            abs((promptWell.top - nameWell.bottom) / density - 39f) < 1.5f,
+        )
     }
 
     @Test fun editingAndValidationKeepTheSharedContract() {

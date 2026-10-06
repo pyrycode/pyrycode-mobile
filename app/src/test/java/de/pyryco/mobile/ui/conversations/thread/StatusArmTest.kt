@@ -12,7 +12,6 @@ class StatusArmTest {
         apiRetrying: Boolean = false,
         isCompacting: Boolean = false,
         isStalled: Boolean = false,
-        hasTurnOutcome: Boolean = false,
         isThinking: Boolean = false,
         isBusy: Boolean = false,
         localSendStage: LocalSendStage = LocalSendStage.None,
@@ -24,7 +23,6 @@ class StatusArmTest {
             apiRetrying = apiRetrying,
             isCompacting = isCompacting,
             isStalled = isStalled,
-            hasTurnOutcome = hasTurnOutcome,
             isThinking = isThinking,
             isBusy = isBusy,
             localSendStage = localSendStage,
@@ -50,11 +48,9 @@ class StatusArmTest {
     }
 
     @Test
-    fun localStages_yieldToEveryRunningTurnArm_andHideStaleOutcomes() {
-        assertEquals(StatusArm.TurnOutcome, arm(hasTurnOutcome = true))
+    fun localStages_yieldToEveryRunningTurnArm() {
         for ((stage, expected) in listOf(LocalSendStage.Sending to StatusArm.Sending, LocalSendStage.Waiting to StatusArm.Waiting)) {
             assertEquals(expected, arm(localSendStage = stage))
-            assertEquals(expected, arm(localSendStage = stage, hasTurnOutcome = true))
             assertEquals(StatusArm.Thinking, arm(localSendStage = stage, isThinking = true, isBusy = true))
             assertEquals(StatusArm.Working, arm(localSendStage = stage, isBusy = true))
             assertEquals(StatusArm.RunningTool, arm(localSendStage = stage, isBusy = true, hasOpenTool = true))
@@ -90,7 +86,6 @@ class StatusArmTest {
                 "apiRetrying" to true,
                 "compacting" to true,
                 "stalled" to true,
-                "outcome" to true,
             )
 
         fun current() =
@@ -100,7 +95,6 @@ class StatusArmTest {
                 apiRetrying = live.getValue("apiRetrying"),
                 isCompacting = live.getValue("compacting"),
                 isStalled = live.getValue("stalled"),
-                hasTurnOutcome = live.getValue("outcome"),
                 isThinking = true,
                 isBusy = true,
                 hasOpenTool = true,
@@ -112,7 +106,6 @@ class StatusArmTest {
                 "apiRetrying" to StatusArm.ApiRetry,
                 "compacting" to StatusArm.Compacting,
                 "stalled" to StatusArm.Stalled,
-                "outcome" to StatusArm.TurnOutcome,
             )
         for ((key, want) in expected) {
             assertEquals("with everything from $key down live", want, current())

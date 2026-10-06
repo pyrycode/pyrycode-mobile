@@ -37,6 +37,9 @@ interface PairedServerCollectionStore : PairedServerStore {
     /** Snapshot ordered oldest-save first; empty for missing or unreadable storage. */
     suspend fun list(): List<PairedServerEntry>
 
+    /** Authoritative snapshot: failure is unknown, never evidence that hosts were removed. */
+    suspend fun readSnapshot(): Result<List<PairedServerEntry>> = Result.success(list())
+
     /** Exact, case-sensitive id lookup; null for an absent id or unreadable storage. */
     suspend fun loadById(serverId: String): PairedServerEntry?
 

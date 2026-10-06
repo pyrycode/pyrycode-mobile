@@ -1,0 +1,4 @@
+{"type":"assistant","message":{"id":"agent-launch","content":[{"type":"tool_use","id":"agent1783","name":"Agent","input":{"description":"Held agent1783","run_in_background":true}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"agent1783","content":"Async agent launched","is_error":false}]}}
+{"type":"system","subtype":"task_started","task_id":"task1783","tool_use_id":"agent1783","description":"Held agent1783","task_type":"local_agent"}
+{"type":"assistant","parent_tool_use_id":"agent1783","message":{"id":"child-step","content":[{"type":"tool_use","id":"child1783","name":"Read","input":{"file_path":"fixture.txt"}}]}}

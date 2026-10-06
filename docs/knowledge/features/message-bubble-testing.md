@@ -16,11 +16,30 @@ first-arrival layout. Keep prefix, progress and incomplete-text assertions toget
 
 Standalone bubble fixtures omit `threadOpenedAt` and retain zero-start behavior.
 For first-arrival timestamp retention and realistic follow fixtures, see
-[thread testing](thread-screen-testing.md#testing). Reopen-specific real-Claude
-`InteractiveStreamE2ETest` coverage and its held-stream
-`DeterministicInteractiveStreamE2ETest` twin remain pending in
-[#1762](https://github.com/pyrycode/pyrycode-mobile/issues/1762); existing full-suite
-live execution does not establish those reopen observations.
+[thread testing](thread-screen-testing.md#testing). The device-only
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately`
+now proves immediate reopen and prefix retention through the isolated daemon/Noise/relay path.
+An eventual combined reply can hide a temporary reset through catch-up or finalization: witness
+an appended word composing with bounded reveal time, then assert the prefix remains displayed
+while the reply is still streaming and its turn non-idle. Release the suffix only after the
+reopen assertion, and fence the terminal result separately until after the suffix display
+checkpoint. Repository text alone is insufficient. See the
+[held-stream sequence and evidence](../../e2e-interactive-stream.md#scenarios-454).
+The real-Claude
+`InteractiveStreamE2ETest.interactiveTurn_reopenOngoingReply_showsArrivedPrefixImmediately`
+remains ignored and manual/unproven because Claude can finish during navigation; pausing
+Compose cannot hold the backend. A full curated live pass does not establish this excluded
+method's reopen observation. See the [manual promotion procedure](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
+
+End-to-end word-reveal coverage must witness displayed text while the same reply
+is still streaming: a final-body check can pass even if progressive display is broken.
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`
+therefore holds two arrived deltas until the displayed-prefix checkpoint, then uses
+an explicit second enqueue to release completion. Require reply identity, repository
+settlement and idle phase before checking the final body; a blinking caret's absence
+is insufficient. The real-Claude word-reveal twin remains ignored and manual because
+its transient window cannot be fenced. Keep cadence and catch-up deadlines in local
+step tests. See the [scenario and manual evidence limits](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
 
 `app/src/test/.../components/StreamingRevealStepTest.kt` covers the pure
 `nextStreamingRevealLength` helper: a short reply advances one word per 33 ms
@@ -47,6 +66,14 @@ See [Streaming variant](message-bubble.md#streaming-variant--progressive-reveal-
 `LocalTextContextMenuToolbarProvider`/`TextContextMenuKeys.CopyKey`, not
 `LocalTextToolbar`. Use native graphics for handles and a no-op `Magnifier` shadow
 for Robolectric dismissal, in a separate class. Devices ignore them.
+
+The device-only real-thread selection pair in [the e2e ladder](../../e2e-interactive-stream.md#what-rung-3-is-made-of)
+uses actual pointer input and the platform clipboard. Wait for the repository's exact assistant
+row with `isStreaming == false`; visible text alone can still be streaming and unselectable.
+Espresso must target `isPlatformPopup()` for Android's floating Copy toolbar: its default
+activity root cannot find the action after the long-press. Keep the known selected word and
+unrelated clipboard baseline independent of the result assertion. A substituted toolbar test
+cannot establish this platform-menu behavior.
 
 `MessageMetaRowToggleTest` mounts the real `ThreadScreen` to cover show/hide and single selection, streaming-to-finished taps, links and independently visible code copy, inert attachment states, and the screen-reader toggle and hidden-row timestamp/copy semantics. Standalone `MessageBubbleTest` and palette fixtures retain the visible-row default, so their streaming copy test does not describe thread behavior. `ThreadFrameCaptureTest.compactWidthAndEnlargedText_keepFrameControlsReachable` reveals the row before testing its copy pointer target. Compose semantics assertions do not establish TalkBack's spoken order on a device.
 

@@ -26,6 +26,7 @@ import de.pyryco.mobile.data.repository.ContextUsage
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
+import de.pyryco.mobile.data.repository.HistoryCoverage
 import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.LiveRefusalEvent
@@ -42,6 +43,7 @@ import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
+import de.pyryco.mobile.data.repository.historyKeys
 import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentSource
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
@@ -96,6 +98,8 @@ import kotlinx.datetime.Instant
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.floor
 
+private const val THREAD_HISTORY_PAGE_SIZE = 200
+
 /**
  * The one `history.*` wire code this screen branches on (#778) — the daemon refused the cursor, so the
  * walk's next ask starts from the newest page instead of surfacing a dead end (#1352). Every other code,
@@ -148,9 +152,14 @@ class ThreadViewModel(
     // is reopened. Absent in tests and the demo host, where a private holder stands in.
     mcpFailureAcknowledgements: McpFailureAcknowledgements? = null,
     // #678: the coordinator's per-conversation background-task roster and its live count (#677). Read
-    // only: nothing here sends. Defaulted to "nothing reported" and 0, which is what a demo host shows.
+    // through the destination-bound coordinator. Demo defaults remain inert.
     backgroundTasks: (conversationId: String) -> Flow<BackgroundTaskRoster?> = { flowOf(null) },
     backgroundTaskCount: (conversationId: String) -> Flow<Int> = { flowOf(0) },
+    backgroundTaskStopSupported: Flow<Boolean> = flowOf(false),
+    backgroundTaskStopRefusals: (conversationId: String) -> Flow<String> = { emptyFlow() },
+    private val stopBackgroundTask: suspend (conversationId: String, taskId: String) -> Result<Unit> = { _, _ ->
+        Result.failure(IllegalStateException("Background task stop unavailable"))
+    },
     // #861: whether this thread's host has a live repository published — for a relay host, the
     // coordinator's `currentRepository` being non-null, which happens only after the Noise handshake,
     // later than the socket-level `Connected` [connectionStateSource] reports. Gates the history ask
@@ -497,14 +506,102 @@ class ThreadViewModel(
     /**
      * This conversation's background-task roster and live count on this thread's host (#678). Each arm is
      * seeded so a source that never emits cannot stall [state]. The task strings stay inside the roster:
-     * nothing here reads, logs or keys on them.
+     * nothing here reads or logs their prose. Controls use only opaque task ids.
      */
-    private val backgroundTaskReading: Flow<Pair<BackgroundTaskRoster?, Int>> =
-        combine(
-            backgroundTasks(conversationId).onStart { emit(null) },
-            backgroundTaskCount(conversationId).onStart { emit(0) },
-            ::Pair,
-        ).distinctUntilChanged()
+    private data class TaskControls(
+        val roster: BackgroundTaskRoster? = null,
+        val count: Int = 0,
+        val supported: Boolean = false,
+        val expanded: Set<String> = emptySet(),
+        val pending: Set<String> = emptySet(),
+    )
+
+    private val taskControlLock = Any()
+    private val taskControls = MutableStateFlow(TaskControls())
+    private val taskStopAttempts = mutableMapOf<String, Any>()
+
+    init {
+        viewModelScope.launch {
+            backgroundTaskStopRefusals(conversationId).collect { taskId ->
+                synchronized(taskControlLock) {
+                    if (taskStopAttempts.remove(taskId) != null) {
+                        taskControls.value = taskControls.value.copy(pending = taskControls.value.pending - taskId)
+                        RelayLog.d { "event=background_task_action code=refused" }
+                    }
+                }
+            }
+        }
+        viewModelScope.launch {
+            combine(
+                backgroundTasks(conversationId).onStart { emit(null) },
+                backgroundTaskCount(conversationId).onStart { emit(0) },
+                backgroundTaskStopSupported.onStart { emit(false) },
+            ) { roster, count, supported -> Triple(roster, count, supported) }.collect { (roster, count, supported) ->
+                synchronized(taskControlLock) {
+                    val eligible =
+                        if (supported) {
+                            roster
+                                ?.tasks
+                                ?.filterNot { it.isFinished }
+                                ?.mapTo(
+                                    HashSet(),
+                                ) { it.taskId }
+                                .orEmpty()
+                        } else {
+                            emptySet()
+                        }
+                    taskStopAttempts.keys.retainAll(eligible)
+                    val old = taskControls.value
+                    taskControls.value =
+                        TaskControls(roster, count, supported, old.expanded.intersect(eligible), old.pending.intersect(eligible))
+                    if (old.pending != taskControls.value.pending || old.expanded != taskControls.value.expanded) {
+                        RelayLog.d { "event=background_task_action code=roster_cleanup" }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun toggleBackgroundTask(taskId: String) {
+        synchronized(taskControlLock) {
+            val current = taskControls.value
+            if (!current.supported || current.roster?.tasks?.any { it.taskId == taskId && !it.isFinished } != true) return
+            val opened = taskId !in current.expanded
+            taskControls.value = current.copy(expanded = if (opened) current.expanded + taskId else current.expanded - taskId)
+            RelayLog.d { "event=background_task_row expanded=$opened" }
+        }
+    }
+
+    private fun sendBackgroundTaskStop(taskId: String) {
+        val attempt = Any()
+        synchronized(taskControlLock) {
+            val current = taskControls.value
+            if (!current.supported ||
+                taskId !in current.expanded ||
+                taskId in current.pending ||
+                current.roster?.tasks?.any { it.taskId == taskId && !it.isFinished } != true
+            ) {
+                return
+            }
+            taskStopAttempts[taskId] = attempt
+            // Before launch: a second tap cannot enqueue a second send, even before state recomposes.
+            taskControls.value = current.copy(pending = current.pending + taskId)
+            RelayLog.d { "event=background_task_action code=pending" }
+        }
+        viewModelScope.launch {
+            if (synchronized(taskControlLock) { taskStopAttempts[taskId] !== attempt }) return@launch
+            val result = stopBackgroundTask(conversationId, taskId)
+            if (result.isFailure) {
+                synchronized(taskControlLock) {
+                    if (taskStopAttempts[taskId] === attempt) {
+                        taskStopAttempts.remove(taskId)
+                        taskControls.value = taskControls.value.copy(pending = taskControls.value.pending - taskId)
+                        RelayLog.d { "event=background_task_action code=send_failed" }
+                    }
+                }
+            }
+        }
+    }
 
     /**
      * Claude's latest estimate of this session's cost (#1346): the newest positive finite `cost_usd_total`
@@ -562,17 +659,20 @@ class ThreadViewModel(
      * an ask settles and restored at open by [historySeed] (#1354); the page count and failures are not.
      */
     private val historyDemand = MutableStateFlow(ThreadHistoryDemand())
+    private val historyCoverage = MutableStateFlow(HistoryCoverage())
+    private var pendingNewest = 0
 
     /**
      * Restores the history position saved when this thread was last open (#1354), so the first pull asks
      * past the rows the cache already drew instead of re-fetching the newest page. Reading asks nothing.
-     * [onDemandOlderHistory] and the `init` block's newest-page ask (#1572) wait for it, so no walk ask can
-     * carry the opening empty cursor once a saved one exists.
+     * Reader demand is dropped until this finishes; the `init` block's newest-page ask waits for it.
+     * No walk ask can carry the opening empty cursor once a saved one exists.
      */
     private val historySeed: Job =
         viewModelScope.launch {
             val saved = repository.readHistoryPosition(conversationId) ?: return@launch
             historyDemand.update { it.restored(cursor = saved.cursor, atStart = saved.atStart) }
+            historyCoverage.value = saved.coverage ?: HistoryCoverage()
         }
 
     /**
@@ -626,8 +726,22 @@ class ThreadViewModel(
             repository.observeQueue(conversationId),
             historyDemand,
             hostAvailable,
-        ) { items, queued, demand, connected ->
-            ThreadContent(items, queued, demand.tail(connected))
+            historyCoverage,
+        ) { items, queued, demand, connected, coverage ->
+            val display = coverage.displayRows(items)
+            val positions = coverage.positions()
+            val markers =
+                (coverage.gaps.map { it.anchor to it.edge } + listOfNotNull(coverage.unknownEdge?.let { 0L to it }))
+                    .sortedBy { it.second }
+                    .map { (anchor, edge) ->
+                        val row =
+                            display
+                                .firstOrNull { row -> row.historyKeys().any { (positions[it] ?: 0) >= edge } }
+                                ?.historyKeys()
+                                ?.firstOrNull()
+                        ThreadHistoryMarker(anchor, row.orEmpty())
+                    }
+            ThreadContent(display, queued, demand.tail(connected), markers)
         }
 
     val state: StateFlow<ThreadUiState> =
@@ -664,12 +778,19 @@ class ThreadViewModel(
                 runConfig = runConfig.forLiveSession(lastKnownSessionId),
                 mutationsSupported = mutationsSupported,
                 historyTail = content.historyTail,
+                historyMarkers = content.historyMarkers,
             )
         }.combine(slashCommandMenu) { uiState, menu ->
             val slashCommandsAccepted = uiState.runConfig.capabilities?.slashCommands ?: true
             uiState.copy(absentActions = absentComposerActions(menu, slashCommandsAccepted), slashCommands = menu?.rows)
-        }.combine(backgroundTaskReading) { uiState, (roster, count) ->
-            uiState.copy(backgroundTasks = roster, backgroundTaskCount = count)
+        }.combine(taskControls) { uiState, tasks ->
+            uiState.copy(
+                backgroundTasks = tasks.roster,
+                backgroundTaskCount = tasks.count,
+                backgroundTaskStopSupported = tasks.supported,
+                expandedBackgroundTaskIds = tasks.expanded,
+                pendingBackgroundTaskIds = tasks.pending,
+            )
         }.combine(channelInfoSession) { uiState, (facts, cost) ->
             uiState.copy(reportedSessionFacts = facts, sessionCostUsd = cost)
         }.combine(mcpStatusReading) { uiState, mcp ->
@@ -1388,7 +1509,12 @@ class ThreadViewModel(
         // #1309: a conversation whose claude had not run yet reads no permission mode and no applied effort,
         // so the open thread asks again when any turn on its host ends and when a reset ends. Each new
         // connection starts a fresh running set. A bump while nothing collects [sessionSettings] sends nothing.
-        viewModelScope.launch { runSettingsRereadEdges(liveSessionEvents).collect(::rereadRunSettings) }
+        viewModelScope.launch {
+            runSettingsRereadEdges(liveSessionEvents).collect { reason ->
+                rereadRunSettings(reason)
+                if (reason == "reset_end") askForContextUsage(reason)
+            }
+        }
 
         // #1345: the MCP reading starts empty on every connection, so the thread asks once when its repository is
         // first available and again on each return, keyed there for the #861 reason. Gated as Channel
@@ -1416,7 +1542,7 @@ class ThreadViewModel(
                 .distinctUntilChanged()
                 .filter { it }
                 .collect {
-                    askForContextUsage(reconnect = opened)
+                    askForContextUsage(reason = if (opened) "reconnect" else null)
                     opened = true
                 }
         }
@@ -1491,12 +1617,12 @@ class ThreadViewModel(
     }
 
     /**
-     * Ask for a fresh context reading of this thread (#1410). Only a [reconnect] ask logs, with a static reason and
-     * never the id: the open is already logged as the thread destination binds, and the opening ask runs during
-     * construction.
+     * Ask for a fresh context reading on open, reconnect (#1410), and reset end (#1761). [reason] is a static
+     * code, never the id. The open passes null because its destination binding is already logged and the ask
+     * runs during construction.
      */
-    private fun askForContextUsage(reconnect: Boolean) {
-        if (reconnect) RelayLog.d { "event=context_usage_ask reason=reconnect" }
+    private fun askForContextUsage(reason: String? = null) {
+        if (reason != null) RelayLog.d { "event=context_usage_ask reason=$reason" }
         repository.requestContextUsage(conversationId)
     }
 
@@ -1511,11 +1637,8 @@ class ThreadViewModel(
      */
     fun onDemandOlderHistory() {
         if (!historySeed.isCompleted) {
-            // #1354: a pull while the saved position is still being read asks once it has been.
-            viewModelScope.launch {
-                historySeed.join()
-                onDemandOlderHistory()
-            }
+            // Prefetch is movement-gated: completing the seed cannot replay an earlier movement.
+            RelayLog.d { "event=history_ask_skipped reason=seeding" }
             return
         }
         if (!hostAvailable.value) {
@@ -1544,17 +1667,27 @@ class ThreadViewModel(
      * stored while the thread was off-screen. The page merges through the repository's dedup, so rows
      * already drawn do not repeat.
      *
-     * It takes the walk's one outstanding-request slot, so it is dropped while a pull or a retry is out. When
+     * It takes the walk's one outstanding-request slot, waiting behind a pull or retry. When
      * the walk's own next ask would carry the empty cursor anyway, the page is the walk's and settles as a
      * pull's would; otherwise the walk's cursor, saved position and stop reason are left as they were.
      */
     private fun askForNewestPage(reconnect: Boolean) {
         if (reconnect) RelayLog.d { "event=history_newest_ask reason=reconnect" }
+        pendingNewest++
+        drainNewestPages()
+    }
+
+    private fun drainNewestPages() {
+        if (pendingNewest == 0 || !hostAvailable.value || historyDemand.value.inFlight) return
         // Re-set on every run of the claim, so after the loop it describes the claim that won.
         var walkPage = false
         val claimed =
             claimHistorySlot {
-                walkPage = it.newestPageAdvancesWalk
+                val coverage = historyCoverage.value
+                walkPage = it.newestPageAdvancesWalk ||
+                    it.stoppedBy == HistoryWalkStop.AtStart &&
+                    coverage.spans.isEmpty() &&
+                    coverage.newestCursor == ""
                 when {
                     walkPage -> it.asking()
                     !it.inFlight -> it.askingNewest()
@@ -1563,20 +1696,27 @@ class ThreadViewModel(
             }
         when {
             claimed == null -> RelayLog.d { "event=history_newest_ask_skipped reason=in_flight" }
-            walkPage -> launchHistoryAsk(claimed)
-            else -> launchNewestPageSideAsk()
+            walkPage -> {
+                pendingNewest--
+                launchHistoryAsk(claimed)
+            }
+            else -> {
+                pendingNewest--
+                launchNewestPageSideAsk()
+            }
         }
     }
 
     /**
-     * A newest-page ask that is not the walk's page (#1572). Its answer is not read at all: the repository has
-     * merged the rows, and the page's cursor and `atStart` would move the walk. A failure is logged with a
+     * A newest-page ask that is not the walk's page. The repository merges rows; only coverage and
+     * gap cursors advance here, leaving the backwards walk unchanged. A failure is logged with a
      * static event only and shows nothing, since the reader asked for no page; the next host arrival asks again.
      */
     private fun launchNewestPageSideAsk() {
         viewModelScope.launch {
             try {
-                repository.requestHistory(conversationId, cursor = "")
+                val page = repository.requestHistory(conversationId, cursor = "", limit = THREAD_HISTORY_PAGE_SIZE)
+                recordCoverage(page, newest = true)
             } catch (e: CancellationException) {
                 throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
             } catch (e: RelayErrorException) {
@@ -1587,16 +1727,15 @@ class ThreadViewModel(
                 RelayLog.d { "event=history_newest_ask_failed" }
             }
             historyDemand.update { it.newestSettled() }
+            drainNewestPages()
         }
     }
 
     /**
      * The walk's single ask site.
      *
-     * The returned [de.pyryco.mobile.data.repository.HistoryPage] is read for its `cursor` and `atStart`
-     * and **nothing else**: `RemoteConversationRepository.requestHistory` has already merged the page's
-     * entries into the thread this VM reads through `observeMessages`, so folding them here as well
-     * would render every loaded row twice. Nothing needs a second fold.
+     * The repository has already merged the returned page into the thread. Here its durable ids update
+     * coverage and its cursor/atStart advance the independent backwards walk; no row is rendered again.
      *
      * Exactly one ask is outstanding at a time ([claimHistorySlot]), so every settle and fail belongs to
      * the current ask. A page that settles across a reconnect still applies: its cursor stays valid.
@@ -1607,16 +1746,73 @@ class ThreadViewModel(
      */
     private fun launchHistoryAsk(claimed: ThreadHistoryDemand) {
         viewModelScope.launch {
-            val page = fetchHistoryPage(claimed) ?: return@launch
-            repository.writeHistoryPosition(conversationId, HistoryPosition(page.cursor, page.atStart))
-            historyDemand.update { it.settled(pageCursor = page.cursor, atStart = page.atStart) }
+            try {
+                val page = fetchHistoryPage(claimed) ?: return@launch
+                historyCoverage.update { it.received(page, newest = claimed.cursor.isEmpty()) }
+                repository.writeHistoryPosition(conversationId, HistoryPosition(page.cursor, page.atStart, historyCoverage.value))
+                historyDemand.update { it.settled(pageCursor = page.cursor, atStart = page.atStart) }
+            } finally {
+                drainNewestPages()
+            }
+        }
+    }
+
+    private suspend fun recordCoverage(
+        page: HistoryPage,
+        newest: Boolean = false,
+        target: Long? = null,
+    ) {
+        historyCoverage.update { it.received(page, newest, target) }
+        val walk = historyDemand.value
+        repository.writeHistoryPosition(
+            conversationId,
+            HistoryPosition(walk.cursor, walk.stoppedBy == HistoryWalkStop.AtStart, historyCoverage.value),
+        )
+    }
+
+    fun onDemandHistoryGap(anchor: Long) {
+        if (!historySeed.isCompleted || !hostAvailable.value) return
+        val coverage = historyCoverage.value
+        if (anchor == 0L && coverage.unknownEdge == null || anchor != 0L && coverage.gaps.none { it.anchor == anchor }) return
+        claimHistorySlot { if (!it.inFlight) it.askingNewest() else null } ?: return
+        val cursor = coverage.cursorFor(anchor)
+        viewModelScope.launch {
+            try {
+                recordCoverage(
+                    repository.requestHistory(conversationId, cursor, limit = THREAD_HISTORY_PAGE_SIZE),
+                    newest = cursor.isEmpty(),
+                    target = anchor,
+                )
+                RelayLog.d { "event=history_gap_page_received" }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: RelayErrorException) {
+                if (error.code == HISTORY_INVALID_CURSOR && cursor.isNotEmpty()) {
+                    historyCoverage.update { it.refused(anchor) }
+                    val walk = historyDemand.value
+                    repository.writeHistoryPosition(
+                        conversationId,
+                        HistoryPosition(walk.cursor, walk.stoppedBy == HistoryWalkStop.AtStart, historyCoverage.value),
+                    )
+                    RelayLog.d { "event=history_gap_cursor_refused" }
+                } else {
+                    RelayLog.d { "event=history_gap_ask_failed" }
+                }
+            } catch (error: IllegalStateException) {
+                RelayLog.d { "event=history_gap_ask_failed" }
+            } catch (error: IllegalArgumentException) {
+                RelayLog.d { "event=history_gap_ask_failed" }
+            } finally {
+                historyDemand.update { it.newestSettled() }
+                drainNewestPages()
+            }
         }
     }
 
     /** Ask for the page at [claimed]'s cursor, or settle the failure and return `null`. */
     private suspend fun fetchHistoryPage(claimed: ThreadHistoryDemand): HistoryPage? {
         try {
-            return repository.requestHistory(conversationId, claimed.cursor)
+            return repository.requestHistory(conversationId, claimed.cursor, limit = THREAD_HISTORY_PAGE_SIZE)
         } catch (e: CancellationException) {
             throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
         } catch (e: RelayErrorException) {
@@ -1625,9 +1821,10 @@ class ThreadViewModel(
             // code falls through to the failure branch, so the fallback here is the safe one.
             if (e.code == HISTORY_INVALID_CURSOR && claimed.cursor.isNotEmpty()) {
                 // #1352: the daemon refused the cursor. The next gesture asks from the newest page;
-                // nothing asks now. #1354: the saved position goes too, so the next open does the same.
+                // nothing asks now. Reset the saved backwards position without dropping durable gaps.
                 RelayLog.d { "event=history_cursor_refused" }
-                repository.writeHistoryPosition(conversationId, null)
+                val coverage = historyCoverage.value.takeIf { it.spans.isNotEmpty() || it.unknown }
+                repository.writeHistoryPosition(conversationId, coverage?.let { HistoryPosition("", false, it) })
                 historyDemand.update { it.cursorRefused() }
             } else {
                 // A refusal of the NEWEST-page ask has nothing to fall back to, so it is a failure.
@@ -1736,6 +1933,11 @@ class ThreadViewModel(
         onSent: () -> Unit,
     ) {
         _attachmentsSending.value = true
+        val copies = attachments.mapNotNull { it.ownedPaste }.filter { it.retain() }
+        val released = AtomicBoolean()
+        val releaseCopies = { if (released.compareAndSet(false, true)) copies.forEach { it.release() } }
+        // Covers a launch into an already-cancelled ViewModel scope, whose body never starts.
+        val cancellation = viewModelScope.coroutineContext[Job]?.invokeOnCompletion { releaseCopies() }
         launchGuardedRepoCall {
             try {
                 val target = state.value.conversationId
@@ -1745,7 +1947,7 @@ class ThreadViewModel(
                     val id = entry.attachmentId ?: upload(target, entry) ?: return@launchGuardedRepoCall
                     // #983: the thread row names each file as it was uploaded.
                     references += MessageAttachment(id, entry.displayName, entry.mimeType)
-                    originals[id] = entry.uri
+                    if (entry.ownedPaste == null) originals[id] = entry.uri
                 }
                 // #984: before the send, because the confirmed row can be drawn while it is suspended. A
                 // send that then fails leaves harmless entries: its retry names the same ids.
@@ -1757,6 +1959,8 @@ class ThreadViewModel(
                 sendInLocalWindow { repository.sendMessage(target, text, references) }
                 onSent()
             } finally {
+                releaseCopies()
+                cancellation?.dispose()
                 // #933: however the send ended — sent, stopped by a failed read or upload, or a swallowed throw.
                 _attachmentsSending.value = false
                 _attachmentUploadProgress.value = null
@@ -1773,7 +1977,7 @@ class ThreadViewModel(
         entry: PendingAttachment,
     ): String? {
         val bytes =
-            when (val read = attachmentReader.read(entry.uri)) {
+            when (val read = entry.ownedPaste?.read(ioDispatcher) ?: attachmentReader.read(entry.uri)) {
                 is AttachmentRead.Bytes -> read.bytes
                 AttachmentRead.TooLarge -> return attachmentSendFailed("read_too_large", AttachmentSendFailure.TOO_LARGE)
                 AttachmentRead.Unreadable -> return attachmentSendFailed("read_failed", AttachmentSendFailure.UNREADABLE)
@@ -1810,8 +2014,9 @@ class ThreadViewModel(
         displayName: String,
         mimeType: String,
         size: Long?,
+        ownedPaste: OwnedPasteCopy? = null,
     ): AttachmentAddOutcome {
-        val outcome = draftStore.addAttachment(serverId, conversationId, uri, displayName, mimeType, size)
+        val outcome = draftStore.addAttachment(serverId, conversationId, uri, displayName, mimeType, size, ownedPaste)
         when (outcome) {
             AttachmentAddOutcome.ADDED -> Unit
             AttachmentAddOutcome.TOO_LARGE -> RelayLog.d { "event=composer_attachment_add outcome=too_large" }
@@ -1828,7 +2033,7 @@ class ThreadViewModel(
         var tooLarge = 0
         var tooMany = 0
         for (entry in picked) {
-            when (addAttachment(entry.uri, entry.displayName, entry.mimeType, entry.size)) {
+            when (addAttachment(entry.uri, entry.displayName, entry.mimeType, entry.size, entry.ownedPaste)) {
                 AttachmentAddOutcome.ADDED -> Unit
                 AttachmentAddOutcome.TOO_LARGE -> tooLarge++
                 AttachmentAddOutcome.TOO_MANY -> tooMany++
@@ -2670,6 +2875,8 @@ class ThreadViewModel(
 
     fun onOverflowEvent(event: ThreadEvent) {
         when (event) {
+            is ThreadEvent.BackgroundTaskToggle -> toggleBackgroundTask(event.taskId)
+            is ThreadEvent.BackgroundTaskStop -> sendBackgroundTaskStop(event.taskId)
             ThreadEvent.Archive -> {
                 // Close the Channel Info Sheet if Archive was tapped from it (a harmless no-op from the
                 // overflow menu, where it is already false); the send + success-only PopBack live in
@@ -2677,7 +2884,13 @@ class ThreadViewModel(
                 closeChannelInfo()
                 sendArchive()
             }
-            ThreadEvent.Delete -> pendingDeleteConfirm.value = true
+            ThreadEvent.Delete -> {
+                // Close the Channel Info Sheet if Delete was tapped from it (#1651), the same precedent
+                // Archive follows above: Figma draws the confirmation over the canvas, with no sheet behind
+                // the scrim.
+                closeChannelInfo()
+                pendingDeleteConfirm.value = true
+            }
             ThreadEvent.DeleteConfirm -> {
                 pendingDeleteConfirm.value = false
                 closeChannelInfo()
@@ -2841,6 +3054,7 @@ class ThreadViewModel(
         val items: List<ThreadItem>,
         val queued: List<QueuedMessage>,
         val historyTail: ThreadHistoryTail,
+        val historyMarkers: List<ThreadHistoryMarker>,
     )
 
     private data class TransientDialogs(

@@ -18,6 +18,14 @@ sealed interface ThreadRow {
     /** A row the daemon has run, or a row that is not a message at all (a boundary, an unrecognized frame). */
     data class Delivered(
         val item: ThreadItem,
+        val agentBlockId: String? = null,
+    ) : ThreadRow
+
+    /** Launch-location affordance for a loaded, joined background Agent. */
+    data class AgentStartMarker(
+        val agentId: String,
+        val description: String,
+        val finished: Boolean,
     ) : ThreadRow
 
     /**
@@ -131,7 +139,9 @@ internal fun foldQueuedRows(
         }
     }
 
-    return items.mapIndexed { index, item -> claimed[index] ?: ThreadRow.Delivered(item) } + unmatched
+    return items.mapIndexedNotNull { index, item ->
+        if (item is ThreadItem.BackgroundTaskLifecycle) null else claimed[index] ?: ThreadRow.Delivered(item)
+    } + unmatched
 }
 
 /**
@@ -151,7 +161,12 @@ internal fun foldToolRuns(
     var start = 0
     while (start < rows.size) {
         var end = start
-        while (end < rows.size && rows[end].isToolRow()) end++
+        while (end < rows.size &&
+            rows[end].isToolRow() &&
+            (rows[end] as ThreadRow.Delivered).agentBlockId == (rows[start] as? ThreadRow.Delivered)?.agentBlockId
+        ) {
+            end++
+        }
         if (end - start >= 2) {
             val run = rows.subList(start, end)
             val tools = run.map { ((it as ThreadRow.Delivered).item as ThreadItem.MessageItem).message }
@@ -203,6 +218,7 @@ internal fun ThreadRow.listKey(chronologicalIndex: Int): String =
         is ThreadRow.Delivered -> item.listKey()
         is ThreadRow.Queued -> echoId?.let { "msg:$it" } ?: "queued-row:$chronologicalIndex"
         is ThreadRow.ToolRun -> "tool-run:$runId"
+        is ThreadRow.AgentStartMarker -> "agent-start:$agentId"
     }
 
 private fun ThreadItem.listKey(): String =
@@ -221,6 +237,7 @@ private fun ThreadItem.listKey(): String =
         is ThreadItem.CompactionBoundary -> "compaction:$occurredAt"
         // The frame type and the daemon's per-refusal ts, which both thread writers dedup on (`holdsModelRefusal`, #875).
         is ThreadItem.ModelRefusal -> if (fallbackModel != null) "refusal:fallback:$occurredAt" else "refusal:no-fallback:$occurredAt"
+        is ThreadItem.BackgroundTaskLifecycle -> "background-task:${terminal != null}:$taskId"
         // The turn id, which both thread writers dedup a stopped row on (`holdsStoppedTurn`, #1356). It is the
         // key's whole tail, so no separator inside it can make two ids spell one key.
         is ThreadItem.StoppedTurn -> "stopped:$turnId"
@@ -285,3 +302,7 @@ private fun ThreadItem.userEchoId(): String? =
         ?.message
         ?.takeIf { it.role == Role.User && it.id.isNotEmpty() }
         ?.id
+
+/** Tool outlines join only inside the same background block or ordinary run. */
+internal fun ThreadRow.joinsToolRow(next: ThreadRow?): Boolean =
+    isToolRow() && next.isToolRow() && (this as ThreadRow.Delivered).agentBlockId == (next as ThreadRow.Delivered).agentBlockId

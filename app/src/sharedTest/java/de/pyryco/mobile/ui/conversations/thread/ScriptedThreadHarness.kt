@@ -159,6 +159,9 @@ class ScriptedThreadHarness(
     /** Generic inbound seam; scenario-specific reply scripting stays with the test. */
     fun pushEnvelope(envelope: Envelope) = pump.push(envelope)
 
+    /** Retained rows for assertions that also run in the scripted device gate. */
+    internal fun observeMessages() = repo.observeMessages(conversationId)
+
     /** Script one `assistant_delta` for [turnId] at [seq] carrying [text] (#337). */
     fun pushAssistantDelta(
         turnId: String,

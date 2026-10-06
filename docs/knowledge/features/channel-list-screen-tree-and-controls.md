@@ -199,10 +199,12 @@ carries the decision. See [ChannelListViewModel](channel-list-viewmodel.md#wirin
 methods, the ordering that keeps a failed store write from clearing the host's cached workspace, and the
 `saving` guard that stops a decline or a second request from racing an in-flight write.
 
-The pen is a deliberate deviation from Figma `15:8` (https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=15-8),
-which draws no pen on host rows — decided in \#1525. `TreeHostRow`'s pencil is the only Edit host entry point for a
-non-owner host, since Settings opens the editor for the owner only, via `SettingsViewModel.openOwnerHostEditor`.
-Removing it needs another entry point with its own design first.
+\#1525 recorded the pen as a deliberate deviation from Figma `15:8`
+(https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=15-8), which at the time drew no pen on host rows. The
+frame has since added a persistent pencil to every host row too, always visible rather than revealed by a state like
+hover or selection, so the deviation is resolved rather than merely tolerated. `TreeHostRow`'s pencil remains the
+only Edit host entry point for a non-owner host, since Settings opens the editor for the owner only, via
+`SettingsViewModel.openOwnerHostEditor`.
 
 ## Host row reconnect control (#840)
 
@@ -276,77 +278,25 @@ for the `HostConversationSource.retryHost` seam this control drives, and
 
 ## Chat row edit control (#827, retired by #1563)
 
-`TreeConversationRow` kept an optional fourth parameter, `onEditTapped: (() -> Unit)? = null`, that a
-non-null value turned into a `TreeRowControl(Icons.Filled.Edit, …)` at the row's trailing edge — the
-design's hover pencil (`15:8`'s `Hover` instance, node `398:7258`). From #827 through #1523, `treeHost` in
-[ChannelListScreen](channel-list-screen.md) passed a non-null callback only when the host was
-connected **and** the row's own target equalled `hostState.selected`, so the pencil drew on at most
-one conversation row. **#1563 (2026-10) stopped passing it at all**, matching Figma `15:8`'s later
-revision, which hides the pen on every conversation row, selected or not: no Channels or Chats row draws
-a pencil any more. A chat is now renamed from the thread's Rename item instead (see
-[Channels row edit control](#channels-row-edit-control-667-retired-by-1563) below for the channel
-equivalent, edited from the thread's Edit item). The parameter itself, `TreeRowControl`'s free-width behaviour when it is `null`, and the row's
-`boundedRowText(conversationName)` clamp are all unchanged and still exercised by the host row's own pen —
-only the conversation rows' call sites stopped supplying a callback. `onEditTapped`, `editDescription`,
-the `TreeChatEditTapped`/`TreeChannelEditTapped` events, their `MainActivity` routes and the list's own
-Edit chat/Edit channel modal bindings stay in the view model, unreached from the UI, pending their removal
-as #1582.
+Chats are renamed from the thread's Rename item. #1563 removed every conversation pen;
+\#1582 removed the unused `TreeConversationRow.onEditTapped` / `editDescription` API,
+pen rendering, `cd_tree_chat_edit` / `cd_tree_channel_edit` resources and both list editor
+routes and bindings. Selection and row opening still use the row's own host-qualified target.
+Host edit controls and their separate tap regions remain unchanged.
 
-**Both sections drew it, each to its own modal (#827, then #667), before #1563.** `treeHost` in
-[ChannelListScreen](channel-list-screen.md) passed `onEditTapped` from an exhaustive `when (section)` —
-originally `null` for `ConversationTreeSection.Channels` and `{ onEvent(TreeChatEditTapped(target)) }`
-for `Chats` — rather than a parameter on the section itself, which is exactly what let
-[Edit channel](#channels-row-edit-control-667-retired-by-1563) (#667) add the `Channels` arm later, binding
-`TreeChannelEditTapped(target)` and its own `editDescription`, without touching this row's shape at all.
-`target` was the row's own `HostConversationTarget`, resolved the same way `TreeRowTapped`'s already is.
-\#1563 removed both arms of that `when` rather than the parameter, so a future row control could reuse the
-same shape without resurrecting this history.
-
-Opening the modal from that target, resolving which host renames it, and following that host's connection
-live were the view model's job — see [ChannelListViewModel](channel-list-viewmodel.md#wiring) — and the
-modal itself, [`EditChatModal`](mobile-modal-callers.md#callers), is unreachable from the UI since #1563;
-it stays wired pending #1582. Archive chat was wired in #828, the same placeholder-then-wire shape the
-host row's Unpair action carried between #744 and #745 — but unlike Unpair, Archive took no confirmation
-step, since the host's own Archive screen restores the chat.
-
-**Lesson from #1563's rework.** Removing a control's only call site is not enough to prove nothing still
-depends on it: search all of `androidTest/` for the control's content description, not just the obvious
-`list`/`e2e` suites — `app/src/androidTest/java/de/pyryco/mobile/design/ListDesignCaptureTest.kt`'s design
-capture walk also tapped this pen to reach Edit channel, and the first PR round missed it because the
-builder's and plan's searches both stopped at `list` and `e2e` tests.
+Control retirement must include design capture callers and component previews as well as
+screen tests: the earlier pen removal missed a capture that still tapped the retired control.
+The no-pen regression checks unmerged label prefixes independently of string resources,
+then proves that selected and unselected rows still open on their own hosts.
 
 ## Channels row edit control (#667, retired by #1563)
 
-`TreeConversationRow` gained a fifth parameter, `@StringRes editDescription: Int =
-R.string.cd_tree_chat_edit`, generalising the pencil's content description that #827 hard-wired to the
-chat string: `treeHost`'s exhaustive `when (section)` passed `cd_tree_chat_edit` for `Chats` (as
-before) and `cd_tree_channel_edit` for `Channels`, alongside `{ onEvent(TreeChannelEditTapped(target)) }`
-in place of the `null` every Channels row passed before #667 — the pencil itself and its own
-merging-semantics node inside `FoldableTreeRow`'s `clickable` were unchanged from #827's chat-row shape,
-since both tiers share one row composable. `target` was the row's own `HostConversationTarget`, the same
-targeting discipline every row control in this file uses. From #1523 both sections' pencils drew only
-on the selected row (see [Chat row edit control](#chat-row-edit-control-827-retired-by-1563) above).
-**#1563 (2026-10) removed both `when` arms**, so neither section's row draws a pencil any more, matching
-Figma `15:8`. A channel is now edited from the thread's Edit item (#1561), reached from `ThreadOverflowMenu`
-rather than from this row; a chat is renamed from the same menu's Rename.
-
-Opening [`EditChannelModal`](mobile-modal-callers.md#callers) from that target, reading the channel's stored
-prompt once the row's host has a live repository, and resolving which host renames, writes the prompt or
-archives were `ChannelListViewModel`'s job, now behind the shared
-[`ChannelEditorController`](channel-list-viewmodel.md#channeleditorcontroller-667--1561) #1561 extracted —
-see [ChannelListViewModel](channel-list-viewmodel.md#wiring). Unlike every other row control here, the
-modal cannot fill its second field synchronously at open: the name comes from the row's own host snapshot
-the way `EditChatModal`'s and `EditWorkspaceModal`'s seeds do, but the system prompt is a separate daemon
-round trip, so the field opens **disabled** with a static reading line until that read lands.
-`ChannelFormFields` gained the two parameters this needs — `promptEnabled: Boolean = true` and
-`promptNote: String? = null`, the note drawn as `supportingText` in the same slot the over-limit message
-already used, so a caller that never passes a note is unaffected — rather than teaching the shared form to
-run its own read, keeping `ChannelFormFields` itself as inert as `EditChatModal`'s field always was. See
-[Mobile modal § Callers](mobile-modal-callers.md#callers) for the full caller contract: the target-tagged
-prompt reading, the `null`-until-shown prompt draft that keeps an unread prompt from ever being
-overwritten, and the outlined Archive action with no confirmation step. The modal and this view model's
-`openChannelEditor`/`openChatEditor` paths stay wired but unreachable from the list, pending their removal
-as #1582.
+A channel is edited through the thread's Edit item (#1561). #1582 removed list hosting,
+state, events and routes after #1563 removed the pen. `ChannelEditorController`,
+`ChannelEditorState` and `ChannelPromptReading` remain in `ui.conversations.list`, with
+unchanged behavior; package location does not imply list ownership. See the
+[controller contract](channel-list-viewmodel.md#channeleditorcontroller-667--1561) and
+[thread modal binding](thread-screen-how-it-works-sheets.md#editchannelmodal-hosting-post-1561).
 
 ## Workspace row edit and archive control (#905)
 

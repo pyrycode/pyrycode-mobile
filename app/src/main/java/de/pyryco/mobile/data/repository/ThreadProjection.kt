@@ -5,6 +5,10 @@ import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.data.network.BackgroundTaskRosterPayloadDto
+import de.pyryco.mobile.data.network.BackgroundTaskRowDto
+import de.pyryco.mobile.data.network.BackgroundTaskStartedPayloadDto
+import de.pyryco.mobile.data.network.BackgroundTaskUpdatedPayloadDto
 import de.pyryco.mobile.data.network.BannerPayloadDto
 import de.pyryco.mobile.data.network.CompactingPayloadDto
 import de.pyryco.mobile.data.network.CompactionBoundaryPayloadDto
@@ -46,6 +50,43 @@ import java.util.concurrent.atomic.AtomicLong
 internal class ThreadProjection(
     private val trail: MessageTrail = MessageTrail(),
 ) {
+    /** Scalar lifecycle evidence shares history's folds; roster hints never create a position. */
+    fun applyBackgroundTaskLifecycle(envelope: Envelope) {
+        try {
+            val timestamp = Instant.parse(envelope.ts)
+            when (envelope.type) {
+                RemoteConversationRepository.TYPE_BACKGROUND_TASK_ROSTER -> {
+                    val dto = MobileJson.decodeFromJsonElement<BackgroundTaskRosterPayloadDto>(envelope.payload)
+                    if (dto.conversationId.isEmpty() || dto.droppedTasks < 0) return
+                    state.update { current ->
+                        val hints = current.backgroundTaskHints[dto.conversationId].orEmpty().toMutableMap()
+                        dto.tasks.forEach { row ->
+                            if (row.taskId.isNotEmpty() && row.toolCallId.isNotEmpty()) hints.putIfAbsent(row.taskId, row)
+                        }
+                        current.copy(backgroundTaskHints = current.backgroundTaskHints + (dto.conversationId to hints))
+                    }
+                }
+                RemoteConversationRepository.TYPE_BACKGROUND_TASK_STARTED -> {
+                    val dto = MobileJson.decodeFromJsonElement<BackgroundTaskStartedPayloadDto>(envelope.payload)
+                    if (dto.conversationId.isEmpty() || dto.taskId.isEmpty()) return
+                    updateThreads { current ->
+                        current + (dto.conversationId to current[dto.conversationId].orEmpty().withBackgroundTaskStarted(dto, timestamp))
+                    }
+                }
+                RemoteConversationRepository.TYPE_BACKGROUND_TASK_UPDATED -> {
+                    val dto = MobileJson.decodeFromJsonElement<BackgroundTaskUpdatedPayloadDto>(envelope.payload)
+                    if (dto.conversationId.isEmpty() || dto.taskId.isEmpty() || dto.status.isEmpty()) return
+                    updateThreads { current ->
+                        current + (dto.conversationId to current[dto.conversationId].orEmpty().withBackgroundTaskUpdated(dto, timestamp))
+                    }
+                }
+            }
+        } catch (e: IllegalArgumentException) {
+            // Decode errors can quote daemon text; discard them unread.
+            return
+        }
+    }
+
     /**
      * `conversationId -> ordered thread rows` ([ThreadItem.MessageItem] + [ThreadItem.SessionBoundary])
      * for the conversation — backfilled history (`message_chunk`) plus live user `message`s and structured
@@ -148,9 +189,13 @@ internal class ThreadProjection(
      */
     private data class ProjectionState(
         val threads: Map<String, List<ThreadItem>> = emptyMap(),
+        // Retain known joins independently of replacement panel state, without inventing launch positions.
+        val backgroundTaskHints: Map<String, Map<String, BackgroundTaskRowDto>> = emptyMap(),
         val echoQueues: Map<String, OwnEchoQueue> = emptyMap(),
         // A history end settles text but does not consume a live echo-reservation boundary.
         val liveEndedTurns: Map<String, Set<String>> = emptyMap(),
+        // Connection-local placement evidence, never a live event id or durable coverage marker.
+        val historyOrder: Map<String, Map<Any, Long>> = emptyMap(),
     )
 
     /**
@@ -390,13 +435,42 @@ internal class ThreadProjection(
     ) {
         val fold = compactionFolds.value[conversationId] ?: CompactionFold()
         var next = fold
-        updateThreads { threads ->
-            val thread = threads[conversationId].orEmpty()
+        state.update { current ->
+            val thread = current.threads[conversationId].orEmpty()
             val (rows, stepped) = step(thread, fold)
             next = stepped
-            if (rows === thread) threads else threads + (conversationId to rows)
+            if (rows === thread) {
+                current
+            } else {
+                current.copy(
+                    threads = current.threads + (conversationId to rows),
+                    historyOrder = current.historyOrder.withFilledDividerOrder(conversationId, fold, thread, rows),
+                )
+            }
         }
         if (next != fold) compactionFolds.update { it + (conversationId to next) }
+    }
+
+    /**
+     * A boundary that fills the pending divider in place gives it a new identity; its daemon position, if a
+     * history page supplied one, moves with it, so later pages still place rows around the divider.
+     */
+    private fun Map<String, Map<Any, Long>>.withFilledDividerOrder(
+        conversationId: String,
+        fold: CompactionFold,
+        before: List<ThreadItem>,
+        after: List<ThreadItem>,
+    ): Map<String, Map<Any, Long>> {
+        val order = this[conversationId] ?: return this
+        val pendingAt = fold.pending ?: return this
+        if (before.size != after.size) return this
+        val index = before.indexOfFirst { it is ThreadItem.CompactionBoundary && it.occurredAt == pendingAt }
+        val filled = after.getOrNull(index) as? ThreadItem.CompactionBoundary ?: return this
+        val old = before[index].mergeIdentity()
+        val logId = order[old] ?: return this
+        val identity = filled.mergeIdentity()
+        if (identity == old || identity in order) return this
+        return this + (conversationId to (order - old + (identity to logId)))
     }
 
     /**
@@ -798,10 +872,9 @@ internal class ThreadProjection(
      * still returned to the caller unchanged: a walking caller needs `cursor` / `atStart` to decide
      * whether to ask again, and #646 owns that decision.
      *
-     * The reduction and the merge both run **inside** the [MutableStateFlow.update] lambda, and that is
-     * load-bearing rather than stylistic: reading the current thread, merging and assigning are one
-     * check-then-act, so hoisting them out would silently lose a concurrent live append every time the
-     * CAS retried. The cost of re-running a pure reduction on a retry is the right trade.
+     * Pure page decoding runs once before the [MutableStateFlow.update]. Reading held rows and their
+     * connection-local daemon order, merging and assigning stay in one atomic update. A CAS retry must
+     * merge against fresh live rows; no decoded page snapshot may replace that current thread.
      *
      * Routes **strictly into [conversationId]'s slice** — the conversation the client asked about — and
      * never reads an entry payload's own `conversation_id`, so a page structurally cannot write into
@@ -826,10 +899,15 @@ internal class ThreadProjection(
     ) {
         if (page.entries.isEmpty()) return
         recordEnded(conversationId, endedTurnIds(page.entries, interactive))
-        updateThreads { current ->
-            val existing = current[conversationId].orEmpty()
-            val merged = existing.mergeHistoryRows(reduceHistoryPage(page.entries, interactive))
-            current + (conversationId to merged.withSettledTurns(endedTurns.value[conversationId].orEmpty()))
+        val reduced = reduceOrderedHistoryPage(page.entries, interactive)
+        state.update { current ->
+            val order = reduced.order + current.historyOrder[conversationId].orEmpty()
+            val existing = current.threads[conversationId].orEmpty()
+            val merged = existing.mergeOrderedHistoryRows(reduced.rows, order)
+            current.copy(
+                threads = current.threads + (conversationId to merged.withSettledTurns(endedTurns.value[conversationId].orEmpty())),
+                historyOrder = current.historyOrder + (conversationId to order),
+            )
         }
         settleEndedTurns(conversationId)
     }
@@ -870,6 +948,9 @@ internal class ThreadProjection(
                 threads = it.threads - conversationId,
                 echoQueues = it.echoQueues - conversationId,
                 liveEndedTurns = it.liveEndedTurns - conversationId,
+                backgroundTaskHints = it.backgroundTaskHints - conversationId,
+                historyOrder =
+                    it.historyOrder - conversationId,
             )
         }
     }
@@ -903,8 +984,25 @@ internal class ThreadProjection(
                         .orEmpty()
                         .filterNot {
                             it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.id in suppressed
+                        }.map { row ->
+                            val hint =
+                                (row as? ThreadItem.BackgroundTaskLifecycle)?.let {
+                                    current.backgroundTaskHints[conversationId]?.get(
+                                        it.taskId,
+                                    )
+                                }
+                            if (row is ThreadItem.BackgroundTaskLifecycle && hint != null) {
+                                row.copy(
+                                    toolCallId = row.toolCallId ?: hint.toolCallId,
+                                    taskType = row.taskType ?: hint.taskType,
+                                    description = row.description ?: hint.description,
+                                    truncatedFields = if (row.description == null) hint.truncatedFields else row.truncatedFields,
+                                )
+                            } else {
+                                row
+                            }
                         }.withParkedEchoesLast(echoes?.parked.orEmpty(), echoes?.backlog.orEmpty())
-                ThreadSnapshot(rows, suppressed)
+                ThreadSnapshot(rows, suppressed, current.historyOrder[conversationId].orEmpty())
             }.distinctUntilChanged()
 
     /** Reserved store positions cannot change [backlog] display order; only [parkedIds] user rows read last. */
@@ -927,7 +1025,7 @@ internal class ThreadProjection(
     fun observeRowCounts(): Flow<Map<String, Int>> =
         state
             .map { current ->
-                current.threads.mapValues { it.value.size }
+                current.threads.mapValues { (_, rows) -> rows.count { it !is ThreadItem.BackgroundTaskLifecycle } }
             }.distinctUntilChanged()
 
     /**

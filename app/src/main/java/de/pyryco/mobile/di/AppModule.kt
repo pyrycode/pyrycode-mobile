@@ -50,22 +50,26 @@ import de.pyryco.mobile.push.PushTokenRefresher
 import de.pyryco.mobile.push.PushTokenSink
 import de.pyryco.mobile.push.PushTokenSource
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
-import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
+import de.pyryco.mobile.ui.conversations.share.ShareIntakeViewModel
+import de.pyryco.mobile.ui.conversations.share.SharingShortcuts
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
 import de.pyryco.mobile.ui.conversations.thread.ContentResolverAttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.McpFailureAcknowledgements
+import de.pyryco.mobile.ui.conversations.thread.OwnedPasteCopy
 import de.pyryco.mobile.ui.conversations.thread.PermissionDraftStore
 import de.pyryco.mobile.ui.conversations.thread.QuestionDraftStore
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.conversations.thread.UsageLimitDismissals
 import de.pyryco.mobile.ui.conversations.thread.asRememberedEffortStore
+import de.pyryco.mobile.ui.conversations.thread.captureSharedAttachment
 import de.pyryco.mobile.ui.onboarding.PairCodeViewModel
 import de.pyryco.mobile.ui.onboarding.ScannerViewModel
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
 import de.pyryco.mobile.ui.settings.SettingsHost
 import de.pyryco.mobile.ui.settings.SettingsViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -73,6 +77,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.transformLatest
 import okhttp3.WebSocket
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.module.Module
@@ -113,7 +118,10 @@ val appModule =
         // and so any future removal path inherits the eviction. `save` and `setDisplayName` deliberately
         // do not evict: re-pairing the same id and renaming a host both keep their drafts and content.
         single {
-            ObservablePairedServerStore(KeystorePairedServerStore(get()), forgetRemovedHost(get(), get(), lazy { get() }, lazy { get() }))
+            ObservablePairedServerStore(
+                KeystorePairedServerStore(get()),
+                forgetRemovedHost(get(), get(), lazy { get() }, lazy { get() }) { get<SharingShortcuts>().removeHost(it) },
+            )
         } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
         single { NoiseClientInfo(deviceName = Build.MODEL, clientVersion = mobileClientVersion()) }
         single {
@@ -208,6 +216,18 @@ val appModule =
         // typed it. Holds no connection and no disk handle, so it is unaffected by reconnects and by
         // the lifecycle driver's background close.
         single { ComposerDraftStore() }
+        viewModel {
+            val context = androidContext()
+            ShareIntakeViewModel(get(), capture = { uri, report ->
+                captureSharedAttachment(
+                    context.contentResolver,
+                    uri,
+                    context.packageName,
+                    File(context.noBackupFilesDir, OwnedPasteCopy.DIRECTORY),
+                    report,
+                )
+            })
+        }
         single { QuestionDraftStore() } onClose { it?.dispose() }
         // #1306: session-grant checkbox drafts, heap only, retired per host when its request changes.
         single { PermissionDraftStore() } onClose { it?.dispose() }
@@ -232,7 +252,6 @@ val appModule =
         }
         // The third dependency is the paired-server store the Edit host modal reads and writes (#744).
         viewModel { ChannelListViewModel(get(), get(), get()) }
-        viewModel { DiscussionListViewModel(get(), get()) }
         viewModel { get<ThreadDestinationFactory>().settings(get(), get()) }
         viewModel { get<ThreadDestinationFactory>().archive(get()) }
         viewModel {
@@ -277,6 +296,17 @@ fun hostConversationModule(
     decorateRepository: (ConversationRepository) -> ConversationRepository = { it },
 ): Module =
     module {
+        single { parameters ->
+            val context = parameters.getOrNull<android.content.Context>() ?: androidContext()
+            val saved =
+                if (useRelay) {
+                    val store = get<ObservablePairedServerStore>()
+                    store.sharingShortcutHosts()
+                } else {
+                    kotlinx.coroutines.flow.flowOf(setOf(HostConversationSource.DEMO_SERVER_ID))
+                }
+            SharingShortcuts(context, get<HostConversationSource>().snapshots, saved)
+        } onClose { it?.dispose() }
         // #797: the demo branch resolves no cache, as HostConversationSource's does below.
         single {
             ThreadDestinationFactory(
@@ -303,6 +333,21 @@ fun hostConversationModule(
             }
         } onClose { it?.dispose() }
     }
+
+/** Unknown storage never authorizes removal; recover even if no pairing mutation follows the failure. */
+@OptIn(ExperimentalCoroutinesApi::class)
+internal fun ObservablePairedServerStore.sharingShortcutHosts(): Flow<Set<String>> =
+    revision
+        .transformLatest {
+            while (true) {
+                val snapshot = readSnapshot().getOrNull()
+                if (snapshot != null) {
+                    emit(snapshot.map { it.record.serverId }.toSet())
+                    return@transformLatest
+                }
+                delay(1_000)
+            }
+        }.distinctUntilChanged()
 
 /**
  * Whether the saved host [serverId] names is in the rejected-pairing state (#843), for the thread's
@@ -438,6 +483,12 @@ internal class ThreadDestinationFactory(
             // #678: the open host's roster and live count; the demo early-return above keeps the defaults.
             backgroundTasks = { id -> bundle?.coordinator?.observeBackgroundTasks(id) ?: flowOf(null) },
             backgroundTaskCount = { id -> bundle?.coordinator?.observeLiveBackgroundTaskCount(id) ?: flowOf(0) },
+            backgroundTaskStopSupported = bundle?.coordinator?.supportsBackgroundTaskStop ?: flowOf(false),
+            backgroundTaskStopRefusals = { id -> bundle?.coordinator?.observeBackgroundTaskStopRefusals(id) ?: emptyFlow() },
+            stopBackgroundTask = { id, task ->
+                bundle?.coordinator?.stopBackgroundTask(id, task)
+                    ?: Result.failure(IllegalStateException("Background task stop unavailable"))
+            },
             // #861: the walk restart waits for the published repository, not the socket — the supervisor's
             // Connected precedes the handshake that publishes it.
             repositoryAvailable = bundle?.coordinator?.currentRepository?.map { it != null } ?: flowOf(false),

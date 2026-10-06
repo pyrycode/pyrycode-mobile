@@ -222,6 +222,15 @@ restoration. Controller/component fakes cover deterministic transitions; no new
 turn. Full curated live evidence and its unrelated failure/rerun are recorded in the
 [interactive stream ladder](../../e2e-interactive-stream.md#verification-status).
 
+An isolated live scenario that overrides host instructions must capture the exact current value,
+confirm its clear before starting a fresh session, and restore and confirm the captured value even
+after setup or assertion failure. Resetting to the daemon default is not restoration of a custom
+or empty original. The Stop scenario's `withClearedHostInstructions` guard (#1721) follows this
+rule locally, preserving scenario order independence and visible restoration failures. Daemon
+foreground guidance can otherwise make Claude refuse the hold before any tool permission appears;
+the controlled interrupt request must also explain why the foreground hold is intentional. See
+[rung-3 Stop coverage](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
+
 ## Related
 
 - [ChannelListViewModel](channel-list-viewmodel.md) — first owner, `ui/conversations/list/`

@@ -40,7 +40,7 @@ data class BackgroundTaskProgress(
  * One background task claude left running past its turn (#677): the join, on [taskId], of the
  * `background_task_started` frame, the roster row and the updates the phone has seen for it.
  *
- * [toolCallId] is `null` until a started frame names the task, since a roster row carries none.
+ * [toolCallId] is `null` until a started frame or enriched roster supplies a non-empty launch id.
  * [description] and [truncatedFields] come from the started frame when one arrived, otherwise from the
  * roster row, and [truncatedFields] is that frame's own report. [description] is a literal command line
  * for `local_bash`, so it gets the same inert-text rule as [BackgroundTaskUpdate].
@@ -72,6 +72,11 @@ data class BackgroundTask(
 data class BackgroundTaskRoster(
     val tasks: List<BackgroundTask>,
     val droppedTasks: Int,
+    /**
+     * Connection-local finished knowledge for thread placement, independent of the replacing [tasks].
+     * These records carry no history position and never contribute to the panel or [liveCount].
+     */
+    val settledTasks: List<BackgroundTask> = emptyList(),
 ) {
     /**
      * Tasks with no terminal status plus [droppedTasks], saturating at [Int.MAX_VALUE] so a

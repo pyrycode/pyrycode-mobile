@@ -29,11 +29,15 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -184,15 +188,7 @@ fun MarkdownText(
     onOpenMarkdownPath: ((String) -> Unit)? = null,
     style: MarkdownTextStyle = MarkdownTextStyle(MaterialTheme.typography.bodyMedium),
 ) {
-    val platformHandler = LocalUriHandler.current
-    val currentOnOpenMarkdownPath by rememberUpdatedState(onOpenMarkdownPath)
-    // Every link tap goes through this one handler, so the block walkers below keep passing a UriHandler.
-    val uriHandler =
-        remember(platformHandler) {
-            object : UriHandler {
-                override fun openUri(uri: String) = routeMarkdownLink(uri, currentOnOpenMarkdownPath, platformHandler::openUri)
-            }
-        }
+    val uriHandler = rememberMarkdownUriHandler(onOpenMarkdownPath)
     val root =
         remember(markdown) {
             MarkdownParser(MarkdownFlavour).buildMarkdownTreeFromString(markdown)
@@ -209,6 +205,95 @@ fun MarkdownText(
     }
 }
 
+/** Every link tap goes through this one handler, so the block walkers keep passing a [UriHandler]. */
+@Composable
+private fun rememberMarkdownUriHandler(onOpenMarkdownPath: ((String) -> Unit)?): UriHandler {
+    val platformHandler = LocalUriHandler.current
+    val currentOnOpenMarkdownPath by rememberUpdatedState(onOpenMarkdownPath)
+    return remember(platformHandler) {
+        object : UriHandler {
+            override fun openUri(uri: String) = routeMarkdownLink(uri, currentOnOpenMarkdownPath, platformHandler::openUri)
+        }
+    }
+}
+
+/** The caret a streaming reply draws after its newest text. It is never part of the parsed source. */
+internal const val STREAMING_CARET_GLYPH = "▎"
+
+/** Test seam for #1766: which tails were parsed and which blocks composed. Production passes none. */
+internal interface StreamingMarkdownObserver {
+    fun parsed(tail: String)
+
+    fun composed(key: Int)
+}
+
+/**
+ * The growing trailing block's presentation, provided around that block alone. A composition local rather than a
+ * parameter so the recursive block walkers shared with [MarkdownText] keep their signatures; outside the trailing
+ * block it is always null.
+ */
+private class StreamingTailPresentation(
+    val tail: StreamingTail,
+    val caretVisible: Boolean,
+)
+
+private val LocalStreamingTail = staticCompositionLocalOf<StreamingTailPresentation?> { null }
+
+/**
+ * A reply while it streams (#1766), through the same block walkers as [MarkdownText]. Completed top-level blocks
+ * are parsed once and reused as the same instances, so a new word or a caret blink recomposes only the growing
+ * last block. That block's unfinished inline constructs show their arrived text without their punctuation, and
+ * the caret follows its text, or takes its own line when the block ends in something else, such as code.
+ */
+@Composable
+internal fun StreamingMarkdownText(
+    source: String,
+    caretVisible: Boolean,
+    modifier: Modifier = Modifier,
+    onOpenMarkdownPath: ((String) -> Unit)? = null,
+    style: MarkdownTextStyle = MarkdownTextStyle(MaterialTheme.typography.bodyMedium),
+    observer: StreamingMarkdownObserver? = null,
+) {
+    val cache = remember(observer) { StreamingMarkdownCache { tail -> observer?.parsed(tail) } }
+    val snapshot = remember(cache, source) { cache.update(source) }
+    val blocks = remember(snapshot) { snapshot.blocks.filter { it.isContent } }
+    val uriHandler = rememberMarkdownUriHandler(onOpenMarkdownPath)
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(style.blockSpacing),
+    ) {
+        blocks.forEachIndexed { index, block ->
+            key(block.key) {
+                val trailing = index == blocks.lastIndex
+                StreamingBlock(block, uriHandler, style, if (trailing) snapshot.tail else null, trailing && caretVisible, observer)
+            }
+        }
+        if (blocks.isEmpty() || snapshot.tail.caretTarget == null) {
+            // Alpha rather than presence, so a blink never moves the lines around it.
+            Text(STREAMING_CARET_GLYPH, Modifier.alpha(if (caretVisible) 1f else 0f), style = style.body)
+        }
+    }
+}
+
+@Composable
+private fun StreamingBlock(
+    block: StreamingMarkdownBlock,
+    uriHandler: UriHandler,
+    style: MarkdownTextStyle,
+    tail: StreamingTail?,
+    caretVisible: Boolean,
+    observer: StreamingMarkdownObserver?,
+) {
+    SideEffect { observer?.composed(block.key) }
+    if (tail == null) {
+        MarkdownBlock(block.node, block.source, uriHandler, style)
+    } else {
+        CompositionLocalProvider(LocalStreamingTail provides StreamingTailPresentation(tail, caretVisible)) {
+            MarkdownBlock(block.node, block.source, uriHandler, style)
+        }
+    }
+}
+
 @Composable
 private fun MarkdownBlock(
     node: ASTNode,
@@ -216,16 +301,36 @@ private fun MarkdownBlock(
     uriHandler: UriHandler,
     style: MarkdownTextStyle,
 ) {
+    val streaming = LocalStreamingTail.current
+    val header = streaming?.tail?.header
+    if (header != null && header.target === node && node.type != MarkdownElementTypes.PARAGRAPH) {
+        // A pending pipe header the parser still reads as a setext heading (#1766).
+        Text(
+            text =
+                buildAnnotatedString {
+                    append(header.text)
+                    appendStreamingCaret(streaming.caretVisible)
+                },
+            style = style.body,
+        )
+        return
+    }
     when (node.type) {
         MarkdownElementTypes.ATX_1 ->
-            HeadingBlock(node, source, uriHandler, MaterialTheme.typography.headlineSmall.readerLineHeight(style.presentation))
+            HeadingBlock(
+                node,
+                source,
+                uriHandler,
+                MaterialTheme.typography.headlineSmall.readerLineHeight(style.presentation),
+                style.reader,
+            )
         MarkdownElementTypes.ATX_2 ->
-            HeadingBlock(node, source, uriHandler, MaterialTheme.typography.titleLarge.readerLineHeight(style.presentation))
+            HeadingBlock(node, source, uriHandler, MaterialTheme.typography.titleLarge.readerLineHeight(style.presentation), style.reader)
         MarkdownElementTypes.ATX_3 ->
-            HeadingBlock(node, source, uriHandler, MaterialTheme.typography.titleMedium.readerLineHeight(style.presentation))
+            HeadingBlock(node, source, uriHandler, MaterialTheme.typography.titleMedium.readerLineHeight(style.presentation), style.reader)
         MarkdownElementTypes.PARAGRAPH ->
             Text(
-                text = buildInline(node, source, uriHandler),
+                text = buildInline(node, source, uriHandler, style.reader),
                 style = style.body,
             )
         MarkdownElementTypes.UNORDERED_LIST ->
@@ -270,7 +375,7 @@ private fun MarkdownBlock(
         else -> {
             val text = node.getTextInNode(source).toString().trim()
             if (text.isNotEmpty()) {
-                Text(text = text, style = style.body)
+                Text(text = AnnotatedString(text).let { if (style.reader) it.withBreaksInLongRuns() else it }, style = style.body)
             }
         }
     }
@@ -301,16 +406,18 @@ private fun HeadingBlock(
     source: String,
     uriHandler: UriHandler,
     style: androidx.compose.ui.text.TextStyle,
+    breakLongRuns: Boolean,
 ) {
     val colors = currentInlineColors()
+    val streaming = LocalStreamingTail.current
     val content = node.children.firstOrNull { it.type == MarkdownTokenTypes.ATX_CONTENT }
     val text =
         buildAnnotatedString {
             if (content != null) {
-                appendInlineChildren(content.trimmedContent(), source, uriHandler, colors)
+                appendLeaf(content, source, uriHandler, colors, streaming) { it.trimmedContent() }
             }
         }
-    Text(text = text, style = style)
+    Text(text = if (breakLongRuns) text.withBreaksInLongRuns() else text, style = style)
 }
 
 @Composable
@@ -336,7 +443,7 @@ private fun ListBlock(
                         text =
                             buildAnnotatedString {
                                 append("$marker  ")
-                                append(buildInline(lead, source, uriHandler))
+                                append(buildInline(lead, source, uriHandler, breakLongRuns = true))
                             },
                         style = style.body,
                     )
@@ -453,7 +560,7 @@ private fun BlockQuoteBlock(
                 }.forEach { child ->
                     if (child.type == MarkdownElementTypes.PARAGRAPH) {
                         Text(
-                            text = buildInline(child, source, uriHandler),
+                            text = buildInline(child, source, uriHandler, reader),
                             style =
                                 style.body.copy(
                                     color = if (reader) MaterialTheme.colorScheme.onSurfaceVariant else style.body.color,
@@ -521,6 +628,7 @@ private fun TableBlock(
     uriHandler: UriHandler,
 ) {
     val colors = currentInlineColors()
+    val streaming = LocalStreamingTail.current
     // The grid conveys the table's structure, so this line has to clear WCAG 1.4.11's 3:1 against
     // the bubble it renders on — always `secondaryContainer`, since `MessageBubble` is the only
     // caller. Desktop's `--color-primary-container` does not survive that port: M3 gives
@@ -564,7 +672,7 @@ private fun TableBlock(
                                     AnnotatedString("")
                                 } else {
                                     buildAnnotatedString {
-                                        appendInlineChildren(cell.trimmedContent(), source, uriHandler, colors)
+                                        appendLeaf(cell, source, uriHandler, colors, streaming) { it.trimmedContent() }
                                     }
                                 },
                             modifier =
@@ -928,11 +1036,101 @@ private fun buildInline(
     node: ASTNode,
     source: String,
     uriHandler: UriHandler,
+    breakLongRuns: Boolean = false,
 ): AnnotatedString {
     val colors = currentInlineColors()
-    return buildAnnotatedString {
-        appendInline(node, source, uriHandler, colors)
+    val streaming = LocalStreamingTail.current
+    val text =
+        buildAnnotatedString {
+            if (streaming == null) {
+                appendInline(node, source, uriHandler, colors)
+            } else {
+                appendLeaf(node, source, uriHandler, colors, streaming) { it.children }
+            }
+        }
+    return if (breakLongRuns) text.withBreaksInLongRuns() else text
+}
+
+/**
+ * A leaf's inline [content]: as parsed outside a streaming tail, and inside it through the pending table header or
+ * the inline probe when [node] is the growing leaf, followed by the caret when the caret follows [node] (#1766).
+ */
+private fun AnnotatedString.Builder.appendLeaf(
+    node: ASTNode,
+    source: String,
+    uriHandler: UriHandler,
+    colors: InlineColors,
+    streaming: StreamingTailPresentation?,
+    content: (ASTNode) -> List<ASTNode>,
+) {
+    val tail = streaming?.tail
+    val header = tail?.header
+    val probe = tail?.probe
+    when {
+        header != null && header.target === node -> append(header.text)
+        probe != null && tail.leaf === node -> appendInlineChildren(content(probe.node), probe.source, uriHandler, colors, probe.synthetic)
+        else -> appendInlineChildren(content(node), source, uriHandler, colors)
     }
+    if (tail != null && tail.caretTarget === node) appendStreamingCaret(streaming.caretVisible)
+}
+
+/**
+ * Present only while the blink is on, as before #1766. A blink-off frame then draws exactly the arrived text, which
+ * the live tests' exact-text waits rely on: an always-present transparent glyph delayed every such wait until the
+ * turn settled, and that shifted the reset scenario's timing until it failed every time.
+ */
+private fun AnnotatedString.Builder.appendStreamingCaret(visible: Boolean) {
+    if (visible) append(STREAMING_CARET_GLYPH)
+}
+
+private val MarkdownTextStyle.reader: Boolean get() = presentation == MarkdownPresentation.Reader
+
+/** The longest run without whitespace the reader lays out as written; see [withBreaksInLongRuns]. */
+internal const val MAX_UNBROKEN_RUN = 1_024
+
+/**
+ * This text with a line break after every [MAX_UNBROKEN_RUN] characters of each longer run that has no
+ * whitespace, and unchanged otherwise. Styles and links carry over.
+ *
+ * Android's text engine shapes and caches text a space-separated word at a time, and a word wider than the
+ * line costs native memory that grows much faster than the word: on the test emulator a 32 KB word took
+ * about 30 MB, a 64 KB word about 220 MB, a 128 KB word about 570 MB, and a 256 KB word, the reader's file
+ * bound, got the process killed (2026-10-05). A zero-width space or a slash does not help, since only a
+ * space or a line break ends the engine's word. Such a run already wraps at arbitrary characters, so a line
+ * break every [MAX_UNBROKEN_RUN] characters only adds one short line per 1024. Only the drawn text changes:
+ * the reader's copies read the note, not this.
+ */
+internal fun AnnotatedString.withBreaksInLongRuns(): AnnotatedString {
+    val cuts = longRunCuts(text)
+    if (cuts.isEmpty()) return this
+    return buildAnnotatedString {
+        var from = 0
+        for (cut in cuts) {
+            append(this@withBreaksInLongRuns.subSequence(from, cut))
+            append('\n')
+            from = cut
+        }
+        append(this@withBreaksInLongRuns.subSequence(from, this@withBreaksInLongRuns.length))
+    }
+}
+
+private fun longRunCuts(text: String): List<Int> {
+    val cuts = mutableListOf<Int>()
+    var runStart = 0
+    for (index in 0..text.length) {
+        if (index < text.length && !text[index].isWhitespace()) continue
+        if (index - runStart > MAX_UNBROKEN_RUN) {
+            var cut = runStart + MAX_UNBROKEN_RUN
+            while (cut < index) {
+                // Never between the halves of a surrogate pair.
+                if (text[cut].isLowSurrogate()) cut++
+                if (cut < index) cuts += cut
+                cut += MAX_UNBROKEN_RUN
+            }
+        }
+        runStart = index + 1
+    }
+    return cuts
 }
 
 /**
@@ -959,7 +1157,17 @@ private fun AnnotatedString.Builder.appendInline(
     source: String,
     uriHandler: UriHandler,
     colors: InlineColors,
+    synthetic: IntRange = IntRange.EMPTY,
 ) {
+    if (overlaps(node, synthetic)) {
+        // Only a streaming probe has synthetic closers (#1766). They never render, and what they close renders
+        // plain: without its opening punctuation, its style or its link.
+        if (node.startOffset >= synthetic.first && node.endOffset <= synthetic.last + 1) return
+        if (node.type in SyntheticallyClosable) {
+            appendSyntheticallyClosed(node, source, uriHandler, colors, synthetic)
+            return
+        }
+    }
     when (node.type) {
         MarkdownElementTypes.EMPH ->
             withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
@@ -968,6 +1176,7 @@ private fun AnnotatedString.Builder.appendInline(
                     source,
                     uriHandler,
                     colors,
+                    synthetic,
                 )
             }
         MarkdownElementTypes.STRONG ->
@@ -977,6 +1186,7 @@ private fun AnnotatedString.Builder.appendInline(
                     source,
                     uriHandler,
                     colors,
+                    synthetic,
                 )
             }
         GFMElementTypes.STRIKETHROUGH ->
@@ -986,6 +1196,7 @@ private fun AnnotatedString.Builder.appendInline(
                     source,
                     uriHandler,
                     colors,
+                    synthetic,
                 )
             }
         MarkdownElementTypes.CODE_SPAN ->
@@ -998,15 +1209,7 @@ private fun AnnotatedString.Builder.appendInline(
                 append(node.getTextInNode(source).toString().trim('`'))
             }
         MarkdownElementTypes.INLINE_LINK -> {
-            val linkText =
-                node.children
-                    .firstOrNull { it.type == MarkdownElementTypes.LINK_TEXT }
-                    ?.children
-                    ?.filter {
-                        it.type != MarkdownTokenTypes.LBRACKET &&
-                            it.type != MarkdownTokenTypes.RBRACKET
-                    }?.joinToString("") { it.getTextInNode(source).toString() }
-                    ?: ""
+            val linkText = inlineLinkText(node, source, synthetic)
             val url =
                 node.children
                     .firstOrNull { it.type == MarkdownElementTypes.LINK_DESTINATION }
@@ -1044,10 +1247,70 @@ private fun AnnotatedString.Builder.appendInline(
         // children whose leaves (DOLLAR, TEXT, WHITE_SPACE) rebuild the `$…$` span verbatim.
         else ->
             if (node.children.isEmpty()) {
-                append(node.getTextInNode(source).toString())
+                append(textOutside(node, source, synthetic))
             } else {
-                appendInlineChildren(node.children, source, uriHandler, colors)
+                appendInlineChildren(node.children, source, uriHandler, colors, synthetic)
             }
+    }
+}
+
+/** The constructs a synthetic closer can complete; each renders plain when one does. */
+private val SyntheticallyClosable =
+    setOf(
+        MarkdownElementTypes.EMPH,
+        MarkdownElementTypes.STRONG,
+        GFMElementTypes.STRIKETHROUGH,
+        MarkdownElementTypes.CODE_SPAN,
+        MarkdownElementTypes.INLINE_LINK,
+    )
+
+private fun overlaps(
+    node: ASTNode,
+    synthetic: IntRange,
+): Boolean = !synthetic.isEmpty() && node.startOffset <= synthetic.last && node.endOffset > synthetic.first
+
+/** [node]'s source characters without any that [synthetic] inserted. */
+private fun textOutside(
+    node: ASTNode,
+    source: String,
+    synthetic: IntRange,
+): String {
+    if (!overlaps(node, synthetic)) return node.getTextInNode(source).toString()
+    val before = if (node.startOffset < synthetic.first) source.substring(node.startOffset, synthetic.first) else ""
+    val after = if (node.endOffset > synthetic.last + 1) source.substring(synthetic.last + 1, node.endOffset) else ""
+    return before + after
+}
+
+/** A link's text as written, brackets dropped. Nested constructs keep their source characters. */
+private fun inlineLinkText(
+    node: ASTNode,
+    source: String,
+    synthetic: IntRange,
+): String =
+    node.children
+        .firstOrNull { it.type == MarkdownElementTypes.LINK_TEXT }
+        ?.children
+        ?.filter {
+            it.type != MarkdownTokenTypes.LBRACKET &&
+                it.type != MarkdownTokenTypes.RBRACKET
+        }?.joinToString("") { textOutside(it, source, synthetic) }
+        ?: ""
+
+private fun AnnotatedString.Builder.appendSyntheticallyClosed(
+    node: ASTNode,
+    source: String,
+    uriHandler: UriHandler,
+    colors: InlineColors,
+    synthetic: IntRange,
+) {
+    when (node.type) {
+        MarkdownElementTypes.EMPH, MarkdownElementTypes.STRONG ->
+            appendInlineChildren(node.children.filter { it.type != MarkdownTokenTypes.EMPH }, source, uriHandler, colors, synthetic)
+        GFMElementTypes.STRIKETHROUGH ->
+            appendInlineChildren(node.children.filter { it.type != GFMTokenTypes.TILDE }, source, uriHandler, colors, synthetic)
+        MarkdownElementTypes.CODE_SPAN -> append(textOutside(node, source, synthetic).trim('`'))
+        // Never a link: the destination is unfinished, so nothing here can be tapped.
+        MarkdownElementTypes.INLINE_LINK -> append(inlineLinkText(node, source, synthetic))
     }
 }
 
@@ -1065,18 +1328,25 @@ private fun AnnotatedString.Builder.appendInlineChildren(
     source: String,
     uriHandler: UriHandler,
     colors: InlineColors,
+    synthetic: IntRange = IntRange.EMPTY,
 ) {
     val runs = singleTildeRuns(children, source)
     var index = 0
     while (index < children.size) {
         val close = runs[index]
         if (close == null) {
-            appendInline(children[index], source, uriHandler, colors)
+            appendInline(children[index], source, uriHandler, colors, synthetic)
             index++
+        } else if (overlaps(children[close], synthetic)) {
+            // A pair closed only by a streaming probe's tilde shows its text plain, without either tilde.
+            for (inner in index + 1 until close) {
+                appendInline(children[inner], source, uriHandler, colors, synthetic)
+            }
+            index = close + 1
         } else {
             withStyle(struckSpanStyle(colors)) {
                 for (inner in index + 1 until close) {
-                    appendInline(children[inner], source, uriHandler, colors)
+                    appendInline(children[inner], source, uriHandler, colors, synthetic)
                 }
             }
             index = close + 1
@@ -1095,7 +1365,7 @@ private fun struckSpanStyle(colors: InlineColors): SpanStyle = SpanStyle(color =
  * line of lone `~` characters, re-paid on every streaming reveal tick. Closing is tested before
  * opening because a tilde may be both, and CommonMark resolves that the same way.
  */
-private fun singleTildeRuns(
+internal fun singleTildeRuns(
     children: List<ASTNode>,
     source: CharSequence,
 ): Map<Int, Int> {

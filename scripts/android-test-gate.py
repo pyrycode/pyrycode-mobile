@@ -24,7 +24,7 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 E2E_PACKAGE = "de.pyryco.mobile.e2e"
-SCENARIOS = ("send-now", "ping", "stream", "spinner", "tool", "tool-failed", "tool-progress", "reconnect", "offline-retry", "replay-order", "tool-then-text", "refusal", "mcp-failed", "context-overflow")
+SCENARIOS = ("stop-background-task", "selection-copy", "background-agent", "send-now", "direct-share", "ping", "stream", "reopen-stream", "spinner", "tool", "tool-failed", "tool-progress", "reconnect", "offline-retry", "replay-order", "tool-then-text", "refusal", "mcp-failed", "context-overflow")
 
 def curated_live_methods():
     """The method names on scripts/e2e-emulator.sh's LIVE curated list, in list order."""
@@ -133,7 +133,8 @@ def print_focus_records(paths):
     """Print each failing test's focus record from its logcat to stderr, where the dispatcher log keeps it (#1131).
 
     FocusRecordListener logs one record per failing device test: the window manager's focused window, focused
-    app and any ANR dialog at the moment of failure. A passing run logs none, so it prints nothing here.
+    app and any ANR dialog just after the test's rules tore down, and the last lifecycle stage of each activity
+    the test opened. A passing run logs none, so it prints nothing here.
     """
     seen = set()
     for path in paths:

@@ -61,8 +61,8 @@ class FinishedBackgroundTasks {
  * `background_task_started`, `background_task_updated`, `background_task_roster` and
  * `background_task_progress` (#1042), split out of
  * [RemoteConversationRepository] like [QueueProjection]. The repository's `onInbound` arm calls [apply]
- * only behind the negotiated `interactive` gate. These frames are daemon state, not turn content, so they
- * never reach the thread timeline.
+ * only behind the negotiated `interactive` gate. The panel remains replacement state; scalar lifecycle
+ * evidence is retained separately by [ThreadProjection].
  *
  * One instance per repository, and a fresh repository per connection, so after a reconnect a conversation
  * holds only what that connection's frames report. The only state carried over is [finished].
@@ -77,6 +77,8 @@ class FinishedBackgroundTasks {
  */
 internal class BackgroundTaskProjection(
     private val finished: FinishedBackgroundTasks,
+    private val onTaskFinished: (String, String) -> Unit = { _, _ -> },
+    private val onRosterReported: (String, Set<String>) -> Unit = { _, _ -> },
 ) {
     /**
      * `conversationId -> roster`. A conversation with no key has reported nothing, which is distinct from
@@ -84,6 +86,9 @@ internal class BackgroundTaskProjection(
      */
     private val mutableRosters = MutableStateFlow<Map<String, BackgroundTaskRoster>>(emptyMap())
     val rosters: StateFlow<Map<String, BackgroundTaskRoster>> = mutableRosters.asStateFlow()
+
+    // A roster join no longer proves a started frame supplied the longer description.
+    private val startedTasks = mutableSetOf<Pair<String, String>>()
 
     /**
      * Updates and progress for tasks a conversation does not hold yet, keyed `conversationId -> taskId`, so a start or
@@ -119,6 +124,7 @@ internal class BackgroundTaskProjection(
     /** Upserts the task in place, creating the conversation's roster if this is its first frame. */
     private fun applyStarted(dto: BackgroundTaskStartedPayloadDto) {
         val conversationId = dto.conversationId
+        startedTasks += conversationId to dto.taskId
         val roster = mutableRosters.value[conversationId] ?: BackgroundTaskRoster(emptyList(), droppedTasks = 0)
         val held = roster.tasks.firstOrNull { it.taskId == dto.taskId }
         val slots = held?.slots() ?: takePending(conversationId, dto.taskId)
@@ -126,7 +132,7 @@ internal class BackgroundTaskProjection(
             task(
                 conversationId = conversationId,
                 taskId = dto.taskId,
-                toolCallId = dto.toolCallId,
+                toolCallId = dto.toolCallId.takeIf { it.isNotEmpty() } ?: held?.toolCallId,
                 taskType = dto.taskType,
                 description = dto.description,
                 truncatedFields = dto.truncatedFields,
@@ -145,7 +151,10 @@ internal class BackgroundTaskProjection(
         val conversationId = dto.conversationId
         val update = BackgroundTaskUpdate(dto.patch, dto.status, dto.summary, dto.truncatedFields)
         val terminal = dto.status.isNotEmpty()
-        if (terminal) finished.mark(conversationId, dto.taskId)
+        if (terminal) {
+            finished.mark(conversationId, dto.taskId)
+            onTaskFinished(conversationId, dto.taskId)
+        }
         val roster = mutableRosters.value[conversationId]
         val held = roster?.tasks?.firstOrNull { it.taskId == dto.taskId }
         if (roster == null || held == null) {
@@ -204,7 +213,10 @@ internal class BackgroundTaskProjection(
                 .associateBy { it.taskId }
         val waiting = pending.remove(conversationId).orEmpty()
         val rows = dto.tasks.distinctBy { it.taskId }
-        finished.retainOnly(conversationId, rows.mapTo(mutableSetOf()) { it.taskId })
+        val taskIds = rows.mapTo(mutableSetOf()) { it.taskId }
+        onRosterReported(conversationId, taskIds)
+        startedTasks.removeAll { (conversation, taskId) -> conversation == conversationId && taskId !in taskIds }
+        finished.retainOnly(conversationId, taskIds)
         val tasks = rows.map { row -> rowTask(conversationId, row, previous[row.taskId], waiting[row.taskId]) }
         publish(conversationId, BackgroundTaskRoster(tasks, dto.droppedTasks))
     }
@@ -216,11 +228,16 @@ internal class BackgroundTaskProjection(
         held: BackgroundTask?,
         waiting: Slots?,
     ): BackgroundTask {
-        if (held != null && held.toolCallId != null) return held.withSlots(conversationId, held.slots())
+        val rowJoin = row.toolCallId.takeIf { it.isNotEmpty() }
+        val fromStarted = (conversationId to row.taskId) in startedTasks
+        val join = if (fromStarted) held?.toolCallId ?: rowJoin else rowJoin ?: held?.toolCallId
+        if (held != null && fromStarted) {
+            return held.copy(toolCallId = join).withSlots(conversationId, held.slots())
+        }
         return task(
             conversationId = conversationId,
             taskId = row.taskId,
-            toolCallId = null,
+            toolCallId = join,
             taskType = row.taskType,
             description = row.description,
             truncatedFields = row.truncatedFields,
@@ -266,7 +283,18 @@ internal class BackgroundTaskProjection(
         conversationId: String,
         roster: BackgroundTaskRoster,
     ) {
-        mutableRosters.update { it + (conversationId to roster) }
+        mutableRosters.update { current ->
+            val settled = current[conversationId]?.settledTasks.orEmpty().associateByTo(linkedMapOf()) { it.taskId }
+            roster.tasks.forEach { task ->
+                val held = settled[task.taskId]
+                // Replacement can forget the panel's finish flag before a later roster supplies the join.
+                when {
+                    held != null -> settled[task.taskId] = held.copy(toolCallId = held.toolCallId ?: task.toolCallId)
+                    task.isFinished -> settled[task.taskId] = task
+                }
+            }
+            current + (conversationId to roster.copy(settledTasks = settled.values.toList()))
+        }
     }
 
     private fun BackgroundTask.slots(): Slots = Slots(latestUpdate, finish, progress)

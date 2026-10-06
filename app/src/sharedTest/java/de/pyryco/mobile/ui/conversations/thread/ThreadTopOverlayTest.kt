@@ -11,6 +11,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.FontScale
+import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
@@ -26,6 +30,7 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.width
@@ -46,6 +51,7 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -53,6 +59,8 @@ import org.robolectric.annotation.GraphicsMode
 import java.io.File
 
 /**
+ * The native usage/Re-pair regression must stay runnable without [Ignore] (#1760).
+ *
  * #1002: notices draw as pills in the thread's Top overlay, and the status row keeps only live turn status.
  */
 @RunWith(AndroidJUnit4::class)
@@ -86,6 +94,7 @@ class ThreadTopOverlayTest {
     private var view: View? = null
     private var errorContainer = Color.Unspecified
     private var errorText = Color.Unspecified
+    private var dismissTaps = 0
     private var rePairTaps = 0
     private var mcpTaps = 0
     private var retryTaps = 0
@@ -104,7 +113,10 @@ class ThreadTopOverlayTest {
                     onRetry = { retryTaps++ },
                     usageLimit = usageLimit,
                     dismissedUsageLimits = dismissed,
-                    onDismissUsageLimit = { dismissed = dismissed + it.dismissalKey() },
+                    onDismissUsageLimit = {
+                        dismissTaps++
+                        dismissed = dismissed + it.dismissalKey()
+                    },
                     showRePair = showRePair,
                     onRePair = { rePairTaps++ },
                     mcpFailure = mcpFailure,
@@ -116,6 +128,68 @@ class ThreadTopOverlayTest {
                 )
             }
         }
+    }
+
+    @Test
+    fun recoveryNotice_sitsBelowOtherNotices_withTheSameGapAndRightEdge() {
+        usageLimit = warning
+        mcpFailure = "github"
+        sessionError = "session.blocked"
+        turnOutcome = TurnRecoveryNotice.ContextTooLong
+        setScreen()
+
+        val outcome = composeRule.onNodeWithContentDescription("Context too long - Compact")
+        outcome.assertIsDisplayed()
+        val previous = composeRule.onNodeWithContentDescription(context.getString(R.string.thread_session_blocked))
+        val before = previous.getUnclippedBoundsInRoot()
+        val after =
+            composeRule
+                .onNodeWithContentDescription(
+                    "Context too long - Compact",
+                    useUnmergedTree = true,
+                ).getUnclippedBoundsInRoot()
+        assertEquals(12f, (after.top - before.bottom).value, 0.5f)
+        assertEquals(before.right.value, after.right.value, 0.5f)
+        composeRule.onNodeWithText("Compact").assertDoesNotExist()
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun recoveryNotice_usesTheHeaderClearance_withoutMovingTheComposer() {
+        setScreen()
+        val composer = composeRule.onNodeWithTag("thread-composer").getUnclippedBoundsInRoot()
+        val header = composeRule.onNodeWithTag("thread-top-bar").getUnclippedBoundsInRoot()
+        turnOutcome = TurnRecoveryNotice.ContextTooLong
+        val bounds =
+            composeRule
+                .onNodeWithContentDescription(
+                    "Context too long - Compact",
+                    useUnmergedTree = true,
+                ).getUnclippedBoundsInRoot()
+        assertEquals(28f, (bounds.top - header.bottom).value, 0.5f)
+        assertEquals(20f, (header.right - bounds.right).value, 0.5f)
+        assertEquals(24f, bounds.height.value, 0.5f)
+        assertEquals(composer, composeRule.onNodeWithTag("thread-composer").getUnclippedBoundsInRoot())
+        composeRule.onNodeWithContentDescription(dismissDescription).assertDoesNotExist()
+    }
+
+    @Test
+    fun recoveryNotice_doesNotPreemptActiveOrConnectionReadings() {
+        turnOutcome = TurnRecoveryNotice.ContextTooLong
+        isBusy = true
+        state = state.copy(hasMessages = true, items = listOf(runningTool("Bash")))
+        setScreen()
+        val pill = composeRule.onNodeWithContentDescription("Context too long - Compact")
+        pill.assertIsDisplayed()
+        composeRule.onNodeWithText("Running Bash…").assertIsDisplayed()
+
+        resetting = ResetStatus(ResetStatus.Phase.WrappingUp, ResetStatus.Handoff.Pending)
+        composeRule.onNodeWithContentDescription(context.getString(R.string.thread_resetting_wrapping_up)).assertIsDisplayed()
+        pill.assertIsDisplayed()
+
+        connectionState = ConnectionState.Connecting
+        composeRule.onNodeWithText("Connecting…").assertIsDisplayed()
+        pill.assertIsDisplayed()
     }
 
     // #1519: client-owned copy; the status picks the lead and is never drawn.
@@ -154,7 +228,8 @@ class ThreadTopOverlayTest {
 
         showRePair = false
         connectionState = ConnectionState.Offline
-        val retryBounds = composeRule.onNodeWithTag("offline_retry_target").getUnclippedBoundsInRoot()
+        // Figma's 12dp gap is between visible pills, independently of Retry's expanded touch box.
+        val retryBounds = composeRule.onNodeWithText(OFFLINE_RETRY_LABEL).getUnclippedBoundsInRoot()
         assertEquals(12f, (pill.getUnclippedBoundsInRoot().top - retryBounds.bottom).value, 0.5f)
         composeRule.onNodeWithTag("offline_retry_target").performClick()
         composeRule.runOnIdle { assertEquals(1, retryTaps) }
@@ -247,6 +322,7 @@ class ThreadTopOverlayTest {
     }
 
     @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
     fun theUsagePill_sitsAboveThePairingPill_whichStartsRePair() {
         usageLimit = warning
         showRePair = true
@@ -264,8 +340,47 @@ class ThreadTopOverlayTest {
             dismissTouch.bottom <= pairingTouch.top || dismissTouch.right <= pairingTouch.left,
         )
 
-        composeRule.onNodeWithText(RE_PAIR_LABEL).performClick()
-        composeRule.runOnIdle { assertEquals(1, rePairTaps) }
+        val minimumWidth = with(composeRule.density) { 48.dp.toPx() }
+        assertTrue("dismiss keeps its horizontal target: $dismissTouch", dismissTouch.width >= minimumWidth)
+        assertTrue("Re-pair keeps its horizontal target: $pairingTouch", pairingTouch.width >= minimumWidth)
+        val pairing = composeRule.onNodeWithContentDescription(RE_PAIR_LABEL)
+        val dismiss = composeRule.onNodeWithContentDescription(dismissDescription)
+        pairing.performTouchInput { click(center) }
+        composeRule.runOnIdle {
+            assertEquals(1, rePairTaps)
+            assertEquals(0, dismissTaps)
+            assertTrue(dismissed.isEmpty())
+        }
+        val pairingNode = pairing.fetchSemanticsNode()
+        pairing.performTouchInput {
+            click(Offset(center.x, pairingNode.touchBoundsInRoot.top - pairingNode.boundsInRoot.top + 1f))
+        }
+        composeRule.runOnIdle {
+            assertEquals(2, rePairTaps)
+            assertEquals(0, dismissTaps)
+            assertTrue(dismissed.isEmpty())
+        }
+        val dismissNode = dismiss.fetchSemanticsNode()
+        // The usage Surface clips input outside its background, so use its facing visible edge.
+        val dismissBottom = minOf(dismissNode.touchBoundsInRoot.bottom, with(composeRule.density) { usageBounds.bottom.toPx() })
+        dismiss.performTouchInput {
+            click(Offset(center.x, dismissBottom - dismissNode.boundsInRoot.top - 1f))
+        }
+        composeRule.runOnIdle {
+            assertEquals(2, rePairTaps)
+            assertEquals(1, dismissTaps)
+            assertEquals(setOf(warning.dismissalKey()), dismissed)
+        }
+        dismiss.assertDoesNotExist()
+        composeRule.runOnIdle { dismissed = emptySet() }
+        dismiss.performTouchInput { click(center) }
+        composeRule.runOnIdle {
+            assertEquals(2, rePairTaps)
+            assertEquals(2, dismissTaps)
+            assertEquals(setOf(warning.dismissalKey()), dismissed)
+        }
+        dismiss.assertDoesNotExist()
+        pairing.assertIsDisplayed()
     }
 
     // #1345: a failed MCP server is an Error pill with no X below the usage pill; its tap opens Channel info.
@@ -323,7 +438,7 @@ class ThreadTopOverlayTest {
         val retryTouch = retry.fetchSemanticsNode().touchBoundsInRoot
         val dismissTouch = composeRule.onNodeWithContentDescription(dismissDescription).fetchSemanticsNode().touchBoundsInRoot
         val usageBounds = composeRule.onNodeWithContentDescription(label("allowed_warning")).getUnclippedBoundsInRoot()
-        val retryPillBounds = composeRule.onNodeWithContentDescription(OFFLINE_RETRY_LABEL).getUnclippedBoundsInRoot()
+        val retryPillBounds = composeRule.onNodeWithText(OFFLINE_RETRY_LABEL).getUnclippedBoundsInRoot()
         val retryTextBounds = composeRule.onNodeWithText(OFFLINE_RETRY_LABEL, useUnmergedTree = true).getUnclippedBoundsInRoot()
         assertEquals(12f, (retryPillBounds.top - usageBounds.bottom).value, 0.5f)
         assertTrue(
@@ -355,12 +470,54 @@ class ThreadTopOverlayTest {
         setScreen()
 
         val targetBounds = composeRule.onNodeWithTag("offline_retry_target").getUnclippedBoundsInRoot()
-        val pillBounds = composeRule.onNodeWithContentDescription(OFFLINE_RETRY_LABEL).getUnclippedBoundsInRoot()
+        val pillBounds = composeRule.onNodeWithText(OFFLINE_RETRY_LABEL).getUnclippedBoundsInRoot()
         val textBounds = composeRule.onNodeWithText(OFFLINE_RETRY_LABEL, useUnmergedTree = true).getUnclippedBoundsInRoot()
         assertTrue("pill $pillBounds should be narrower than its target $targetBounds", pillBounds.width < targetBounds.width)
         assertEquals(targetBounds.right.value, pillBounds.right.value, 0.5f)
         assertEquals(targetBounds.top.value, pillBounds.top.value, 0.5f)
         assertEquals((textBounds.width + 16.dp).value, pillBounds.width.value, 0.5f)
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun enlargedOfflinePill_isEnclosedByRetry_andItsLeftEdgeReceivesPointerTaps() {
+        composeRule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, 892.dp))) {
+                DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(2f)) {
+                    PyrycodeMobileTheme(dynamicColor = false) {
+                        ThreadTopOverlay(
+                            usageLimit = null,
+                            usageLimitDismissed = false,
+                            onDismissUsageLimit = {},
+                            showRePair = false,
+                            onRePair = {},
+                            connectionState = ConnectionState.Offline,
+                            onRetryConnection = { retryTaps++ },
+                            transientError = "Couldn't open file",
+                        )
+                    }
+                }
+            }
+        }
+        val offline = composeRule.onNodeWithText(OFFLINE_RETRY_LABEL)
+        val pill = offline.getUnclippedBoundsInRoot()
+        val retry = composeRule.onNodeWithTag("offline_retry_target")
+        val target = retry.getUnclippedBoundsInRoot()
+        assertTrue("enlarged pill must exercise width beyond the old target: $pill", pill.width > 144.dp)
+        // A physical tap on the formerly exposed surface must activate Retry.
+        offline.performTouchInput { click(Offset(2.dp.toPx(), center.y)) }
+        composeRule.runOnIdle { assertEquals(1, retryTaps) }
+        assertTrue("target $target must enclose pill $pill", target.left <= pill.left && target.bottom >= pill.bottom)
+        assertTrue("Retry retains its minimum height: $target", target.height >= 48.dp - 0.5.dp)
+        assertEquals(pill.top.value, target.top.value, 0.5f)
+        assertEquals(pill.right.value, target.right.value, 0.5f)
+        val error = composeRule.onNodeWithTag("transient_error_notice")
+        assertEquals(12f, (error.getUnclippedBoundsInRoot().top - pill.bottom).value, 0.5f)
+        error.assertHasNoClickAction().performTouchInput { click(center) }
+        composeRule.runOnIdle { assertEquals(1, retryTaps) }
+        retry.performTouchInput { click(Offset(2.dp.toPx(), bottom - 2.dp.toPx())) }
+        composeRule.runOnIdle { assertEquals(2, retryTaps) }
     }
 
     // AC #4: a live usage reading no longer masks live turn status.

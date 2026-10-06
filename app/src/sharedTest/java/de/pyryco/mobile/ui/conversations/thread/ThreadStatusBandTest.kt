@@ -37,6 +37,7 @@ import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.assertDpEquals
 import de.pyryco.mobile.ui.conversations.components.STATUS_GLYPH_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -183,14 +184,6 @@ class ThreadStatusBandTest {
             composeTestRule.waitForIdle()
             glyphs.assertCountEquals(1)
             val bounds = glyphs[0].getUnclippedBoundsInRoot()
-            if (state.turnOutcome != null) {
-                // #1357: every recovery notice wraps to two lines even at 412dp, raising the band, and the glyph
-                // stays centred on it; its leading edge must not move.
-                val reference = expected ?: bounds
-                assertEquals("glyph left in ${state.name}", reference.left, bounds.left)
-                assertEquals("glyph right in ${state.name}", reference.right, bounds.right)
-                return@forEach
-            }
             assertEquals("glyph bounds in ${state.name}", expected ?: bounds, bounds)
             expected = bounds
         }
@@ -282,8 +275,8 @@ class ThreadStatusBandTest {
         composeTestRule.mainClock.advanceTimeByFrame()
         val glyph = composeTestRule.onNodeWithTag(STATUS_GLYPH_TEST_TAG, useUnmergedTree = true)
         val first = glyph.getUnclippedBoundsInRoot()
-        assertEquals(14.dp, first.right - first.left)
-        assertEquals(16.dp, first.bottom - first.top)
+        assertDpEquals(14.dp, first.right - first.left)
+        assertDpEquals(16.dp, first.bottom - first.top)
 
         composeTestRule.mainClock.advanceTimeBy(400)
         assertEquals(first, glyph.getUnclippedBoundsInRoot())

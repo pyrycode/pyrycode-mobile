@@ -34,7 +34,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 
-/** Real fixed-dark pixels for the thread's five status readings at the Figma viewport. */
+/** Real fixed-dark pixels for thread status readings and recovery overlay at the Figma viewport. */
 @RunWith(AndroidJUnit4::class)
 class ThreadActivityIndicatorCaptureTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -56,7 +56,7 @@ class ThreadActivityIndicatorCaptureTest {
                 Triple(1, "Claude is retrying, attempt 3 of 10", "retry"),
                 Triple(2, "Claude is compacting the conversation", "compacting"),
                 Triple(3, "Restarting", "reset"),
-                Triple(4, "Context too long. Compact or reset the session.", "outcome"),
+                Triple(4, "Context too long - Compact", "outcome"),
             )
         readings.forEach { (value, description, name) ->
             reading = value
@@ -71,7 +71,7 @@ class ThreadActivityIndicatorCaptureTest {
 
     @Viewport("320x692")
     @Test
-    fun compactLargeTextKeepsOutcomeInTheStatusArea() {
+    fun compactLargeTextKeepsOutcomeVisibleAboveTheThread() {
         showThread(fontScale = 1.5f)
         listOf(
             Triple(6, "Agent is thinking", "thinking"),

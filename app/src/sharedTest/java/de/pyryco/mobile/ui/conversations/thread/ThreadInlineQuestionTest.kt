@@ -58,6 +58,7 @@ import de.pyryco.mobile.data.model.QuestionOption
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.e2e.questionAnswerTarget
+import de.pyryco.mobile.ui.assertRectEqualsWithinPixel
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -162,6 +163,37 @@ class ThreadInlineQuestionTest {
             .onNodeWithTag("question-send-failed")
             .assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
             .assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Error))
+    }
+
+    // #1600: Figma 668:3245 draws the failure line in bodyMedium's full 20dp box; the theme's default
+    // trims it to its glyphs, which pulls the gap above it and the buttons below it off the frame.
+    @Test
+    fun failure_line_keeps_its_full_line_box() {
+        rule.setContent {
+            PyrycodeMobileTheme {
+                ThreadScreen(
+                    ThreadUiState("chat", "Client planning", isPromoted = false),
+                    {},
+                    {},
+                    ConnectionState.Connected,
+                    {},
+                    questionState = question.copy(phase = QuestionSendPhase.Failed),
+                )
+            }
+        }
+
+        val results = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        rule
+            .onNodeWithTag("question-send-failed")
+            .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+
+        assertEquals(
+            androidx.compose.ui.text.style.LineHeightStyle.Trim.None,
+            results
+                .single()
+                .layoutInput.style.lineHeightStyle
+                ?.trim,
+        )
     }
 
     @Test
@@ -290,9 +322,9 @@ class ThreadInlineQuestionTest {
         rule.onNode(hasScrollToIndexAction()).performScrollToIndex(15)
         val anchor = rule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot
         rule.runOnIdle { pending = question }
-        assertEquals(anchor, rule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot)
+        assertRectEqualsWithinPixel(anchor, rule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot)
         rule.runOnIdle { pending = question.copy(selections = listOf(QuestionSelection(otherTicked = true, otherText = " draft "))) }
-        assertEquals(anchor, rule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot)
+        assertRectEqualsWithinPixel(anchor, rule.onNodeWithText("History 15").fetchSemanticsNode().boundsInRoot)
         rule.onNodeWithTag("question-batch-title").assertDoesNotExist()
         rule.onNode(hasScrollToIndexAction()).performScrollToIndex(32)
         // #1352: reaching the oldest row is not a pull, so it asks nothing.
@@ -316,7 +348,9 @@ class ThreadInlineQuestionTest {
                                 Question(
                                     "Choose a language",
                                     "Language",
-                                    listOf(QuestionOption("Kotlin", "JVM\n".repeat(8)), QuestionOption("Rust", "Systems\n".repeat(8))),
+                                    // Tall enough that Continue is off screen once Kotlin is scrolled into view, with the
+                                    // device's font as well as Robolectric's taller stand-in.
+                                    listOf(QuestionOption("Kotlin", "JVM\n".repeat(16)), QuestionOption("Rust", "Systems\n".repeat(16))),
                                     false,
                                 ),
                             ),
@@ -625,19 +659,24 @@ class ThreadInlineQuestionTest {
     }
 
     // #1484, Figma 636:4325: stacked at 150 %, the pair sits at the card's start with Cancel centred over Continue.
+    // The pair stacks only when 150 % text no longer fits side by side, as on a 320 dp phone. That is
+    // Robolectric's own window width; the emulator's 411 dp one fits the pair, so the width is forced.
     @Test
+    @OptIn(ExperimentalTestApi::class)
     fun stacked_actions_sit_at_the_start_with_cancel_centred_over_continue() {
         rule.setContent {
-            DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.5f)) {
-                PyrycodeMobileTheme {
-                    ThreadScreen(
-                        ThreadUiState("chat", "Client planning", isPromoted = false),
-                        {},
-                        {},
-                        ConnectionState.Connected,
-                        {},
-                        questionState = question,
-                    )
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 640.dp))) {
+                DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.5f)) {
+                    PyrycodeMobileTheme {
+                        ThreadScreen(
+                            ThreadUiState("chat", "Client planning", isPromoted = false),
+                            {},
+                            {},
+                            ConnectionState.Connected,
+                            {},
+                            questionState = question,
+                        )
+                    }
                 }
             }
         }

@@ -121,6 +121,23 @@ density, so the root does not measure at the exact dp passed in —
 forced width fails on that rounding; compare within a pixel instead
 ([#1334](https://github.com/pyrycode/pyrycode-mobile/issues/1334)).
 
+The same rounding happens on the emulator, which is a Pixel 2 at density 2.625:
+28dp is 73.5px, lays out as 74px and reads back as 28.19dp. A shared test that
+checks a Figma dp value uses `assertDpEquals` or `pixelDp()` from
+`ui/PixelSnapping.kt`, which allow one device pixel there and nothing at
+Robolectric's density 1. Rows stacked down a screen add their roundings up, so
+check a row against its neighbour rather than against the top of the screen.
+The device also ignores `@Config` qualifiers and Robolectric's 320dp width,
+draws text with its own font, and runs at that density: a test that needs a
+412dp frame forces it with `ForcedSize`, scales pixel samples by the composition's
+density, and measures a layout box rather than the text inside it.
+
+Text width is never exact, so a test may allow slack on it and on anything a
+text's width positions. Line height is different: it is fixed by the design,
+not by the text inside it, so a test checks the height of a line and the
+vertical rhythm it sets exactly, allowing only the one device pixel
+`assertDpEquals` already grants for rounding.
+
 A shared test class needs `@RunWith(AndroidJUnit4::class)`. The device runner
 does not require it, but without it the JVM runs the class outside Robolectric and
 every test fails on a null `Build.FINGERPRINT`.
@@ -189,14 +206,27 @@ the kept per-test logcat under tag `FocusRecord`. A passing run has no
 records — the listener only runs on failure — so a passing gate prints
 nothing extra. Fields: `focus` is the window holding input focus,
 `focusedApp` the focused activity record, `anr` any
-`Application Not Responding: …` window titles or `none`, and `error` means
-recording itself failed (the other fields are absent). The record is read
-just after the failing test's rules tear down, not at the exact instant of
-failure: an `ActivityScenarioRule` or Compose rule has usually already closed
-the test activity by the time `testFailure` fires, so `focusedApp` commonly
-names whatever the teardown left focused (such as the launcher), not the test
-activity. A system dialog holding focus over the test is still captured. A
+`Application Not Responding: …` window titles or `none`, `activities` each
+activity the failing test opened with the last lifecycle stage it reached
+(`none` if it opened none), and `error` means recording itself failed (the
+other fields are absent). The record is read just after the failing test's
+rules tear down, not at the exact instant of failure: an
+`ActivityScenarioRule` or Compose rule has usually already closed the test
+activity by the time `testFailure` fires, so `focus` and `focusedApp`
+commonly name whatever the teardown left focused, on the managed emulator
+`com.android.fakesystemapp/.launcher.EmptyHomeActivity`, not the test
+activity. Read `activities` first: `DESTROYED` means that launcher focus is a
+teardown leftover and the test failed on its own assertion, so read the
+assertion, not the focus. `RESUMED` beside a foreign `focus` is a real loss
+of focus. #1809 is the cost of skipping this: 38 failures on the main sweep,
+every one showing the launcher, were triaged as a shared focus fault when
+they were density and Robolectric-size assertions (fixed by #1808). A
+system dialog holding focus over the test is still captured. A
 crash dialog (`Application Error: …`) shows under `focus`, not `anr` — the
 first real record (#1131) found one blocking `com.android.bluetooth`, not an
-ANR. This ticket records evidence only; no mitigation (dismissal, retry) is
-implemented against it.
+ANR. The listener remains diagnostic. Separately, `E2eInstrumentationRunner.quietSystem`
+now disables emulator Bluetooth, hides system crash dialogs for the run and closes existing
+system dialogs (shipped at `186c399b`). It restores the dialog setting on finish and leaves
+Bluetooth off. The [earlier-Other evidence](development-verification-emulator-evidence.md#emulator-and-real-evidence)
+shows the unchanged IME method passing even during a native Bluetooth crash; this mitigation
+does not establish that the emulator service itself is repaired.

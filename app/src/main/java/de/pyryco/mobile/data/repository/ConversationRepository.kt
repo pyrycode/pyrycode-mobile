@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.model.BackgroundTaskUpdate
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
@@ -888,6 +889,24 @@ enum class ConversationFilter { All, Channels, Discussions, Archived }
  * rows above the latest delimiter.
  */
 sealed interface ThreadItem {
+    /**
+     * Invisible, in-memory lifecycle position (#1782), ordered alongside ordinary thread entries.
+     * Identity within a conversation is `(taskId, terminal != null)`, stable across pagination/replay.
+     * A null [terminal] denotes launch; a non-null one denotes finish, even before the launch is known.
+     * Launch fields are backfilled by task id without moving this marker. [toolCallId] joins the launching
+     * tool row whenever it loads; it never rewrites that row's parent link. Text remains inert and unlogged.
+     * Render and cache consumers must exclude this evidence.
+     */
+    data class BackgroundTaskLifecycle(
+        val taskId: String,
+        val occurredAt: Instant,
+        val toolCallId: String? = null,
+        val description: String? = null,
+        val taskType: String? = null,
+        val truncatedFields: List<String>? = null,
+        val terminal: BackgroundTaskUpdate? = null,
+    ) : ThreadItem
+
     data class MessageItem(
         val message: Message,
     ) : ThreadItem
@@ -1143,9 +1162,9 @@ data class HistoryPage(
 )
 
 /**
- * How far back one thread's history has been received (#1354), saved beside its cached rows: the last
- * received [HistoryPage]'s [cursor] and [atStart], desktop's received `coverage`. Only a received page sets
- * it, even an empty one; the row count never implies it, and a thread only ever fed live has none.
+ * The independent backwards walk's position, saved beside cached rows, plus received durable entry
+ * coverage and unresolved gaps. Default-null coverage means legacy rows cannot certify completeness.
+ * Only received pages establish coverage; live rows never do.
  *
  * [cursor] is the daemon's opaque value, echoed verbatim and never logged, parsed, or used as a path or
  * key — so [toString] leaves it out.
@@ -1153,6 +1172,7 @@ data class HistoryPage(
 data class HistoryPosition(
     val cursor: String,
     val atStart: Boolean,
+    val coverage: HistoryCoverage? = null,
 ) {
     override fun toString(): String = "HistoryPosition(atStart=$atStart)"
 }

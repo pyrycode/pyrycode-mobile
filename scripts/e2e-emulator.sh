@@ -629,6 +629,8 @@ keep_bypass_transcripts() {
 cleanup() {
   local code=$?
   log "tearing down…"
+  [ -n "${BACKGROUND_AGENT_FIXTURE_PID:-}" ] && kill "${BACKGROUND_AGENT_FIXTURE_PID}" 2>/dev/null || true
+  [ -n "${STOP_TASK_FIXTURE_PID:-}" ] && kill "${STOP_TASK_FIXTURE_PID}" 2>/dev/null || true
   [ -n "${WATCHER_PID}" ] && kill "${WATCHER_PID}" 2>/dev/null || true
   [ -n "${DAEMON_PID}" ] && kill "${DAEMON_PID}" 2>/dev/null || true
   [ -n "${DAEMON_B_PID:-}" ] && kill "${DAEMON_B_PID}" 2>/dev/null || true
@@ -728,6 +730,14 @@ if [ -n "${DETERMINISTIC}" ]; then
   # is offline when drop B must fire). Only the replay-order arm overrides it.
   DROP_B_FENCE="enqueue"
   case "${SCENARIO}" in
+    selection-copy)
+      TEST_METHOD="interactiveTurn_seededChannel_systemCopyCopiesSelectedWord"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/selection-copy.jsonl}"
+      ;;
+    direct-share)
+      TEST_METHOD="interactiveTurn_directShareShortcut_stagesBeforeExplicitSend"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/ping.jsonl}"
+      ;;
     ping)
       TEST_METHOD="interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/ping.jsonl}"
@@ -735,6 +745,12 @@ if [ -n "${DETERMINISTIC}" ]; then
     stream)
       TEST_METHOD="interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/stream.jsonl}"
+      FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/stream-end.jsonl}"  # completion follows the displayed-prefix checkpoint
+      ;;
+    reopen-stream)
+      TEST_METHOD="interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/reopen-stream-open.jsonl}"
+      FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/reopen-stream-done.jsonl}"
       ;;
     spinner)
       TEST_METHOD="interactiveTurn_seededChannel_showsThinkingSpinnerDuringTurn"
@@ -751,6 +767,15 @@ if [ -n "${DETERMINISTIC}" ]; then
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/tool-open.jsonl}"
       FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/send-now-delivered.jsonl}"
       DROP_B_FENCE="send-now"
+      ;;
+    stop-background-task)
+      TEST_METHOD="interactiveTurn_seededChannel_stopBackgroundTaskRemovesRunningRow"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/ping.jsonl}"
+      ;;
+    background-agent)
+      TEST_METHOD="interactiveTurn_seededChannel_backgroundAgentMovesAndSettles"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/background-agent-open.jsonl}"
+      FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/background-agent-finish.jsonl}"
       ;;
     tool-failed)
       TEST_METHOD="interactiveTurn_seededChannel_failedToolStepRendersFailed"
@@ -799,7 +824,7 @@ if [ -n "${DETERMINISTIC}" ]; then
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/context-overflow.jsonl}"
       ;;
     *)
-      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order | tool-then-text | refusal | mcp-failed | context-overflow)"
+      die "unknown SCENARIO='${SCENARIO}' (expected: reopen-stream | selection-copy | background-agent | ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order | tool-then-text | refusal | mcp-failed | context-overflow)"
       ;;
   esac
   log "deterministic scenario: ${SCENARIO} → ${TEST_METHOD}"
@@ -979,9 +1004,19 @@ if [ -n "${DETERMINISTIC}" ]; then
   # the fake answers mcp_status only under this knob.
   REPLAY_ENV=(PYRY_FAKE_CLAUDE_STREAM_JSON=1 PYRY_FAKE_CLAUDE_MCP_STATUS=1
     "PYRY_FAKE_CLAUDE_STREAM_REPLAY_FIRST=${FIXTURE_FILE}")
+  if [ "${SCENARIO}" = "stop-background-task" ]; then
+    # Existing canned roster rider owns retained task state and the stop_task control response.
+    REPLAY_ENV=(PYRY_FAKE_CLAUDE_STREAM_JSON=1 PYRY_FAKE_CLAUDE_MCP_STATUS=1 PYRY_FAKE_CLAUDE_STREAM_ROSTER=1)
+  fi
   if [ -n "${FIXTURE_FILE_2}" ]; then
     REPLAY_ENV+=("PYRY_FAKE_CLAUDE_STREAM_REPLAY_SECOND=${FIXTURE_FILE_2}"
       "PYRY_FAKE_CLAUDE_STREAM_REPLAY_RELEASE=${REPLAY_RELEASE}")
+  fi
+  if [ "${SCENARIO}" = "reopen-stream" ]; then
+    # #1762: let the suffix compose while still streaming; result delivery needs enqueue #3.
+    E2E_HELD_RESULT_RELEASE="${WORK_DIR}/release-terminal-result"
+    REPLAY_ENV+=("E2E_HELD_RESULT_CHILD=${FAKE_BIN}" "E2E_HELD_RESULT_RELEASE=${E2E_HELD_RESULT_RELEASE}")
+    FAKE_BIN="${REPO_ROOT}/scripts/e2e-held-result.py"
   fi
   DAEMON_COMMAND+=("HOME=${ISO_HOME}" PYRY_ALLOW_INSECURE_RELAY=1 PYRY_MOBILE_V2=1
     "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${REPLAY_ENV[@]}" "${PYRY_BIN}"
@@ -1313,6 +1348,28 @@ fi
 # #1642: only the isolated harness daemon can release the live Bash hold. The tool
 # cannot finish until send-now delivery is logged; no wall-clock sleep releases it.
 if [ -z "${DETERMINISTIC}" ]; then
+  # #1830: a keyed Bash hold, released by scenario teardown even on assertion failure.
+  STOP_TASK_PORT_FILE="${WORK_DIR}/stop-task-port"
+  python3 "${REPO_ROOT}/scripts/stop-task-fixture.py" "${STOP_TASK_PORT_FILE}" &
+  STOP_TASK_FIXTURE_PID=$!
+  stop_task_deadline=$((SECONDS + 10))
+  until [ -s "${STOP_TASK_PORT_FILE}" ]; do
+    kill -0 "${STOP_TASK_FIXTURE_PID}" 2>/dev/null || die "Stop task fixture exited"
+    [ "${SECONDS}" -lt "${stop_task_deadline}" ] || die "Stop task fixture did not start"
+    sleep 0.1
+  done
+  STOP_TASK_URL="http://127.0.0.1:$(cat "${STOP_TASK_PORT_FILE}")"
+  # #1783: hold a real background Agent until the phone's release command.
+  BACKGROUND_AGENT_PORT_FILE="${WORK_DIR}/background-agent-port"
+  python3 "${REPO_ROOT}/scripts/background-agent-fixture.py" "${BACKGROUND_AGENT_PORT_FILE}" &
+  BACKGROUND_AGENT_FIXTURE_PID=$!
+  background_agent_deadline=$((SECONDS + 10))
+  until [ -s "${BACKGROUND_AGENT_PORT_FILE}" ]; do
+    kill -0 "${BACKGROUND_AGENT_FIXTURE_PID}" 2>/dev/null || die "background Agent fixture exited"
+    [ "${SECONDS}" -lt "${background_agent_deadline}" ] || die "background Agent fixture did not start"
+    sleep 0.1
+  done
+  BACKGROUND_AGENT_URL="http://127.0.0.1:$(cat "${BACKGROUND_AGENT_PORT_FILE}")"
   SEND_NOW_RELEASE="${WORK_DIR}/send-now-release"
   (
     while ! grep -qF 'relay: v2 send_queued_now delivered' "${DAEMON_LOG}"; do sleep 0.1; done
@@ -1339,6 +1396,11 @@ if [ -n "${DETERMINISTIC}" ] && [ -n "${FIXTURE_FILE_2}" ]; then
     fi
     touch "${REPLAY_RELEASE}"
     log "released second stream fragment"
+    if [ "${SCENARIO}" = "reopen-stream" ]; then
+      while [ "$(grep -cF 'send_message.enqueued' "${DAEMON_LOG}" 2>/dev/null || true)" -lt 3 ]; do sleep 0.2; done
+      touch "${E2E_HELD_RESULT_RELEASE}"
+      log "released terminal result after third enqueue"
+    fi
   ) &
   WATCHER_PID=$!
 fi
@@ -1387,6 +1449,7 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_reconnect_slashCommandsAndCompactStillWork"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundTask_countsInActionsMenuAndPanel"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_stopBackgroundTask_completesThenRepliesAgain"
   # #955: the push scenarios join (one turn each): a turn that ends while the app is in the background, and
   # a prompt that surfaces while it is, each alerted through a real FCM push from the production relay.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread"
@@ -1397,6 +1460,8 @@ elif [ -n "${LIVE}" ]; then
   # This list filters; it does not order. JUnit runs methods by name hash, and the two names place the
   # phone-to-peer method last and the offered-file method before the background-task one (see their KDoc).
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_sharedContentFromAndroid_arrivesAtPeerWithItsBytes"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_directShareShortcut_arrivesAtPeerWithItsBytes"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart"
   # #1020: history replay now names a user message's files, so the peer's file after a history reload joins,
   # one turn (the peer's message). The list holds 32 methods and 34 turns.
@@ -1426,9 +1491,12 @@ elif [ -n "${LIVE}" ]; then
   # #1090: a conversation's attention dot follows a real turn on the answer daemon: Unread after the peer's
   # ping, Idle once opened, Waiting while the peer holds a prompt. It adds one method and two turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_attentionDot_followsARealTurn"
+  # #1735: foreground attention pills on A track B's held permission and completed turn (one turn).
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_otherConversationAttentionPills_waitingAndFinished"
   # #1107: #1076's background-task progress method joins now that the daemon drops a subagent's prompt echo
   # (pyrycode/pyrycode#2658). One turn, so the list holds 44 methods and 44 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundAgentProgress_showsOnRunningCard"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundAgent_followsBottomUntilFinished"
   # #1223: the phone's acknowledged choice in one chat applies before the first real turn in a new chat.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage"
   # #1249 restores the discussion round trip and host-isolated Archive proof through the list toolbar.
@@ -1460,6 +1528,11 @@ elif [ -n "${LIVE}" ]; then
   # ask (#1572). Two turns (A's ping and A's permission-held command).
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_sendQueuedNow_reachesRunningTurn"
+  # #1674: finished reply partial selection through Android's system Copy menu. One Claude turn.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_finishedReply_systemCopyCopiesSelectedWord"
+  # #1766: a real reply with emphasis, inline code, a fenced block and a table streams through the parser-led
+  # body and settles formatted with no lost text. One Claude turn.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_markdownReply_rendersFormattedBody"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi
@@ -1469,6 +1542,12 @@ fi
 log "running ${DEVICE}DebugAndroidTest (headless emulator: boot → install → ${TEST_TARGET} → teardown)…"
 log "  phone relayUrl = ${PHONE_RELAY_URL}"
 GRADLE_TEST_ARGS=(-PuseRelayRepository=true)
+if [ -n "${STOP_TASK_URL:-}" ]; then
+  GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.stopTaskFixtureUrl="${STOP_TASK_URL}")
+fi
+if [ -n "${BACKGROUND_AGENT_URL:-}" ]; then
+  GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.backgroundAgentFixtureUrl="${BACKGROUND_AGENT_URL}")
+fi
 if [ -n "${SEND_NOW_RELEASE:-}" ]; then
   GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.sendNowReleasePath="${SEND_NOW_RELEASE}")
 fi

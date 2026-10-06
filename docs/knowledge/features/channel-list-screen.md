@@ -52,8 +52,12 @@ The body branches on `hostState.hosts` — the only model the screen is fed:
   Both create in their host's daemon-default folder. See
   [Conversation tree (#731)](#conversation-tree-731) and [Add controls (#738)](channel-list-screen-tree-and-controls.md#add-controls-738).
 
-`Routes.DISCUSSION_LIST` / `DiscussionListScreen` stay in the graph, unreachable — removing them was out of
-\#731's scope and remains out of \#738's. The generic top app bar #732 was going to retire is already gone —
+\#1672 removed the unreachable `discussions` destination, `Routes.DISCUSSION_LIST`,
+`DiscussionListScreen` and its ViewModel after #731 removed their only entry point.
+Chats remain under each host in the tree; [Save as channel](save-as-channel-dialog.md)
+remains in the thread header menu. This removal changes no reachable flow.
+
+The generic top app bar #732 was going to retire is already gone —
 \#737 replaced it with the list's own bar, split off as the first of #732's two slices.
 
 ## Create chat failure notice (#1748)
@@ -91,6 +95,31 @@ all header controls; its sequential effect collector preserves queued failures a
 successes. See [Archive behavior and coverage](archived-discussions-screen.md#what-it-does)
 and the [retained restore-failure verdict](../../../app/src/androidTest/assets/design-1220/list/index.md#restore-failure--error-pill-reuse-6854337).
 
+## Share destination picker (#1728)
+
+A pending Android share turns this screen into a destination picker. `ChannelListScreen` takes two
+defaulted parameters for it: `shareHeader`, which replaces `ChannelListTopBar`, and
+`conversationSelectionEnabled`. `PyryNavHost` passes `SharePickerHeader`
+(`ui/conversations/share/SharePickerHeader.kt`), built from Figma
+[771:6753](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=771-6753). It has a 48dp back
+target and the `titleLarge` title "Share to…". Below them sits a preview row with a 48dp outlined, rounded
+thumbnail, a `titleMedium` summary and the first filename in `bodySmall`. The thumbnail shows the first
+shared image from its private copy, a spinner while capture runs, or a file icon. The summary reads
+"N images" for an all-image batch, "N files" for any other file batch, or the start of the text, cut to
+one line, for a text-only share. The header's 28dp bottom padding reproduces the frame's spacing to the
+first host row.
+
+The body is the same `ConversationTree` in a selection-only mode. Folds, offline host rows and their
+reconnect affordance stay. The host edit control, the section plus controls, the options menu, the
+create-chat failure notice and the editor and add-workspace bindings are hidden. Only conversation rows
+choose a destination, and each row carries its own host target. While capture runs,
+`TreeConversationRow` is disabled for touch, accessibility and pressed feedback, so a tap cannot select
+before the batch is ready. With no hosts, the existing empty copy shows and the back arrow still cancels.
+`SharePickerTest` covers the header, summaries, the folded offline tree, the readiness gate and the
+transfer into the chosen thread. Intake and ownership are described in
+[Composer pending attachments](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments)
+and the intent flow in [Navigation § Incoming shares](navigation.md#incoming-shares-1728).
+
 ## Shape
 
 ```kotlin
@@ -112,25 +141,6 @@ sealed interface ChannelListEvent {
     data class HostEditNameSubmitted(val name: String) : ChannelListEvent
     /** The modal's Cancel, Close and Back, which the shell routes through one dismissal callback. */
     data object HostEditDismissed : ChannelListEvent
-    /** A Chats row's pencil: open the Edit chat modal on **that** row's own host and conversation (#827).
-     *  Ids only — the view model reads the name from that host's own snapshot. */
-    data class TreeChatEditTapped(val target: HostConversationTarget) : ChannelListEvent
-    /** The open Edit chat modal's OK, already trimmed. No ids, for the reason
-     *  [HostEditNameSubmitted] carries none: the target is the open editor's. */
-    data class ChatEditNameSubmitted(val name: String) : ChannelListEvent
-    /** The Edit chat modal's Cancel, Close and Back. */
-    data object ChatEditDismissed : ChannelListEvent
-    /** A Channels row's pen: open Edit channel on **that** row's own host and conversation (#667). The
-     *  name is read from the host's own snapshot, never from the row's text. */
-    data class TreeChannelEditTapped(val target: HostConversationTarget) : ChannelListEvent
-    /** The Edit channel modal's OK: the name already trimmed by the component, the prompt verbatim — or
-     *  `null` when the modal never showed a stored prompt — and the Mute notifications checkbox as it
-     *  stands (#1021). No ids: the target is the open modal's. */
-    data class ChannelEditSubmitted(val name: String, val systemPrompt: String?, val muted: Boolean) : ChannelListEvent
-    /** The Edit channel modal's Archive channel; the target is the open modal's. */
-    data object ChannelArchiveRequested : ChannelListEvent
-    /** The Edit channel modal's Cancel, Close and Back. */
-    data object ChannelEditDismissed : ChannelListEvent
     /** An Add workspace row selected (#904): the raw path, never the displayed text. */
     data class AddWorkspaceSelected(val path: String) : ChannelListEvent
     /** The new-folder dialog's trimmed name; the folder is created on the open modal's host. */
@@ -177,11 +187,11 @@ controls now use ordinary `clickable` in `ConversationTreeRows.kt`.
 `RowTapped` and `RecentDiscussionsTapped` are gone — the two composables that emitted them
 (`ConversationRow` at the top level, `SeeAllDiscussionsRow`) no longer exist in this file, and an event
 nothing can emit is dead code. `CreateDiscussionTapped` and `LongPressFab` are gone too (#738).
-`TreeHostChatAddTapped` now opens the host-qualified Create chat modal; `PairHostTapped` opens pairing.
+`TreeHostChatAddTapped` now creates a chat immediately on its named host; `PairHostTapped` opens pairing.
 `ChannelListEvent` still lives in `ChannelListScreen.kt`, with the destination wiring calling explicit
 ViewModel methods for host and modal events
 (`TreeHostChatAddTapped`, `TreeHostEditTapped`, `HostEditNameSubmitted`,
-`HostEditDismissed` (#744), `TreeChatEditTapped`, `ChatEditNameSubmitted`, `ChatEditDismissed` (#827),
+`HostEditDismissed` (#744),
 `AddWorkspaceSelected`, `AddWorkspaceFolderCreateRequested`, `AddWorkspaceSubmitted`,
 `AddWorkspaceDismissed` (#904, replacing `WorkspacePicked` / `WorkspacePickerDismissed`),
 `TreeWorkspaceEditTapped`, `WorkspaceEditNameSubmitted`, `WorkspaceEditDismissed`,
@@ -328,23 +338,12 @@ distinction from the tree's own blank at all — see the next section.
   rows and name field for the prompt inside the same shell, Cancel / the close glyph / system Back each
   decline rather than dismiss, and OK confirms exactly once.
 
-  `ChannelListScreenTest` gained (#827): every Chats row carries a pencil named "Edit chat <name>", Channels
-  rows carry none, and tapping the pencil emits exactly `TreeChatEditTapped` with the row's own target and no
-  `TreeRowTapped`. With an open `chatEditor`, the field pre-fills, OK emits `ChatEditNameSubmitted` with the
-  trimmed name, Cancel emits `ChatEditDismissed`, and `failed` shows the generic string. A mutable host state
-  in the harness flips a target host to disconnected — OK disables without closing the modal or losing the
-  typed name — and back to connected, re-enabling it. **A `LazyColumn` row below the fold is not composed**,
-  so a pencil assertion on a lower row needs `performScrollToNode(hasScrollAction())` first — the same call
-  the tree's own reach-the-last-row test above already uses; `onAllNodes(...).assertCountEquals(1)` against
-  an uncomposed row finds nothing and reads as a missing pencil rather than as an unscrolled list.
-
-  `ChannelListScreenTest` gained (#1021): `editChannelModal_muteRowOpensAtTheHostsFlag_andOkReportsTheToggledValue`
-  asserts the Mute notifications row is the checkbox role at the 48dp touch floor, opens `isOn` for a
-  muted `savedMuted`, and that OK reports the toggled value on `ChannelEditSubmitted.muted` — including
-  after a `failed` state change, which keeps the operator's toggle where they left it rather than
-  reverting to the opening value; `editChannelModal_muteRowOpensUncheckedForAnUnmutedChannel` covers the
-  unmuted open. Every existing `ChannelEditSubmitted(...)` expectation in this file gained `muted = false`,
-  and the prompt-redaction assertion still passes with the widened event.
+  `noConversationRowDrawsAPen_andRowsStillOpen` checks the unmerged semantics for the
+  retired “Edit channel ” and “Edit chat ” label prefixes without depending on removed resources.
+  It retains row counts and host-qualified opening across selection changes. Scroll lower rows into
+  composition before checking them: an absent off-screen node cannot prove a control was removed.
+  List-only conversation modal tests retired in #1582; thread Edit channel and Rename hosting,
+  standalone modal tests and isolated design captures remain.
 
 ## Related
 
@@ -382,8 +381,7 @@ distinction from the tree's own blank at all — see the next section.
   `selectAddWorkspaceFolder`, `createAddWorkspaceFolder`, `submitAddWorkspace`, `dismissAddWorkspace`
   (replacing `openHostWorkspacePicker`, `pickHostWorkspace`, `dismissHostWorkspacePicker`), since #744
   `openHostEditor`, `submitHostName`, `dismissHostEditor`, and since #745 `requestHostUnpair`,
-  `confirmHostUnpair`, `declineHostUnpair`, and since #827 `openChatEditor`, `submitChatName`,
-  `dismissChatEditor`, `isHostConnected`, and since #905 `openWorkspaceEditor`, `submitWorkspaceName`,
+  `confirmHostUnpair`, `declineHostUnpair`, `isHostConnected`, and since #905 `openWorkspaceEditor`, `submitWorkspaceName`,
   `requestWorkspaceArchive`, `confirmWorkspaceArchive`, `declineWorkspaceArchive`,
   `dismissWorkspaceEditor`; the compatibility `state` producer, `onEvent`
   reducer and `navigationEvents` this screen once also consumed retired with the button in #738), [Tree
