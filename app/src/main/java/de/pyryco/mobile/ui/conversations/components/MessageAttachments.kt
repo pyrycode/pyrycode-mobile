@@ -50,7 +50,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -87,6 +87,10 @@ private val LoadingIndicatorStroke = 2.dp
 // The same bubble-relative tint keeps file text, loading and errors readable on both message roles.
 private const val ATTACHMENT_CONTENT_ALPHA = 0.80f
 private const val IMAGE_PLACEHOLDER_ALPHA = 0.12f
+
+// Figma 696:4913 draws the name and its state line in their full line boxes; the theme's bodySmall would
+// otherwise trim them to their glyphs, both shortening the row and tightening the name-to-state gap (#1624).
+private val AttachmentLineBox = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
 
 // A header may ask for any aspect ratio. Covering the slot with the short side is what the crop needs;
 // capping the long side is what keeps a 10^6 × 160 image from decoding at full width.
@@ -410,12 +414,14 @@ private fun AttachmentFileRow(
         horizontalArrangement = Arrangement.spacedBy(FileFieldSpacing),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        FileGlyph(name = name, tint = tint)
+        // Figma draws the glyph and the name at full strength; only the state line beneath the name is
+        // dimmed (#1624).
+        FileGlyph(name = name, tint = MaterialTheme.colorScheme.primary)
         Column(modifier = Modifier.weight(1f, fill = false)) {
             Text(
                 text = name ?: stringResource(R.string.thread_attachment_unnamed),
-                style = MaterialTheme.typography.bodySmall,
-                color = tint,
+                style = MaterialTheme.typography.bodySmall.copy(lineHeightStyle = AttachmentLineBox),
+                color = LocalContentColor.current,
                 maxLines = 1,
                 overflow = TextOverflow.MiddleEllipsis,
             )
@@ -426,7 +432,13 @@ private fun AttachmentFileRow(
                     AttachmentViewState.Failed -> R.string.thread_attachment_failed
                     is AttachmentViewState.Ready, null -> null
                 }
-            status?.let { Text(text = stringResource(it), style = MaterialTheme.typography.bodySmall, color = tint) }
+            status?.let {
+                Text(
+                    text = stringResource(it),
+                    style = MaterialTheme.typography.bodySmall.copy(lineHeightStyle = AttachmentLineBox),
+                    color = tint,
+                )
+            }
             if (state is AttachmentViewState.Failed) {
                 TextButton(onClick = onRetry) { Text(stringResource(R.string.thread_attachment_retry)) }
             }
@@ -449,7 +461,8 @@ private fun FileGlyph(
         )
         Text(
             text = name?.let(::attachmentTypeLabel) ?: stringResource(R.string.thread_attachment_file),
-            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+            // Figma 696:4913 draws the type label at regular weight, not medium (#1624).
+            style = MaterialTheme.typography.bodySmall,
             color = tint,
             textAlign = TextAlign.Center,
             maxLines = 1,

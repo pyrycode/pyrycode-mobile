@@ -2,6 +2,7 @@ package de.pyryco.mobile.ui.conversations.components
 
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
@@ -19,9 +20,12 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.test.espresso.Espresso
@@ -50,6 +54,30 @@ class RenameDialogTest {
         composeTestRule.onNode(hasText("Name")).assertIsDisplayed()
         composeTestRule.onNodeWithText("Cancel").assertIsDisplayed()
         composeTestRule.onNodeWithText("Save").assertIsDisplayed()
+    }
+
+    // #1651: Figma 671:5664 leaves 23dp from the "Name" label's glyph top to the field's top, 2dp more
+    // than this dialog drew before — the theme's default line box trims the label short of the frame's
+    // full box. Pinned at the text-style level: the label keeps its full line box rather than the
+    // trimmed default, so the field below it does not creep closer than the frame.
+    @Test
+    fun label_keeps_its_full_line_box_so_the_field_does_not_creep_closer() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                RenameDialog(initialName = "old name", onSubmit = {}, onDismiss = {})
+            }
+        }
+
+        val results = mutableListOf<TextLayoutResult>()
+        composeTestRule.onNode(hasText("Name")).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+
+        assertEquals(
+            LineHeightStyle.Trim.None,
+            results
+                .single()
+                .layoutInput.style.lineHeightStyle
+                ?.trim,
+        )
     }
 
     @Test

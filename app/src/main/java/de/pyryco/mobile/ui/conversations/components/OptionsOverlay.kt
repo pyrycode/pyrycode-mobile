@@ -34,6 +34,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Constraints
@@ -58,6 +59,9 @@ enum class OptionsOverlayPlacement { Above, Below }
 
 // Figma 533:1958's `Options overlay`: a 6dp-rounded column with 2dp of vertical padding;
 // each 28dp row has 12dp horizontal and 6dp vertical padding.
+// Figma draws a row's label and detail in their full line boxes; the theme's bodySmall would otherwise
+// trim them to their glyphs, shortening every row by a few px against the frame (#1607).
+private val OptionLineBox = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
 private val OverlayShape = RoundedCornerShape(6.dp)
 private val OverlayVerticalPadding = 2.dp
 private val OptionHorizontalPadding = 12.dp
@@ -238,7 +242,7 @@ private fun OptionsColumn(
                     @Composable { labelModifier: Modifier ->
                         Text(
                             text = option.label,
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodySmall.copy(lineHeightStyle = OptionLineBox),
                             color =
                                 if (option.enabled) {
                                     MaterialTheme.colorScheme.primary
@@ -258,7 +262,7 @@ private fun OptionsColumn(
                         label(Modifier)
                         Text(
                             text = detail,
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodySmall.copy(lineHeightStyle = OptionLineBox),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = DETAIL_MAX_LINES,
                             overflow = TextOverflow.Ellipsis,

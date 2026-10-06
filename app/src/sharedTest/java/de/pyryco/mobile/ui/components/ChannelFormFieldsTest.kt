@@ -90,6 +90,24 @@ class ChannelFormFieldsTest {
         close(promptWell.width, width)
     }
 
+    // #1651: Figma 671:5558 leaves 39dp from the name well's bottom to the prompt well's top — the 12dp
+    // gap between the two fields, plus the prompt label's own full line box, plus the 8dp label-to-field
+    // gap. The theme's default would trim that label to its glyphs and pull the two wells 3dp closer.
+    @Test fun nameWellToPromptWellMatchesTheFrame() {
+        show()
+        val nameWell = rule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).fetchSemanticsNode().boundsInRoot
+        val promptWell = rule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).fetchSemanticsNode().boundsInRoot
+        val density =
+            InstrumentationRegistry
+                .getInstrumentation()
+                .targetContext.resources.displayMetrics.density
+
+        assertTrue(
+            "expected 39dp, got ${(promptWell.top - nameWell.bottom) / density}dp",
+            abs((promptWell.top - nameWell.bottom) / density - 39f) < 1.5f,
+        )
+    }
+
     @Test fun editingAndValidationKeepTheSharedContract() {
         show()
         rule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).assertIsFocused().assertIsEnabled()

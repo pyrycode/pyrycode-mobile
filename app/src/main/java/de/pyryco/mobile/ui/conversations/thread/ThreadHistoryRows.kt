@@ -31,12 +31,14 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.historyKeys
+import de.pyryco.mobile.ui.conversations.components.MessageAreaRowSpacing
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
 
 // #777: the oldest-end loading row, sized to ThinkingIndicator's shipped spinner-and-label idiom and
@@ -50,6 +52,13 @@ private val HistoryLoadingLabelGap = 8.dp
 // #778: the failure rows' own inset, one step tighter than the loading row's so the tinted surface does
 // not read as a message bubble.
 private val HistoryTailRowPadding = 12.dp
+
+// #1605: every history tail row leaves the standard 16dp `Message area` gap to the oldest message below
+// it, the same rhythm every other stream row keeps (`MessageAreaRowSpacing`); the Figma frames also draw
+// a label or action in its full line box, which the theme's defaults would otherwise trim to its glyphs
+// and shave a couple of px off each row's height.
+private val HistoryTailBottomGap = MessageAreaRowSpacing
+private val HistoryTailLineBox = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
 
 /**
  * Observe real touch movement toward older content, including that touch's continuing fling.
@@ -245,6 +254,7 @@ internal fun HistoryLoadingRow() {
         modifier =
             Modifier
                 .fillMaxWidth()
+                .padding(bottom = HistoryTailBottomGap)
                 .padding(horizontal = HistoryLoadingGutter, vertical = HistoryLoadingVerticalPadding)
                 .semantics(mergeDescendants = true) { contentDescription = description },
         verticalAlignment = Alignment.CenterVertically,
@@ -256,7 +266,7 @@ internal fun HistoryLoadingRow() {
         )
         Text(
             text = stringResource(R.string.thread_history_loading_label),
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodySmall.copy(lineHeightStyle = HistoryTailLineBox),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
@@ -285,19 +295,19 @@ internal fun HistoryRetryRow(onRetry: () -> Unit) {
                     .fillMaxWidth()
                     // Fully qualified: a bare `Role` here is the message-author Role already imported.
                     .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onRetry)
-                    .padding(horizontal = HistoryLoadingGutter, vertical = HistoryTailRowPadding)
+                    .padding(vertical = HistoryTailRowPadding)
                     .semantics(mergeDescendants = true) { contentDescription = description },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(HistoryLoadingLabelGap),
         ) {
             Text(
                 text = stringResource(R.string.thread_history_retry_label),
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.copy(lineHeightStyle = HistoryTailLineBox),
                 modifier = Modifier.weight(1f),
             )
             Text(
                 text = stringResource(R.string.thread_history_retry_action),
-                style = MaterialTheme.typography.labelLarge,
+                style = MaterialTheme.typography.labelLarge.copy(lineHeightStyle = HistoryTailLineBox),
             )
         }
     }
@@ -340,21 +350,30 @@ private fun HistoryNoticeRow(
     HistoryTailSurface {
         Text(
             text = label,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodySmall.copy(lineHeightStyle = HistoryTailLineBox),
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = HistoryLoadingGutter, vertical = HistoryTailRowPadding)
+                    .padding(vertical = HistoryTailRowPadding)
                     .semantics(mergeDescendants = true) { contentDescription = description },
         )
     }
 }
 
-/** The shared error-toned surface behind the oldest-end failure rows (#778) and the offline notice (#1352). */
+/**
+ * The shared error-toned surface behind the oldest-end failure rows (#778) and the offline notice (#1352).
+ * Figma `689:4330`–`689:4427` inset the tinted surface itself in the thread's 20dp content gutter, like
+ * every other stream row, rather than only the text inside it (#1605) — so the gutter sits here, outside
+ * the coloured surface, with the standard 16dp gap to the oldest message below it.
+ */
 @Composable
 private fun HistoryTailSurface(content: @Composable () -> Unit) {
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = HistoryLoadingGutter)
+                .padding(bottom = HistoryTailBottomGap),
         color = MaterialTheme.colorScheme.errorContainer,
         contentColor = MaterialTheme.colorScheme.onErrorContainer,
         shape = MaterialTheme.shapes.small,
