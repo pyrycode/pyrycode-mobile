@@ -896,15 +896,17 @@ fun ThreadScreen(
                                         is ThreadRow.AgentStartMarker ->
                                             AgentStartMarker(row.description, row.finished, onGoToAgent = { goToAgent = row.agentId })
                                         is ThreadRow.ToolRun ->
-                                            ToolRunRow(
-                                                toolCalls = remember(row.tools) { row.tools.mapNotNull { it.toolCall } },
-                                                expanded = row.expanded,
-                                                onToggle = {
-                                                    expandedRuns =
-                                                        if (row.expanded) expandedRuns - row.runId else expandedRuns + row.runId
-                                                },
-                                                modifier = Modifier.padding(horizontal = MessageContentGutter),
-                                            )
+                                            Box(Modifier.testTag("tool-run:${row.runId}")) {
+                                                ToolRunRow(
+                                                    toolCalls = remember(row.tools) { row.tools.mapNotNull { it.toolCall } },
+                                                    expanded = row.expanded,
+                                                    onToggle = {
+                                                        expandedRuns =
+                                                            if (row.expanded) expandedRuns - row.runId else expandedRuns + row.runId
+                                                    },
+                                                    modifier = Modifier.padding(horizontal = MessageContentGutter),
+                                                )
+                                            }
                                     }
                                 }
                             }

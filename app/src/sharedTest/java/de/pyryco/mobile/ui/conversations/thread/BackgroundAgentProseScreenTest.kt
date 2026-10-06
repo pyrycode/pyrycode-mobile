@@ -6,7 +6,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasScrollToIndexAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -141,6 +144,31 @@ class BackgroundAgentProseScreenTest {
         compose.onNodeWithText("Child").assertDoesNotExist()
         run(1).performClick()
         compose.onNodeWithText("Child").assertIsDisplayed()
+    }
+
+    @Test fun agentRunControlHasStableOwnershipWhenAnOrdinaryRunHasTheSameLabel() {
+        mount(true, true)
+        compose.runOnIdle {
+            val tool = items.filterIsInstance<ThreadItem.MessageItem>().first { it.message.id == "read" }.message
+            items = listOf(
+                ThreadItem.MessageItem(tool.copy(id = "outside", toolCall = tool.toolCall?.copy(parentToolUseId = ""))),
+                ThreadItem.MessageItem(tool.copy(id = "outside2", toolCall = tool.toolCall?.copy(parentToolUseId = ""))),
+                prose("Ordinary reply"),
+            ) + items
+        }
+        val agentRun = hasText("Using tools: 2", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:a"))
+        val ordinaryRun =
+            hasText("Using tools: 2", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:outside"))
+        compose.onNode(agentRun).performClick()
+        reveal("Child")
+        compose.onAllNodesWithText("Child").assertCountEquals(1)
+        compose.onNodeWithTag("tool-run:outside").assertExists()
+        compose.onNode(ordinaryRun).performClick()
+        reveal("Using tools: 2")
+        compose.onNode(agentRun).performClick()
+        compose.onNodeWithText("Child").assertDoesNotExist()
+        compose.onNodeWithText("Child after tool").assertDoesNotExist()
+        compose.onNodeWithTag("tool-run:outside").assertExists()
     }
 
     @Test fun interleavedProseAndToolsHideTogetherAndRemainNestedWhenSettingIsOff() {

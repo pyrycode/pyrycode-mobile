@@ -4731,7 +4731,7 @@ class InteractiveStreamE2ETest {
             // Exact paragraph matching excludes the user prompt that names the requested token.
             val reply = hasText(token)
             val child = hasTestTag("background-agent-child:$agentId")
-            val run = hasText("Using tools:", substring = true) and hasClickAction()
+            val run = hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:$agentId"))
             val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
             list.performScrollToNode(run)
             composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(0)
@@ -4763,8 +4763,12 @@ class InteractiveStreamE2ETest {
                     !peer.field(it, "status").isNullOrEmpty()
             }
         } finally {
-            runBlocking { preferences.setCollapseToolUses(previousCollapse) }
-            peer.close()
+            try {
+                stopTaskFixtureGet(fixture.replace("127.0.0.1", "10.0.2.2") + "/release-reply")
+            } finally {
+                runBlocking { preferences.setCollapseToolUses(previousCollapse) }
+                peer.close()
+            }
         }
     }
 
@@ -4890,8 +4894,11 @@ class InteractiveStreamE2ETest {
         val fixture = twoHostArg("backgroundAgentFixtureUrl")
         require(fixture.matches(Regex("http://127\\.0\\.0\\.1:[0-9]+"))) { "invalid background Agent fixture" }
         val peer = runningToolPeer()
+        val preferences = GlobalContext.get().get<AppPreferences>()
+        val previousCollapse = runBlocking { preferences.collapseToolUses.first() }
         val allowed = mutableSetOf<String>()
         try {
+            runBlocking { preferences.setCollapseToolUses(true) }
             awaitChannelList()
             awaitConnected()
             val (chat, name) = answerChat(serverId, "e2e1783-agent-")
@@ -4992,12 +4999,22 @@ class InteractiveStreamE2ETest {
             composeTestRule.onNode(marker).performClick()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
             composeTestRule.onNode(header).assertIsDisplayed()
+            // The expanded family can exceed the viewport once it contains prose. Its closed run
+            // is the same block's compact anchor; keep both it and the later message composed.
+            val run = hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:$agentId"))
+            composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(run)
+            composeTestRule.onNode(run).performClick()
             composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(inThreadList(later))
-            val settled = composeTestRule.onNode(header).fetchSemanticsNode().boundsInRoot
+            val settled = composeTestRule.onNode(run).fetchSemanticsNode().boundsInRoot
             val after = composeTestRule.onNode(inThreadList(later), useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
             assertTrue("later phone message must render below the settled Agent", settled.bottom <= after.top)
         } finally {
-            peer.close()
+            try {
+                stopTaskFixtureGet(fixture.replace("127.0.0.1", "10.0.2.2") + "/release")
+            } finally {
+                runBlocking { preferences.setCollapseToolUses(previousCollapse) }
+                peer.close()
+            }
         }
     }
 

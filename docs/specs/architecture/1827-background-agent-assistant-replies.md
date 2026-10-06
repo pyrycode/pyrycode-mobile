@@ -64,6 +64,8 @@ None.
 
 2026-10-06 (verifier finding 1): `ThreadFold.reduceDelta` learns the first nonempty parent for the current wire lane before its text sequence guard. Replayed and older deltas enrich only unknown attribution, preserving text, sequence, row identity, first-arrival timestamp and settled status; later conflicting hints cannot replace the winner. Fold and ViewModel probes cover replay before any repository update, nested ownership, unique keys, closed/open/closed visibility and repository handoff. Shared screen coverage verifies the visible synthetic moves into the closed block and reveals once at the existing 16 dp indent. This local correction adds no declarations or consumer migrations; the complete ticket remains below 1600 written lines.
 
+2026-10-06 (live gate rework): Give each tool run a semantic ownership tag using its existing run id. Live collapse assertions target the joined Agent run instead of any identically labelled ordinary run. The placement scenario verifies marker navigation to the real Agent header, then closes its containing run before comparing the block anchor with a later phone message; expanded child prose can exceed the lazy viewport. Both scenario holds release in `finally`, and the placement scenario restores its collapse preference. A shared-screen regression with two identically labelled runs proves independent control and lossless child visibility. These changes add no identity scheme, exported declaration, visual treatment or production state.
+
 ## Documentation handoff
 
 - Pending documentation stage: `docs/knowledge/features/thread-screen.md` or owning linked topic, attribution/fallback and collapse behavior.
@@ -79,7 +81,7 @@ None.
 - [Android surface] No exported component, deep link, intent, provider or WebView changes. Child prose uses the existing assistant text renderer.
 - [Cryptography] No change to Noise, key storage, nonce management or secret comparison. Equality compares public grouping hints only.
 - [Network/IO] No production network change; frame caps, TLS, timeouts and reconnect backoff remain at their existing boundaries. Live fixture uses fixed bounded loopback hold/release endpoints.
-- [Errors/logs] Pure folds introduce no logs. Parent ids, assistant bodies, tokens and decrypted frames must never be logged. Semantic tags expose only the existing public Agent id to tests/accessibility, not extra message content.
+- [Errors/logs] Pure folds introduce no logs. Parent ids, assistant bodies, tokens and decrypted frames must never be logged. Semantic tags expose only existing public Agent/run ids to tests/accessibility, not extra message content. Live teardown uses fixed validated loopback release paths, never daemon-authored paths.
 - [Concurrency] No new coroutine or shared state. Conversation-scoped fold/expansion cannot group another host/conversation's rows; reconnect reruns pure projection.
 - [Threat model] Malicious relay delay/reorder is covered by replay/history probes and existing Noise protection. Hostile daemon parent cycles/missing joins terminate/fall back. Token theft and UI screenshot/accessibility/keyboard exposure retain existing protections and are unchanged by grouping; no additional credential sink is introduced.
 
