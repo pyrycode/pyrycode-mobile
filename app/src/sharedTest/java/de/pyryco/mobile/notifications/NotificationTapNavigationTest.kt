@@ -1,6 +1,8 @@
 package de.pyryco.mobile.notifications
 
 import android.content.Context
+import android.os.Looper
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -8,6 +10,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.preferencesOf
+import androidx.navigation.NavController
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
 import androidx.test.core.app.ApplicationProvider
@@ -47,11 +50,14 @@ import de.pyryco.mobile.ui.conversations.thread.NavigationPeer
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.withContext
 import kotlinx.datetime.Instant
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -61,6 +67,7 @@ import org.koin.dsl.binds
 import org.koin.dsl.module
 import org.koin.dsl.onClose
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * A notification tap's target on the production graph and `Routes` (#685): a saved host's conversation
@@ -79,6 +86,7 @@ class NotificationTapNavigationTest {
     private lateinit var registry: RelayConnectionRegistry
     private lateinit var nav: NavHostController
     private val rows = CompletableDeferred<List<Conversation>>()
+    private val threadOpenedOnMain = AtomicBoolean(false)
 
     @After fun close() {
         if (::app.isInitialized) app.close()
@@ -107,6 +115,38 @@ class NotificationTapNavigationTest {
 
         compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.CONVERSATION_THREAD }
         compose.runOnIdle { assertEquals(target, Routes.target(nav.currentBackStackEntry?.arguments)) }
+    }
+
+    @Test fun aSavedHostsTapReturnsToMainAfterAnIoLookup() {
+        val target = HostConversationTarget(SAVED, "conv")
+        rows.complete(listOf(conversation("conv", promoted = true)))
+        start(target, ioLookup = true)
+
+        compose.waitUntil(5_000) {
+            compose.runOnIdle { nav.currentDestination?.route == Routes.CONVERSATION_THREAD }
+        }
+        compose.runOnIdle {
+            assertTrue("Thread navigation must run on Main", threadOpenedOnMain.get())
+            assertEquals(target, Routes.target(nav.currentBackStackEntry?.arguments))
+            nav.popBackStack()
+            assertEquals(Routes.CHANNEL_LIST, nav.currentDestination?.route)
+        }
+    }
+
+    @Test fun directShareReturnsToMainAfterAnIoLookupAndTransfersOnce() {
+        val target = HostConversationTarget(SAVED, "conv")
+        rows.complete(listOf(conversation("conv", promoted = true)))
+        start(target, direct = true, ioLookup = true)
+
+        compose.waitUntil(5_000) {
+            compose.runOnIdle { nav.currentDestination?.route == Routes.CONVERSATION_THREAD }
+        }
+        compose.runOnIdle {
+            assertTrue("Direct Share navigation must run on Main", threadOpenedOnMain.get())
+            assertEquals(target, Routes.target(nav.currentBackStackEntry?.arguments))
+            assertEquals("direct", app.koin.get<ComposerDraftStore>().draftFor(SAVED, "conv"))
+            assertEquals(null, intake?.state?.value)
+        }
     }
 
     @Test fun anArchivedConversationsTapStaysOnTheChannelList() {
@@ -233,6 +273,7 @@ class NotificationTapNavigationTest {
     private fun start(
         target: HostConversationTarget,
         direct: Boolean = false,
+        ioLookup: Boolean = false,
     ) {
         val serverKey = NavigationPeer.key()
         val deviceKey = NavigationPeer.key()
@@ -243,7 +284,16 @@ class NotificationTapNavigationTest {
 
                 override suspend fun load() = entries.lastOrNull()?.record
 
-                override suspend fun loadById(serverId: String) = entries.find { it.record.serverId == serverId }
+                override suspend fun loadById(serverId: String) =
+                    if (ioLookup) {
+                        withContext(Dispatchers.IO) {
+                            // Force suspension as the real Keystore/DataStore lookup does.
+                            delay(10)
+                            entries.find { it.record.serverId == serverId }
+                        }
+                    } else {
+                        entries.find { it.record.serverId == serverId }
+                    }
 
                 override suspend fun save(record: PairedServer) = Unit
 
@@ -322,6 +372,16 @@ class NotificationTapNavigationTest {
             KoinIsolatedContext(app) {
                 PyrycodeMobileTheme {
                     nav = rememberNavController()
+                    DisposableEffect(nav) {
+                        val listener =
+                            NavController.OnDestinationChangedListener { _, destination, _ ->
+                                if (destination.route == Routes.CONVERSATION_THREAD) {
+                                    threadOpenedOnMain.set(Looper.myLooper() == Looper.getMainLooper())
+                                }
+                            }
+                        nav.addOnDestinationChangedListener(listener)
+                        onDispose { nav.removeOnDestinationChangedListener(listener) }
+                    }
                     PyryNavHost(Routes.CHANNEL_LIST, navController = nav, openTarget = target.takeUnless { direct }, shareIntake = intake)
                 }
             }

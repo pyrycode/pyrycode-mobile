@@ -270,10 +270,11 @@ internal fun PyryNavHost(
                 conversations.snapshots.first { it.holdsActive(candidate) }
                 candidate
             }
+        val savedHost = target != null && destinations.isSavedHost(target.serverId)
         withContext(Dispatchers.Main.immediate) {
-            // Transfer and navigation share one Main turn after validation and the generation check.
+            // Finish suspending host reads before entering the single Main turn for transfer/navigation.
             if (target != null &&
-                destinations.isSavedHost(target.serverId) &&
+                savedHost &&
                 conversations.snapshots.value.holdsActive(target) &&
                 navController.currentDestination?.route == Routes.CHANNEL_LIST &&
                 shareIntake?.select(target, batch.generation) == true
@@ -820,16 +821,19 @@ internal fun PyryNavHost(
             return@LaunchedEffect
         }
         val active = withTimeoutOrNull(NOTIFICATION_TAP_ROW_WAIT) { conversations.snapshots.first { it.holdsActive(target) } }
-        when {
-            shareIntake?.state?.value != null -> RelayLog.d { "event=notification_tap_rejected code=share_pending" }
-            !destinations.isSavedHost(target.serverId) -> RelayLog.d { "event=notification_tap_rejected code=unknown_host" }
-            active == null -> RelayLog.d { "event=notification_tap_rejected code=inactive_conversation" }
-            // The user moved on during the wait; a late row must not push a thread over where they went.
-            navController.currentDestination?.route != Routes.CHANNEL_LIST ->
-                RelayLog.d { "event=notification_tap_rejected code=navigated_away" }
-            else -> {
-                RelayLog.d { "event=notification_tap_accepted" }
-                navController.openThread(target)
+        val savedHost = destinations.isSavedHost(target.serverId)
+        withContext(Dispatchers.Main.immediate) {
+            when {
+                shareIntake?.state?.value != null -> RelayLog.d { "event=notification_tap_rejected code=share_pending" }
+                !savedHost -> RelayLog.d { "event=notification_tap_rejected code=unknown_host" }
+                active == null -> RelayLog.d { "event=notification_tap_rejected code=inactive_conversation" }
+                // The user moved on during the wait; a late row must not push a thread over where they went.
+                navController.currentDestination?.route != Routes.CHANNEL_LIST ->
+                    RelayLog.d { "event=notification_tap_rejected code=navigated_away" }
+                else -> {
+                    RelayLog.d { "event=notification_tap_accepted" }
+                    navController.openThread(target)
+                }
             }
         }
     }

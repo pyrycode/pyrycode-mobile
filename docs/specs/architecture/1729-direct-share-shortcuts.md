@@ -44,6 +44,8 @@ The publisher has one application-owned coroutine scope with injected IO dispatc
 
 Capture remains in viewModelScope with the existing injected IO dispatcher and cancellation cleanup. Direct routing runs in a generation/capture-keyed LaunchedEffect, so replacement, consumption, cancellation and recreation cancel the old lookup. Recreation keeps the activity ViewModel and can retry an unconsumed lookup; consumed state cannot replay. Connection shutdown keeps the existing lifecycle driver and rows.
 
+Notification/launcher routing and direct-share routing finish every suspending saved-host lookup before explicitly entering `Dispatchers.Main.immediate`. Their final UI checks, synchronous draft transfer and navigation contain no suspension, so Compose test continuation interception cannot resume navigation on the store's IO worker. Cancellation still fences entry into that Main turn.
+
 ## Error handling
 
 Malformed shortcut extras, unknown ids, unpaired hosts and unavailable rows retain captured content and clear direct routing to show the existing picker. Launcher unavailable targets stay on the list via existing notification semantics. Unreadable shortcut storage starts with an empty ledger; atomic write failures retain the in-memory ledger and log only static outcomes. Android publication failures log static codes without ids, labels or shared data. No errors enter drafts or invoke network uploads.
@@ -76,6 +78,7 @@ None. Use non-long-lived dynamic shortcuts; remove cached copies defensively on 
 - [Network and I/O] No wire change. Readiness waits five seconds and cancellation prevents late transfers; no upload or send before Send.
 - [Errors and logs] MUST FIX from re-review: `KeystorePairedServerStore.readSnapshot` distinguishes successful emptiness from classified IO, Keystore and invalid-data failures; failure outcomes carry static codes without original causes. Failed host reads cannot authorize deletion or rewrite the recent ledger. Static event/outcome codes and counts only. Never log names, ids, URIs, payloads, keys or shared content.
 - [Concurrency] MUST FIX from re-review: confirmed unpair calls `SharingShortcuts.removeHost` in the awaited non-cancellable cleanup hook, under the same mutex as opens and projections. Revision conflation and immediate re-pair cannot retain or resurrect a removed target; background application startup always subscribes the publisher. All publisher writes serialize; generation checks surround synchronous draft transfer and precede navigation. Reconnect cannot resurrect removed targets from snapshots.
+- [Navigation concurrency] Live-gate repair: saved-host IO reads complete before the explicit Main boundary in both exported navigation effects. Draft transfer, generation/route checks and navigation share a non-suspending Main turn; a cancelled lookup cannot reach that turn. No validation, readiness limit, secret handling or wire contract is relaxed.
 - [Recovery] MUST FIX from second re-review: a failed first store read retries independently of pairing mutations, preserving unknown state until success. Recovery belongs to the publisher collector, with a one-second cancellable delay; a newer revision cancels obsolete recovery. No permanent initialization wait survives storage recovery, and disposal leaves no retry job.
 - [Threat model] Relay delay or flood remains handled by existing transport; hostile names are bounded and rendered as labels; rooted-device secret theft retains existing Keystore protection. UI screenshot/accessibility exposure is existing platform visibility and shared content remains explicit Send only. Protocol prompt-injection and relay metadata residual risks are unchanged.
 
@@ -83,6 +86,8 @@ None. Use non-long-lived dynamic shortcuts; remove cached copies defensively on 
 **Date:** 2026-10-06
 
 ## Revisions
+
+2026-10-06: The live gate found notification navigation running on an IO worker after `isSavedHost`, corrupting a back-stack entry and crashing teardown during the following rename scenario. The base branch passed both named methods. A production-graph probe with a suspending IO host lookup reproduced the lifecycle failure; direct-share coverage also exposed its final host lookup inside the earlier Main boundary. Both effects now finish suspending validation before entering Main for their UI checks and navigation. `NotificationTapNavigationTest` asserts the actual destination callback runs on the main Looper, exact-host arguments survive and direct content transfers once. #1832 overlaps `MainActivity` only in an unrelated thread callback; edits stay local.
 
 2026-10-06: Device compilation established that public ShortcutInfo omits icon access. The device probe reads the stored icon through LauncherApps using temporary shell shortcut-read permission and compares rendered pixels with the launcher resource. Publisher initialization now gates open and lookup until the first saved-host read, and skips unchanged snapshot projections to avoid artificial usage/rate-limit churn. Added the `direct-share` scripted scenario using the existing ping fixture as the deterministic pre-Send twin.
 
