@@ -1162,9 +1162,9 @@ data class HistoryPage(
 )
 
 /**
- * How far back one thread's history has been received (#1354), saved beside its cached rows: the last
- * received [HistoryPage]'s [cursor] and [atStart], desktop's received `coverage`. Only a received page sets
- * it, even an empty one; the row count never implies it, and a thread only ever fed live has none.
+ * The independent backwards walk's position, saved beside cached rows, plus received durable entry
+ * coverage and unresolved gaps. Default-null coverage means legacy rows cannot certify completeness.
+ * Only received pages establish coverage; live rows never do.
  *
  * [cursor] is the daemon's opaque value, echoed verbatim and never logged, parsed, or used as a path or
  * key — so [toString] leaves it out.
@@ -1172,6 +1172,7 @@ data class HistoryPage(
 data class HistoryPosition(
     val cursor: String,
     val atStart: Boolean,
+    val coverage: HistoryCoverage? = null,
 ) {
     override fun toString(): String = "HistoryPosition(atStart=$atStart)"
 }

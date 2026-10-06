@@ -21,6 +21,7 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.historyKeys
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -34,6 +35,44 @@ import org.junit.runner.RunWith
 class ThreadScreenHistoryTest {
     @get:Rule
     val composeRule = createComposeRule()
+
+    @Test
+    fun markersAreBetweenContent_andAReaderPullTargetsTheFirstCrossedGap() {
+        val items = rows(3)
+        val markers = listOf(ThreadHistoryMarker(1, items[1].historyKeys().first()), ThreadHistoryMarker(2, items[2].historyKeys().first()))
+        var oldest = 0
+        val demands = mutableListOf<Long>()
+        setScreen({ threadState(items, ThreadHistoryTail.None).copy(historyMarkers = markers) }, onDemand = { oldest++ }, onGap = {
+            demands +=
+                it
+        })
+        composeRule.onNodeWithTag("history-gap:2").assertIsDisplayed()
+        composeRule.runOnIdle { assertTrue(demands.isEmpty()) }
+        val marker = composeRule.onNodeWithTag("history-gap:2").fetchSemanticsNode().boundsInRoot
+        val older = composeRule.onNodeWithText("Row 2.").fetchSemanticsNode().boundsInRoot
+        val newer = composeRule.onNodeWithText("Row 3.").fetchSemanticsNode().boundsInRoot
+        assertTrue(older.bottom <= marker.top)
+        assertTrue(marker.bottom <= newer.top)
+        pullTowardOlder()
+        composeRule.runOnIdle {
+            assertEquals(listOf(2L), demands)
+            assertEquals(0, oldest)
+        }
+    }
+
+    @Test
+    fun aNonRenderingNewerSpanHasAPullableMarker_withoutAskingOnArrival() {
+        val demands = mutableListOf<Long>()
+        setScreen({
+            threadState(rows(2), ThreadHistoryTail.None).copy(historyMarkers = listOf(ThreadHistoryMarker(2, "")))
+        }, onDemand = {}, onGap = {
+            demands += it
+        })
+        composeRule.onNodeWithTag("history-gap:2").assertIsDisplayed()
+        composeRule.runOnIdle { assertTrue(demands.isEmpty()) }
+        pullTowardOlder()
+        composeRule.runOnIdle { assertEquals(listOf(2L), demands) }
+    }
 
     @Test
     fun loading_row_is_shown_at_the_oldest_end_only_while_a_page_is_in_flight() {
@@ -218,6 +257,7 @@ class ThreadScreenHistoryTest {
         state: () -> ThreadUiState,
         onDemand: () -> Unit,
         onRetryOlder: () -> Unit = {},
+        onGap: (Long) -> Unit = {},
     ) {
         composeRule.setContent {
             PyrycodeMobileTheme {
@@ -228,6 +268,7 @@ class ThreadScreenHistoryTest {
                     connectionState = ConnectionState.Connected,
                     onRetry = {},
                     onDemandOlderHistory = onDemand,
+                    onDemandHistoryGap = onGap,
                     onRetryOlderHistory = onRetryOlder,
                 )
             }
