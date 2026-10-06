@@ -80,6 +80,7 @@ import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
+import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.ATTACHMENT_CHUNK_BYTES
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
@@ -328,6 +329,89 @@ class InteractiveStreamE2ETest {
         val conversationId = newHostConversationId(serverId, before)
         sendFromPhone(SELECTION_PROMPT)
         composeTestRule.assertFinishedReplySystemCopy(hostRepository(serverId), conversationId, REPLY_TIMEOUT_MS)
+    }
+
+    /**
+     * #1762 manual: a long plain reply offers a prefix, but Claude may finish while navigation runs.
+     * Pausing Compose cannot fence the backend. A settled reply fails the open-turn checks; it never
+     * qualifies as live reopen evidence. Un-ignore and run this named method to attempt promotion,
+     * recording executed/failed/skipped counts and only accepting a still-open checkpoint.
+     */
+    @Ignore("manual, unproven — Claude can finish between prefix capture and thread reopen; no backend hold")
+    @Test
+    fun interactiveTurn_reopenOngoingReply_showsArrivedPrefixImmediately() {
+        awaitChannelList()
+        awaitConnected()
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val (conversationId, name) = answerChat(serverId, "reopen-stream-")
+        openChatRow(name)
+        val repository = hostRepository(serverId)
+        sendFromPhone(
+            "Write one plain paragraph of at least 800 words about a walk in a forest. " +
+                "Use ordinary words and spaces only, no markdown, lists, headings or tools. Begin writing immediately.",
+        )
+        val captured =
+            runBlocking {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    repository
+                        .observeMessages(conversationId)
+                        .map { rows ->
+                            rows
+                                .filterIsInstance<ThreadItem.MessageItem>()
+                                .map { it.message }
+                                .firstOrNull {
+                                    it.role == Role.Assistant &&
+                                        it.isStreaming &&
+                                        it.content
+                                            .trim()
+                                            .split(Regex("\\s+"))
+                                            .size >= 20
+                                }
+                        }.filterNotNull()
+                        .first()
+                }
+            }
+        val prefix = captured.content
+        assertTrue("capture requires a non-empty substantial prefix", prefix.isNotBlank())
+        val inBubble = hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+        val displayedPrefix = hasText(prefix, substring = true) and inBubble
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(displayedPrefix, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        fun assertStillOpen() {
+            val rows = runBlocking { repository.observeMessages(conversationId).first() }.filterIsInstance<ThreadItem.MessageItem>()
+            assertTrue("a completed reply cannot prove ongoing reopen", rows.any { it.message.id == captured.id && it.message.isStreaming })
+            assertNotEquals(LiveSessionEvent.TurnState.Phase.Idle, runBlocking { repository.observeTurnPhase(conversationId).first() })
+        }
+        assertStillOpen()
+        leaveThread()
+        composeTestRule.onAllNodes(hasTestTag(MESSAGE_BUBBLE_TEST_TAG), useUnmergedTree = true).assertCountEquals(0)
+        val listRow = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(name, substring = true)
+        scrollListTo(listRow)
+        composeTestRule.mainClock.autoAdvance = false
+        try {
+            composeTestRule.onAllNodes(listRow).onFirst().performClick()
+            val body =
+                SemanticsMatcher("streaming caret inside a reply bubble") { node ->
+                    node.config.getOrElse(SemanticsProperties.Text) { emptyList() }.any { it.text.endsWith("▎") }
+                } and inBubble
+            val start = composeTestRule.mainClock.currentTime
+            while (composeTestRule.onAllNodes(body, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()) {
+                check(
+                    composeTestRule.mainClock.currentTime - start < 128,
+                ) { "reopened streaming body did not compose within the frame budget" }
+                runBlocking { delay(250) }
+                composeTestRule.mainClock.advanceTimeByFrame()
+                composeTestRule.waitForIdle()
+            }
+            assertStillOpen()
+            composeTestRule.onNode(displayedPrefix, useUnmergedTree = true).assertIsDisplayed()
+            composeTestRule.onAllNodes(displayedPrefix, useUnmergedTree = true).assertCountEquals(1)
+            assertStillOpen()
+        } finally {
+            composeTestRule.mainClock.autoAdvance = true
+        }
     }
 
     @Test
