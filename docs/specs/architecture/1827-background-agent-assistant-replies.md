@@ -58,6 +58,10 @@ Sizing: forecast approximately 1050 written lines including this plan, tests, fi
 
 None.
 
+## Revisions
+
+2026-10-06: The existing live fixture retains its release event for the full suite. The new scenario uses separate fixed `/hold-reply` and `/release-reply` endpoints with an independent bounded event, so #1783's earlier release cannot end this scenario's background hold. Existing endpoints and ownership remain unchanged.
+
 ## Documentation handoff
 
 - Pending documentation stage: `docs/knowledge/features/thread-screen.md` or owning linked topic, attribution/fallback and collapse behavior.

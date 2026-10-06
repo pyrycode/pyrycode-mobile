@@ -1454,6 +1454,7 @@ elif [ -n "${LIVE}" ]; then
   # (pyrycode/pyrycode#2658). One turn, so the list holds 44 methods and 44 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundAgentProgress_showsOnRunningCard"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundAgent_followsBottomUntilFinished"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundAgent_replyStaysUnderAgent"
   # #1223: the phone's acknowledged choice in one chat applies before the first real turn in a new chat.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage"
   # #1249 restores the discussion round trip and host-isolated Archive proof through the list toolbar.

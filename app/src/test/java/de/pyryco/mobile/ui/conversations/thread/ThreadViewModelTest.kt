@@ -2069,6 +2069,29 @@ class ThreadViewModelTest {
     // ---- #337: accumulate assistant_delta into a growing streaming MessageItem -------------------
 
     @Test
+    fun assistantDeltas_syntheticRowRetainsEachWireLanesParent() =
+        runTest {
+            val repo = MessagesControllableRepo()
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            for ((lane, parent) in listOf("main" to "", "child-a" to "agent-a", "child-b" to "agent-b")) {
+                events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, lane, 0, lane, parent))
+                advanceUntilIdle()
+                val message =
+                    vm.state.value.items
+                        .filterIsInstance<ThreadItem.MessageItem>()
+                        .single()
+                        .message
+                assertEquals(lane, message.id)
+                assertEquals(lane, message.content)
+                assertEquals(parent, message.parentToolUseId)
+            }
+            collector.cancel()
+        }
+
+    @Test
     fun assistantDeltas_produceSingleGrowingStreamingMessage() =
         runTest {
             val repo = MessagesControllableRepo()

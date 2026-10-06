@@ -38,6 +38,8 @@ internal data class StreamingTurn(
     val baselineAssistantIds: Set<String>,
     /** First delta arrival; preserved across appends and used by streaming reveal initialization. */
     val startedAt: Instant,
+    /** First nonempty grouping hint for this wire lane; never an action or a new identity. */
+    val parentToolUseId: String = "",
 )
 
 /** The fold accumulator: the latest finished projection plus the current [StreamingTurn]. */
@@ -114,11 +116,19 @@ private fun ThreadFold.reduceDelta(
                         ended = false,
                         baselineAssistantIds = finished.assistantIds(),
                         startedAt = receivedAt,
+                        parentToolUseId = delta.parentToolUseId,
                     ),
             )
         // In-order delta for the current turn — append.
         delta.seq > current.lastSeq ->
-            copy(stream = current.copy(text = current.text + delta.text, lastSeq = delta.seq))
+            copy(
+                stream =
+                    current.copy(
+                        text = current.text + delta.text,
+                        lastSeq = delta.seq,
+                        parentToolUseId = current.parentToolUseId.ifEmpty { delta.parentToolUseId },
+                    ),
+            )
         // Out-of-order or replayed delta — ignore (AC #2).
         else -> this
     }
@@ -146,6 +156,7 @@ internal fun ThreadFold.render(): List<ThreadItem> {
             content = turn.text,
             timestamp = turn.startedAt,
             isStreaming = !turn.ended,
+            parentToolUseId = turn.parentToolUseId,
         )
     return finished + ThreadItem.MessageItem(synthetic)
 }

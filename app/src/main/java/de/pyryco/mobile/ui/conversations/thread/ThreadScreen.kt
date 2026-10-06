@@ -76,6 +76,7 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalUiState
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.repository.ApiRetryStatus
@@ -99,6 +100,7 @@ import de.pyryco.mobile.ui.conversations.components.CompactionBoundaryDivider
 import de.pyryco.mobile.ui.conversations.components.ConnectionStatusIndicator
 import de.pyryco.mobile.ui.conversations.components.EmptyThreadState
 import de.pyryco.mobile.ui.conversations.components.MEMORY_PLUGIN_DOCS_URL
+import de.pyryco.mobile.ui.conversations.components.MessageAreaRowSpacing
 import de.pyryco.mobile.ui.conversations.components.MessageBubble
 import de.pyryco.mobile.ui.conversations.components.MessageContentGutter
 import de.pyryco.mobile.ui.conversations.components.ModelRefusalRow
@@ -819,6 +821,13 @@ fun ThreadScreen(
                                                                 item.message.id
                                                             ) {
                                                                 Modifier.testTag("background-agent:${item.message.id}")
+                                                            } else if (row.agentBlockId != null && item.message.role == Role.Assistant) {
+                                                                Modifier
+                                                                    .padding(
+                                                                        start =
+                                                                            MessageAreaRowSpacing *
+                                                                                ((toolDepths[item.message.parentToolUseId] ?: 0) + 1),
+                                                                    ).testTag("background-agent-child:${row.agentBlockId}")
                                                             } else {
                                                                 Modifier
                                                             },

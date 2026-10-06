@@ -4634,6 +4634,140 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /** #1827: attributed prose belongs only to the real background Agent's collapsible block. */
+    @Test
+    fun interactiveTurn_backgroundAgent_replyStaysUnderAgent() {
+        val fixture = twoHostArg("backgroundAgentFixtureUrl")
+        require(fixture.matches(Regex("http://127\\.0\\.0\\.1:[0-9]+"))) { "invalid background Agent fixture" }
+        val peer = runningToolPeer()
+        val preferences = GlobalContext.get().get<AppPreferences>()
+        val previousCollapse = runBlocking { preferences.collapseToolUses.first() }
+        val allowed = mutableSetOf<String>()
+        val token = "child1827_attributed"
+        try {
+            runBlocking { preferences.setCollapseToolUses(true) }
+            awaitChannelList()
+            awaitConnected()
+            val (chat, name) = answerChat(twoHostArg(ARG_SERVER_ID), "e2e1827-agent-")
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            openChatRow(name)
+            sendFromPhone(
+                "Use Agent once with run_in_background=true, subagent_type=general-purpose and description=Held reply agent. " +
+                    "Give it exactly these instructions: first emit exactly $token as its own ordinary assistant paragraph " +
+                    "before using tools. " +
+                    "Then make two separate foreground Bash calls, each running printf ready1827. " +
+                    "Then run Bash with timeout 180000 in the foreground: " +
+                    "curl --max-time 180 --silent --show-error $fixture/hold-reply . " +
+                    "After that command finishes reply done1827. Do not use any other tool yourself or wait for the agent. " +
+                    "End your own turn immediately with exactly launched1827.",
+            )
+            val launched =
+                allowPromptsUntil(
+                    peer,
+                    chat,
+                    REPLY_TIMEOUT_MS,
+                    "no reply Agent started",
+                    allowed,
+                    frame = "background_task_started",
+                ) {
+                    it.type == "background_task_started" && peer.field(it, "task_type") == "local_agent"
+                }
+            val task = MobileJson.decodeFromJsonElement(BackgroundTaskStartedPayloadDto.serializer(), launched.payload)
+            val agentId = task.toolCallId
+            require(agentId.isNotEmpty()) { "background task omitted its Agent join" }
+            allowPromptsUntil(
+                peer,
+                chat,
+                REPLY_TIMEOUT_MS,
+                "no attributed background prose",
+                allowed,
+                frame = "assistant_delta",
+            ) {
+                it.type == "assistant_delta" &&
+                    peer.field(it, "parent_tool_use_id") == agentId &&
+                    peer
+                        .recorded(chat)
+                        .filter { frame ->
+                            frame.type == "assistant_delta" && peer.field(frame, "parent_tool_use_id") == agentId
+                        }.joinToString("") { frame -> peer.field(frame, "text").orEmpty() }
+                        .contains(token)
+            }
+            allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "launching turn did not end", allowed) { it.type == "turn_end" }
+            allowPromptsUntil(
+                peer,
+                chat,
+                REPLY_TIMEOUT_MS,
+                "reply Agent did not reach its hold",
+                allowed,
+                frame = "background_task_progress",
+            ) {
+                it.type == "background_task_progress" && peer.field(it, "task_id") == task.taskId
+            }
+            val priorEnds = peer.recorded(chat).count { it.type == "turn_end" }
+            sendFromPhone("Reply exactly main1827_continues. Leave the background agent running.")
+            allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "main conversation did not continue", allowed) {
+                it.type == "turn_end" && peer.recorded(chat).count { frame -> frame.type == "turn_end" } > priorEnds
+            }
+            assertTrue(
+                "background Agent must remain running during the main reply",
+                peer.recorded(chat).none {
+                    it.type == "background_task_updated" &&
+                        peer.field(it, "task_id") == task.taskId &&
+                        !peer.field(it, "status").isNullOrEmpty()
+                },
+            )
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                runBlocking { hostRepository().observeMessages(chat).first() }.any {
+                    it is ThreadItem.MessageItem && it.message.role == Role.Assistant && token in it.message.content
+                }
+            }
+            val held =
+                runBlocking { hostRepository().observeMessages(chat).first() }
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .map { it.message }
+                    .filter { it.role == Role.Assistant && token in it.content }
+            assertEquals("one attributed reply segment", 1, held.size)
+            assertEquals(agentId, held.single().parentToolUseId)
+            // Exact paragraph matching excludes the user prompt that names the requested token.
+            val reply = hasText(token)
+            val child = hasTestTag("background-agent-child:$agentId")
+            val run = hasText("Using tools:", substring = true) and hasClickAction()
+            val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
+            list.performScrollToNode(run)
+            composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(0)
+            composeTestRule.onNode(run).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(reply and hasAnyAncestor(child), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            list.performScrollToNode(reply)
+            composeTestRule.onNode(reply and hasAnyAncestor(child), useUnmergedTree = true).assertIsDisplayed()
+            composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(1)
+            list.performScrollToNode(run)
+            composeTestRule.onNode(run).performClick()
+            composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(0)
+            list.performScrollToNode(inThreadList("main1827_continues"))
+            composeTestRule.onNode(inThreadList("main1827_continues"), useUnmergedTree = true).assertIsDisplayed()
+            sendFromPhone(
+                "Run exactly this Bash command in the foreground: curl --silent --show-error $fixture/release-reply . Then reply released1827.",
+            )
+            allowPromptsUntil(
+                peer,
+                chat,
+                BACKGROUND_FINISH_TIMEOUT_MS,
+                "reply Agent did not finish",
+                allowed,
+                frame = "background_task_updated",
+            ) {
+                it.type == "background_task_updated" &&
+                    peer.field(it, "task_id") == task.taskId &&
+                    !peer.field(it, "status").isNullOrEmpty()
+            }
+        } finally {
+            runBlocking { preferences.setCollapseToolUses(previousCollapse) }
+            peer.close()
+        }
+    }
+
     /** #1783: a real background local_agent outlives its launching turn and follows newer phone messages. */
     @Test
     fun interactiveTurn_backgroundAgent_followsBottomUntilFinished() {
