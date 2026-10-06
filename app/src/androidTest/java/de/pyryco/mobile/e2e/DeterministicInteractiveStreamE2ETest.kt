@@ -30,6 +30,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import de.pyryco.mobile.data.repository.ConnectionStateSource
@@ -37,6 +38,8 @@ import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.grantNotificationPermission
+import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
+import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -62,6 +65,7 @@ import org.koin.core.context.GlobalContext
  * selected by `SCENARIO` in `scripts/e2e-emulator.sh`):
  *  - `ping` (default, #431) — a single-line reply renders.
  *  - `stream` (#454) — a multi-`assistant_delta` reply assembles into one message.
+ *  - `reopen-stream` (#1762) — arrived prefix renders immediately on reopening, before the second-send release.
  *  - `spinner` (#454) — the thinking spinner shows mid-turn, then clears at turn end (a two-fixture
  *    drop holds the turn open so the transient state is observable; see the method KDoc).
  *  - `tool` (#455) — a tool step renders running mid-turn, then done after the result (two-fixture
@@ -378,6 +382,141 @@ class DeterministicInteractiveStreamE2ETest {
         } finally {
             runCatching { fault.start() }
         }
+    }
+
+    /** #1762: fragment B cannot arrive until the immediate reopen assertion sends message #2. */
+    @Test
+    fun interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately() {
+        arriveInSeededThread()
+        val repository =
+            requireNotNull(
+                GlobalContext
+                    .get()
+                    .get<RelayRepositoryCoordinator>()
+                    .currentRepository.value,
+            )
+        val conversationId =
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    repository
+                        .observeConversations(ConversationFilter.All)
+                        .first { rows -> rows.any { it.name == SEED_CHANNEL_NAME } }
+                        .single { it.name == SEED_CHANNEL_NAME }
+                        .id
+                }
+            }
+
+        fun assistantRows() =
+            runBlocking { repository.observeMessages(conversationId).first() }
+                .filterIsInstance<ThreadItem.MessageItem>()
+                .map { it.message }
+                .filter { it.role == Role.Assistant }
+
+        fun assertOpenReply(expected: String) {
+            val rows = assistantRows()
+            assertEquals("only the held reply may exist before completion", 1, rows.size)
+            val row = rows.single()
+            assertEquals(expected, row.content)
+            assertTrue("the reply must remain streaming at the display checkpoint", row.isStreaming)
+            assertNotEquals(LiveSessionEvent.TurnState.Phase.Idle, runBlocking { repository.observeTurnPhase(conversationId).first() })
+        }
+        val inBubble = hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+        val prefix = hasText(REOPEN_PREFIX, substring = true) and inBubble
+        typeAndSend(SEND_PROMPT)
+        runBlocking {
+            withTimeout(REPLY_TIMEOUT_MS) {
+                repository.observeMessages(conversationId).first { rows ->
+                    rows.filterIsInstance<ThreadItem.MessageItem>().any { it.message.content == REOPEN_PREFIX && it.message.isStreaming }
+                }
+            }
+        }
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(prefix, useUnmergedTree = true).fetchSemanticsNodes().size ==
+                1
+        }
+        composeTestRule.onNode(prefix, useUnmergedTree = true).assertIsDisplayed()
+        assertOpenReply(REOPEN_PREFIX)
+        composeTestRule.onNodeWithContentDescription("Back").performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodes(hasTestTag(MESSAGE_BUBBLE_TEST_TAG), useUnmergedTree = true).assertCountEquals(0)
+        composeTestRule.mainClock.autoAdvance = false
+        try {
+            composeTestRule.onAllNodesWithText(SEED_CHANNEL_NAME).onFirst().performClick()
+            awaitFirstReopenedStreamingBody()
+            // No text-based retry: inspect the first composed streaming body before reveal catch-up.
+            assertOpenReply(REOPEN_PREFIX)
+            composeTestRule.onNode(prefix, useUnmergedTree = true).assertIsDisplayed()
+            composeTestRule.onAllNodes(prefix, useUnmergedTree = true).assertCountEquals(1)
+            composeTestRule.onAllNodesWithText(REOPEN_SUFFIX, substring = true).assertCountEquals(0)
+            assertOpenReply(REOPEN_PREFIX)
+            // Prepare the enqueue while paused: one frame makes the composer's send action ready.
+            composeTestRule.onNode(hasSetTextAction()).performTextInput(SECOND_PROMPT)
+            composeTestRule.mainClock.advanceTimeByFrame()
+            composeTestRule.waitForIdle()
+            composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+            val combined = REOPEN_PREFIX + REOPEN_SUFFIX
+            runBlocking {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    repository.observeMessages(conversationId).first { rows ->
+                        rows.filterIsInstance<ThreadItem.MessageItem>().any { it.message.content == combined }
+                    }
+                }
+            }
+            assertOpenReply(combined)
+            // Witness the updated body, not just the repository: the first suffix word was absent
+            // before drop B. A reset cannot retype the 26-word prefix within this 128 ms budget.
+            val appendedWord = hasText(" and", substring = true) and inBubble
+            val start = composeTestRule.mainClock.currentTime
+            while (composeTestRule.onAllNodes(appendedWord, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()) {
+                check(composeTestRule.mainClock.currentTime - start < 128) { "suffix did not compose while retaining the arrived prefix" }
+                runBlocking { delay(250) }
+                composeTestRule.mainClock.advanceTimeByFrame()
+                composeTestRule.waitForIdle()
+            }
+            composeTestRule.onNode(appendedWord, useUnmergedTree = true).assertIsDisplayed()
+            composeTestRule.onNode(prefix, useUnmergedTree = true).assertIsDisplayed()
+            composeTestRule.onAllNodes(prefix, useUnmergedTree = true).assertCountEquals(1)
+            assertOpenReply(combined)
+        } finally {
+            composeTestRule.mainClock.autoAdvance = true
+        }
+        // Completion is fenced separately, after the still-open suffix-arrival display checkpoint.
+        typeAndSend("finish")
+        val combined = REOPEN_PREFIX + REOPEN_SUFFIX
+        val fullReply = hasText(combined, substring = true) and inBubble
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(fullReply, useUnmergedTree = true).fetchSemanticsNodes().size ==
+                1
+        }
+        composeTestRule.onNode(prefix, useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNode(fullReply, useUnmergedTree = true).assertIsDisplayed()
+        runBlocking {
+            withTimeout(REPLY_TIMEOUT_MS) {
+                repository.observeMessages(conversationId).first { rows ->
+                    rows.filterIsInstance<ThreadItem.MessageItem>().any { it.message.content == combined && !it.message.isStreaming }
+                }
+            }
+        }
+        assertEquals(1, assistantRows().count { it.content == combined && !it.isStreaming })
+        composeTestRule.onAllNodes(fullReply, useUnmergedTree = true).assertCountEquals(1)
+    }
+
+    /** Network/composition may settle in wall time; reveal receives at most 128 ms of frames. */
+    private fun awaitFirstReopenedStreamingBody() {
+        val body =
+            SemanticsMatcher("streaming caret inside a reply bubble") { node ->
+                node.config.getOrElse(SemanticsProperties.Text) { emptyList() }.any { it.text.endsWith("▎") }
+            } and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+        val start = composeTestRule.mainClock.currentTime
+        while (composeTestRule.onAllNodes(body, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()) {
+            check(composeTestRule.mainClock.currentTime - start < 128) { "reopened streaming body did not compose within the frame budget" }
+            runBlocking { delay(250) }
+            composeTestRule.mainClock.advanceTimeByFrame()
+            composeTestRule.waitForIdle()
+        }
+        assertTrue(composeTestRule.mainClock.currentTime - start <= 128)
     }
 
     /**
@@ -960,6 +1099,11 @@ class DeterministicInteractiveStreamE2ETest {
     }
 
     private companion object {
+        const val REOPEN_PREFIX =
+            "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november " +
+                "oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu"
+        const val REOPEN_SUFFIX = " and the held reply is now complete"
+
         const val PING = "ping"
 
         // The host-seeded promoted channel's name (scripts/e2e-emulator.sh writes conversations.json

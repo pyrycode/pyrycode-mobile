@@ -288,6 +288,34 @@ delimiter positioned between the two cross-session messages, driven through the 
 
 ## What rung 3 is made of
 
+**Reopening an ongoing reply (#1762, manual and unproven).**
+`InteractiveStreamE2ETest.interactiveTurn_reopenOngoingReply_showsArrivedPrefixImmediately`
+captures a real-Claude plain-text prefix of at least 20 words, leaves for the channel list,
+verifies that the old bubbles unmounted, and reopens the same conversation with automatic
+Compose clock advancement paused. It observes the first bubble-scoped streaming caret within
+128 ms of composition frames and asserts that the captured prefix is displayed exactly once.
+The same reply must still be streaming and its turn non-idle before and after the assertion;
+a completed reply fails and cannot supply reopen evidence.
+
+The method is `@Ignore` and excluded from the curated live suite. Claude can finish during
+navigation; even a long prompt cannot fence that transient window, and pausing Compose leaves
+backend execution running. No passing live reopen assertion is claimed. Its rung-4 twin,
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately`,
+uses `reopen-stream` to hold the prefix, release a suffix on the second send, then withhold
+completion until the third send after a still-open suffix display checkpoint. See
+[deterministic sequence](#scenarios-454) and [counted evidence](#verification-status).
+
+For manual promotion, remove the method's ignore and run:
+
+```bash
+python3 scripts/android-test-gate.py live --tests 'de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_reopenOngoingReply_showsArrivedPrefixImmediately'
+```
+
+Record fresh named-method XML with nonzero executed, zero failed and zero skipped counts,
+and confirm the open-turn checkpoint passed. Only then add the method to the curated live
+selector. A skip or another method's live pass cannot close this manual gap. The pre-ship
+command remains `python3 scripts/android-test-gate.py live`.
+
 **Background Agent follows the newest end (#1783).**
 `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`
 launches a real `local_agent` with `run_in_background=true` and waits for the launching turn to end
@@ -325,6 +353,16 @@ using the seeded channel and `selection-copy.jsonl` through the real scripted ha
 Both run on a device without substituted menu/clipboard providers or production test tags.
 The live method is in the curated full suite; run the focused deterministic scenario with
 `python3 scripts/android-test-gate.py scripted selection-copy`. `scripted-all` includes it too.
+
+**Formatted streaming markdown (#1766).**
+`InteractiveStreamE2ETest#interactiveTurn_markdownReply_rendersFormattedBody` asks real Claude for a
+reply holding emphasis, inline code, a fenced block and a table, waits for the settled bubble, and
+checks the bold and monospace spans, every code and table marker, and that the reply arrived with no
+lost source text. It is in the curated full suite. Pending syntax, block reuse, pacing and equal-width
+settlement are proved without a device by `StreamingMarkdownTextTest` and the prefix replay in
+`StreamingMarkdownTest`. Live result: the method passed on 2026-10-05 against PR #1810's earlier
+implementation. The parser-led implementation that replaced it has no live result yet, so a fresh
+passing full curated live run, reporting executed, failed and skipped counts, is still owed.
 
 
 The rung-3 coverage also includes
@@ -1899,7 +1937,7 @@ host-prompt handlers. Scripted runs and unrelated live subsets retain their exis
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the current selector has 60 runnable `@Test` methods. The historical
+incantation to remember — the current selector has 61 runnable `@Test` methods. The historical
 inventory below describes the pre-#1193 forty-four-method set; ignored methods are excluded from
 the current selector as described under the model and effort settings round trip. It covered ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
@@ -2408,6 +2446,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `background-agent` (#1783) | background lifecycle moves a loaded tool family, marker navigation opens its run, and finish settles it before later text | `background-agent-open.jsonl` + `background-agent-finish.jsonl` | **two** (release on second send) |
 | `selection-copy` (#1674) | finished assistant prose copies only the long-pressed word through Android’s system menu | `selection-copy.jsonl` | one |
 | `ping` (default) | a single-line reply renders | `ping.jsonl` | one |
+| `reopen-stream` (#1762) | arrived prefix is immediate on reopen and retained when a suffix composes while the turn stays open; one final combined reply | `reopen-stream-open.jsonl` + `reopen-stream-done.jsonl` | **two** (suffix on second send, terminal result on third) |
 | `stream` | a multi-`assistant_delta` reply assembles into **one** message | `stream.jsonl` | one |
 | `spinner` | the thinking spinner shows mid-turn, then clears at turn end | `spinner-open.jsonl` + `spinner-end.jsonl` | **two** |
 | `tool` (#455) | a tool step shows **running** in flight, then **done** after the result | `tool-open.jsonl` + `tool-done.jsonl` | **two** |
@@ -2420,6 +2459,37 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `refusal` (#1360) | a session-scoped `model_refusal_fallback` row offers "Switch back to Haiku" (the menu label, #1494); the tap writes `haiku` and the button disappears | `refusal.jsonl` | one |
 | `mcp-failed` (#1457) | the failed-MCP-server pill (#1345) renders and tapping it opens Channel info on its MCP servers section | `mcp-failed.jsonl` | one |
 | `context-overflow` (#1473) | the combined top-overlay context/Compact pill (#1603) renders after a `prompt_too_long` turn end, and tapping Compact reaches the daemon's child | `context-overflow.jsonl` | one |
+
+`reopen-stream` selects
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately`
+and is registered in both the harness and `scripts/android-test-gate.py`'s `SCENARIOS`, including
+`scripted-all`. Its real-Claude counterpart is
+`InteractiveStreamE2ETest.interactiveTurn_reopenOngoingReply_showsArrivedPrefixImmediately`,
+which remains [ignored and manual](#what-rung-3-is-made-of).
+
+1. `reopen-stream-open.jsonl` supplies a known 26-word assistant prefix without a terminal
+   `result`. Await its streaming repository row and displayed text, leave for the channel list,
+   and verify the old bubbles unmounted.
+2. Pause automatic reveal-clock advancement before reopening. Observe the first bubble-scoped
+   streaming caret within 128 ms of composition frames; immediately require the whole prefix
+   displayed once, no suffix, one streaming assistant row and a non-idle turn.
+3. Keep the clock paused and send the second inert prompt. The existing second
+   `send_message.enqueued` fence releases `reopen-stream-done.jsonl`.
+   `scripts/e2e-held-result.py` forwards its suffix unchanged but holds the raw terminal
+   `result` until a separate third-enqueue signal. This test-only wrapper owns and cleans up
+   only its fakeclaude child; the isolated daemon identity and production path stay intact.
+4. Await combined repository text, then witness the first appended word (` and`) displayed
+   inside the reply bubble within another 128 ms of composition frames. Require the full
+   original prefix still displayed once and the sole reply still streaming with a non-idle
+   turn. Repository arrival alone cannot prove that the updated body composed.
+5. Restore automatic clock advancement and send the third inert prompt (`finish`), releasing
+   the terminal result. Require the combined reply displayed once and exactly one finalized
+   assistant row. Clock restoration is also guaranteed on assertion failure.
+
+Run the focused twin with `python3 scripts/android-test-gate.py scripted reopen-stream`.
+The repaired focused run and the full scripted gate passed its named method; the earlier
+zero-initialization control failed the immediate-prefix assertion. Counts and evidence limits
+are recorded under [Verification status](#verification-status).
 
 `background-agent` selects
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`
@@ -2666,6 +2736,39 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+**Ongoing-reply reopen (#1762, 2026-10-06).** The repaired focused command
+`ANDROID_GATE_WAIT_SECONDS=1800 python3 scripts/android-test-gate.py scripted reopen-stream`
+reported exit 0: **1 executed, 1 passed, 0 failed, 0 errors, 0 skipped**. Documentation inspected
+`/Users/juhanailmoniemi/.codex/publish/pyrycode-mobile/builder-1762-rework/evidence/repaired-reopen-stream.xml`,
+the retained copy of `build/dispatcher-tests/scripted-28mxr2o7/dispatcher.xml`; it contains the passing
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately`.
+The [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1838#issuecomment-6009452387)
+independently inspected this copy and the fresh full
+`build/dispatcher-tests/scripted-all-9iv3m1r3/dispatcher.xml`: **18 executed, 18 passed,
+0 failed, 0 errors, 0 skipped**, including this method in `reopen-stream-0-TEST-installed.xml`.
+The supplied dispatcher gate report confirms that named pass on `a66e8ad35c` under
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all`.
+
+The retained `before-completion-fence.xml` in the same evidence folder contains this method with
+**1 executed, 0 passed, 1 failed, 0 errors, 0 skipped**. The PR reports exit 1 for the strengthened
+checkpoint against the original suffix/result delivery, originally
+`build/dispatcher-tests/scripted-mdd7t3fd/dispatcher.xml`. Its compact XML has no failure detail;
+the failure location remains builder-reported. This led to fencing completion separately.
+The earlier pre-#1753 zero-initialization control is also builder-reported:
+**1 executed, 1 failed, 0 skipped**, failing the immediate reopened-prefix assertion at
+`build/dispatcher-tests/scripted-59mzwb_6/dispatcher.xml`. That original XML is unavailable to
+both verifier and documentation; it is historical supplied evidence, not independently inspected
+proof. Production source was restored and no production change lands. See
+[PR evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1838).
+
+`InteractiveStreamE2ETest.interactiveTurn_reopenOngoingReply_showsArrivedPrefixImmediately`
+was not executed and remains manual, unproven live coverage. The unrelated full live gate
+reported **60 executed, 59 passed, 1 failed, 0 skipped**; the dispatcher recorded the failed
+background-agent method passing on rerun on the same merged tree. Those results do not establish
+this excluded reopen method. See [live gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1762#issuecomment-6009840321)
+and the [manual promotion procedure](#what-rung-3-is-made-of). The UI gate has no readable
+per-test counts, so no named UI pass is inferred. Documentation ran only the docs guard.
 
 **Stop background task (#1830, 2026-10-06).** The dispatcher full live gate ran
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on `feature/1830`
@@ -3893,6 +3996,16 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Ongoing-reply reopen (#1762):**
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately`
+  passed both the repaired focused `reopen-stream` run and `scripted-all`; the separate
+  second-send suffix and third-send result fences keep both display checkpoints on an open reply.
+  `InteractiveStreamE2ETest.interactiveTurn_reopenOngoingReply_showsArrivedPrefixImmediately`
+  remains ignored, excluded from the curated selector and manual/unproven because Claude may
+  finish during navigation. Follow the [un-ignore and named-run procedure](#what-rung-3-is-made-of)
+  before promoting it. [Verification status](#verification-status) distinguishes retained XML
+  from the unavailable historical control. The pre-ship live command is unchanged.
 
 - **Guarded background-task stop (#1830):**
   `InteractiveStreamE2ETest.interactiveTurn_stopBackgroundTask_completesThenRepliesAgain`

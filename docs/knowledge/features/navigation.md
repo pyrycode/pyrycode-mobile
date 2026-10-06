@@ -5,14 +5,13 @@ Single-activity Compose Navigation host. `MainActivity` is the only Activity; al
 ## What it does
 
 Boots into `welcome` on a fresh install or `channel_list` when a saved pairing
-exists. The graph has eleven routes; the thread destination carries both the
+exists. The graph has ten routes; the thread destination carries both the
 owning `serverId` and the host-local `conversationId`.
 
 - **`welcome`** (start destination when no paired-server record exists) — renders `WelcomeScreen` (#7).
 - **`scanner`** — renders [ScannerScreen](scanner-screen.md) with its destination-scoped ViewModel, camera permission launcher and live preview. A decoded QR is parsed into an immutable fingerprint/record confirmation state without writing. Confirm saves, starts the controller and navigates to `channel_list`, popping the scanner inclusively; this camera path does not await encrypted readiness. Decline/Back from confirmation re-arms scanning. Paste actions navigate to `pair_code`; ordinary Back pops to the caller.
 - **`pair_code`** — renders [PairCodeScreen](paste-code-dialog.md) with a destination-scoped `PairCodeViewModel`. Its optional-name form, fingerprint confirmation and saved-target connection wait stay within one route. Cancel returns to the caller; success clears the previous graph entries and opens `channel_list` only after both target connection legs are ready. Since #842 the destination pattern (`Routes.PAIR_CODE_ROUTE`) takes an optional `serverId` query argument, shaped like Settings' own below; when present, the flow is scoped to re-pair exactly that host instead of naming a new one — see [manual pairing entry and return](#manual-pairing-entry-and-return).
 - **`channel_list`** — renders [ChannelListScreen](channel-list-screen.md), fed entirely by host-qualified state since #738 retired the flat compatibility model and its `selectedServerId()` adapter for this screen. Its single top-right toolbar control, “Pair another host”, opens `scanner` (`ChannelListEvent.PairHostTapped → navController.navigate(Routes.SCANNER)`). Both empty and populated lists expose this entry. Camera confirmation and successful manual pairing via `pair_code` land back on the list; see [manual pairing entry and return](#manual-pairing-entry-and-return). Unpairing the list's last saved host leaves `welcome` instead — see [Returning to Welcome after the last host](#returning-to-welcome-after-the-last-host-1323).
-- **`discussions`** — renders [DiscussionListScreen](discussion-list-screen.md). Unreachable since #731 retired the channel list's "see all" link that was its only entry point; the route, screen and its adapter (captures host-qualified row and promotion targets, consumes only `hostNavigationEvents`) stay in the graph regardless — removing them is out of scope for both #731 and #738.
 - **`conversation_thread/{serverId}/{conversationId}`** — renders [ThreadScreen](thread-screen.md#wiring) with a destination-scoped ViewModel and dependencies from the exact retained host. Back pops the stack. Also reachable from outside the graph entirely since [#685](../../specs/architecture/685-mobile-attention-alerts.md): a notification tap parses to the same `HostConversationTarget` and `PyryNavHost` pushes it on top of `channel_list` via its `openTarget` param, gated by `ThreadDestinationFactory.isSavedHost`. Since [#1400](../../specs/architecture/1400-notification-tap-active-conversation.md), a saved host alone is not enough: the tap opens only once the host's `HostConversationSnapshot` holds the conversation among its (unarchived) `channels` or `chats`, waiting up to `NOTIFICATION_TAP_ROW_WAIT` (5 s) for a cold-start snapshot before giving up and staying on the list — see [Push messaging service § Attention alerts and the tap route](push-messaging-service.md#attention-alerts-and-the-tap-route-685).
 - **`markdown_reader/{serverId}/{conversationId}/{attachmentId}`** — renders the [Markdown reader screen](markdown-reader-screen.md) (#1027), reached only from the thread destination above: tapping a ready file row whose name ends in `.md`/`.markdown` reads and strictly decodes it first, then routes `ThreadNavigation.OpenMarkdown(attachmentId)` to `navController.navigate(Routes.markdownReader(target, event.attachmentId))`. Wrapped in `HostDestination` like the thread route; the back arrow and system back both pop back to the same thread entry.
 - **`markdown_link/{serverId}/{conversationId}`** — since #1050, renders the same [Markdown reader screen](markdown-reader-screen.md#linked-note-live-since-1050) for a markdown-path link tapped in an assistant reply, but for a note read live from the workspace rather than a stored attachment. Ids only, deliberately: the path itself never travels in the route (it would put assistant-authored text in the saved back stack), so `Routes.markdownReader`'s own "ids only: never a file name, path or URI" KDoc holds unchanged, and the sibling `markdown_reader` route above is untouched. `ThreadNavigation.OpenLinkedMarkdown` (carrying nothing — the document lives in the thread's `ThreadViewModel`) routes to `navController.navigate(Routes.markdownLink(target))`. The destination resolves the thread's own `ThreadViewModel` with `navController.getBackStackEntry(Routes.CONVERSATION_THREAD)` + `koinViewModel(viewModelStoreOwner = …)` and reads its held document once. Wrapped in `HostDestination` like the two routes above.
@@ -20,7 +19,10 @@ owning `serverId` and the host-local `conversationId`.
 - **`archived_discussions/{serverId}`** — renders [Archived Discussions](archived-discussions-screen.md) for the required host owner. The separate channel-list sidebar Archive action navigates with the selected server id; `HostDestination` rejects an unknown or removed owner rather than showing another host’s archive. Restore stays on this screen.
 - **`about`** — retains the standalone [About screen](about-screen.md) route and its static content. Settings no longer offers an About entry.
 
-[#382](../codebase/382.md) had added a tenth route, `literal_screen/{serverId}/{conversationId}`, rendering a `LiteralScreenSurface` reached from the thread overflow menu and the stall promotion banner. [#883](../../specs/architecture/883-retire-literal-screen.md) removed the route, its destination ViewModel and both entry points once the daemon dropped the server-side screen-snapshot render path; the graph is back to nine routes.
+[#382](../codebase/382.md) had added a tenth route, `literal_screen/{serverId}/{conversationId}`, rendering a `LiteralScreenSurface` reached from the thread overflow menu and the stall promotion banner. [#883](../../specs/architecture/883-retire-literal-screen.md) removed the route, its destination ViewModel and both entry points once the daemon dropped the server-side screen-snapshot render path; the graph returned to nine routes at that point. Later reader routes expanded it;
+\#1672 removed the unreachable `discussions` route, screen, ViewModel and adapter.
+Chats open from the host tree and promotion remains in the
+[thread Save as channel modal](save-as-channel-dialog.md).
 
 Other-conversation [attention pills](thread-top-overlay.md#the-attention-pill-1735) use
 `openAttentionTarget`: single Waiting and Finished pills retain a typed `HostConversationTarget`
@@ -140,9 +142,9 @@ the same shape for the now-retired literal-screen destination, was removed by
 characters cannot become route separators. Domain ids and wire payloads remain
 host-local; do not encode the host into a repository conversation id.
 
-Both list destinations collect only their ViewModel's `hostNavigationEvents` in
-`LaunchedEffect(vm)` and pass each target to `openThread`. The flat row callback
-invokes the host command rather than navigating separately. `openThread` suppresses
+The channel-list destination collects its ViewModel's `hostNavigationEvents` in
+`LaunchedEffect(vm)` and passes each target to `openThread`. Tree row callbacks
+invoke the host command rather than navigating separately. `openThread` suppresses
 only a target identical to the current thread's full pair. A/A/B in one burst
 therefore yields one A entry and a distinct B entry, even when conversation ids
 collide. Do not use `launchSingleTop` on this parameterized thread route: it can
@@ -228,23 +230,18 @@ any paired host's migrated legacy default.
 
 ### Temporary flat-list compatibility
 
-[ChannelListScreen](channel-list-screen.md)'s assembled conversation tree (#729/#730/#731, split from
-\#641) resolves each row's host from the row itself — `TreeRowTapped(HostConversationTarget)` maps straight to
-`vm.onHostRowTapped(target)`, with no `selectedServerId()` lookup. The Chats-section
-`TreeHostChatAddTapped(serverId)` opens a Create chat confirmation for that exact host; Create sends
-`createDiscussion(null)` through its repository, never `selectedServerId()`. `ChannelListScreen` and its `ChannelListViewModel` therefore have **no**
-remaining consumer of the compatibility adapter below — #738 retired the flat `ChannelListUiState`, its
-`onEvent` reducer and the `repository` constructor parameter that fed them, along with the last FAB path
-that read `selectedServerId()` for this screen. The still-unreachable `DiscussionListScreen`
-(`Routes.DISCUSSION_LIST`, left in the graph but with no way to navigate to it since #731 retired its "see
-all" entry point) is the adapter's sole remaining consumer: at row tap, `selectedServerId()` captures the
-current relay owner or explicit demo id and `RowTapped` / `SaveAsChannelRequested` resolve through it.
+[ChannelListScreen](channel-list-screen.md)'s conversation tree resolves each row's
+host from the row itself: `TreeRowTapped(HostConversationTarget)` calls
+`vm.onHostRowTapped(target)` without a `selectedServerId()` lookup. The host's
+Chats plus creates directly through that host's repository (#1563), sending a null
+`cwd` for the daemon-default folder.
 
-Discussion promotion uses `requestHostPromotion(target)`, then
-`confirmHostPromotion` / `cancelHostPromotion`. The route projects the captured
-host prompt into the flat `Loaded.pendingPromotion` display model; selection changes
-do not change the confirmation target. Legacy bare-id navigation flows remain on
-the ViewModels for compatibility but are not collected by the production graph.
+\#738 retired the channel list's flat state, reducer and repository constructor
+parameter. #1672 removed the remaining selected-host flat-list adapter with the
+unreachable discussion destination. No list destination now collects bare-id
+navigation or projects a host promotion prompt into a flat model. Keep host
+identity on the row target; reintroducing selected-host routing would open the
+wrong host when conversation ids collide.
 
 `HostWorkspaceRepository` wraps the thread destination for its workspace picker. Settings no longer opens a picker. The channel list resolves host-specific repository operations through its ViewModel; see [WorkspacePicker § Consumers](workspace-picker.md#consumers).
 
@@ -338,10 +335,16 @@ Welcome; expecting it to choose a new initial route tests the wrong lifecycle
 
 `LiteralScreenNavigationTest` mounts the production `PyryNavHost`, `Routes` and
 Koin bindings directly, bypassing the Activity startup gate. It cannot prove
-migration completes before navigation opens. It covers both host event streams,
-A/A/B duplicate suppression, reserved characters, distinct destination ViewModels,
-back/reopen, saved-state restoration and invalid-host return. A copied minimal
+migration completes before navigation opens.
+`hostStreamsBackReopenAndRestorationKeepDestinationIdentity` opens both hosts
+through `ChannelListViewModel`, returning to `CHANNEL_LIST` before each reopen.
+It checks A/A/B duplicate suppression, distinct destination ViewModels for hosts
+sharing a conversation id, Back/reopen and saved-state restoration. The suite
+also covers reserved characters and invalid-host return. A copied minimal
 graph can pass while production route arguments or bindings are wrong.
+`recentDiscussionsDestinationIsNotRegistered` additionally checks the production
+graph has no `discussions` node; absence of an entry action alone would miss a
+registered dead destination.
 Its picker cases open the actual descendant component with two Noise peers,
 distinct recents and assertions that the other host receives no picker reads or
 writes across selection changes and reconnect.

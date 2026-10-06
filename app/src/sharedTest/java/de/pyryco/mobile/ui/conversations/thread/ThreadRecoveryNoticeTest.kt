@@ -22,6 +22,7 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.ui.conversations.components.STATUS_GLYPH_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
+import de.pyryco.mobile.ui.pixelPx
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -149,7 +150,9 @@ class ThreadRecoveryNoticeTest {
                 .boundsInRoot
         val touch = target.fetchSemanticsNode().touchBoundsInRoot
         val density = composeRule.density.density
-        assertEquals(24f * density, visible.height, 0.5f)
+        // The pill's height is the sum of its own top padding, its text line, and its bottom padding, each
+        // rounded to a device pixel on its own (#1823), so the check allows one device pixel of drift.
+        assertEquals(24f * density, visible.height, pixelPx())
         assertTrue("Compact needs at least 48dp touch height: $touch", touch.height >= 48f * density)
         assertEquals(visible.top, touch.top, 0.5f)
         // Both taps are outside the drawn pill and near the target's left/right bottom edges.

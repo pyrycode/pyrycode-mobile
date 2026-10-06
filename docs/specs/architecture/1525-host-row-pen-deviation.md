@@ -33,3 +33,11 @@ Pending for the documentation stage: in `docs/knowledge/features/channel-list-sc
 "Host row edit control (#744)", add a short paragraph stating that the pen is a deliberate deviation from Figma
 `15:8` (which draws none on host rows), decided in #1525, because it is the only Edit host entry point for a
 non-owner host; removing it needs another entry point with its own design first.
+
+## Revisions
+
+**2026-10-06:** Figma `15:8` now draws a persistent pencil on every host row too, matching the shipped row — the
+deviation this ticket recorded is resolved, not just tolerated. `docs/knowledge/features/channel-list-screen-tree-and-controls.md`,
+section "Host row edit control (#744)", is updated to drop the "deviation" framing; the pencil stays the only Edit
+host entry point for a non-owner host, which is still true independent of the design delta. No code changes — the
+row's pencil was already unconditional and non-hover-gated, which is what the frame now also shows.

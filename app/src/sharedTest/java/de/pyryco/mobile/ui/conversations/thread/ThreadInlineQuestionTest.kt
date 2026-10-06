@@ -165,6 +165,37 @@ class ThreadInlineQuestionTest {
             .assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Error))
     }
 
+    // #1600: Figma 668:3245 draws the failure line in bodyMedium's full 20dp box; the theme's default
+    // trims it to its glyphs, which pulls the gap above it and the buttons below it off the frame.
+    @Test
+    fun failure_line_keeps_its_full_line_box() {
+        rule.setContent {
+            PyrycodeMobileTheme {
+                ThreadScreen(
+                    ThreadUiState("chat", "Client planning", isPromoted = false),
+                    {},
+                    {},
+                    ConnectionState.Connected,
+                    {},
+                    questionState = question.copy(phase = QuestionSendPhase.Failed),
+                )
+            }
+        }
+
+        val results = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        rule
+            .onNodeWithTag("question-send-failed")
+            .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+
+        assertEquals(
+            androidx.compose.ui.text.style.LineHeightStyle.Trim.None,
+            results
+                .single()
+                .layoutInput.style.lineHeightStyle
+                ?.trim,
+        )
+    }
+
     @Test
     fun an_open_permission_prompt_withholds_the_question_until_it_resolves_with_picks_intact() {
         val picked =

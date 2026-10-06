@@ -64,6 +64,8 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso
@@ -79,6 +81,7 @@ import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
+import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.ATTACHMENT_CHUNK_BYTES
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
@@ -327,6 +330,89 @@ class InteractiveStreamE2ETest {
         composeTestRule.assertFinishedReplySystemCopy(hostRepository(serverId), conversationId, REPLY_TIMEOUT_MS)
     }
 
+    /**
+     * #1762 manual: a long plain reply offers a prefix, but Claude may finish while navigation runs.
+     * Pausing Compose cannot fence the backend. A settled reply fails the open-turn checks; it never
+     * qualifies as live reopen evidence. Un-ignore and run this named method to attempt promotion,
+     * recording executed/failed/skipped counts and only accepting a still-open checkpoint.
+     */
+    @Ignore("manual, unproven — Claude can finish between prefix capture and thread reopen; no backend hold")
+    @Test
+    fun interactiveTurn_reopenOngoingReply_showsArrivedPrefixImmediately() {
+        awaitChannelList()
+        awaitConnected()
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val (conversationId, name) = answerChat(serverId, "reopen-stream-")
+        openChatRow(name)
+        val repository = hostRepository(serverId)
+        sendFromPhone(
+            "Write one plain paragraph of at least 800 words about a walk in a forest. " +
+                "Use ordinary words and spaces only, no markdown, lists, headings or tools. Begin writing immediately.",
+        )
+        val captured =
+            runBlocking {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    repository
+                        .observeMessages(conversationId)
+                        .map { rows ->
+                            rows
+                                .filterIsInstance<ThreadItem.MessageItem>()
+                                .map { it.message }
+                                .firstOrNull {
+                                    it.role == Role.Assistant &&
+                                        it.isStreaming &&
+                                        it.content
+                                            .trim()
+                                            .split(Regex("\\s+"))
+                                            .size >= 20
+                                }
+                        }.filterNotNull()
+                        .first()
+                }
+            }
+        val prefix = captured.content
+        assertTrue("capture requires a non-empty substantial prefix", prefix.isNotBlank())
+        val inBubble = hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+        val displayedPrefix = hasText(prefix, substring = true) and inBubble
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(displayedPrefix, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        fun assertStillOpen() {
+            val rows = runBlocking { repository.observeMessages(conversationId).first() }.filterIsInstance<ThreadItem.MessageItem>()
+            assertTrue("a completed reply cannot prove ongoing reopen", rows.any { it.message.id == captured.id && it.message.isStreaming })
+            assertNotEquals(LiveSessionEvent.TurnState.Phase.Idle, runBlocking { repository.observeTurnPhase(conversationId).first() })
+        }
+        assertStillOpen()
+        leaveThread()
+        composeTestRule.onAllNodes(hasTestTag(MESSAGE_BUBBLE_TEST_TAG), useUnmergedTree = true).assertCountEquals(0)
+        val listRow = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(name, substring = true)
+        scrollListTo(listRow)
+        composeTestRule.mainClock.autoAdvance = false
+        try {
+            composeTestRule.onAllNodes(listRow).onFirst().performClick()
+            val body =
+                SemanticsMatcher("streaming caret inside a reply bubble") { node ->
+                    node.config.getOrElse(SemanticsProperties.Text) { emptyList() }.any { it.text.endsWith("▎") }
+                } and inBubble
+            val start = composeTestRule.mainClock.currentTime
+            while (composeTestRule.onAllNodes(body, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()) {
+                check(
+                    composeTestRule.mainClock.currentTime - start < 128,
+                ) { "reopened streaming body did not compose within the frame budget" }
+                runBlocking { delay(250) }
+                composeTestRule.mainClock.advanceTimeByFrame()
+                composeTestRule.waitForIdle()
+            }
+            assertStillOpen()
+            composeTestRule.onNode(displayedPrefix, useUnmergedTree = true).assertIsDisplayed()
+            composeTestRule.onAllNodes(displayedPrefix, useUnmergedTree = true).assertCountEquals(1)
+            assertStillOpen()
+        } finally {
+            composeTestRule.mainClock.autoAdvance = true
+        }
+    }
+
     @Test
     fun interactiveTurn_pingPrompt_streamsPingReplyIntoThread() {
         // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
@@ -349,6 +435,73 @@ class InteractiveStreamE2ETest {
 
         // 5. Match the displayed reply itself; queued prompt removal cannot offset this signal.
         composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+    }
+
+    /** #1766: one real reply streams through the parser-led streaming body and settles into the same GFM renderer. */
+    @Test
+    fun interactiveTurn_markdownReply_rendersFormattedBody() {
+        val peer = runningToolPeer()
+        try {
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val (chat, name) = answerChat(twoHostArg(ARG_SERVER_ID), "markdown-reveal-")
+            assertPeerAnswers(peer, chat)
+            openChatRow(name)
+            val stamp = System.currentTimeMillis()
+            val bold = "bold$stamp"
+            val inline = "inline$stamp"
+            val code = "code$stamp"
+            val cell = "cell$stamp"
+            val end = "end$stamp"
+            val body = "**$bold** `$inline`\n\n```text\n$code\n```\n\n| Key | Value |\n| --- | --- |\n| $cell | present |\n\n$end"
+            sendFromPhone(
+                "Reply with exactly the following markdown body, preserving every word and its formatting. " +
+                    "Do not use tools or surround the whole response with another code fence:\n\n" + body,
+            )
+            awaitTurnEnd(peer, chat, 1, "the formatted markdown reply")
+            val reply = assistantText(peer, chat)
+            // A generated fixture that does not contain the requested constructs proves nothing.
+            assertTrue(reply.contains("**$bold**"))
+            assertTrue(reply.contains("`$inline`"))
+            assertTrue(reply.contains("```text"))
+            assertTrue(reply.contains("| $cell | present |"))
+            // The prompt repeats the final paragraph. Select the formatted reply, and require the
+            // finished bubble's details action rather than mistaking a blink-off caret for settlement.
+            val settledReply =
+                hasTestTag(MESSAGE_BUBBLE_TEST_TAG) and hasClickAction() and
+                    hasAnyDescendant(hasText("$bold $inline"))
+            val inReply = hasAnyAncestor(settledReply)
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasText(end) and inReply, useUnmergedTree = true).fetchSemanticsNodes().size == 1 &&
+                    composeTestRule.onAllNodesWithText("▎").fetchSemanticsNodes().isEmpty()
+            }
+            val formatted =
+                composeTestRule
+                    .onNode(hasText("$bold $inline") and inReply, useUnmergedTree = true)
+                    .fetchSemanticsNode()
+                    .config[SemanticsProperties.Text]
+                    .single()
+            assertTrue(
+                formatted.spanStyles.any {
+                    it.item.fontWeight == FontWeight.Bold &&
+                        formatted.text.substring(it.start, it.end) == bold
+                },
+            )
+            assertTrue(
+                formatted.spanStyles.any {
+                    it.item.fontFamily == FontFamily.Monospace &&
+                        formatted.text.substring(it.start, it.end) == inline
+                },
+            )
+            listOf(code, "Key", "Value", cell, "present", end).forEach {
+                composeTestRule.onNode(hasText(it) and inReply, useUnmergedTree = true).assertIsDisplayed()
+            }
+            // The whole reply survives the streaming-to-history boundary with no lost source text.
+            assertEquals(body, reply.trim())
+        } finally {
+            peer.close()
+        }
     }
 
     /**

@@ -3791,8 +3791,10 @@ class ThreadViewModelTest {
             navCollector.cancel()
         }
 
+    // #1651: Delete follows Archive's precedent — tapped from the Channel Info sheet, it closes that
+    // sheet too, so Figma's confirmation dialog draws over the canvas rather than over the sheet's scrim.
     @Test
-    fun onOverflowEvent_delete_opensConfirmDialogWithoutDeletingOrNavigating() =
+    fun onOverflowEvent_delete_opensConfirmDialogAndClosesTheSheetWithoutDeletingOrNavigating() =
         runTest {
             val repo = RecordingRepo()
             val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
@@ -3807,7 +3809,7 @@ class ThreadViewModelTest {
             advanceUntilIdle()
 
             assertTrue(vm.state.value.deleteConfirmVisible)
-            assertTrue(vm.state.value.channelInfoOpen)
+            assertFalse(vm.state.value.channelInfoOpen)
             assertTrue(repo.deleteCalls.isEmpty())
             assertTrue(navEvents.isEmpty())
             collector.cancel()
@@ -3815,7 +3817,7 @@ class ThreadViewModelTest {
         }
 
     @Test
-    fun onOverflowEvent_deleteDismiss_closesConfirmKeepsSheetWithoutDeleting() =
+    fun onOverflowEvent_deleteDismiss_closesConfirmWithoutReopeningTheSheetOrDeleting() =
         runTest {
             val repo = RecordingRepo()
             val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
@@ -3832,7 +3834,7 @@ class ThreadViewModelTest {
             advanceUntilIdle()
 
             assertFalse(vm.state.value.deleteConfirmVisible)
-            assertTrue(vm.state.value.channelInfoOpen)
+            assertFalse(vm.state.value.channelInfoOpen)
             assertTrue(repo.deleteCalls.isEmpty())
             collector.cancel()
         }
