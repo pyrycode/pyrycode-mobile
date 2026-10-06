@@ -49,7 +49,9 @@ Invariant probes check cached older rows; chronological once-only posts/reply; i
 
 ## Open Questions
 
-None. Two batches of 60 posts exceed the daemon’s existing default 50-entry page; assertions require the reply outside the newest page and at least two older pulls. No cursor encoding assumptions. Synthetic content remains fixture-only.
+Resolve the stranded newest-page request in production via #1842 before completing the scripted/live proof. The failing test remains active on this branch while the ticket waits on that native dependency. No application fix belongs to this test-only ticket.
+
+Setup resolved: Two batches of 60 posts exceed the daemon’s existing default 50-entry page; assertions require the reply outside the newest page and at least two older pulls. No cursor encoding assumptions. Synthetic content remains fixture-only.
 
 ## Documentation handoff
 
@@ -79,3 +81,5 @@ Pending for documentation stage:
 ## Revisions
 
 2026-10-06: The test application’s existing repository decorator is the request-count seam. Capture newest/older classification and completed pages without retaining cursors. Use two 60-post batches with the completed reply between them, exceeding the daemon’s default 50-entry page. The live baseline refreshes once after its settled ping so coverage certifies durable baseline entries before the tested disconnect. The deterministic twin uses its own promoted discussion and the existing ping fixture, avoiding cross-method reply collisions. The external force-stop proof runs a dedicated preparation method on an emulator booted under the existing device hold; the host driver then kills the actual app and restarts the daemon after the synthetic post to exclude replay there too. Original stop/start readiness coverage remains effective.
+
+2026-10-06: Two isolated scripted `ping` runs exposed a production reconnect failure before the gap could be filled: the newest availability event was logged, but the repository tap recorded zero asks/completions and retained only the baseline. File and link #1842; preserve the failing regression without issuing a test-side history request or ignoring its assertion. The exact stranded guard needs diagnosis in #1842. The actual external force-stop/relaunch proof passed against the isolated real daemon: one preparation test passed, one synthetic post displayed once with no scrolling, app PID absent after stop and replaced after launch. Sanitized counted evidence is retained in `scripts/e2e-fixtures/1833-force-stop-evidence.json`; reconnect failure counts are retained beside it. Full live execution and documentation remain later-stage work after the blocker and proof pass.

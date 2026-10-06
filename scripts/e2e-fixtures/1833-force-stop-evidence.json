@@ -1,0 +1,30 @@
+{
+  "started_utc": "2026-10-06T05:14:38Z",
+  "device_sdk": "33",
+  "device_image": "google/sdk_gslim_arm64/emulator64_arm64:13/TE1A.220922.033/10836537:userdebug/dev-keys",
+  "app_revision": "b781c6fca320c0d8009bba8ae2201b7403a3bc2e",
+  "daemon_revision": "bf82c68e10c895c5fecc5552652dbe63e6677d39",
+  "daemon_version": "pyry dev",
+  "conversation_id": "07bd03a1-f92e-4d06-9008-fdd48f1aaac5",
+  "synthetic_post_id": "e2e1833-stop-1791263676796",
+  "synthetic_post_text": "e2e1833-stop-1791263676796-new-000",
+  "result": "PASS",
+  "pid_before": "2772",
+  "process_stopped": true,
+  "stopped_utc": "2026-10-06T05:14:43Z",
+  "pid_after": "3118",
+  "process_relaunched": true,
+  "post_count": 1,
+  "scrolling": false,
+  "relaunched_utc": "2026-10-06T05:14:48Z",
+  "command": "PYRYCODE_SRC=<sibling checkout> PYRYCODE_RELAY_SRC=<sibling checkout> python3 scripts/e2e-force-stop-proof.py",
+  "preparation": {
+    "executed": 1,
+    "passed": 1,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "xml_sha256": "92fd6c1618be696a9cfba3f51fa806dd39e1d0fd2e659fd8c29e683a68cfa9d4"
+  },
+  "scope": "Owned isolated real daemon; scripted child; zero real-Claude turns. Pairing and app cache retained across actual app stop/relaunch; durable home retained across daemon restart."
+}

@@ -3,7 +3,6 @@ package de.pyryco.mobile.e2e
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -70,12 +69,16 @@ internal class DurableGapProof(
     ) {
         try {
             reconnect()
-            rule.waitUntil(30_000) {
-                DurableHistoryProbe.completed() == 1 &&
-                    messages().any { it == newestPost } &&
-                    coverageGap() &&
-                    rule.onNodeWithText(newestPost, useUnmergedTree = true).isDisplayed()
+            try {
+                rule.waitUntil(30_000) { DurableHistoryProbe.completed() >= 1 }
+            } catch (failure: Throwable) {
+                throw AssertionError(
+                    "newest completion: asks=${DurableHistoryProbe.asks().size}, pages=${DurableHistoryProbe.completed()}, rows=${messages().size}, gap=${coverageGap()}",
+                    failure,
+                )
             }
+            rule.waitUntil(30_000) { messages().any { it == newestPost } && coverageGap() }
+            rule.onNodeWithText(newestPost, useUnmergedTree = true).assertIsDisplayed()
             assertEquals("only availability asks without a gesture", listOf(true), DurableHistoryProbe.asks())
             assertTrue("older post must be outside newest page and empty replay", olderPost !in messages())
             assertTrue("reply must be outside newest page and empty replay", messages().none { it.contains(replyText, ignoreCase = true) })
