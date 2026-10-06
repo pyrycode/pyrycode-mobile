@@ -5297,8 +5297,11 @@ class InteractiveStreamE2ETest {
             // Marker navigation opened the run. ScrollTo uses the drawing viewport, so reveal the
             // actual tap center between the chrome bars before closing it.
             composeTestRule.questionAnswerTarget(openedRun).performClick()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(closedRun).fetchSemanticsNodes().isNotEmpty() }
-            composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(inThreadList(later))
+            // Closing removes the child rows; when one of them anchored the list, the header can
+            // leave composition, so scroll back to it rather than waiting for it to reappear.
+            val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { runCatching { list.performScrollToNode(closedRun) }.isSuccess }
+            list.performScrollToNode(inThreadList(later))
             val settled = composeTestRule.onNode(closedRun).fetchSemanticsNode().boundsInRoot
             val after = composeTestRule.onNode(inThreadList(later), useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
             assertTrue("later phone message must render below the settled Agent", settled.bottom <= after.top)
