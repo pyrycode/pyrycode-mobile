@@ -226,8 +226,9 @@ whichever state happens to be the one currently rendered.
 ### The oldest-end history demand and retry (#777, #778, #1569, #1572)
 
 Split into [Thread screen — the oldest-end history demand](thread-screen-oldest-end-history-demand.md)
-when this document passed the size cap. Covers `OlderHistoryGesture`/`olderHistoryPull`, the 200dp ask
-band, the retry/dead-end/offline tail, and the newest-page ask an open thread sends every time its host
+when this document passed the size cap. Covers `OlderHistoryGesture`/`olderHistoryPull`, movement-based
+two-viewport prefetch and 200-entry pages, the retry/dead-end/offline tail, and the newest-page ask an
+open thread sends every time its host
 becomes available (at open and after every reconnect, #1572 — widened from #1569's never-loaded-only
 opening ask, because a reply stored while the thread was off-screen was never cached and a reconnect
 discarded it).
