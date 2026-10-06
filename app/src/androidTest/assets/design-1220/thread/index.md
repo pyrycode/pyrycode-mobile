@@ -807,24 +807,34 @@ older captures.
 
 ### Queued message row — `696:4677`
 
-- **Owning ticket:** #1622 (open; the drop-button-disappears finding no longer reproduces, see below)
+- **Owning ticket:** #1622; #1642 supplied the weighted action reservation that repaired the disappearing drop button.
 - **Capture:** `queued-messages.png`, plus `queued-long.png` (a third, longer row added as evidence) (412x892, 1.0)
 - **Side-by-side:** `queued-messages-side-by-side.png`, `queued-long-side-by-side.png`
 - **Overlay:** `queued-messages-overlay.png`, `queued-long-overlay.png`
-- **Verdict:** mismatch (spacing only)
-- `QueuedMessageRow`'s bubble `Surface` carries `weight(1f, fill = false)` since #1642 (`034a4958`), so the
-  drop target survives on every wrapping row, including the long third row `queued-long.png` adds: all three
-  rows' X icons measure at x 362–373 (centre ≈367.5), matching the frame's centred-at-368 spec within a
-  device pixel. The remaining difference is the gap between two queued rows: a pixel scan at a fixed column
-  finds the first bubble ends at y=684 in both the app and the frame (same bottom anchor), but the second
-  bubble starts at y=692 in the app against y=700 in the frame — an 8 px gap against the frame's 16 px, from
-  `QueuedRowVerticalPadding`.
+- **Verdict:** match (queued-row geometry and spacing)
+- #1622 refreshed both captures on full `pixel8Api35`, API 35, with hardware rendering, density/font scale
+  1.0 and real 24 px status/navigation bars (`syntheticBars=false` in both sidecars). The focused command was
+  `./gradlew :app:pixel8Api35DebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.design.ThreadDesignCaptureTest#queuedAndToolRowFramesAt412By892' -Pandroid.testInstrumentationRunnerArguments.requireRealSystemBars=true --console=plain`.
+  [1622-results.xml](1622-results.xml) records 1 executed/passed, 0 failures/errors and 0 skipped;
+  `queuedAndToolRowFramesAt412By892` is present and passed. This replaces the queued captures from the
+  three-method #1619 audit above, without replacing its other states.
+- Wrapping bubbles measure 200 px and successive bubbles have a 16 px gap. Close glyph ink spans
+  x=361–374, centred at x=368. #1642's `weight(1f, fill = false)` reserves action space; #1622 adds the
+  explicit 200 dp cap and symmetric 8 dp row padding while preserving the thread's 8 dp bottom compensation.
+  `QueuedMessageRowGeometryTest` additionally checks 20/16 dp bubble padding, 48 dp drop bounds and one
+  callback per centre/edge tap for short, wrapping and long unbroken text. Its 600 dp viewport case proves
+  the cap independently of the available width at 412 dp.
+- The [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1853#issuecomment-6024329699)
+  confirmed the retained comparisons and reference pixels. It did not independently refresh remote Figma;
+  the builder reports its fresh export was byte-identical to retained `figma-696-4677.png`.
+  Seeded history and surrounding chrome differ from the frame and are outside this queued-row verdict;
+  their existing audit ownership remains unchanged. Live queue/drop coverage remains #849.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | match: drop button fully inside the 20 px gutter on every row, including the long wrapping one; bubble bottom-anchors identically to the frame |
-| Padding | match: bubble horizontal/vertical padding and the two-line row's wrap break are identical in the app and the frame |
-| Spacing | mismatch: 8 px between queued rows against the frame's 16 px |
+| Geometry | match: wrapping bubbles capped at 200 dp; drop has a 48 dp target ending at the 20 dp gutter, centred at x=368, including the long wrapping row |
+| Padding | match: 20 dp horizontal/16 dp vertical bubble padding |
+| Spacing | match: 16 px between queued bubbles |
 | Typography | match |
 | Colour | match |
 | Borders | match |
@@ -832,7 +842,7 @@ older captures.
 | Icon paths | match: waiting glyph, close X |
 | Component state | match: no Send-now button drawn. #1642's Send-now action is gated on the session reporting `capabilities.mid_turn_input: true`, absent on the capture's seeded session; its absence here is the approved, decided behaviour this README's "Approved additions without a separate frame" already records, not a mismatch |
 
-- **Routed:** #1622 (spacing only; a comment on the issue records that the button fix already landed)
+- **Routed:** none for the queued row; #1622 resolves its width/spacing contract and pins drop reachability.
 
 ### Sub-agent tool rows — `696:4795`
 

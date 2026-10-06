@@ -604,8 +604,8 @@ fun ThreadScreen(
                 // #1002: the message area, with the Top overlay pinned over its top edge while the messages
                 // scroll beneath it.
                 Box(modifier = Modifier.fillMaxWidth().weight(1f).testTag("thread-message-region")) {
-                    // #1352: a pull toward older messages is the only history ask. Inert while a page is
-                    // loading, so a second pull sends nothing; the ViewModel still decides the rest.
+                    // Movement can prefetch after a page settles; arrival alone never asks.
+                    // The ViewModel remains the authoritative single-flight and termination gate.
                     val demandOlderHistory by rememberUpdatedState(onDemandOlderHistory)
                     val demandHistoryGap by rememberUpdatedState(onDemandHistoryGap)
                     val gapMarkers by rememberUpdatedState(state.historyMarkers)
@@ -687,11 +687,11 @@ fun ThreadScreen(
                         // #1352: prompt rows take the lowest indices of the reversed list and are never
                         // history, so the oldest thread row sits after them.
                         val oldestRowIndex by rememberUpdatedState(if (rows.isEmpty()) -1 else rows.size + promptRowCount - 1)
-                        val askBandPx by rememberUpdatedState(with(LocalDensity.current) { HistoryAskBand.toPx() })
                         val currentHistoryRows by rememberUpdatedState(rows)
                         val historyPromptRows by rememberUpdatedState(promptRowCount)
                         val listPull =
                             remember(listState) {
+                                var gapDemanded = false
                                 OlderHistoryGesture(
                                     nearOldestEnd = {
                                         visibleHistoryMarker(
@@ -702,10 +702,15 @@ fun ThreadScreen(
                                             gapHeights,
                                         ) !=
                                             null ||
-                                            listState.layoutInfo.isNearOldestEnd(oldestRowIndex, askBandPx)
+                                            listState.layoutInfo.isNearOldestEnd(
+                                                oldestRowIndex,
+                                                listState.layoutInfo.viewportSize.height * 2f,
+                                                historyPromptRows,
+                                            )
                                     },
                                     onDemand = {
-                                        if (!historyLoading) {
+                                        // A selected gap owns this touch and its fling even after its marker disappears.
+                                        if (!historyLoading && !gapDemanded) {
                                             val marker =
                                                 visibleHistoryMarker(
                                                     listState.layoutInfo,
@@ -714,9 +719,15 @@ fun ThreadScreen(
                                                     gapMarkers,
                                                     gapHeights,
                                                 )
-                                            if (marker != null) demandHistoryGap(marker.anchor) else demandOlderHistory()
+                                            if (marker != null) {
+                                                gapDemanded = true
+                                                demandHistoryGap(marker.anchor)
+                                            } else {
+                                                demandOlderHistory()
+                                            }
                                         }
                                     },
+                                    onStart = { gapDemanded = false },
                                 )
                             }
                         // #1314: one following state, derived from position on every scroll as desktop's

@@ -25,6 +25,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -60,63 +61,80 @@ private val HistoryTailBottomGap = MessageAreaRowSpacing
 private val HistoryTailLineBox = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
 
 /**
- * How close to the oldest end a pull must start to ask for older history (#1352), desktop's
- * `HISTORY_ASK_BAND_PX` in `threadScrollPosition.ts`.
- */
-internal val HistoryAskBand = 200.dp
-
-/**
- * The reader's pull toward older messages (#1352), desktop's `demandHistory`: a touch drag toward older
- * content that **starts** with the thread at, or within [HistoryAskBand] of, its oldest end calls
- * [onDemand] once. A drag that starts further away only scrolls. Apply it with [olderHistoryPull].
- *
- * The start is read on the gesture's first pointer down, and the drag is seen as a nested scroll before
- * the list consumes it, so only a user's drag asks: a page arriving, a programmatic or semantics scroll,
- * or the oldest row coming into view never does. It consumes nothing, so a list that cannot scroll — a
- * short thread — still reports the pull, as desktop's wheel does.
- *
- * The thread's list uses `reverseLayout = true`, so older content lies at the top and a pull toward it moves
- * the finger down: a positive `y` delta.
+ * Observe real touch movement toward older content, including that touch's continuing fling.
+ * Position is checked after each movement; layout and page arrival never initiate demand.
+ * The reversed thread's older direction is a positive nested-scroll y delta.
  */
 internal class OlderHistoryGesture(
     private val nearOldestEnd: () -> Boolean,
     private val onDemand: () -> Unit,
+    private val onStart: () -> Unit = {},
 ) : NestedScrollConnection {
-    // Whether the current touch gesture started near the oldest end and has not asked yet. Set on the
-    // first pointer down; cleared by the ask and by the fling that ends every drag.
-    private var armed = false
+    private var touching = false
+    private var flingEligible = false
+    private var flinging = false
 
     fun onGestureStart() {
-        armed = nearOldestEnd()
+        touching = true
+        flingEligible = false
+        flinging = false
+        onStart()
     }
 
-    override fun onPreScroll(
+    fun onGestureEnd() {
+        touching = false
+    }
+
+    fun onGestureCancel() {
+        touching = false
+        flingEligible = false
+        flinging = false
+    }
+
+    override fun onPostScroll(
+        consumed: Offset,
         available: Offset,
         source: NestedScrollSource,
     ): Offset {
-        if (armed && source == NestedScrollSource.UserInput && available.y > 0f) {
-            armed = false
-            onDemand()
-        }
+        val touchMovement = touching && source == NestedScrollSource.UserInput
+        if (touchMovement) flingEligible = true
+        val readerMovement = touchMovement || flinging && source == NestedScrollSource.SideEffect
+        if (readerMovement && consumed.y + available.y > 0f && nearOldestEnd()) onDemand()
         return Offset.Zero
     }
 
-    // A drag's fling dispatch, at zero velocity too, follows its last delta, so this ends the gesture.
     override suspend fun onPreFling(available: Velocity): Velocity {
-        armed = false
+        flinging = flingEligible && available.y > 0f
+        touching = false
+        flingEligible = false
+        return Velocity.Zero
+    }
+
+    override suspend fun onPostFling(
+        consumed: Velocity,
+        available: Velocity,
+    ): Velocity {
+        flinging = false
         return Velocity.Zero
     }
 }
 
-/**
- * Attach [gesture] to a scrollable thread surface (#1352): observe each gesture's first pointer down without
- * consuming it, and receive the surface's drag deltas as its nested-scroll parent.
- */
+/** Observe pointer lifetime without consuming the list's input. */
 internal fun Modifier.olderHistoryPull(gesture: OlderHistoryGesture): Modifier =
     pointerInput(gesture) {
-        awaitEachGesture {
-            awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-            gesture.onGestureStart()
+        try {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                if (down.type == PointerType.Touch) {
+                    gesture.onGestureStart()
+                    do {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                    } while (event.changes.any { it.pressed })
+                    gesture.onGestureEnd()
+                }
+            }
+        } finally {
+            gesture.onGestureCancel()
         }
     }.nestedScroll(gesture)
 
@@ -199,21 +217,24 @@ internal fun HistoryGapRow(
 }
 
 /**
- * Whether the reversed thread list sits at, or within [bandPx] of, its oldest end (#1352). [oldestIndex] is
- * the oldest thread row's list index, or negative when the thread has no rows, which counts as at the end.
- *
- * Under `reverseLayout` an item's offset runs from the viewport's bottom, so the part of the oldest row
- * still hidden above the viewport is `offset + size - viewportEndOffset`. The list's top content padding
- * (#1562) is after-content padding there and lies past the oldest row, so it is added back to measure the
- * distance from the scroll's oldest end. A row not laid out yet counts as further away than the band.
+ * Estimate loaded distance above the reversed viewport, even when its oldest row is not laid out.
+ * Measured history rows supply an average height for unseen rows. Prompt and tail rows are excluded.
+ * The visible oldest edge is exact; after-content padding remains part of the loaded distance.
  */
 internal fun LazyListLayoutInfo.isNearOldestEnd(
     oldestIndex: Int,
     bandPx: Float,
+    firstHistoryIndex: Int = 0,
 ): Boolean {
     if (oldestIndex < 0) return true
-    val oldest = visibleItemsInfo.firstOrNull { it.index == oldestIndex } ?: return false
-    return oldest.offset + oldest.size + afterContentPadding - viewportEndOffset <= bandPx
+    val history = visibleItemsInfo.filter { it.index in firstHistoryIndex..oldestIndex }
+    val edge = history.maxByOrNull { it.index } ?: return false
+    val unseenRows = oldestIndex - edge.index
+    val averageHeight = history.sumOf { it.size.toLong() }.toFloat() / history.size
+    val distance =
+        edge.offset.toFloat() + edge.size + afterContentPadding - viewportEndOffset +
+            unseenRows.toFloat() * (averageHeight + mainAxisItemSpacing)
+    return distance <= bandPx
 }
 
 /**
