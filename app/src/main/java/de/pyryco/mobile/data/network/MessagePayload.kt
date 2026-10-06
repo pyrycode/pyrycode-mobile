@@ -33,7 +33,7 @@ import kotlinx.serialization.Serializable
  * everywhere else, so [toMessage] ignores it; the history reducer and the live `message` arm read it
  * (#1351), and only on a user row. [queuedMsgId] names the delivered queue entry (#1655), matching
  * `protocol-mobile.md` Application message types (`message`) and Queue (v2). It is delivery metadata,
- * not persisted domain state; history mapping ignores it and legacy payloads omit it.
+ * not persisted domain state; history delivery settlement reads it and legacy payloads omit it.
  */
 @Serializable
 data class MessagePayloadDto(

@@ -4190,47 +4190,73 @@ class RemoteConversationRepositoryTest {
         val other = collectMessages(repo, "c-other")
         runCurrent()
         pump.push(turnStateEnvelope("c-1", "responding"))
+        runCurrent()
+        assertEquals(emptyList<ThreadItem>(), thread.last())
         pump.push(assistantDeltaEnvelope("c-1", "turn-1", 0, "First"))
         runCurrent()
         val b = sendAndAck(repo, pump, "c-1", "B")
         val c = sendAndAck(repo, pump, "c-1", "C")
         val originals = thread.last().filterIsInstance<ThreadItem.MessageItem>().filter { it.message.id in setOf(b, c) }
         val entries = listOf(QueuedFixture(41L, "B", TS, b), QueuedFixture(42L, "C", TS, c))
-        pump.push(queueStateEnvelope("c-1", entries))
-        pump.push(toolUseEnvelope("c-1", "turn-1", "tool-1", "Bash", "held tool"))
-        pump.push(toolResultEnvelope("c-1", "turn-1", "tool-1", false, "done"))
-        pump.push(assistantDeltaEnvelope("c-1", "turn-1", 1, "Done"))
-        pump.push(turnEndEnvelope("c-1", "turn-1", "end_turn"))
 
         fun expect(vararg expected: String) {
             runCurrent()
             assertEquals(expected.toList(), messageIds(thread.last()))
+            assertEquals(originals, thread.last().filterIsInstance<ThreadItem.MessageItem>().filter { it.message.id in setOf(b, c) })
             for (rows in thread) {
                 val queued = messageIds(rows).filter { it in setOf(b, c) }
                 if (queued.size == 2) assertEquals(listOf(b, c), queued)
                 assertTrue(messageIds(rows).none { it.startsWith("turn-2#") || it.startsWith("turn-3#") })
             }
         }
-        expect("turn-1", "tool-1", "turn-1#1", b, c)
-        if (removeFirst) pump.push(queueStateEnvelope("c-1", entries.drop(1)))
-        pump.push(deliveredEntryEnvelope("c-1", b, 41L))
-        pump.push(turnStateEnvelope("c-1", "responding"))
-        pump.push(assistantDeltaEnvelope("c-1", "turn-2", 0, "B0"))
-        pump.push(queueStateEnvelope("c-other", emptyList()))
         pump.push(queueStateEnvelope("c-1", entries))
+        expect("turn-1", b, c)
+        pump.push(toolUseEnvelope("c-1", "turn-1", "tool-1", "Bash", "held tool"))
+        expect("turn-1", "tool-1", b, c)
+        pump.push(toolResultEnvelope("c-1", "turn-1", "tool-1", false, "done"))
+        expect("turn-1", "tool-1", b, c)
+        pump.push(assistantDeltaEnvelope("c-1", "turn-1", 1, "Done"))
+        expect("turn-1", "tool-1", "turn-1#1", b, c)
+        pump.push(turnEndEnvelope("c-1", "turn-1", "end_turn"))
+        expect("turn-1", "tool-1", "turn-1#1", b, c)
+        if (removeFirst) {
+            pump.push(queueStateEnvelope("c-1", entries.drop(1)))
+            expect("turn-1", "tool-1", "turn-1#1", b, c)
+        }
+        pump.push(deliveredEntryEnvelope("c-1", b, 41L))
+        expect("turn-1", "tool-1", "turn-1#1", b, c)
+        pump.push(turnStateEnvelope("c-1", "responding"))
+        expect("turn-1", "tool-1", "turn-1#1", b, c)
+        pump.push(assistantDeltaEnvelope("c-1", "turn-2", 0, "B0"))
+        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c)
+        pump.push(queueStateEnvelope("c-other", emptyList()))
+        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c)
+        pump.push(queueStateEnvelope("c-1", entries))
+        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c)
         pump.push(assistantDeltaEnvelope("c-1", "turn-2", 1, "B1"))
+        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c)
         pump.push(turnEndEnvelope("c-1", "turn-2", "end_turn"))
         expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c)
-        if (removeFirst) pump.push(queueStateEnvelope("c-1", emptyList()))
+        if (removeFirst) {
+            pump.push(queueStateEnvelope("c-1", emptyList()))
+            expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c)
+        }
         pump.push(deliveredEntryEnvelope("c-1", c, 42L))
+        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c)
         pump.push(assistantDeltaEnvelope("c-1", "turn-3", 0, "C0"))
+        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c, "turn-3")
         pump.push(assistantDeltaEnvelope("c-1", "turn-3", 1, "C1"))
+        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c, "turn-3")
         pump.push(queueStateEnvelope("c-1", entries.drop(1))) // B drain delayed into C reply.
         expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c, "turn-3")
         pump.push(deliveredEntryEnvelope("c-1", b, 41L))
+        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c, "turn-3")
         pump.push(deliveredEntryEnvelope("c-1", c, 42L))
+        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c, "turn-3")
         pump.push(queueStateEnvelope("c-1", emptyList()))
+        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c, "turn-3")
         pump.push(queueStateEnvelope("c-1", entries))
+        expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c, "turn-3")
         pump.push(assistantDeltaEnvelope("c-1", "turn-3", 2, "C2"))
         expect("turn-1", "tool-1", "turn-1#1", b, "turn-2", c, "turn-3")
         assertEquals(originals, thread.last().filterIsInstance<ThreadItem.MessageItem>().filter { it.message.id in setOf(b, c) })
@@ -4244,6 +4270,88 @@ class RemoteConversationRepositoryTest {
                 ?.map { it.seq },
         )
         assertEquals(emptyList<ThreadItem>(), other.last())
+    }
+
+    @Test
+    fun queuedDelivery_historyBeforePush_preservesAnsweringReplyAndHeldMetadata() =
+        runTest {
+            assertHistoryDeliveryOverlap(historyFirst = true)
+        }
+
+    @Test
+    fun queuedDelivery_historyAfterPush_preservesAnsweringReplyAndHeldMetadata() =
+        runTest {
+            assertHistoryDeliveryOverlap(historyFirst = false)
+        }
+
+    private fun TestScope.assertHistoryDeliveryOverlap(historyFirst: Boolean) {
+        val pump = FakeSessionPump()
+        val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+        val thread = collectMessages(repo, "c-1")
+        runCurrent()
+        pump.push(turnStateEnvelope("c-1", "responding"))
+        runCurrent()
+        pump.push(assistantDeltaEnvelope("c-1", "turn-1", 0, "First"))
+        runCurrent()
+        var sent: Message? = null
+        backgroundScope.launch {
+            sent =
+                repo.sendMessage("c-1", "original", attachments = listOf(MessageAttachment(LIVE_ATTACHMENT_ID, "photo.jpg", "image/jpeg")))
+        }
+        runCurrent()
+        pump.push(ackEnvelope(pump.sent.last { it.type == "send_message" }.id))
+        runCurrent()
+        val held = requireNotNull(sent)
+        val own = held.id
+        pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "original", TS, own))))
+        runCurrent()
+        pump.push(toolUseEnvelope("c-1", "turn-1", "tool-1", "Bash", "tool"))
+        runCurrent()
+        pump.push(turnEndEnvelope("c-1", "turn-1", "end_turn"))
+        runCurrent()
+
+        fun expectReply(content: String) {
+            runCurrent()
+            assertEquals(listOf("turn-1", "tool-1", own, "turn-2"), messageIds(thread.last()))
+            assertEquals(ThreadItem.MessageItem(held), thread.last()[2])
+            val reply = (thread.last()[3] as ThreadItem.MessageItem).message
+            assertEquals(content, reply.content)
+            assertEquals(if (content == "Reply") listOf(0) else listOf(0, 1), reply.segment?.deltas?.map { it.seq })
+        }
+
+        fun mergePage() {
+            val request = startRequestHistory(repo, "c-1")
+            runCurrent()
+            pump.push(
+                historyPageEnvelope(
+                    inReplyTo = pump.sent.last { it.type == "request_history" }.id,
+                    raw = """{"entries":[
+                    {"id":11,"type":"assistant_delta","payload":{"conversation_id":"c-1","turn_id":"turn-2","seq":0,"text":"Reply"},"ts":"$TS"},
+                    {"id":10,"type":"message","payload":{"conversation_id":"foreign","message_id":"$own","role":"user","text":"history copy","queued_msg_id":42,"attachment_ids":["$LIVE_ATTACHMENT_ID"]},"ts":"$TS"}
+                ],"cursor":"","at_start":true}""",
+                ),
+            )
+            runCurrent()
+            assertTrue(request().isSuccess)
+            expectReply("Reply")
+        }
+        if (historyFirst) mergePage()
+        pump.push(deliveredEntryEnvelope("c-1", own, 42L))
+        runCurrent()
+        if (historyFirst) expectReply("Reply") else assertEquals(listOf("turn-1", "tool-1", own), messageIds(thread.last()))
+        mergePage()
+        pump.push(assistantDeltaEnvelope("c-1", "turn-2", 0, "Reply"))
+        expectReply("Reply")
+        pump.push(deliveredEntryEnvelope("c-1", own, 42L))
+        expectReply("Reply")
+        pump.push(assistantDeltaEnvelope("c-1", "turn-2", 1, " done"))
+        expectReply("Reply done")
+        pump.push(queueStateEnvelope("c-1", emptyList()))
+        expectReply("Reply done")
+        pump.push(queueStateEnvelope("c-other", listOf(QueuedFixture(42L, "peer", TS, own))))
+        expectReply("Reply done")
+        pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "stale", TS, own))))
+        expectReply("Reply done")
     }
 
     @Test

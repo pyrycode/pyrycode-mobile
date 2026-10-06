@@ -13,12 +13,14 @@ import de.pyryco.mobile.data.network.BannerPayloadDto
 import de.pyryco.mobile.data.network.CompactingPayloadDto
 import de.pyryco.mobile.data.network.CompactionBoundaryPayloadDto
 import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.MessagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.ModelRefusalFallbackPayloadDto
 import de.pyryco.mobile.data.network.ModelRefusalNoFallbackPayloadDto
 import de.pyryco.mobile.data.network.ToolDeniedPayloadDto
 import de.pyryco.mobile.data.network.ToolProgressPayloadDto
 import de.pyryco.mobile.data.network.UnrecognizedMessagePayloadDto
+import de.pyryco.mobile.data.network.WireRole
 import de.pyryco.mobile.data.network.failed
 import de.pyryco.mobile.data.network.toDenial
 import de.pyryco.mobile.data.network.toRow
@@ -907,13 +909,47 @@ internal class ThreadProjection(
         if (page.entries.isEmpty()) return
         recordEnded(conversationId, endedTurnIds(page.entries, interactive))
         val reduced = reduceOrderedHistoryPage(page.entries, interactive)
+        // A stored modern user delivery is placement evidence before its live replay arrives.
+        val deliveries =
+            page.entries.mapNotNull { entry ->
+                if (entry.type != RemoteConversationRepository.TYPE_MESSAGE) return@mapNotNull null
+                try {
+                    MobileJson
+                        .decodeFromJsonElement<MessagePayloadDto>(entry.payload)
+                        .takeIf { it.role == WireRole.User && it.queuedMsgId != null }
+                } catch (e: IllegalArgumentException) {
+                    null // Match the reducer's silent malformed-entry boundary.
+                }
+            }
         state.update { current ->
             val order = reduced.order + current.historyOrder[conversationId].orEmpty()
             val existing = current.threads[conversationId].orEmpty()
             val merged = existing.mergeOrderedHistoryRows(reduced.rows, order)
+            val echoes =
+                deliveries.fold(current.echoQueues[conversationId] ?: OwnEchoQueue()) { echoes, delivery ->
+                    val entryId = delivery.queuedMsgId ?: return@fold echoes
+                    val id = delivery.messageId
+                    val own =
+                        id in mintedMessageIds.value[conversationId].orEmpty() &&
+                            merged.filterIsInstance<ThreadItem.MessageItem>().any { it.message.id == id && it.message.role == Role.User }
+                    val settled = if (own) setOf(id) else emptySet()
+                    echoes.copy(
+                        backlog = echoes.backlog.filterNot { it.id == entryId },
+                        consumedBacklog = echoes.consumedBacklog + entryId,
+                        queued = echoes.queued - settled,
+                        delivered = echoes.delivered + settled,
+                        pushed = echoes.pushed + settled,
+                        behindTurn = echoes.behindTurn - settled,
+                        sendNow = echoes.sendNow - settled,
+                        awaitingPush = echoes.awaitingPush - settled,
+                        placementPending = echoes.placementPending - settled,
+                        reserved = echoes.reserved - settled,
+                    )
+                }
             current.copy(
                 threads = current.threads + (conversationId to merged.withSettledTurns(endedTurns.value[conversationId].orEmpty())),
                 historyOrder = current.historyOrder + (conversationId to order),
+                echoQueues = if (deliveries.isEmpty()) current.echoQueues else current.echoQueues + (conversationId to echoes),
             )
         }
         settleEndedTurns(conversationId)
@@ -1107,8 +1143,8 @@ internal class ThreadProjection(
      * they are not yet reported delivered, and remain in the store
      * for identity and attachment metadata, hidden from the read and skipped by assistant deltas.
      * [placementPending] retains every busy echo removed before its delivered push, including a
-     * settled closed-turn drain. The first push consumes this membership and corrects placement only
-     * when it reports Send now. Ordinary and duplicate pushes cannot move it. Idle echoes never join it.
+     * settled closed-turn drain. The first push consumes this membership. A modern push corrects placement;
+     * a legacy push does so only for Send now. Duplicate pushes cannot move it. Idle echoes never join it.
      *
      * [behindTurn] is the [queued] ids first reported while a turn was open (#1636), and only those, the
      * [parked] ones, read last until delivery reveals their reserved slot or moves them to the end.
@@ -1117,13 +1153,14 @@ internal class ThreadProjection(
      * put it below the reply's start and split the reply around it.
      *
      * [reserved] holds parked echoes positioned after their waiting turn at its first end (#1655).
-     * Ordinary confirmation preserves these slots even when the next reply has begun. Membership
-     * lasts until the first push, including across queue removal, so Send now can override it once.
+     * Legacy ordinary confirmation preserves these slots even when the next reply has begun. Membership
+     * lasts until delivery, including across queue removal; modern pushes or Send now override it once.
      * [backlog] retains snapshot FIFO entries, including peers, minus consumed entry ids. Only its
      * head can reserve a legacy slot; a peer ahead of an own echo makes it wait for another turn.
      * [consumedBacklog] records entry ids independently of row ids, including pushes before snapshots.
-     * It survives absent and stale snapshots for this connection. [pushed] separately prevents another
-     * entry sharing a delivered own row's id from relocating that held row. Both die with the connection.
+     * It survives absent and stale snapshots for this connection. [pushed] records live or history delivery,
+     * preventing replay or another entry sharing a delivered own row's id from relocating that held row.
+     * Both die with the connection.
      */
     private data class OwnEchoQueue(
         val queued: Set<String> = emptySet(),
