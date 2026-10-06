@@ -924,9 +924,29 @@ internal class ThreadProjection(
         state.update { current ->
             val order = reduced.order + current.historyOrder[conversationId].orEmpty()
             val existing = current.threads[conversationId].orEmpty()
-            val merged = existing.mergeOrderedHistoryRows(reduced.rows, order)
-            val echoes =
-                deliveries.fold(current.echoQueues[conversationId] ?: OwnEchoQueue()) { echoes, delivery ->
+            val echoes = current.echoQueues[conversationId] ?: OwnEchoQueue()
+            val pending = echoes.parked + echoes.awaitingPush + echoes.placementPending
+            val firstDeliveries =
+                deliveries
+                    .filter { it.messageId !in echoes.pushed && it.queuedMsgId !in echoes.consumedBacklog }
+                    .mapTo(HashSet()) { it.messageId }
+            // Only pending own user rows have provisional positions; keep their original objects at history's slot.
+            val provisional =
+                existing
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .filter {
+                        it.message.role == Role.User &&
+                            it.message.id in pending &&
+                            it.message.id in firstDeliveries &&
+                            it.message.id in mintedMessageIds.value[conversationId].orEmpty()
+                    }.associateBy { it.message.id }
+            val receiving = existing.filterNot { it is ThreadItem.MessageItem && it.message.id in provisional }
+            val merged =
+                receiving.mergeOrderedHistoryRows(reduced.rows, order).map { row ->
+                    if (row is ThreadItem.MessageItem) provisional[row.message.id] ?: row else row
+                }
+            val settledEchoes =
+                deliveries.fold(echoes) { echoes, delivery ->
                     val entryId = delivery.queuedMsgId ?: return@fold echoes
                     val id = delivery.messageId
                     val own =
@@ -949,7 +969,7 @@ internal class ThreadProjection(
             current.copy(
                 threads = current.threads + (conversationId to merged.withSettledTurns(endedTurns.value[conversationId].orEmpty())),
                 historyOrder = current.historyOrder + (conversationId to order),
-                echoQueues = if (deliveries.isEmpty()) current.echoQueues else current.echoQueues + (conversationId to echoes),
+                echoQueues = if (deliveries.isEmpty()) current.echoQueues else current.echoQueues + (conversationId to settledEchoes),
             )
         }
         settleEndedTurns(conversationId)

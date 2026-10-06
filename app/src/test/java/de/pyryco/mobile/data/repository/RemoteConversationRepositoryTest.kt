@@ -4284,7 +4284,16 @@ class RemoteConversationRepositoryTest {
             assertHistoryDeliveryOverlap(historyFirst = false)
         }
 
-    private fun TestScope.assertHistoryDeliveryOverlap(historyFirst: Boolean) {
+    @Test
+    fun queuedDelivery_historyBeforeLiveEnd_preservesDeliveredPositionAndReply() =
+        runTest {
+            assertHistoryDeliveryOverlap(historyFirst = true, reserveFirst = false)
+        }
+
+    private fun TestScope.assertHistoryDeliveryOverlap(
+        historyFirst: Boolean,
+        reserveFirst: Boolean = true,
+    ) {
         val pump = FakeSessionPump()
         val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
         val thread = collectMessages(repo, "c-1")
@@ -4307,8 +4316,10 @@ class RemoteConversationRepositoryTest {
         runCurrent()
         pump.push(toolUseEnvelope("c-1", "turn-1", "tool-1", "Bash", "tool"))
         runCurrent()
-        pump.push(turnEndEnvelope("c-1", "turn-1", "end_turn"))
-        runCurrent()
+        if (reserveFirst) {
+            pump.push(turnEndEnvelope("c-1", "turn-1", "end_turn"))
+            runCurrent()
+        }
 
         fun expectReply(content: String) {
             runCurrent()
@@ -4327,7 +4338,8 @@ class RemoteConversationRepositoryTest {
                     inReplyTo = pump.sent.last { it.type == "request_history" }.id,
                     raw = """{"entries":[
                     {"id":11,"type":"assistant_delta","payload":{"conversation_id":"c-1","turn_id":"turn-2","seq":0,"text":"Reply"},"ts":"$TS"},
-                    {"id":10,"type":"message","payload":{"conversation_id":"foreign","message_id":"$own","role":"user","text":"history copy","queued_msg_id":42,"attachment_ids":["$LIVE_ATTACHMENT_ID"]},"ts":"$TS"}
+                    {"id":10,"type":"message","payload":{"conversation_id":"foreign","message_id":"$own","role":"user","text":"history copy","queued_msg_id":42,"attachment_ids":["$LIVE_ATTACHMENT_ID"]},"ts":"$TS"},
+                    {"id":9,"type":"tool_use","payload":{"conversation_id":"c-1","turn_id":"turn-1","tool_use_id":"tool-1","name":"Bash","input_summary":"tool"},"ts":"$TS"}
                 ],"cursor":"","at_start":true}""",
                 ),
             )

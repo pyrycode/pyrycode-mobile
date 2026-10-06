@@ -246,7 +246,7 @@ class ThreadProjectionTest {
     @Test
     fun modernDelivery_historyOverlapOnEitherSide_keepsHeldMetadataAndReplayIdentity() =
         runTest {
-            for (historyFirst in listOf(false, true)) {
+            for ((historyFirst, reserveFirst) in listOf(false to true, true to true, true to false)) {
                 val projection = ThreadProjection()
                 val queue = QueueProjection()
                 val thread = collect(projection, "c1")
@@ -269,8 +269,17 @@ class ThreadProjectionTest {
                         ),
                         PUSHED_AT,
                     )
-                val page = HistoryPage(listOf(opener, entry), cursor = "", atStart = true)
-                projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-1", "end_turn"))
+                val tool =
+                    HistoryEntry(
+                        9L,
+                        "tool_use",
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"c1","turn_id":"turn-1","tool_use_id":"tool-1","name":"Bash","input_summary":"sleep 60"}""",
+                        ),
+                        PUSHED_AT,
+                    )
+                val page = HistoryPage(listOf(opener, entry, tool), cursor = "", atStart = true)
+                if (reserveFirst) projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c1", "turn-1", "end_turn"))
 
                 fun expectReply(content: String) {
                     runCurrent()
@@ -321,11 +330,100 @@ class ThreadProjectionTest {
                             ),
                         ),
                     ),
-                    replayedThread.last().take(1),
+                    replayedThread.last().filterIsInstance<ThreadItem.MessageItem>().filter { it.message.id == "mine" },
                 )
-                assertEquals(listOf("mine", "turn-2"), ids(replayedThread.last()))
-                assertEquals("Reply done", (replayedThread.last()[1] as ThreadItem.MessageItem).message.content)
+                assertEquals(listOf("tool-1", "mine", "turn-2"), ids(replayedThread.last()))
+                assertEquals("Reply done", (replayedThread.last()[2] as ThreadItem.MessageItem).message.content)
             }
+        }
+
+    @Test
+    fun modernHistoryDelivery_twoPendingOwnEchoesUseTheirAnsweringPositions() =
+        runTest {
+            val projection = ThreadProjection()
+            val queue = QueueProjection()
+            val thread = collect(projection, "c1")
+            val first = startQueuedTurn(projection, queue)
+            val second = sendOwn(projection, "second", "second original")
+            projection.onQueueState(queue, 42L to "mine", 43L to "second")
+
+            fun entry(
+                id: Long,
+                type: String,
+                payload: String,
+            ) = HistoryEntry(id, type, MobileJson.parseToJsonElement(payload), PUSHED_AT)
+            val page =
+                HistoryPage(
+                    listOf(
+                        entry(
+                            13L,
+                            "assistant_delta",
+                            """{"conversation_id":"c1",
+                "turn_id":"turn-3",
+                "seq":0,
+                "text":"C0"}""",
+                        ),
+                        entry(
+                            12L,
+                            "message",
+                            """{"conversation_id":"c1",
+                "message_id":"second",
+                "role":"user",
+                "text":"copy C",
+                "queued_msg_id":43}""",
+                        ),
+                        entry(
+                            11L,
+                            "assistant_delta",
+                            """{"conversation_id":"c1",
+                "turn_id":"turn-2",
+                "seq":0,
+                "text":"B0"}""",
+                        ),
+                        entry(
+                            10L,
+                            "message",
+                            """{"conversation_id":"c1",
+                "message_id":"mine",
+                "role":"user",
+                "text":"copy B",
+                "queued_msg_id":42}""",
+                        ),
+                        entry(
+                            9L,
+                            "tool_use",
+                            """{"conversation_id":"c1",
+                "turn_id":"turn-1",
+                "tool_use_id":"tool-1",
+                "name":"Bash",
+                "input_summary":"sleep 60"}""",
+                        ),
+                    ),
+                    cursor = "",
+                    atStart = true,
+                )
+
+            fun expect() {
+                runCurrent()
+                assertEquals(listOf("turn-1", "tool-1", "mine", "turn-2", "second", "turn-3"), ids(thread.last()))
+                assertEquals(ThreadItem.MessageItem(first), thread.last()[2])
+                assertEquals(ThreadItem.MessageItem(second), thread.last()[4])
+            }
+            projection.mergeHistoryPage("c1", page, interactive = true)
+            expect()
+            projection.appendLiveMessage("c1", userMessage("mine", "replay B", PUSHED_AT), queuedMessageId = 42L)
+            expect()
+            projection.appendLiveMessage("c1", userMessage("second", "replay C", PUSHED_AT), queuedMessageId = 43L)
+            expect()
+            projection.onQueueState(queue, 42L to "mine", 43L to "second")
+            expect()
+            projection.mergeHistoryPage("c1", page, interactive = true)
+            expect()
+            projection.applyAssistantDelta(delta("turn-3", 0, "C0"))
+            expect()
+            projection.applyAssistantDelta(delta("turn-3", 1, "C1"))
+            expect()
+            assertEquals("C0C1", (thread.last().last() as ThreadItem.MessageItem).message.content)
         }
 
     @Test
