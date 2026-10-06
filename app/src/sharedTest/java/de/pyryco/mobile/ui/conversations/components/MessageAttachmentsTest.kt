@@ -5,11 +5,14 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHasNoClickAction
+import androidx.compose.ui.test.assertTouchHeightIsEqualTo
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -320,6 +323,42 @@ class MessageAttachmentsTest {
         composeTestRule.onNodeWithText("Retry").assertExists()
         composeTestRule.onNodeWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG).assertHasNoClickAction()
         assertEquals(emptyList<Any>(), acted)
+    }
+
+    @Test
+    fun failedRetry_keepsFortyDpLayoutHeight_andFortyEightDpTouchTarget() {
+        val retried = mutableListOf<String>()
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                Surface {
+                    MessageAttachments(
+                        attachments =
+                            listOf(
+                                MessageAttachment(A1, "notes.txt", "text/plain"),
+                                MessageAttachment(A2, "gone.yaml", "application/yaml"),
+                            ),
+                        states = mapOf(A1 to AttachmentViewState.Failed, A2 to AttachmentViewState.NotFound),
+                        onShown = {},
+                        onRetry = { retried += it },
+                    )
+                }
+            }
+        }
+
+        val retry = composeTestRule.onNodeWithText("Retry")
+        val retryBounds = retry.getUnclippedBoundsInRoot()
+        assertEquals(40f, retryBounds.height.value, 0.5f)
+        val rows = composeTestRule.onAllNodesWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG)
+        val failed = rows[0].getUnclippedBoundsInRoot()
+        val next = rows[1].getUnclippedBoundsInRoot()
+        assertEquals(72f, failed.height.value, 0.5f)
+        assertEquals(84f, (next.top - failed.top).value, 0.5f)
+        retry.assertTouchHeightIsEqualTo(48.dp)
+
+        // Real pointer taps in the expanded target, 2dp beyond each visible edge.
+        retry.performTouchInput { click(Offset(center.x, -height / 20f)) }
+        retry.performTouchInput { click(Offset(center.x, height + height / 20f)) }
+        assertEquals(listOf(A1, A1), retried)
     }
 
     @Test

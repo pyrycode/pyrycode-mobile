@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
@@ -440,7 +441,11 @@ private fun AttachmentFileRow(
                 )
             }
             if (state is AttachmentViewState.Failed) {
-                TextButton(onClick = onRetry) { Text(stringResource(R.string.thread_attachment_retry)) }
+                // Figma 696:4913 reserves 40dp in the row; Compose still expands pointer hit testing
+                // to the platform's 48dp minimum beyond these visual bounds.
+                TextButton(onClick = onRetry, modifier = Modifier.height(40.dp)) {
+                    Text(stringResource(R.string.thread_attachment_retry))
+                }
             }
         }
     }
