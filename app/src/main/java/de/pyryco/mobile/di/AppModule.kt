@@ -77,6 +77,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapNotNull
 import okhttp3.WebSocket
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.module.Module
@@ -117,7 +118,10 @@ val appModule =
         // and so any future removal path inherits the eviction. `save` and `setDisplayName` deliberately
         // do not evict: re-pairing the same id and renaming a host both keep their drafts and content.
         single {
-            ObservablePairedServerStore(KeystorePairedServerStore(get()), forgetRemovedHost(get(), get(), lazy { get() }, lazy { get() }))
+            ObservablePairedServerStore(
+                KeystorePairedServerStore(get()),
+                forgetRemovedHost(get(), get(), lazy { get() }, lazy { get() }) { get<SharingShortcuts>().removeHost(it) },
+            )
         } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
         single { NoiseClientInfo(deviceName = Build.MODEL, clientVersion = mobileClientVersion()) }
         single {
@@ -298,7 +302,10 @@ fun hostConversationModule(
             val saved =
                 if (useRelay) {
                     val store = get<ObservablePairedServerStore>()
-                    store.revision.map { store.list().map { it.record.serverId }.toSet() }
+                    store.revision.mapNotNull {
+                        val snapshot = store.readSnapshot().getOrNull()
+                        snapshot?.map { it.record.serverId }?.toSet()
+                    }
                 } else {
                     kotlinx.coroutines.flow.flowOf(setOf(HostConversationSource.DEMO_SERVER_ID))
                 }

@@ -110,6 +110,10 @@ internal class RecentShareTargets(
             },
         ).toString()
 
+    fun removeHost(serverId: String) {
+        entries = entries.filterNot { it.target.serverId == serverId }
+    }
+
     private fun decode(encoded: String): List<RecentShareTarget> =
         try {
             if (encoded.length > 16_384) {
@@ -180,6 +184,18 @@ internal class SharingShortcuts(
         ready.await()
         return mutex.withLock { ledger?.resolve(id) }
     }
+
+    /** Confirmed unpair cannot be inferred from a conflated revision or a failed store read. */
+    suspend fun removeHost(serverId: String) =
+        withContext(dispatcher) {
+            mutex.withLock {
+                val current = load()
+                val before = current.entries
+                current.removeHost(serverId)
+                saved = saved?.minus(serverId)
+                publish(current, before)
+            }
+        }
 
     suspend fun opened(target: HostConversationTarget) =
         withContext(dispatcher) {

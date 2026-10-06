@@ -69,7 +69,7 @@ class ObservablePairedServerStore(
 /**
  * The production [ObservablePairedServerStore.onHostRemoved]: a removed pairing takes its host's unsent
  * composer text (#790), its cached conversation content (#798), its retained attachment files (#900) and
- * its acknowledged MCP failures (#1345) with it.
+ * its acknowledged MCP failures (#1345) and retained sharing shortcuts (#1729) with it.
  *
  * Named rather than written inline in `appModule` so the JVM unpair test binds this exact function —
  * a restated lambda would stay green while production forgot a step.
@@ -88,11 +88,13 @@ internal fun forgetRemovedHost(
     mcpAcknowledgements: McpFailureAcknowledgements,
     cache: Lazy<ConversationCache>,
     attachments: Lazy<AttachmentStore>,
+    removeSharingShortcuts: suspend (String) -> Unit,
 ): suspend (String) -> Unit =
     { serverId ->
         drafts.clearHost(serverId)
         mcpAcknowledgements.clearHost(serverId)
         withContext(NonCancellable) {
+            removeSharingShortcuts(serverId)
             cache.value
                 .removeHost(serverId)
                 .onFailure { RelayLog.d { "event=host_cache_remove_failed" } }
