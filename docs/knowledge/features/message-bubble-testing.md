@@ -31,6 +31,16 @@ remains ignored and manual/unproven because Claude can finish during navigation;
 Compose cannot hold the backend. A full curated live pass does not establish this excluded
 method's reopen observation. See the [manual promotion procedure](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
 
+End-to-end word-reveal coverage must witness displayed text while the same reply
+is still streaming: a final-body check can pass even if progressive display is broken.
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`
+therefore holds two arrived deltas until the displayed-prefix checkpoint, then uses
+an explicit second enqueue to release completion. Require reply identity, repository
+settlement and idle phase before checking the final body; a blinking caret's absence
+is insufficient. The real-Claude word-reveal twin remains ignored and manual because
+its transient window cannot be fenced. Keep cadence and catch-up deadlines in local
+step tests. See the [scenario and manual evidence limits](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
+
 `app/src/test/.../components/StreamingRevealStepTest.kt` covers the pure
 `nextStreamingRevealLength` helper: a short reply advances one word per 33 ms
 step; spaces, tabs, newlines and Unicode whitespace are preserved; a final word

@@ -295,6 +295,32 @@ delimiter positioned between the two cross-session messages, driven through the 
 
 ## What rung 3 is made of
 
+**Word-reveal observation (#1765, manual).**
+`InteractiveStreamE2ETest.interactiveTurn_wordReveal_displaysArrivedTextBeforeFinalReply`
+uses one tool-free plain-paragraph reply. Its matcher comes from the assistant row,
+not the prompt. It observes nonempty arrived text displayed in a bubble, rechecks
+that the same reply is streaming with a non-idle turn, then awaits that reply's
+settlement and idle phase before checking its complete final body without a caret.
+Presence checks use generous timeouts; word cadence and the 500 ms catch-up bound
+belong to `StreamingRevealStepTest`, not live delta timing assertions.
+
+The method remains `@Ignore`-gated and outside the curated live selector: Claude
+can finish before the display checkpoint. Routine live-gate success does not
+execute this observation. For an operator's manual attempt, remove only this
+method's `@Ignore`, run the named method through the isolated harness, then restore
+its `@Ignore` afterward:
+
+```bash
+python3 scripts/android-test-gate.py live --tests 'de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_wordReveal_displaysArrivedTextBeforeFinalReply'
+```
+
+Keep the fresh named-method XML and executed/passed/failed/skipped counts separate
+from automated suite results. Missing the transient window is a failed observation;
+a skipped run supplies no evidence. No manual execution has been supplied for #1765.
+Its held rung-4 twin is
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`
+(`stream`); see [scripted coverage](#scenarios-454).
+
 **Reopening an ongoing reply (#1762, manual and unproven).**
 `InteractiveStreamE2ETest.interactiveTurn_reopenOngoingReply_showsArrivedPrefixImmediately`
 captures a real-Claude plain-text prefix of at least 20 words, leaves for the channel list,
@@ -2448,7 +2474,7 @@ and `stop_reason: "end_turn"` where the turn closes. The `ping` fixture is:
 `#454` added the `stream` + `spinner` fixtures below; `#455` added the `tool-open` / `tool-done` /
 `tool-failed` tool-step fixtures (same shape, with `tool_use` / `tool_result` content blocks); `#476`
 (reconnect) and `#477` (replay-order) build their fixtures on this same shape — `replay-order.jsonl`
-mirrors `stream.jsonl`'s three-delta shape (distinct `message.id`s, last with `stop_reason: "end_turn"`).
+mirrors the combined `stream.jsonl` / `stream-end.jsonl` three-delta shape (distinct `message.id`s, last with `stop_reason: "end_turn"`).
 
 ### Scenarios (#454)
 
@@ -2465,7 +2491,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `direct-share` (#1729) | published shortcut stages text in its thread without a picker or send; explicit Send receives ping | `ping.jsonl` | one |
 | `ping` (default) | a single-line reply renders | `ping.jsonl` | one |
 | `reopen-stream` (#1762) | arrived prefix is immediate on reopen and retained when a suffix composes while the turn stays open; one final combined reply | `reopen-stream-open.jsonl` + `reopen-stream-done.jsonl` | **two** (suffix on second send, terminal result on third) |
-| `stream` | a multi-`assistant_delta` reply assembles into **one** message | `stream.jsonl` | one |
+| `stream` (#1765) | arrived words display while the same reply stays streaming; all three deltas settle into one complete reply without a caret | `stream.jsonl` + `stream-end.jsonl` | **two** (completion on second send) |
 | `spinner` | the thinking spinner shows mid-turn, then clears at turn end | `spinner-open.jsonl` + `spinner-end.jsonl` | **two** |
 | `tool` (#455) | a tool step shows **running** in flight, then **done** after the result | `tool-open.jsonl` + `tool-done.jsonl` | **two** |
 | `tool-failed` (#455) | a failing tool step renders **failed** | `tool-failed.jsonl` | one |
@@ -2582,13 +2608,21 @@ echo is the second — and only the echo proves the command reached the daemon's
 the context notice is gone. No live rung-3 twin is possible: real Claude cannot be driven to
 `prompt_too_long` on demand.
 
-**`stream`** — `stream.jsonl` is three `text` lines with **distinct** `message.id`s, so the producer
-emits three `assistant_delta` envelopes (same `turn_id`, `seq` 0/1/2); the last line's
-`stop_reason: end_turn` + non-empty text marks the final assistant delta; the following top-level
-`result/subtype=success` record closes the stream. The phone's #337 fold concatenates the
-three deltas (keyed by `turn_id`) into the single message `"Hello, streamed world"`. The test asserts
-the cross-delta-boundary substring `"streamed world"`, present only if the deltas assembled into one
-message (never on delta count or the streaming caret).
+**`stream`** —
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`
+is the held twin of the manual word-reveal observation. `stream.jsonl` emits two
+arrivals forming a multi-word prefix without a terminal record. The test observes `Hello, streamed`
+in a displayed bubble and verifies the assistant row is still streaming and the
+turn non-idle. Only after that checkpoint does its explicit second send release
+`stream-end.jsonl`, carrying the third delta and terminal result. Elapsed time alone
+cannot release completion. Together the fragments retain the three distinct
+assistant `message.id`s and assemble one reply, `Hello, streamed world`.
+
+The test awaits that same reply ID with exact complete text, `isStreaming == false`
+and an idle turn before checking the displayed final body without its caret.
+Caret absence alone cannot establish completion because the caret blinks. This
+scenario stays selected by `scripted stream` and `scripted-all`; it asserts display
+and settlement, not cadence or a live catch-up deadline.
 
 **`spinner`** — the thinking state is transient: a single fragment with `thinking` then `end_turn` would
 flip `isThinking` true→false before Compose lays out the spinner. The harness therefore holds the turn
@@ -2754,6 +2788,22 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+**Word reveal (#1765):** at PR head `128f94e47f`, the verifier's fresh
+`scripted-all` XML records **19 executed, 19 passed, 0 failed, 0 skipped**.
+`stream-0-TEST-installed.xml` explicitly contains
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`:
+**1 executed, 1 passed, 0 failed, 0 skipped**. The verifier retained the aggregate
+`dispatcher.xml` and this method report under `/tmp/verifier-1855/`; see
+[PR #1855's verdict](https://github.com/pyrycode/pyrycode-mobile/pull/1855).
+The UI eligibility gate ran no device tests and supplies no UI execution evidence.
+
+The dispatcher full live run `2026-10-06T20-14-56-816Z`, on that head merged with
+`origin/main` at `b8aeba3638`, records **62 executed, 62 passed, 0 failed, 0 skipped**
+in the supplied JUnit-derived gate report and
+[issue gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1765#issuecomment-6025053393).
+This is automated full-suite evidence. The ignored manual word-reveal observation
+was not selected or executed; no separate manual result is supplied or claimed.
 
 **Recent-conversation Direct Share (#1729, 2026-10-06).** The dispatcher-owned full live command
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` reported **62 executed,
@@ -4028,6 +4078,14 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Word reveal (#1765):** the held `stream` twin,
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`,
+  passed in `scripted-all`. The rung-3
+  `InteractiveStreamE2ETest.interactiveTurn_wordReveal_displaysArrivedTextBeforeFinalReply`
+  remains ignored and manual/unproven; the full live pass does not close that observation gap.
+  Follow the [named manual procedure](#what-rung-3-is-made-of) and record any future manual
+  evidence separately. The pre-ship command stays `python3 scripts/android-test-gate.py live`.
 
 - **Recent-conversation Direct Share (#1729):**
   `InteractiveStreamE2ETest.interactiveTurn_directShareShortcut_arrivesAtPeerWithItsBytes` passed in
