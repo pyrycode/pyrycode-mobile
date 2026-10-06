@@ -742,6 +742,11 @@ if [ -n "${DETERMINISTIC}" ]; then
       TEST_METHOD="interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/stream.jsonl}"
       ;;
+    reopen-stream)
+      TEST_METHOD="interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/reopen-stream-open.jsonl}"
+      FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/reopen-stream-done.jsonl}"
+      ;;
     spinner)
       TEST_METHOD="interactiveTurn_seededChannel_showsThinkingSpinnerDuringTurn"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/spinner-open.jsonl}"      # drop A: thinking, held open
@@ -814,7 +819,7 @@ if [ -n "${DETERMINISTIC}" ]; then
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/context-overflow.jsonl}"
       ;;
     *)
-      die "unknown SCENARIO='${SCENARIO}' (expected: selection-copy | background-agent | ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order | tool-then-text | refusal | mcp-failed | context-overflow)"
+      die "unknown SCENARIO='${SCENARIO}' (expected: reopen-stream | selection-copy | background-agent | ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order | tool-then-text | refusal | mcp-failed | context-overflow)"
       ;;
   esac
   log "deterministic scenario: ${SCENARIO} → ${TEST_METHOD}"

@@ -48,3 +48,7 @@ None. The real-Claude transient window is deliberately manual under the issue's 
 ## Documentation handoff
 
 Pending for the documentation stage: update `docs/e2e-interactive-stream.md`, “What rung 3 is made of” and “Deterministic mode (rung 4)”, with both method names, `reopen-stream`'s prefix-without-result / second-send-release / suffix-and-result sequence and observed counted evidence. Document the ignored live transient-window reason and manual un-ignore/named-run procedure. Documentation records supplied evidence and does not generate live proof.
+
+## Verification evidence
+
+2026-10-06: replacing only `StreamingAssistantBody`'s initial reveal value with zero executed the selected `reopen-stream` method and failed its first reopened full-prefix display assertion: 1 executed, 1 failed, 0 skipped. Evidence: `build/dispatcher-tests/scripted-59mzwb_6/dispatcher.xml`. The exact production source was restored immediately; no production diff remains. The earlier two device-busy exits executed no cases and are not evidence. Current-code focused and final gate results are recorded in the PR.
