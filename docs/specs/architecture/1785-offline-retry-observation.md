@@ -54,3 +54,7 @@ Pending documentation stage: `docs/e2e-interactive-stream.md`, “Offline Retry 
 ## Size
 
 Forecast approximately 350–450 written lines including plan, regression tests and extraction; one new internal production type, no changed constructor, two existing controller consumers, four acceptance criteria, no new state-machine failure branches. Within every builder ceiling.
+
+## Revisions
+
+- 2026-10-07: the RED regression drove eight real supervisor dials ending in DaemonAbsent while the extracted original observer still timed out at 90 seconds of virtual time (1 executed, 1 failed, 0 skipped). The repaired observer resolves the actual capped snapshot; the focused GREEN run executed 40 tests, all passed. This confirms conflation as a reproducible cause, without claiming the unavailable original logcat proves exactly how many historical transitions were missed. The snapshot also preserves retained failure history rather than resetting the supervisor or adding scenario retries.

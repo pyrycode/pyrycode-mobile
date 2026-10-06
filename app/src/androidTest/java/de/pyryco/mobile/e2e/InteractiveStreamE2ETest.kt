@@ -470,7 +470,9 @@ class InteractiveStreamE2ETest {
                                 .filterIsInstance<ThreadItem.MessageItem>()
                                 .map { it.message }
                                 .firstOrNull {
-                                    it.role == Role.Assistant && it.isStreaming && it.content.trim().contains(' ') &&
+                                    it.role == Role.Assistant &&
+                                        it.isStreaming &&
+                                        it.content.trim().contains(' ') &&
                                         !prompt.contains(it.content.trim(), ignoreCase = true)
                                 }
                         }.filterNotNull()
@@ -3549,7 +3551,7 @@ class InteractiveStreamE2ETest {
         }
     }
 
-    /** The foreground thread's real Offline pill retries its owning daemon after six failed dials (#1286). */
+    /** The foreground thread's real Offline pill retries its owning daemon during the actual capped backoff (#1286, #1785). */
     @Test
     fun interactiveTurn_offlineRetry_reconnectsSameHostAndReplies() {
         val serverId = twoHostArg(ARG_SERVER_ID)
@@ -3573,7 +3575,7 @@ class InteractiveStreamE2ETest {
                 }
             assertNull("the old host repository survived the daemon failure", bundle.coordinator.currentRepository.value)
 
-            // The deadline began at the sixth failed dial, before daemon startup and the tap.
+            // The deadline began at the actual capped backoff, before daemon startup and the tap.
             // Recovery must beat the earliest passive dial, even if startup consumes most of the wait.
             fault.start()
             composeTestRule.onNodeWithTag("offline_retry_target").assertIsDisplayed()
