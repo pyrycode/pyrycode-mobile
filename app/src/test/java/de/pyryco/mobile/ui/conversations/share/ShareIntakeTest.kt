@@ -199,6 +199,44 @@ class ShareIntakeTest {
             assertEquals(0, copies.root.listFiles()?.size)
         }
 
+    @Test fun shortcutExtrasAreUntrustedButNeverDiscardAnOtherwiseValidBatch() {
+        fun share(id: Any?) =
+            Intent(Intent.ACTION_SEND).putExtra(Intent.EXTRA_TEXT, "keep me").apply {
+                when (id) {
+                    is String -> putExtra(Intent.EXTRA_SHORTCUT_ID, id)
+                    is Int -> putExtra(Intent.EXTRA_SHORTCUT_ID, id)
+                }
+            }
+        assertEquals("published-id", SharePayload.from(share("published-id"))?.shortcutId)
+        for (bad in listOf(null, 42, " ", "x".repeat(257))) {
+            val payload = requireNotNull(SharePayload.from(share(bad)))
+            assertEquals("keep me", payload.text)
+            assertNull(payload.shortcutId)
+        }
+    }
+
+    @Test fun lateLookupCannotSelectAReplacedOrCancelledBatch() =
+        runTest {
+            val dispatcher = StandardTestDispatcher(testScheduler)
+            Dispatchers.setMain(dispatcher)
+            val drafts = ComposerDraftStore()
+            val vm = ShareIntakeViewModel(drafts, { _, _ -> null }, dispatcher)
+            val target = HostConversationTarget("host", "x")
+            vm.accept(SharePayload("old", emptyList(), "old-id"))
+            advanceUntilIdle()
+            val old = requireNotNull(vm.state.value).generation
+            vm.accept(SharePayload("new", emptyList(), "new-id"))
+            advanceUntilIdle()
+            assertFalse(vm.select(target, old))
+            assertEquals("", drafts.draftFor("host", "x"))
+            val current = requireNotNull(vm.state.value).generation
+            vm.fallback(old)
+            assertEquals("new-id", vm.state.value?.shortcutId)
+            vm.cancel()
+            assertFalse(vm.select(target, current))
+            assertEquals("", drafts.draftFor("host", "x"))
+        }
+
     private suspend fun captured(
         uri: Uri,
         dispatcher: kotlinx.coroutines.CoroutineDispatcher,

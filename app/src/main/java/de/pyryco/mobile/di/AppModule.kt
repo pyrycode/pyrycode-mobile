@@ -51,6 +51,7 @@ import de.pyryco.mobile.push.PushTokenSink
 import de.pyryco.mobile.push.PushTokenSource
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.share.ShareIntakeViewModel
+import de.pyryco.mobile.ui.conversations.share.SharingShortcuts
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
 import de.pyryco.mobile.ui.conversations.thread.ContentResolverAttachmentReader
@@ -68,6 +69,7 @@ import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
 import de.pyryco.mobile.ui.settings.SettingsHost
 import de.pyryco.mobile.ui.settings.SettingsViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -75,6 +77,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.transformLatest
 import okhttp3.WebSocket
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.module.Module
@@ -115,7 +118,10 @@ val appModule =
         // and so any future removal path inherits the eviction. `save` and `setDisplayName` deliberately
         // do not evict: re-pairing the same id and renaming a host both keep their drafts and content.
         single {
-            ObservablePairedServerStore(KeystorePairedServerStore(get()), forgetRemovedHost(get(), get(), lazy { get() }, lazy { get() }))
+            ObservablePairedServerStore(
+                KeystorePairedServerStore(get()),
+                forgetRemovedHost(get(), get(), lazy { get() }, lazy { get() }) { get<SharingShortcuts>().removeHost(it) },
+            )
         } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
         single { NoiseClientInfo(deviceName = Build.MODEL, clientVersion = mobileClientVersion()) }
         single {
@@ -290,6 +296,17 @@ fun hostConversationModule(
     decorateRepository: (ConversationRepository) -> ConversationRepository = { it },
 ): Module =
     module {
+        single { parameters ->
+            val context = parameters.getOrNull<android.content.Context>() ?: androidContext()
+            val saved =
+                if (useRelay) {
+                    val store = get<ObservablePairedServerStore>()
+                    store.sharingShortcutHosts()
+                } else {
+                    kotlinx.coroutines.flow.flowOf(setOf(HostConversationSource.DEMO_SERVER_ID))
+                }
+            SharingShortcuts(context, get<HostConversationSource>().snapshots, saved)
+        } onClose { it?.dispose() }
         // #797: the demo branch resolves no cache, as HostConversationSource's does below.
         single {
             ThreadDestinationFactory(
@@ -316,6 +333,21 @@ fun hostConversationModule(
             }
         } onClose { it?.dispose() }
     }
+
+/** Unknown storage never authorizes removal; recover even if no pairing mutation follows the failure. */
+@OptIn(ExperimentalCoroutinesApi::class)
+internal fun ObservablePairedServerStore.sharingShortcutHosts(): Flow<Set<String>> =
+    revision
+        .transformLatest {
+            while (true) {
+                val snapshot = readSnapshot().getOrNull()
+                if (snapshot != null) {
+                    emit(snapshot.map { it.record.serverId }.toSet())
+                    return@transformLatest
+                }
+                delay(1_000)
+            }
+        }.distinctUntilChanged()
 
 /**
  * Whether the saved host [serverId] names is in the rejected-pairing state (#843), for the thread's

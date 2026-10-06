@@ -1077,6 +1077,13 @@ class RemoteConversationRepository(
             emitAll(conversationListProjection.observe(filter))
         }
 
+    /** Host snapshots retain the distinction between early upserts and a fully loaded list. */
+    internal fun observeConversationSnapshots(filter: ConversationFilter): Flow<Pair<List<Conversation>, Boolean>> =
+        flow {
+            pump.send(listConversationsRequest())
+            emitAll(conversationListProjection.observeSnapshots(filter))
+        }
+
     private fun listConversationsRequest(): Envelope =
         Envelope(
             id = relayRequests.nextRequestId(),
