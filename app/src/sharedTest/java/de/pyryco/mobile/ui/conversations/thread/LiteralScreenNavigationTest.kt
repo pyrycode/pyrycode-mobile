@@ -41,7 +41,6 @@ import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.di.appModule
 import de.pyryco.mobile.di.conversationRepositoryModule
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
-import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.Dispatchers
@@ -51,6 +50,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -99,19 +99,25 @@ class LiteralScreenNavigationTest {
         compose.runOnIdle { nav.popBackStack() }
         compose.runOnIdle {
             assertEquals(Routes.CHANNEL_LIST, nav.currentDestination?.route)
-            nav.navigate(Routes.DISCUSSION_LIST)
+            model<ChannelListViewModel>().onHostRowTapped(b)
         }
-        compose.waitForIdle()
-        compose.runOnIdle { model<DiscussionListViewModel>().onHostRowTapped(b) }
         awaitTarget(b, Routes.CONVERSATION_THREAD)
         compose.runOnIdle { assertNotSame(first, model<ThreadViewModel>()) }
         restoration.emulateSavedInstanceStateRestore()
         awaitTarget(b, Routes.CONVERSATION_THREAD)
         compose.runOnIdle { nav.popBackStack() }
         compose.waitForIdle()
-        compose.runOnIdle { model<DiscussionListViewModel>().onHostRowTapped(a) }
+        compose.runOnIdle {
+            assertEquals(Routes.CHANNEL_LIST, nav.currentDestination?.route)
+            model<ChannelListViewModel>().onHostRowTapped(a)
+        }
         awaitTarget(a, Routes.CONVERSATION_THREAD)
         compose.runOnIdle { assertNotSame(first, model<ThreadViewModel>()) }
+    }
+
+    @Test fun recentDiscussionsDestinationIsNotRegistered() {
+        start()
+        compose.runOnIdle { assertNull(nav.graph.findNode("discussions")) }
     }
 
     @Test fun unknownAndRemovedHostsReturnToListWithoutResolvingAnotherHost() {
