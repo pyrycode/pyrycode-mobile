@@ -49,7 +49,7 @@ Existing rung-3 proof: `InteractiveStreamE2ETest.interactiveTurn_peerAttachment_
 
 ## Open Questions
 
-None. Estimated total written work is 750–1000 lines across three production files, three test files and this plan; zero new exported types, fewer than ten consumers, five acceptance criteria, and no new history-walk reject branches.
+None. Estimated total written work is 750–1000 lines across three production files, four test files and this plan; zero new exported types, fewer than ten consumers, five acceptance criteria, and no new history-walk reject branches.
 
 ## Documentation handoff
 

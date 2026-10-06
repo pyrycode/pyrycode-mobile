@@ -1,11 +1,23 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasScrollToIndexAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -15,6 +27,8 @@ import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
+import androidx.compose.ui.test.swipeWithVelocity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
@@ -90,7 +104,13 @@ class ThreadScreenHistoryTest {
     @Test
     fun a_pull_on_an_empty_thread_asks_once() {
         var demands = 0
-        setScreen({ threadState(emptyList(), ThreadHistoryTail.None).copy(hasMessages = false) }, onDemand = { demands++ })
+        var pending = false
+        setScreen({ threadState(emptyList(), ThreadHistoryTail.None).copy(hasMessages = false) }, onDemand = {
+            if (!pending) {
+                demands++
+                pending = true
+            }
+        })
         pullTowardOlder()
         composeRule.runOnIdle { assertEquals(1, demands) }
     }
@@ -98,33 +118,52 @@ class ThreadScreenHistoryTest {
     @Test
     fun a_pull_on_a_thread_too_short_to_scroll_asks_once() {
         var demands = 0
-        setScreen({ threadState(rows(count = 3), ThreadHistoryTail.None) }, onDemand = { demands++ })
+        var pending = false
+        setScreen({ threadState(rows(count = 3), ThreadHistoryTail.None) }, onDemand = {
+            if (!pending) {
+                demands++
+                pending = true
+            }
+        })
         pullTowardOlder()
         composeRule.runOnIdle { assertEquals(1, demands) }
     }
 
     @Test
-    fun a_long_thread_asks_only_for_a_pull_that_starts_near_its_oldest_end() {
+    fun a_long_thread_prefetches_only_near_its_oldest_end() {
         var demands = 0
-        setScreen({ threadState(rows(count = 30), ThreadHistoryTail.None) }, onDemand = { demands++ })
+        var pending = false
+        setScreen({ threadState(rows(count = 30), ThreadHistoryTail.None) }, onDemand = {
+            if (!pending) {
+                demands++
+                pending = true
+            }
+        })
 
         // Opened at the newest end: the pull only scrolls.
         pullTowardOlder(fraction = 0.1f)
         composeRule.runOnIdle { assertEquals(0, demands) }
 
-        // At the oldest end: one ask per pull.
+        // At the oldest end: movement asks after each controlled slot release.
         composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(29)
         composeRule.waitForIdle()
         pullTowardOlder()
         composeRule.runOnIdle { assertEquals(1, demands) }
+        pending = false
         pullTowardOlder()
         composeRule.runOnIdle { assertEquals(2, demands) }
     }
 
     @Test
-    fun the_ask_band_is_200dp_from_the_oldest_end() {
+    fun the_prefetch_band_is_two_current_viewports_from_the_oldest_end() {
         var demands = 0
-        setScreen({ threadState(rows(count = 30), ThreadHistoryTail.None) }, onDemand = { demands++ })
+        var pending = false
+        setScreen({ threadState(rows(count = 30), ThreadHistoryTail.None) }, onDemand = {
+            if (!pending) {
+                demands++
+                pending = true
+            }
+        })
 
         // 100dp short of the oldest end is inside the band...
         scrollToOldestThenTowardNewer(100)
@@ -133,8 +172,14 @@ class ThreadScreenHistoryTest {
         pullTowardOlder(fraction = 0.05f)
         composeRule.runOnIdle { assertEquals(1, demands) }
 
-        // ...and 300dp short is outside it.
-        scrollToOldestThenTowardNewer(300)
+        // Three viewport heights back is outside the new range.
+        pending = false
+        val viewport =
+            composeRule
+                .onNodeWithTag(MESSAGE_REGION_TAG)
+                .fetchSemanticsNode()
+                .boundsInRoot.height
+        scrollToOldestThenTowardNewer(with(composeRule.density) { (viewport * 3).toDp().value.toInt() })
         pullTowardOlder(fraction = 0.05f)
         composeRule.runOnIdle { assertEquals(1, demands) }
     }
@@ -186,8 +231,10 @@ class ThreadScreenHistoryTest {
         composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(10)
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Row 19.").assertIsDisplayed()
+        val before = composeRule.onNodeWithText("Row 19.").fetchSemanticsNode().boundsInRoot
         composeRule.runOnIdle { state = state.copy(items = rows(count = 20, prefix = "Older") + state.items) }
         composeRule.onNodeWithText("Row 19.").assertIsDisplayed()
+        assertEquals(before, composeRule.onNodeWithText("Row 19.").fetchSemanticsNode().boundsInRoot)
     }
 
     // --- #778: the failure states of the same oldest-end slot --------------------------------------
@@ -219,6 +266,253 @@ class ThreadScreenHistoryTest {
         // A dead end offers no affordance at all: pressing where the retry would be does nothing.
         composeRule.onNodeWithContentDescription(HISTORY_DEAD_END_DESCRIPTION).performClick()
         assertEquals(0, retries)
+    }
+
+    @Test
+    fun dragEnteringTwoViewportRangePrefetchesWhileOldestIsStillHidden() {
+        var asks = 0
+        var pending = false
+        val list =
+            setPrefetchList(initialIndex = 16, onDemand = {
+                if (!pending) {
+                    asks++
+                    pending = true
+                }
+            })
+        composeRule.runOnIdle {
+            assertTrue(!list.layoutInfo.isNearOldestEnd(29, list.layoutInfo.viewportSize.height * 2f))
+        }
+        composeRule.onNodeWithTag("prefetch-list").performTouchInput {
+            down(Offset(center.x, 10f))
+            moveBy(Offset(0f, 150f), delayMillis = 1000)
+            advanceEventTime(200)
+            up()
+        }
+        composeRule.runOnIdle {
+            assertEquals(1, asks)
+            assertTrue(list.layoutInfo.visibleItemsInfo.none { it.index == 29 })
+        }
+    }
+
+    @Test
+    fun flingEnteringRangeFromOutsideAsksOnlyAfterTouchRelease() {
+        var asks = 0
+        var pending = false
+        val list =
+            setPrefetchList(initialIndex = 8, onDemand = {
+                if (!pending) {
+                    asks++
+                    pending = true
+                }
+            })
+        composeRule.mainClock.autoAdvance = false
+        composeRule.onNodeWithTag("prefetch-list").performTouchInput {
+            swipeWithVelocity(start = Offset(center.x, 10f), end = Offset(center.x, 150f), endVelocity = 5000f)
+        }
+        assertEquals(0, asks)
+        composeRule.mainClock.advanceTimeBy(1000)
+        composeRule.mainClock.autoAdvance = true
+        composeRule.runOnIdle {
+            assertEquals(1, asks)
+            assertTrue(list.firstVisibleItemIndex > 8)
+        }
+    }
+
+    @Test
+    fun viewportResizeAndMixedRowsChangeRangeButOnlyMovementAsks() {
+        var height by mutableStateOf(100.dp)
+        var asks = 0
+        var pending = false
+        val list =
+            setPrefetchList(
+                20,
+                viewportHeight = { height },
+                mixed = true,
+                onDemand = {
+                    if (!pending) {
+                        asks++
+                        pending = true
+                    }
+                },
+            )
+        composeRule.runOnIdle {
+            assertTrue(!list.layoutInfo.isNearOldestEnd(29, list.layoutInfo.viewportSize.height * 2f))
+            height = 200.dp
+        }
+        composeRule.runOnIdle {
+            assertTrue(list.layoutInfo.isNearOldestEnd(29, list.layoutInfo.viewportSize.height * 2f))
+            assertEquals(0, asks)
+        }
+        composeRule.onNodeWithTag("prefetch-list").performTouchInput {
+            down(Offset(center.x, 20f))
+            moveBy(Offset(0f, 40f), delayMillis = 300)
+            advanceEventTime(200)
+            up()
+        }
+        composeRule.runOnIdle { assertEquals(1, asks) }
+    }
+
+    @Test
+    fun pageArrivingDuringAHeldDragPreservesAnchorAndOnlyFurtherMovementAsks() {
+        var count by mutableStateOf(30)
+        var loading = false
+        var asks = 0
+        val list =
+            setPrefetchList(16, count = { count }, onDemand = {
+                if (!loading) {
+                    asks++
+                    loading = true
+                }
+            })
+        val surface = composeRule.onNodeWithTag("prefetch-list")
+        surface.performTouchInput {
+            down(Offset(center.x, 10f))
+            moveBy(Offset(0f, 150f), delayMillis = 600)
+        }
+        composeRule.runOnIdle { assertEquals(1, asks) }
+        val before = list.firstVisibleItemIndex to list.firstVisibleItemScrollOffset
+        composeRule.runOnIdle {
+            count = 32
+            loading = false
+        }
+        composeRule.runOnIdle {
+            assertEquals(before, list.firstVisibleItemIndex to list.firstVisibleItemScrollOffset)
+            assertEquals(1, asks)
+        }
+        surface.performTouchInput {
+            moveBy(Offset(0f, 80f), delayMillis = 600)
+        }
+        composeRule.runOnIdle {
+            assertEquals(
+                "index=${list.firstVisibleItemIndex} offset=${list.firstVisibleItemScrollOffset} near=${list.layoutInfo.isNearOldestEnd(
+                    count - 1,
+                    list.layoutInfo.viewportSize.height * 2f,
+                )}",
+                2,
+                asks,
+            )
+        }
+        surface.performTouchInput {
+            advanceEventTime(200)
+            up()
+        }
+        // The controlled page is already loaded: subsequent reader scrolling reaches its rows.
+        repeat(4) {
+            surface.performTouchInput { swipeDown(durationMillis = 1000) }
+        }
+        composeRule.onNodeWithText("Prefetch 30").assertExists()
+        composeRule.runOnIdle { assertTrue(list.layoutInfo.visibleItemsInfo.any { it.index >= 30 }) }
+    }
+
+    @Test
+    fun semanticsAfterATouchEndsCannotReuseItsProvenance() {
+        var asks = 0
+        var pending = false
+        setPrefetchList(27, onDemand = {
+            if (!pending) {
+                asks++
+                pending = true
+            }
+        })
+        val surface = composeRule.onNodeWithTag("prefetch-list")
+        surface.performTouchInput {
+            down(center)
+            up()
+        }
+        surface.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 100f) }
+        composeRule.runOnIdle { assertEquals(0, asks) }
+    }
+
+    @Test
+    fun fullThreadPrefetchArrivalKeepsTheVisibleRowAndLetsTheReaderEnterOlderRows() {
+        var state by mutableStateOf(threadState(rows(80), ThreadHistoryTail.None))
+        var asks = 0
+        setScreen({ state }, onDemand = {
+            if (state.historyTail != ThreadHistoryTail.Loading) {
+                asks++
+                state = state.copy(historyTail = ThreadHistoryTail.Loading)
+            }
+        })
+        val list = composeRule.onNode(hasScrollToIndexAction())
+        val region = composeRule.onNodeWithTag(MESSAGE_REGION_TAG)
+        list.performScrollToIndex(79)
+        val bounds = region.fetchSemanticsNode().boundsInRoot
+        list.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, -bounds.height * 2.2f) }
+        composeRule.runOnIdle { assertEquals(0, asks) }
+        region.performTouchInput {
+            down(Offset(center.x, height * 0.3f))
+            moveBy(Offset(0f, height * 0.35f), delayMillis = 800)
+        }
+        composeRule.runOnIdle { assertEquals(1, asks) }
+        composeRule.onNodeWithText("Row 1.").assertDoesNotExist()
+        val anchor =
+            composeRule
+                .onAllNodes(hasText("Row ", substring = true))
+                .fetchSemanticsNodes()
+                .first { it.boundsInRoot.top > bounds.top + 100 && it.boundsInRoot.bottom < bounds.bottom - 150 }
+        val text = anchor.config[SemanticsProperties.Text].single().text
+        val before = anchor.boundsInRoot
+        // Complete the controlled response while its spinner is still ahead of the reader.
+        composeRule.runOnIdle {
+            state = state.copy(items = rows(10, prefix = "Older") + state.items, historyTail = ThreadHistoryTail.None)
+        }
+        assertEquals(before, composeRule.onNodeWithText(text).fetchSemanticsNode().boundsInRoot)
+        composeRule.runOnIdle { assertEquals(1, asks) }
+        region.performTouchInput {
+            advanceEventTime(200)
+            up()
+        }
+        // Hold later requests unresolved. The arrived page can still be read without waiting on them.
+        repeat(7) { pullTowardOlder(fraction = 0.5f) }
+        composeRule.onNodeWithText("Older 5.").assertIsDisplayed()
+    }
+
+    /** Small geometry-controlled fixture exercising the production modifier and distance predicate. */
+    private fun setPrefetchList(
+        initialIndex: Int,
+        count: () -> Int = { 30 },
+        viewportHeight: () -> Dp = { 200.dp },
+        mixed: Boolean = false,
+        onDemand: () -> Unit,
+    ): LazyListState {
+        val list = LazyListState(firstVisibleItemIndex = initialIndex)
+        composeRule.setContent {
+            PyrycodeMobileTheme {
+                val oldest by rememberUpdatedState(count() - 1)
+                val demand by rememberUpdatedState(onDemand)
+                val gesture =
+                    remember(list) {
+                        OlderHistoryGesture(
+                            nearOldestEnd = { list.layoutInfo.isNearOldestEnd(oldest, list.layoutInfo.viewportSize.height * 2f) },
+                            onDemand = { demand() },
+                        )
+                    }
+                LazyColumn(
+                    state = list,
+                    reverseLayout = true,
+                    modifier =
+                        Modifier
+                            .width(200.dp)
+                            .height(viewportHeight())
+                            .testTag("prefetch-list")
+                            .olderHistoryPull(gesture),
+                ) {
+                    items(count(), key = { "prefetch:$it" }) { index ->
+                        val rowHeight =
+                            if (!mixed) {
+                                50.dp
+                            } else if (index % 2 == 0) {
+                                40.dp
+                            } else {
+                                60.dp
+                            }
+                        Text("Prefetch $index", Modifier.height(rowHeight))
+                    }
+                }
+            }
+        }
+        composeRule.waitForIdle()
+        return list
     }
 
     /** A user drag toward older messages: the finger moves down over [fraction] of the message region. */
