@@ -872,22 +872,29 @@ older captures.
 
 ### Message attachment states — `696:4913`
 
-- **Owning ticket:** #1624 (closed, fixed by #1848); #1850 (open, residual spacing)
+- **Owning ticket:** #1624 (closed, fixed by #1848); #1850 (Retry spacing fixed)
 - **Capture:** `attachment-states.png` (412x892, 1.0)
 - **Side-by-side:** `attachment-states-side-by-side.png`
 - **Overlay:** `attachment-states-overlay.png`
-- **Verdict:** mismatch (small residual)
-- #1848 fixed the tile colour, weight and name/state dimming #1624 found. A fresh pixel scan of the file-tile
-  column finds the row pitch for the tile with no Retry control matches the frame exactly (58 px in both, log
-  tile to PDF tile); the pitch from the PDF tile (which carries Retry) to the YAML tile is 106 px in the app
-  against the frame's 98 px, an 8 px excess from `AttachmentFileRow`'s `TextButton`'s default touch-target
-  height.
+- **Verdict:** match (Retry spacing corrected by #1850)
+- Fresh post-rework `ThreadDesignCaptureTest#attachmentAndEmptyFramesAt412By892` capture on 2026-10-07, full pixel8Api35,
+  real 24px bars, 412x892, density/font scale 1.0. `attachment-retry-1850-green.xml` records 1 executed/passed,
+  0 failures/errors/skips. The fresh Figma export is pixel-identical to `figma-696-4913.png`.
+- #1850 reduces Retry's layout allocation from 48dp to the frame's 40dp. The shared regression measures the
+  failed row at 72dp and its next-row top at 84dp, and proves the 48dp touch target with pointer taps beyond
+  both visible edges. In the hardware capture the glyph tops are 460/538/616px; Figma's are 436/514/592px.
+  Accounting for the app's 24px status bar, all three align exactly, with 78px tile-top pitch on both sides
+  of Retry. These consistent top-edge measurements supersede the earlier audit's 58/106/98px
+  pitch figures. #1848's colour, weight and name/state-dimming fixes remain in place.
+- Rework preserves the same normal-size pixels below the status bar while allowing Retry to grow with
+  enlarged text. Native-graphics shared tests at font scales 1.5 and 2 require a fully allocated paragraph
+  without visual overflow, compact-bubble containment and a touch target of at least 48dp.
 
 | Aspect | Verdict |
 |---|---|
 | Geometry | match: placeholder/spinner and bubble outer size within 2 px |
 | Padding | match: the name-to-state gap is 5 px in both, for every tile |
-| Spacing | mismatch: the Retry-bearing tile pushes the following tile 8 px further than the frame |
+| Spacing | match: 40dp Retry layout, 78px glyph-top pitch in app and frame; 48dp touch target retained |
 | Typography | match: type label regular weight |
 | Colour | match: tile glyph/outline/type label in the primary colour, file name at full on-secondary-container strength, only the state line dimmed |
 | Borders | match |
@@ -895,7 +902,7 @@ older captures.
 | Icon paths | match |
 | Component state | match: Loading, Couldn't load file with Retry, File not found |
 
-- **Routed:** #1850
+- **Routed:** none (residual Retry spacing fixed by #1850)
 
 ### Empty thread — `696:4989`
 
