@@ -28,6 +28,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.cache.ConversationCache
+import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.RelayConnectionSupervisor
@@ -196,6 +198,104 @@ class DeterministicInteractiveStreamE2ETest {
             }
         typeAndSend(SELECTION_PROMPT)
         composeTestRule.assertFinishedReplySystemCopy(repository, conversationId, REPLY_TIMEOUT_MS)
+    }
+
+    /** Preparation only. A host process executes actual app death after this instrumentation exits. */
+    @Test
+    fun interactiveTurn_externalForceStop_preparesSettledChannel() {
+        arriveInSeededThread()
+        val args = InstrumentationRegistry.getArguments()
+        val serverId = requireNotNull(args.getString("serverId"))
+        val repo =
+            requireNotNull(
+                GlobalContext
+                    .get()
+                    .get<RelayRepositoryCoordinator>()
+                    .currentRepository.value,
+            )
+        val name = "e2e-stop-" + System.currentTimeMillis()
+        val conversation = runBlocking { repo.createDiscussion().also { repo.promote(it.id, name) } }
+        val prefix = "e2e1833-stop-" + System.currentTimeMillis()
+        DaemonFaultControl().posts(name, "$prefix-baseline", 1)
+        composeTestRule.onNodeWithContentDescription("Back").performClick()
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) { composeTestRule.onAllNodesWithText(name).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onNodeWithText(name).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText("$prefix-baseline-000").fetchSemanticsNodes().isNotEmpty()
+        }
+        val cache = GlobalContext.get().get<ConversationCache>()
+        runBlocking {
+            withTimeout(THREAD_TIMEOUT_MS) {
+                while (cache
+                        .readThread(serverId, conversation.id)
+                        .filterIsInstance<ThreadItem.MessageItem>()
+                        .none { it.message.content == "$prefix-baseline-000" && !it.message.isStreaming }
+                ) {
+                    kotlinx.coroutines.delay(50)
+                }
+            }
+        }
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        java.io.File(context.filesDir, "e2e1833-proof.json").writeText(
+            kotlinx.serialization.json
+                .buildJsonObject {
+                    put("conversation_id", kotlinx.serialization.json.JsonPrimitive(conversation.id))
+                    put("channel", kotlinx.serialization.json.JsonPrimitive(name))
+                    put("prefix", kotlinx.serialization.json.JsonPrimitive(prefix))
+                }.toString(),
+        )
+    }
+
+    /** Zero-Claude durable twin runs beside the original ping scenario, with its own channel. */
+    @Test
+    fun interactiveTurn_seededChannel_durableGapCatchUp() {
+        arriveInSeededThread()
+        val args = InstrumentationRegistry.getArguments()
+        val serverId = requireNotNull(args.getString("serverId"))
+        val repo =
+            requireNotNull(
+                GlobalContext
+                    .get()
+                    .get<RelayRepositoryCoordinator>()
+                    .currentRepository.value,
+            )
+        val name = "e2e-gap-" + System.currentTimeMillis()
+        val conversation = runBlocking { repo.createDiscussion().also { repo.promote(it.id, name) } }
+        val fault = DaemonFaultControl()
+        fault.posts(name, "e2e1833-baseline", 1)
+        composeTestRule.onNodeWithContentDescription("Back").performClick()
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) { composeTestRule.onAllNodesWithText(name).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onNodeWithText(name).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText("e2e1833-baseline-000").fetchSemanticsNodes().isNotEmpty()
+        }
+        val proof = DurableGapProof(composeTestRule, serverId, conversation.id)
+        proof.cacheBaseline()
+        val peer =
+            SecondClientPeer(
+                PairedServer(
+                    serverId,
+                    requireNotNull(args.getString("peerToken")),
+                    requireNotNull(args.getString("relayUrl")),
+                    requireNotNull(args.getString("serverStaticPublicKey")),
+                ),
+            )
+        try {
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            severLink()
+            composeTestRule.onNodeWithText("e2e1833-baseline-000").assertIsDisplayed()
+            proof.missPages(name) {
+                runBlocking {
+                    peer.sendMessage(conversation.id, "e2e1833-completed-turn", THREAD_TIMEOUT_MS)
+                    peer.awaitFrame(conversation.id, "turn_end", REPLY_TIMEOUT_MS)
+                }
+            }
+            proof.catchUp(::restoreLink, "ping")
+            assertEquals("cached older row retained", 1, proof.messages().count { it == "e2e1833-baseline-000" })
+        } finally {
+            peer.close()
+            DurableHistoryProbe.end()
+        }
     }
 
     @Test

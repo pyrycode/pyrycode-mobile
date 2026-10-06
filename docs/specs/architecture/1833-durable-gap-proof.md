@@ -49,7 +49,7 @@ Invariant probes check cached older rows; chronological once-only posts/reply; i
 
 ## Open Questions
 
-None. Page count derives from the actual newest-page size rather than assuming cursor encoding. Synthetic content remains fixture-only.
+None. Two batches of 60 posts exceed the daemon’s existing default 50-entry page; assertions require the reply outside the newest page and at least two older pulls. No cursor encoding assumptions. Synthetic content remains fixture-only.
 
 ## Documentation handoff
 
@@ -75,3 +75,7 @@ Pending for documentation stage:
 
 **Reviewer:** builder self-review per `builder/security-review.md`
 **Date:** 2026-10-06
+
+## Revisions
+
+2026-10-06: The test application’s existing repository decorator is the request-count seam. Capture newest/older classification and completed pages without retaining cursors. Use two 60-post batches with the completed reply between them, exceeding the daemon’s default 50-entry page. The live baseline refreshes once after its settled ping so coverage certifies durable baseline entries before the tested disconnect. The deterministic twin uses its own promoted discussion and the existing ping fixture, avoiding cross-method reply collisions. The external force-stop proof runs a dedicated preparation method on an emulator booted under the existing device hold; the host driver then kills the actual app and restarts the daemon after the synthetic post to exclude replay there too. Original stop/start readiness coverage remains effective.

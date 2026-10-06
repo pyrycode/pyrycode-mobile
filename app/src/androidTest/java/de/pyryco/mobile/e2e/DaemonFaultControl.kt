@@ -10,6 +10,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.net.InetSocketAddress
 import java.net.Socket
 
@@ -23,6 +25,19 @@ internal class DaemonFaultControl {
     fun stop() = request("stop")
 
     fun start() = request("start")
+
+    fun posts(
+        name: String,
+        prefix: String,
+        count: Int,
+    ) = request(
+        "posts",
+        buildJsonObject {
+            put("name", name)
+            put("prefix", prefix)
+            put("count", count)
+        }.toString(),
+    )
 
     /** Returns a deadline safely before the earliest passive dial after the sixth failure. */
     fun stopUntilRetryWindow(
@@ -68,13 +83,17 @@ internal class DaemonFaultControl {
             check(it > 0) { "the passive reconnect window elapsed before Retry recovery" }
         }
 
-    private fun request(action: String) {
+    private fun request(
+        action: String,
+        body: String = "",
+    ) {
         Socket().use { socket ->
             socket.connect(InetSocketAddress("10.0.2.2", port), 5_000)
-            socket.soTimeout = 15_000
-            socket.getOutputStream().write("POST /$action HTTP/1.0\r\nContent-Length: 0\r\n\r\n".toByteArray())
+            socket.soTimeout = if (action == "posts") 120_000 else 15_000
+            val bytes = body.toByteArray()
+            socket.getOutputStream().write("POST /$action HTTP/1.0\r\nContent-Length: ${bytes.size}\r\n\r\n".toByteArray() + bytes)
             val status = socket.getInputStream().bufferedReader().readLine()
-            check(status?.startsWith("HTTP/1.0 200") == true) { "test daemon $action failed: $status" }
+            check(status?.startsWith("HTTP/1.0 200") == true) { "owned test daemon control failed" }
         }
     }
 }

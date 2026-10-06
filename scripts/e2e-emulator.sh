@@ -1017,7 +1017,7 @@ else
 fi
 FAULT_PORT_FILE="${WORK_DIR}/daemon-fault-port"
 python3 "${REPO_ROOT}/scripts/e2e-daemon-fault.py" --port-file "${FAULT_PORT_FILE}" --log "${DAEMON_LOG}" \
-  --ready-token 'relay: conn established' \
+  --ready-token 'relay: conn established' --control-socket "${ISO_HOME:-${HOME}}/.pyry/${PYRY_NAME}.sock" \
   -- "${DAEMON_COMMAND[@]}" >"${WORK_DIR}/daemon-fault.log" 2>&1 &
 DAEMON_PID=$!
 FAULT_DEADLINE=$((SECONDS + 10))
@@ -1320,6 +1320,12 @@ PY
     [ -n "${PEER_TOKEN}" ] || die "empty peer pairing token"
     log "second-client peer minted on serverId=${SERVER_ID}"
   fi
+  if [ -n "${DETERMINISTIC}" ] && [ "${SCENARIO}" = "ping" ]; then
+    env "HOME=${ISO_HOME}" PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME}" --name="${PAIR_NAME_PEER}" \
+      >"${PAIR_PEER_OUT}" 2>&1 || die "scripted peer pairing failed"
+    PARSED_PEER="$(pair_token "${PAIR_PEER_OUT}")" || die "scripted peer parsing failed"
+    eval "${PARSED_PEER}"
+  fi
   if [ -z "${DETERMINISTIC}" ] && [ -z "${ANSWER_UNMET}" ]; then
     mint_answer_pairing
   fi
@@ -1396,6 +1402,11 @@ fi
 # excluded. The #965 stop method is added on top, spending two turns: the stopped turn and its follow-up ping.
 if [ -n "${DETERMINISTIC}" ]; then
   TEST_TARGET="${TEST_CLASS}#${TEST_METHOD}"
+  if [ "${EXTERNAL_FORCE_STOP_PROOF:-}" = "1" ]; then
+    TEST_TARGET="${TEST_CLASS}#interactiveTurn_externalForceStop_preparesSettledChannel"
+  elif [ "${SCENARIO}" = "ping" ]; then
+    TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_seededChannel_durableGapCatchUp"
+  fi
 elif [ -n "${LIVE}" ]; then
   # LIVE curates its real-claude turns: ping + create-workspace-folder + new-session + delete +
   # archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host +
@@ -1602,6 +1613,11 @@ if [ "${TEST_STATUS}" -ne 0 ]; then
     [ "${TEST_STATUS}" -eq 0 ] || report_stale_pairing_codes
   fi
   [ "${TEST_STATUS}" -eq 0 ] || exit "${TEST_STATUS}"
+fi
+
+if [ "${EXTERNAL_FORCE_STOP_PROOF:-}" = "1" ]; then
+  [ "${E2E_INSTALLED:-}" = "1" ] && [ "${DEVICE}" = "connected" ] || die "force-stop proof requires its owned connected device"
+  python3 "${REPO_ROOT}/scripts/e2e-force-stop-proof.py" --owned-worker "${FAULT_PORT}" "${MOBILE_REVISION}" "${DAEMON_REVISION}" "${FORCE_STOP_EVIDENCE}" || exit $?
 fi
 
 if [ -n "${DETERMINISTIC}" ]; then
