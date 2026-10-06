@@ -994,7 +994,14 @@ fun ThreadScreen(
         )
     }
     if (backgroundTasksOpen) {
-        BackgroundTaskPanel(roster = state.backgroundTasks, onDismiss = { backgroundTasksOpen = false })
+        BackgroundTaskPanel(
+            roster = state.backgroundTasks,
+            onDismiss = { backgroundTasksOpen = false },
+            stopSupported = state.backgroundTaskStopSupported,
+            expandedTaskIds = state.expandedBackgroundTaskIds,
+            pendingTaskIds = state.pendingBackgroundTaskIds,
+            onEvent = onOverflowEvent,
+        )
     }
     WorkspacePicker(
         visible = state.workspacePickerVisible,

@@ -16,6 +16,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -483,6 +484,45 @@ class DeterministicInteractiveStreamE2ETest {
             tool >= 0 && tool < user && user < reply,
         )
         assertEquals(1, rows.count { it.message.content == SECOND_PROMPT })
+    }
+
+    /** #1830: only a phone Stop tap releases the scripted held task; no second message fence. */
+    @Test
+    fun interactiveTurn_seededChannel_stopBackgroundTaskRemovesRunningRow() {
+        arriveInSeededThread()
+        typeAndSend(SEND_PROMPT)
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val coordinator = GlobalContext.get().get<RelayRepositoryCoordinator>()
+        val conversation =
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    coordinator.backgroundTasks
+                        .first { rows ->
+                            rows.values.any {
+                                it.liveCount ==
+                                    1
+                            }
+                        }.keys
+                        .single()
+                }
+            }
+        composeTestRule.onNodeWithContentDescription("More actions").performClick()
+        composeTestRule.onNode(hasText(context.getString(R.string.background_tasks_title)) and hasClickAction()).performClick()
+        val row = hasText("cat ${'$'}FIFO") and hasClickAction()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(row).fetchSemanticsNodes().size == 1 }
+        composeTestRule.onNode(row).performTouchInput { click() }
+        val stop = context.getString(R.string.background_tasks_stop)
+        composeTestRule.onNodeWithText(stop).performTouchInput { click() }
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            coordinator.backgroundTasks.value[conversation]?.liveCount == 0 &&
+                composeTestRule.onAllNodesWithText(stop).fetchSemanticsNodes().isEmpty()
+        }
+        assertEquals(0, coordinator.backgroundTasks.value[conversation]?.liveCount)
+        assertTrue(
+            coordinator.backgroundTasks.value[conversation]
+                ?.tasks
+                ?.none { it.taskId == "bybi8g8i8" } == true,
+        )
     }
 
     /** #1783: deterministic lifecycle/parent fixture twin; second send releases the terminal fragment. */

@@ -1046,7 +1046,7 @@ class RelayConnectionFactoryTest {
         runTest {
             Dispatchers.setMain(StandardTestDispatcher(testScheduler))
             val questionScheduler = kotlinx.coroutines.test.TestCoroutineScheduler()
-            val f = Fixture(this)
+            val f = Fixture(this).also { it.stopTaskSupport = true }
             val registry = f.registry()
             val prefs =
                 AppPreferences(
@@ -1162,6 +1162,60 @@ class RelayConnectionFactoryTest {
                         .filterIsInstance<ThreadItem.MessageItem>()
                         .single()
                         .message.content,
+                )
+                // #1830: colliding task/conversation ids stay on each destination's captured host.
+                val roster =
+                    envelope(
+                        "background_task_roster",
+                        """{"conversation_id":"c","tasks":[{"task_id":"same-task","task_type":"local_bash","description":"inert","truncated_fields":null}],"dropped_tasks":0}""",
+                    )
+                ta.emit(roster)
+                tb.emit(roster)
+                runCurrent()
+                assertTrue(a.state.value.backgroundTaskStopSupported)
+                assertTrue(b.state.value.backgroundTaskStopSupported)
+                a.onOverflowEvent(ThreadEvent.BackgroundTaskToggle("same-task"))
+                b.onOverflowEvent(ThreadEvent.BackgroundTaskToggle("same-task"))
+                a.onOverflowEvent(ThreadEvent.BackgroundTaskStop("same-task"))
+                b.onOverflowEvent(ThreadEvent.BackgroundTaskStop("same-task"))
+                runCurrent()
+                val stopA = ta.outbound.single { it.type == "stop_background_task" }
+                val stopB = tb.outbound.single { it.type == "stop_background_task" }
+                for (stop in listOf(stopA, stopB)) {
+                    assertEquals(
+                        "c",
+                        stop.payload.jsonObject["conversation_id"]
+                            ?.jsonPrimitive
+                            ?.content,
+                    )
+                    assertEquals(
+                        "same-task",
+                        stop.payload.jsonObject["task_id"]
+                            ?.jsonPrimitive
+                            ?.content,
+                    )
+                }
+                ta.emit(
+                    envelope(
+                        "error",
+                        """{"code":"stop_background_task.refused","message":"inert","retryable":false}""",
+                    ).copy(inReplyTo = stopA.id),
+                )
+                runCurrent()
+                assertTrue(
+                    a.state.value.pendingBackgroundTaskIds
+                        .isEmpty(),
+                )
+                assertEquals(setOf("same-task"), b.state.value.pendingBackgroundTaskIds)
+                tb.emit(envelope("background_task_roster", """{"conversation_id":"c","tasks":[],"dropped_tasks":0}"""))
+                runCurrent()
+                assertTrue(
+                    b.state.value.pendingBackgroundTaskIds
+                        .isEmpty(),
+                )
+                assertTrue(
+                    b.state.value.expandedBackgroundTaskIds
+                        .isEmpty(),
                 )
                 ta.outbound.clear()
                 tb.outbound.clear()
@@ -1480,6 +1534,7 @@ class RelayConnectionFactoryTest {
         var unavailable: String? = null
         var handshaking: String? = null
         var interactive = true
+        var stopTaskSupport = false
         val keys = Keys()
         val transports = mutableListOf<PeerTransport>()
         val factory =
@@ -1500,6 +1555,7 @@ class RelayConnectionFactoryTest {
                         record.serverId == unavailable,
                         interactive,
                         record.serverId == handshaking,
+                        stopTaskSupport,
                     ).also { transports += it }
                 },
                 NoiseClientInfo("test-device", "test-version"),
@@ -1582,6 +1638,7 @@ class RelayConnectionFactoryTest {
         private val unavailable: Boolean = false,
         private val interactive: Boolean = true,
         private var holdHandshake: Boolean = false,
+        private val stopTaskSupport: Boolean = false,
     ) : RelayTransport {
         private val frames = Channel<InnerFrameV2>(Channel.UNLIMITED)
         private val links = Channel<TransportEvent>(Channel.UNLIMITED)
@@ -1657,7 +1714,11 @@ class RelayConnectionFactoryTest {
                         .encodeToString(
                             envelope(
                                 "hello_ack",
-                                """{"protocol_version":"v2","server_id":"${record.serverId}","conn_id":"connection","capabilities":${if (interactive) "[\"interactive\"]" else "[]"}}""",
+                                """{"protocol_version":"v2","server_id":"${record.serverId}","conn_id":"connection","capabilities":${if (interactive) {
+                                    if (stopTaskSupport) "[\"interactive\",\"stop_background_task\"]" else "[\"interactive\"]"
+                                } else {
+                                    "[]"
+                                }}}""",
                             ),
                         ).encodeToByteArray()
                 } else {

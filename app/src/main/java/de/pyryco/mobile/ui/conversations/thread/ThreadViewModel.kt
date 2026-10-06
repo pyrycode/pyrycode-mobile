@@ -148,9 +148,14 @@ class ThreadViewModel(
     // is reopened. Absent in tests and the demo host, where a private holder stands in.
     mcpFailureAcknowledgements: McpFailureAcknowledgements? = null,
     // #678: the coordinator's per-conversation background-task roster and its live count (#677). Read
-    // only: nothing here sends. Defaulted to "nothing reported" and 0, which is what a demo host shows.
+    // through the destination-bound coordinator. Demo defaults remain inert.
     backgroundTasks: (conversationId: String) -> Flow<BackgroundTaskRoster?> = { flowOf(null) },
     backgroundTaskCount: (conversationId: String) -> Flow<Int> = { flowOf(0) },
+    backgroundTaskStopSupported: Flow<Boolean> = flowOf(false),
+    backgroundTaskStopRefusals: (conversationId: String) -> Flow<String> = { emptyFlow() },
+    private val stopBackgroundTask: suspend (conversationId: String, taskId: String) -> Result<Unit> = { _, _ ->
+        Result.failure(IllegalStateException("Background task stop unavailable"))
+    },
     // #861: whether this thread's host has a live repository published — for a relay host, the
     // coordinator's `currentRepository` being non-null, which happens only after the Noise handshake,
     // later than the socket-level `Connected` [connectionStateSource] reports. Gates the history ask
@@ -497,14 +502,102 @@ class ThreadViewModel(
     /**
      * This conversation's background-task roster and live count on this thread's host (#678). Each arm is
      * seeded so a source that never emits cannot stall [state]. The task strings stay inside the roster:
-     * nothing here reads, logs or keys on them.
+     * nothing here reads or logs their prose. Controls use only opaque task ids.
      */
-    private val backgroundTaskReading: Flow<Pair<BackgroundTaskRoster?, Int>> =
-        combine(
-            backgroundTasks(conversationId).onStart { emit(null) },
-            backgroundTaskCount(conversationId).onStart { emit(0) },
-            ::Pair,
-        ).distinctUntilChanged()
+    private data class TaskControls(
+        val roster: BackgroundTaskRoster? = null,
+        val count: Int = 0,
+        val supported: Boolean = false,
+        val expanded: Set<String> = emptySet(),
+        val pending: Set<String> = emptySet(),
+    )
+
+    private val taskControlLock = Any()
+    private val taskControls = MutableStateFlow(TaskControls())
+    private val taskStopAttempts = mutableMapOf<String, Any>()
+
+    init {
+        viewModelScope.launch {
+            backgroundTaskStopRefusals(conversationId).collect { taskId ->
+                synchronized(taskControlLock) {
+                    if (taskStopAttempts.remove(taskId) != null) {
+                        taskControls.value = taskControls.value.copy(pending = taskControls.value.pending - taskId)
+                        RelayLog.d { "event=background_task_action code=refused" }
+                    }
+                }
+            }
+        }
+        viewModelScope.launch {
+            combine(
+                backgroundTasks(conversationId).onStart { emit(null) },
+                backgroundTaskCount(conversationId).onStart { emit(0) },
+                backgroundTaskStopSupported.onStart { emit(false) },
+            ) { roster, count, supported -> Triple(roster, count, supported) }.collect { (roster, count, supported) ->
+                synchronized(taskControlLock) {
+                    val eligible =
+                        if (supported) {
+                            roster
+                                ?.tasks
+                                ?.filterNot { it.isFinished }
+                                ?.mapTo(
+                                    HashSet(),
+                                ) { it.taskId }
+                                .orEmpty()
+                        } else {
+                            emptySet()
+                        }
+                    taskStopAttempts.keys.retainAll(eligible)
+                    val old = taskControls.value
+                    taskControls.value =
+                        TaskControls(roster, count, supported, old.expanded.intersect(eligible), old.pending.intersect(eligible))
+                    if (old.pending != taskControls.value.pending || old.expanded != taskControls.value.expanded) {
+                        RelayLog.d { "event=background_task_action code=roster_cleanup" }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun toggleBackgroundTask(taskId: String) {
+        synchronized(taskControlLock) {
+            val current = taskControls.value
+            if (!current.supported || current.roster?.tasks?.any { it.taskId == taskId && !it.isFinished } != true) return
+            val opened = taskId !in current.expanded
+            taskControls.value = current.copy(expanded = if (opened) current.expanded + taskId else current.expanded - taskId)
+            RelayLog.d { "event=background_task_row expanded=$opened" }
+        }
+    }
+
+    private fun sendBackgroundTaskStop(taskId: String) {
+        val attempt = Any()
+        synchronized(taskControlLock) {
+            val current = taskControls.value
+            if (!current.supported ||
+                taskId !in current.expanded ||
+                taskId in current.pending ||
+                current.roster?.tasks?.any { it.taskId == taskId && !it.isFinished } != true
+            ) {
+                return
+            }
+            taskStopAttempts[taskId] = attempt
+            // Before launch: a second tap cannot enqueue a second send, even before state recomposes.
+            taskControls.value = current.copy(pending = current.pending + taskId)
+            RelayLog.d { "event=background_task_action code=pending" }
+        }
+        viewModelScope.launch {
+            if (synchronized(taskControlLock) { taskStopAttempts[taskId] !== attempt }) return@launch
+            val result = stopBackgroundTask(conversationId, taskId)
+            if (result.isFailure) {
+                synchronized(taskControlLock) {
+                    if (taskStopAttempts[taskId] === attempt) {
+                        taskStopAttempts.remove(taskId)
+                        taskControls.value = taskControls.value.copy(pending = taskControls.value.pending - taskId)
+                        RelayLog.d { "event=background_task_action code=send_failed" }
+                    }
+                }
+            }
+        }
+    }
 
     /**
      * Claude's latest estimate of this session's cost (#1346): the newest positive finite `cost_usd_total`
@@ -668,8 +761,14 @@ class ThreadViewModel(
         }.combine(slashCommandMenu) { uiState, menu ->
             val slashCommandsAccepted = uiState.runConfig.capabilities?.slashCommands ?: true
             uiState.copy(absentActions = absentComposerActions(menu, slashCommandsAccepted), slashCommands = menu?.rows)
-        }.combine(backgroundTaskReading) { uiState, (roster, count) ->
-            uiState.copy(backgroundTasks = roster, backgroundTaskCount = count)
+        }.combine(taskControls) { uiState, tasks ->
+            uiState.copy(
+                backgroundTasks = tasks.roster,
+                backgroundTaskCount = tasks.count,
+                backgroundTaskStopSupported = tasks.supported,
+                expandedBackgroundTaskIds = tasks.expanded,
+                pendingBackgroundTaskIds = tasks.pending,
+            )
         }.combine(channelInfoSession) { uiState, (facts, cost) ->
             uiState.copy(reportedSessionFacts = facts, sessionCostUsd = cost)
         }.combine(mcpStatusReading) { uiState, mcp ->
@@ -2683,6 +2782,8 @@ class ThreadViewModel(
 
     fun onOverflowEvent(event: ThreadEvent) {
         when (event) {
+            is ThreadEvent.BackgroundTaskToggle -> toggleBackgroundTask(event.taskId)
+            is ThreadEvent.BackgroundTaskStop -> sendBackgroundTaskStop(event.taskId)
             ThreadEvent.Archive -> {
                 // Close the Channel Info Sheet if Archive was tapped from it (a harmless no-op from the
                 // overflow menu, where it is already false); the send + success-only PopBack live in

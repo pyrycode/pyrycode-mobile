@@ -83,3 +83,11 @@ Pending documentation stage: `docs/knowledge/features/mobile-modal-callers.md`, 
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-06
+
+## Revisions
+
+- 2026-10-06: The fakeclaude replay path does not populate its stop-control lookup. The deterministic twin uses its existing canned-roster rider (one retained task, no natural finish) and existing stop_task handler instead. No sibling code or new fake flag is required. The live hold uses a keyed loopback fixture with explicit arrival/status and teardown release; the fixture has no natural release timer.
+- 2026-10-06: Pointer coverage includes the card padding. Make the entire card the merged toggle target, with the stop button as a nested independent clickable semantics node (Compose excludes that node from the parent's merge). Enabled and disabled button surface/extension taps must never bubble to the card. This replaces the narrower text-subtree toggle so every row tap opens the row.
+- 2026-10-06: The full-card nested approach failed the disabled-button extension probe: its tap reached the ancestor toggle. Keep a separate toggle block that includes the closed card's padding and all text; an open button sits outside that block with an 8 dp gap accommodating its touch extension. This preserves read-only merged bounds and prevents both enabled and disabled button taps from toggling.
+- 2026-10-06: Extend the existing destination-factory collision test to exercise the real #1829 sends/refusal through AppModule. Add one synthetic device capture to BackgroundTaskPanelCaptureTest for the open-row screenshot; real pixels are the device-only reason. No existing capture expectations change.
+- 2026-10-06: Implementation recount is approximately 1400 added/deleted source, test, script and plan lines, with two new event declarations, compatible defaulted consumers and seven guarded action/cleanup branches. The open-row emulator capture agrees with the Figma reference; preserve the synthetic image and metadata as review evidence.
