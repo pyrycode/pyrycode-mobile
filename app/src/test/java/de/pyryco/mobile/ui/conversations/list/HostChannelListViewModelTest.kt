@@ -2928,7 +2928,7 @@ class HostChannelListViewModelTest {
                     single<PairedServerCollectionStore> {
                         ObservablePairedServerStore(
                             store,
-                            forgetRemovedHost(drafts, mcpAcknowledgements, lazyOf(cache), lazyOf(attachments)),
+                            forgetRemovedHost(drafts, mcpAcknowledgements, lazyOf(cache), lazyOf(attachments)) {},
                         )
                     }
                 },

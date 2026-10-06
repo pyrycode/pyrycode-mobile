@@ -57,13 +57,15 @@ class HostConversationSourceTest {
             try {
                 runCurrent()
                 assertEquals(listOf("Host", "host"), source.snapshots.value.map { it.serverId })
-                assertTrue(source.snapshots.value.all { it.channels.isEmpty() && it.chats.isEmpty() })
+                assertTrue(source.snapshots.value.all { it.channels.isEmpty() && it.chats.isEmpty() && !it.rowsLoaded })
                 val channel = row("same", promoted = true)
                 val older = row("older", promoted = true)
                 val chat = row("chat", promoted = false)
                 a.repo.emit(listOf(older, chat, channel, row("archived", true).copy(archived = true), chat.copy(archived = true)))
                 b.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Handshaking)
                 runCurrent()
+                assertTrue(source.snapshots.value[0].rowsLoaded)
+                assertTrue(!source.snapshots.value[1].rowsLoaded)
                 assertEquals(listOf(older, channel), source.snapshots.value[0].channels)
                 assertSame(
                     channel,
