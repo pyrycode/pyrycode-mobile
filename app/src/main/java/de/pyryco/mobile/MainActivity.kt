@@ -827,7 +827,8 @@ internal fun PyryNavHost(
             when {
                 shareIntake?.state?.value != null -> RelayLog.d { "event=notification_tap_rejected code=share_pending" }
                 !savedHost -> RelayLog.d { "event=notification_tap_rejected code=unknown_host" }
-                active == null -> RelayLog.d { "event=notification_tap_rejected code=inactive_conversation" }
+                active == null || !conversations.snapshots.value.holdsActive(target) ->
+                    RelayLog.d { "event=notification_tap_rejected code=inactive_conversation" }
                 // The user moved on during the wait; a late row must not push a thread over where they went.
                 navController.currentDestination?.route != Routes.CHANNEL_LIST ->
                     RelayLog.d { "event=notification_tap_rejected code=navigated_away" }

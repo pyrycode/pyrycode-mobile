@@ -25,11 +25,18 @@ import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.crypto.PairedServerEntry
 import de.pyryco.mobile.data.crypto.PairedServerStore
+import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.PyrycodeLinkStatus
+import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.RelayTransportFactory
 import de.pyryco.mobile.data.network.base64StdEncode
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.data.repository.ConversationFilter
+import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.di.HostConversationConnection
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.di.InertAttachmentStore
 import de.pyryco.mobile.di.InertConversationCache
@@ -68,6 +75,7 @@ import org.koin.dsl.module
 import org.koin.dsl.onClose
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * A notification tap's target on the production graph and `Routes` (#685): a saved host's conversation
@@ -154,6 +162,63 @@ class NotificationTapNavigationTest {
         start(HostConversationTarget(SAVED, "conv"))
 
         assertStaysOnTheListPastTheWait()
+    }
+
+    @Test fun aDeletedRowDuringTheFinalHostLookupStaysOnTheListWithoutChangingDrafts() {
+        assertUnavailableDuringFinalHostLookup(archived = false)
+    }
+
+    @Test fun anArchivedRowDuringTheFinalHostLookupStaysOnTheListWithoutChangingDrafts() {
+        assertUnavailableDuringFinalHostLookup(archived = true)
+    }
+
+    private fun assertUnavailableDuringFinalHostLookup(archived: Boolean) {
+        val target = HostConversationTarget(SAVED, "conv")
+        val activeRow = conversation(target.conversationId, promoted = true)
+        val liveRows = MutableStateFlow(listOf(activeRow))
+        val lookups = AtomicInteger()
+        val finalLookupStarted = CompletableDeferred<Unit>()
+        val releaseFinalLookup = CompletableDeferred<Unit>()
+        start(target, liveRows = liveRows, beforeHostLookup = {
+            if (lookups.incrementAndGet() == 2) {
+                finalLookupStarted.complete(Unit)
+                releaseFinalLookup.await()
+            }
+        })
+        compose.waitUntil(5_000) { finalLookupStarted.isCompleted }
+        val drafts = app.koin.get<ComposerDraftStore>()
+        compose.runOnIdle {
+            val snapshot =
+                app.koin
+                    .get<HostConversationSource>()
+                    .snapshots.value
+                    .single()
+            assertTrue(snapshot.rowsLoaded)
+            assertEquals(listOf(activeRow), snapshot.channels)
+            assertEquals(Routes.CHANNEL_LIST, nav.currentDestination?.route)
+            drafts.setDraft(SAVED, target.conversationId, "keep target draft")
+            drafts.setDraft("other", target.conversationId, "keep other host draft")
+            drafts.addAttachment(SAVED, target.conversationId, "content://test/draft", "draft.txt", "text/plain", 5)
+        }
+        val originalDrafts = drafts.drafts.value
+        val originalAttachments = drafts.attachments.value
+        compose.runOnIdle { liveRows.value = if (archived) listOf(activeRow.copy(archived = true)) else emptyList() }
+        compose.waitUntil(5_000) {
+            val snapshot =
+                app.koin
+                    .get<HostConversationSource>()
+                    .snapshots.value
+                    .single()
+            snapshot.rowsLoaded && snapshot.channels.isEmpty()
+        }
+        compose.runOnIdle { releaseFinalLookup.complete(Unit) }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertEquals(Routes.CHANNEL_LIST, nav.currentDestination?.route)
+            assertEquals(null, nav.previousBackStackEntry)
+            assertEquals(originalDrafts, drafts.drafts.value)
+            assertEquals(originalAttachments, drafts.attachments.value)
+        }
     }
 
     @Test fun anUnknownConversationsTapStaysOnTheChannelList() {
@@ -274,6 +339,8 @@ class NotificationTapNavigationTest {
         target: HostConversationTarget,
         direct: Boolean = false,
         ioLookup: Boolean = false,
+        liveRows: MutableStateFlow<List<Conversation>>? = null,
+        beforeHostLookup: suspend () -> Unit = {},
     ) {
         val serverKey = NavigationPeer.key()
         val deviceKey = NavigationPeer.key()
@@ -284,8 +351,9 @@ class NotificationTapNavigationTest {
 
                 override suspend fun load() = entries.lastOrNull()?.record
 
-                override suspend fun loadById(serverId: String) =
-                    if (ioLookup) {
+                override suspend fun loadById(serverId: String): PairedServerEntry? {
+                    beforeHostLookup()
+                    return if (ioLookup) {
                         withContext(Dispatchers.IO) {
                             // Force suspension as the real Keystore/DataStore lookup does.
                             delay(10)
@@ -294,6 +362,7 @@ class NotificationTapNavigationTest {
                     } else {
                         entries.find { it.record.serverId == serverId }
                     }
+                }
 
                 override suspend fun save(record: PairedServer) = Unit
 
@@ -359,7 +428,31 @@ class NotificationTapNavigationTest {
                     single<AttachmentReader> { AttachmentReader { AttachmentRead.Unreadable } }
                     // On the main thread like the registry above: the test's effect dispatcher does not
                     // redispatch, so a snapshot published from Dispatchers.Default would navigate off it.
-                    single { HostConversationSource.relay(get(), Dispatchers.Main.immediate, cache = get(), viewing = get()) } onClose {
+                    single {
+                        if (liveRows == null) {
+                            HostConversationSource.relay(get(), Dispatchers.Main.immediate, cache = get(), viewing = get())
+                        } else {
+                            val repository =
+                                object : ConversationRepository by FakeConversationRepository() {
+                                    override fun observeConversations(filter: ConversationFilter) = liveRows
+                                }
+                            HostConversationSource(
+                                MutableStateFlow(
+                                    listOf(
+                                        HostConversationConnection(
+                                            SAVED,
+                                            null,
+                                            MutableStateFlow(repository),
+                                            MutableStateFlow(ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)),
+                                        ),
+                                    ),
+                                ),
+                                { if (it == SAVED) repository else null },
+                                Dispatchers.Main.immediate,
+                                viewing = get(),
+                            )
+                        }
+                    } onClose {
                         it?.dispose()
                     }
                 },
