@@ -734,6 +734,10 @@ if [ -n "${DETERMINISTIC}" ]; then
       TEST_METHOD="interactiveTurn_seededChannel_systemCopyCopiesSelectedWord"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/selection-copy.jsonl}"
       ;;
+    direct-share)
+      TEST_METHOD="interactiveTurn_directShareShortcut_stagesBeforeExplicitSend"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/ping.jsonl}"
+      ;;
     ping)
       TEST_METHOD="interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/ping.jsonl}"
@@ -1456,6 +1460,7 @@ elif [ -n "${LIVE}" ]; then
   # phone-to-peer method last and the offered-file method before the background-task one (see their KDoc).
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_sharedContentFromAndroid_arrivesAtPeerWithItsBytes"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_directShareShortcut_arrivesAtPeerWithItsBytes"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart"
   # #1020: history replay now names a user message's files, so the peer's file after a history reload joins,
   # one turn (the peer's message). The list holds 32 methods and 34 turns.
