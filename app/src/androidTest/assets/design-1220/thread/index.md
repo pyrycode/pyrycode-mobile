@@ -877,7 +877,7 @@ older captures.
 - **Side-by-side:** `attachment-states-side-by-side.png`
 - **Overlay:** `attachment-states-overlay.png`
 - **Verdict:** match (Retry spacing corrected by #1850)
-- Fresh `ThreadDesignCaptureTest#attachmentAndEmptyFramesAt412By892` capture on 2026-10-06, full pixel8Api35,
+- Fresh post-rework `ThreadDesignCaptureTest#attachmentAndEmptyFramesAt412By892` capture on 2026-10-07, full pixel8Api35,
   real 24px bars, 412x892, density/font scale 1.0. `attachment-retry-1850-green.xml` records 1 executed/passed,
   0 failures/errors/skips. The fresh Figma export is pixel-identical to `figma-696-4913.png`.
 - #1850 reduces Retry's layout allocation from 48dp to the frame's 40dp. The shared regression measures the
@@ -886,6 +886,9 @@ older captures.
   Accounting for the app's 24px status bar, all three align exactly, with 78px tile-top pitch on both sides
   of Retry. These consistent top-edge measurements supersede the earlier audit's 58/106/98px
   pitch figures. #1848's colour, weight and name/state-dimming fixes remain in place.
+- Rework preserves the same normal-size pixels below the status bar while allowing Retry to grow with
+  enlarged text. Native-graphics shared tests at font scales 1.5 and 2 require a fully allocated paragraph
+  without visual overflow, compact-bubble containment and a touch target of at least 48dp.
 
 | Aspect | Verdict |
 |---|---|

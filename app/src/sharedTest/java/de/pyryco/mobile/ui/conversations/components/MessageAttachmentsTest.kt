@@ -40,6 +40,7 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -219,10 +220,19 @@ class MessageAttachmentsTest {
 
     @Test
     fun enlargedText_longFileNameAndRetryStayInsideTheCompactBubble() {
+        assertEnlargedRetryIsUnclipped(fontScale = 1.5f)
+    }
+
+    @Test
+    fun doubledText_longFileNameAndRetryStayInsideTheCompactBubble() {
+        assertEnlargedRetryIsUnclipped(fontScale = 2f)
+    }
+
+    private fun assertEnlargedRetryIsUnclipped(fontScale: Float) {
         val name = "Filename of the Best file attachment that the assistant generated.pdf"
         render(
             message(MessageAttachment(A1, name, "application/pdf")),
-            fontScale = 1.5f,
+            fontScale = fontScale,
             states = { mapOf(A1 to AttachmentViewState.Failed) },
         )
 
@@ -233,6 +243,19 @@ class MessageAttachmentsTest {
         assertTrue(row.left >= bubble.left && row.right <= bubble.right)
         assertTrue(nameBounds.right <= bubble.right)
         assertTrue(retry.right <= bubble.right && retry.bottom <= bubble.bottom)
+        val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        composeTestRule
+            .onNodeWithText("Retry", useUnmergedTree = true)
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        val layout = layouts.single()
+        assertFalse(
+            "Retry must paint its entire paragraph at fontScale $fontScale: size=${layout.size}, " +
+                "paragraph=${layout.multiParagraph.width}x${layout.multiParagraph.height}, " +
+                "widthOverflow=${layout.didOverflowWidth}, heightOverflow=${layout.didOverflowHeight}",
+            layout.hasVisualOverflow,
+        )
+        assertTrue("Retry paragraph exceeds its allocated height", layout.multiParagraph.height <= layout.size.height)
+        composeTestRule.onNodeWithText("Retry").assertTouchHeightIsEqualTo(maxOf(48.dp, retry.height))
     }
 
     @Test

@@ -26,3 +26,9 @@ First add a failing shared test beside existing Retry tests: require a 40dp butt
 ## Revisions
 
 - 2026-10-06: The initial compact-bubble regression wrapped the failure label and measured an unrelated extra text line. Render `MessageAttachments` directly for the single-line geometry contract; the existing enlarged-text bubble test still covers containment. The corrected test failed with an 80dp row before implementation and passes with 72dp afterward. Hardware comparison uses the same glyph-top edge for every tile: 78px pitch in both app and Figma, superseding the issue's 58/106/98px figures. The design contract remains a 40dp layout and at least 48dp touch area.
+- 2026-10-06 (rework, finding 1): Fixed height clips the Retry paragraph at font scales 1.5 and 2. Replace it with a 40dp minimum and scope `LocalMinimumInteractiveComponentSize` to `Dp.Unspecified` for this button's layout reservation. Foundation's pointer-target expansion remains enabled. Normal geometry remains unchanged, while enlarged text receives its full paragraph height plus button padding. Extend the existing compact-bubble test to reject visual overflow at both scales and assert the touch target remains at least 48dp; retain normal-size geometry and pointer-edge assertions. Refresh hardware capture evidence after repair.
+- 2026-10-07 (rework, finding 1): The full overflow assertion also exposed a 1.5-scale horizontal allocation of 54px for a 59px paragraph. Give the Retry button its maximum intrinsic width so both dimensions fit the label; normal height and next-row spacing remain unchanged. Both enlarged-text probes and all 35 attachment/bubble tests pass.
+
+## Documentation handoff
+
+- Pending for the documentation stage: `docs/knowledge/features/message-bubble-attachment-slot.md`, Attachment slot — final normal-size Retry allocation, expanded touch target, enlarged-text behavior, retained capture evidence and corrected 78px glyph-top pitch (verifier handoff).
