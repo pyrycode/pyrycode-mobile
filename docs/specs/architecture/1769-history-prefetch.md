@@ -1,0 +1,56 @@
+# #1769 — Prefetch older thread history during reader movement
+
+## Files read
+
+- `ThreadHistoryRows.kt`: `OlderHistoryGesture`, `olderHistoryPull`, `isNearOldestEnd` own touch provenance and the reversed-list distance predicate.
+- `ThreadScreen.kt`: the message-region branches, prompt row indices, gap routing and stable-key list preserve empty pulls and reader anchors.
+- `ThreadViewModel.kt`: `onDemandOlderHistory`, `fetchHistoryPage`, `launchNewestPageSideAsk`, `onDemandHistoryGap`, `claimHistorySlot` share the outstanding request slot.
+- `ThreadHistoryDemand.kt`: `canAsk`, `settled`, `cursorRefused` remain authoritative for single flight and terminal stops.
+- `ThreadScreenHistoryTest.kt`, `ThreadOldestEndBandTest.kt`, `ThreadViewModelTest.kt`: existing demand, position, retry and reconnect coverage.
+- `docs/knowledge/INDEX.md`, `features/thread-screen.md`, `features/thread-screen-oldest-end-history-demand.md`: semantics scroll can emit UserInput without a pointer; gap pulls must retain their target and one-page-per-touch policy.
+- `docs/knowledge/features/development-verification-gates.md`: shared screen coverage runs under Robolectric; counts must come from fresh XML.
+
+## Design source
+
+**Figma:** https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8
+
+Read design context and screenshot of the thread frame. It has a reversed chronological message area under the title overlay and above the composer, with blue Material role-token bubbles and body typography. This change retains that layout and the shipped history-tail spinner/label and error surfaces; the frame has no separate history-loading visual.
+
+## Context
+
+The one-shot 200dp gesture-start predicate misses a drag or fling entering the loaded end later. Prefetch approximately two current list viewport heights ahead, requesting 200 durable entries, to give responses time to arrive. It cannot eliminate stalls when the reader outruns the response. No protocol or history merge contract changes, and no decision record is needed.
+
+Non-blocking overlaps: #1827 changes row rendering; the older `1283-notice-placement` branch changes connection chrome and history-row comments. Changes here stay local to demand wiring. Former blocker #1832 is merged and its gap targeting and newest-arrival scheduling remain intact.
+
+## Design
+
+- Keep `OlderHistoryGesture` as a non-consuming nested-scroll observer. A real pointer down starts touch provenance; pointer completion closes the drag window. Only a drag's own positive-velocity `onPreFling` transfers provenance to its fling, and `onPostFling` clears it. UserInput checks require an active touch; SideEffect checks require that attributed fling.
+- Check position on each qualifying movement after the list consumes it, using consumed plus available delta so an end pull still works. No layout observer or request-completion observer initiates prefetch. A subsequent movement can ask after the single-flight slot is released during the same drag/fling.
+- `isNearOldestEnd` uses the current list viewport height as its two-viewport threshold. When the oldest row is visible, its edge gives exact remaining distance including after-content padding. Otherwise extrapolate from the highest visible history row and the mean measured visible history-row height plus item spacing. Exclude prompt and tail rows. This is an estimate for unmeasured content, recalculated on movement for current geometry and mixed-height rows.
+- `ThreadScreen` retains loading suppression and visible gap-marker priority. Reset a per-touch gap-demand latch on touch start so one gesture still asks at most one gap page; ordinary oldest-end prefetch can ask again after arrival when movement continues. No new UI state or exported type is needed.
+- Supply a private shared thread page-size constant of 200 at all three merged request paths: backwards/retry, newest side asks, and gaps. Preserve cursor, server clamp, short/empty page and atStart behavior.
+- Drop prefetch before history-position seeding finishes instead of queuing it. Opening/reconnect newest asks already wait for the seed and remain available, as does explicit Retry.
+
+## State and concurrency model
+
+Pointer and fling provenance live only in the remembered screen-local observer and are cleared on completion/cancellation. The modifier owns no coroutine beyond its cancellable pointer input. Distance reads current layout synchronously. Existing ViewModel-scope history jobs, StateFlows, repository availability and atomic slot claims remain authoritative; closing the ViewModel cancels them. Background socket closure remains the existing lifecycle driver's responsibility.
+
+## Error handling
+
+Keep `ThreadHistoryDemand` failure and termination classification unchanged. Prefetch issues no wire operation offline or at a terminal stop; existing failures, Retry, invalid-cursor recovery and content-free structured logging remain in the ViewModel. No new failure branches or dependencies.
+
+## Testing strategy
+
+Write failing tests first. Unit tests drive the real gesture observer through drag entry, attributed fling entry, direction and provenance rejection, pointer end/cancellation, repeated movement and idle page/geometry changes. Layout fakes pin two-viewport boundaries, hidden oldest mixed heights, spacing/padding, prompt/tail exclusion and viewport changes. ViewModel tests capture limit=200 across opening, older, Retry, reconnect side asks and gap asks; retain single-flight and termination tests.
+
+Update and extend `ThreadScreenHistoryTest` under sharedTest for real pointer drags/flings entering from outside, suppression, controlled page arrival, unchanged visible-row bounds, and scrolling into newly loaded older rows. Run the affected full class plus history ViewModel and demand coverage, lint, assembleDebug, Android-test Kotlin compilation and forced Spotless. After the last main merge run the entire unit/shared suite and pre-verify with Gradle. The dispatcher runs `./gradlew check` and owns the fresh full live gate; record its named history-reload method as pending, never as passed. No device-only tests or stream fixtures change.
+
+Existing rung-3 proof: `InteractiveStreamE2ETest.interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload`; no new real-Claude scenario is needed.
+
+## Open Questions
+
+None. Estimated total written work is 750–1000 lines across three production files, three test files and this plan; zero new exported types, fewer than ten consumers, five acceptance criteria, and no new history-walk reject branches.
+
+## Documentation handoff
+
+Pending for the documentation stage: update `docs/knowledge/features/thread-screen-oldest-end-history-demand.md`, “The oldest-end history demand”, for position-based two-viewport prefetch and 200-entry thread pages. Record fresh full live-gate executed/failed/skipped counts and confirmation that the named attachment history-reload method ran and passed, in the ticket evidence documentation. Also record dispatcher `./gradlew check` counts for `ThreadScreenHistoryTest`.
