@@ -730,6 +730,7 @@ class ThreadViewModel(
             val positions = coverage.positions()
             val markers =
                 (coverage.gaps.map { it.anchor to it.edge } + listOfNotNull(coverage.unknownEdge?.let { 0L to it }))
+                    .sortedBy { it.second }
                     .map { (anchor, edge) ->
                         val row =
                             display

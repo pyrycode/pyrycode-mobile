@@ -94,3 +94,5 @@ Pending for the documentation stage:
 2026-10-06: Inspection of backwards cursor refusal found its old whole-position clear would discard persisted gaps. Reset only backwards cursor/stop when durable coverage exists; preserve gaps/cursors for later targeted demand. Empty legacy-free positions retain the previous clear behavior.
 
 Final sizing: approximately 1400 written lines including the plan, four exported model types, one screen callback consumer, four acceptance criteria and fewer than ten request rejection branches. All hard boundaries hold.
+
+2026-10-06: When unknown and known markers attach to one row or non-rendering edge, sort by the durable newer edge before positioning. Unknown coverage stays chronologically older; first-crossed pull targeting remains deterministic.

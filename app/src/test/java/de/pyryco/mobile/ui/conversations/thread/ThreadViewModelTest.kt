@@ -5007,6 +5007,26 @@ class ThreadViewModelTest {
         }
 
     @Test
+    fun history_unknownAndKnownMarkersSharingAnEdge_remainInChronologicalOrder() =
+        runTest {
+            val coverage = HistoryCoverage(unknown = true).received(durablePage(1, cursor = "older"))
+            val repo = HistoryRepo(saved = HistoryPosition("older", true, coverage)) { durablePage(9, cursor = "eight") }
+            val vm = makeVm(historyHandle(), repo)
+            val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals(
+                listOf(0L, 1L),
+                vm.state.value.historyMarkers
+                    .map { it.anchor },
+            )
+            assertTrue(
+                vm.state.value.historyMarkers
+                    .all { it.beforeRow.isEmpty() },
+            )
+            collector.cancel()
+        }
+
+    @Test
     fun history_aRefusedBackwardsCursor_resetsOnlyThatWalk_andKeepsDurableGaps() =
         runTest {
             val coverage = HistoryCoverage().received(durablePage(1, 2, cursor = "oldest"))
