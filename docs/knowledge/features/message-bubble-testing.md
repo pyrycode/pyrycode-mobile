@@ -16,11 +16,20 @@ first-arrival layout. Keep prefix, progress and incomplete-text assertions toget
 
 Standalone bubble fixtures omit `threadOpenedAt` and retain zero-start behavior.
 For first-arrival timestamp retention and realistic follow fixtures, see
-[thread testing](thread-screen-testing.md#testing). Reopen-specific real-Claude
-`InteractiveStreamE2ETest` coverage and its held-stream
-`DeterministicInteractiveStreamE2ETest` twin remain pending in
-[#1762](https://github.com/pyrycode/pyrycode-mobile/issues/1762); existing full-suite
-live execution does not establish those reopen observations.
+[thread testing](thread-screen-testing.md#testing). The device-only
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately`
+now proves immediate reopen and prefix retention through the isolated daemon/Noise/relay path.
+An eventual combined reply can hide a temporary reset through catch-up or finalization: witness
+an appended word composing with bounded reveal time, then assert the prefix remains displayed
+while the reply is still streaming and its turn non-idle. Release the suffix only after the
+reopen assertion, and fence the terminal result separately until after the suffix display
+checkpoint. Repository text alone is insufficient. See the
+[held-stream sequence and evidence](../../e2e-interactive-stream.md#scenarios-454).
+The real-Claude
+`InteractiveStreamE2ETest.interactiveTurn_reopenOngoingReply_showsArrivedPrefixImmediately`
+remains ignored and manual/unproven because Claude can finish during navigation; pausing
+Compose cannot hold the backend. A full curated live pass does not establish this excluded
+method's reopen observation. See the [manual promotion procedure](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
 
 `app/src/test/.../components/StreamingRevealStepTest.kt` covers the pure
 `nextStreamingRevealLength` helper: a short reply advances one word per 33 ms
