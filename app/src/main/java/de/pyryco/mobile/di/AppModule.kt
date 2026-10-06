@@ -52,6 +52,7 @@ import de.pyryco.mobile.push.PushTokenSource
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.conversations.share.ShareIntakeViewModel
+import de.pyryco.mobile.ui.conversations.share.SharingShortcuts
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
 import de.pyryco.mobile.ui.conversations.thread.ContentResolverAttachmentReader
@@ -292,6 +293,17 @@ fun hostConversationModule(
     decorateRepository: (ConversationRepository) -> ConversationRepository = { it },
 ): Module =
     module {
+        single(createdAtStart = true) { parameters ->
+            val context = parameters.getOrNull<android.content.Context>() ?: androidContext()
+            val saved =
+                if (useRelay) {
+                    val store = get<ObservablePairedServerStore>()
+                    store.revision.map { store.list().map { it.record.serverId }.toSet() }
+                } else {
+                    kotlinx.coroutines.flow.flowOf(setOf(HostConversationSource.DEMO_SERVER_ID))
+                }
+            SharingShortcuts(context, get<HostConversationSource>().snapshots, saved)
+        } onClose { it?.dispose() }
         // #797: the demo branch resolves no cache, as HostConversationSource's does below.
         single {
             ThreadDestinationFactory(

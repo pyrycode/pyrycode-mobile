@@ -11,6 +11,7 @@ import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ShortcutManager
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.ParcelFileDescriptor
@@ -113,6 +114,7 @@ import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_ID
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_STATIC_PUBLIC_KEY
 import de.pyryco.mobile.grantNotificationPermission
 import de.pyryco.mobile.notifications.ATTENTION_CHANNEL_ID
+import de.pyryco.mobile.notifications.NotificationTap
 import de.pyryco.mobile.push.PushTokenSource
 import de.pyryco.mobile.ui.components.CHANNEL_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
@@ -128,6 +130,7 @@ import de.pyryco.mobile.ui.conversations.components.treeHostChannelAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostChatAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostEditTestTag
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
+import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHAT_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.ATTACHMENT_STRIP_TEST_TAG
@@ -5272,6 +5275,93 @@ class InteractiveStreamE2ETest {
                     documentName,
                 ).all { composeTestRule.onAllNodes(hasContentDescription(it)).fetchSemanticsNodes().isNotEmpty() }
             }
+            composeTestRule.onNode(hasSetTextAction()).assertTextContains(PING_PROMPT)
+            assertEquals("no automatic send in X", 0, userMessages(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) }))
+            composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the shared-content turn in X did not end") { it.type == "turn_end" }
+            val history = runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) }
+            val named = userMessageAttachmentIds(history)
+            assertEquals("user messages in X", 1, named.size)
+            val ids = named.single()
+            assertEquals("attachment ids in X", 2, ids.distinct().size)
+            val digests = ids.map { sha256(runBlocking { peer.retrieveAttachment(chatX, it, REPLY_TIMEOUT_MS) }.bytes) }
+            assertEquals(setOf(sha256(png), sha256(document)), digests.toSet())
+            val payload = history.single { it.isUserMessage() }.payload as JsonObject
+            assertEquals("peer received the shared text", PING_PROMPT, payload["text"]?.jsonPrimitive?.content)
+            assertEquals("messages in Y", 0, userMessages(runBlocking { peer.history(chatY, THREAD_TIMEOUT_MS) }))
+        } finally {
+            deleteFixtures(inserted)
+            peer.close()
+        }
+    }
+
+    /** Android Direct Share uses the published pair identity; one real Claude turn. */
+    @Test
+    fun interactiveTurn_directShareShortcut_arrivesAtPeerWithItsBytes() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer = runningToolPeer()
+        val inserted = mutableListOf<Uri>()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        try {
+            val stamp = System.currentTimeMillis()
+            val png = pngFixture()
+            val document = documentFixture("shared-$stamp")
+            val pngName = ATTACH_FILE_PREFIX + "shared-$stamp.png"
+            val documentName = ATTACH_FILE_PREFIX + "shared-$stamp.txt"
+            val sources =
+                arrayListOf(
+                    insertDownload(pngName, "image/png", png, inserted),
+                    insertDownload(documentName, TEXT_MIME, document, inserted),
+                )
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val (chatX, nameX) = answerChat(serverId, ATTACH_CHAT_NAME_PREFIX)
+            val (chatY, _) = answerChat(serverId, ATTACH_OTHER_NAME_PREFIX)
+            assertPeerAnswers(peer, chatX)
+            val context = instrumentation.targetContext
+            openChatRow(nameX)
+            val manager = context.getSystemService(ShortcutManager::class.java)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                manager.dynamicShortcuts.any {
+                    NotificationTap
+                        .target(it.intent) ==
+                        HostConversationTarget(serverId, chatX)
+                }
+            }
+            val shortcut =
+                manager.dynamicShortcuts.single {
+                    NotificationTap
+                        .target(it.intent) ==
+                        HostConversationTarget(serverId, chatX)
+                }
+            composeTestRule.runOnUiThread {
+                context.startActivity(
+                    Intent(context, MainActivity::class.java).apply {
+                        action = Intent.ACTION_SEND_MULTIPLE
+                        type = "*/*"
+                        putExtra(Intent.EXTRA_SHORTCUT_ID, shortcut.id)
+                        putExtra(Intent.EXTRA_TEXT, PING_PROMPT)
+                        putParcelableArrayListExtra(Intent.EXTRA_STREAM, sources)
+                        clipData = ClipData.newRawUri("share", sources.first()).apply { addItem(ClipData.Item(sources.last())) }
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    },
+                )
+            }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                listOf(
+                    pngName,
+                    documentName,
+                ).all { composeTestRule.onAllNodes(hasContentDescription(it)).fetchSemanticsNodes().isNotEmpty() }
+            }
+            deleteFixtures(inserted)
+            sources.forEach { uri ->
+                assertTrue(
+                    "the original share source must be unreadable",
+                    runCatching { context.contentResolver.openInputStream(uri)?.use { it.read() } }.getOrNull() == null,
+                )
+            }
+            composeTestRule.onAllNodes(hasText("Share to…")).assertCountEquals(0)
             composeTestRule.onNode(hasSetTextAction()).assertTextContains(PING_PROMPT)
             assertEquals("no automatic send in X", 0, userMessages(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) }))
             composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()

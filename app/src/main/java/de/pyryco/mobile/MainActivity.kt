@@ -72,6 +72,7 @@ import de.pyryco.mobile.ui.conversations.list.PendingPromotion
 import de.pyryco.mobile.ui.conversations.share.ShareIntakeViewModel
 import de.pyryco.mobile.ui.conversations.share.SharePayload
 import de.pyryco.mobile.ui.conversations.share.SharePickerHeader
+import de.pyryco.mobile.ui.conversations.share.SharingShortcuts
 import de.pyryco.mobile.ui.conversations.thread.LinkedMarkdownReaderDestination
 import de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDestination
 import de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNotice
@@ -100,12 +101,15 @@ import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
 import de.pyryco.mobile.ui.settings.SettingsScreen
 import de.pyryco.mobile.ui.settings.SettingsViewModel
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.androidx.compose.koinViewModel
 import org.koin.androidx.viewmodel.ext.android.viewModel
 import org.koin.compose.koinInject
+import org.koin.core.parameter.parametersOf
 import kotlin.time.Duration.Companion.seconds
 
 class MainActivity : ComponentActivity() {
@@ -244,6 +248,8 @@ internal fun PyryNavHost(
     val destinations = koinInject<ThreadDestinationFactory>()
     val appPreferences = koinInject<AppPreferences>()
     val conversations = koinInject<HostConversationSource>()
+    val shortcutContext = LocalContext.current.applicationContext
+    val shortcuts = koinInject<SharingShortcuts>(parameters = { parametersOf(shortcutContext) })
     val shared = shareIntake?.state?.collectAsStateWithLifecycle()?.value
     BackHandler(enabled = shared != null, onBack = onCancelShare)
     LaunchedEffect(shared?.generation) {
@@ -251,6 +257,31 @@ internal fun PyryNavHost(
             navController.navigate(Routes.CHANNEL_LIST) {
                 popUpTo(navController.graph.id) { inclusive = true }
                 launchSingleTop = true
+            }
+        }
+    }
+    LaunchedEffect(shared?.generation, shared?.capturing, shared?.shortcutId) {
+        val batch = shared?.takeUnless { it.capturing } ?: return@LaunchedEffect
+        val id = batch.shortcutId ?: return@LaunchedEffect
+        val target =
+            withTimeoutOrNull(NOTIFICATION_TAP_ROW_WAIT) {
+                val candidate = shortcuts.resolve(id) ?: return@withTimeoutOrNull null
+                if (!destinations.isSavedHost(candidate.serverId)) return@withTimeoutOrNull null
+                conversations.snapshots.first { it.holdsActive(candidate) }
+                candidate
+            }
+        withContext(Dispatchers.Main.immediate) {
+            // Transfer and navigation share one Main turn after validation and the generation check.
+            if (target != null &&
+                destinations.isSavedHost(target.serverId) &&
+                conversations.snapshots.value.holdsActive(target) &&
+                navController.currentDestination?.route == Routes.CHANNEL_LIST &&
+                shareIntake?.select(target, batch.generation) == true
+            ) {
+                RelayLog.d { "event=share_shortcut_accepted" }
+                navController.openThread(target)
+            } else {
+                shareIntake?.fallback(batch.generation)
             }
         }
     }
@@ -429,6 +460,10 @@ internal fun PyryNavHost(
             LaunchedEffect(vm) {
                 vm.lastHostUnpaired.collect { navController.returnToWelcome() }
             }
+            if (shared?.shortcutId != null) {
+                Surface(modifier = Modifier.fillMaxSize()) {}
+                return@composable
+            }
             ChannelListScreen(
                 hostState = hostState,
                 shareHeader = shared?.let { batch -> { SharePickerHeader(batch, onCancelShare) } },
@@ -538,6 +573,10 @@ internal fun PyryNavHost(
         ) { backStackEntry ->
             val target = Routes.target(backStackEntry.arguments)
             HostDestination(target.serverId, destinations, navController) {
+                LaunchedEffect(backStackEntry) {
+                    conversations.snapshots.first { it.holdsActive(target) }
+                    shortcuts.opened(target)
+                }
                 val vm = koinViewModel<ThreadViewModel>()
                 val state by vm.state.collectAsStateWithLifecycle()
                 val connectionState by vm.connectionState.collectAsStateWithLifecycle()
@@ -782,6 +821,8 @@ internal fun PyryNavHost(
         }
         val active = withTimeoutOrNull(NOTIFICATION_TAP_ROW_WAIT) { conversations.snapshots.first { it.holdsActive(target) } }
         when {
+            shareIntake?.state?.value != null -> RelayLog.d { "event=notification_tap_rejected code=share_pending" }
+            !destinations.isSavedHost(target.serverId) -> RelayLog.d { "event=notification_tap_rejected code=unknown_host" }
             active == null -> RelayLog.d { "event=notification_tap_rejected code=inactive_conversation" }
             // The user moved on during the wait; a late row must not push a thread over where they went.
             navController.currentDestination?.route != Routes.CHANNEL_LIST ->

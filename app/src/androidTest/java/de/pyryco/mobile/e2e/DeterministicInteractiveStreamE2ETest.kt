@@ -1,5 +1,6 @@
 package de.pyryco.mobile.e2e
 
+import android.content.pm.ShortcutManager
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -34,7 +35,9 @@ import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.grantNotificationPermission
+import de.pyryco.mobile.notifications.NotificationTap
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -195,6 +198,44 @@ class DeterministicInteractiveStreamE2ETest {
             }
         typeAndSend(SELECTION_PROMPT)
         composeTestRule.assertFinishedReplySystemCopy(repository, conversationId, REPLY_TIMEOUT_MS)
+    }
+
+    @Test
+    fun interactiveTurn_directShareShortcut_stagesBeforeExplicitSend() {
+        arriveInSeededThread()
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = context.getSystemService(ShortcutManager::class.java)
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { manager.dynamicShortcuts.any { it.shortLabel.toString() == SEED_CHANNEL_NAME } }
+        val shortcut = manager.dynamicShortcuts.single { it.shortLabel.toString() == SEED_CHANNEL_NAME }
+        val target =
+            requireNotNull(
+                NotificationTap
+                    .target(shortcut.intent),
+            )
+        composeTestRule.runOnUiThread {
+            context.startActivity(
+                android.content.Intent(context, MainActivity::class.java).apply {
+                    action = android.content.Intent.ACTION_SEND
+                    type = "text/plain"
+                    putExtra(android.content.Intent.EXTRA_TEXT, SEND_PROMPT)
+                    putExtra(android.content.Intent.EXTRA_SHORTCUT_ID, shortcut.id)
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                },
+            )
+        }
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasSetTextAction() and hasText(SEND_PROMPT)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodes(hasText("Share to…")).assertCountEquals(0)
+        val repository =
+            requireNotNull(GlobalContext.get().get<HostConversationSource>().repositoryFor(target.serverId))
+        val before = runBlocking { repository.observeMessages(target.conversationId).first() }
+        assertFalse(before.any { it is ThreadItem.MessageItem && it.message.role == Role.User })
+        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(PING, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(PING, substring = true).onFirst().assertIsDisplayed()
     }
 
     @Test

@@ -1,5 +1,8 @@
 package de.pyryco.mobile.notifications
 
+import android.content.Context
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
@@ -7,6 +10,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.preferencesOf
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.NOTIFICATION_TAP_ROW_WAIT
 import de.pyryco.mobile.PyryNavHost
@@ -32,13 +36,19 @@ import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.di.appModule
 import de.pyryco.mobile.di.conversationRepositoryModule
 import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
+import de.pyryco.mobile.ui.conversations.share.RecentShareTargets
+import de.pyryco.mobile.ui.conversations.share.ShareIntakeViewModel
+import de.pyryco.mobile.ui.conversations.share.SharePayload
+import de.pyryco.mobile.ui.conversations.share.SharingShortcuts
 import de.pyryco.mobile.ui.conversations.thread.AttachmentRead
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
+import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
 import de.pyryco.mobile.ui.conversations.thread.NavigationPeer
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.datetime.Instant
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -50,6 +60,7 @@ import org.koin.core.KoinApplication
 import org.koin.dsl.binds
 import org.koin.dsl.module
 import org.koin.dsl.onClose
+import java.io.File
 
 /**
  * A notification tap's target on the production graph and `Routes` (#685): a saved host's conversation
@@ -163,6 +174,45 @@ class NotificationTapNavigationTest {
         }
     }
 
+    @Test fun directShareWaitsForTheExactHostsRowAndTransfersOnce() {
+        val target = HostConversationTarget(SAVED, "conv")
+        start(target, direct = true)
+        compose.mainClock.advanceTimeBy(NOTIFICATION_TAP_ROW_WAIT_MS / 2)
+        compose.runOnIdle { assertEquals(Routes.CHANNEL_LIST, nav.currentDestination?.route) }
+        compose.onAllNodes(hasText("Share to…")).assertCountEquals(0)
+        rows.complete(listOf(conversation("conv", promoted = true)))
+        compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.CONVERSATION_THREAD }
+        compose.runOnIdle {
+            assertEquals(target, Routes.target(nav.currentBackStackEntry?.arguments))
+            assertEquals("direct", app.koin.get<ComposerDraftStore>().draftFor(SAVED, "conv"))
+            assertEquals("", app.koin.get<ComposerDraftStore>().draftFor("other", "conv"))
+        }
+    }
+
+    @Test fun staleDirectShareFallsBackWithoutMutatingAnyDraftAndLateRowsCannotStage() {
+        val target = HostConversationTarget(SAVED, "deleted")
+        start(target, direct = true)
+        assertStaysOnTheListPastTheWait()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("Share to…")).fetchSemanticsNodes().isNotEmpty() }
+        rows.complete(listOf(conversation("deleted", promoted = true)))
+        compose.mainClock.advanceTimeBy(1_000)
+        compose.runOnIdle {
+            assertEquals(Routes.CHANNEL_LIST, nav.currentDestination?.route)
+            assertEquals("", app.koin.get<ComposerDraftStore>().draftFor(SAVED, "deleted"))
+        }
+    }
+
+    @Test fun cancelledDirectShareCannotNavigateWhenTheRowArrives() {
+        start(HostConversationTarget(SAVED, "conv"), direct = true)
+        compose.runOnIdle { intake?.cancel() }
+        rows.complete(listOf(conversation("conv", promoted = true)))
+        compose.mainClock.advanceTimeBy(NOTIFICATION_TAP_ROW_WAIT_MS + 1_000)
+        compose.runOnIdle {
+            assertEquals(Routes.CHANNEL_LIST, nav.currentDestination?.route)
+            assertEquals("", app.koin.get<ComposerDraftStore>().draftFor(SAVED, "conv"))
+        }
+    }
+
     private fun assertStaysOnTheListPastTheWait() {
         compose.mainClock.advanceTimeBy(NOTIFICATION_TAP_ROW_WAIT_MS + 1_000)
         compose.waitForIdle()
@@ -178,7 +228,12 @@ class NotificationTapNavigationTest {
         archived: Boolean = false,
     ) = Conversation(id, null, "/w", "s", emptyList(), promoted, Instant.fromEpochMilliseconds(0), archived = archived)
 
-    private fun start(target: HostConversationTarget) {
+    private var intake: ShareIntakeViewModel? = null
+
+    private fun start(
+        target: HostConversationTarget,
+        direct: Boolean = false,
+    ) {
         val serverKey = NavigationPeer.key()
         val deviceKey = NavigationPeer.key()
         val entries = listOf(PairedServerEntry(PairedServer(SAVED, "unused", "wss://unused.example", base64StdEncode(serverKey.publicKey))))
@@ -229,11 +284,18 @@ class NotificationTapNavigationTest {
                         transform(stored.value).also { stored.value = it }
                 },
             )
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val ledgerFile = File(context.cacheDir, "direct-share-test")
+        val ledger = RecentShareTargets(4).apply { open(target, "target") }
+        ledgerFile.writeText(ledger.encode())
         app =
             KoinApplication.init().modules(
                 appModule,
                 conversationRepositoryModule(true),
                 module {
+                    single {
+                        SharingShortcuts(context, get<HostConversationSource>().snapshots, flowOf(setOf(SAVED)), ledgerFile)
+                    } onClose { it?.dispose() }
                     single { registry }
                     single { store } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
                     single { preferences }
@@ -252,11 +314,15 @@ class NotificationTapNavigationTest {
                     }
                 },
             )
+        if (direct) {
+            intake = ShareIntakeViewModel(app.koin.get(), { _, _ -> null }, Dispatchers.Main.immediate)
+            intake?.accept(SharePayload("direct", emptyList(), ledger.id(target)))
+        }
         compose.setContent {
             KoinIsolatedContext(app) {
                 PyrycodeMobileTheme {
                     nav = rememberNavController()
-                    PyryNavHost(Routes.CHANNEL_LIST, navController = nav, openTarget = target)
+                    PyryNavHost(Routes.CHANNEL_LIST, navController = nav, openTarget = target.takeUnless { direct }, shareIntake = intake)
                 }
             }
         }

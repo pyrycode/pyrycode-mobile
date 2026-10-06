@@ -52,7 +52,7 @@ Malformed shortcut extras, unknown ids, unpaired hosts and unavailable rows reta
 
 Test first. Deterministic publisher probes cover host-colliding ids, rename identity, recency permutations and duplicate opens, four-target/platform caps, restart, initial empty/cache/disconnect/reconnect snapshots, archive/delete/unpair and no resurrection without a new open. Use the real fold and injected publisher seams. Intake tests cover malformed shortcut types, capture-before-transfer and obsolete generation refusal. Shared production-graph tests cover direct success, exact-host existing draft merge, delayed rows, stale fallback, cancellation/replacement and no replay, alongside existing picker and notification navigation tests.
 
-A device-only SharingShortcutsTest reads the real ShortcutManager state and manifest XML, checks normal dynamic publication, category, MIME data, label, resource icon, no static/pinned shortcut and stored launcher intent activation. Real OS shortcut publication is the reason for device execution. Run that focused class and retain XML executed counts.
+A device-only SharingShortcutsDeviceTest reads the real ShortcutManager state and manifest XML, checks normal dynamic publication, category, MIME data, label, resource icon, no static/pinned shortcut and stored launcher intent activation. Real OS shortcut publication is the reason for device execution. Run that focused class and retain XML executed counts.
 
 Add the named rung-3 direct-share test with text, PNG and document using the published id. Prove no picker or send before Send, both byte digests and text in X, and no message in Y; preserve the ordinary share scenario. Add a deterministic staging twin where the existing scripted stream harness can hold state before Send. Dispatcher owns full live acceptance with fresh executed/failed/skipped counts and confirmation the new method ran and passed; pending live results are not a builder pass.
 
@@ -78,3 +78,15 @@ None. Use non-long-lived dynamic shortcuts; remove cached copies defensively on 
 
 **Reviewer:** builder (self-review per builder/security-review.md)
 **Date:** 2026-10-06
+
+## Revisions
+
+2026-10-06: Device compilation established that public ShortcutInfo omits icon access. The device probe reads the stored icon through LauncherApps using temporary shell shortcut-read permission and compares rendered pixels with the launcher resource. Publisher initialization now gates open and lookup until the first saved-host read, and skips unchanged snapshot projections to avoid artificial usage/rate-limit churn. Added the `direct-share` scripted scenario using the existing ping fixture as the deterministic pre-Send twin.
+
+2026-10-06: A focused production-graph test resumed the Compose test continuation on the publisher IO thread after lookup. Final validation, generation-checked draft transfer and navigation now explicitly enter Main.immediate. Lookup waits for initialization and then reads the bounded in-memory ledger under its mutex, avoiding an unnecessary IO hop. This preserves the synchronous transfer contract on both Robolectric and Android.
+
+2026-10-06: Source inspection found `ConversationListProjection.upsertConversation` can emit a partial list before the first full snapshot. `ConversationListProjection.observeSnapshots` now exposes readiness that only a decoded full `conversations` frame establishes, including when its rows equal the preceding partial list. `RemoteConversationRepository.observeConversationSnapshots` passes the pair to HostConversationSource; other repositories keep their existing complete-list contract. The combine reads current rows after the ready edge so collector ordering cannot pair old partial rows with new readiness. The early-upsert/equal-full-list probe guards this distinction; no wire contract or ordinary repository read changes.
+
+## Documentation handoff
+
+Pending for the documentation stage: `docs/knowledge/features/navigation.md`, Incoming shares, records recent targets, Direct Share and launcher validation and loaded-list reconciliation. `docs/e2e-interactive-stream.md`, The ladder, records the named direct-share rung-3 method and the `direct-share` deterministic scenario. Documentation completion requires the dispatcher’s fresh full live executed/failed/skipped counts and confirmation that the new named method ran and passed.
