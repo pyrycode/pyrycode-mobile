@@ -122,14 +122,16 @@ class CachingConversationRepository(
     override suspend fun readHistoryPosition(conversationId: String): HistoryPosition? {
         val saved = cache.readHistoryPosition(serverId, conversationId)
         val empty = cache.readThread(serverId, conversationId).isEmpty()
-        if (saved?.coverage != null) {
-            return if (empty && saved.coverage.spans.isEmpty()) {
-                saved.copy(coverage = saved.coverage.copy(unknown = false))
-            } else {
-                saved
-            }
+        if (empty &&
+            saved
+                ?.coverage
+                ?.spans
+                .orEmpty()
+                .isEmpty()
+        ) {
+            return null
         }
-        if (empty) return saved
+        if (saved?.coverage != null) return saved
         return (saved ?: HistoryPosition("", false)).copy(coverage = HistoryCoverage(unknown = true))
     }
 

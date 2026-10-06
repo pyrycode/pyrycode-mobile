@@ -1684,7 +1684,9 @@ class ThreadViewModel(
         var walkPage = false
         val claimed =
             claimHistorySlot {
-                walkPage = it.newestPageAdvancesWalk
+                val coverage = historyCoverage.value
+                walkPage = it.newestPageAdvancesWalk ||
+                    it.stoppedBy == HistoryWalkStop.AtStart && coverage.spans.isEmpty() && coverage.newestCursor == ""
                 when {
                     walkPage -> it.asking()
                     !it.inFlight -> it.askingNewest()

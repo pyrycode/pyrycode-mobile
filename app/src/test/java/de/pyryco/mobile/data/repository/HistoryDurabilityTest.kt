@@ -59,6 +59,12 @@ class HistoryDurabilityTest {
 
     private fun rows(page: HistoryPage) = reduceHistoryPage(page.entries, true)
 
+    @Test fun anEmptyUncoveredCacheCannotRestoreAnOldStopOrCursor() =
+        runTest {
+            cache().writeHistoryPosition("h", "c", HistoryPosition("old", true))
+            assertNull(CachingConversationRepository(FakeConversationRepository(), cache(), "h").readHistoryPosition("c"))
+        }
+
     @Test fun discardedToolRowsInvalidateBothUseAndResultEntries() {
         val use =
             HistoryEntry(

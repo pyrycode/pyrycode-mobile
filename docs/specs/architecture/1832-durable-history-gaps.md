@@ -99,3 +99,5 @@ Final sizing: approximately 1520 written lines including the plan, four exported
 2026-10-06: When unknown and known markers attach to one row or non-rendering edge, sort by the durable newer edge before positioning. Unknown coverage stays chronologically older; first-crossed pull targeting remains deterministic.
 
 2026-10-06: Tool-use/result retention probes failed because a row's earliest order id and message text did not cover every producer or its stored result. The reducer now records all producing entry ids; ordinary row proofs hash the exact cache-policy record, including retained tool output and attachments. Dropping or changing a retained row invalidates all its producer claims. Delta proofs remain fragment-specific. This closes the security review's row-before-state MUST FIX for mutable rows as well.
+
+2026-10-06: Empty uncovered caches ignore old cursor/stop metadata. An earlier verified empty terminal page also allows the next availability newest page to seed a fresh backwards walk. Neither case creates a conservative marker; both preserve oldest-end reader demand once entries arrive.

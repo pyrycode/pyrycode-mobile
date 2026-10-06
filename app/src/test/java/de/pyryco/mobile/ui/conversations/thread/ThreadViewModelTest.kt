@@ -5007,6 +5007,26 @@ class ThreadViewModelTest {
         }
 
     @Test
+    fun history_anEarlierEmptyTerminalPageCannotBlockDemandAfterReconnect() =
+        runTest {
+            val available = MutableStateFlow(true)
+            var pages = 0
+            val repo =
+                HistoryRepo {
+                    if (pages++ == 0) HistoryPage(emptyList(), "", true) else durablePage(9, cursor = "eight")
+                }
+            val vm = makeVm(historyHandle(), repo, repositoryAvailable = available)
+            advanceUntilIdle()
+            available.value = false
+            advanceUntilIdle()
+            available.value = true
+            advanceUntilIdle()
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+            assertEquals(listOf("", "", "eight"), repo.asks)
+        }
+
+    @Test
     fun history_unknownAndKnownMarkersSharingAnEdge_remainInChronologicalOrder() =
         runTest {
             val coverage = HistoryCoverage(unknown = true).received(durablePage(1, cursor = "older"))
