@@ -390,7 +390,6 @@ store-listing assets, not app surfaces, so they are outside the inventory too.
 
 | Surface | Evidence |
 |---|---|
-| Discussion list (`Routes.DISCUSSION_LIST`, `DiscussionListScreen` with its menu and promotion dialog) | the destination exists, but no `navigate` call targets `Routes.DISCUSSION_LIST` |
 | About (`Routes.ABOUT`, `AboutScreen`) | the destination exists, but no `navigate` call targets `Routes.ABOUT` |
 | Settings model, effort and theme pickers (`ModelPickerDialog`, `EffortPickerDialog`, `ThemePickerDialog`) | defined only; `SettingsScreen` takes no picker callback |
 | `PasteCodeDialog` | defined only; the scanner's paste link opens the Pair Screen |

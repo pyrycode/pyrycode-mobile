@@ -1,13 +1,26 @@
 # DiscussionListViewModel
 
-Sibling of [`ChannelListViewModel`](channel-list-viewmodel.md) for the unpromoted
-(discussion) tier. Exposes host-qualified snapshots, navigation and promotion
-through the shared `HostConversationSource`. The selected-host compatibility
-`StateFlow<DiscussionListUiState>` still feeds
-[`DiscussionListScreen`](discussion-list-screen.md), a stateless `(state, onEvent)`
-composable mounted at the `discussions` route.
+Retired by #1672: the screen, ViewModel, `discussions` route, exclusive promotion
+helpers/resources and their tests were deleted after #731 removed the only entry
+point. Chats now open from the [host tree](channel-list-screen.md); reachable
+promotion belongs to the [thread Save as channel modal](save-as-channel-dialog.md),
+which seeds from the chat name, falls back to `New channel` for null/blank names,
+submits the trimmed name and cancels without a write. The removed list's
+`Untitled channel` default is not that modal's contract.
 
-Package: `de.pyryco.mobile.ui.conversations.list` (`app/src/main/java/de/pyryco/mobile/ui/conversations/list/`). File: `DiscussionListViewModel.kt`.
+The remaining sections preserve the retired implementation's history, not current
+source or bindings.
+
+
+Before retirement, this was the sibling of
+[`ChannelListViewModel`](channel-list-viewmodel.md) for the unpromoted
+(discussion) tier. It exposed host-qualified snapshots, navigation and promotion
+through the shared `HostConversationSource`. The selected-host compatibility
+`StateFlow<DiscussionListUiState>` fed
+[`DiscussionListScreen`](discussion-list-screen.md), a stateless `(state, onEvent)`
+composable formerly mounted at the `discussions` route.
+
+Former package: `de.pyryco.mobile.ui.conversations.list` (`app/src/main/java/de/pyryco/mobile/ui/conversations/list/`). Deleted file: `DiscussionListViewModel.kt`.
 
 ## What it does
 
