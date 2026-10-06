@@ -746,14 +746,11 @@ class DeterministicInteractiveStreamE2ETest {
      * sequence arrives post-reconnect into the fresh, empty repo. "No missing segment, in order" holds by
      * construction, independent of uncertain partial-turn replay semantics.
      *
-     * The closing asserts are the one deliberate count assertion the suite allows (#476 precedent): the
-     * **order** check matches the cross-delta-boundary concatenation [ORDERED_REPLY_SUBSTRING] (present
-     * only if the deltas assembled in production order — a reordered replay breaks the substring), and the
-     * **exactly-once** check `assertCountEquals(1)` on it is the load-bearing dedup invariant (`event_id`
-     * high-water + `message_id` upsert, #337/#385) on a genuinely buffered-during-outage re-delivery.
-     * Both key on the final assembled text (stable — any duplicate from replay is a stable extra row, not
-     * a transient), so they do not violate the ladder's "never on counts" rule, which targets delta /
-     * timing counts. Tolerant otherwise (substring, generous timeouts).
+     * Check the final reply text in visible top-to-bottom order, across assistant segments. A durable
+     * user echo can land between deltas and legitimately split the reply into two bubbles (ADR 0007).
+     * Requiring one text node would reject that valid history/replay join. Exact equality with
+     * [ORDERED_REPLY_SUBSTRING] still rejects missing, reordered or duplicated text, regardless of where
+     * the echo was logged; neither the seeded title nor the prompts contain these fixture words.
      */
     @Test
     fun interactiveTurn_seededChannel_missedEventsReplayInOrderAfterReconnect() {
@@ -780,12 +777,8 @@ class DeterministicInteractiveStreamE2ETest {
         restoreLink()
 
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(ORDERED_REPLY_SUBSTRING, substring = true).fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.renderedReplyText(ORDERED_REPLY_SUBSTRING) == ORDERED_REPLY_SUBSTRING
         }
-        // In order: the cross-delta-boundary concatenation is present (a reordering breaks the substring).
-        // Exactly once: it renders in a single node — no segment lost, no row duplicated.
-        composeTestRule.onAllNodesWithText(ORDERED_REPLY_SUBSTRING, substring = true).assertCountEquals(1)
-
         // Prove exact text and per-delta identity too: a duplicated sequence within one row must fail.
         val rows =
             runBlocking {
@@ -803,23 +796,10 @@ class DeterministicInteractiveStreamE2ETest {
                             .first { conversations -> conversations.any { it.name == SEED_CHANNEL_NAME } }
                             .single { it.name == SEED_CHANNEL_NAME }
                             .id
-                    repository.observeMessages(conversationId).first { items ->
-                        items.filterIsInstance<ThreadItem.MessageItem>().any {
-                            it.message.role == Role.Assistant && !it.message.isStreaming && ORDERED_REPLY_SUBSTRING in it.message.content
-                        }
-                    }
+                    repository.observeMessages(conversationId).first { it.hasCompletedReplay(ORDERED_REPLY_SUBSTRING) }
                 }
-            }.filterIsInstance<ThreadItem.MessageItem>()
-        val reply = rows.single { it.message.role == Role.Assistant }
-        assertEquals(ORDERED_REPLY_SUBSTRING, reply.message.content)
-        assertEquals(
-            listOf(0, 1, 2),
-            reply.message.segment
-                ?.deltas
-                ?.map { it.seq },
-        )
-        val user = rows.single { it.message.role == Role.User && it.message.content == SEND_PROMPT }
-        assertTrue("initial user must precede the complete ordered reply", rows.indexOf(user) < rows.indexOf(reply))
+            }
+        composeTestRule.assertOrderedReplay(rows, ORDERED_REPLY_SUBSTRING, SEND_PROMPT)
     }
 
     /**
@@ -969,8 +949,8 @@ class DeterministicInteractiveStreamE2ETest {
         const val RECONNECT_REPLY_SUBSTRING = "reconnected reply"
 
         // The replay-order scenario's drop-B sequence assembles into "alpha bravo charlie" (three deltas
-        // "alpha "/"bravo "/"charlie" in replay-order.jsonl). The asserted substring spans all three delta
-        // boundaries, so matching it requires the deltas to have assembled in production order — a reordered
+        // "alpha "/"bravo "/"charlie" in replay-order.jsonl). Reading the rendered parts top-to-bottom
+        // checks production order and exactly-once text even across a retained user separator. A reordered
         // replay ("bravo alpha charlie") fails the match. Collides with nothing else on screen (the
         // "e2e-seed" title, "ping", "Bash", "streamed world", "reconnected reply", the inert "hello" prompt).
         const val ORDERED_REPLY_SUBSTRING = "alpha bravo charlie"
