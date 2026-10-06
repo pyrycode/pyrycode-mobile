@@ -3281,6 +3281,8 @@ class InteractiveStreamE2ETest {
 
     /**
      * The composer's Stop control stops a real running turn, and the conversation carries on (#965, rung 3).
+     * The isolated host's instructions are cleared before the fresh session and restored exactly afterwards
+     * (#1721), so its foreground-free default does not contradict this intentional interrupt exercise.
      * The phone's own turn runs [STOP_HOLD_PROMPT]: a command that waits on an event nothing sets, so it
      * never returns on its own and the turn stays open until it is stopped, with no timing involved. The
      * command first raises a permission prompt, which the phone draws as a dialog over the composer; the
@@ -3311,54 +3313,72 @@ class InteractiveStreamE2ETest {
             // 1. A fresh chat on the selected host, its id read off the host's repository as #849 does.
             awaitChannelList()
             awaitConnected()
-            val before = hostConversationIds(serverId)
-            createChat()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
-            }
-            val conversationId = newHostConversationId(serverId, before)
+            // #1721: the harness-supplied server id belongs to its isolated e2e daemon.
+            // Clear before the fresh session starts; the helper restores even after a failed assertion.
+            withClearedHostInstructions(
+                read = {
+                    runBlocking {
+                        withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).requestHostSystemPrompt().getOrThrow().systemPrompt }
+                    }
+                },
+                write = { instructions ->
+                    runBlocking {
+                        withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).setHostSystemPrompt(instructions).getOrThrow() }
+                    }
+                },
+            ) {
+                val before = hostConversationIds(serverId)
+                createChat()
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+                }
+                val conversationId = newHostConversationId(serverId, before)
 
-            // 2. The phone starts the held turn; the peer allows its command once, so the command runs and
-            //    the permission dialog leaves the composer.
-            // Bind the token through a prior peer, as earlier full-suite scenarios do (#1696).
-            // A new static key on the observing peer must fail even when this method runs alone.
-            SecondClientPeer(pairing).use { prior ->
-                peerStep(prior, "open prior peer") { prior.open(CONNECT_TIMEOUT_MS) }
-            }
-            peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
-            sendFromPhone(STOP_HOLD_PROMPT)
-            val modalId =
-                peerStep(peer, "await the held command's permission prompt") { peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS) }
-            peerStep(peer, "allow the prompt once and await its dismissal") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
+                // 2. The phone starts the held turn; the peer allows its command once, so the command runs and
+                //    the permission dialog leaves the composer.
+                // Bind the token through a prior peer, as earlier full-suite scenarios do (#1696).
+                // A new static key on the observing peer must fail even when this method runs alone.
+                SecondClientPeer(pairing).use { prior ->
+                    peerStep(prior, "open prior peer") { prior.open(CONNECT_TIMEOUT_MS) }
+                }
+                peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
+                sendFromPhone(STOP_HOLD_PROMPT)
+                val modalId =
+                    peerStep(
+                        peer,
+                        "await the held command's permission prompt",
+                    ) { peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS) }
+                peerStep(peer, "allow the prompt once and await its dismissal") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
 
-            // 3. Tap the composer's Stop control once no dialog covers it.
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasText(modalCancel)).fetchSemanticsNodes().isEmpty() &&
-                    composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onNode(stopControl).performClick()
+                // 3. Tap the composer's Stop control once no dialog covers it.
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(hasText(modalCancel)).fetchSemanticsNodes().isEmpty() &&
+                        composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isNotEmpty()
+                }
+                composeTestRule.onNode(stopControl).performClick()
 
-            // 4. AC-1: the turn ends as cancelled and the Stop control goes.
-            val turnEnd =
-                peerStep(peer, "await the stopped turn's turn_end") { peer.awaitFrame(conversationId, "turn_end", THREAD_TIMEOUT_MS) }
-            assertEquals(
-                "stopped turn's stop_reason",
-                "cancelled",
-                (turnEnd.payload as? JsonObject)?.get("stop_reason")?.jsonPrimitive?.contentOrNull,
-            )
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isEmpty()
-            }
+                // 4. AC-1: the turn ends as cancelled and the Stop control goes.
+                val turnEnd =
+                    peerStep(peer, "await the stopped turn's turn_end") { peer.awaitFrame(conversationId, "turn_end", THREAD_TIMEOUT_MS) }
+                assertEquals(
+                    "stopped turn's stop_reason",
+                    "cancelled",
+                    (turnEnd.payload as? JsonObject)?.get("stop_reason")?.jsonPrimitive?.contentOrNull,
+                )
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isEmpty()
+                }
 
-            // 5. AC-1: a following message in the same thread gets a real reply, and that turn is the
-            //    conversation's second; the stopped turn's own reply was never drawn.
-            sendFromPhone(PING_PROMPT)
-            awaitPingReplyNamingLayer(peer, serverId, conversationId, priorTurnEnds = 1)
-            peerStep(
-                peer,
-                "await the ping turn's turn_end",
-            ) { peer.awaitFrame(conversationId, "turn_end", THREAD_TIMEOUT_MS, occurrence = 2) }
-            composeTestRule.onAllNodes(hasText(STOP_HOLD_REPLY, ignoreCase = true), useUnmergedTree = true).assertCountEquals(0)
+                // 5. AC-1: a following message in the same thread gets a real reply, and that turn is the
+                //    conversation's second; the stopped turn's own reply was never drawn.
+                sendFromPhone(PING_PROMPT)
+                awaitPingReplyNamingLayer(peer, serverId, conversationId, priorTurnEnds = 1)
+                peerStep(
+                    peer,
+                    "await the ping turn's turn_end",
+                ) { peer.awaitFrame(conversationId, "turn_end", THREAD_TIMEOUT_MS, occurrence = 2) }
+                composeTestRule.onAllNodes(hasText(STOP_HOLD_REPLY, ignoreCase = true), useUnmergedTree = true).assertCountEquals(0)
+            }
         } finally {
             peer.close()
         }
@@ -8652,8 +8672,13 @@ class InteractiveStreamE2ETest {
         // `python3` command, so it needs permission, which the peer grants — see WAIT_PROMPT for why it is not
         // a `sleep`. STOP_HOLD_REPLY is a token no other prompt asks for; neither text contains "ping".
         const val STOP_HOLD_PROMPT =
-            "Run this exact shell command with your tools in the foreground, not in the background, and without " +
-                "a timeout, then reply with exactly: pyryheld. Command: python3 -c \"import threading; threading.Event().wait()\""
+            "This is a controlled interrupt test on an isolated test host. We are testing the phone's Stop control: " +
+                "a second test client will approve your tool permission prompt once, then the phone will tap Stop " +
+                "to interrupt the running command. The command intentionally waits forever and does no other work. " +
+                "Please run this exact shell command with your tools in the foreground, not in the background, " +
+                "and without a timeout so the turn stays running until Stop is tapped. " +
+                "Only if the command returns normally, reply with exactly: pyryheld. " +
+                "Command: python3 -c \"import threading; threading.Event().wait()\""
         const val STOP_HOLD_REPLY = "pyryheld"
 
         // Pairing-flow production strings (hardcoded in the composables, no resources). PASTE_CODE_LINK is
