@@ -87,6 +87,8 @@ None. Use non-long-lived dynamic shortcuts; remove cached copies defensively on 
 
 2026-10-06: Source inspection found `ConversationListProjection.upsertConversation` can emit a partial list before the first full snapshot. `ConversationListProjection.observeSnapshots` now exposes readiness that only a decoded full `conversations` frame establishes, including when its rows equal the preceding partial list. `RemoteConversationRepository.observeConversationSnapshots` passes the pair to HostConversationSource; other repositories keep their existing complete-list contract. The combine reads current rows after the ready edge so collector ordering cannot pair old partial rows with new readiness. The early-upsert/equal-full-list probe guards this distinction; no wire contract or ordinary repository read changes.
 
+2026-10-06: The whole-suite repository-binding tests exposed that eager publication made the pure JVM selector require an Android context. The publisher remains an application-scoped singleton but initializes when PyryNavHost first resolves it, preserving startup reconciliation while leaving selector-only resolution Android-free. Existing ConversationRepositoryBindingTest cases guard this seam.
+
 ## Documentation handoff
 
 Pending for the documentation stage: `docs/knowledge/features/navigation.md`, Incoming shares, records recent targets, Direct Share and launcher validation and loaded-list reconciliation. `docs/e2e-interactive-stream.md`, The ladder, records the named direct-share rung-3 method and the `direct-share` deterministic scenario. Documentation completion requires the dispatcher’s fresh full live executed/failed/skipped counts and confirmation that the new named method ran and passed.

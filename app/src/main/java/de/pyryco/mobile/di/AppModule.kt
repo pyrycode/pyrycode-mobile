@@ -293,7 +293,7 @@ fun hostConversationModule(
     decorateRepository: (ConversationRepository) -> ConversationRepository = { it },
 ): Module =
     module {
-        single(createdAtStart = true) { parameters ->
+        single { parameters ->
             val context = parameters.getOrNull<android.content.Context>() ?: androidContext()
             val saved =
                 if (useRelay) {
