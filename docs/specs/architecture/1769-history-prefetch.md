@@ -58,3 +58,34 @@ Pending for the documentation stage: update `docs/knowledge/features/thread-scre
 ## Revisions
 
 - 2026-10-06 — Verifier finding 1 exposed a gap-to-backwards fallthrough after the selected gap's marker disappeared or left the viewport. The per-touch gap latch now gates every history demand before marker lookup, retaining the selected walk throughout the drag and its continuing fling until a fresh touch resets it. Four controlled-response `ThreadScreenHistoryTest` cases cover marker removal and movement offscreen during both a held drag and a continuing fling, and prove a fresh touch can request again. All four first failed by issuing a backwards page after the gap settled. Ordinary oldest-end prefetch still allows subsequent movement to ask after settlement when the gesture has not selected a gap. No geometry, request-slot or repository changes are needed.
+
+## Documentation evidence (2026-10-06)
+
+The evergreen handoff is recorded in
+[The oldest-end history demand](../../knowledge/features/thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777):
+movement-based two-current-viewport prefetch, hidden-row estimation, touch/fling provenance,
+suppression, 200-entry thread pages and gap selection retained independently of marker visibility.
+No live scenario or harness changed, so the existing real-Claude ladder coverage remains applicable.
+
+The dispatcher's fresh full live-gate JUnit report, latest output
+`2026-10-06T18-56-51-114Z`, records **61 executed, 59 passed, 2 failed, 0 skipped**.
+It explicitly lists
+`InteractiveStreamE2ETest.interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload`
+as executed and passed in that full suite; this was not a separate focused run.
+The [issue's live-gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1769#issuecomment-6023826810)
+identifies branch `408305c720` merged with `origin/main` at `369823ade0` and the command
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`.
+The two failures were the finished-reply system-copy and stop-running-turn methods;
+the dispatcher reports both passed on rerun on the same merged tree and accepted the gate.
+The full run itself still had two failures; no counted rerun result is supplied here.
+
+**Unfinished: fresh dispatcher `./gradlew check` counts for `ThreadScreenHistoryTest`.**
+The [latest verifier verdict](https://github.com/pyrycode/pyrycode-mobile/pull/1839#issuecomment-6023294091)
+records compiler OOM before unit execution on `408305c720`, with no fresh class XML.
+The prompt's recorded passing gate on `11e0321d7554e020dd76936cb8e36c28226deed4`
+is an earlier tree, before the four gap-selection regressions. Its 19 executed/passed,
+0 failed, 0 skipped history-screen methods do not verify the repair. The builder's
+23-method passing unit result is not dispatcher `check` evidence either. Verification
+must supply a fresh completed dispatcher `./gradlew check` run and class XML counts,
+including the four controlled-response gap-selection regressions. Documentation remains
+unfinished until that evidence is available; no tests were run by documentation.
