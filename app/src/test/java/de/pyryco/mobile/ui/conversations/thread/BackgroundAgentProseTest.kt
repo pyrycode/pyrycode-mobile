@@ -210,6 +210,47 @@ class BackgroundAgentProseTest {
         assertEquals(listOf(held), fold.reduce(ThreadInput.Finished(listOf(held)), "c").render())
     }
 
+    @Test fun lateParentOnReplayOrOlderDeltaEnrichesOnlyAttributionAndKeepsProseInItsBlock() {
+        val base = listOf(tool("a"), start("a"), text("main"))
+        for (seq in listOf(0, 1)) {
+            val delta = LiveSessionEvent.AssistantDelta("c", "child", seq, "reply", "")
+            val initial = ThreadFold(base, null).reduce(ThreadInput.Live(delta, ts), "c")
+            val before = (initial.render().last() as ThreadItem.MessageItem).message
+            assertNull(delivered(project(initial.render())).single { it.item == ThreadItem.MessageItem(before) }.agentBlockId)
+
+            val replay = delta.copy(seq = 0, text = "ignored", parentToolUseId = "a")
+            val learned = initial.reduce(ThreadInput.Live(replay, Instant.parse("2026-10-06T10:00:01Z")), "c")
+            val after = (learned.render().last() as ThreadItem.MessageItem).message
+            assertEquals(before.copy(parentToolUseId = "a"), after)
+            assertEquals(initial.stream?.copy(parentToolUseId = "a"), learned.stream)
+            val rows = project(learned.render())
+            assertEquals("a", delivered(rows).single { it.item == ThreadItem.MessageItem(after) }.agentBlockId)
+            assertEquals(listOf("main"), ids(foldToolRuns(rows, emptySet())))
+            assertEquals(listOf("main", "a", "child"), ids(foldToolRuns(rows, setOf("a"))))
+            assertEquals(listOf("main"), ids(foldToolRuns(rows, emptySet())))
+            assertUnique(rows)
+            assertUnique(foldToolRuns(rows, setOf("a")))
+
+            val conflicting = replay.copy(parentToolUseId = "other")
+            assertEquals(learned, learned.reduce(ThreadInput.Live(conflicting, ts), "c"))
+            assertEquals(initial, initial.reduce(ThreadInput.Live(replay.copy(conversationId = "other"), ts), "c"))
+        }
+    }
+
+    @Test fun lateParentAfterTurnEndPreservesSettledTextIdentityAndTimestamp() {
+        val delta = LiveSessionEvent.AssistantDelta("c", "child", 0, "reply", "")
+        val settled =
+            ThreadFold(emptyList(), null)
+                .reduce(ThreadInput.Live(delta, ts), "c")
+                .reduce(ThreadInput.Live(LiveSessionEvent.TurnEnd("c", "child", "end_turn"), ts), "c")
+        val learned = settled.reduce(ThreadInput.Live(delta.copy(parentToolUseId = "a"), ts), "c")
+        assertEquals(settled.stream?.copy(parentToolUseId = "a"), learned.stream)
+        assertEquals(
+            (settled.render().single() as ThreadItem.MessageItem).message.copy(parentToolUseId = "a"),
+            (learned.render().single() as ThreadItem.MessageItem).message,
+        )
+    }
+
     @Test fun historyOverlapReplayAndReconnectKeepEachSegmentOnceAtTheFinishAnchor() =
         runTest {
             val script =

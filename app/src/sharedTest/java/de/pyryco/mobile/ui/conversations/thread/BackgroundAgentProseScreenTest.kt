@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.BackgroundTaskUpdate
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
@@ -93,6 +94,37 @@ class BackgroundAgentProseScreenTest {
     private fun run(count: Int) = compose.onNodeWithText("Using tools: $count", substring = true)
 
     private fun reveal(text: String) = compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(text))
+
+    @Test fun lateParentReplayMovesVisibleSyntheticIntoClosedBlockAndOpeningRevealsItOnce() {
+        mount(false, true)
+        val receivedAt = Instant.parse("2020-01-01T10:00:00Z")
+        val delta = LiveSessionEvent.AssistantDelta("c", "child", 0, "Reply", "")
+        var fold =
+            ThreadFold(items.filterNot { (it as? ThreadItem.MessageItem)?.message?.id == "Child" }, null)
+                .reduce(ThreadInput.Live(delta, receivedAt), "c")
+        compose.runOnIdle { items = fold.render() }
+        compose.onNodeWithText("Reply", substring = true).assertIsDisplayed()
+        compose.onNodeWithTag("background-agent-child:a").assertDoesNotExist()
+        compose.runOnIdle {
+            fold = fold.reduce(ThreadInput.Live(delta.copy(parentToolUseId = "a"), receivedAt), "c")
+            items = fold.render()
+        }
+        compose.onNodeWithText("Reply", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("Main").assertIsDisplayed()
+        run(1).performClick()
+        compose.onNodeWithText("Reply", substring = true).assertIsDisplayed()
+        compose.onNodeWithTag("background-agent-child:a").assertIsDisplayed()
+        compose.onAllNodesWithText("Reply", substring = true).assertCountEquals(1)
+        val child = compose.onNodeWithText("Reply", substring = true).getUnclippedBoundsInRoot()
+        val main = compose.onNodeWithText("Main").getUnclippedBoundsInRoot()
+        assertEquals(main.left + 16.dp, child.left)
+        run(1).performClick()
+        compose.onNodeWithText("Reply", substring = true).assertDoesNotExist()
+        compose.onNodeWithTag("background-agent-child:a").assertDoesNotExist()
+        compose.runOnIdle { collapse = false }
+        compose.onNodeWithText("Reply", substring = true).assertIsDisplayed()
+        compose.onAllNodesWithText("Reply", substring = true).assertCountEquals(1)
+    }
 
     @Test fun proseWithoutChildToolUsesExistingOpenCloseControlAndSetting() {
         mount(false, true)

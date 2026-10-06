@@ -62,6 +62,8 @@ None.
 
 2026-10-06: The existing live fixture retains its release event for the full suite. The new scenario uses separate fixed `/hold-reply` and `/release-reply` endpoints with an independent bounded event, so #1783's earlier release cannot end this scenario's background hold. Existing endpoints and ownership remain unchanged.
 
+2026-10-06 (verifier finding 1): `ThreadFold.reduceDelta` learns the first nonempty parent for the current wire lane before its text sequence guard. Replayed and older deltas enrich only unknown attribution, preserving text, sequence, row identity, first-arrival timestamp and settled status; later conflicting hints cannot replace the winner. Fold and ViewModel probes cover replay before any repository update, nested ownership, unique keys, closed/open/closed visibility and repository handoff. Shared screen coverage verifies the visible synthetic moves into the closed block and reveals once at the existing 16 dp indent. This local correction adds no declarations or consumer migrations; the complete ticket remains below 1600 written lines.
+
 ## Documentation handoff
 
 - Pending documentation stage: `docs/knowledge/features/thread-screen.md` or owning linked topic, attribution/fallback and collapse behavior.
@@ -71,7 +73,7 @@ None.
 
 **Verdict:** PASS
 
-- [Trust boundaries] `foldBackgroundAgentBlocks` joins only loaded tool ids with existing local-agent/background evidence. Parent strings grant no authority. Missing/cyclic joins preserve text. `ThreadFold` carries the inert hint without changing wire validation or existing bounded assistant rendering.
+- [Trust boundaries] `foldBackgroundAgentBlocks` joins only loaded tool ids with existing local-agent/background evidence. Parent strings grant no authority. Missing/cyclic joins preserve text. `ThreadFold.reduceLive` guards conversation identity before `reduceDelta` accepts a first nonempty hint on the same wire lane, independently of text deduplication; a conflicting replay cannot replace known attribution. This changes neither wire validation nor existing bounded assistant rendering.
 - [Tokens] No credential generation, access, storage or lifecycle changes; fixture uses the existing isolated test stack.
 - [Files/storage] No paths, cache keys, persistence, backup or file writes derive from parent ids. Cache migration is outside this ticket.
 - [Android surface] No exported component, deep link, intent, provider or WebView changes. Child prose uses the existing assistant text renderer.
