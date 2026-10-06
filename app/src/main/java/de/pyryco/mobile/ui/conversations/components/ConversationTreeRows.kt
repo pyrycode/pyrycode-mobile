@@ -293,6 +293,11 @@ fun treeHostChatAddTestTag(serverId: String): String = "tree-host-chat-add:${bou
  * Fixed Channels or Chats section under one host, each with its own create control. The supplied sidebar
  * frame shows only Channels' plus; #1190's later product decision gives Chats the matching control. A null
  * [onAddTapped] draws no plus: the caller passes null while the host is not connected (#1336).
+ *
+ * Carries no extra end padding of its own. #1203 measured a 10dp trailing inset here against an earlier
+ * revision of Figma `15:8`; the frame has since moved the plus flush with the host row's pencil column —
+ * every pen and plus glyph in the current frame shares one right edge, 2px from the row's content edge —
+ * so this row fills width exactly as [TreeHostRow] does.
  */
 @Composable
 fun TreeHostSectionRow(
@@ -317,7 +322,7 @@ fun TreeHostSectionRow(
         startIndent = HostSectionIndent,
         expanded = expanded,
         onToggleExpanded = onToggleExpanded,
-        modifier = modifier.padding(end = 10.dp),
+        modifier = modifier,
     ) {
         if (onAddTapped != null) {
             TreeRowControl(
