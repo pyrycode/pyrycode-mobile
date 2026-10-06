@@ -1,0 +1,1 @@
+api=35 sizeDp=412x892 density=1.0 fontScale=1.0 staticDark=true nonblank=true design=568:890,568:877 date=2026-10-06

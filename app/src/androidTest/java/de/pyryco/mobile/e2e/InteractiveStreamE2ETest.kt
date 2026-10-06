@@ -4768,6 +4768,121 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /** #1830: Stop acts on a joined, still-held background Bash task; omission is valid completion. */
+    @Test
+    fun interactiveTurn_stopBackgroundTask_completesThenRepliesAgain() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val fixture = twoHostArg("stopTaskFixtureUrl")
+        require(fixture.matches(Regex("http://127\\.0\\.0\\.1:[0-9]+"))) { "invalid Stop task fixture" }
+        val key = System.currentTimeMillis().toString()
+        val deviceFixture = fixture.replace("127.0.0.1", "10.0.2.2") + "/" + key
+        val command = "curl --silent --show-error $fixture/$key/hold"
+        val peer = runningToolPeer()
+        val allowed = mutableSetOf<String>()
+        try {
+            awaitChannelList()
+            awaitConnected()
+            val (chat, name) = answerChat(serverId, "e2e1830-stop-")
+            runningToolPeer().use { prior -> peerStep(prior, "bind prior Stop task peer") { prior.open(CONNECT_TIMEOUT_MS) } }
+            peerStep(peer, "open Stop task peer") { peer.open(CONNECT_TIMEOUT_MS) }
+            openChatRow(name)
+            val coordinator = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)).coordinator
+            runBlocking { withTimeout(THREAD_TIMEOUT_MS) { coordinator.supportsBackgroundTaskStop.first { it } } }
+            val probe = HeldBackgroundTaskProbe(chat, command)
+            sendFromPhone(
+                "Use Bash exactly once with run_in_background=true and timeout=600000. Set command to this exact string: \"$command\". " +
+                    "Do not change the command, add a timeout or wait for the background task. " +
+                    "End your own turn immediately with exactly launched1830. Do not use any other tools.",
+            )
+            allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "held Bash did not join a retained roster", allowed, "background_task_roster") {
+                probe.taskId(peer.recorded(chat)) != null
+            }
+            val taskId = checkNotNull(probe.taskId(peer.recorded(chat))) { "held task lost its roster membership" }
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    while (stopTaskFixtureGet(deviceFixture + "/status") != "held") delay(CACHE_POLL_MS)
+                }
+            }
+            allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "launching background turn did not finish", allowed) { it.type == "turn_end" }
+            assertTrue(
+                "held task finished before Stop",
+                peer.recorded(chat).none {
+                    it.type == "background_task_updated" && peer.field(it, "task_id") == taskId && !peer.field(it, "status").isNullOrEmpty()
+                },
+            )
+            assertTrue("task identity must still be retained", taskId == probe.taskId(peer.recorded(chat)))
+            openBackgroundTasks()
+            val row = hasText("Command") and hasClickAction() and inBackgroundPanel()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(row).fetchSemanticsNodes().size == 1 }
+            composeTestRule.onNode(row).performTouchInput { click() }
+            val stop = hasText(string(R.string.background_tasks_stop)) and hasClickAction() and inBackgroundPanel()
+            composeTestRule.onNode(stop).assertIsDisplayed()
+            assertEquals("hold must remain unreleased before Stop", "held", stopTaskFixtureGet(deviceFixture + "/status"))
+            assertTrue("joined task must remain in the roster before Stop", taskId == probe.taskId(peer.recorded(chat)))
+            val boundary = peer.recorded(chat).size
+            composeTestRule.onNode(stop).performTouchInput { click() }
+            allowPromptsUntil(
+                peer,
+                chat,
+                45_000,
+                "Stop produced no terminal update or roster omission",
+                allowed,
+                "background_task_completion",
+            ) {
+                peer.recorded(chat).drop(boundary).any { frame -> probe.completed(frame, taskId) }
+            }
+            assertEquals("natural release cannot be the completion signal", "held", stopTaskFixtureGet(deviceFixture + "/status"))
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                coordinator.backgroundTasks.value[chat]?.liveCount == 0 &&
+                    composeTestRule
+                        .onAllNodes(hasText(string(R.string.background_tasks_status_running)) and inBackgroundPanel())
+                        .fetchSemanticsNodes()
+                        .isEmpty()
+            }
+            composeTestRule.onAllNodes(stop).assertCountEquals(0)
+            closeBackgroundTasks()
+            val taskPill =
+                SemanticsMatcher("nonzero running task count") { node ->
+                    node.config.getOrNull(SemanticsProperties.ContentDescription)?.any {
+                        Regex("[1-9]\\d* tasks? running").matches(it)
+                    } == true
+                }
+            composeTestRule.onAllNodes(taskPill).assertCountEquals(0)
+            val reply = "stop1830reply$key"
+            sendFromPhone("Reply exactly $reply. Do not use tools.")
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                assistantText(peer, chat).contains(reply) &&
+                    composeTestRule
+                        .onAllNodes(hasText(reply) and inThreadList(reply), useUnmergedTree = true)
+                        .fetchSemanticsNodes()
+                        .isNotEmpty()
+            }
+            composeTestRule.onNode(hasText(reply) and inThreadList(reply), useUnmergedTree = true).assertIsDisplayed()
+        } finally {
+            try {
+                assertEquals("scenario teardown must release the hold", "released", stopTaskFixtureGet(deviceFixture + "/release"))
+            } finally {
+                peer.close()
+            }
+        }
+    }
+
+    /** Test-owned numeric path, never daemon text; the emulator reaches the host through its loopback bridge. */
+    private fun stopTaskFixtureGet(url: String): String {
+        val connection =
+            java.net
+                .URI(url)
+                .toURL()
+                .openConnection() as java.net.HttpURLConnection
+        connection.connectTimeout = 5_000
+        connection.readTimeout = 5_000
+        return try {
+            connection.inputStream.bufferedReader().use { it.readText().take(32) }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     /** #1783: a real background local_agent outlives its launching turn and follows newer phone messages. */
     @Test
     fun interactiveTurn_backgroundAgent_followsBottomUntilFinished() {

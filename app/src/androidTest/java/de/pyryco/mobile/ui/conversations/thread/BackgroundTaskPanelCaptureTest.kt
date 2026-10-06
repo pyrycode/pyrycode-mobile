@@ -65,6 +65,14 @@ class BackgroundTaskPanelCaptureTest {
         capture("emulator-unreported-412x892.png")
     }
 
+    /** Real pixels for the Figma open row; synthetic text only. */
+    @Test
+    fun stopActionOpenRowAt412By892() {
+        showPanel(stopSupported = true, expanded = setOf("t1"))
+        rule.onNodeWithText("Stop task").assertIsDisplayed()
+        capture("emulator-stop-open-412x892.png", design = "568:890,568:877", date = "2026-10-06")
+    }
+
     @Viewport("320x640")
     @Test
     fun compactLargeTextKeepsScrolledContentAndCloseGlyphReachable() {
@@ -103,18 +111,33 @@ class BackgroundTaskPanelCaptureTest {
         assertTrue("$text ends inside the compact viewport", bounds.right <= 320f)
     }
 
-    private fun showPanel(fontScale: Float = 1f) {
+    private fun showPanel(
+        fontScale: Float = 1f,
+        stopSupported: Boolean = false,
+        expanded: Set<String> = emptySet(),
+    ) {
         rule.setContent {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale)) {
                 PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
-                    if (open) BackgroundTaskPanel(roster = roster, onDismiss = { open = false })
+                    if (open) {
+                        BackgroundTaskPanel(
+                            roster = roster,
+                            onDismiss = { open = false },
+                            stopSupported = stopSupported,
+                            expandedTaskIds = expanded,
+                        )
+                    }
                 }
             }
         }
     }
 
-    private fun capture(name: String) {
+    private fun capture(
+        name: String,
+        design: String = "568:877,568:932,568:981,568:997,563:1054",
+        date: String = "2026-09-30",
+    ) {
         rule.waitForIdle()
         // The dialog's window animation can still be running after Compose becomes idle.
         SystemClock.sleep(600)
@@ -134,7 +157,7 @@ class BackgroundTaskPanelCaptureTest {
         File(output, name).outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
         File(output, "$name.txt").writeText(
             "api=${Build.VERSION.SDK_INT} sizeDp=412x892 density=1.0 fontScale=1.0 staticDark=true " +
-                "nonblank=$realPixels design=568:877,568:932,568:981,568:997,563:1054 date=2026-09-30\n",
+                "nonblank=$realPixels design=$design date=$date\n",
         )
         image.recycle()
     }

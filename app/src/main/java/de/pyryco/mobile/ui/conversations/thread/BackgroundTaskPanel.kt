@@ -2,9 +2,11 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import android.content.res.Configuration
 import android.util.Log
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,28 +14,38 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
@@ -47,6 +59,7 @@ import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.BackgroundTaskUpdate
 import de.pyryco.mobile.ui.components.MobileReadOnlyModal
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.modalControl
 
 // The wire names a `truncated_fields` list carries, matched and never rendered. The task's list names
 // `description` / `task_type` (held as `taskType`); an update's own list names `patch` / `summary`. The
@@ -83,7 +96,7 @@ private val ProgressGap = 2.dp
 private const val META_SEPARATOR = " · "
 
 /**
- * The read-only background-task list (#678), redrawn to its Figma frames (#1041), in the shared mobile
+ * The background-task list (#678), redrawn to its Figma frames (#1041), in the shared mobile
  * modal shell, closed from its header glyph or Back. Closing sends nothing and changes nothing.
  *
  * [roster] is branched on before its tasks are read: `null` means nothing has been reported, an empty
@@ -102,6 +115,10 @@ internal fun BackgroundTaskPanel(
     roster: BackgroundTaskRoster?,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    stopSupported: Boolean = false,
+    expandedTaskIds: Set<String> = emptySet(),
+    pendingTaskIds: Set<String> = emptySet(),
+    onEvent: (ThreadEvent) -> Unit = {},
 ) {
     LaunchedEffect(Unit) {
         val reading =
@@ -143,7 +160,7 @@ internal fun BackgroundTaskPanel(
                         title = stringResource(R.string.background_tasks_empty),
                         support = stringResource(R.string.background_tasks_empty_support),
                     )
-                else -> TaskGroups(roster.tasks, partial = dropped > 0)
+                else -> TaskGroups(roster.tasks, partial = dropped > 0, stopSupported, expandedTaskIds, pendingTaskIds, onEvent)
             }
         }
         // Keep every reading anchored to the content start; overflow remains in the shell's scroll area.
@@ -155,6 +172,10 @@ internal fun BackgroundTaskPanel(
 private fun TaskGroups(
     tasks: List<BackgroundTask>,
     partial: Boolean,
+    stopSupported: Boolean,
+    expandedTaskIds: Set<String>,
+    pendingTaskIds: Set<String>,
+    onEvent: (ThreadEvent) -> Unit,
 ) {
     val running = tasks.filterNot { it.isFinished }
     val finished = tasks.filter { it.isFinished }
@@ -166,7 +187,11 @@ private fun TaskGroups(
                 stringResource(R.string.background_tasks_group_running, running.size)
             },
         )
-        running.forEach { TaskRow(it) }
+        running.forEach { task ->
+            key(task.taskId) {
+                TaskRow(task, stopSupported, task.taskId in expandedTaskIds, task.taskId in pendingTaskIds, onEvent)
+            }
+        }
     }
     if (finished.isNotEmpty()) {
         if (running.isNotEmpty()) Spacer(Modifier.height(4.dp))
@@ -177,7 +202,7 @@ private fun TaskGroups(
                 stringResource(R.string.background_tasks_group_finished, finished.size)
             },
         )
-        finished.forEach { TaskRow(it) }
+        finished.forEach { task -> key(task.taskId) { TaskRow(task) } }
     }
 }
 
@@ -197,60 +222,107 @@ private fun GroupLabel(text: String) {
  * One task card: its type and status tag, then its description, a running task's progress, the terminal
  * summary and the latest mid-life update when present. Each cut marker is its own element directly after the field it describes,
  * never text joined onto the field, so daemon text ending in the marker's words cannot pass for the app's
- * claim. Not clickable; merged so a screen reader reads the task as one node.
+ * claim. Eligible running text toggles expansion as one merged node; its stop button is independent.
  */
 @Composable
-private fun TaskRow(task: BackgroundTask) {
+private fun TaskRow(
+    task: BackgroundTask,
+    stopSupported: Boolean = false,
+    expanded: Boolean = false,
+    pending: Boolean = false,
+    onEvent: (ThreadEvent) -> Unit = {},
+) {
     val colors = MaterialTheme.colorScheme
     val typography = MaterialTheme.typography
     val cardAlpha = if (task.isFinished) FINISHED_CARD_ALPHA else RUNNING_CARD_ALPHA
+    val eligible = stopSupported && !task.isFinished
+    val expansion = stringResource(if (expanded) R.string.background_tasks_expanded else R.string.background_tasks_collapsed)
     Column(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .background(colors.onPrimary.copy(alpha = cardAlpha), MaterialTheme.shapes.small)
-                .padding(horizontal = 14.dp, vertical = 12.dp)
-                .semantics(mergeDescendants = true) {},
+                .background(colors.onPrimary.copy(alpha = cardAlpha), MaterialTheme.shapes.small),
         verticalArrangement = Arrangement.spacedBy(TaskRowGap),
     ) {
-        val type = boundedText(taskTypeLabel(task.taskType))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .then(if (eligible) Modifier.clickable { onEvent(ThreadEvent.BackgroundTaskToggle(task.taskId)) } else Modifier)
+                    .padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = if (eligible && expanded) 0.dp else 12.dp)
+                    .semantics(mergeDescendants = true) { if (eligible) stateDescription = expansion },
+            verticalArrangement = Arrangement.spacedBy(TaskRowGap),
         ) {
-            Text(
-                text = type.text,
-                modifier = Modifier.weight(1f),
-                style =
-                    typography.bodySmall
-                        .monospace()
-                        .copy(lineHeight = 17.sp, letterSpacing = 0.sp)
-                        .untrimmedLineBox(),
-                color = colors.primary,
-            )
-            TaskTag(task, Modifier.widthIn(max = TagMaxWidth))
-        }
-        if (wasCut(task.truncatedFields, CUT_TASK_TYPE) || type.cutForDisplay) CutMarker()
-        TaskField(
-            raw = task.description,
-            cutByDaemon = wasCut(task.truncatedFields, CUT_DESCRIPTION),
-            style =
-                typography.bodyMedium.copy(fontSize = 13.sp).let {
-                    if (task.taskType == TYPE_LOCAL_BASH) it.monospace().copy(letterSpacing = 0.sp) else it
-                },
-            color = if (task.isFinished) colors.onSurfaceVariant else colors.onSurface,
-        )
-        task.progress?.takeUnless { task.isFinished }?.let { TaskProgress(it) }
-        task.finish?.takeIf { it.summary.isNotEmpty() }?.let { finish ->
+            val type = boundedText(taskTypeLabel(task.taskType))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = type.text,
+                    modifier = Modifier.weight(1f),
+                    style =
+                        typography.bodySmall
+                            .monospace()
+                            .copy(lineHeight = 17.sp, letterSpacing = 0.sp)
+                            .untrimmedLineBox(),
+                    color = colors.primary,
+                )
+                TaskTag(task, Modifier.widthIn(max = TagMaxWidth))
+                if (eligible) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_composer_send),
+                        contentDescription = null,
+                        tint = colors.primary,
+                        modifier = Modifier.size(28.dp).testTag("background-task-toggle").rotate(if (expanded) 0f else 180f),
+                    )
+                }
+            }
+            if (wasCut(task.truncatedFields, CUT_TASK_TYPE) || type.cutForDisplay) CutMarker()
             TaskField(
-                raw = finish.summary,
-                cutByDaemon = wasCut(finish.truncatedFields, CUT_SUMMARY),
-                style = typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 19.sp),
-                color = colors.onSurfaceVariant,
+                raw = task.description,
+                cutByDaemon = wasCut(task.truncatedFields, CUT_DESCRIPTION),
+                style =
+                    typography.bodyMedium.copy(fontSize = 13.sp).let {
+                        if (task.taskType == TYPE_LOCAL_BASH) it.monospace().copy(letterSpacing = 0.sp) else it
+                    },
+                color = if (task.isFinished) colors.onSurfaceVariant else colors.onSurface,
             )
+            task.progress?.takeUnless { task.isFinished }?.let { TaskProgress(it) }
+            task.finish?.takeIf { it.summary.isNotEmpty() }?.let { finish ->
+                TaskField(
+                    raw = finish.summary,
+                    cutByDaemon = wasCut(finish.truncatedFields, CUT_SUMMARY),
+                    style = typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 19.sp),
+                    color = colors.onSurfaceVariant,
+                )
+            }
+            task.latestUpdate?.let { LatestUpdate(it) }
         }
-        task.latestUpdate?.let { LatestUpdate(it) }
+        if (eligible && expanded) {
+            // Separate from the toggle subtree, including the button's invisible touch extension.
+            Box(Modifier.padding(start = 14.dp, end = 14.dp, bottom = 12.dp)) {
+                Surface(
+                    modifier =
+                        Modifier
+                            .heightIn(min = 32.dp)
+                            .clickable(enabled = !pending, role = Role.Button) { onEvent(ThreadEvent.BackgroundTaskStop(task.taskId)) }
+                            .alpha(if (pending) 0.38f else 1f),
+                    shape = MaterialTheme.shapes.modalControl,
+                    color = colors.background,
+                    contentColor = colors.primary,
+                    border = BorderStroke(1.dp, colors.primary),
+                ) {
+                    Text(
+                        text = stringResource(R.string.background_tasks_stop),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp),
+                        style = typography.bodySmall.untrimmedLineBox(),
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -569,7 +641,7 @@ private val previewRoster =
 @Composable
 private fun BackgroundTaskPanelPreview() {
     PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
-        BackgroundTaskPanel(roster = previewRoster, onDismiss = {})
+        BackgroundTaskPanel(roster = previewRoster, onDismiss = {}, stopSupported = true, expandedTaskIds = setOf("t1"))
     }
 }
 
