@@ -26,6 +26,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -216,6 +217,27 @@ class ModelRefusalSwitchBackTest {
         setRow(offer = null)
 
         composeRule.onNodeWithText("Switch back", substring = true).assertDoesNotExist()
+    }
+
+    // #1614: Figma 620:1570 draws the title, the explanation and the "Hide details" toggle in their full
+    // line boxes, even with no switch-back offer on the row — previously only applied when one was present.
+    @Test
+    fun expandedWithNoOffer_keepsTheTitleAndExplanationAndToggleInTheirFullLineBoxes() {
+        setRow(offer = null)
+        composeRule.onNode(hasClickAction()).performClick()
+
+        fun trim(text: String): LineHeightStyle.Trim? {
+            val results = mutableListOf<TextLayoutResult>()
+            composeRule.onNode(hasText(text, substring = true)).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+            return results
+                .single()
+                .layoutInput.style.lineHeightStyle
+                ?.trim
+        }
+
+        assertEquals(LineHeightStyle.Trim.None, trim("Refused on"))
+        assertEquals(LineHeightStyle.Trim.None, trim("Retried on Sonnet."))
+        assertEquals(LineHeightStyle.Trim.None, trim("Hide details"))
     }
 
     @Test

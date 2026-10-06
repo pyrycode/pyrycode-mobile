@@ -1,9 +1,16 @@
 package de.pyryco.mobile.ui.conversations.components
 
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -13,6 +20,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.GraphicsMode
 
 /**
  * The stopped-turn row's copy (#1356), case for case against desktop's `stoppedTurnText`. The lead and every
@@ -102,5 +110,28 @@ class StoppedTurnRowTest {
             .onNodeWithText("Stopped: context too long, compact or reset (Codex reported: invalid_request)")
             .assertIsDisplayed()
         composeTestRule.onNode(hasClickAction()).assertDoesNotExist()
+    }
+
+    // #1608: Figma 685:3992 leaves 30dp from the bubble above to this row's text: the stream's standard
+    // 16dp row gap (the previous row's own trailing gutter, outside this component) plus this row's own
+    // 8dp top pad. This slice owns only the 8dp; a sibling with no trailing gutter of its own, as here,
+    // leaves exactly that much.
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun leaves_its_own_8dp_top_pad_above_the_text() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                Column {
+                    androidx.compose.foundation.layout
+                        .Box(Modifier.testTag("bubble-above").height(10.dp))
+                    StoppedTurnRow(item = stopped("max_turns"), agent = ConversationAgent.Claude)
+                }
+            }
+        }
+
+        val above = composeTestRule.onNodeWithTag("bubble-above").getUnclippedBoundsInRoot()
+        val text = composeTestRule.onNodeWithText("Stopped: turn limit reached").getUnclippedBoundsInRoot()
+
+        assertEquals(8f, (text.top - above.bottom).value, 0.5f)
     }
 }

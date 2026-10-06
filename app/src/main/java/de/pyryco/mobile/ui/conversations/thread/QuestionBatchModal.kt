@@ -99,7 +99,9 @@ internal fun QuestionBatchActions(
             val failure = stringResource(R.string.question_send_failed)
             Text(
                 failure,
-                style = MaterialTheme.typography.bodyMedium,
+                // Figma 668:3245 draws this line in bodyMedium's full 20dp box; the theme's default trims it to
+                // its glyphs, which pulls both the gap above it and the buttons below it off the frame (#1600).
+                style = MaterialTheme.typography.bodyMedium.copy(lineHeightStyle = FrameLineBox),
                 color = MaterialTheme.colorScheme.error,
                 modifier =
                     Modifier

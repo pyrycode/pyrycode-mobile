@@ -782,17 +782,19 @@ fun ThreadScreen(
                                     onCancel = onModalCancel,
                                     alwaysAllowAccepted = alwaysAllowAccepted,
                                     onAlwaysAllowChanged = onAlwaysAllowChanged,
-                                    gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerGutter, vertical = 4.dp),
+                                    gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerGutter),
                                 )
                             }
                             // #1340: a refused answer stays in the slot its card held, above any newer card, until
                             // its X. No frame draws it: Figma 347:6617's Default pill, laid in the page unshadowed.
+                            // Figma 668:3054: the pill sits flush on the stream's own top inset, with no extra
+                            // gutter above it (#1599) — only a bottom gutter separates it from what follows.
                             if (answerRejected) {
                                 item(key = "permission-rejection") {
                                     Box(
                                         Modifier
                                             .fillMaxWidth()
-                                            .padding(horizontal = ComposerGutter, vertical = 4.dp)
+                                            .padding(start = ComposerGutter, end = ComposerGutter, bottom = 4.dp)
                                             .testTag(PERMISSION_REJECTION_TEST_TAG),
                                     ) {
                                         NoticePill(
@@ -1373,13 +1375,27 @@ private fun ThreadStatusArea(
     }
 }
 
-/** Account only for ordinary BubbleFrame trailing space; other row kinds own their resting gap (#1630). */
-private fun ordinaryMessageRestAdjustment(
+/**
+ * The extra trailing space under the newest row to drop from the composer's bottom content padding, so the
+ * gap to the status band reads as the frames' 16dp regardless of which row kind sits last (#1630). A plain
+ * `BubbleFrame` rests at 4dp over that baseline; a nested tool row, a bubble carrying attachments, and a
+ * queued row each rest further over it (12dp, 16dp, 8dp) by their own extra bottom space, which this backs
+ * back out. Only the newest rendered row matters — anything behind it does not touch the band.
+ */
+internal fun ordinaryMessageRestAdjustment(
     row: ThreadRow?,
     promptRows: Int,
 ): Dp {
-    val message = ((row as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)?.message
-    return if (promptRows == 0 && message != null && message.toolCall == null && message.attachments.isEmpty()) 4.dp else 0.dp
+    if (promptRows != 0) return 0.dp
+    if (row is ThreadRow.Queued) return 8.dp
+    val delivered = (row as? ThreadRow.Delivered) ?: return 0.dp
+    val message = (delivered.item as? ThreadItem.MessageItem)?.message ?: return 0.dp
+    return when {
+        message.attachments.isNotEmpty() -> 16.dp
+        message.toolCall != null && delivered.agentBlockId != null -> 12.dp
+        message.toolCall == null -> 4.dp
+        else -> 0.dp
+    }
 }
 
 /** Which one reading the status band shows (#1311); see [statusArm]. */
