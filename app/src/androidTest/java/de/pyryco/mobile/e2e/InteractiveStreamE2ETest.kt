@@ -4885,18 +4885,31 @@ class InteractiveStreamE2ETest {
             val reply = hasText(token)
             val child = hasTestTag("background-agent-child:$agentId")
             val run = hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:$agentId"))
+            val expandLabel = string(R.string.tool_run_expand)
+            val closedRun =
+                run and
+                    SemanticsMatcher("closed owned Agent run") {
+                        it.config.getOrNull(SemanticsActions.OnClick)?.label == expandLabel
+                    }
             val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
             list.performScrollToNode(run)
+            composeTestRule.onNode(closedRun).assertExists()
             composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(0)
             composeTestRule.onNode(run).performClick()
+            // Expansion can put this early paragraph outside the lazy viewport as later tool rows arrive.
+            // Bring it into composition before waiting for its ownership and display assertions.
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(reply and hasAnyAncestor(child), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+                runCatching { list.performScrollToNode(reply) }.isSuccess &&
+                    composeTestRule.onAllNodes(reply and hasAnyAncestor(child), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
-            list.performScrollToNode(reply)
             composeTestRule.onNode(reply and hasAnyAncestor(child), useUnmergedTree = true).assertIsDisplayed()
             composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(1)
             list.performScrollToNode(run)
             composeTestRule.onNode(run).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                runCatching { list.performScrollToNode(closedRun) }.isSuccess &&
+                    composeTestRule.onAllNodes(reply, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+            }
             composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(0)
             list.performScrollToNode(inThreadList("main1827_continues"))
             composeTestRule.onNode(inThreadList("main1827_continues"), useUnmergedTree = true).assertIsDisplayed()

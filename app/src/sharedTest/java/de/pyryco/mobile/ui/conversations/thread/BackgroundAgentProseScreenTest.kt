@@ -193,6 +193,29 @@ class BackgroundAgentProseScreenTest {
         compose.onAllNodesWithText("Child").assertCountEquals(1)
     }
 
+    @Test fun earlyProseInALongBlockCanBeScrolledIntoViewAndHiddenByItsOwnRun() {
+        mount(true, true)
+        compose.runOnIdle { items = items + (0 until 30).map { prose("Later child $it", "a") } }
+        val ownedRun = hasText("Using tools: 2", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:a"))
+        compose.onNode(ownedRun).performClick()
+        reveal("Later child 29")
+        // A loaded child can be outside composition; ownership is checked after scrolling it into view.
+        compose.onNodeWithText("Child").assertDoesNotExist()
+        reveal("Child")
+        compose.onNode(hasText("Child") and hasAnyAncestor(hasTestTag("background-agent-child:a"))).assertIsDisplayed()
+        compose.onAllNodesWithText("Child").assertCountEquals(1)
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(ownedRun)
+        compose.onNode(ownedRun).performClick()
+        compose.onNodeWithText("Child").assertDoesNotExist()
+        compose.onNodeWithText("Later child 29").assertDoesNotExist()
+        // Collapse preserves every loaded paragraph; disabling it reveals the same child again.
+        compose.runOnIdle { collapse = false }
+        reveal("Child")
+        compose.onAllNodesWithText("Child").assertCountEquals(1)
+        reveal("Later child 29")
+        compose.onNodeWithText("Later child 29").assertIsDisplayed()
+    }
+
     @Test fun finishAndLaterMainReplyKeepProseNestedAndCollapseStillControlsVisibility() {
         mount(false, false)
         compose.runOnIdle {
