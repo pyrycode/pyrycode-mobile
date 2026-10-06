@@ -67,7 +67,7 @@ import org.koin.core.context.GlobalContext
  * Ten scenarios, one per script invocation (the harness runs exactly one `@Test` method per run,
  * selected by `SCENARIO` in `scripts/e2e-emulator.sh`):
  *  - `ping` (default, #431) — a single-line reply renders.
- *  - `stream` (#454) — a multi-`assistant_delta` reply assembles into one message.
+ *  - `stream` (#454, #1765) — arrived words display while held open, then complete in the same reply.
  *  - `reopen-stream` (#1762) — arrived prefix renders immediately on reopening, before the second-send release.
  *  - `spinner` (#454) — the thinking spinner shows mid-turn, then clears at turn end (a two-fixture
  *    drop holds the turn open so the transient state is observable; see the method KDoc).
@@ -561,24 +561,72 @@ class DeterministicInteractiveStreamE2ETest {
     }
 
     /**
-     * `stream` scenario — a reply that arrives over three `assistant_delta` chunks (fixture
-     * `stream.jsonl`) must render as **one** assembled assistant message. Asserting a substring that
-     * spans the 2nd→3rd delta boundary ("streamed world") proves the deltas concatenated into a single
-     * message rather than rendering as separate rows. Tolerant (substring, generous timeout); never on
-     * delta count or the streaming caret.
+     * `stream` (#1765): two arrivals stay open until their words display. The explicit second send
+     * releases `stream-end.jsonl`; the same reply then contains all three deltas without its caret.
+     * Repository settlement and idle phase establish completion, independently of caret blinking.
      */
     @Test
     fun interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread() {
         arriveInSeededThread()
+        val repository =
+            requireNotNull(
+                GlobalContext
+                    .get()
+                    .get<RelayRepositoryCoordinator>()
+                    .currentRepository.value,
+            )
+        val conversationId =
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    repository
+                        .observeConversations(ConversationFilter.All)
+                        .first { rows -> rows.any { it.name == SEED_CHANNEL_NAME } }
+                        .single { it.name == SEED_CHANNEL_NAME }
+                        .id
+                }
+            }
+        val inBubble = hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+        val prefix =
+            hasText(STREAMED_PREFIX, substring = true) and
+                hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG) and !hasClickAction())
         typeAndSend(SEND_PROMPT)
-
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(STREAMED_SUBSTRING, substring = true).fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodes(prefix, useUnmergedTree = true).fetchSemanticsNodes().size == 1
         }
-        composeTestRule
-            .onAllNodesWithText(STREAMED_SUBSTRING, substring = true)
-            .onFirst()
-            .assertIsDisplayed()
+        composeTestRule.onNode(prefix, useUnmergedTree = true).assertIsDisplayed()
+        val held =
+            runBlocking { repository.observeMessages(conversationId).first() }
+                .filterIsInstance<ThreadItem.MessageItem>()
+                .single { it.message.role == Role.Assistant }
+                .message
+        assertEquals(STREAMED_PREFIX, held.content.trimEnd())
+        assertTrue("displayed arrived text must belong to an ongoing reply", held.isStreaming)
+        assertNotEquals(LiveSessionEvent.TurnState.Phase.Idle, runBlocking { repository.observeTurnPhase(conversationId).first() })
+
+        // The host watcher cannot release the terminal fragment before this explicit action.
+        typeAndSend(SECOND_PROMPT)
+        val finished =
+            runBlocking {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    val rows =
+                        repository.observeMessages(conversationId).first { rows ->
+                            rows.filterIsInstance<ThreadItem.MessageItem>().any {
+                                it.message.id == held.id && !it.message.isStreaming && it.message.content == STREAMED_REPLY
+                            }
+                        }
+                    repository.observeTurnPhase(conversationId).first { it == LiveSessionEvent.TurnState.Phase.Idle }
+                    rows.filterIsInstance<ThreadItem.MessageItem>().single { it.message.role == Role.Assistant }.message
+                }
+            }
+        assertEquals(held.id, finished.id)
+        val finalBody = hasText(STREAMED_REPLY) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG) and hasClickAction())
+        val caret = hasText("▎", substring = true) and inBubble
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(finalBody, useUnmergedTree = true).fetchSemanticsNodes().size == 1 &&
+                composeTestRule.onAllNodes(caret, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+        }
+        composeTestRule.onNode(finalBody, useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onAllNodes(caret, useUnmergedTree = true).assertCountEquals(0)
     }
 
     /**
@@ -1164,10 +1212,9 @@ class DeterministicInteractiveStreamE2ETest {
         // fixture) on the 2nd send_message.enqueued — its text is inert (the scripted reply ignores it).
         const val SECOND_PROMPT = "bye"
 
-        // The `stream` fixture's three deltas assemble into "Hello, streamed world"; this substring spans
-        // the 2nd→3rd delta boundary, so matching it proves the deltas concatenated into one message.
-        // Neither word collides with the seeded channel name "e2e-seed" rendered in the top bar.
-        const val STREAMED_SUBSTRING = "streamed world"
+        // Held words arrive in two deltas; the final check also spans the terminal delta boundary.
+        const val STREAMED_PREFIX = "Hello, streamed"
+        const val STREAMED_REPLY = "Hello, streamed world"
 
         // The tool scenarios' verbatim tool name (carried through the fold from the envelope `name`,
         // ToolCallRow renders it in the collapsed header). Asserted in the running → done case to prove

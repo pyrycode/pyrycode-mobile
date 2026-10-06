@@ -745,6 +745,7 @@ if [ -n "${DETERMINISTIC}" ]; then
     stream)
       TEST_METHOD="interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/stream.jsonl}"
+      FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/stream-end.jsonl}"  # completion follows the displayed-prefix checkpoint
       ;;
     reopen-stream)
       TEST_METHOD="interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately"
