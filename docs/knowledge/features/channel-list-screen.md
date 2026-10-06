@@ -52,8 +52,12 @@ The body branches on `hostState.hosts` — the only model the screen is fed:
   Both create in their host's daemon-default folder. See
   [Conversation tree (#731)](#conversation-tree-731) and [Add controls (#738)](channel-list-screen-tree-and-controls.md#add-controls-738).
 
-`Routes.DISCUSSION_LIST` / `DiscussionListScreen` stay in the graph, unreachable — removing them was out of
-\#731's scope and remains out of \#738's. The generic top app bar #732 was going to retire is already gone —
+\#1672 removed the unreachable `discussions` destination, `Routes.DISCUSSION_LIST`,
+`DiscussionListScreen` and its ViewModel after #731 removed their only entry point.
+Chats remain under each host in the tree; [Save as channel](save-as-channel-dialog.md)
+remains in the thread header menu. This removal changes no reachable flow.
+
+The generic top app bar #732 was going to retire is already gone —
 \#737 replaced it with the list's own bar, split off as the first of #732's two slices.
 
 ## Create chat failure notice (#1748)
