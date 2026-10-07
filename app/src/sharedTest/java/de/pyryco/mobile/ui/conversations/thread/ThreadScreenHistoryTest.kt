@@ -242,56 +242,64 @@ class ThreadScreenHistoryTest {
 
     @Test
     fun a_long_thread_prefetches_only_near_its_oldest_end() {
+        val count = 120
         var demands = 0
         var pending = false
-        setScreen({ threadState(rows(count = 30), ThreadHistoryTail.None) }, onDemand = {
+        setScreen({ threadState(rows(count), ThreadHistoryTail.None) }, onDemand = {
             if (!pending) {
                 demands++
                 pending = true
             }
         })
 
-        // Opened at the newest end: the pull only scrolls.
-        pullTowardOlder(fraction = 0.1f)
+        assertScreenHistoryDistance(minViewports = 3f)
+        pullInReadingArea(fraction = 0.1f)
+        assertScreenHistoryDistance(minViewports = 2f)
         composeRule.runOnIdle { assertEquals(0, demands) }
 
-        // At the oldest end: movement asks after each controlled slot release.
-        composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(29)
-        composeRule.waitForIdle()
-        pullTowardOlder()
-        composeRule.runOnIdle { assertEquals(1, demands) }
-        pending = false
-        pullTowardOlder()
+        // Semantics positioning asks nothing; only the subsequent reader movement asks.
+        composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(count - 1)
+        assertScreenHistoryDistance(maxViewports = 0.25f)
+        composeRule.runOnIdle { assertEquals(0, demands) }
+        pullInReadingArea(fraction = 0.1f)
+        composeRule.runOnIdle {
+            assertEquals(1, demands)
+            pending = false
+        }
+        assertScreenHistoryDistance(maxViewports = 0.25f)
+        pullInReadingArea(fraction = 0.1f)
         composeRule.runOnIdle { assertEquals(2, demands) }
     }
 
     @Test
     fun the_prefetch_band_is_two_current_viewports_from_the_oldest_end() {
+        val count = 120
         var demands = 0
         var pending = false
-        setScreen({ threadState(rows(count = 30), ThreadHistoryTail.None) }, onDemand = {
+        setScreen({ threadState(rows(count), ThreadHistoryTail.None) }, onDemand = {
             if (!pending) {
                 demands++
                 pending = true
             }
         })
 
-        // 100dp short of the oldest end is inside the band...
-        scrollToOldestThenTowardNewer(100)
-        composeRule.onNodeWithText("Row 1.").assertExists()
-        assertTrue("Row 1 should be partly hidden behind the header", oldestRowTop() < readingAreaTop())
-        pullTowardOlder(fraction = 0.05f)
-        composeRule.runOnIdle { assertEquals(1, demands) }
+        positionScreenFromOldest(count, viewports = 1.3f)
+        assertScreenHistoryDistance(minViewports = 1f, maxViewports = 1.6f)
+        composeRule.onNodeWithText("Row 1.").assertDoesNotExist()
+        composeRule.runOnIdle { assertEquals(0, demands) }
+        pullInReadingArea(fraction = 0.05f)
+        assertScreenHistoryDistance(minViewports = 0.5f, maxViewports = 2f)
+        composeRule.onNodeWithText("Row 1.").assertDoesNotExist()
+        composeRule.runOnIdle {
+            assertEquals(1, demands)
+            pending = false
+        }
 
-        // Three viewport heights back is outside the new range.
-        pending = false
-        val viewport =
-            composeRule
-                .onNodeWithTag(MESSAGE_REGION_TAG)
-                .fetchSemanticsNode()
-                .boundsInRoot.height
-        scrollToOldestThenTowardNewer(with(composeRule.density) { (viewport * 3).toDp().value.toInt() })
-        pullTowardOlder(fraction = 0.05f)
+        positionScreenFromOldest(count, viewports = 3f)
+        assertScreenHistoryDistance(minViewports = 2.5f)
+        composeRule.runOnIdle { assertEquals(1, demands) }
+        pullInReadingArea(fraction = 0.05f)
+        assertScreenHistoryDistance(minViewports = 2f)
         composeRule.runOnIdle { assertEquals(1, demands) }
     }
 
@@ -384,25 +392,23 @@ class ThreadScreenHistoryTest {
         var asks = 0
         var pending = false
         val list =
-            setPrefetchList(initialIndex = 16, onDemand = {
+            setPrefetchList(initialIndex = 0, onDemand = {
                 if (!pending) {
                     asks++
                     pending = true
                 }
             })
-        composeRule.runOnIdle {
-            assertTrue(!list.layoutInfo.isNearOldestEnd(29, list.layoutInfo.viewportSize.height * 2f))
-        }
+        positionPrefetchOutsideBand(list)
+        assertPrefetchBand(list, oldest = 29, inside = false)
+        composeRule.runOnIdle { assertEquals(0, asks) }
         composeRule.onNodeWithTag("prefetch-list").performTouchInput {
-            down(Offset(center.x, 10f))
-            moveBy(Offset(0f, 150f), delayMillis = 1000)
+            down(Offset(center.x, height * 0.05f))
+            moveBy(Offset(0f, height * 0.8f), delayMillis = 1000)
             advanceEventTime(200)
             up()
         }
-        composeRule.runOnIdle {
-            assertEquals(1, asks)
-            assertTrue(list.layoutInfo.visibleItemsInfo.none { it.index == 29 })
-        }
+        assertPrefetchBand(list, oldest = 29, inside = true)
+        composeRule.runOnIdle { assertEquals(1, asks) }
     }
 
     @Test
@@ -469,40 +475,45 @@ class ThreadScreenHistoryTest {
         var loading = false
         var asks = 0
         val list =
-            setPrefetchList(16, count = { count }, onDemand = {
+            setPrefetchList(0, count = { count }, onDemand = {
                 if (!loading) {
                     asks++
                     loading = true
                 }
             })
+        positionPrefetchOutsideBand(list)
+        assertPrefetchBand(list, oldest = count - 1, inside = false)
+        composeRule.runOnIdle { assertEquals(0, asks) }
         val surface = composeRule.onNodeWithTag("prefetch-list")
         surface.performTouchInput {
-            down(Offset(center.x, 10f))
-            moveBy(Offset(0f, 150f), delayMillis = 600)
+            down(Offset(center.x, height * 0.05f))
+            moveBy(Offset(0f, height * 0.8f), delayMillis = 600)
         }
-        composeRule.runOnIdle { assertEquals(1, asks) }
-        val before = list.firstVisibleItemIndex to list.firstVisibleItemScrollOffset
+        assertPrefetchBand(list, oldest = count - 1, inside = true)
+        val before =
+            composeRule.runOnIdle {
+                assertEquals(1, asks)
+                list.firstVisibleItemIndex to list.firstVisibleItemScrollOffset
+            }
         composeRule.runOnIdle {
             count = 32
             loading = false
         }
+        assertPrefetchBand(list, oldest = count - 1, inside = true)
         composeRule.runOnIdle {
             assertEquals(before, list.firstVisibleItemIndex to list.firstVisibleItemScrollOffset)
             assertEquals(1, asks)
         }
         surface.performTouchInput {
-            moveBy(Offset(0f, 80f), delayMillis = 600)
+            advanceEventTime(600)
         }
-        composeRule.runOnIdle {
-            assertEquals(
-                "index=${list.firstVisibleItemIndex} offset=${list.firstVisibleItemScrollOffset} near=${list.layoutInfo.isNearOldestEnd(
-                    count - 1,
-                    list.layoutInfo.viewportSize.height * 2f,
-                )}",
-                2,
-                asks,
-            )
+        composeRule.runOnIdle { assertEquals("A resting finger cannot request the arrived page", 1, asks) }
+        assertPrefetchBand(list, oldest = count - 1, inside = true)
+        surface.performTouchInput {
+            moveBy(Offset(0f, height * 0.1f), delayMillis = 600)
         }
+        assertPrefetchBand(list, oldest = count - 1, inside = true)
+        composeRule.runOnIdle { assertEquals(2, asks) }
         surface.performTouchInput {
             advanceEventTime(200)
             up()
@@ -634,29 +645,91 @@ class ThreadScreenHistoryTest {
         composeRule.waitForIdle()
     }
 
-    /** Scroll to the oldest end, then [dp] back toward newer messages, without a user drag. */
-    private fun scrollToOldestThenTowardNewer(dp: Int) {
+    /** Uniform rows let measured pitch locate the offscreen oldest row independently. */
+    private fun assertScreenHistoryDistance(
+        minViewports: Float = Float.NEGATIVE_INFINITY,
+        maxViewports: Float = Float.POSITIVE_INFINITY,
+    ) {
+        val viewport = composeRule.onNode(hasScrollToIndexAction()).fetchSemanticsNode().boundsInRoot
+        val visible =
+            composeRule
+                .onAllNodes(hasText("Row ", substring = true))
+                .fetchSemanticsNodes()
+                .filter { it.boundsInRoot.top > viewport.top && it.boundsInRoot.bottom < viewport.bottom }
+                .map { node ->
+                    node.config[SemanticsProperties.Text]
+                        .single()
+                        .text
+                        .removePrefix("Row ")
+                        .removeSuffix(".")
+                        .toInt() to
+                        node.boundsInRoot.top
+                }.sortedBy { it.first }
+        assertTrue("Need two fully measured uniform rows: $visible", visible.size >= 2)
+        val (olderNumber, olderTop) = visible.first()
+        val (newerNumber, newerTop) = visible.last()
+        val pitch = (newerTop - olderTop) / (newerNumber - olderNumber)
+        assertTrue("Row pitch must be positive", pitch > 0f)
+        val headerBottom =
+            composeRule
+                .onNodeWithTag("thread-top-bar")
+                .fetchSemanticsNode()
+                .boundsInRoot.bottom
+        val distance = headerBottom - (olderTop - (olderNumber - 1) * pitch)
+        val viewports = distance / viewport.height
+        assertTrue("Hidden history is $viewports viewports; expected $minViewports..$maxViewports", viewports in minViewports..maxViewports)
+    }
+
+    private fun positionScreenFromOldest(
+        count: Int,
+        viewports: Float,
+    ) {
         val list = composeRule.onNode(hasScrollToIndexAction())
-        list.performScrollToIndex(29)
-        composeRule.waitForIdle()
-        val px = with(composeRule.density) { dp.dp.toPx() }
-        // Semantics scroll follows the list's index order: under reverseLayout a negative y moves toward
-        // index 0, the newest rows.
-        list.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, -px) }
+        list.performScrollToIndex(count - 1)
+        val distance = list.fetchSemanticsNode().boundsInRoot.height * viewports
+        // Negative semantics y follows reverse-layout indices toward newer content.
+        list.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, -distance) }
         composeRule.waitForIdle()
     }
 
-    private fun oldestRowTop(): Float =
-        composeRule
-            .onNodeWithText("Row 1.")
-            .fetchSemanticsNode()
-            .boundsInRoot.top
+    /** The drawing viewport underlaps chrome; touch starts in the measured clear reading area. */
+    private fun pullInReadingArea(fraction: Float) {
+        val list = composeRule.onNode(hasScrollToIndexAction())
+        val viewport = list.fetchSemanticsNode().boundsInRoot
+        val header = composeRule.onNodeWithTag("thread-top-bar").fetchSemanticsNode().boundsInRoot
+        val composer = composeRule.onNodeWithTag("thread-composer").fetchSemanticsNode().boundsInRoot
+        val start = header.bottom - viewport.top + (composer.top - header.bottom) * 0.2f
+        val distance = viewport.height * fraction
+        assertTrue("Gesture must stay between header and composer", start + distance < composer.top - viewport.top)
+        list.performTouchInput {
+            swipeDown(startY = start, endY = start + distance, durationMillis = 800)
+        }
+        composeRule.waitForIdle()
+    }
 
-    private fun readingAreaTop(): Float =
-        composeRule
-            .onNodeWithTag("thread-top-bar")
-            .fetchSemanticsNode()
-            .boundsInRoot.bottom
+    private fun positionPrefetchOutsideBand(list: LazyListState) {
+        val surface = composeRule.onNodeWithTag("prefetch-list")
+        surface.performScrollToIndex(29)
+        val distance = composeRule.runOnIdle { list.layoutInfo.viewportSize.height * 2.1f }
+        surface.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, -distance) }
+        composeRule.waitForIdle()
+    }
+
+    private fun assertPrefetchBand(
+        list: LazyListState,
+        oldest: Int,
+        inside: Boolean,
+    ) {
+        composeRule.runOnIdle {
+            val layout = list.layoutInfo
+            assertEquals(
+                "index=${list.firstVisibleItemIndex}, offset=${list.firstVisibleItemScrollOffset}, viewport=${layout.viewportSize.height}",
+                inside,
+                layout.isNearOldestEnd(oldest, layout.viewportSize.height * 2f),
+            )
+            assertTrue("The oldest row must still be hidden", layout.visibleItemsInfo.none { it.index == oldest })
+        }
+    }
 
     private fun setScreen(
         state: () -> ThreadUiState,
