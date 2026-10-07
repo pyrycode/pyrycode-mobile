@@ -233,11 +233,11 @@ never fails the others.
 
 **Removal — `removeHost(serverId): Result<Unit>` (#900):** on `ioDispatcher`, `deleteRecursively`s the
 host's whole directory. Failure is decided by the directory's continued existence afterward — the same
-rule [`FileConversationCache.removeHost`](conversation-cache.md#removal-on-unpair--forgetremovedhost)
+rule [`FileConversationCache.removeHost`](conversation-cache-removal.md#removal-on-unpair--forgetremovedhost)
 uses — and a `SecurityException` is also caught as failure; an unknown host is a successful no-op. The
 failure carries a static message with no id or path, and never throws except on cancellation. The store
 itself logs nothing here; the caller,
-[`forgetRemovedHost`](conversation-cache.md#removal-on-unpair--forgetremovedhost), logs the static
+[`forgetRemovedHost`](conversation-cache-removal.md#removal-on-unpair--forgetremovedhost), logs the static
 `event=host_attachments_remove_failed` on failure and does not surface it.
 
 **Served to other apps (#985), never the store as a whole.** A kept file's bytes reach another app only

@@ -220,3 +220,10 @@ _(none yet — system overview will land when there's more than one screen to ma
 - [MessageBubble — testing](features/message-bubble-testing.md) — selection-menu fixtures, metadata gestures, palette and geometry guards, and attachment coverage; split from `message-bubble.md` on 2026-10-03.
 
 - [ConversationRepository — interface and reading types](features/conversation-repository-shape.md): API shape and returned-value semantics, including required host prompt current/default readings and nullable channel prompts. Split from the parent overview to keep it under the size cap.
+
+- [Conversation cache — The contract](features/conversation-cache-contract.md) — portable storage and saved coverage contracts.
+- [Conversation cache — Layout](features/conversation-cache-layout.md) — serialized records, paths and atomic row/position writers.
+- [Conversation cache — Failure model — graceful reads, reporting mutations](features/conversation-cache-failure-model.md) — graceful reads and reporting mutations.
+- [Conversation cache — Removal on unpair — forgetRemovedHost](features/conversation-cache-removal.md) — host and conversation eviction.
+- [Conversation cache — Testing](features/conversation-cache-testing.md) — fresh-instance persistence, restoration and durability regression coverage.
+- [Conversation cache — Related](features/conversation-cache-related.md) — cache design and owning-topic references.
