@@ -76,20 +76,45 @@ when open, and unique row keys alone did not catch it. `BackgroundAgentProseTest
 `BackgroundAgentProseScreenTest` attach gaps to the first Agent tool and to child prose, and assert
 each anchor appears exactly once through closed, open, closed and collapse-off states.
 
-A real reader pull toward a visible marker calls the defaulted `onDemandHistoryGap(anchor)`
-callback, wired by `MainActivity` to `ThreadViewModel.onDemandHistoryGap`. Measured marker bounds
-select the first marker crossed toward older content when several are visible, before considering
-ordinary oldest-end demand. Merely revealing a marker, semantics scrolling or receiving a page
+**Unsigned gap targeting (#1911) preserves one identity from placement through dispatch.**
+`ThreadHistoryMarker.unsignedAnchor` is authoritative through `ULong.MAX_VALUE`, including after
+restoration. Projection uses `unsignedGaps`, `unsignedUnknownEdge` and `unsignedPositions`; measured
+height keys, row tags and folded-agent markers keep that same unsigned anchor. Zero identifies only
+authoritative unknown coverage, never uncertainty introduced by the signed compatibility view.
+The signed marker constructor and checked `anchor` accessor remain for lower-range callers; upper
+positions must use `unsignedAnchor` rather than wrapping or substituting an id.
+
+A real reader pull calls `onDemandUnsignedHistoryGap(anchor)`, wired by `MainActivity` to
+`ThreadViewModel.onDemandUnsignedHistoryGap`. The appended, defaulted screen callback forwards
+representable anchors to the existing signed callback; the signed ViewModel method remains a
+lower-range adapter. Measured marker bounds select the first marker crossed toward older content
+when several are visible, before considering ordinary oldest-end demand. Stale or missing anchors
+are rejected before claiming the shared request slot. Dispatch and settlement use `cursorForUnsigned`,
+`receivedUnsigned` and `refusedUnsigned`, retaining the selected anchor across the signed boundary
+and through the maximum id. Merely revealing a marker, semantics scrolling or receiving a page
 asks nothing. Each pull costs at most one page, including cursorless walks that reread a covered
 page. Each gap keeps its own opaque cursor and leaves the backwards walk's cursor/stop alone;
-saved `AtStart` cannot block gap demand. A refused cursor retains its marker and waits for the next
-pull, using the latest usable newest-page cursor or empty cursor. Once a touch selects a gap,
+saved `AtStart` cannot block gap demand. A typed invalid-cursor refusal invalidates only the refused
+opaque cursor, retains its marker and waits for the next pull, using the latest usable newest-page
+cursor or empty cursor. Once a touch selects a gap,
 its latch gates every further history demand through that drag and its continuing fling, before
 consulting marker visibility. Page settlement can remove the marker, and movement can take it
 offscreen; neither may redirect the same touch into the independent backwards walk. A fresh
 touch resets selection. Four controlled-response `ThreadScreenHistoryTest` regressions cover
 marker removal and movement offscreen during both drag and fling; keeping the marker present
-throughout a test would miss this fallthrough.
+throughout a test would miss this fallthrough. Shared physical-fling fixtures convert their dp/s
+velocity using the test rule's density; a fixed pixel/s value can stop short on a managed device
+while passing under Robolectric.
+
+`unsignedMarkersTargetFirstCrossedGap` and `unsignedGapSettlementKeepsSelectedTouch` exercise exact
+upper-range tags and physical pulls. The signed fixture
+`markersAreBetweenContent_andAReaderPullTargetsTheFirstCrossedGap` omits the unsigned callback so it
+checks the production default adapter. The [#1911 verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1924#issuecomment-6044984944)
+and fresh affected-class XML confirm all three passed on managed Android 13: 26 executed/passed,
+0 failed, 0 skipped. The configured device-only UI gate excludes these shared methods; its separate
+run passed 199 executed tests, with 0 failed and 1 skipped. This is affected-class device evidence,
+not execution of the named methods inside that gate. Rung-3 durable-gap operator-flow evidence
+remains owned by #1833; #1911 adds no live scenario.
 
 The shared `inFlight` flag still drives the oldest-end Loading row during newest/gap asks, even
 when the independent backwards walk is at `AtStart`; this is the existing #1572 visual quirk.

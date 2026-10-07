@@ -66,8 +66,9 @@ or signed spans: an empty cache cannot prove completeness. Regression coverage m
 file cache and ViewModel, receive a later signed terminal page and demand older history again; testing
 `received` alone or keeping one cacheable row misses this restore failure. Unsigned persistence and
 restored order are described under [saved position](#resuming-from-the-saved-position-1354).
-The UI gap-anchor migration remains #1911 and foreground acknowledgement #1912; conservative signed
-guards do not establish upper-range marker targeting or seen state.
+The completed [unsigned gap path (#1911)](#resuming-from-the-saved-position-1354) consumes authoritative
+coverage independently of these signed guards. Foreground acknowledgement remains #1912;
+conservative completeness guards establish no seen state.
 
 **History establishes modern queued delivery (#1655).** A stored user `message` with a valid
 `queued_msg_id` can arrive with its answering delta 0 before the first live push, even before
@@ -444,11 +445,20 @@ targetable rather than inheriting the same old anchor.
 Positive signed cache documents retain rows and usable coverage under the unchanged serialized
 field names. Signed construction and lower-range readers remain source-compatible: spans expose
 only their representable portion and gaps/cursor anchors omit unrepresentable ids. Upper-range
-evidence sets sticky `unsignedIncomplete` so the signed UI stays conservatively unknown and cannot
-restore `AtStart`. Authoritative `unsignedUnknown` can still close on `at_start`; the compatibility
+evidence sets sticky `unsignedIncomplete` so signed completeness stays conservatively unknown and
+cannot restore `AtStart`. Authoritative `unsignedUnknown` can still close on `at_start`; the compatibility
 flag does not erase unsigned coverage or restored order. Malformed optional metadata discards the
 saved position independently of readable retained rows, which restore as legacy unknown.
 Restoration, position writes and page receipt send no read command and initiate no history fetch.
+
+**Restored gap targeting is unsigned end to end (#1911).** The ViewModel projects markers from
+`unsignedGaps`, `unsignedUnknownEdge` and `unsignedPositions`, preserving the exact anchor across
+`Long.MAX_VALUE` through `ULong.MAX_VALUE`. Only authoritative `unsignedUnknown` supplies the zero
+anchor; sticky signed uncertainty does not create a durable marker. Reader selection sends that
+same unsigned anchor to `cursorForUnsigned`; page coverage and cursor refusal use `receivedUnsigned`
+and `refusedUnsigned`. Restoring rows/coverage or receiving a page creates no older demand. The
+[#1842 readiness and settlement handoff](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777)
+still drains only already-counted newest arrivals.
 
 Each gap retains an opaque walk cursor, starting from the page immediately above it. A cursorless
 hole uses the nearest stored page-edge cursor above it; cursors are never constructed from entry
@@ -472,7 +482,14 @@ coverage and its usable cursor survive even with no retained rows or signed span
 Markers sit between held older and newer content, before their newer row. A non-rendering newer
 span can leave a standalone marker at the newest content edge. Assistant deltas on opposite sides
 of a hole use display-only fragments so the marker fits between them without changing retained
-repository rows. Known and unknown markers sharing a row/edge sort by their durable newer edge,
+repository rows. Fragment boundaries use unsigned delta order and adjacent received-span endpoints,
+not the retained demand anchor. After partial fill that anchor can lie inside the extended older
+span: deltas at `A` and `A+4`, followed by `A+1`, must display `A,A+1` / marker / `A+4` while still
+targeting `A`. Comparing against `A` would rejoin held text across the unresolved hole and put the
+marker before the whole reply; serialization would preserve that error. The partial-fill and
+serialized-restoration ViewModel regressions assert fragment content, exact placement and unchanged
+opaque cursor identity across the signed boundary, upper range and maximum boundary. Known and
+unknown markers sharing a row/edge sort by their durable newer edge,
 keeping unknown coverage chronologically older. See [reader targeting](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777)
 for the first-crossed gesture rule.
 
@@ -488,7 +505,8 @@ position could reach disk before rows. Failed row writes cannot advance claims; 
 conservative state. Trimming and changed/missing retained rows invalidate coverage, and the later
 state write must retain the trim's backwards cursor/stop reset. See [the two file writers](conversation-cache.md#the-thread-documents-two-writers-1354)
 and [the wrapper's saved position](caching-conversation-repository.md#the-saved-history-position-1354).
-[#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) supplies the device proof these JVM
+[#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) retains ownership of the rung-3 live
+durable-gap operator-flow proof; #1911 adds no live scenario. It supplies the device proof these JVM
 tests cannot. After the owned daemon restarts with its durable home kept and its replay ring
 emptied, both the real-Claude offline-read method and its scripted twin show one newest ask without
 a gesture, a remaining gap marker, one older page per physical reader pull, and every missed post
