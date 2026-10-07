@@ -319,7 +319,14 @@ class DeterministicInteractiveStreamE2ETest {
                         }
                     }
                     peer.sendMessage(conversation.id, "e2e1833-completed-turn", THREAD_TIMEOUT_MS)
-                    peer.awaitFrame(conversation.id, "turn_end", REPLY_TIMEOUT_MS)
+                    withTimeout(REPLY_TIMEOUT_MS) {
+                        while (peer.recorded(conversation.id).none {
+                                it.type == "turn_end" && peer.field(it, "producer") != "channel_post"
+                            }
+                        ) {
+                            delay(50)
+                        }
+                    }
                 }
             }
             proof.catchUp(::restoreLink, "ping")
