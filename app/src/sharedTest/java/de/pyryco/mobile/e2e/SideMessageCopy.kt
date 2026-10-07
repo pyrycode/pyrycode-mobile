@@ -39,14 +39,13 @@ internal fun ComposeTestRule.assertSideMessageCopy(message: Message) {
     repeat(notices.fetchSemanticsNodes().size) { notices[0].performClick() }
     // The divided targets may overflow a short first row; scroll its visual row, not the overflow.
     onNode(sourceRow).performScrollTo()
-    scrollSideMessageGlyphIntoView(sourceRow, "message-copy-glyph")
     onNode(
         hasContentDescription(context.getString(R.string.cd_thread_copy_message)) and
             hasAnyAncestor(sourceRow),
     ).assertIsDisplayed()
     runOnIdle { clipboard.setPrimaryClip(ClipData.newPlainText("copy baseline", "unrelated baseline")) }
-    val glyph = onNode(hasTestTag("message-copy-glyph") and hasAnyAncestor(sourceRow), useUnmergedTree = true).fetchSemanticsNode()
-    onRoot().performTouchInput { click(glyph.boundsInRoot.center) }
+    val point = sideMessageActionTapPoint(sourceRow, "message-copy-glyph")
+    onRoot().performTouchInput { click(point) }
     runOnIdle {
         assertEquals(
             message.content.take(100_000),

@@ -39,12 +39,11 @@ internal fun ComposeTestRule.assertSideMessageReply(
     repeat(notices.fetchSemanticsNodes().size) { notices[0].performClick() }
     // The divided targets may overflow a short first row; scroll its visual row, not the overflow.
     onNode(sourceRow).performScrollTo()
-    scrollSideMessageGlyphIntoView(sourceRow, "message-reply-glyph")
     val reply =
         onNode(hasContentDescription(context.getString(R.string.cd_thread_reply_message)) and hasAnyAncestor(sourceRow))
             .assertIsDisplayed()
-    val glyph = onNode(hasTestTag("message-reply-glyph") and hasAnyAncestor(sourceRow), useUnmergedTree = true).fetchSemanticsNode()
-    onRoot().performTouchInput { click(glyph.boundsInRoot.center) }
+    val point = sideMessageActionTapPoint(sourceRow, "message-reply-glyph")
+    onRoot().performTouchInput { click(point) }
     waitUntil(5_000) {
         onNode(hasSetTextAction()).fetchSemanticsNode().config[SemanticsProperties.EditableText].text == expectedDraft
     }
@@ -58,29 +57,55 @@ internal fun ComposeTestRule.assertSideMessageReply(
 }
 
 /**
- * Semantic scrolling sees the full list; pointer actions must clear its overlaid chrome too. That chrome
- * includes the Top overlay's pills under the header. A short thread starts at the overlay's own inset
- * (#1509), so its first row cannot scroll clear of a pill that stays up; fail here, naming the cover,
- * rather than let the pointer tap land on the pill instead of the glyph.
+ * Semantic scrolling sees the full list; a pointer tap must also miss the chrome drawn over it: the header,
+ * the composer and the Top overlay's pills. A short thread starts at the overlay's own inset (#1509), so a
+ * pill that stays up can cover a first row's glyph. Returns the glyph's centre when it is clear, otherwise
+ * the nearest clear point inside the same action's own target (#1818: copy owns the pair's upper part down
+ * to the midpoint, reply the lower part). Fails, naming the cover, when the action has no clear point.
  */
-internal fun ComposeTestRule.scrollSideMessageGlyphIntoView(
+internal fun ComposeTestRule.sideMessageActionTapPoint(
     sourceRow: androidx.compose.ui.test.SemanticsMatcher,
     glyphTag: String,
-) {
-    if (onAllNodes(hasTestTag("thread-top-bar")).fetchSemanticsNodes().isEmpty()) return
-    val margin = 24f * density.density
+): Offset {
+    val glyphNode = hasTestTag(glyphTag) and hasAnyAncestor(sourceRow)
+    if (onAllNodes(hasTestTag("thread-top-bar")).fetchSemanticsNodes().isEmpty()) {
+        return onNode(glyphNode, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot.center
+    }
+    val unit = density.density
+    val isCopy = glyphTag == "message-copy-glyph"
 
-    // The clear band between the header, or the Top overlay below it, and the composer; and the glyph's centre.
-    fun placement(): Triple<Float, Float, Float> {
-        val header = onNodeWithTag("thread-top-bar").fetchSemanticsNode().boundsInRoot.bottom
-        val overlay = onAllNodes(hasTestTag("thread-top-overlay")).fetchSemanticsNodes().maxOfOrNull { it.boundsInRoot.bottom }
-        val bottom = onNodeWithTag("thread-composer").fetchSemanticsNode().boundsInRoot.top
-        val glyph = onNode(hasTestTag(glyphTag) and hasAnyAncestor(sourceRow), useUnmergedTree = true).fetchSemanticsNode()
-        return Triple(maxOf(header, overlay ?: header), bottom, glyph.boundsInRoot.center.y)
+    // Header bottom, composer top, pill rectangles and the glyph centre, as currently laid out.
+    fun clearPoint(): Pair<Offset?, String> {
+        val top = onNodeWithTag("thread-top-bar").fetchSemanticsNode().boundsInRoot.bottom + 2 * unit
+        val bottom = onNodeWithTag("thread-composer").fetchSemanticsNode().boundsInRoot.top - 2 * unit
+        val pills =
+            onAllNodes(hasAnyAncestor(hasTestTag("thread-top-overlay")), useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .map { it.boundsInRoot.inflate(4 * unit) }
+        val centre = onNode(glyphNode, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot.center
+        // The action's own target, kept 3dp off the shared midpoint and its outer edge.
+        val range =
+            if (isCopy) {
+                (centre.y - 21 * unit)..(centre.y + 9.5f * unit)
+            } else {
+                (centre.y - 9.5f * unit)..(centre.y + 21 * unit)
+            }
+
+        fun clear(y: Float) = y in top..bottom && pills.none { it.contains(Offset(centre.x, y)) }
+        val steps = ((range.endInclusive - range.start) / unit).toInt()
+        val candidates = listOf(centre.y) + (0..steps).map { range.start + it * unit }.sortedBy { kotlin.math.abs(it - centre.y) }
+        val y = candidates.firstOrNull(::clear)
+        return y?.let { Offset(centre.x, it) } to "glyph centre $centre, clear band $top..$bottom px, pills $pills"
     }
     repeat(5) {
-        val (top, bottom, y) = placement()
-        if (y in (top + margin)..(bottom - margin)) return
+        val (point, _) = clearPoint()
+        if (point != null) return point
+        val top = onNodeWithTag("thread-top-bar").fetchSemanticsNode().boundsInRoot.bottom
+        val bottom = onNodeWithTag("thread-composer").fetchSemanticsNode().boundsInRoot.top
+        val y =
+            onNode(glyphNode, useUnmergedTree = true)
+                .fetchSemanticsNode()
+                .boundsInRoot.center.y
         val region = onNodeWithTag("thread-message-region")
         val origin = region.fetchSemanticsNode().boundsInRoot.topLeft
         val middle = (top + bottom) / 2f
@@ -95,8 +120,6 @@ internal fun ComposeTestRule.scrollSideMessageGlyphIntoView(
         region.performTouchInput { swipe(start, start + Offset(0f, distance), 500) }
         waitForIdle()
     }
-    val (top, bottom, y) = placement()
-    if (y !in (top + margin)..(bottom - margin)) {
-        throw AssertionError("$glyphTag at y=$y stays under thread chrome; clear band is $top..$bottom px")
-    }
+    val (point, layout) = clearPoint()
+    return point ?: throw AssertionError("$glyphTag has no tap point clear of thread chrome; $layout")
 }
