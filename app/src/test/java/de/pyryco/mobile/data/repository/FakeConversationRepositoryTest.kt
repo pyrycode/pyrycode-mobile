@@ -1054,7 +1054,7 @@ class FakeConversationRepositoryTest {
 
             while (true) {
                 val page = repo.requestHistory(SEED_ID, cursor = cursor, limit = 7)
-                visited += page.entries.map { it.id }
+                visited += page.entries.map { requireNotNull(it.id) }
                 pages++
                 if (page.atStart) {
                     assertEquals("a terminal page carries no cursor", "", page.cursor)

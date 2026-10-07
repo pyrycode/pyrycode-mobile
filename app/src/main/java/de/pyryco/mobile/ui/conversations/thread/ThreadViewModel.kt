@@ -674,7 +674,12 @@ class ThreadViewModel(
     private val historySeed: Job =
         viewModelScope.launch {
             val saved = repository.readHistoryPosition(conversationId) ?: return@launch
-            historyDemand.update { it.restored(cursor = saved.cursor, atStart = saved.atStart) }
+            historyDemand.update {
+                it.restored(
+                    cursor = saved.cursor,
+                    atStart = saved.atStart && saved.coverage?.unsignedIncomplete != true,
+                )
+            }
             historyCoverage.value = saved.coverage ?: HistoryCoverage()
         }
 
@@ -1886,8 +1891,20 @@ class ThreadViewModel(
             try {
                 val page = fetchHistoryPage(claimed) ?: return@launch
                 historyCoverage.update { it.received(page, newest = claimed.cursor.isEmpty()) }
-                repository.writeHistoryPosition(conversationId, HistoryPosition(page.cursor, page.atStart, historyCoverage.value))
-                historyDemand.update { it.settled(pageCursor = page.cursor, atStart = page.atStart) }
+                val coverage = historyCoverage.value
+                val settled =
+                    if (page.atStart && coverage.unsignedIncomplete) {
+                        // Retain a usable walk and visible unknown state until signed consumers migrate.
+                        RelayLog.d { "event=history_completeness_unavailable reason=unsigned_identity" }
+                        claimed.failed(retryable = false)
+                    } else {
+                        claimed.settled(pageCursor = page.cursor, atStart = page.atStart)
+                    }
+                repository.writeHistoryPosition(
+                    conversationId,
+                    HistoryPosition(settled.cursor, settled.stoppedBy == HistoryWalkStop.AtStart, coverage),
+                )
+                historyDemand.update { settled }
             } finally {
                 drainNewestPages()
             }
@@ -1900,6 +1917,9 @@ class ThreadViewModel(
         target: Long? = null,
     ) {
         historyCoverage.update { it.received(page, newest, target) }
+        if (historyCoverage.value.unsignedIncomplete) {
+            historyDemand.update { if (it.stoppedBy == HistoryWalkStop.AtStart) it.copy(stoppedBy = null) else it }
+        }
         val walk = historyDemand.value
         repository.writeHistoryPosition(
             conversationId,

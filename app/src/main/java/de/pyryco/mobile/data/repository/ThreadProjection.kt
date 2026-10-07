@@ -197,7 +197,7 @@ internal class ThreadProjection(
         // A history end settles text but does not consume a live echo-reservation boundary.
         val liveEndedTurns: Map<String, Set<String>> = emptyMap(),
         // Connection-local placement evidence, never a live event id or durable coverage marker.
-        val historyOrder: Map<String, Map<Any, Long>> = emptyMap(),
+        val historyOrder: Map<String, Map<Any, ULong>> = emptyMap(),
     )
 
     /**
@@ -465,12 +465,12 @@ internal class ThreadProjection(
      * A boundary that fills the pending divider in place gives it a new identity; its daemon position, if a
      * history page supplied one, moves with it, so later pages still place rows around the divider.
      */
-    private fun Map<String, Map<Any, Long>>.withFilledDividerOrder(
+    private fun Map<String, Map<Any, ULong>>.withFilledDividerOrder(
         conversationId: String,
         fold: CompactionFold,
         before: List<ThreadItem>,
         after: List<ThreadItem>,
-    ): Map<String, Map<Any, Long>> {
+    ): Map<String, Map<Any, ULong>> {
         val order = this[conversationId] ?: return this
         val pendingAt = fold.pending ?: return this
         if (before.size != after.size) return this
@@ -922,7 +922,7 @@ internal class ThreadProjection(
                 }
             }
         state.update { current ->
-            val order = reduced.order + current.historyOrder[conversationId].orEmpty()
+            val order = reduced.unsignedOrder + current.historyOrder[conversationId].orEmpty()
             val existing = current.threads[conversationId].orEmpty()
             val echoes = current.echoQueues[conversationId] ?: OwnEchoQueue()
             val pending = echoes.parked + echoes.awaitingPush + echoes.placementPending
@@ -942,7 +942,7 @@ internal class ThreadProjection(
                     }.associateBy { it.message.id }
             val receiving = existing.filterNot { it is ThreadItem.MessageItem && it.message.id in provisional }
             val merged =
-                receiving.mergeOrderedHistoryRows(reduced.rows, order).map { row ->
+                receiving.mergeUnsignedHistoryRows(reduced.rows, order).map { row ->
                     if (row is ThreadItem.MessageItem) provisional[row.message.id] ?: row else row
                 }
             val settledEchoes =
@@ -1065,7 +1065,8 @@ internal class ThreadProjection(
                                 row
                             }
                         }.withParkedEchoesLast(echoes?.parked.orEmpty(), echoes?.backlog.orEmpty().map { it.messageId })
-                ThreadSnapshot(rows, suppressed, current.historyOrder[conversationId].orEmpty())
+                val unsignedOrder = current.historyOrder[conversationId].orEmpty()
+                ThreadSnapshot(rows, suppressed, unsignedOrder.signedHistoryOrder(), unsignedOrder)
             }.distinctUntilChanged()
 
     /** Reserved store positions cannot change [backlog] display order; only [parkedIds] user rows read last. */

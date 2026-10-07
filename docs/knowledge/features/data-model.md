@@ -153,6 +153,36 @@ for retention through append, replay and history/cache joins.
 
 `attachments` (#983) names the files a message references: one entry per file the operator sent with it (in send order), per id a replayed `send_message` named (in wire order, names unset), or the one file an `attachment_offered` row carries. It is **trailing defaulted** (`emptyList()`), the same cascade-avoidance lever as `toolCall`. `MessageAttachment.attachmentId` is the id to fetch the bytes by; `displayName`/`mimeType` are hints, `null` when not known (a bare history reference) and `""` when known but cleaned to nothing (an offer whose name sanitized empty) — the same three-state convention as everywhere else in this model that "unknown" and "known-empty" are distinct. **Both hints are untrusted display text even after cleaning through `attachmentDisplayName`** (a local file's name is authored by whichever app supplied the document, exactly as an offer's name is authored by claude): render as inert text only, never a path, a cache key, a log field, or a handler choice. `MessageAttachment.toString()` omits both hints so an accidental log call cannot leak one. See [Attachment upload](attachment-upload.md) and [Remote conversation repository — send, create, promote, rename](remote-conversation-repository-send-create-promote-rename.md) (§ Naming a message's attachments) for the send path, [Remote conversation repository — reads and thread store history paging](remote-conversation-repository-reads-and-thread-store-history-paging.md) for history reduction, and [Remote conversation repository § Status projections](remote-conversation-repository.md#status-projections-one-file-per-status-event) for the offer row `AttachmentOfferProjection` appends.
 
+### `HistoryEntry` — received durable identity (#1909)
+
+`HistoryEntry` lives with the repository contract in `data/repository/ConversationRepository.kt`.
+Its authoritative `unsignedId: ULong` is positive, from 1 through 18446744073709551615, and scoped
+to the source host and requested conversation. Reloading history retains that identity; connection
+ids, replay event ids, timestamps and renderer keys never establish durable claims.
+
+The primary constructor takes `(type, payload, timestamp, unsignedId)`. Existing positional and
+named `HistoryEntry(id: Long, type, payload, timestamp)` construction remains usable for positive
+signed ids through `Long.MAX_VALUE`; nonpositive construction rejects. The read-only `id: Long?`
+returns the exact signed value in that range and null above it, never a wrapped or clamped value.
+Keep the unsigned parameter last: Kotlin erases `ULong` and `Long` to the same JVM parameter type,
+so matching constructor parameter order would collide.
+
+The wire DTO reuses `ReadMarkIdSerializer` for strict unsigned JSON integer decoding, then the
+domain constructor rejects zero. Negative, fractional/exponent, quoted, null, missing and overflowing
+ids fail the entire awaiting history request before thread mutation, without killing the inbound
+collector. Newest-first page order, raw payloads, unknown types and timestamp validation are retained.
+The wire contract remains in pyrycode's `docs/protocol-mobile.md`.
+
+Reduction retains `unsignedOrder` and `unsignedClaims` for rows and assistant deltas produced by
+received entries; live-only content supplies no claim. `ThreadSnapshot.unsignedHistoryOrder` is
+published with rows and suppression from one projection generation. Signed `historyOrder` and
+reducer `order` omit unrepresentable positions; reducer `claims` omit an entire claim set if any
+member is above the signed range. These views cannot certify omitted content as covered, durably
+restored or seen. Coverage/cache migration belongs to #1910, gap anchors to #1911 and foreground
+acknowledgement to #1912. Until those consumers migrate, sticky `HistoryCoverage.unsignedIncomplete`
+keeps both coverage and saved walk completeness conservative, including empty-cache reopen. See
+[history folding and compatibility](remote-conversation-repository-reads-and-thread-store-history-paging.md#history-pages-fold-into-the-same-thread-645).
+
 ## Why `kotlinx.datetime.Instant`
 
 CLAUDE.md's "Don't" section names Compose Multiplatform as a walk-back trigger. `java.time.Instant` is JVM-only; `kotlinx.datetime.Instant` works on every Kotlin target. The data layer must stay portable, so every timestamp in this package uses the kotlinx type. See `../decisions/0001-kotlinx-datetime-for-data-layer.md`.
@@ -165,7 +195,9 @@ CLAUDE.md's "Don't" section names Compose Multiplatform as a walk-back trigger. 
   shape for a subset of these fields; both keep their own private record type with its own
   mapping functions rather than annotating the domain model, which would pull persistence and
   wire concerns into a type every layer depends on.
-- **No `require(...)` / `init { }` validation.** Schema-shape only; constructors cannot fail. The repository layer will enforce invariants (e.g. `currentSessionId ∈ sessionHistory ∪ {new}`) when it lands.
+- **No `require(...)` / `init { }` validation on `Conversation`, `Session` or `Message`.** These
+  model constructors describe schema shape. The repository-layer `HistoryEntry` above does enforce
+  positive durable identity at construction.
 - **No `SessionBoundary` marker here.** CLAUDE.md describes a synthetic marker the repository interleaves into the message stream to drive thread-screen delimiters; that type lives with the repository contract as `ThreadItem.SessionBoundary` in `data/repository/ConversationRepository.kt` (landed in #3). See `conversation-repository.md`.
 - **No persistence on the model itself.** The conversation cache (#795) is the first persistence
   consumer; it stores a cache-local copy rather than the domain type, so `Conversation` stays
