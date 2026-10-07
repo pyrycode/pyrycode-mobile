@@ -23,7 +23,9 @@ internal fun ComposeContentTestRule.assertReplySuggestionLongPress(
     repository: ConversationRepository,
     conversationId: String,
     timeoutMillis: Long,
-) {
+    progress: ReplySuggestionProgress = ReplySuggestionProgress(),
+) = progress.run {
+    progress.at(ReplySuggestionStage.SessionReady)
     val suggestion =
         runBlocking {
             withTimeout(timeoutMillis) {
@@ -33,15 +35,19 @@ internal fun ComposeContentTestRule.assertReplySuggestionLongPress(
                         .filterNotNull()
                         .first { !it.held }
                         .sessionId
+                progress.at(ReplySuggestionStage.DaemonOffer)
                 repository.observeReplySuggestion(conversationId, session).filterNotNull().first { !it.suggestedReply.isNullOrBlank() }
             }
         }
     val text = requireNotNull(suggestion.suggestedReply)
+    progress.at(ReplySuggestionStage.Placeholder)
     waitUntil(timeoutMillis) {
         onAllNodesWithTag(REPLY_SUGGESTION_PLACEHOLDER_TAG, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
     }
     onNodeWithTag(REPLY_SUGGESTION_PLACEHOLDER_TAG, useUnmergedTree = true).assertTextEquals(text)
+    progress.at(ReplySuggestionStage.LongPressRelease)
     onNodeWithContentDescription("Send message").performTouchInput { longClick() }
+    progress.at(ReplySuggestionStage.UserEcho)
     val messages =
         runBlocking {
             withTimeout(timeoutMillis) {
@@ -49,6 +55,7 @@ internal fun ComposeContentTestRule.assertReplySuggestionLongPress(
             }
         }
     assertEquals(1, messages.suggestedReplyCount(text))
+    progress.at(ReplySuggestionStage.RevisionedClear)
     val clear =
         runBlocking {
             withTimeout(timeoutMillis) {
@@ -59,6 +66,7 @@ internal fun ComposeContentTestRule.assertReplySuggestionLongPress(
             }
         }
     assertTrue(clear.revision > suggestion.revision)
+    progress.at(ReplySuggestionStage.PlaceholderRemoved)
     waitUntil(timeoutMillis) { onAllNodesWithTag(REPLY_SUGGESTION_PLACEHOLDER_TAG, useUnmergedTree = true).fetchSemanticsNodes().isEmpty() }
 }
 

@@ -428,18 +428,42 @@ class InteractiveStreamE2ETest {
     /** #1866: a daemon-authored next reply requires an explicit confirmed hold/release. */
     @Test
     fun interactiveTurn_replySuggestion_longPressSends() {
-        awaitChannelList()
-        awaitConnected()
         val serverId = twoHostArg(ARG_SERVER_ID)
-        val before = hostConversationIds(serverId)
-        createChat()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        val peer = runningToolPeer()
+        var conversation: String? = null
+        val progress =
+            ReplySuggestionProgress {
+                "${peer.linkState()}; ${replySuggestionWireEvidence(conversation?.let(peer::recorded).orEmpty())}"
+            }
+        try {
+            progress.run {
+                progress.at(ReplySuggestionStage.ChannelList)
+                awaitChannelList()
+                progress.at(ReplySuggestionStage.Connected)
+                awaitConnected()
+                val before = hostConversationIds(serverId)
+                progress.at(ReplySuggestionStage.CreateConversation)
+                createChat()
+                progress.at(ReplySuggestionStage.OpenThread)
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+                }
+                progress.at(ReplySuggestionStage.ResolveConversation)
+                val created = newHostConversationId(serverId, before)
+                conversation = created
+                progress.at(ReplySuggestionStage.Repository)
+                val repository = hostRepository(serverId)
+                progress.at(ReplySuggestionStage.OpenPeer)
+                runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+                progress.at(ReplySuggestionStage.SendInitialMessage)
+                sendFromPhone(PING_PROMPT)
+                progress.at(ReplySuggestionStage.InitialReply)
+                composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+                composeTestRule.assertReplySuggestionLongPress(repository, created, REPLY_TIMEOUT_MS, progress)
+            }
+        } finally {
+            peer.close()
         }
-        val conversation = newHostConversationId(serverId, before)
-        sendFromPhone(PING_PROMPT)
-        composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
-        composeTestRule.assertReplySuggestionLongPress(hostRepository(serverId), conversation, REPLY_TIMEOUT_MS)
     }
 
     @Test
