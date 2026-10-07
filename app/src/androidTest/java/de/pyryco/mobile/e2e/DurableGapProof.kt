@@ -13,6 +13,7 @@ import androidx.test.ext.junit.rules.ActivityScenarioRule
 import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.historyKeys
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -39,12 +40,15 @@ internal class DurableGapProof(
         DurableHistoryProbe.begin(conversationId)
         runBlocking {
             withTimeout(30_000) {
-                while (cache
-                        .readHistoryPosition(serverId, conversationId)
-                        ?.coverage
-                        ?.spans
-                        .isNullOrEmpty()
-                ) {
+                while (true) {
+                    val rows = cache.readThread(serverId, conversationId).filterIsInstance<ThreadItem.MessageItem>()
+                    val coverage = cache.readHistoryPosition(serverId, conversationId)?.coverage
+                    // A stale opening page can cover state frames without covering the settled ping.
+                    if (rows.isNotEmpty() && coverage != null && coverage.spans.isNotEmpty() &&
+                        rows.all { row -> row.historyKeys().all { coverage.rowEntries[it].orEmpty().isNotEmpty() } }
+                    ) {
+                        break
+                    }
                     delay(50)
                 }
             }

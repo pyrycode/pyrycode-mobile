@@ -3517,8 +3517,25 @@ class InteractiveStreamE2ETest {
             // 5. AC-2: while the phone is offline the peer's turn runs to its end; the phone draws none of it.
             gap.missPages(chatName) {
                 runBlocking {
+                    // Host post acceptance precedes delivery; fence the first batch before the reply.
+                    withTimeout(WAIT_TURN_TIMEOUT_MS) {
+                        while (peer.recorded(conversationId).none {
+                                it.type == "assistant_delta" && peer.field(it, "text") == gap.lastOlderPost
+                            }
+                        ) {
+                            delay(50)
+                        }
+                    }
                     peer.sendMessage(conversationId, OFFLINE_PROMPT, THREAD_TIMEOUT_MS)
-                    peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS, occurrence = 2)
+                    // Posts also end turns. Only the second interactive completion settles this reply.
+                    withTimeout(WAIT_TURN_TIMEOUT_MS) {
+                        while (peer.recorded(conversationId).count {
+                                it.type == "turn_end" && peer.field(it, "producer") != "channel_post"
+                            } < 2
+                        ) {
+                            delay(50)
+                        }
+                    }
                 }
             }
             composeTestRule.waitForIdle()
@@ -3535,6 +3552,7 @@ class InteractiveStreamE2ETest {
             assertDrawnOnce(inThreadList(PING_PROMPT), pingReplyMatcher())
         } finally {
             peer.close()
+            DurableHistoryProbe.end()
         }
     }
 
