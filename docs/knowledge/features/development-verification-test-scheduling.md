@@ -8,6 +8,19 @@ and its links.
 
 ## Test scheduling and harnesses
 
+Shared screen tests cannot assume an empty application singleton on the device:
+Robolectric recreates the application/Koin graph per method, while instrumentation
+keeps it across methods. `SharePickerTest` retains the production
+`ComposerDraftStore` so intake-to-thread assertions prove both use the same store.
+Its outer `ExternalResource` in a `RuleChain` calls `clearConversation` for every
+fixture host/conversation pair before each method and in teardown after the inner
+Compose rule closes, including when assertions fail. Clear text and pending
+attachment ownership together; clearing text alone leaves files for the next
+method, and cleanup before composition closes lets thread observers rewrite it.
+Seed preservation checks with explicit nonempty drafts instead of relying on the
+previous method's state. See [share navigation setup](navigation.md#testing) and
+[counted class evidence](development-verification-emulator-evidence.md#share-picker-fixture-isolation-1885).
+
 The routine UI gate excludes `de.pyryco.mobile.e2e` through the instrumentation
 `notPackage` argument. A test in that package can compile without running in this
 gate. Keep ordinary application-wiring assertions in their owning package:

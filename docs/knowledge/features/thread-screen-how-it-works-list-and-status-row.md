@@ -16,12 +16,20 @@ Newest-end padding is `composerHeight - ComposerTopGap - restAdjustment`, clampe
 at zero. Composer height is measured inside its IME padding; `ComposerTopGap` is
 16dp. For a delivered message without tools or attachments, and with no prompt
 rows, `restAdjustment` is 4dp: its existing 16dp `BubbleFrame` trailing space then
-leaves the visible surface 12dp above the status band. Other row kinds get no such
-adjustment or additional list gap. Non-rendering Info banners keep their stable
-rows and keys but are skipped when finding the newest rendered row; otherwise
-appending an invisible banner would change the ordinary-message resting gap.
-Internal row spacing belongs to [#1630](https://github.com/pyrycode/pyrycode-mobile/issues/1630).
-Recheck the combined ordinary-row gap when the second ticket integrates.
+leaves the visible surface 12dp above the status band
+([#1630](https://github.com/pyrycode/pyrycode-mobile/issues/1630)). A bubble carrying
+attachments rests 16dp and a queued row rests 8dp, each backing out its own extra
+bottom space to land at the same 12dp. A tool-call row needs no adjustment at all,
+nested in a background Agent block or not: its own trailing space
+(`MessageRowVerticalSpacing`) already equals the 12dp target. A fix landed after release
+4592 shipped a 12dp adjustment for a tool call carrying a non-null `agentBlockId` on top
+of that already-sufficient trailing space, double-subtracting from the reserved padding
+and pulling a running background Agent's single, not-yet-folded row under the status
+band — the newest row then read as cut off beneath the composer's blurred fade.
+`BackgroundAgentRestGapTest` screen-proofs the gap for a closed and an open Agent run,
+with and without the status band's running-tasks pill. Non-rendering Info banners keep
+their stable rows and keys but are skipped when finding the newest rendered row;
+otherwise appending an invisible banner would change the ordinary-message resting gap.
 
 Reservations follow actual attachment and draft height changes. When a prompt or
 row-kind change changes the rest adjustment, an idle history reader's keyed anchor
