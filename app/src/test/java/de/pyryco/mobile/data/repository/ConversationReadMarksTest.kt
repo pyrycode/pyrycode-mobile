@@ -532,6 +532,34 @@ class ConversationReadMarksTest {
             assertEquals(72uL, held.readEvidence.checkpoint(presented, 0u))
         }
 
+    @Test
+    fun slashCommandMetadataWithoutHistoryIdentityDoesNotBlockReceivedReply() =
+        runTest {
+            val pump = Pump()
+            val repository = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            pump.push(snapshot(row("a", "0", "0")))
+            pump.push(
+                Envelope(
+                    601,
+                    "slash_command_list",
+                    TS,
+                    MobileJson.parseToJsonElement("""{"conversation_id":"a","commands":[],"dropped_commands":0}"""),
+                ),
+            )
+            pump.push(
+                Envelope(
+                    602,
+                    "message",
+                    TS,
+                    MobileJson.parseToJsonElement("""{"conversation_id":"a","message_id":"m","role":"user","text":"seen"}"""),
+                    historyEntryId = 81u,
+                ),
+            )
+            runCurrent()
+            val held = repository.observeThreadSnapshot("a").first()
+            assertEquals(81uL, held.readEvidence.checkpoint(held.rows.single(), 0u))
+        }
+
     private fun TestScope.repo(pump: Pump) = RemoteConversationRepository(pump, backgroundScope)
 
     private fun row(

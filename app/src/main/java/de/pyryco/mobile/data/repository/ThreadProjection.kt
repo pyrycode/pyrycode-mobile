@@ -1317,7 +1317,7 @@ private val READ_METADATA_TYPES =
         "session_settings_updated",
         "model_announced",
         "model_list",
-        "slash_commands",
+        "slash_command_list",
         "reply_suggestion",
         "queue_state",
         "mcp_status",
