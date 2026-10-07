@@ -278,13 +278,13 @@ class SharePickerTest {
         val capture = CompletableDeferred<PickedAttachment>()
         val intake = ShareIntakeViewModel(drafts, { _, _ -> capture.await() }, Dispatchers.Main.immediate)
         lateinit var nav: NavHostController
+        compose.runOnIdle { intake.accept(SharePayload("shared text", listOf(Uri.parse("content://foreign/document")))) }
         compose.setContent {
             nav = rememberNavController()
             PyrycodeMobileTheme {
                 PyryNavHost(Routes.CHANNEL_LIST, navController = nav, shareIntake = intake)
             }
         }
-        compose.runOnIdle { intake.accept(SharePayload("shared text", listOf(Uri.parse("content://foreign/document")))) }
         compose.onNodeWithText("Share to…").assertIsDisplayed()
         compose.waitUntil(5_000) { compose.onAllNodes(hasText("Personal")).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("share-capturing").assertIsDisplayed()
@@ -329,11 +329,11 @@ class SharePickerTest {
         val capture = CompletableDeferred<PickedAttachment>()
         val intake = ShareIntakeViewModel(drafts, { _, _ -> capture.await() }, Dispatchers.Main.immediate)
         lateinit var nav: NavHostController
+        compose.runOnIdle { intake.accept(SharePayload("direct", listOf(Uri.parse("content://foreign/file")), id)) }
         compose.setContent {
             nav = rememberNavController()
             PyrycodeMobileTheme { PyryNavHost(Routes.CHANNEL_LIST, navController = nav, shareIntake = intake) }
         }
-        compose.runOnIdle { intake.accept(SharePayload("direct", listOf(Uri.parse("content://foreign/file")), id)) }
         compose.onAllNodes(hasText("Share to…")).assertCountEquals(0)
         compose.runOnIdle {
             assertEquals("existing", drafts.draftFor(target.serverId, target.conversationId))
@@ -347,9 +347,6 @@ class SharePickerTest {
             assertEquals(false, intake.select(target))
         }
         compose.onAllNodes(hasText("Share to…")).assertCountEquals(0)
-        compose.waitUntil(5_000) {
-            compose.onAllNodes(hasSetTextAction()).fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
-        }
         compose.onNode(hasSetTextAction()).assertTextContains("existing\ndirect")
     }
 
@@ -360,8 +357,8 @@ class SharePickerTest {
         drafts.setDraft(target.serverId, target.conversationId, existingDraft)
         val captured = file("keep.pdf", "application/pdf")
         val intake = ShareIntakeViewModel(drafts, { _, _ -> captured }, Dispatchers.Main.immediate)
-        compose.setContent { PyrycodeMobileTheme { PyryNavHost(Routes.CHANNEL_LIST, shareIntake = intake) } }
         compose.runOnIdle { intake.accept(SharePayload("keep this", listOf(Uri.parse("content://foreign/keep")), "unknown")) }
+        compose.setContent { PyrycodeMobileTheme { PyryNavHost(Routes.CHANNEL_LIST, shareIntake = intake) } }
         compose.waitUntil(5_000) { intake.state.value?.shortcutId == null }
         compose.onNodeWithText("Share to…").assertIsDisplayed()
         compose.onNodeWithTag("share-ready").assertIsDisplayed()
