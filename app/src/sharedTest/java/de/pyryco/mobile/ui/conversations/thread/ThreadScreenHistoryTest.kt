@@ -868,20 +868,30 @@ class ThreadScreenHistoryTest {
     ) {
         composeRule.setContent {
             PyrycodeMobileTheme {
-                ThreadScreen(
-                    state = state(),
-                    onBack = {},
-                    onSendMessage = {},
-                    connectionState = ConnectionState.Connected,
-                    onRetry = {},
-                    onDemandOlderHistory = onDemand,
-                    onDemandHistoryGap = onGap,
-                    onDemandUnsignedHistoryGap =
-                        onUnsignedGap ?: { anchor ->
-                            if (anchor <= Long.MAX_VALUE.toULong()) onGap(anchor.toLong())
-                        },
-                    onRetryOlderHistory = onRetryOlder,
-                )
+                if (onUnsignedGap == null) {
+                    ThreadScreen(
+                        state = state(),
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                        onDemandOlderHistory = onDemand,
+                        onDemandHistoryGap = onGap,
+                        onRetryOlderHistory = onRetryOlder,
+                    )
+                } else {
+                    ThreadScreen(
+                        state = state(),
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                        onDemandOlderHistory = onDemand,
+                        onDemandHistoryGap = onGap,
+                        onDemandUnsignedHistoryGap = onUnsignedGap,
+                        onRetryOlderHistory = onRetryOlder,
+                    )
+                }
             }
         }
     }
