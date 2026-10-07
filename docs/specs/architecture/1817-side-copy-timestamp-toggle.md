@@ -61,9 +61,10 @@ None. #1818 owns reply and the midpoint split between its overlapping targets.
 
 Pending for documentation stage:
 - `app/src/androidTest/assets/design-1220/README.md`, #1621 row: timestamp alone hides until tap; copy always beside the bubble, citing #1817.
-- `docs/knowledge/features/message-bubble.md`: side copy placement, streaming availability and timestamp-only toggle.
+- `docs/knowledge/features/message-bubble.md`: side copy placement, streaming availability, timestamp-only toggle and the contrasting backing that preserves the specified glyph tint.
 - Record fresh dispatcher full live-suite evidence for the named ping method, including executed, failed and skipped counts.
 
 ## Revisions
 
 - 2026-10-07: Shared tests exposed metadata assumptions in attachment, selection and palette fixtures. Those assertions now identify timestamp text directly, while side-copy geometry and tint are checked separately. Added `SideMessageCopy.kt` as a shared device assertion for live ping and held streaming, and a non-merging `message-row` tag to scope copy to its own source. Forced-size geometry is measured inside the configured viewport, avoiding the outer Robolectric window's different density. The behavior and state contracts are unchanged.
+- 2026-10-07, verifier finding 1: Explicit accessibility resolution for the Figma conflict: retain the exact `inversePrimary` tint and original 11×12dp `ic_copy`, and add a centered 13×14dp `inverseSurface` backing with `MaterialTheme.shapes.extraSmall` corners. This deliberate addition to the reference gives the glyph a contrasting adjacent surface and the button a contrasting boundary, without changing the 13dp column, 12dp gap, bubble measurement or 48dp target. Static light pairs `#9DCBFC` with `#2D3135`; static dark pairs `#32628D` with `#E0E2E8`. `MessageBubblePaletteTest.assertPalette` checks both source-colour contrast ratios at ≥3:1 and verifies actual glyph/backing pixels for user, assistant and streaming messages in static and wallpaper light/dark, including theme changes and streaming completion. Its host uses the real `threadColors.background` rather than the unmodified global background. The existing geometry and interaction tests remain the guards against a backing changing layout or gestures. No tint substitution or global theme change is authorized by this resolution.

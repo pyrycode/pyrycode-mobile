@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -397,12 +398,23 @@ private fun MessageActions(text: String) {
                     },
             contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                painter = painterResource(R.drawable.ic_copy),
-                contentDescription = null,
-                modifier = Modifier.size(width = 11.dp, height = 12.dp).testTag("message-copy-glyph"),
-                tint = MaterialTheme.colorScheme.inversePrimary,
-            )
+            // #1817 accessibility resolution: the Figma tint needs a contrasting adjacent surface.
+            // Keep the backing within the column, leaving the glyph and extended target unchanged.
+            Box(
+                modifier =
+                    Modifier
+                        .size(width = MessageActionsWidth, height = 14.dp)
+                        .background(MaterialTheme.colorScheme.inverseSurface, MaterialTheme.shapes.extraSmall)
+                        .testTag("message-copy-backing"),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_copy),
+                    contentDescription = null,
+                    modifier = Modifier.size(width = 11.dp, height = 12.dp).testTag("message-copy-glyph"),
+                    tint = MaterialTheme.colorScheme.inversePrimary,
+                )
+            }
         }
     }
 }
