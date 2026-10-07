@@ -215,6 +215,25 @@ class ThreadViewModelReplySuggestionTest {
             assertTrue(repo.sends.isEmpty())
         }
 
+    @Test fun freshDaemonLifetimeMayRestartRevisions_butSameRevisionReconciliationStaysInvalidated() =
+        runTest {
+            val repo = Repository()
+            val connection = FakeConnectionStateSource()
+            val vm = vm(repo, connection)
+            repo.set(50u, "old lifetime")
+            val old = requireNotNull(vm.suggestedReply.value)
+            connection.emit(ConnectionState.Offline)
+            repo.readings.value = emptyMap()
+            connection.emit(ConnectionState.Connected)
+            repo.set(50u, "old lifetime")
+            assertNull(vm.suggestedReply.value)
+            // #1865 allows decreasing revisions only after replacing the connection repository.
+            repo.readings.value = emptyMap()
+            repo.set(1u, "fresh lifetime")
+            assertEquals("fresh lifetime", vm.suggestedReply.value?.text)
+            assertFalse(vm.sendSuggestedReply(old))
+        }
+
     @Test fun hostAndDestinationTokensCannotAuthorizeAnotherViewModel() =
         runTest {
             val a = Repository()

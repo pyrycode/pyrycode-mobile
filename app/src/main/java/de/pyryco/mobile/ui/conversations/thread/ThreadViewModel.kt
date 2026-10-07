@@ -970,6 +970,7 @@ class ThreadViewModel(
     private var suggestionSession: String? = null
     private var suggestionBusy = false
     private val invalidatedSuggestions = mutableMapOf<String, ULong>()
+    private val observedSuggestionRevisions = mutableMapOf<String, ULong>()
 
     init {
         viewModelScope.launch {
@@ -1011,6 +1012,15 @@ class ThreadViewModel(
                 }.flatMapLatest { session ->
                     session?.let { repository.observeReplySuggestion(conversationId, it) } ?: flowOf(null)
                 }.collect { reading ->
+                    reading?.let {
+                        // #1865 never emits a decreasing revision within one connection. A lower one
+                        // therefore identifies a fresh daemon lifetime, whose watermarks start again.
+                        val previous = observedSuggestionRevisions[it.sessionId]
+                        if (previous != null && it.revision < previous) {
+                            invalidatedSuggestions.remove(it.sessionId)
+                        }
+                        observedSuggestionRevisions[it.sessionId] = it.revision
+                    }
                     suggestionReading = reading
                     refreshSuggestedReply()
                 }
@@ -2028,8 +2038,8 @@ class ThreadViewModel(
 
     /**
      * Send [text] naming [attachments], this chat's pending entries as they stood when send was tapped
-     * (#932). [text] is the trimmed text and never blank: [sendMessage] refuses that before reading the
-     * attachments (#1328); [onComposerCommand] passes its command.
+     * (#932). [text] is nonblank: ordinary drafts are trimmed, while [sendSuggestedReply] preserves the
+     * confirmed offer verbatim. [onComposerCommand] passes its command.
      *
      * Each entry without an acknowledged id is read and uploaded in order, and its id recorded in
      * [draftStore] as soon as the daemon acknowledges it, so a later failure never costs a retry that
