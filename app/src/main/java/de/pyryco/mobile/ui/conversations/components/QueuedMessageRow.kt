@@ -1,19 +1,17 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.Send
-import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -21,10 +19,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -37,11 +41,15 @@ private val QueuedRowVerticalPadding = 8.dp
 // BubbleVerticalPadding, MessageRoleInset — `internal`, same package) rather than copied here. A queued
 // row and a sent one are one bubble family and there is nothing left to drift.
 //
-// Figma `696:4677` caps queued bubbles at 200dp. Weight reserves the action targets first and lets
-// the bubble shrink within the user-side lane when Send now is present.
+// Reserve the waiting glyph and narrow action column before measuring the wrapping bubble.
 private val QueuedBubbleMaxWidth = 200.dp
 private val WaitingGlyphSize = 16.dp
-private val WaitingGlyphGap = 8.dp
+private val WaitingGlyphGap = 12.dp
+private val QueuedActionsWidth = 13.dp
+private val QueuedActionsGap = 12.dp
+private val QueuedActionTarget = 48.dp
+private val QueuedActionCentreGap = 25.dp
+private val QueuedActionGlyph = 12.dp
 
 // De-emphasis that reads the row as not-yet-sent, distinct from the full-opacity sent bubbles it now
 // sits among.
@@ -65,8 +73,8 @@ private const val QUEUED_ALPHA = 0.6f
  * cannot leak it into a render, a key or a log. The drop is a one-way trigger: this render mutates
  * nothing and the row leaves only on the next `queue_state` snapshot (no optimistic removal).
  *
- * Figma queued-row frame `696:4677` supplies the dimmed bubble, waiting glyph and drop. #1642
- * extends it with Send now before drop; no separate action frame exists.
+ * Figma `848:9517` (Mobile) supplies the full-opacity Send now/Cancel column left of the
+ * dimmed bubble, preceded by the retained waiting glyph.
  */
 @Composable
 fun QueuedMessageRow(
@@ -80,7 +88,8 @@ fun QueuedMessageRow(
     // distinguishes it is a state, not a different identity. It is also the Compose-test handle, the
     // marker idiom ThreadScreen's ModalOptionButton already uses.
     val queuedState = stringResource(R.string.thread_queued_state_desc)
-    Row(
+    val actionHeight = if (onSendNow != null) QueuedActionTarget * 2 else QueuedActionTarget
+    Layout(
         modifier =
             modifier
                 .fillMaxWidth()
@@ -89,55 +98,116 @@ fun QueuedMessageRow(
                     end = MessageContentGutter,
                     top = QueuedRowVerticalPadding,
                     bottom = QueuedRowVerticalPadding,
-                ).alpha(QUEUED_ALPHA)
-                .semantics(mergeDescendants = true) { stateDescription = queuedState },
-        horizontalArrangement = Arrangement.End,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = Icons.Outlined.Schedule,
-            // Decorative: the row text + the state description carry the meaning for a11y.
-            contentDescription = null,
-            modifier =
-                Modifier
-                    .padding(end = WaitingGlyphGap)
-                    .size(WaitingGlyphSize),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Surface(
-            modifier = Modifier.weight(1f, fill = false).widthIn(max = QueuedBubbleMaxWidth),
-            shape = BubbleShape,
-            color = MaterialTheme.colorScheme.userBubbleContainer,
-        ) {
-            Text(
-                text = text,
-                modifier =
-                    Modifier.padding(
-                        horizontal = BubbleHorizontalPadding,
-                        vertical = BubbleVerticalPadding,
-                    ),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-            )
-        }
-        if (onSendNow != null) {
-            IconButton(onClick = onSendNow, modifier = Modifier.size(48.dp)) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Outlined.Send,
-                    contentDescription = stringResource(R.string.cd_thread_queued_send_now),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        // Trailing un-queue affordance. The clickable IconButton forms its own semantics node, so it
-        // stays individually addressable despite the row's mergeDescendants group. `Close` (×) is the
-        // Material "remove from a list" convention — a queued message is un-queued, not deleted.
-        IconButton(onClick = onDrop, modifier = Modifier.size(48.dp)) {
+                ).semantics(mergeDescendants = true) { stateDescription = queuedState },
+        content = {
             Icon(
-                imageVector = Icons.Outlined.Close,
-                contentDescription = stringResource(R.string.cd_thread_queued_drop),
+                imageVector = Icons.Outlined.Schedule,
+                contentDescription = null,
+                modifier = Modifier.size(WaitingGlyphSize).alpha(QUEUED_ALPHA).testTag("queued-waiting-glyph"),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Surface(
+                modifier = Modifier.heightIn(min = actionHeight).alpha(QUEUED_ALPHA).testTag("queued-bubble"),
+                shape = BubbleShape,
+                color = MaterialTheme.colorScheme.userBubbleContainer,
+            ) {
+                Box(contentAlignment = Alignment.CenterStart) {
+                    Text(
+                        text = text,
+                        modifier = Modifier.padding(horizontal = BubbleHorizontalPadding, vertical = BubbleVerticalPadding),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                }
+            }
+            QueuedActions(onDrop, onSendNow)
+        },
+    ) { measurables, constraints ->
+        val waitingWidth = WaitingGlyphSize.roundToPx()
+        val waitingGap = WaitingGlyphGap.roundToPx()
+        val actionsWidth = QueuedActionsWidth.roundToPx()
+        val bubbleGap = QueuedActionsGap.roundToPx()
+        val reserved = waitingWidth + waitingGap + actionsWidth + bubbleGap
+        val waiting = measurables[0].measure(Constraints.fixed(waitingWidth, WaitingGlyphSize.roundToPx()))
+        val bubble =
+            measurables[1].measure(
+                constraints.copy(
+                    minWidth = 0,
+                    minHeight = 0,
+                    maxWidth = minOf(QueuedBubbleMaxWidth.roundToPx(), (constraints.maxWidth - reserved).coerceAtLeast(0)),
+                ),
+            )
+        val actions = measurables[2].measure(Constraints.fixed(actionsWidth, bubble.height))
+        layout(constraints.maxWidth, bubble.height) {
+            val bubbleX = constraints.maxWidth - bubble.width
+            val actionsX = bubbleX - bubbleGap - actionsWidth
+            waiting.placeRelative(actionsX - waitingGap - waitingWidth, (bubble.height - waiting.height) / 2)
+            bubble.placeRelative(bubbleX, 0)
+            // As in MessageActions, the extended target wins its small overlap with the bubble.
+            actions.placeRelative(actionsX, 0)
+        }
+    }
+}
+
+/** Adjoining targets meet at the bubble midpoint while the visible glyphs stay 25dp apart. */
+@Composable
+private fun QueuedActions(
+    onDrop: () -> Unit,
+    onSendNow: (() -> Unit)?,
+) {
+    val paired = onSendNow != null
+    val callbacks = if (onSendNow != null) listOf(onSendNow, onDrop) else listOf(onDrop)
+    val sendLabel = stringResource(R.string.cd_thread_queued_send_now)
+    val dropLabel = stringResource(R.string.cd_thread_queued_drop)
+    Box(modifier = Modifier.testTag("queued-actions"), contentAlignment = Alignment.Center) {
+        Layout(
+            modifier = Modifier.requiredSize(QueuedActionTarget, QueuedActionTarget * callbacks.size),
+            content = {
+                callbacks.forEachIndexed { index, callback ->
+                    val send = paired && index == 0
+                    Layout(
+                        modifier =
+                            Modifier
+                                .semantics { contentDescription = if (send) sendLabel else dropLabel }
+                                .clickable(role = Role.Button, onClick = callback),
+                        content = {
+                            Icon(
+                                painter = painterResource(if (send) R.drawable.ic_composer_send else R.drawable.ic_queued_cancel),
+                                contentDescription = null,
+                                modifier =
+                                    Modifier
+                                        .size(
+                                            QueuedActionGlyph,
+                                        ).testTag(if (send) "queued-send-glyph" else "queued-cancel-glyph"),
+                                tint = MaterialTheme.colorScheme.inversePrimary,
+                            )
+                        },
+                    ) { children, targetConstraints ->
+                        val glyph = children.single().measure(targetConstraints.copy(minWidth = 0, minHeight = 0))
+                        val halfGap = (QueuedActionCentreGap / 2).toPx()
+                        val centreY =
+                            when {
+                                !paired -> targetConstraints.maxHeight / 2f
+                                send -> targetConstraints.maxHeight - halfGap
+                                else -> halfGap
+                            }
+                        val x = (targetConstraints.maxWidth - glyph.width) / 2f
+                        val y = centreY - glyph.height / 2f
+                        layout(targetConstraints.maxWidth, targetConstraints.maxHeight) {
+                            glyph.placeRelativeWithLayer(x.toInt(), y.toInt()) {
+                                translationX = x - x.toInt()
+                                translationY = y - y.toInt()
+                            }
+                        }
+                    }
+                }
+            },
+        ) { measurables, constraints ->
+            val targetHeight = constraints.maxHeight / callbacks.size
+            val targets = measurables.map { it.measure(Constraints.fixed(constraints.maxWidth, targetHeight)) }
+            layout(constraints.maxWidth, constraints.maxHeight) {
+                targets.forEachIndexed { index, target -> target.placeRelative(0, index * targetHeight) }
+            }
         }
     }
 }
