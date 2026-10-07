@@ -1423,55 +1423,21 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * Delete-conversation twin of the ping happy path (#554, Layer 3): drive the real Delete flow end to
-     * end against a real daemon, exercising the already-shipped #532 `delete` wire (pyrycode#822). Give a
-     * scratch discussion a runtime-unique, list-visible identity via **Rename**, confirm it is **present**
-     * on the channel list, then delete it from the thread — thread overflow → "Channel info" → the sheet's
-     * "Delete" → the "Delete conversation?" dialog → confirm — and assert **both** durable post-conditions:
-     * the unique name is **gone from the list** and the **thread has popped back**.
+     * Real relay/daemon deletion round-trip (#554). Create a discussion, rename it to a runtime-unique
+     * identity, observe it displayed on the list, then re-enter and delete through Channel info and its
+     * confirmation dialog. Independently assert that the thread returns to the list and the name is absent.
      *
-     * **Reachability.** The Delete affordance lives in the `mutationsSupported`-gated Actions block of the
-     * Channel Info sheet, reached from the **ungated** "Channel info" overflow item.
-     * [de.pyryco.mobile.data.repository.RemoteConversationRepository.mutationsSupported] is `true` in relay
-     * mode (PR #572), so the flow is reachable on a plain **discussion** — the same real overflow the
-     * operator uses. Delete is conversation-scoped (keyed by `conversation_id`, replies
-     * `conversation_deleted`), so it carries none of the session-scoped blockers that re-park the sibling
-     * e2es; it is in the clean-buildable camp with #541 / #566.
+     * A discussion needs no promotion or dedicated workspace: Rename controls its identity, while Channel
+     * info exposes Delete whenever remote mutations are supported. The focused dialog field avoids the
+     * thread composer's editable field, and the confirmation button's Cancel sibling identifies the real
+     * dialog action. Scroll the sheet's Delete into view before tapping.
      *
-     * **Durable identity via Rename, not promote.** A scratch discussion is auto-named server-side, so its
-     * name is not test-controlled and asserting one's absence is fragile. Renaming to
-     * [CONVERSATION_NAME_PREFIX]` + System.currentTimeMillis()` gives a runtime-unique, list-visible token
-     * that cannot pre-exist on screen nor collide with conversations accumulated by prior LIVE gate runs.
-     * Rename (not "Save as channel") touches only the name — no dedicated-workspace folder that would
-     * accumulate on the operator's real `~/pyry-workspace` across runs (the #566 accumulation problem). The
-     * renamed discussion stays a discussion and is #1 in `observeConversations(Discussions)`
-     * (`sortedByDescending { lastUsedAt }`, just created) → always inside the visible recents, so its row is
-     * guaranteed present.
+     * Each one-shot write waits for this host's pump-gated repository (#1888); entry-only Connected can
+     * also mean idle. Observe the renamed thread header before Back destroys the ViewModel's scope. These
+     * waits preserve failure reporting and submit each action once, without retries or scenario sleeps.
      *
-     * **The absence is a genuine inversion.** [CONVERSATION_NAME_PREFIX]` + …` is unique, so its presence is
-     * observed on the list (step 5 assert + step 6 re-enter tap) *before* the delete, and its
-     * `assertCountEquals(0)` after (step 9) is a real present→absent flip on the same surface — never a
-     * match-everything, never a delta count or timing (the #481 / #566 token discipline, applied to an
-     * **absence** assertion).
-     *
-     * **The "Delete" collision (the one gotcha).** The sheet's Delete `ActionCell` and the confirm dialog's
-     * button are **both** the literal `"Delete"`, and `ThreadEvent.Delete` leaves the sheet composed behind
-     * the dialog (it sets `pendingDeleteConfirm` without clearing `pendingChannelInfo`), so both "Delete"
-     * nodes are on screen at confirm time. The confirm tap is disambiguated by a compound matcher only the
-     * dialog's button satisfies — its sibling is [DELETE_DIALOG_CANCEL], which the sheet (whose dismiss is a
-     * Close *icon*) has no equivalent of. Never [onFirst] across the two identical "Delete" nodes (z-order
-     * is not guaranteed).
-     *
-     * **Always-on, not `@Ignore`d.** The post-conditions are **durable** structural facts (a conversation is
-     * in the list or not; the thread popped or not) — no transient like #482's spinner — so the scenario
-     * belongs in the always-on gate, matching #481's tool-name row and #541's delimiter.
-     *
-     * **Zero real-claude turns (deliberate divergence from #541 / #566).** Create-discussion, rename, and
-     * delete are daemon round-trips, not claude turns, and the durable identity is the typed name (no live
-     * session content needed to identify it), so this scenario sends **no** ping and spends **no** claude
-     * turn. It still rides the real rung-3 stack (real relay + daemon) and belongs in the LIVE gate: it
-     * catches a broken `delete` / `rename` wire against the production relay. The LIVE gate is a **quartet**
-     * (4 methods) at **still 3 turns** (delete adds a method, not a turn).
+     * Create, rename and delete are daemon round-trips, so the scenario uses zero Claude turns. Its durable
+     * structural postconditions keep it in the always-on LIVE suite.
      */
     @Test
     fun interactiveTurn_deleteConversation_removesFromListAndClosesThread() {
