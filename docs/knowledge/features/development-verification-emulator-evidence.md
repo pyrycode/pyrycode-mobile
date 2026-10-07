@@ -134,6 +134,12 @@ through the harness's `connected` device with `ANDROID_SERIAL` pinned, so
 parallel tickets never share an emulator. Each scenario still gets its own
 daemon, relay, pairing and app install. The step names each scenario's result
 on stderr and stops the emulator even when the dispatcher's time cap kills it.
+That stop only asks ADB to quit the emulator, so the wait and kill that reap the
+owned process sit in a `finally`: an ADB timeout or error once skipped them and
+released device custody with the emulator still running (#1833). When the request
+fails the emulator is killed at once, and a second cancellation is held off until
+it is reaped. A cleanup test that substitutes a successful stop cannot catch this;
+inject the ADB failure into the real teardown.
 Before the ui gate has ever created the AVD it falls back to the managed
 device per scenario. Measured 2026-09-23: 61 seconds against 152 for seven
 separate runs (the scenario count has grown since). `scripted <scenario>`

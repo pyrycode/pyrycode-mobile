@@ -579,8 +579,11 @@ cache. See [Caching conversation repository](caching-conversation-repository.md)
 partial fills, conservative legacy migration, cache exclusions, failed row writes and interruption
 between row/state writes. `HistoryCacheReworkTest` exercises complete production paths for durable
 order, saved cursor/stop trim reset and deletion during suspended writers; see
-[wrapper testing](caching-conversation-repository.md#testing). Independent live/force-stop evidence
-belongs to [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833), not these JVM probes.
+[wrapper testing](caching-conversation-repository.md#testing).
+
+Real app process death is proved on a device: [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833)'s
+external force-stop proof stops the app without clearing data, and a post made meanwhile appears
+once after relaunch without scrolling. See the [evidence](../../e2e-interactive-stream.md#verification-status).
 
 The two `HistoryCacheReworkTest` trim-reset cases reconcile 100,001 rows, write the production
 100,000-row retained file and restore through fresh cache/repository instances. Keep that full-cap

@@ -1,0 +1,22 @@
+{
+  "ticket": 1833,
+  "result": "PASS",
+  "app_revision": "5b2e885c8b8309686096c894e871de96becf8d9e",
+  "daemon_revision": "6019328b378cad587f69b7bc94de37febbdf8556",
+  "device": "pixel2Api33Atd",
+  "scenario": "ping",
+  "command": "ANDROID_GATE_WAIT_SECONDS=2700 PYRYCODE_SRC=<sibling checkout> PYRYCODE_RELAY_SRC=<sibling checkout> python3 scripts/android-test-gate.py scripted ping",
+  "artifact": "build/dispatcher-tests/scripted-wjshaq6s/dispatcher.xml",
+  "executed": 2,
+  "passed": 2,
+  "failed": 0,
+  "errors": 0,
+  "skipped": 0,
+  "passed_methods": [
+    "interactiveTurn_seededChannel_durableGapCatchUp",
+    "interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread"
+  ],
+  "xml_sha256": "d231e352b799cfa0fbcf920ba123232cca3be6480473b6282e950951b8a4d174",
+  "scope": "Owned isolated daemon and managed emulator; durable home/cache retained; replay emptied; zero real-Claude turns. Rendered prompt/reply uniqueness/order and inert-reveal checks active. No credentials, cursors or entry payloads.",
+  "sanitized_xml": "scripts/e2e-fixtures/1833-gap-reconnect-pass.xml"
+}

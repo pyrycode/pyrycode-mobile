@@ -1,0 +1,34 @@
+{
+  "ticket": 1833,
+  "blocker": 1842,
+  "result": "FAIL",
+  "app_revision": "b40c8638",
+  "daemon_revision": "bf82c68e10c895c5fecc5552652dbe63e6677d39",
+  "device": "pixel2Api33Atd",
+  "scenario": "ping",
+  "runs": [
+    {
+      "artifact": "build/dispatcher-tests/scripted-gxfsux85",
+      "executed": 2,
+      "passed": 1,
+      "failed": 1,
+      "skipped": 0,
+      "failure": "newest page or gap not observed after reconnect"
+    },
+    {
+      "artifact": "build/dispatcher-tests/scripted-y3c0pkb1",
+      "executed": 2,
+      "passed": 1,
+      "failed": 1,
+      "skipped": 0,
+      "failure": "newest completion: asks=0, pages=0, rows=1, gap=false",
+      "diagnostic_helper_change": "split the newest completion wait from row/gap visibility, without changing requests"
+    }
+  ],
+  "failed_method": "DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_durableGapCatchUp",
+  "passed_method": "DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread",
+  "observed_event": "history_newest_ask reason=reconnect",
+  "diagnosis": "No request reached the repository after availability; exact stranded guard remains to confirm in the production fix.",
+  "replay_excluded": "Owned daemon restarted with durable home retained before phone reconnect.",
+  "scope": "Owned isolated daemon and managed emulator; zero real-Claude turns; no credentials, cursors or entry payloads."
+}
