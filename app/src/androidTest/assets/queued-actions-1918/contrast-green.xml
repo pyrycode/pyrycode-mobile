@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.components.QueuedMessageRowGeometryTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-07T19:59:53.459Z" hostname="Juhanas-MacBook-Air.local" time="13.1">
+  <properties/>
+  <testcase name="palettes_keepActionsOpaqueAndOnlyBubbleAndWaitingDimmed" classname="de.pyryco.mobile.ui.conversations.components.QueuedMessageRowGeometryTest" time="10.808"/>
+  <testcase name="wideViewport_stillCapsWrappingBubbleAt200Dp" classname="de.pyryco.mobile.ui.conversations.components.QueuedMessageRowGeometryTest" time="0.11"/>
+  <testcase name="pairedTargets_at412Dp_routeEdgesAndMidpointToOnlySelectedRow" classname="de.pyryco.mobile.ui.conversations.components.QueuedMessageRowGeometryTest" time="0.506"/>
+  <testcase name="cancelOnly_at412Dp_keepsIndependentTarget" classname="de.pyryco.mobile.ui.conversations.components.QueuedMessageRowGeometryTest" time="0.238"/>
+  <testcase name="pairedTargets_at320Dp_routeEdgesAndMidpointToOnlySelectedRow" classname="de.pyryco.mobile.ui.conversations.components.QueuedMessageRowGeometryTest" time="0.193"/>
+  <testcase name="referenceRows_matchBubblePaddingSpacingAndLeftActionColumn" classname="de.pyryco.mobile.ui.conversations.components.QueuedMessageRowGeometryTest" time="0.078"/>
+  <testcase name="cancelOnly_at320Dp_keepsIndependentTarget" classname="de.pyryco.mobile.ui.conversations.components.QueuedMessageRowGeometryTest" time="0.231"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
