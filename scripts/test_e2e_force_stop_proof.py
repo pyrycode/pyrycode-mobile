@@ -17,37 +17,71 @@ spec.loader.exec_module(proof)
 
 
 class ForceStopProofTest(unittest.TestCase):
-    def test_cancel_during_boot_reaps_emulator_before_custody_release(self):
+    ADB_FAILURES = (subprocess.TimeoutExpired("adb", 30), OSError("adb missing"), KeyboardInterrupt())
+
+    def owned_emulator(self):
         child = subprocess.Popen(["sleep", "60"])
-        events = []
+        self.addCleanup(lambda: child.poll() is None and (child.kill(), child.wait()))
+        return child
 
-        def stop(_env, serial, process):
-            self.assertEqual("emulator-5600", serial)
-            self.assertIs(child, process)
-            process.terminate()
-            process.wait(timeout=5)
-            events.append("emulator stopped")
-
-        @contextlib.contextmanager
-        def custody():
-            try:
-                yield
-            finally:
-                events.append("custody released")
-
+    @staticmethod
+    @contextlib.contextmanager
+    def custody(events, child):
         try:
-            with self.assertRaises(KeyboardInterrupt), custody(), \
-                 patch.object(proof.gate, "free_emulator_port", return_value=5600), \
-                 patch.object(proof.gate.subprocess, "Popen", return_value=child), \
-                 patch.object(proof.gate.subprocess, "run", side_effect=KeyboardInterrupt), \
-                 patch.object(proof.gate, "stop_emulator", side_effect=stop):
-                proof.gate.boot_emulator({"ANDROID_HOME": "/fixture-sdk"}, "/fixture-avd", "fixture")
-            self.assertEqual(["emulator stopped", "custody released"], events)
-            self.assertIsNotNone(child.poll())
+            yield
         finally:
-            if child.poll() is None:
-                child.terminate()
-                child.wait(timeout=5)
+            events.append(("custody released", child.returncode))
+
+    def test_adb_failure_on_teardown_still_reaps_the_emulator(self):
+        for failure in self.ADB_FAILURES:
+            with self.subTest(failure=type(failure).__name__):
+                child = self.owned_emulator()
+                started = time.monotonic()
+                with patch.object(proof.gate.subprocess, "run", side_effect=failure):
+                    if isinstance(failure, KeyboardInterrupt):
+                        with self.assertRaises(KeyboardInterrupt):
+                            proof.gate.stop_emulator({"ANDROID_HOME": "/fixture-sdk"}, "emulator-5600", child)
+                    else:
+                        proof.gate.stop_emulator({"ANDROID_HOME": "/fixture-sdk"}, "emulator-5600", child)
+                self.assertIsNotNone(child.returncode, "the owned emulator must be reaped")
+                self.assertLess(time.monotonic() - started, 10, "an undelivered stop must not wait out the timeout")
+
+    def test_cancel_during_boot_with_failing_adb_reaps_emulator_before_custody_release(self):
+        for failure in self.ADB_FAILURES[:2]:
+            with self.subTest(failure=type(failure).__name__):
+                child = self.owned_emulator()
+                events = []
+                # The boot poll is cancelled, then the real teardown's ADB request fails too.
+                with self.assertRaises(KeyboardInterrupt), self.custody(events, child), \
+                     patch.object(proof.gate, "free_emulator_port", return_value=5600), \
+                     patch.object(proof.gate.subprocess, "Popen", return_value=child), \
+                     patch.object(proof.gate.subprocess, "run", side_effect=[KeyboardInterrupt(), failure]):
+                    proof.gate.boot_emulator({"ANDROID_HOME": "/fixture-sdk"}, "/fixture-avd", "fixture")
+                self.assertEqual(1, len(events))
+                self.assertIsNotNone(events[0][1], "custody released while the emulator still ran")
+
+    def test_proof_failure_with_adb_timeout_reaps_emulator_before_custody_release(self):
+        booted = SimpleNamespace(returncode=0, stdout="1\n")
+        for failure in self.ADB_FAILURES[:2]:
+            with self.subTest(failure=type(failure).__name__), tempfile.TemporaryDirectory() as temp:
+                child = self.owned_emulator()
+                events = []
+                previous = proof.signal.getsignal(proof.signal.SIGTERM)
+                self.addCleanup(proof.signal.signal, proof.signal.SIGTERM, previous)
+                env = {"ANDROID_HOME": "/fixture-sdk", "PYRY_BIN": "pyry", "RELAY_BIN": "relay"}
+                # The owned device fails mid-proof, and the teardown's ADB request then fails as well.
+                with patch.dict(os.environ, env), patch.object(proof, "ROOT", Path(temp)), \
+                     patch.object(proof.gate, "build_apks", return_value=0), \
+                     patch.object(proof.gate, "device_hold", side_effect=lambda *_: self.custody(events, child)), \
+                     patch.object(proof.gate, "managed_avd", return_value=("/fixture-avd", "fixture")), \
+                     patch.object(proof.gate, "free_emulator_port", return_value=5600), \
+                     patch.object(proof.gate.subprocess, "Popen", return_value=child), \
+                     patch.object(proof.gate.subprocess, "run", side_effect=[booted, failure]), \
+                     patch.object(proof.gate, "install_once", return_value=None), \
+                     self.assertRaisesRegex(RuntimeError, "installation failed"):
+                    proof.main()
+                self.assertEqual(1, len(events))
+                self.assertIsNotNone(events[0][1], "custody released while the emulator still ran")
 
     def test_cancel_harness_runs_exit_cleanup_and_reaps_descendant_before_returning(self):
         with tempfile.TemporaryDirectory() as temp:

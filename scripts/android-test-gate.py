@@ -372,15 +372,28 @@ def boot_emulator(env, avd_home, avd, timeout=180):
 
 
 def stop_emulator(env, serial, process):
+    """Stop an owned emulator and reap it, even when ADB times out, fails or is interrupted.
+
+    ADB only asks the emulator to quit. The wait and kill run in a finally, so no ADB failure can skip them, and
+    when the request was never delivered the emulator is killed at once instead of being waited for. A second
+    cancellation is held off until the emulator is reaped, so every caller's custody release comes after it.
+    """
     if process is None or process.poll() is not None:
         return
     adb = str(Path(env["ANDROID_HOME"]) / "platform-tools" / "adb")
-    subprocess.run([adb, "-s", serial, "emu", "kill"], capture_output=True, timeout=30)
-    try:
-        process.wait(timeout=20)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=20)
+    asked = False
+    with uninterrupted_cleanup():
+        try:
+            subprocess.run([adb, "-s", serial, "emu", "kill"], capture_output=True, timeout=30)
+            asked = True
+        except (OSError, subprocess.TimeoutExpired) as error:
+            print(f"Android gate: adb emu kill failed: {error}; killing the emulator", file=sys.stderr)
+        finally:
+            try:
+                process.wait(timeout=20 if asked else 0)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
 
 
 # ---- the host-wide device hold (#1071) -------------------------------------------------------------------
