@@ -437,40 +437,41 @@ class DeterministicInteractiveStreamE2ETest {
                     .get<RelayRepositoryCoordinator>()
                     .currentRepository,
             )
-        runBlocking {
-            val conversationId =
-                withTimeout(THREAD_TIMEOUT_MS) {
-                    repository
-                        .observeConversations(ConversationFilter.All)
-                        .first { rows -> rows.any { it.name == SEED_CHANNEL_NAME } }
-                        .single { it.name == SEED_CHANNEL_NAME }
-                        .id
+        val (conversationId, checkpoint) =
+            runBlocking {
+                val conversationId =
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        repository
+                            .observeConversations(ConversationFilter.All)
+                            .first { rows -> rows.any { it.name == SEED_CHANNEL_NAME } }
+                            .single { it.name == SEED_CHANNEL_NAME }
+                            .id
+                    }
+                val checkpoint =
+                    withTimeoutOrNull(REPLY_TIMEOUT_MS) {
+                        repository
+                            .threadSnapshots(conversationId)
+                            .mapNotNull { snapshot ->
+                                val reply =
+                                    snapshot.rows
+                                        .filterIsInstance<ThreadItem.MessageItem>()
+                                        .lastOrNull { it.message.role == Role.Assistant && it.message.content == PING }
+                                reply?.let { snapshot.readEvidence.checkpoint(it, 0uL) }
+                            }.first()
+                    }
+                if (checkpoint == null) {
+                    val evidence = repository.threadSnapshots(conversationId).first().readEvidence
+                    error(
+                        "No reply checkpoint: versions=${evidence.versions.size}, barriers=${evidence.facts.values.count {
+                            it == null
+                        }}, unidentified=${evidence.unidentified.size}",
+                    )
                 }
-            val checkpoint =
-                withTimeoutOrNull(REPLY_TIMEOUT_MS) {
-                    repository
-                        .threadSnapshots(conversationId)
-                        .mapNotNull { snapshot ->
-                            val reply =
-                                snapshot.rows
-                                    .filterIsInstance<ThreadItem.MessageItem>()
-                                    .lastOrNull { it.message.role == Role.Assistant && it.message.content == PING }
-                            reply?.let { snapshot.readEvidence.checkpoint(it, 0uL) }
-                        }.first()
-                }
-            if (checkpoint == null) {
-                val evidence = repository.threadSnapshots(conversationId).first().readEvidence
-                error(
-                    "No reply checkpoint: versions=${evidence.versions.size}, barriers=${evidence.facts.values.count {
-                        it == null
-                    }}, unidentified=${evidence.unidentified.size}",
-                )
+                conversationId to checkpoint
             }
-            withTimeout(REPLY_TIMEOUT_MS) {
-                repository.observeReadMarks(conversationId).first { facts ->
-                    (facts?.readUpTo ?: 0uL) >= checkpoint
-                }
-            }
+        // Keep driving Compose frames while layout/reveal qualification catches up with receipt.
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            runBlocking { (repository.observeReadMarks(conversationId).first()?.readUpTo ?: 0uL) >= checkpoint }
         }
     }
 

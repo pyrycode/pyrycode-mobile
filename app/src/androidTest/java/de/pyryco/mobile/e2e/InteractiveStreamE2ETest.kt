@@ -167,6 +167,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.dropWhile
 import kotlinx.coroutines.flow.filterNotNull
@@ -4493,7 +4494,13 @@ class InteractiveStreamE2ETest {
 
             // 3. Read the actual reply at the newest end, and observe the confirmed mark from the peer.
             openChatRow(nameA)
-            peerStep(peer, "observe the phone's confirmed read of A") { peer.awaitReadMark(chatA, replyCheckpoint, THREAD_TIMEOUT_MS) }
+            peerStep(peer, "observe the phone's confirmed read of A") {
+                coroutineScope {
+                    val confirmed = async(Dispatchers.Default) { peer.awaitReadMark(chatA, replyCheckpoint, THREAD_TIMEOUT_MS) }
+                    composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { confirmed.isCompleted }
+                    confirmed.await()
+                }
+            }
             val afterPhoneRead = peerStep(peer, "confirm A's stored read fact") { peer.readMarks(chatA, THREAD_TIMEOUT_MS) }
             assertTrue("phone read advances the shared durable mark", (afterPhoneRead.readUpTo ?: 0uL) >= replyCheckpoint)
             leaveThread()
