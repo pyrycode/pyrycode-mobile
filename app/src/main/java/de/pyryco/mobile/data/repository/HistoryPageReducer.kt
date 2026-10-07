@@ -864,25 +864,17 @@ internal fun List<ThreadItem>.mergeUnsignedCachedRows(
 ): List<ThreadItem> = mergeRows(cached, order, cacheRestore = true)
 
 /** Resolve persisted hashes once when restoring a base, rather than on every live delta emission. */
-internal fun List<ThreadItem>.receivedHistoryOrder(positions: Map<String, Long>): Map<Any, Long> =
-    if (positions.isEmpty()) {
-        emptyMap()
-    } else {
-        buildMap {
-            this@receivedHistoryOrder.deltaRows().forEach { row ->
-                val identity = row.mergeIdentity()
-                positions[historyIdentity(identity)]?.let { put(identity, it) }
-            }
-        }
-    }
+internal fun List<ThreadItem>.receivedHistoryOrder(positions: Map<String, Long>): Map<Any, Long> = resolveHistoryOrder(positions)
 
 /** Resolve persisted hashes once when restoring a base, rather than on every live delta emission. */
-internal fun List<ThreadItem>.receivedUnsignedHistoryOrder(positions: Map<String, ULong>): Map<Any, ULong> =
+internal fun List<ThreadItem>.receivedUnsignedHistoryOrder(positions: Map<String, ULong>): Map<Any, ULong> = resolveHistoryOrder(positions)
+
+private fun <T> List<ThreadItem>.resolveHistoryOrder(positions: Map<String, T>): Map<Any, T> =
     if (positions.isEmpty()) {
         emptyMap()
     } else {
         buildMap {
-            this@receivedUnsignedHistoryOrder.deltaRows().forEach { row ->
+            this@resolveHistoryOrder.deltaRows().forEach { row ->
                 val identity = row.mergeIdentity()
                 positions[historyIdentity(identity)]?.let { put(identity, it) }
             }
