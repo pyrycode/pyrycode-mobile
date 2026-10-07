@@ -437,8 +437,13 @@ then two harmless `printf` calls and a foreground `curl` hold on the fixture's `
 peer must record that paragraph as `assistant_delta` frames whose `parent_tool_use_id` is the
 Agent's tool id. While the agent stays held, a second phone message gets a main reply. The
 repository must hold exactly one segment with the token and that parent. With collapse on, the
-Agent's run, picked by its `tool-run:<Agent id>` tag, starts closed with the paragraph absent;
-opening it shows the paragraph once under `background-agent-child:<Agent id>`, and closing hides it
+Agent's child run starts closed with the paragraph absent. From the same loaded repository
+snapshot used for attribution, the test selects the first tool whose `toolCall.parentToolUseId`
+is that Agent id and matches the clickable control beneath `tool-run:<child tool id>` (#1904).
+Ownership identifies the family; the first loaded owned child tool identifies its run, while
+the root Agent stays separate. This avoids both the stale root-id selector and an arbitrary
+identically labelled control.
+Opening it shows the paragraph once under `background-agent-child:<Agent id>`, and closing hides it
 again. The main reply stays visible in the thread list. A phone Bash `curl` to `/release-reply` lets the agent
 finish, and teardown releases the hold and restores the collapse preference whatever happens.
 
@@ -2618,7 +2623,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | --- | --- | --- | --- |
 | `reply-suggestion` (#1866) | actual suggestion placeholder, long-press/release, one verbatim user message and newer daemon clear | `reply-suggestion.jsonl` (successful result followed by native `prompt_suggestion`) | one |
 | `stop-background-task` (#1830) | opening the retained running row and tapping Stop removes its row/count | existing fakeclaude canned-roster rider and `stop_task` handler | no replay fragments or second-message release |
-| `background-agent` (#1783, #1827) | background lifecycle moves a loaded tool family, marker navigation opens its run, and finish settles it before later text; attributed child prose stays in the run through closed, open and closed states while unmatched and main prose stay top-level | `background-agent-open.jsonl` + `background-agent-finish.jsonl` | **two** (release on second send) |
+| `background-agent` (#1783, #1827) | background lifecycle moves a loaded tool family, marker navigation preserves collapse state, explicit expansion reveals its child run, and finish settles it before later text; attributed child prose stays in the run through closed, open and closed states while unmatched and main prose stay top-level | `background-agent-open.jsonl` + `background-agent-finish.jsonl` | **two** (release on second send) |
 | `selection-copy` (#1674) | finished assistant prose copies only the long-pressed word through Android’s system menu | `selection-copy.jsonl` | one |
 | `direct-share` (#1729) | published shortcut stages text in its thread without a picker or send; explicit Send receives ping | `ping.jsonl` | one |
 | `ping` (default) | a single-line reply renders | `ping.jsonl` | one |
@@ -2672,7 +2677,9 @@ are recorded under [Verification status](#verification-status).
 and belongs to `python3 scripts/android-test-gate.py scripted-all`. The first raw fragment leaves a
 running background Agent family after its launching turn; a second phone send releases terminal
 lifecycle evidence followed by `after1783`. The test navigates from Running and Finished markers,
-opens the collapsed containing run and asserts the settled header is above the later reply.
+asserts the owned `tool-run:child1783` remains closed after both taps and that the settled header
+is above the later reply. It explicitly opens that run before checking the final attributed
+paragraph exactly once; navigation alone does not establish prose visibility (#1904).
 Run it with `python3 scripts/android-test-gate.py scripted background-agent`.
 
 `refusal` selects
@@ -3159,6 +3166,27 @@ also contains that passing method: **1 executed/passed, 0 failed, 0 skipped**. T
 proofs with zero real Claude turns. The verifier's UI gate reports **187 executed/passed,
 0 failed, 1 skipped**, including all three `BackgroundTaskPanelCaptureTest` methods;
 synthetic captures establish appearance separately from live completion.
+
+**Background Agent owned-run selector (#1904, 2026-10-07).** The fresh dispatcher full live
+JUnit XML, `2026-10-07T11-37-20-880Z_real-claude-gate_#1904.log`, contains the passing,
+unskipped `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_replyStaysUnderAgent`:
+**64 executed, 63 passed, 1 failed, 0 skipped**, on `136053256394` merged with main
+`4a523704100d`. The unrelated archive-restore method failed once and passed on the same-tree
+rerun (**1 executed/passed, 0 failed, 0 skipped**). This is full-suite evidence, not a focused
+background-Agent live run. See [dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1904#issuecomment-6037681106).
+
+The [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1908#issuecomment-6037084859)
+records fresh `scripted-all-brmj917t/dispatcher.xml`: **20 executed/passed, 0 failed, 0 skipped**,
+including `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`;
+its method report records **1 executed/passed, 0 failed, 0 skipped**. The PR records the repaired
+focused development `background-agent` run with the same **1 executed/passed, 0 failed, 0 skipped**.
+Both inherited #1854 reports failed at the first root-id run-control scroll: branch
+`3e059504f933` had **64 executed, 4 failed, 0 skipped** and main `970d7c422f3e`
+had **1 executed, 1 failed, 0 skipped**. The [PR diagnosis](https://github.com/pyrycode/pyrycode-mobile/pull/1908)
+names both reports. Child-run identity repairs that selector while preserving attribution,
+closed/open/closed visibility, main continuation, fixture release and preference restoration.
+The scripted twin now explicitly expands after navigation; #1867 owns the separate navigation-close
+investigation. Documentation executed only the docs guard.
 
 **Background Agent at the newest end (#1783, 2026-10-06).** The dispatcher ran
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on `feature/1783`
@@ -4490,6 +4518,17 @@ The remaining checks here are specific to a real relay or real Claude execution:
   [Verification status](#verification-status). Controlled tests cover multi-agent/history permutations,
   late roster joins, retained finished knowledge and expansion restoration. No placement-coverage
   follow-up remains; cache-only fallback is an explicit limit. The pre-ship command remains
+  `python3 scripts/android-test-gate.py live`.
+
+- **Background Agent owned-run proof (#1904):**
+  `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_replyStaysUnderAgent` remains curated
+  and passed in the fresh dispatcher full live XML. Its rung-4 twin,
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`,
+  passed in the full scripted gate and the focused development `background-agent` run.
+  [Verification status](#verification-status) records counts and the unrelated archive-restore rerun.
+  Select by loaded child ownership and actual run identity; explicitly expand after navigation,
+  which preserves collapse state. No selector-coverage follow-up remains. #1867 retains the
+  separate navigation-close investigation. The pre-ship command remains
   `python3 scripts/android-test-gate.py live`.
 
 - **Background Agent prose in its block (#1827):**
