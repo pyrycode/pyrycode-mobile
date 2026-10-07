@@ -44,6 +44,17 @@ their newer content, between held older/newer rows. Display-only assistant fragm
 inside a split turn; tool folding keeps the first newer tool row visible. Non-rendering spans can
 place a standalone marker at the newest content edge, including a thread with no message rows.
 
+A joined background-agent block is the exception to that split
+([#1827](thread-screen-subagent-tool-rows.md#attributed-assistant-prose-in-agent-blocks-1827)).
+`foldHistoryToolRuns` keeps the block whole across a gap, because splitting it let child prose escape
+its closed Agent run. `foldedAgentHistoryMarkers` instead moves a marker attached to a hidden block row
+onto the closed run header. The marker keeps its original anchor and cursor, so a pull there asks for
+the same gap. An expanded run header claims no marker: opening the run returns each marker to its
+original delivered row. A header that also kept its first tool's marker drew one durable gap twice
+when open, and unique row keys alone did not catch it. `BackgroundAgentProseTest` and
+`BackgroundAgentProseScreenTest` attach gaps to the first Agent tool and to child prose, and assert
+each anchor appears exactly once through closed, open, closed and collapse-off states.
+
 A real reader pull toward a visible marker calls the defaulted `onDemandHistoryGap(anchor)`
 callback, wired by `MainActivity` to `ThreadViewModel.onDemandHistoryGap`. Measured marker bounds
 select the first marker crossed toward older content when several are visible, before considering

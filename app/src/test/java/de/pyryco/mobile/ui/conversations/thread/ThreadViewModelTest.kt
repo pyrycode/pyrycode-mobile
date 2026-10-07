@@ -15,6 +15,7 @@ import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
+import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.reconnected
 import de.pyryco.mobile.data.model.reduce
 import de.pyryco.mobile.data.network.MobileJson
@@ -2071,6 +2072,98 @@ class ThreadViewModelTest {
         }
 
     // ---- #337: accumulate assistant_delta into a growing streaming MessageItem -------------------
+
+    @Test
+    fun assistantDeltas_lateParentReplayMovesSyntheticIntoJoinedBlockBeforeRepositoryHandoff() =
+        runTest {
+            val repo = MessagesControllableRepo()
+            val ts = Instant.parse("2026-10-06T10:00:00Z")
+            val agent =
+                ThreadItem.MessageItem(
+                    Message(
+                        "a",
+                        "s",
+                        Role.Tool,
+                        "",
+                        ts,
+                        false,
+                        toolCall = ToolCall("Agent", "", "", inputFields = mapOf("run_in_background" to "true")),
+                    ),
+                )
+            val base = listOf(agent, ThreadItem.BackgroundTaskLifecycle("task-a", ts, "a", "Agent", "local_agent"))
+            repo.messages.value = base
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            val delta = LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "child", 0, "reply")
+            events.emit(delta)
+            advanceUntilIdle()
+            val before =
+                vm.state.value.items
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .single { it.message.id == "child" }
+                    .message
+            events.emit(delta.copy(parentToolUseId = "a"))
+            advanceUntilIdle()
+            val after =
+                vm.state.value.items
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .single { it.message.id == "child" }
+                    .message
+            assertEquals(before.copy(parentToolUseId = "a"), after)
+            assertEquals(base, repo.messages.value) // No repository emission repairs the synthetic.
+            val items = vm.state.value.items
+            val rows = foldBackgroundAgentBlocks(foldQueuedRows(items, emptyList()), items, null)
+            assertEquals("a", rows.filterIsInstance<ThreadRow.Delivered>().single { it.item == ThreadItem.MessageItem(after) }.agentBlockId)
+            val keys = rows.mapIndexed { i, row -> row.listKey(i) }
+            assertEquals(keys.distinct(), keys)
+            for (expanded in listOf(emptySet(), setOf("a"), emptySet())) {
+                val visible = foldToolRuns(rows, expanded)
+                val replies =
+                    visible
+                        .filterIsInstance<ThreadRow.Delivered>()
+                        .mapNotNull { (it.item as? ThreadItem.MessageItem)?.message }
+                        .filter { it.id == "child" }
+                assertEquals(if (expanded.isEmpty()) emptyList() else listOf(after), replies)
+                val visibleKeys = visible.mapIndexed { i, row -> row.listKey(i) }
+                assertEquals(visibleKeys.distinct(), visibleKeys)
+            }
+            repo.messages.value = base + ThreadItem.MessageItem(after.copy(isStreaming = false))
+            advanceUntilIdle()
+            assertEquals(
+                listOf(after.copy(isStreaming = false)),
+                vm.state.value.items
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .filter { it.message.id == "child" }
+                    .map { it.message },
+            )
+            collector.cancel()
+        }
+
+    @Test
+    fun assistantDeltas_syntheticRowRetainsEachWireLanesParent() =
+        runTest {
+            val repo = MessagesControllableRepo()
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            for ((lane, parent) in listOf("main" to "", "child-a" to "agent-a", "child-b" to "agent-b")) {
+                events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, lane, 0, lane, parent))
+                advanceUntilIdle()
+                val message =
+                    vm.state.value.items
+                        .filterIsInstance<ThreadItem.MessageItem>()
+                        .single()
+                        .message
+                assertEquals(lane, message.id)
+                assertEquals(lane, message.content)
+                assertEquals(parent, message.parentToolUseId)
+            }
+            collector.cancel()
+        }
 
     @Test
     fun assistantDeltas_produceSingleGrowingStreamingMessage() =
