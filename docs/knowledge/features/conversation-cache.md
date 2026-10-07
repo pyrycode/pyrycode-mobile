@@ -564,6 +564,14 @@ order, saved cursor/stop trim reset and deletion during suspended writers; see
 [wrapper testing](caching-conversation-repository.md#testing). Independent live/force-stop evidence
 belongs to [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833), not these JVM probes.
 
+The two `HistoryCacheReworkTest` trim-reset cases reconcile 100,001 rows, write the production
+100,000-row retained file and restore through fresh cache/repository instances. Keep that full-cap
+fixture and its saved cursor/stop, coverage and reader-demand assertions. Its real disk work can
+exceed `runTest`'s default one-minute wall deadline under load without a suspended ViewModel
+handoff; [#1842](https://github.com/pyrycode/pyrycode-mobile/pull/1915#issuecomment-6038977116)
+scopes a bounded three-minute timeout to `trimmingResetsWalk`, rather than shrinking the fixture
+or changing cache production behavior.
+
 No Compose UI test and no emulator scenario for the original two storage families — #796's
 restored conversation rows
 and #797's restored thread rows both draw through the same composables a live row does, so the
