@@ -3,6 +3,7 @@ package de.pyryco.mobile.design
 import android.view.View
 import android.view.WindowInsets
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -289,6 +290,14 @@ class ListDesignCaptureTest {
             reopenDelete()
             shell("input tap 8 100")
             assertDeleteDismissed()
+            for (left in listOf(true, false)) {
+                reopenDelete()
+                val surface = deleteSurfaceBounds()
+                val margin = 12f * rule.density.density
+                val x = if (left) surface.left - margin else surface.right + margin
+                shell("input tap ${x.toInt()} ${surface.center.y.toInt()}")
+                assertDeleteDismissed()
+            }
             assertEquals("kitchenclaw refactor", thread.state.value.displayName)
         } finally {
             runBlocking { fake.rename(thread.state.value.conversationId, originalName) }
@@ -324,11 +333,15 @@ class ListDesignCaptureTest {
         assertTrue(!checkNotNull(design.inputs.thread.value).state.value.deleteConfirmVisible)
     }
 
-    private fun assertDeleteGeometry(compact: Boolean) {
+    private fun deleteSurfaceBounds(): Rect {
         val node = rule.onNodeWithTag("delete-dialog-surface").fetchSemanticsNode()
         val location = IntArray(2)
         (checkNotNull(node.root) as ViewRootForTest).view.getLocationOnScreen(location)
-        val surface = node.boundsInRoot.translate(Offset(location[0].toFloat(), location[1].toFloat()))
+        return node.boundsInRoot.translate(Offset(location[0].toFloat(), location[1].toFloat()))
+    }
+
+    private fun assertDeleteGeometry(compact: Boolean) {
+        val surface = deleteSurfaceBounds()
         val body = rule.onNodeWithText("This permanently deletes", substring = true)
         val layouts = mutableListOf<TextLayoutResult>()
         body.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
@@ -359,8 +372,8 @@ class ListDesignCaptureTest {
             assertEquals(316f, surface.width, 2f)
             assertEquals(220f, surface.height, 2f)
             assertEquals(48f, surface.left, 2f)
-            // Dialog windows use screen coordinates; remove the real Activity status-bar inset.
-            val topInset = ViewCompat.getRootWindowInsets(design.view)?.getInsets(WindowInsetsCompat.Type.statusBars())?.top ?: 0
+            // Dialog windows use screen coordinates; remove the Activity's effective real or synthetic inset.
+            val topInset = design.insets().getInsets(WindowInsetsCompat.Type.statusBars()).top
             assertEquals(312f, surface.top - topInset, 2f)
             assertEquals(3, layouts.single().lineCount)
         }

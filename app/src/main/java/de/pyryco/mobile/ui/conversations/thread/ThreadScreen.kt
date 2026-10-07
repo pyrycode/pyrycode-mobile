@@ -75,6 +75,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.offset
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import de.pyryco.mobile.R
@@ -1525,8 +1526,11 @@ private fun DeleteConfirmationDialog(
         Surface(
             modifier =
                 Modifier
-                    .padding(horizontal = 24.dp)
-                    .widthIn(max = 316.dp)
+                    // Reserve screen clearance without counting transparent margins as dialog content.
+                    .layout { measurable, constraints ->
+                        val placeable = measurable.measure(constraints.offset(horizontal = -48.dp.roundToPx()))
+                        layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
+                    }.widthIn(max = 316.dp)
                     .fillMaxWidth()
                     .testTag("delete-dialog-surface"),
             shape = MaterialTheme.shapes.extraLarge,

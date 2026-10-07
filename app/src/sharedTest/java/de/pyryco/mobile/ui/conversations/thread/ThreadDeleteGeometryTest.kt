@@ -1,6 +1,10 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import android.os.SystemClock
+import android.view.MotionEvent
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
@@ -161,6 +165,37 @@ class ThreadDeleteGeometryTest {
             )
         }
         rule.runOnIdle { assertEquals(listOf(ThreadEvent.DeleteDismiss), events) }
+    }
+
+    @Test fun pointer_beside_left_surface_edge_dismisses_once() = tapBesideSurface(left = true)
+
+    @Test fun pointer_beside_right_surface_edge_dismisses_once() = tapBesideSurface(left = false)
+
+    private fun tapBesideSurface(left: Boolean) {
+        show()
+        val node = rule.onNodeWithTag("delete-dialog-surface").fetchSemanticsNode()
+        val view = (checkNotNull(node.root) as ViewRootForTest).view
+        val location = IntArray(2)
+        val decorLocation = IntArray(2)
+        rule.runOnUiThread {
+            view.getLocationOnScreen(location)
+            view.rootView.getLocationOnScreen(decorLocation)
+            val surface = node.boundsInRoot.translate(Offset(location[0].toFloat(), location[1].toFloat()))
+            val margin = 12f * rule.density.density
+            val x = (if (left) surface.left - margin else surface.right + margin) - decorLocation[0]
+            val y = surface.center.y - decorLocation[1]
+            val time = SystemClock.uptimeMillis()
+            for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
+                val event = MotionEvent.obtain(time, time, action, x, y, 0)
+                try {
+                    view.rootView.dispatchTouchEvent(event)
+                } finally {
+                    event.recycle()
+                }
+            }
+        }
+        rule.runOnIdle { assertEquals(listOf(ThreadEvent.DeleteDismiss), events) }
+        rule.onNodeWithText("About").assertDoesNotExist()
     }
 
     @Test fun long_name_grows_surface_without_clipping_body() {
