@@ -560,6 +560,7 @@ internal fun PyryNavHost(
                 val alwaysAllowAccepted by vm.alwaysAllowAccepted.collectAsStateWithLifecycle()
                 val answerRejected by vm.answerRejected.collectAsStateWithLifecycle()
                 val draft by vm.draft.collectAsStateWithLifecycle()
+                val suggestedReply by vm.suggestedReply.collectAsStateWithLifecycle()
                 val systemPrompt by vm.systemPrompt.collectAsStateWithLifecycle()
                 val pendingAttachments by vm.pendingAttachments.collectAsStateWithLifecycle()
                 val attachmentsSending by vm.attachmentsSending.collectAsStateWithLifecycle()
@@ -605,6 +606,8 @@ internal fun PyryNavHost(
                     state = state,
                     onBack = { navController.popBackStack() },
                     onSendMessage = vm::sendMessage,
+                    suggestedReply = suggestedReply,
+                    onSendSuggestedReply = vm::sendSuggestedReply,
                     connectionState = connectionState,
                     onRetry = vm::retry,
                     isThinking = isThinking,
@@ -648,6 +651,7 @@ internal fun PyryNavHost(
                     onRetryOlderHistory = vm::onRetryOlderHistory,
                     draft = draft,
                     onDraftChange = vm::onDraftChange,
+                    onReplyToMessage = vm::replyToMessage,
                     systemPrompt = systemPrompt,
                     // #933: the composer's attachment picker and strip, over the same per-chat draft store.
                     attachments = pendingAttachments,

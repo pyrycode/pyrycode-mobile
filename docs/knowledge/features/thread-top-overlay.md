@@ -2,7 +2,7 @@
 
 The **notice surface** for the thread ([#1002](https://github.com/pyrycode/pyrycode-mobile/issues/1002)):
 other conversations' attention, claude's usage-limit report, a failed MCP server ([#1345](https://github.com/pyrycode/pyrycode-mobile/issues/1345)),
-the pairing-error notice, Offline Retry, conversation session errors and stopped-turn recovery, drawn as a right-aligned stack of
+the pairing-error notice, Offline Retry, conversation session errors, stopped-turn recovery and local confirmations, drawn as a right-aligned stack of
 [`NoticePill`](notice-pill.md)s pinned over the top of the message area — replacing the two arms they used
 to share with live turn status inside `ThreadStatusArea`.
 
@@ -46,6 +46,8 @@ internal fun ThreadTopOverlay(
     transientError: String? = null,
     transientErrorOccurrence: Long = 0L,
     attentionPill: (@Composable () -> Unit)? = null,
+    confirmation: String? = null,
+    confirmationOccurrence: Long = 0L,
 )
 ```
 
@@ -53,7 +55,7 @@ The usage lead no longer names the agent ([Usage-limit indicator](usage-limit-in
 Since #1678, `agent = state.agent` selects the session-error copy independently of usage copy.
 
 Emits nothing when there is no pill to show (`usageLimit == null || usageLimitDismissed`, `mcpFailure == null`,
-`!showRePair`, `connectionState != Offline`, `sessionError == null`, `turnOutcome == null`, `transientError == null`, `LocalNavigationErrorNotice.current?.currentMessage == null`, and `attentionPill == null`) — the overlay is an overlap (`Box` alignment, not a layout slot), so an empty overlay costs
+`!showRePair`, `connectionState != Offline`, `sessionError == null`, `turnOutcome == null`, `transientError == null`, `LocalNavigationErrorNotice.current?.currentMessage == null`, `confirmation == null`, and `attentionPill == null`) — the overlay is an overlap (`Box` alignment, not a layout slot), so an empty overlay costs
 nothing and the message area draws exactly as if it were absent. Otherwise a `Column(horizontalAlignment =
 End, verticalArrangement = spacedBy(12.dp))` — Figma `541:2446`'s 12dp pill gap — with, top to bottom:
 
@@ -181,8 +183,8 @@ it cannot run Retry.
 conversation-local failure joins that first-in, first-out queue in the order it happened, and each
 pill stays for the full Material Short time of 4 s, adjusted by the accessibility manager as a snackbar's would
 be. Expiry removes only that pill. Each occurrence has its own identity, so a repeated identical failure is
-announced again. Leaving the screen or switching conversation cancels the shown and queued pills. Saved
-confirmations and the dismissed-elsewhere prompt keep the bottom snackbar.
+announced again. Leaving the screen or switching conversation cancels the shown and queued pills.
+Confirmations use a separate queue below these errors (#1851).
 
 Share capture failures and intake/selection count or size refusals reuse this inert Error treatment
 through `NavigationErrorPill` (#1824). They render after conversation-local transient errors with a 12dp
@@ -200,6 +202,32 @@ navigation notice. See [Incoming shares](navigation.md#incoming-shares-1728) for
 startup placement, and [share regression evidence](development-verification-emulator-evidence.md#share-failure-presentation-1824)
 for the actual collector/navigation coverage. A conversation-local queue would clear selection
 refusals at the very navigation boundary where the operator needs to read them.
+
+### The Default confirmation pill (#1851)
+
+Dismissal reasons from `dismissReasonText` and attachment “File saved” share one
+screen-local confirmation FIFO. `TransientConfirmationPill` renders after every other
+visible notice, including conversation and navigation errors, with 12dp visible-surface
+gaps. Offline and stopped-turn following-notice layouts measure those gaps from the
+painted pill rather than an expanded action target. The inert Default treatment uses
+`primaryContainer` / `onPrimaryContainer`, bodySmall, 6dp corners, 8/4dp padding,
+a 24dp single-line height and a polite live region. It reserves no message space.
+
+`rememberTransientConfirmationNoticeState` reuses `TransientErrorNoticeState` in a
+separate instance. Every admission, including identical text, has a new occurrence
+and its full 4,000ms lifetime starting when it becomes visible. Accessibility timeout
+calculation sets text/icons true and controls false. Errors keep independent queues
+and can appear above an active confirmation immediately. The confirmation state and
+scope are keyed by conversation; screen exit or conversation switch cancels active
+and waiting occurrences, clearing the visible message.
+
+Enqueue from the modal-id effect into the composition-owned scope. Launching the
+queued job as a child of `LaunchedEffect(modalId)` would let a later modal ID cancel
+an earlier confirmation. Keep the modal-id trigger to prevent unrelated recomposition
+from replaying it; reopening still shows the latest eligible dismissal exposed by the
+host fold. No persistence or additional reconnect/history replay is introduced.
+See [thread routing](thread-screen.md#what-it-does), [reader confirmations](markdown-reader-screen.md#what-it-does)
+and the [three notice-only comparisons](../../../app/src/androidTest/assets/confirmation-1851/README.md).
 
 ## Placement in `ThreadScreen`
 

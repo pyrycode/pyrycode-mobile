@@ -1,0 +1,27 @@
+Ticket #1851 — builder checks (2026-10-07)
+
+Test-first routing check:
+./gradlew testDebugUnitTest --tests '*ThreadScreenAttachmentLoadTest.savedUsesADefaultPill_andCoexistsWithAnErrorPill' --tests '*MarkdownReaderScreenTest.aPickedDocument_receivesTheTextOnScreen_andTheReaderSaysSaved' --tests '*ThreadTransientErrorTest.dismissedElsewhere_usesADefaultPill_whileAnErrorPillShows' --console=plain
+Exit 1; 3 executed, 3 failed, 0 skipped. Each failed because confirmation text lacked the Default pill tag while the old snackbar was present.
+
+Focused deterministic check:
+./gradlew testDebugUnitTest --tests '*ThreadConfirmationNoticeTest' --tests '*ThreadTransientErrorTest' --tests '*ThreadScreenAttachmentLoadTest' --tests '*MarkdownReaderScreenTest' --tests '*TransientErrorNoticeStateTest' --tests '*ThreadTopOverlayTest' --tests '*NoticePillTest' --tests '*ThreadFrameTest' --tests '*MarkdownReaderDesignTest' --tests '*ThreadCanvasPaletteTest' --tests '*SnackbarRoutingGuardTest' --console=plain
+Exit 0; fresh XML: 122 executed, 122 passed, 0 failures, 0 errors, 0 skipped.
+
+./gradlew compileDebugAndroidTestKotlin lint assembleDebug spotlessApply --console=plain
+Exit 0; androidTest compilation, lint and debug APK passed. The live assertion is compiled again by the subsequent capture build.
+
+Live handoff:
+Dispatcher owns the fresh full real-Claude gate and executed/failed/skipped counts for InteractiveStreamE2ETest#interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload. No fresh live pass is claimed by this builder run.
+
+Focused real-bar capture:
+./gradlew :app:pixel8Api35DebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.design.ThreadDesignCaptureTest#dismissalNoticeFrameAt412By892,de.pyryco.mobile.design.ThreadDesignCaptureTest#threadSavedFrameAt412By892,de.pyryco.mobile.design.ThreadDesignCaptureTest#readerSavedFrameAt412By892' -Pandroid.testInstrumentationRunnerArguments.requireRealSystemBars=true --console=plain
+Exit 0; 3 executed, 3 passed, 0 failures, 0 errors, 0 skipped. Fresh capture-results.xml names each selected method.
+Raw XML: app/build/outputs/androidTest-results/managedDevice/debug/pixel8Api35/TEST-pixel8Api35-_app-.xml
+Raw captures: app/build/intermediates/managed_device_android_test_additional_output/debugAndroidTest/pixel8Api35DebugAndroidTest/design-1220/confirmation-1851/
+
+Post-main final checks (main already up to date):
+./gradlew testDebugUnitTest --console=plain
+Exit 0; 4,664 executed, 4,664 passed, 0 failures, 0 errors, 0 skipped.
+./gradlew assembleDebug spotlessApply --console=plain
+Exit 0; final debug APK and formatting passed.

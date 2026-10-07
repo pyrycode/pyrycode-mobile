@@ -22,9 +22,30 @@ into view.
 **[#1572](https://github.com/pyrycode/pyrycode-mobile/issues/1572): one newest page at open and
 on each host-availability arrival while the thread stays open.** The collector waits for the saved
 position seed and repository availability, so offline open asks nothing until the host arrives.
-Since [#1832](../../specs/architecture/1832-durable-history-gaps.md), an arrival behind an older
-request is counted and deferred until the shared request slot releases, rather than lost. A failed
-newest ask consumes its arrival without retry. Closing the ViewModel cancels pending work.
+After seeding, raw `repositoryAvailable` counts one arrival for the initial available state and
+each observed false-to-true transition; repeated true emissions add nothing. Pending arrivals
+survive an occupied slot across newest, older, retry and gap requests, as introduced by
+[#1832](../../specs/architecture/1832-durable-history-gaps.md). They also survive lagging derived
+availability: [#1842](../../specs/architecture/1842-newest-page-availability-handoff.md) confirmed
+that raw true could queue work while `hostAvailable` was false and the slot was free. When derived
+true finally published, no request settlement remained to drain that arrival. Logging
+`history_newest_ask` alone therefore did not prove a request reached the repository.
+
+The `hostAvailable` readiness collector now drains existing pending newest work without counting
+another arrival. Request settlement supplies the other drain handoff, including after success or
+failure while readiness still lags. Pending work is consumed only after claiming the shared slot;
+at most one history request runs at once. A failed newest ask consumes its arrival without an
+automatic retry. Destination exit cancels active requests and pending delivery. Readiness, slot
+release, page arrival and marker visibility create no older/gap demand; those requests still
+require reader movement or the existing explicit Retry action.
+
+`ThreadNewestPageHandoffTest` gates the eager availability projection while driving production
+collectors, rather than invoking a private drain or issuing harness history. Its delayed-readiness
+regression exposed the free-slot failure against unchanged production. Keep this schedule alongside
+offline open, repeated availability, successful/failed busy-slot settlement and exit cancellation
+probes; an immediate availability fixture can pass while leaving the handoff broken. The
+[durable emulator twin](../../e2e-interactive-stream.md#scripted-ping-durable-gap-proof-1842)
+checks repository delivery after replay is emptied, then uses reader pulls for older catch-up.
 
 The newest reply now retains durable entry coverage and page-edge cursors. A side ask leaves the
 independent backwards cursor/stop untouched; a newest page that is also that walk's next page seeds

@@ -56,6 +56,10 @@ data class ConversationResponseDto(
     @Serializable(with = InstantIso8601Serializer::class)
     val lastUsedAt: Instant,
     @SerialName("workspace_label") val workspaceLabel: String? = null,
+    // Absent/null means unavailable; zero is valid. Strict unsigned decoding avoids signed overflow.
+    @SerialName("read_up_to")
+    @Serializable(with = ReadMarkIdSerializer::class)
+    val readUpTo: ULong? = null,
     // Kept raw so an absent key stays distinguishable: an older daemon omits it on `conversation_updated`,
     // and [de.pyryco.mobile.data.repository.ConversationListProjection.upsertConversation] then keeps the
     // stored agent instead of reading Claude.

@@ -488,9 +488,17 @@ internal fun reduceHistoryPage(
 
 internal class ReducedHistoryPage(
     val rows: List<ThreadItem>,
-    val order: Map<Any, Long>,
-    val claims: Map<Any, Set<Long>>,
-)
+    val unsignedOrder: Map<Any, ULong>,
+    val unsignedClaims: Map<Any, Set<ULong>>,
+) {
+    val order: Map<Any, Long> get() = unsignedOrder.signedHistoryOrder()
+    val claims: Map<Any, Set<Long>>
+        get() =
+            unsignedClaims
+                .mapNotNull { (key, ids) ->
+                    if (ids.any { it > Long.MAX_VALUE.toULong() }) null else key to ids.mapTo(HashSet()) { it.toLong() }
+                }.toMap()
+}
 
 /** Order belongs to the contextual fold: a falling compaction edge needs its earlier rising edge. */
 internal fun reduceOrderedHistoryPage(
@@ -498,8 +506,8 @@ internal fun reduceOrderedHistoryPage(
     interactive: Boolean,
 ): ReducedHistoryPage {
     var compaction = CompactionFold()
-    val order = HashMap<Any, Long>()
-    val claims = HashMap<Any, MutableSet<Long>>()
+    val order = HashMap<Any, ULong>()
+    val claims = HashMap<Any, MutableSet<ULong>>()
     val rows =
         entries.asReversed().fold(emptyList<ThreadItem>()) { rows, entry ->
             val next =
@@ -518,9 +526,9 @@ internal fun reduceOrderedHistoryPage(
                     // Filling a pending divider changes its identity, but keeps the falling edge's position.
                     val logId =
                         if (next.size == rows.size && row is ThreadItem.CompactionBoundary && previous is ThreadItem.CompactionBoundary) {
-                            order.remove(previous.mergeIdentity()) ?: entry.id
+                            order.remove(previous.mergeIdentity()) ?: entry.unsignedId
                         } else {
-                            entry.id
+                            entry.unsignedId
                         }
                     val segment = (row as? ThreadItem.MessageItem)?.message?.segment
                     if (segment == null) {
@@ -529,7 +537,7 @@ internal fun reduceOrderedHistoryPage(
                         if (previous is ThreadItem.CompactionBoundary && previous.mergeIdentity() != row.mergeIdentity()) {
                             ids.addAll(claims.remove(previous.mergeIdentity()).orEmpty())
                         }
-                        ids.add(entry.id)
+                        ids.add(entry.unsignedId)
                     } else {
                         val before =
                             (previous as? ThreadItem.MessageItem)
@@ -542,7 +550,7 @@ internal fun reduceOrderedHistoryPage(
                         segment.deltas.forEach { delta ->
                             val key = listOf("delta", segment.turnId, delta.seq)
                             order.putIfAbsent(key, logId)
-                            if (delta.seq !in before) claims.getOrPut(key) { HashSet() }.add(entry.id)
+                            if (delta.seq !in before) claims.getOrPut(key) { HashSet() }.add(entry.unsignedId)
                         }
                     }
                 }
@@ -686,7 +694,7 @@ private fun List<ThreadItem>.withHistoryEntry(
                 } else {
                     MobileJson
                         .decodeFromJsonElement<UnrecognizedMessagePayloadDto>(entry.payload)
-                        .toRow(id = historyRowId(entry.id), occurredAt = entry.timestamp)
+                        .toRow(id = historyRowId(entry.unsignedId), occurredAt = entry.timestamp)
                         ?.let { row -> if (holdsUnrecognized(row.id)) this else this + row }
                         ?: this
                 }
@@ -787,7 +795,7 @@ private fun decodeLiveEvent(entry: HistoryEntry): LiveSessionEvent? =
  * namespace disjoint from the live lane's `"unrecognized-<counter>"`, which is minted from a per-process
  * counter and would otherwise collide by coincidence.
  */
-private fun historyRowId(entryId: Long): String = "history-$entryId"
+private fun historyRowId(entryId: ULong): String = "history-$entryId"
 
 // ---- The merge ---------------------------------------------------------------------------------
 
@@ -797,6 +805,11 @@ internal fun List<ThreadItem>.mergeHistoryRows(rows: List<ThreadItem>): List<Thr
 internal fun List<ThreadItem>.mergeOrderedHistoryRows(
     rows: List<ThreadItem>,
     order: Map<Any, Long>,
+): List<ThreadItem> = mergeRows(rows, order.filterValues { it > 0 }.mapValues { it.value.toULong() })
+
+internal fun List<ThreadItem>.mergeUnsignedHistoryRows(
+    rows: List<ThreadItem>,
+    order: Map<Any, ULong>,
 ): List<ThreadItem> = mergeRows(rows, order)
 
 /** Insert fresh history or reconnect evidence beside its neighbours; held markers never move on replay. */
@@ -843,7 +856,7 @@ private fun List<ThreadItem>.withHistoryLifecyclePositions(
 internal fun List<ThreadItem>.mergeCachedRows(
     cached: List<ThreadItem>,
     order: Map<Any, Long> = emptyMap(),
-): List<ThreadItem> = mergeRows(cached, order, cacheRestore = true)
+): List<ThreadItem> = mergeRows(cached, order.filterValues { it > 0 }.mapValues { it.value.toULong() }, cacheRestore = true)
 
 /** Resolve persisted hashes once when restoring a base, rather than on every live delta emission. */
 internal fun List<ThreadItem>.receivedHistoryOrder(positions: Map<String, Long>): Map<Any, Long> =
@@ -866,7 +879,7 @@ internal fun ThreadItem.mergeIdentity(): Any {
 
 private fun List<ThreadItem>.mergeRows(
     incoming: List<ThreadItem>,
-    order: Map<Any, Long>,
+    order: Map<Any, ULong>,
     cacheRestore: Boolean = false,
 ): List<ThreadItem> {
     if (incoming.isEmpty()) return this
@@ -933,7 +946,7 @@ private fun List<ThreadItem>.mergeRows(
     }
     // Prefix maxima allow binary insertion lookup without sorting or scanning held rows per cache row.
     val clocks = base.runningFold(Instant.DISTANT_PAST) { latest, row -> maxOf(latest, row.mergeTimestamp()) }.drop(1)
-    val logPositions = TreeMap<Long, Int>()
+    val logPositions = TreeMap<ULong, Int>()
     base.forEachIndexed { index, row -> order[row.mergeIdentity()]?.let { logPositions[it] = index } }
     val following = IntArray(rows.size) { -1 }
     var next = -1

@@ -77,7 +77,8 @@ to #1529.
 **#1619 routed defects (Reachable states, #1539).** #1622 queued-row spacing (drop-button loss already fixed by
 #1642) · #1623 (closed) / #1626 nested tool rows' Stop-vs-Send and path shortening, both frame-side questions ·
 #1624 (closed, fixed by #1848) / #1850 attachment Retry row's residual 8 px · #1625 (closed, fixed by #1848) ·
-#1851 the dismissal notice and the thread/reader Saved confirmations' move to a top-overlay Default pill.
+\#1851 (fixed) the dismissal notice and thread/reader Saved confirmations now use a top-overlay Default pill;
+notice-only MATCH verdicts are recorded below.
 
 ## Composer and footer
 
@@ -736,10 +737,10 @@ not a separate focused run; the deterministic scenario proves this pill's tap pa
 | Borders | match (none) |
 | Radii | match: 6 px corners |
 | Icon paths | match (none, no X) |
-| Component state | match: inert, expires like the thread pill. Saved still uses the bottom snackbar |
+| Component state | match: inert, expires like the thread pill. Saved now uses a Default overlay pill (#1851) |
 
-- **Routed:** none. The unresolved Saved and dismissed-elsewhere differences, and #1619's non-error scope
-  conflict, stay open; this entry does not settle them.
+- **Routed:** none for this Error arm. #1851 resolves the Saved and dismissed-elsewhere
+  differences with the notice-only comparisons below.
 
 ### History tail — Loading `689:4281`, Retry `689:4330`, Dead end `689:4379`, Offline `689:4427`
 
@@ -930,46 +931,58 @@ older captures.
 
 ### Prompt resolved elsewhere (dismissal notice) — `696:5065`
 
-- **Owning ticket:** none before this audit; #1851 (new)
-- **Capture:** `prompt-resolved-elsewhere.png` (412x892, 1.0)
-- **Side-by-side:** `prompt-resolved-elsewhere-side-by-side.png`
-- **Overlay:** `prompt-resolved-elsewhere-overlay.png`
-- **Verdict:** mismatch — Juhana's call: the app's bottom snackbar is a gap to own, not a match, against the
-  frame's top-overlay pill
-- `ThreadScreen`'s `ModalUiState.Dismissed` branch still calls `snackbarHostState.showSnackbar(reason)`. #1604
-  moved every *error* notice on this screen to the top-overlay stack but explicitly excluded this non-error
-  dismissal from its scope, and closed before any successor picked it up; #1619's own routing record flagged
-  the conflict as unresolved. The frame draws "Resolved on another device" as a Default pill, right-aligned in
-  the top overlay under the header.
+- **Owning ticket:** #1851
+- **Capture:** [prompt-resolved-elsewhere.png](../../confirmation-1851/prompt-resolved-elsewhere.png) (412 × 892, font scale 1)
+- **Comparison:** [notice surfaces](../../confirmation-1851/notice-surfaces.png), [geometry](../../confirmation-1851/prompt-resolved-elsewhere-geometry.txt)
+- **Verdict:** MATCH, notice surface only; supersedes the earlier bottom-snackbar mismatch.
 
-| Aspect | Verdict |
-|---|---|
-| Geometry | mismatch: bottom-anchored, near-full-width snackbar against a right-aligned top-overlay pill |
-| Padding | mismatch: snackbar's own padding against the pill's 8/4 px |
-| Spacing | mismatch: no relation to the overlay stack's 12 px gap, since it is not in that stack |
-| Typography | match: same string, `dismissReasonText("remote")` → "Resolved on another device" |
-| Colour | mismatch: default snackbar surface against primary-container/on-primary-container |
-| Borders | match (none) |
-| Radii | mismatch: snackbar's own radius against the pill's 6 px |
-| Icon paths | match (none, no X on either) |
-| Component state | match: inert, auto-dismisses |
+The host modal projection renders “Resolved on another device” through production
+`dismissReasonText`. Painted bounds are (218,121)–(392,145), 174 × 24dp.
+Removing the real 24px status inset aligns to Figma (219,97)–(392,121): the
+left/width difference is 1dp; all other edges match exactly. The Default pill is
+inert, has no X and expires; no bottom snackbar appears.
 
-- **Routed:** #1851
+### Thread Saved — `696:5065` (Default treatment and placement)
+
+- **Owning ticket:** #1851
+- **Capture:** [thread-saved.png](../../confirmation-1851/thread-saved.png) (412 × 892, font scale 1)
+- **Comparison:** [geometry](../../confirmation-1851/thread-saved-geometry.txt)
+- **Verdict:** MATCH, notice surface only.
+
+The actual attachment load/save action reaches “File saved” via a stubbed system
+create-document result and the production saver. Bounds are (317,121)–(392,145),
+75 × 24dp: 59dp text plus 8dp padding on each side. Placement and height match
+exactly; no separate Saved Figma arm defines a fixed width.
 
 ### Reader notices — `696:5101` (Saved arm)
 
-- **Owning ticket:** #1747 (closed; see "Reader error — `696:5101`" above for the error arm, which matches);
-  #1851 (new, this arm)
-- **Capture:** none; not recaptured by this pass
-- **Verdict:** unverified for Save failed, mismatch for Saved (Juhana's call)
-- The error arm ("Couldn't open file") already has a match verdict above, taken by #1747. Save failed and
-  Saved settle only after the system's create-document picker returns; the harness cannot drive that picker
-  without a new test dependency, the same limitation the original #1619 pipeline round recorded. Save failed
-  shares the error pill and placement already verified; Saved is a Default (non-error) pill the app does not
-  yet draw, the same gap as the dismissal notice above.
+- **Owning ticket:** #1851; #1747 retains the Error-arm verdict above
+- **Capture:** [reader-saved.png](../../confirmation-1851/reader-saved.png) (412 × 892, font scale 1)
+- **Comparison:** [geometry](../../confirmation-1851/reader-saved-geometry.txt)
+- **Verdict:** MATCH, notice surface only; supersedes the earlier Saved mismatch.
 
-- **Routed:** #1851 (Saved); Save failed stays unverified, no new ticket — it shares #1747's already-verified
-  error treatment
+The visible Save to device action reaches the production saver through a stubbed
+create-document result. Bounds are (317,121)–(392,145), 75 × 24dp. `696:5101`
+depicts Error “Couldn't save file”; it supplies reader placement, while `696:5065`
+supplies the required Default treatment. This capture does not establish the
+Save-failed arm, which remains outside #1851's three-state capture scope.
+
+For all three surfaces, the right gutter is exactly 20dp and clearance below the
+measured bar through its rule is 28dp. Padding is 8dp horizontal/4dp vertical;
+bodySmall uses 12sp/16sp/0.4sp tracking, Default `primaryContainer` /
+`onPrimaryContainer` pixels are exactly #134A74 / #CFE4FF, and corners use the
+shared 6dp token. Corner rasterization differs by 1px, within the 2dp tolerance.
+Native shared tests establish 12dp visible gaps below errors, including Offline,
+stopped-turn and navigation-error seams, and unchanged message/reader bounds.
+
+[Fresh full-device XML](../../confirmation-1851/capture-results.xml) names all three
+`ThreadDesignCaptureTest` methods: `dismissalNoticeFrameAt412By892`,
+`threadSavedFrameAt412By892`, `readerSavedFrameAt412By892`; 3 executed/passed,
+0 failed/errors/skipped on full `pixel8Api35`, `requireRealSystemBars=true`.
+The [capture record](../../confirmation-1851/README.md) retains hardware PNGs,
+viewport/inset sidecars and notice-only comparison details. The verifier's UI gate
+also passed all three methods: 194 executed/passed, 0 failed, 1 unrelated skipped.
+Other frame differences are outside this comparison; no routing follow-up remains.
 
 ### No separate frame
 

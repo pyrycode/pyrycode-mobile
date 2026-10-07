@@ -746,6 +746,10 @@ if [ -n "${DETERMINISTIC}" ]; then
       TEST_METHOD="interactiveTurn_directShareShortcut_stagesBeforeExplicitSend"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/ping.jsonl}"
       ;;
+    reply-suggestion)
+      TEST_METHOD="interactiveTurn_seededChannel_replySuggestionLongPressSends"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/reply-suggestion.jsonl}"
+      ;;
     ping)
       TEST_METHOD="interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/ping.jsonl}"
@@ -1041,7 +1045,7 @@ else
 fi
 FAULT_PORT_FILE="${WORK_DIR}/daemon-fault-port"
 python3 "${REPO_ROOT}/scripts/e2e-daemon-fault.py" --port-file "${FAULT_PORT_FILE}" --log "${DAEMON_LOG}" \
-  --ready-token 'relay: conn established' \
+  --ready-token 'relay: conn established' --control-socket "${ISO_HOME:-${HOME}}/.pyry/${PYRY_NAME}.sock" \
   -- "${DAEMON_COMMAND[@]}" >"${WORK_DIR}/daemon-fault.log" 2>&1 &
 DAEMON_PID=$!
 FAULT_DEADLINE=$((SECONDS + 10))
@@ -1382,6 +1386,12 @@ PY
     [ -n "${PEER_TOKEN}" ] || die "empty peer pairing token"
     log "second-client peer minted on serverId=${SERVER_ID}"
   fi
+  if [ -n "${DETERMINISTIC}" ] && [ "${SCENARIO}" = "ping" ]; then
+    env "HOME=${ISO_HOME}" PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME}" --name="${PAIR_NAME_PEER}" \
+      >"${PAIR_PEER_OUT}" 2>&1 || die "scripted peer pairing failed"
+    PARSED_PEER="$(pair_token "${PAIR_PEER_OUT}")" || die "scripted peer parsing failed"
+    eval "${PARSED_PEER}"
+  fi
   if [ -z "${DETERMINISTIC}" ] && [ -z "${ANSWER_UNMET}" ]; then
     mint_answer_pairing
   fi
@@ -1463,6 +1473,9 @@ fi
 # excluded. The #965 stop method is added on top, spending two turns: the stopped turn and its follow-up ping.
 if [ -n "${DETERMINISTIC}" ]; then
   TEST_TARGET="${TEST_CLASS}#${TEST_METHOD}"
+  if [ "${SCENARIO}" = "ping" ]; then
+    TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_seededChannel_durableGapCatchUp"
+  fi
 elif [ -n "${LIVE}" ]; then
   # LIVE curates its real-claude turns: ping + create-workspace-folder + new-session + delete +
   # archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host +
@@ -1481,6 +1494,7 @@ elif [ -n "${LIVE}" ]; then
   # the two already ignored workspace-switching scenarios. #1250 retired the peer workspace-label
   # method, so the active list and gate floor contain 41 methods after #1251.
   TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow,${TEST_CLASS}#interactiveTurn_saveAsChannel_promotesToChannelTier,${TEST_CLASS}#interactiveTurn_listArchiveEntry_opensArchived,${TEST_CLASS}#interactiveTurn_twoHostsCollidingConversationId_stayPerHost,${TEST_CLASS}#interactiveTurn_peerStartedTurn_continuesOnPhone,${TEST_CLASS}#interactiveTurn_peerQueue_staysConsistentAcrossClients,${TEST_CLASS}#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect,${TEST_CLASS}#interactiveTurn_offlineRetry_reconnectsSameHostAndReplies,${TEST_CLASS}#interactiveTurn_pingPrompt_statusSheetShowsRunningModel,${TEST_CLASS}#interactiveTurn_pingPrompt_footerShowsContextUsage,${TEST_CLASS}#interactiveTurn_modelChange_roundTripsAndStaysPerConversation,${TEST_CLASS}#interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn,${TEST_CLASS}#interactiveTurn_chosenEffort_appliesFromTheFirstTurn,${TEST_CLASS}#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel,${TEST_CLASS}#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_replySuggestion_longPressSends"
   # #965: the stop method joins the list, so it holds 21 methods and 17 turns while #687 stays out.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain"
   # #1246: the operator-bypass method is selected again; its write and fresh reply decide settlement.

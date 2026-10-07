@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.view.View
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -518,6 +520,45 @@ class ThreadTopOverlayTest {
         composeRule.runOnIdle { assertEquals(1, retryTaps) }
         retry.performTouchInput { click(Offset(2.dp.toPx(), bottom - 2.dp.toPx())) }
         composeRule.runOnIdle { assertEquals(2, retryTaps) }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun confirmationFollowsNavigationAndThreadErrors_belowStoppedTurn_withoutInheritingActions() {
+        var compactTaps = 0
+        composeRule.setContent {
+            val navigation = rememberTransientErrorNoticeState()
+            LaunchedEffect(navigation) { navigation.enqueue(this, "navigation error") }
+            CompositionLocalProvider(LocalNavigationErrorNotice provides navigation) {
+                PyrycodeMobileTheme(dynamicColor = false) {
+                    ThreadTopOverlay(
+                        usageLimit = warning,
+                        usageLimitDismissed = false,
+                        onDismissUsageLimit = {},
+                        showRePair = false,
+                        onRePair = {},
+                        sessionError = "session.blocked",
+                        turnOutcome = TurnRecoveryNotice.ContextTooLong,
+                        onCompact = { compactTaps++ },
+                        transientError = "thread error",
+                        confirmation = "File saved",
+                    )
+                }
+            }
+        }
+        composeRule.mainClock.autoAdvance = false
+        val threadError = composeRule.onNodeWithText("thread error").getUnclippedBoundsInRoot()
+        val navigationError = composeRule.onNodeWithText("navigation error").getUnclippedBoundsInRoot()
+        val confirmation = composeRule.onNodeWithTag("transient_confirmation_notice").assertHasNoClickAction()
+        val bounds = confirmation.getUnclippedBoundsInRoot()
+        assertEquals(12f, (navigationError.top - threadError.bottom).value, 0.5f)
+        assertEquals(12f, (bounds.top - navigationError.bottom).value, 0.5f)
+        confirmation.performTouchInput { click(center) }
+        composeRule.runOnIdle { assertEquals(0, compactTaps) }
+        composeRule.mainClock.advanceTimeBy(4_100)
+        composeRule.onNodeWithText("navigation error").assertDoesNotExist()
+        val after = confirmation.getUnclippedBoundsInRoot()
+        assertEquals(12f, (after.top - threadError.bottom).value, 0.5f)
     }
 
     // AC #4: a live usage reading no longer masks live turn status.

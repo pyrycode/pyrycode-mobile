@@ -102,7 +102,7 @@ class BackgroundAgentProseScreenTest {
 
     private fun reveal(text: String) = compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(text))
 
-    @Test fun lateParentReplayMovesVisibleSyntheticIntoClosedBlockAndOpeningRevealsItOnce() {
+    @Test fun lateParentReplayMovesVisibleSyntheticIntoBlockWithoutHidingIt() {
         mount(false, true)
         val receivedAt = Instant.parse("2020-01-01T10:00:00Z")
         val delta = LiveSessionEvent.AssistantDelta("c", "child", 0, "Reply", "")
@@ -116,37 +116,28 @@ class BackgroundAgentProseScreenTest {
             fold = fold.reduce(ThreadInput.Live(delta.copy(parentToolUseId = "a"), receivedAt), "c")
             items = fold.render()
         }
-        compose.onNodeWithText("Reply", substring = true).assertDoesNotExist()
-        compose.onNodeWithText("Main").assertIsDisplayed()
-        run(1).performClick()
+        // The reply moves into the agent's block and stays visible there: a lone child never meets the
+        // two-row fold threshold (#1827 follow-up), so there is no header to hide it behind.
         compose.onNodeWithText("Reply", substring = true).assertIsDisplayed()
         compose.onNodeWithTag("background-agent-child:a").assertIsDisplayed()
         compose.onAllNodesWithText("Reply", substring = true).assertCountEquals(1)
         val child = compose.onNodeWithText("Reply", substring = true).getUnclippedBoundsInRoot()
         val main = compose.onNodeWithText("Main").getUnclippedBoundsInRoot()
         assertEquals(main.left + 16.dp, child.left)
-        run(1).performClick()
-        compose.onNodeWithText("Reply", substring = true).assertDoesNotExist()
-        compose.onNodeWithTag("background-agent-child:a").assertDoesNotExist()
         compose.runOnIdle { collapse = false }
         compose.onNodeWithText("Reply", substring = true).assertIsDisplayed()
         compose.onAllNodesWithText("Reply", substring = true).assertCountEquals(1)
     }
 
-    @Test fun proseWithoutChildToolUsesExistingOpenCloseControlAndSetting() {
+    @Test fun proseWithoutChildToolAlwaysShowsRegardlessOfCollapseSetting() {
         mount(false, true)
-        compose.onNodeWithText("Child").assertDoesNotExist()
-        compose.onNodeWithText("Main").assertIsDisplayed()
-        run(1).performClick()
+        // A lone prose child never meets the two-row fold threshold (#1827 follow-up), so it always shows
+        // beneath its agent's own row, whether or not "Collapse assistant tool uses" is on.
         compose.onNodeWithText("Child").assertIsDisplayed()
-        compose.onAllNodesWithText("Child").assertCountEquals(1)
-        run(1).performClick()
-        compose.onNodeWithText("Child").assertDoesNotExist()
+        compose.onNodeWithText("Main").assertIsDisplayed()
         compose.runOnIdle { collapse = false }
         compose.onNodeWithText("Child").assertIsDisplayed()
         compose.runOnIdle { collapse = true }
-        compose.onNodeWithText("Child").assertDoesNotExist()
-        run(1).performClick()
         compose.onNodeWithText("Child").assertIsDisplayed()
     }
 
@@ -158,20 +149,30 @@ class BackgroundAgentProseScreenTest {
                 ThreadItem.MessageItem(tool.copy(id = "outside", toolCall = tool.toolCall?.copy(parentToolUseId = ""))),
                 ThreadItem.MessageItem(tool.copy(id = "outside2", toolCall = tool.toolCall?.copy(parentToolUseId = ""))),
                 prose("Ordinary reply"),
-            ) + items
+            ) + items + ThreadItem.MessageItem(tool.copy(id = "read2"))
         }
-        val agentRun = hasText("Using tools: 2", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:a"))
+        // Both runs have the same label; the first owned child tool identifies the Agent's run.
+        val runId =
+            items
+                .filterIsInstance<ThreadItem.MessageItem>()
+                .map { it.message }
+                .first { it.role == Role.Tool && it.toolCall?.parentToolUseId == "a" }
+                .id
+        assertEquals("read", runId)
+        val agentRun = hasText("Using tools: 2", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:$runId"))
         val ordinaryRun =
             hasText("Using tools: 2", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:outside"))
         compose.onNode(agentRun).performClick()
         reveal("Child")
         compose.onAllNodesWithText("Child").assertCountEquals(1)
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(ordinaryRun)
         compose.onNodeWithTag("tool-run:outside").assertExists()
         compose.onNode(ordinaryRun).performClick()
-        reveal("Using tools: 2")
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(agentRun)
         compose.onNode(agentRun).performClick()
         compose.onNodeWithText("Child").assertDoesNotExist()
         compose.onNodeWithText("Child after tool").assertDoesNotExist()
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasTestTag("tool-run:outside"))
         compose.onNodeWithTag("tool-run:outside").assertExists()
     }
 
@@ -179,13 +180,14 @@ class BackgroundAgentProseScreenTest {
         mount(true, true)
         compose.onNodeWithText("Child").assertDoesNotExist()
         compose.onNodeWithText("Child after tool").assertDoesNotExist()
-        run(2).performClick()
+        // The run counts only the one tool-bearing child, "read" -- never the root (#1827 follow-up).
+        run(1).performClick()
         reveal("Child after tool")
         compose.onNodeWithText("Child after tool").assertIsDisplayed()
         reveal("Child")
         compose.onNodeWithText("Child").assertIsDisplayed()
-        reveal("Using tools: 2")
-        run(2).performClick()
+        reveal("Using tools: 1")
+        run(1).performClick()
         compose.onNodeWithText("Child").assertDoesNotExist()
         compose.onNodeWithText("Child after tool").assertDoesNotExist()
         compose.runOnIdle { collapse = false }
@@ -200,7 +202,8 @@ class BackgroundAgentProseScreenTest {
     @Test fun earlyProseInALongBlockCanBeScrolledIntoViewAndHiddenByItsOwnRun() {
         mount(true, true)
         compose.runOnIdle { items = items + (0 until 30).map { prose("Later child $it", "a") } }
-        val ownedRun = hasText("Using tools: 2", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:a"))
+        // The run counts only the one tool-bearing child, "read" -- never the root (#1827 follow-up).
+        val ownedRun = hasText("Using tools: 1", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:read"))
         compose.questionAnswerTarget(ownedRun).performClick()
         reveal("Later child 29")
         // A loaded child can be outside composition; ownership is checked after scrolling it into view.
@@ -219,7 +222,7 @@ class BackgroundAgentProseScreenTest {
         compose.onNodeWithText("Later child 29").assertIsDisplayed()
     }
 
-    @Test fun childGapStaysVisibleAtClosedHeaderAndReturnsToProseWhenOpened() {
+    @Test fun childGapStaysVisibleBesideItsAlwaysVisibleProse() {
         mount(false, true)
         compose.runOnIdle {
             val child = items.filterIsInstance<ThreadItem.MessageItem>().first { it.message.id == "Child" }
@@ -237,23 +240,19 @@ class BackgroundAgentProseScreenTest {
                 compose.onNodeWithTag("history-gap:$anchor").assertIsDisplayed()
             }
         }
-        compose.onNodeWithText("Child").assertDoesNotExist()
-        assertEachGapOnce()
-        run(1).performClick()
+        // A lone prose child never meets the two-row fold threshold (#1827 follow-up), so it -- and both
+        // gap markers anchored around it -- are visible regardless of the collapse setting.
         compose.onNodeWithText("Child").assertIsDisplayed()
         assertEachGapOnce()
         val gap = compose.onNodeWithTag("history-gap:1").getUnclippedBoundsInRoot()
         val prose = compose.onNodeWithText("Child").getUnclippedBoundsInRoot()
         org.junit.Assert.assertTrue(gap.bottom <= prose.top)
-        run(1).performClick()
-        compose.onNodeWithText("Child").assertDoesNotExist()
-        assertEachGapOnce()
         compose.runOnIdle { collapse = false }
         compose.onNodeWithText("Child").assertIsDisplayed()
         assertEachGapOnce()
     }
 
-    @Test fun finishAndLaterMainReplyKeepProseNestedAndCollapseStillControlsVisibility() {
+    @Test fun finishAndLaterMainReplyKeepProseNestedAndAlwaysVisible() {
         mount(false, false)
         compose.runOnIdle {
             items = items +
@@ -265,9 +264,9 @@ class BackgroundAgentProseScreenTest {
         }
         compose.onNodeWithTag("background-agent-child:a").assertIsDisplayed()
         compose.onAllNodesWithText("Child").assertCountEquals(1)
+        // A lone prose child never meets the two-row fold threshold (#1827 follow-up), so it stays visible
+        // whether or not "Collapse assistant tool uses" is on.
         compose.runOnIdle { collapse = true }
-        compose.onNodeWithText("Child").assertDoesNotExist()
-        run(1).performClick()
         compose.onNodeWithText("Child").assertIsDisplayed()
         compose.onNodeWithText("Later").assertIsDisplayed()
     }

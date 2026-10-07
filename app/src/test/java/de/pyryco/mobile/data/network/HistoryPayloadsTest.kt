@@ -169,6 +169,53 @@ class HistoryPayloadsTest {
         }
     }
 
+    @Test
+    fun upperRangeIdentity_hasNoSignedCompatibilityClaim() {
+        val page =
+            decodePage("""{"entries":[{"id":18446744073709551615,"type":"future","payload":{},"ts":"$TS"}],"cursor":"","at_start":true}""")
+        assertEquals(null, page.entries.single().id)
+    }
+
+    @Test
+    fun unsignedIdentity_preservesAllBoundaryValuesAndRawSemantics() {
+        val values = listOf(1uL, Long.MAX_VALUE.toULong(), Long.MAX_VALUE.toULong() + 1u, ULong.MAX_VALUE)
+        val rawPayload = MobileJson.parseToJsonElement("""{"opaque":[1,"value"],"nested":{"id":-1}}""")
+        for (id in values) {
+            val page =
+                decodePage(
+                    """{"entries":[{"id":$id,"event_id":7,"type":"future","payload":$rawPayload,"ts":"$TS"}],"cursor":"opaque","at_start":false}""",
+                )
+            val entry = page.entries.single()
+            assertEquals(id, entry.unsignedId)
+            assertEquals(rawPayload, entry.payload)
+            assertEquals(Instant.parse(TS), entry.timestamp)
+            assertEquals("future", entry.type)
+            assertEquals("opaque", page.cursor)
+        }
+    }
+
+    @Test
+    fun invalidNumericIdentities_areRejectedWithoutCoercion() {
+        for (token in listOf(
+            "0",
+            "-1",
+            "18446744073709551616",
+            "1.5",
+            "1.0",
+            "1e3",
+            "null",
+            "true",
+            "{}",
+            "[]",
+            "\"1\"",
+            "\"18446744073709551615\"",
+        )) {
+            assertThrows("identity $token", IllegalArgumentException::class.java) {
+                decodePage("""{"entries":[{"id":$token,"type":"future","payload":{},"ts":"$TS"}],"cursor":"","at_start":true}""")
+            }
+        }
+    }
+
     private fun decodePage(raw: String): HistoryPage =
         MobileJson
             .decodeFromJsonElement<HistoryPagePayloadDto>(MobileJson.parseToJsonElement(raw))

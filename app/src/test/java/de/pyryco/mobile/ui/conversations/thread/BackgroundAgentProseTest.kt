@@ -90,12 +90,14 @@ class BackgroundAgentProseTest {
         assertEquals(listOf("main", "main-later", "a", "a-first", "read", "a-second", "b", "b-first", "b-second"), ids(rows))
         assertEquals(listOf("a", "a", "a", "a", "b", "b", "b"), delivered(rows).drop(2).map { it.agentBlockId })
         assertUnique(rows)
-        val open = foldToolRuns(rows, setOf("a", "b"))
+        // Each root always draws as itself (#1827 follow-up); only "a"'s one tool-bearing child run — "read" —
+        // is ever collapsible. Lane "b" has no tool among its children, so it never folds at all.
+        val open = foldToolRuns(rows, setOf("read"))
         assertEquals(ids(rows), ids(open))
         assertUnique(open)
-        assertEquals(listOf("main", "main-later"), ids(foldToolRuns(rows, emptySet())))
+        assertEquals(listOf("main", "main-later", "a", "b", "b-first", "b-second"), ids(foldToolRuns(rows, emptySet())))
         assertEquals(
-            listOf(listOf("a", "read"), listOf("b")),
+            listOf(listOf("read")),
             foldToolRuns(rows, emptySet()).filterIsInstance<ThreadRow.ToolRun>().map { it.tools.map(Message::id) },
         )
     }
@@ -111,7 +113,7 @@ class BackgroundAgentProseTest {
                 ThreadHistoryMarker(2, agent.historyKeys().first()),
             )
         val closed = foldHistoryToolRuns(rows, emptySet(), markers)
-        val open = foldHistoryToolRuns(rows, setOf("a"), markers)
+        val open = foldHistoryToolRuns(rows, setOf("read"), markers)
         val reclosed = foldHistoryToolRuns(rows, emptySet(), markers)
         // Check every row: expanded runs retain both their header and the original first tool.
         for (display in listOf(closed, open, reclosed, rows)) {
@@ -120,8 +122,9 @@ class BackgroundAgentProseTest {
             assertUnique(display)
             val run = display.filterIsInstance<ThreadRow.ToolRun>().singleOrNull()
             if (run != null && !run.expanded) {
-                assertEquals(listOf("main"), ids(display))
-                assertEquals("a", run.runId)
+                // "a" itself is never folded away (#1827 follow-up); only its "read" child run collapses.
+                assertEquals(listOf("main", "a"), ids(display))
+                assertEquals("read", run.runId)
                 assertEquals(projected, historyMarkersFor(run, projected))
             } else {
                 assertEquals(ids(rows), ids(display))
@@ -213,8 +216,11 @@ class BackgroundAgentProseTest {
         val after = project(base + start("a"))
         assertEquals(listOf("ordinary", "main", "a", "child"), ids(after))
         val carried = carryRunExpansion(before, after, setOf("ordinary"), emptySet())
-        assertEquals(setOf("ordinary", "a"), carried.expandedRuns)
-        assertEquals(emptySet<String>(), carried.pending)
+        // "a" never becomes a run id itself (#1827 follow-up), and its lone "child" never forms a run
+        // either, so "a"'s carried intent has nothing left to resolve into — it stays pending, harmlessly,
+        // since the block it names never collapses.
+        assertEquals(setOf("ordinary"), carried.expandedRuns)
+        assertEquals(setOf("a"), carried.pending)
         assertEquals(listOf("ordinary", "main", "a", "child"), ids(foldToolRuns(after, carried.expandedRuns)))
         assertUnique(after)
     }
@@ -261,9 +267,11 @@ class BackgroundAgentProseTest {
             assertEquals(initial.stream?.copy(parentToolUseId = "a"), learned.stream)
             val rows = project(learned.render())
             assertEquals("a", delivered(rows).single { it.item == ThreadItem.MessageItem(after) }.agentBlockId)
-            assertEquals(listOf("main"), ids(foldToolRuns(rows, emptySet())))
+            // "a" draws as itself, and its one prose child never meets the two-row fold threshold either
+            // (#1827 follow-up), so the block shows fully regardless of which runs are expanded.
+            assertEquals(listOf("main", "a", "child"), ids(foldToolRuns(rows, emptySet())))
             assertEquals(listOf("main", "a", "child"), ids(foldToolRuns(rows, setOf("a"))))
-            assertEquals(listOf("main"), ids(foldToolRuns(rows, emptySet())))
+            assertEquals(listOf("main", "a", "child"), ids(foldToolRuns(rows, emptySet())))
             assertUnique(rows)
             assertUnique(foldToolRuns(rows, setOf("a")))
 

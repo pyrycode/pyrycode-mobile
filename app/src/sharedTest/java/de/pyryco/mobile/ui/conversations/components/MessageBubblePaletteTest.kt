@@ -54,7 +54,6 @@ class MessageBubblePaletteTest {
     private var assistantFill = Color.Unspecified
     private var background = Color.Unspecified
     private var actionTint = Color.Unspecified
-    private var actionBacking = Color.Unspecified
     private var userBody = Color.Unspecified
     private var assistantBody = Color.Unspecified
     private var renderedMode: Pair<Boolean, Boolean>? = null
@@ -79,8 +78,7 @@ class MessageBubblePaletteTest {
                     userFill = if (dark && !wallpaper) Color(0xFF003355) else scheme.primaryContainer
                     assistantFill = if (dark && !wallpaper) Color(0xFF001D34) else scheme.secondaryContainer
                     background = scheme.threadColors.background
-                    actionTint = scheme.inversePrimary
-                    actionBacking = scheme.inverseSurface
+                    actionTint = scheme.primary
                     userBody = scheme.onPrimaryContainer
                     assistantBody = scheme.onSecondaryContainer
                     if (!wallpaper) {
@@ -138,10 +136,10 @@ class MessageBubblePaletteTest {
         assertEquals(dark to wallpaper, renderedMode)
         assertEquals(3, bubbles.size)
         val queued = rule.onNodeWithText("Queued", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-        val glyphs = rule.onAllNodesWithTag("message-copy-glyph", useUnmergedTree = true).fetchSemanticsNodes()
-        assertEquals(3, glyphs.size)
-        val backings = rule.onAllNodesWithTag("message-copy-backing", useUnmergedTree = true).fetchSemanticsNodes()
-        assertEquals("finished user, finished assistant and streaming copy need a contrasting backing", 3, backings.size)
+        val glyphs =
+            rule.onAllNodesWithTag("message-copy-glyph", useUnmergedTree = true).fetchSemanticsNodes() +
+                rule.onAllNodesWithTag("message-reply-glyph", useUnmergedTree = true).fetchSemanticsNodes()
+        assertEquals(6, glyphs.size)
 
         fun contrast(
             first: Color,
@@ -151,10 +149,9 @@ class MessageBubblePaletteTest {
             val secondLuminance = second.luminance()
             return (maxOf(firstLuminance, secondLuminance) + 0.05f) / (minOf(firstLuminance, secondLuminance) + 0.05f)
         }
-        val glyphContrast = contrast(actionTint, actionBacking)
-        val boundaryContrast = contrast(actionBacking, background)
-        assertTrue("side copy glyph contrast must be at least 3:1; got $glyphContrast", glyphContrast >= 3f)
-        assertTrue("side copy backing contrast must be at least 3:1; got $boundaryContrast", boundaryContrast >= 3f)
+        // No backing (#1889): each action glyph's tint must clear 3:1 against the thread background on its own.
+        val glyphContrast = contrast(actionTint, background)
+        assertTrue("side action glyph contrast against the thread background must be at least 3:1; got $glyphContrast", glyphContrast >= 3f)
         rule.runOnIdle {
             val root = checkNotNull(view)
             val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
@@ -194,13 +191,7 @@ class MessageBubblePaletteTest {
                         if (bitmap.getPixel(x, y) == expected) matchingPixels++
                     }
                 }
-                assertTrue("side copy must use the scheme inversePrimary tint", matchingPixels > 0)
-            }
-            backings.forEach { backing ->
-                val bounds = backing.boundsInRoot
-                // The middle of the left margin is clear of the glyph and rounded corners.
-                val glyph = glyphs.single { bounds.contains(it.boundsInRoot.center) }.boundsInRoot
-                assertPixel((bounds.left + glyph.left) / 2, bounds.center.y, actionBacking)
+                assertTrue("both side actions must use the scheme primary tint", matchingPixels > 0)
             }
             bitmap.recycle()
         }

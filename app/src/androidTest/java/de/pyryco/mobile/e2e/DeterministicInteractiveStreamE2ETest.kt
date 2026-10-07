@@ -2,8 +2,10 @@ package de.pyryco.mobile.e2e
 
 import android.content.pm.ShortcutManager
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -26,10 +28,14 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Role
@@ -124,6 +130,10 @@ class DeterministicInteractiveStreamE2ETest {
 
     @get:Rule
     val composeTestRule = createAndroidComposeRule<MainActivity>()
+
+    /** #1818: reply's keyboard check needs a real IME, which ATD images omit; selected per method. */
+    @get:Rule
+    val testIme = TestImeRule()
 
     // The spinner's content-description (production UI string, no test tags). Copied from
     // ScriptedThreadRenderTest (the Layer-1 twin). Keep in sync with res/values/strings.xml:
@@ -248,6 +258,98 @@ class DeterministicInteractiveStreamE2ETest {
             composeTestRule.onAllNodesWithText(PING, substring = true).fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onAllNodesWithText(PING, substring = true).onFirst().assertIsDisplayed()
+    }
+
+    /** #1866: the native fixture holds the suggestion until the explicit submission clears it. */
+    @Test
+    fun interactiveTurn_seededChannel_replySuggestionLongPressSends() {
+        arriveInSeededThread()
+        typeAndSend(SEND_PROMPT)
+        val repository =
+            requireNotNull(
+                GlobalContext
+                    .get()
+                    .get<RelayRepositoryCoordinator>()
+                    .currentRepository.value,
+            )
+        val conversation =
+            runBlocking {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    repository
+                        .observeConversations(ConversationFilter.All)
+                        .first { rows -> rows.any { it.name == SEED_CHANNEL_NAME } }
+                        .first { it.name == SEED_CHANNEL_NAME }
+                        .id
+                }
+            }
+        composeTestRule.assertReplySuggestionLongPress(repository, conversation, REPLY_TIMEOUT_MS)
+    }
+
+    /** Zero-Claude durable twin runs beside the original ping scenario, with its own channel. */
+    @Test
+    fun interactiveTurn_seededChannel_durableGapCatchUp() {
+        arriveInSeededThread()
+        val args = InstrumentationRegistry.getArguments()
+        val serverId = requireNotNull(args.getString("serverId"))
+        val repo =
+            requireNotNull(
+                GlobalContext
+                    .get()
+                    .get<RelayRepositoryCoordinator>()
+                    .currentRepository.value,
+            )
+        val name = "e2e-gap-" + System.currentTimeMillis()
+        val conversation = runBlocking { repo.createDiscussion().also { repo.promote(it.id, name) } }
+        val fault = DaemonFaultControl()
+        fault.posts(name, "e2e1833-baseline", 1)
+        composeTestRule.onNodeWithContentDescription("Back").performClick()
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) { composeTestRule.onAllNodesWithText(name).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onNodeWithText(name).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText("e2e1833-baseline-000").fetchSemanticsNodes().isNotEmpty()
+        }
+        val proof = DurableGapProof(composeTestRule, serverId, conversation.id)
+        proof.cacheBaseline()
+        val peer =
+            SecondClientPeer(
+                PairedServer(
+                    serverId,
+                    requireNotNull(args.getString("peerToken")),
+                    requireNotNull(args.getString("relayUrl")),
+                    requireNotNull(args.getString("serverStaticPublicKey")),
+                ),
+            )
+        try {
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            severLink()
+            composeTestRule.onNodeWithText("e2e1833-baseline-000").assertIsDisplayed()
+            proof.missPages(name) {
+                runBlocking {
+                    withTimeout(REPLY_TIMEOUT_MS) {
+                        while (peer.recorded(conversation.id).none {
+                                it.type == "assistant_delta" && peer.field(it, "text") == proof.lastOlderPost
+                            }
+                        ) {
+                            kotlinx.coroutines.delay(50)
+                        }
+                    }
+                    peer.sendMessage(conversation.id, "e2e1833-completed-turn", THREAD_TIMEOUT_MS)
+                    withTimeout(REPLY_TIMEOUT_MS) {
+                        while (peer.recorded(conversation.id).none {
+                                it.type == "turn_end" && peer.field(it, "producer") != "channel_post"
+                            }
+                        ) {
+                            delay(50)
+                        }
+                    }
+                }
+            }
+            proof.catchUp(::restoreLink, "ping")
+            assertEquals("cached older row retained", 1, proof.messages().count { it == "e2e1833-baseline-000" })
+        } finally {
+            peer.close()
+            DurableHistoryProbe.end()
+        }
     }
 
     @Test
@@ -573,6 +675,7 @@ class DeterministicInteractiveStreamE2ETest {
      */
     @Test
     fun interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread() {
+        testIme.select()
         arriveInSeededThread()
         val repository =
             requireNotNull(
@@ -609,6 +712,7 @@ class DeterministicInteractiveStreamE2ETest {
         assertTrue("displayed arrived text must belong to an ongoing reply", held.isStreaming)
         assertNotEquals(LiveSessionEvent.TurnState.Phase.Idle, runBlocking { repository.observeTurnPhase(conversationId).first() })
 
+        acknowledgeFailedMcpPill()
         composeTestRule.assertSideMessageCopy(held)
         val sent =
             runBlocking { repository.observeMessages(conversationId).first() }
@@ -617,8 +721,23 @@ class DeterministicInteractiveStreamE2ETest {
                 .message
         composeTestRule.assertSideMessageCopy(sent)
 
-        // The host watcher cannot release the terminal fragment before this explicit action.
-        typeAndSend(SECOND_PROMPT)
+        val heldQuote = "Assistant:\n\"${held.content}\"\n"
+        composeTestRule.assertSideMessageReply(held, heldQuote)
+        composeTestRule.waitUntil(5_000) {
+            composeTestRule.runOnIdle {
+                ViewCompat.getRootWindowInsets(composeTestRule.activity.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+            }
+        }
+        val staged = heldQuote + "User:\n\"${sent.content}\"\n"
+        composeTestRule.assertSideMessageReply(sent, staged)
+        assertEquals(
+            1,
+            runBlocking { repository.observeMessages(conversationId).first() }
+                .filterIsInstance<ThreadItem.MessageItem>()
+                .count { it.message.role == Role.User },
+        )
+        // Explicit test-driver send releases later chunks while the phone's staged quote stays open.
+        runBlocking { repository.sendMessage(conversationId, SECOND_PROMPT) }
         val finished =
             runBlocking {
                 withTimeout(REPLY_TIMEOUT_MS) {
@@ -646,6 +765,15 @@ class DeterministicInteractiveStreamE2ETest {
         composeTestRule.onNode(finalBody, useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onAllNodes(caret, useUnmergedTree = true).assertCountEquals(0)
         composeTestRule.assertSideMessageCopy(finished)
+        assertEquals(
+            staged,
+            composeTestRule
+                .onNode(hasSetTextAction())
+                .fetchSemanticsNode()
+                .config[SemanticsProperties.EditableText]
+                .text,
+        )
+        composeTestRule.assertSideMessageReply(finished, staged + "Assistant:\n\"${finished.content}\"\n")
     }
 
     /**
@@ -785,7 +913,14 @@ class DeterministicInteractiveStreamE2ETest {
         val header = hasTestTag("background-agent:agent1783")
         val child = hasTestTag("background-agent-child:agent1783")
         val prose = hasText("child1827-before")
-        val run = hasText("Using tools:", substring = true) and hasClickAction()
+        // The fixture's child1783 tool owns the run identity; the Agent root stays separate.
+        val run = hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:child1783"))
+        val expandLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.tool_run_expand)
+        val closedRun =
+            run and
+                SemanticsMatcher("closed owned Agent run") {
+                    it.config.getOrNull(SemanticsActions.OnClick)?.label == expandLabel
+                }
         val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodesWithText(running).fetchSemanticsNodes().isNotEmpty() }
         list.performScrollToNode(hasText("unmatched1827"))
@@ -793,7 +928,7 @@ class DeterministicInteractiveStreamE2ETest {
         composeTestRule.onAllNodes(hasText("unmatched1827") and hasAnyAncestor(child), useUnmergedTree = true).assertCountEquals(0)
         list.performScrollToNode(run)
         composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(0)
-        composeTestRule.onNode(run).performClick()
+        composeTestRule.onNode(closedRun).performClick()
         list.performScrollToNode(prose)
         composeTestRule.onNode(prose and hasAnyAncestor(child), useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(1)
@@ -804,6 +939,9 @@ class DeterministicInteractiveStreamE2ETest {
         composeTestRule.onNode(marker).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
         composeTestRule.onNode(header).assertIsDisplayed()
+        composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(0)
+        list.performScrollToNode(run)
+        composeTestRule.onNode(closedRun).assertExists()
         typeAndSend("release1783")
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodesWithText("after1783").fetchSemanticsNodes().isNotEmpty() }
         composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(marker)
@@ -814,6 +952,11 @@ class DeterministicInteractiveStreamE2ETest {
         val agent = composeTestRule.onNode(header).fetchSemanticsNode().boundsInRoot
         val after = composeTestRule.onNodeWithText("after1783", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         assertTrue("terminal block must settle before the following reply", agent.bottom <= after.top)
+        // Navigation preserves collapse state; explicitly open the owned run to inspect its reply.
+        list.performScrollToNode(run)
+        composeTestRule.onNode(closedRun).assertExists()
+        composeTestRule.onAllNodesWithText("child1827-after", useUnmergedTree = true).assertCountEquals(0)
+        composeTestRule.onNode(closedRun).performClick()
         list.performScrollToNode(hasText("child1827-after"))
         composeTestRule.onNode(hasText("child1827-after") and hasAnyAncestor(child), useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onAllNodesWithText("child1827-after", useUnmergedTree = true).assertCountEquals(1)
@@ -1125,6 +1268,31 @@ class DeterministicInteractiveStreamE2ETest {
         composeTestRule.onAllNodesWithText(SEED_CHANNEL_NAME).onFirst().performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /**
+     * Every scripted run reports a failed MCP server (#1457), and its Error pill has no dismiss. A short thread
+     * starts at the Top overlay's inset (#1509), so the pill covers the first row's side actions and the
+     * pointer helpers cannot scroll them clear. Acknowledge it as a user would: open it, close Channel info.
+     */
+    private fun acknowledgeFailedMcpPill() {
+        val pill = hasClickAction() and SemanticsMatcher("text starts with $mcpFailedPrefix") { nodeText(it).startsWith(mcpFailedPrefix) }
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodes(pill).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onAllNodes(pill).onFirst().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(MCP_SECTION_HEADER).fetchSemanticsNodes().isNotEmpty()
+        }
+        // The first back can only close the keyboard, so press until the sheet is gone, never past it.
+        repeat(3) {
+            if (composeTestRule.onAllNodesWithText(MCP_SECTION_HEADER).fetchSemanticsNodes().isNotEmpty()) {
+                Espresso.pressBack()
+                composeTestRule.waitForIdle()
+            }
+        }
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(MCP_SECTION_HEADER).fetchSemanticsNodes().isEmpty() &&
+                composeTestRule.onAllNodes(pill).fetchSemanticsNodes().isEmpty()
         }
     }
 

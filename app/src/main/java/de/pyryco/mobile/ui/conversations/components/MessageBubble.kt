@@ -1,13 +1,13 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
@@ -64,7 +64,9 @@ internal val MessageRoleInset = 100.dp
 private val DeliveredMessageRoleInset = 40.dp
 private val MessageActionsGap = 12.dp
 private val MessageActionsWidth = 13.dp
-private val MessageCopyTargetSize = 48.dp
+private val MessageActionTargetSize = 48.dp
+private val MessageActionCentreGap = 25.dp
+private val MessageActionPairHeight = MessageActionTargetSize * 2
 
 // #896: the frame has no subagent grouping, so each nesting level steps a tool row in by the
 // `Message area` gap it already uses between rows.
@@ -98,6 +100,9 @@ private const val STREAMING_CARET_BLINK_PERIOD_MS: Long = 500L
  * the meta row until the bubble is tapped and owns which message shows it; the defaults keep the row
  * drawn and the bubble inert, as every other host had it. A non-null [onToggleMetaRow] is the bubble's
  * tap and its screen-reader click.
+ *
+ * [onReply] receives the immutable message source at tap time; the host stages it in its own draft.
+ * Tool rows never expose this action. The default leaves previews and standalone mounts inert.
  */
 @Composable
 fun MessageBubble(
@@ -115,6 +120,7 @@ fun MessageBubble(
     metaRowVisible: Boolean = true,
     onToggleMetaRow: (() -> Unit)? = null,
     threadOpenedAt: Instant? = null,
+    onReply: (Message) -> Unit = {},
 ) {
     val metaRow = MetaRowControl(metaRowVisible, onToggleMetaRow)
     val attachments: @Composable () -> Unit = {
@@ -129,8 +135,8 @@ fun MessageBubble(
         )
     }
     when (message.role) {
-        Role.User -> UserMessageBubble(message, attachments, metaRow, modifier)
-        Role.Assistant -> AssistantMessage(message, attachments, onOpenMarkdownLink, metaRow, threadOpenedAt, modifier)
+        Role.User -> UserMessageBubble(message, attachments, metaRow, onReply, modifier)
+        Role.Assistant -> AssistantMessage(message, attachments, onOpenMarkdownLink, metaRow, threadOpenedAt, onReply, modifier)
         // The gutter is applied here rather than inside ToolCallRow: moving it into the components left
         // the tool row as the one list kind still bleeding to the screen edge, which reads as a ragged
         // left edge next to the bubbles. The row's own layout belongs to #658, and this arm reaches it
@@ -162,6 +168,7 @@ private fun UserMessageBubble(
     message: Message,
     attachments: @Composable () -> Unit,
     metaRow: MetaRowControl,
+    onReply: (Message) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     MessageContainer(
@@ -171,6 +178,7 @@ private fun UserMessageBubble(
         bubbleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         attachments = attachments,
         metaRow = metaRow,
+        onReply = onReply,
         modifier = modifier,
     ) {
         if (message.hasNoBody()) return@MessageContainer
@@ -203,6 +211,7 @@ private fun AssistantMessage(
     onOpenMarkdownLink: ((String) -> Unit)?,
     metaRow: MetaRowControl,
     threadOpenedAt: Instant?,
+    onReply: (Message) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     MessageContainer(
@@ -212,6 +221,7 @@ private fun AssistantMessage(
         bubbleContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
         attachments = attachments,
         metaRow = metaRow,
+        onReply = onReply,
         modifier = modifier,
     ) {
         if (message.isStreaming) {
@@ -273,6 +283,7 @@ private fun MessageContainer(
     modifier: Modifier = Modifier,
     attachments: @Composable () -> Unit = {},
     metaRow: MetaRowControl = MetaRowControl(),
+    onReply: (Message) -> Unit = {},
     body: @Composable () -> Unit,
 ) {
     val isUserSide = alignment == Alignment.End
@@ -309,6 +320,7 @@ private fun MessageContainer(
             Surface(
                 modifier =
                     Modifier
+                        .heightIn(min = MessageActionPairHeight)
                         .shadow(4.dp, BubbleShape)
                         .testTag(MESSAGE_BUBBLE_TEST_TAG)
                         .then(tap)
@@ -334,7 +346,7 @@ private fun MessageContainer(
                             horizontal = BubbleHorizontalPadding,
                             vertical = BubbleVerticalPadding,
                         ),
-                    verticalArrangement = Arrangement.spacedBy(BubbleContentSpacing),
+                    verticalArrangement = Arrangement.spacedBy(BubbleContentSpacing, Alignment.CenterVertically),
                     // The design puts `items-start` on the `Message` column for *both* roles — a short
                     // user body is left-aligned inside its bubble — and `justify-end` on the user's meta
                     // row alone. So the column aligns Start and the meta row overrides for its own side.
@@ -360,7 +372,7 @@ private fun MessageContainer(
                     }
                 }
             }
-            MessageActions(message.content)
+            MessageActions(message, onReply)
         },
     ) { measurables, constraints ->
         val actionsWidth = MessageActionsWidth.roundToPx()
@@ -370,50 +382,78 @@ private fun MessageContainer(
             measurables[0].measure(
                 constraints.copy(minWidth = 0, minHeight = 0, maxWidth = (constraints.maxWidth - reserved).coerceAtLeast(0)),
             )
-        val actions = measurables[1].measure(Constraints.fixed(actionsWidth, bubble.height))
-        layout(constraints.maxWidth, bubble.height) {
+        val rowHeight = maxOf(bubble.height, MessageActionPairHeight.roundToPx())
+        val actions = measurables[1].measure(Constraints.fixed(actionsWidth, rowHeight))
+        layout(constraints.maxWidth, rowHeight) {
             val bubbleX = if (isUserSide) constraints.maxWidth - bubble.width else 0
-            bubble.placeRelative(bubbleX, 0)
+            bubble.placeRelative(bubbleX, (rowHeight - bubble.height) / 2)
             // Placed after the surface so the extended target wins where it overlaps the bubble.
             actions.placeRelative(if (isUserSide) bubbleX - gap - actionsWidth else bubble.width + gap, 0)
         }
     }
 }
 
-/** Drawn column geometry stays separate from the 48dp clickable target. No clipping here. */
+/** Two adjoining 48dp targets surround the glyph pair without overlapping neighbouring rows. */
 @Composable
-private fun MessageActions(text: String) {
+private fun MessageActions(
+    message: Message,
+    onReply: (Message) -> Unit,
+) {
     val clipboard = LocalClipboardManager.current
-    val copyLabel = stringResource(R.string.cd_thread_copy_message)
+    val labels = listOf(stringResource(R.string.cd_thread_copy_message), stringResource(R.string.cd_thread_reply_message))
     Box(modifier = Modifier.testTag("message-actions"), contentAlignment = Alignment.Center) {
-        Box(
-            modifier =
-                Modifier
-                    .requiredSize(MessageCopyTargetSize)
-                    .semantics {
-                        contentDescription = copyLabel
-                    }.clickable(role = androidx.compose.ui.semantics.Role.Button) {
-                        clipboard.setBoundedText(text)
-                        RelayLog.d { "event=message_copy" }
-                    },
-            contentAlignment = Alignment.Center,
-        ) {
-            // #1817 accessibility resolution: the Figma tint needs a contrasting adjacent surface.
-            // Keep the backing within the column, leaving the glyph and extended target unchanged.
-            Box(
-                modifier =
-                    Modifier
-                        .size(width = MessageActionsWidth, height = 14.dp)
-                        .background(MaterialTheme.colorScheme.inverseSurface, MaterialTheme.shapes.extraSmall)
-                        .testTag("message-copy-backing"),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_copy),
-                    contentDescription = null,
-                    modifier = Modifier.size(width = 11.dp, height = 12.dp).testTag("message-copy-glyph"),
-                    tint = MaterialTheme.colorScheme.inversePrimary,
-                )
+        Layout(
+            modifier = Modifier.requiredSize(MessageActionTargetSize, MessageActionPairHeight),
+            content = {
+                repeat(2) { index ->
+                    Layout(
+                        modifier =
+                            Modifier
+                                .semantics { contentDescription = labels[index] }
+                                .clickable(role = androidx.compose.ui.semantics.Role.Button) {
+                                    if (index == 0) {
+                                        clipboard.setBoundedText(message.content)
+                                        RelayLog.d { "event=message_copy" }
+                                    } else {
+                                        onReply(message)
+                                    }
+                                },
+                        content = {
+                            // Figma 620:1577 draws each glyph alone, no backing. `primary` clears 3:1
+                            // against the thread background in every palette (#1889); see
+                            // message-bubble.md's action contrast section for the figures.
+                            Icon(
+                                painter = painterResource(if (index == 0) R.drawable.ic_copy else R.drawable.ic_reply),
+                                contentDescription = null,
+                                modifier =
+                                    Modifier
+                                        .size(width = if (index == 0) 11.dp else 13.dp, height = 12.dp)
+                                        .testTag(if (index == 0) "message-copy-glyph" else "message-reply-glyph"),
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        },
+                    ) { children, targetConstraints ->
+                        val glyph = children.single().measure(targetConstraints.copy(minWidth = 0, minHeight = 0))
+                        val halfGlyphGap = (MessageActionCentreGap / 2).toPx()
+                        val centreY = if (index == 0) targetConstraints.maxHeight - halfGlyphGap else halfGlyphGap
+                        val glyphX = (targetConstraints.maxWidth - glyph.width) / 2f
+                        val glyphY = centreY - glyph.height / 2f
+                        layout(targetConstraints.maxWidth, targetConstraints.maxHeight) {
+                            glyph.placeRelativeWithLayer(glyphX.toInt(), glyphY.toInt()) {
+                                translationX = glyphX - glyphX.toInt()
+                                translationY = glyphY - glyphY.toInt()
+                            }
+                        }
+                    }
+                }
+            },
+        ) { measurables, constraints ->
+            val midpoint = constraints.maxHeight / 2
+            val top = measurables[0].measure(Constraints.fixed(constraints.maxWidth, midpoint))
+            val bottom = measurables[1].measure(Constraints.fixed(constraints.maxWidth, constraints.maxHeight - midpoint))
+            layout(constraints.maxWidth, constraints.maxHeight) {
+                top.placeRelative(0, 0)
+                bottom.placeRelative(0, midpoint)
             }
         }
     }

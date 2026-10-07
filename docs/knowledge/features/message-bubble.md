@@ -1,6 +1,6 @@
 # MessageBubble
 
-Stateless row primitive (#128) rendering a single `Message` in the conversation thread surface. Three visual variants dispatched off `Message.role`: a right-aligned bubble for `Role.User` (plain text) and a left-aligned bubble for `Role.Assistant` (markdown-rendered via [`MarkdownText`](./markdown-text.md) since #129 — CommonMark element set, boxed since #644), both through one shared `Message` component; and a tap-to-expand `surfaceContainerHigh` card for `Role.Tool`, routed via [`ToolCallRow`](./tool-call-row.md) since #131. User and assistant bubbles can end with a **meta row** — that message's own locale-formatted date/time (#644). In the thread only that timestamp stays hidden until tapped, with at most one visible and none on a streaming reply (#1621, revised by #1817). Copy is always beside the bubble, left of user messages and right of assistant messages, including streaming replies. Assistant content reveals progressively with a blinking caret when `Message.isStreaming = true` (#184), through stabilized, formatted markdown since #1766. Eventual call site is the `LazyColumn(reverseLayout = true)` body of [`ThreadScreen`](./thread-screen.md).
+Stateless row primitive (#128) rendering a single `Message` in the conversation thread surface. Three visual variants dispatched off `Message.role`: a right-aligned bubble for `Role.User` (plain text) and a left-aligned bubble for `Role.Assistant` (markdown-rendered via [`MarkdownText`](./markdown-text.md) since #129 — CommonMark element set, boxed since #644), both through one shared `Message` component; and a tap-to-expand `surfaceContainerHigh` card for `Role.Tool`, routed via [`ToolCallRow`](./tool-call-row.md) since #131. User and assistant bubbles can end with a **meta row** — that message's own locale-formatted date/time (#644). In the thread only that timestamp stays hidden until tapped, with at most one visible and none on a streaming reply (#1621, revised by #1817). Copy and reply (#1818) are always beside the bubble, left of user messages and right of assistant messages, including streaming replies. Assistant content reveals progressively with a blinking caret when `Message.isStreaming = true` (#184), through stabilized, formatted markdown since #1766. Eventual call site is the `LazyColumn(reverseLayout = true)` body of [`ThreadScreen`](./thread-screen.md).
 
 Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`). Files: `MessageBubble.kt` (both role bubbles, the streaming pair) and `MessageMetaRow.kt` (the meta row + copy control, since #644 — `internal` rather than file-private so [#657](../codebase/657.md)'s per-code-block copy control can reuse it). Sibling of [`DiscussionPreviewRow`](./discussion-preview-row.md), [`ConversationRow`](./conversation-row.md), `ArchiveRow.kt`.
 
@@ -80,8 +80,9 @@ At `toolNestingDepth = 0` (every non-tool row, and a top-level or unmatched-pare
 its action column at the bubble's height. It places the bubble at the role's edge
 and the actions beside it: left of user messages, right of assistant messages
 (#1817, [Figma 620:1577 / 808:12242](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=620-1577)).
-The column is 13dp wide with a 12dp bubble-to-column gap, and copy alone is centered
-vertically. Reply and its pair centering belong to #1818.
+The column is 13dp wide with a 12dp bubble-to-column gap. Copy sits above reply
+(#1818), glyph centres 25dp apart, and the pair is centred vertically beside the
+bubble. Tool and queued rows have no actions.
 
 The 20dp gutters leave 372dp at the 412dp reference width. Delivered bubbles reserve
 a private 40dp far-side inset plus the 12dp gap and 13dp column, giving a **307dp**
@@ -160,9 +161,9 @@ only #644's static-dark fill divergence; the current message presentation uses:
 | User body `Schemes/on-primary-container` | `#CFE4FF` | `colorScheme.onPrimaryContainer` | As named. |
 | Timestamp text `Schemes/inverse-primary` | `#32628D` | `LocalContentColor.current.copy(alpha = META_CONTENT_ALPHA)` (0.8) | **Accessibility deviation:** Figma's tone measures about 2–3:1 on these fills. The enclosing surface provides `onPrimaryContainer` for user and `onSecondaryContainer` for assistant; 80% of that role clears 4.5:1 on both. |
 
-Side copy (#1817) maps `Schemes/Inverse Primary` to `inversePrimary` on a
-13×14dp `inverseSurface` backing; timestamp contrast treatment above remains
-inside the bubble. See [the action contrast resolution](#meta-row-and-copy-control-messagemetarowkt-since-644).
+Side copy (#1817) and reply (#1818) draw their Figma glyphs alone, no backing, tinted
+`colorScheme.primary`; timestamp contrast treatment above remains inside the
+bubble. See [the action contrast resolution](#meta-row-and-copy-control-messagemetarowkt-since-644).
 
 The bubble-specific roles leave global Material containers unchanged (static dark:
 `primaryContainer = #134A74`, `secondaryContainer = #3A4857`). Static dark now maps
@@ -208,20 +209,42 @@ streaming text ahead of progressive display, through `setBoundedText`. The share
 `CopyTextControl` remains compact with its existing ambient tint and padding, and
 uses the same safeguard; it copies the block's source rather than the message.
 
-The side button has an explicit 48×48dp target around the 11×12dp `ic_copy`, without
-expanding the drawn 13dp column or bubble. Its overflow is not clipped and it is
-placed after the bubble so taps in the overlap copy rather than toggle time.
-When reply arrives, #1818 owns splitting overlapping targets at the midpoint of
-glyph centers 25dp apart, with other sides extending 24dp from each center.
+Each side action has its own adjoining 48×48dp target (#1895); the pair's touch
+layout is 48×96dp. The 11×12dp `ic_copy` and 13×12dp `ic_reply` glyphs sit
+12.5dp above and below the shared edge, preserving their 25dp centre gap and
+bubble-relative centring without widening the drawn 13dp column or bubble.
+A tap just above the shared edge copies and just below it replies. There is no
+zero minimum-touch-target override. Horizontal target overflow remains unclipped
+and is placed after the bubble, so taps in the overlap act rather than toggle time.
 
-The glyph uses `colorScheme.inversePrimary`. That tint alone on the thread
-background failed light-theme contrast (1.61:1), despite passing tint-pixel checks.
-The explicit accessibility resolution adds a centered 13×14dp `inverseSurface`
-backing with `MaterialTheme.shapes.extraSmall` corners, preserving glyph, column,
-gap and target geometry. Static light pairs `#9DCBFC` with `#2D3135`; static dark
-pairs `#32628D` with `#E0E2E8`. Check both glyph/backing and backing/thread contrast,
-using the actual thread background, rather than substituting a tint or changing
-global theme roles. See [palette and geometry coverage](message-bubble-testing.md#testing).
+Short visible bubble surfaces have a 96dp minimum height, with their body/meta
+column vertically centred. Both targets fit inside that surface and its message
+row, keeping adjacent short rows' targets separate. Increasing only the row's
+blank space below a short surface breaks the visible 12dp newest-bubble rest gap;
+enlarge the surface instead. Long surfaces retain their content spacing and
+width contracts. See [minimum-dimension and pointer coverage](message-bubble-testing.md#testing).
+
+Reply (#1818) hands the immutable `Message` at tap time to `onReply`; the default
+is inert, so previews and standalone mounts need no fixture. `ThreadScreen` turns
+it into a staged composer quote, see
+[composer draft ownership](thread-screen-composer-drafts-and-attachments.md#composer-draft-ownership).
+TalkBack exposes it as its own “Reply to this message” Button. Neither action
+toggles the timestamp.
+
+The glyph uses `colorScheme.primary`. Figma names `Schemes/Inverse Primary` for
+this icon, but that role is paired with `inverseSurface` — the opposite theme's
+surface, not this screen's own background — so it measured 1.61:1 in static
+light. A centered 13×14dp `inverseSurface` backing briefly patched that to 3:1,
+but in dark theme `inverseSurface` is near-white, so the patch showed as a stray
+light chip behind the glyph; that backing is removed. `primary` is the same
+accent hue read through the matching theme instead of the inverted one: static
+light pairs `#32628D` on the `#F8F9FF` thread background (6.1:1); static dark
+pairs `#9DCBFC` on the static-dark thread canvas `#0B0E11` (11.4:1). Check
+glyph-on-thread-background contrast directly, using the actual thread
+background, across static and wallpaper light/dark. See
+[palette and geometry coverage](message-bubble-testing.md#testing). #1818's
+ticket asked for reply in the old `inversePrimary` tint over an `inverseSurface`
+backing; reply follows `primary` without backing instead, matching copy.
 
 ### Streaming variant — progressive reveal + blinking caret (since #184)
 
@@ -297,8 +320,8 @@ Each role container's `Layout` carries `Modifier.padding(bottom = MessageAreaRow
 ## Configuration
 
 - **Transitive dependencies:** the assistant variant routes through [`MarkdownText`](./markdown-text.md), wired against `org.jetbrains:markdown` (see [ADR 0002](../decisions/0002-markdown-renderer-library.md)). Since #644, `MessageMetaRow.kt` reads `LocalClipboardManager` / `AnnotatedString` (`androidx.compose.ui`) and `java.time.format.DateTimeFormatter` (already on the min-SDK-33 classpath, no desugaring needed — same posture as [`SessionBoundaryDelimiter`](session-boundary-delimiter.md)'s time formatter).
-- **Accessibility strings:** `cd_thread_copy_message` ("Copy this message"), the copy control's accessible name, in the `cd_thread_*` family. User bodies still render plainly and assistant bodies through `MarkdownText` with no role prefix. Since #1621, `cd_thread_message_sent` describes the hidden timestamp, and `thread_message_show_details` / `thread_message_hide_details` label the bubble action; the labels now say “Show time” / “Hide time” (#1817), and copy is an independent side Button without a bubble custom action.
-- **One drawable** (since #644): `res/drawable/ic_copy.xml` — single-path, 11×12 viewport, tinted at the call site from `inversePrimary` for side copy and `LocalContentColor` for code copy, the same idiom `ic_open_in_new.xml` already uses.
+- **Accessibility strings:** `cd_thread_copy_message` ("Copy this message") and `cd_thread_reply_message` ("Reply to this message", #1818), the side actions' accessible names, in the `cd_thread_*` family. User bodies still render plainly and assistant bodies through `MarkdownText` with no role prefix. Since #1621, `cd_thread_message_sent` describes the hidden timestamp, and `thread_message_show_details` / `thread_message_hide_details` label the bubble action; the labels now say “Show time” / “Hide time” (#1817), and copy is an independent side Button without a bubble custom action.
+- **Drawables:** `res/drawable/ic_copy.xml` (since #644) — single-path, 11×12 viewport, tinted at the call site from `primary` for side copy and `LocalContentColor` for code copy, the same idiom `ic_open_in_new.xml` already uses. `res/drawable/ic_reply.xml` (#1818) is Figma's 13×12 `reply-solid-full`, tinted `primary`.
 - **Bubble theme roles:** wrap consumers in `PyrycodeMobileTheme`, which provides
   `LocalUserBubbleContainer` / `LocalAssistantBubbleContainer` through the
   `ColorScheme.userBubbleContainer` / `assistantBubbleContainer` extensions in

@@ -91,18 +91,13 @@ routes; expressions inside Kotlin string templates are inspected. This is a
 syntax contract, not whole-program dataflow analysis or a substitute for reviewing
 message producers.
 
-The four permitted non-error regions are:
-
-- `ThreadScreen`'s attachment callback: only `AttachmentNotice.SAVED` reaches the
-  snackbar; other attachment notices reach Error pills.
-- `MarkdownReaderScreen`'s note-save callback: the same Saved-only split.
-- `ThreadScreen`'s `ModalUiState.Dismissed` branch: the dismissed-elsewhere reason
-  from `dismissReasonText`, in the effect keyed by `modalId`.
-- `ArchivedDiscussionsScreen`'s `RestoreSucceeded` branch: the success resource
-  formatted with the restored display name.
-
-`ChannelListScreen` has no permitted snackbar route. These classifications do
-not migrate non-error notices to Default pills or alter presentation lifetimes.
+The remaining production snackbar route is `ArchivedDiscussionsScreen`'s
+`RestoreSucceeded` branch: the success resource formatted with the restored display
+name. #1851 migrated thread/reader Saved and thread `ModalUiState.Dismissed` to
+screen-local Default top-overlay pills. `ThreadScreen`, `MarkdownReaderScreen` and
+`ChannelListScreen` have no active snackbar route. The guard still contains the
+three exact historical thread/reader classifications; their presence does not
+mean those routes remain in production.
 
 For a new notice, first review whether its producer represents a failure. Route
 failures to Error pills. A new non-error snackbar needs an explicit classification
@@ -188,6 +183,13 @@ checks a Figma dp value uses `assertDpEquals` or `pixelDp()` from
 `ui/PixelSnapping.kt`, which allow one device pixel there and nothing at
 Robolectric's density 1. Rows stacked down a screen add their roundings up, so
 check a row against its neighbour rather than against the top of the screen.
+When the total position or height itself is a design target, retain it and
+justify any larger `pixels` allowance from the measured, independently rounded
+segments. Check the component gaps and line boxes separately within one pixel
+so a permissive total cannot hide a spacing regression. The
+[thread geometry examples](thread-screen-testing.md#testing) retain 97dp and
+60dp totals with measured two-pixel allowances; integral-density checks remain
+exact even with that allowance.
 The device also ignores `@Config` qualifiers and Robolectric's 320dp width,
 draws text with its own font, and runs at that density: a test that needs a
 412dp frame forces it with `ForcedSize`, scales pixel samples by the composition's
@@ -198,6 +200,11 @@ text's width positions. Line height is different: it is fixed by the design,
 not by the text inside it, so a test checks the height of a line and the
 vertical rhythm it sets exactly, allowing only the one device pixel
 `assertDpEquals` already grants for rounding.
+
+Fetch semantics nodes on the test thread before entering `runOnIdle` for
+main-thread text-layout access such as `GetTextLayoutResult`. A semantics query
+inside the callback can nest main-thread synchronization; a Robolectric pass
+does not establish device safety for that helper.
 
 A shared test class needs `@RunWith(AndroidJUnit4::class)`. The device runner
 does not require it, but without it the JVM runs the class outside Robolectric and
