@@ -1,5 +1,8 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.Role
+
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -2000,6 +2003,21 @@ class ThreadViewModel(
         _suggestedReply.value = null
         draftStore.setDraft(serverId, conversationId, text)
         refreshSuggestedReply()
+    }
+
+    /** Snapshot source into this destination's latest draft on Main, without sending or touching files. */
+    fun replyToMessage(message: Message): String? {
+        val label = when (message.role) {
+            Role.User -> "User"
+            Role.Assistant -> "Assistant"
+            Role.Tool -> return null
+        }
+        val latest = draftStore.draftFor(serverId, conversationId)
+        val separator = if (latest.isNotEmpty() && !latest.endsWith('\n')) "\n" else ""
+        val quoted = latest + separator + label + ":\n\"" + message.content + "\"\n"
+        onDraftChange(quoted)
+        RelayLog.d { "event=message_reply_staged" }
+        return quoted
     }
 
     /**

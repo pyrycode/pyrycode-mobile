@@ -77,3 +77,8 @@ Pending for the documentation stage:
 
 **Reviewer:** builder (self-review per builder/security-review.md)
 **Date:** 2026-10-07
+
+## Revisions
+
+- 2026-10-07: fractional-density geometry probes exposed accumulated padding rounding. Place glyphs from each target's outer 24dp radius in pixels, preserving fractional translation, and divide the full 73dp target pair at one shared midpoint. Backing remains 13dp wide (copy has horizontal padding; reply already fills it), so neither backing nor targets widen the drawn column.
+- 2026-10-07: a remounted sole text field can inherit platform focus without a reply request. The remount test provides another focused target and also counts keyboard-show requests, distinguishing platform focus from replay of this feature's consumed request.

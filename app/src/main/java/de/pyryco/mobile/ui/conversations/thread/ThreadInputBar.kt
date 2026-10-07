@@ -36,6 +36,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -117,6 +120,8 @@ fun ThreadInputBar(
     sending: Boolean = false,
     onImagesReceived: ((List<Uri>, InputContentInfo?) -> Unit)? = null,
     enabled: Boolean = true,
+    replyDraft: String? = null,
+    onReplyConsumed: () -> Unit = {},
     suggestedReply: SuggestedReply? = null,
     onSendSuggestedReply: (SuggestedReply) -> Boolean = { false },
 ) {
@@ -156,7 +161,20 @@ fun ThreadInputBar(
                 }
             }
         }
-    LaunchedEffect(text) {
+    val replyFocusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val currentOnReplyConsumed by rememberUpdatedState(onReplyConsumed)
+    LaunchedEffect(text, replyDraft) {
+        if (replyDraft != null) {
+            textAtLastEdit = text.takeUnless { it == replyDraft }
+            accountedText = replyDraft
+            fieldState.setTextAndPlaceCursorAtEnd(replyDraft)
+            replyFocusRequester.requestFocus()
+            keyboard?.show()
+            RelayLog.d { "event=message_reply_focus" }
+            currentOnReplyConsumed()
+            return@LaunchedEffect
+        }
         val shown = fieldState.text.toString()
         if (shown == text) {
             // Once the draft has caught up, the pre-edit text means nothing: a send that clears back to it
@@ -232,6 +250,7 @@ fun ThreadInputBar(
                 modifier =
                     Modifier
                         .weight(1f)
+                        .focusRequester(replyFocusRequester)
                         .padding(vertical = FieldTextVerticalInset)
                         .then(if (onImagesReceived != null) Modifier.contentReceiver(imageReceiver) else Modifier),
                 inputTransformation = reportEdits,

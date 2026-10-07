@@ -19,6 +19,8 @@ import android.os.SystemClock
 import android.provider.MediaStore
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -476,8 +478,28 @@ class InteractiveStreamE2ETest {
                         .map { it.message }
                 }
             }
-        composeTestRule.assertSideMessageCopy(messages.single { it.role == Role.User && it.content == PING_PROMPT })
-        composeTestRule.assertSideMessageCopy(messages.single { it.role == Role.Assistant })
+        val user = messages.single { it.role == Role.User && it.content == PING_PROMPT }
+        val assistant = messages.single { it.role == Role.Assistant }
+        composeTestRule.assertSideMessageCopy(user)
+        composeTestRule.assertSideMessageCopy(assistant)
+        val userQuote = "User:\n\"${user.content}\"\n"
+        composeTestRule.assertSideMessageReply(user, userQuote)
+        composeTestRule.waitUntil(5_000) {
+            composeTestRule.runOnIdle {
+                ViewCompat.getRootWindowInsets(composeTestRule.activity.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+            }
+        }
+        composeTestRule.onNode(hasSetTextAction()).performTextInput("answer")
+        val appended = userQuote + "answer\nAssistant:\n\"${assistant.content}\"\n"
+        composeTestRule.assertSideMessageReply(assistant, appended)
+        composeTestRule.waitUntil(5_000) {
+            composeTestRule.runOnIdle {
+                ViewCompat.getRootWindowInsets(composeTestRule.activity.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+            }
+        }
+        assertEquals(messages, runBlocking { repository.observeMessages(conversationId).first() }
+            .filterIsInstance<ThreadItem.MessageItem>().map { it.message })
+
     }
 
     /**

@@ -53,6 +53,7 @@ class MessageBubblePaletteTest {
     private var userFill = Color.Unspecified
     private var assistantFill = Color.Unspecified
     private var background = Color.Unspecified
+    private var actionBacking = Color.Unspecified
     private var actionTint = Color.Unspecified
     private var userBody = Color.Unspecified
     private var assistantBody = Color.Unspecified
@@ -78,7 +79,8 @@ class MessageBubblePaletteTest {
                     userFill = if (dark && !wallpaper) Color(0xFF003355) else scheme.primaryContainer
                     assistantFill = if (dark && !wallpaper) Color(0xFF001D34) else scheme.secondaryContainer
                     background = scheme.threadColors.background
-                    actionTint = scheme.primary
+                    actionTint = scheme.inversePrimary
+                    actionBacking = scheme.inverseSurface
                     userBody = scheme.onPrimaryContainer
                     assistantBody = scheme.onSecondaryContainer
                     if (!wallpaper) {
@@ -136,8 +138,9 @@ class MessageBubblePaletteTest {
         assertEquals(dark to wallpaper, renderedMode)
         assertEquals(3, bubbles.size)
         val queued = rule.onNodeWithText("Queued", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-        val glyphs = rule.onAllNodesWithTag("message-copy-glyph", useUnmergedTree = true).fetchSemanticsNodes()
-        assertEquals(3, glyphs.size)
+        val glyphs = rule.onAllNodesWithTag("message-copy-glyph", useUnmergedTree = true).fetchSemanticsNodes() +
+            rule.onAllNodesWithTag("message-reply-glyph", useUnmergedTree = true).fetchSemanticsNodes()
+        assertEquals(6, glyphs.size)
 
         fun contrast(
             first: Color,
@@ -147,10 +150,9 @@ class MessageBubblePaletteTest {
             val secondLuminance = second.luminance()
             return (maxOf(firstLuminance, secondLuminance) + 0.05f) / (minOf(firstLuminance, secondLuminance) + 0.05f)
         }
-        // No backing (#1817 added one, then removed it as the fix for the white-chip-in-dark-theme
-        // bug): the glyph tint must clear 3:1 against the actual thread background on its own.
-        val glyphContrast = contrast(actionTint, background)
-        assertTrue("side copy glyph contrast against the thread background must be at least 3:1; got $glyphContrast", glyphContrast >= 3f)
+        // #1818 pairs the inverted accent with its contrast surface for both controls.
+        val glyphContrast = contrast(actionTint, actionBacking)
+        assertTrue("action contrast must be at least 3:1; got $glyphContrast", glyphContrast >= 3f)
         rule.runOnIdle {
             val root = checkNotNull(view)
             val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
@@ -183,6 +185,7 @@ class MessageBubblePaletteTest {
             }
             glyphs.forEach { glyph ->
                 val bounds = glyph.boundsInRoot
+                assertPixel(bounds.left + 1, bounds.top - 1, actionBacking)
                 val expected = actionTint.toArgb()
                 var matchingPixels = 0
                 for (x in bounds.left.toInt() until bounds.right.toInt()) {
@@ -190,7 +193,7 @@ class MessageBubblePaletteTest {
                         if (bitmap.getPixel(x, y) == expected) matchingPixels++
                     }
                 }
-                assertTrue("side copy must use the scheme primary tint", matchingPixels > 0)
+                assertTrue("both actions must use the scheme inversePrimary tint", matchingPixels > 0)
             }
             bitmap.recycle()
         }

@@ -1,6 +1,8 @@
 package de.pyryco.mobile.e2e
 
 import android.content.pm.ShortcutManager
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -636,8 +638,19 @@ class DeterministicInteractiveStreamE2ETest {
                 .message
         composeTestRule.assertSideMessageCopy(sent)
 
-        // The host watcher cannot release the terminal fragment before this explicit action.
-        typeAndSend(SECOND_PROMPT)
+        val heldQuote = "Assistant:\n\"${held.content}\"\n"
+        composeTestRule.assertSideMessageReply(held, heldQuote)
+        composeTestRule.waitUntil(5_000) {
+            composeTestRule.runOnIdle {
+                ViewCompat.getRootWindowInsets(composeTestRule.activity.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+            }
+        }
+        val staged = heldQuote + "User:\n\"${sent.content}\"\n"
+        composeTestRule.assertSideMessageReply(sent, staged)
+        assertEquals(1, runBlocking { repository.observeMessages(conversationId).first() }
+            .filterIsInstance<ThreadItem.MessageItem>().count { it.message.role == Role.User })
+        // Explicit test-driver send releases later chunks while the phone's staged quote stays open.
+        runBlocking { repository.sendMessage(conversationId, SECOND_PROMPT) }
         val finished =
             runBlocking {
                 withTimeout(REPLY_TIMEOUT_MS) {
@@ -665,6 +678,8 @@ class DeterministicInteractiveStreamE2ETest {
         composeTestRule.onNode(finalBody, useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onAllNodes(caret, useUnmergedTree = true).assertCountEquals(0)
         composeTestRule.assertSideMessageCopy(finished)
+        assertEquals(staged, composeTestRule.onNode(hasSetTextAction()).fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
+        composeTestRule.assertSideMessageReply(finished, staged + "Assistant:\n\"${finished.content}\"\n")
     }
 
     /**
