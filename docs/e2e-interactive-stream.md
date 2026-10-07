@@ -560,6 +560,74 @@ Counted repair evidence, inspected for the named methods:
   [dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1854#issuecomment-6038270787)
   accepted the gate after the unrelated rerun. This closes the Copy live handoff.
 
+Recurrence diagnostics (#1931) repair demonstrated evidence loss, not an established
+platform trigger. The retained #1918 full run recorded **65 executed, 2 failed,
+0 skipped**, with this Copy method timing out after 90000 ms in the clipboard-result
+fence; its same-tree rerun recorded **2 executed, 2 passed, 0 failed, 0 skipped**.
+Both used mobile revision `38048ef4fd3af2a0cc04f365fc15e262342e0cc3`. The reports did
+not retain selection range, actual clipboard outcome or focus at Copy. See the
+[investigation](https://github.com/pyrycode/pyrycode-mobile/issues/1931#issuecomment-6047772841)
+and [plan](specs/architecture/1931-selection-copy-diagnostics.md).
+
+The shared assertion preserves the finalized reply, independent verified baseline,
+layout-measured `cobalt` press, one actual platform Copy, original deadline and exact
+word/shorter-than-reply checks. Bounded checkpoints retain body window geometry,
+local press/layout size, public selection range (or `unknown`), activity focus and
+lifecycle flags, focused-view class and operation package. Before/after Copy also
+record menu screen and root-visible rectangles, shown/visible/attached/enabled flags,
+window focus and operation package. Popup-root coordinates differ from screen/window
+coordinates; retained menu flags do not prove callback delivery or dismissal.
+
+Clipboard snapshots are read once per UI-thread observation and classified as absent,
+zero-item, non-text, unchanged baseline, selected word, whole reply, empty text, known
+reply span or other text. Metadata retains item count, text length and timestamp;
+other text gets only a SHA-256 of its first 256 characters, never raw text or labels.
+Timeout retains at most six outcome transitions, observation count, latest outcome,
+Copy checkpoints and final activity state before teardown, with the original timeout
+as cause. A null read cannot prove empty system storage or focus loss. Clipboard
+exceptions propagate. Public range was unavailable in passing traces; neither that
+nor post-teardown focus permits inventing a selection or focus cause. See
+[testing guidance](knowledge/features/message-bubble-testing.md#testing).
+
+Counted #1931 evidence on the final repair, distinct from the historical trigger:
+
+- Original diagnostic regression XML `/tmp/builder-1931/regressions-red.xml`
+  recorded **4 executed, 2 failed, 0 skipped**: unchanged-baseline and whole-reply
+  controls rejected the old generic timeout diagnostics. `regressions-green.xml`
+  recorded **8 executed, 8 passed, 0 failed, 0 skipped** after the diagnostic repair.
+  See the [initial review](https://github.com/pyrycode/pyrycode-mobile/pull/1933#issuecomment-6048605838).
+- The deliberately delayed wrong-word control failed before baseline synchronization:
+  **1 executed, 1 failed, 0 skipped** in
+  `/tmp/builder-1931/rework-e45dcc7990f3/delayed-first-observation-red.xml`.
+  Its real replacement now awaits the helper's recorded baseline via
+  `onBaselineObserved`/`CompletableDeferred`, rather than a timer or independent read.
+  `clipboard-class-green.xml` beside it confirms **8 executed, 8 passed, 0 failed,
+  0 skipped**, including that method, unchanged-baseline/whole-reply rejection,
+  delayed success, attribution and absent/non-text/private-text diagnostic controls.
+- Focused `scripted selection-copy` XML `selection-copy-green.xml` in the same folder
+  confirms **1 executed, 1 passed, 0 failed, 0 skipped**, specifically
+  `DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_systemCopyCopiesSelectedWord`.
+  Fresh verifier `scripted-all` independently confirms that method passed:
+  **22 executed, 22 passed, 0 failed, 0 skipped** overall, with **1 executed,
+  1 passed, 0 failed, 0 skipped** in
+  `build/dispatcher-tests/scripted-all-4hma8abe/selection-copy-0-TEST-installed.xml`.
+  Verifier UI XML `build/dispatcher-tests/ui-t101u8o9/dispatcher.xml` confirms all
+  eight clipboard controls passed within **205 executed, 205 passed, 0 failed,
+  1 skipped**, including
+  `wrongWordAfterBaseline_reportsTheLastOutcomeAndFocusBeforeTeardown` with its
+  one-second delayed start, baseline history, final wrong word and before-teardown
+  focus. See the [passing review](https://github.com/pyrycode/pyrycode-mobile/pull/1933#issuecomment-6048888907).
+- Dispatcher full live run `2026-10-07T23-25-50-614Z` tested `feature/1931` at
+  `19d768329dbc` merged with `origin/main` at `149f7167b581`: **65 executed,
+  65 passed, 0 failed, 0 skipped**, with no flaky reruns. Its XML explicitly contains
+  the passing `InteractiveStreamE2ETest#interactiveTurn_finishedReply_systemCopyCopiesSelectedWord`.
+  Report: `$AGENTS_REPO_PATH/logs/2026-10-07T23-25-50-614Z_real-claude-gate_#1931.log`,
+  with companion `.stderr.log`; see the
+  [dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1931#issuecomment-6049159689).
+  This full run closes live acceptance separately from deterministic proof; no
+  separate focused live run is claimed. A recurrence still requires investigation
+  of the new in-step diagnostics before claiming a historical platform cause or repair.
+
 **Formatted streaming markdown (#1766).**
 `InteractiveStreamE2ETest#interactiveTurn_markdownReply_rendersFormattedBody` asks real Claude for a
 reply holding emphasis, inline code, a fenced block and a table, waits for the settled bubble, and
@@ -4923,7 +4991,7 @@ The remaining checks here are specific to a real relay or real Claude execution:
   remains unchanged.
 
 
-- **Finished-reply system Copy (#1674, reliability #1854):** the live method
+- **Finished-reply system Copy (#1674, reliability #1854, diagnostics #1931):** the live method
   `InteractiveStreamE2ETest#interactiveTurn_finishedReply_systemCopyCopiesSelectedWord` and
   `DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_systemCopyCopiesSelectedWord`
   share the platform selection assertion. Both named methods passed: the deterministic twin
@@ -4932,7 +5000,12 @@ The remaining checks here are specific to a real relay or real Claude execution:
   [Finished-reply partial Copy](#what-rung-3-is-made-of), alongside the historical
   [Verification status](#verification-status). Activity-owned attribution and bounded exact-word
   observation retain one real platform Copy action and propagate clipboard exceptions; no Copy
-  coverage follow-up remains.
+  coverage follow-up remains. #1931 adds bounded in-step geometry/focus and classified
+  clipboard outcomes while preserving that contract. Its named deterministic twin
+  passed in `scripted-all` (**22 executed, 0 failed, 0 skipped**) and the live method
+  passed in the fresh dispatcher full suite (**65 executed, 0 failed, 0 skipped**).
+  The historical trigger remains unproven; investigate any recurrence using those
+  diagnostics, without interpreting null reads or retained menu flags as a cause.
 
 
 - **Reset-ended context refresh (#1761):**
