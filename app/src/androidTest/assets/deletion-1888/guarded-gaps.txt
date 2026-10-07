@@ -1,0 +1,6 @@
+Revision: e2525a93376c34ab69afce0395057dfd30b856ae
+Source: build/dispatcher-tests/live-yln6f7vx
+Selected: de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_deleteConversation_removesFromListAndClosesThread
+Executed: 1; passed: 1; failed: 0; skipped: 0
+
+10-07 20:42:52.959  2789  2836 I DeleteDiagnostic: event=gap_replay phase=delete repository=false legacy_connected=true
