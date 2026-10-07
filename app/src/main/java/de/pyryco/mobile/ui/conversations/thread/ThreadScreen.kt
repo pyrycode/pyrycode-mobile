@@ -663,33 +663,18 @@ fun ThreadScreen(
                                 (if (state.historyMarkers.any { it.beforeRow.isEmpty() }) 1 else 0) +
                                 (if (openRequest != null) PERMISSION_ROW_COUNT else 0) +
                                 (if (answerRejected) 1 else 0)
-                        // The agent's own root never joins its run (#1827 follow-up), so the run holding its
-                        // block's children is found by block membership below, not by the root's own id
-                        // being one of its tools.
-                        val blockByTool =
-                            remember(agentRows) {
-                                agentRows
-                                    .filterIsInstance<ThreadRow.Delivered>()
-                                    .filter { it.isToolRow() }
-                                    .associate { ((it.item as ThreadItem.MessageItem).message.id) to it.agentBlockId }
-                            }
+                        // "Go to agent" only scrolls the block's own root row into view; it never expands
+                        // the block's collapsed run (that root draws as itself regardless, #1827
+                        // follow-up — only its own tap, via ToolRunRow's onToggle, opens or closes a run).
                         LaunchedEffect(goToAgent, rows, promptRowCount) {
                             val agentId = goToAgent ?: return@LaunchedEffect
-                            val run =
-                                rows.filterIsInstance<ThreadRow.ToolRun>().firstOrNull { row ->
-                                    row.tools.any { blockByTool[it.id] == agentId }
+                            val index =
+                                reversedRows.indexOfFirst { row ->
+                                    ((row as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)?.message?.id == agentId
                                 }
-                            if (run != null && !run.expanded) {
-                                expandedRuns = expandedRuns + run.runId
-                            } else {
-                                val index =
-                                    reversedRows.indexOfFirst { row ->
-                                        ((row as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)?.message?.id == agentId
-                                    }
-                                if (index >= 0) {
-                                    listState.scrollToItem(index + promptRowCount)
-                                    goToAgent = null
-                                }
+                            if (index >= 0) {
+                                listState.scrollToItem(index + promptRowCount)
+                                goToAgent = null
                             }
                         }
                         // Info banners retain their keys but render nothing; spacing follows the visible row.

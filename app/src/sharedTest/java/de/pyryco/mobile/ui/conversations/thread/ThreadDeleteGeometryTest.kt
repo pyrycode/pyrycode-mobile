@@ -62,9 +62,9 @@ class ThreadDeleteGeometryTest {
             .inDp()
 
     private fun layout(text: String): TextLayoutResult {
+        val node = rule.onNodeWithText(text, useUnmergedTree = true).fetchSemanticsNode()
         val results = mutableListOf<TextLayoutResult>()
         rule.runOnIdle {
-            val node = rule.onNodeWithText(text, useUnmergedTree = true).fetchSemanticsNode()
             checkNotNull(node.config[SemanticsActions.GetTextLayoutResult].action).invoke(results)
         }
         return results.single()

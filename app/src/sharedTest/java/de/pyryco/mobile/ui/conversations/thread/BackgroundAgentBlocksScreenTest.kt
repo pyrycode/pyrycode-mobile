@@ -131,13 +131,14 @@ class BackgroundAgentBlocksScreenTest {
             compose.onNodeWithText("Agent finished").assertIsDisplayed()
             compose.onAllNodesWithText("Agent started, still working").assertCountEquals(0)
             marker().performClick()
+            // "Go to agent" only scrolls (this PR); the children's run stays exactly as collapsed as
+            // before the tap.
             compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
-            compose.onNodeWithText("Read", useUnmergedTree = true).assertIsDisplayed()
+            compose.onNodeWithText("Read", useUnmergedTree = true).assertDoesNotExist()
             assertTrue(
                 compose.onNodeWithText("Agent").getUnclippedBoundsInRoot().top <
                     compose.onNodeWithText("Newer").getUnclippedBoundsInRoot().top,
             )
-            compose.onNodeWithText("Using tools: 2", substring = true).performClick()
         }
         compose.runOnIdle { state = state.copy(items = state.items + finish() + user("Later")) }
         marker().performClick()
@@ -288,7 +289,7 @@ class BackgroundAgentBlocksScreenTest {
         compose.onAllNodesWithText("original input", substring = true, useUnmergedTree = true).assertCountEquals(1)
     }
 
-    @Test fun markerOpensItsCollapsedRunBeforeAndAfterFinishAndDoesNotMergeWithOrdinaryTool() {
+    @Test fun markerScrollsWithoutOpeningItsCollapsedRunAndDoesNotMergeWithOrdinaryTool() {
         mount(
             listOf(
                 tool("a", "Agent"),
@@ -305,13 +306,48 @@ class BackgroundAgentBlocksScreenTest {
         compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
         compose.onNodeWithText("Read", useUnmergedTree = true).assertDoesNotExist()
         marker().performClick()
+        // "Go to agent" scrolls only (this PR): the root stays visible as always and its children's run
+        // stays exactly as collapsed as it was before the tap.
         compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
-        compose.onNodeWithText("Read", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("Read", useUnmergedTree = true).assertDoesNotExist()
         compose.runOnIdle { state = state.copy(items = state.items + finish() + user("Later")) }
         list().performScrollToNode(hasText("Go to agent ↓"))
         marker().performClick()
         compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("Read", useUnmergedTree = true).assertDoesNotExist()
         compose.onAllNodesWithText("Using tools: 2", substring = true).assertCountEquals(1)
+    }
+
+    /**
+     * "Go to agent" moves the viewport to the block's root row only (this PR). Before the fix it also
+     * opened the root's own collapsed run; a reader who wanted the run closed had it reopened under them
+     * on every jump. Two children so the run can collapse, mirroring the rest of this file's #1827
+     * follow-up fixtures.
+     */
+    @Test fun markerOnlyScrollsAndLeavesACollapsedRunCollapsed() {
+        mount(
+            listOf(tool("a", "Agent"), launch(), tool("child", "Read", "a"), tool("child2", "Glob", "a"), user("Newer")),
+            true,
+        )
+        compose.onNodeWithText("Using tools: 2", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Read", useUnmergedTree = true).assertDoesNotExist()
+        compose.runOnIdle { state = state.copy(items = state.items + finish() + user("Later")) }
+        marker().performClick()
+        // The root scrolled into view, between the two later messages -- navigation happened -- but its
+        // run is still exactly as collapsed as it was before the tap.
+        assertTrue(
+            compose.onNodeWithText("Newer").getUnclippedBoundsInRoot().top <
+                compose.onNodeWithText("Agent", useUnmergedTree = true).getUnclippedBoundsInRoot().top,
+        )
+        assertTrue(
+            compose.onNodeWithText("Agent", useUnmergedTree = true).getUnclippedBoundsInRoot().top <
+                compose.onNodeWithText("Later").getUnclippedBoundsInRoot().top,
+        )
+        compose.onNodeWithText("Read", useUnmergedTree = true).assertDoesNotExist()
+        compose.onNodeWithText("Using tools: 2", substring = true).assertIsDisplayed()
+        // The run still opens on its own tap -- only the marker's auto-expand side effect was removed.
+        compose.onNodeWithText("Using tools: 2", substring = true).performClick()
+        compose.onNodeWithText("Read", useUnmergedTree = true).assertIsDisplayed()
     }
 
     @Test fun rosterBeforeStartMovesBlockAndBackfillNeverDuplicatesIt() {

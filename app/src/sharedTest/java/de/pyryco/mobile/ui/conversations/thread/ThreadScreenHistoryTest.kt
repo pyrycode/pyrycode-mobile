@@ -40,6 +40,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.historyKeys
+import de.pyryco.mobile.ui.assertDpEquals
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -851,7 +852,15 @@ class ThreadScreenHistoryTest {
         )
 
         val retry = composeRule.onNodeWithTag("retry-row").getUnclippedBoundsInRoot()
-        assertEquals(60f, retry.height.value, 0.5f)
+        val content = composeRule.onNodeWithContentDescription(HISTORY_RETRY_DESCRIPTION).getUnclippedBoundsInRoot()
+        val action = composeRule.onNodeWithText("Try again", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertDpEquals(20.dp, action.height, "action retains its full line box")
+        assertDpEquals(12.dp, action.top - content.top, "top content padding")
+        assertDpEquals(12.dp, content.bottom - action.bottom, "bottom content padding")
+        assertDpEquals(16.dp, retry.bottom - content.bottom, "standard gap below the retry surface")
+        // At density 2.625 the 20dp line is 53px, each 12dp inset is 32px and the 16dp
+        // gutter is 42px: 159px = 60.57143dp, 1.5px above the 60dp total target.
+        assertDpEquals(60.dp, retry.height, "line box plus padding and trailing gutter", pixels = 2)
     }
 
     private companion object {
