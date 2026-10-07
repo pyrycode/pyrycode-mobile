@@ -17,12 +17,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -35,9 +34,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -53,7 +54,6 @@ import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.parsePairingPayload
 import de.pyryco.mobile.data.network.serverKeyFingerprint
 import de.pyryco.mobile.data.preferences.AppPreferences
-import de.pyryco.mobile.data.repository.AttachmentUploadLimit
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.di.ThreadDestinationFactory
@@ -64,18 +64,19 @@ import de.pyryco.mobile.ui.conversations.list.ChannelListScreen
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import de.pyryco.mobile.ui.conversations.list.PLAY_STORE_URL
+import de.pyryco.mobile.ui.conversations.share.ShareErrorNoticeHost
 import de.pyryco.mobile.ui.conversations.share.ShareIntakeViewModel
 import de.pyryco.mobile.ui.conversations.share.SharePayload
 import de.pyryco.mobile.ui.conversations.share.SharePickerHeader
 import de.pyryco.mobile.ui.conversations.share.SharingShortcuts
 import de.pyryco.mobile.ui.conversations.thread.LinkedMarkdownReaderDestination
 import de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDestination
+import de.pyryco.mobile.ui.conversations.thread.NavigationErrorPill
 import de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNotice
 import de.pyryco.mobile.ui.conversations.thread.ThreadNavigation
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.conversations.thread.UsageLimitDismissals
-import de.pyryco.mobile.ui.conversations.thread.formatMegabytes
 import de.pyryco.mobile.ui.conversations.thread.readLinkedMarkdown
 import de.pyryco.mobile.ui.conversations.thread.rememberThreadAttention
 import de.pyryco.mobile.ui.onboarding.CameraPreview
@@ -171,57 +172,50 @@ class MainActivity : ComponentActivity() {
         setContent {
             val appPreferences = koinInject<AppPreferences>()
             val pairedServerStore = koinInject<PairedServerCollectionStore>()
-            val snackbar = remember { SnackbarHostState() }
-            LaunchedEffect(shareIntake) {
-                shareIntake.notices.collect { (message, count) ->
-                    val text =
-                        when {
-                            count > 0 -> resources.getQuantityString(message, count, count)
-                            message == R.string.thread_attachment_send_too_large ->
-                                resources.getString(
-                                    message,
-                                    formatMegabytes(AttachmentUploadLimit.MAX_BYTES),
-                                )
-                            else -> resources.getString(message)
-                        }
-                    snackbar.showSnackbar(text)
-                }
-            }
             PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
-                Scaffold(modifier = Modifier.fillMaxSize(), snackbarHost = { SnackbarHost(snackbar) }) { innerPadding ->
-                    val paired: Boolean? by produceState<Boolean?>(
-                        initialValue = null,
-                        pairedServerStore,
-                        appPreferences,
-                    ) {
-                        RelayLog.d { "event=workspace_startup_started" }
-                        val hosts = pairedServerStore.list()
-                        val migration = appPreferences.migrateDefaultWorkspace(hosts.map { it.record.serverId }.toSet())
-                        if (migration.isSuccess) {
-                            value = hosts.isNotEmpty()
-                            RelayLog.d { "event=workspace_startup_ready" }
-                        } else {
-                            RelayLog.w { "event=workspace_startup_blocked code=migration_failed" }
+                ShareErrorNoticeHost(shareIntake) {
+                    Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+                        val paired: Boolean? by produceState<Boolean?>(
+                            initialValue = null,
+                            pairedServerStore,
+                            appPreferences,
+                        ) {
+                            RelayLog.d { "event=workspace_startup_started" }
+                            val hosts = pairedServerStore.list()
+                            val migration = appPreferences.migrateDefaultWorkspace(hosts.map { it.record.serverId }.toSet())
+                            if (migration.isSuccess) {
+                                value = hosts.isNotEmpty()
+                                RelayLog.d { "event=workspace_startup_ready" }
+                            } else {
+                                RelayLog.w { "event=workspace_startup_blocked code=migration_failed" }
+                            }
                         }
-                    }
-                    when (val v = paired) {
-                        null ->
-                            Surface(
-                                modifier =
-                                    Modifier
-                                        .fillMaxSize()
-                                        .padding(innerPadding),
-                            ) {}
-                        else ->
-                            PyryNavHost(
-                                startDestination = if (v) Routes.CHANNEL_LIST else Routes.WELCOME,
-                                modifier = Modifier.padding(innerPadding).consumeWindowInsets(innerPadding),
-                                openTarget = externalTarget.takeIf { v },
-                                openTargetVersion = externalTargetVersion,
-                                shareIntake = shareIntake,
-                                onCancelShare = ::cancelShare,
-                                pairingPrefill = pairingPrefill,
-                            )
+                        when (val v = paired) {
+                            null ->
+                                Surface(
+                                    modifier =
+                                        Modifier
+                                            .fillMaxSize()
+                                            .padding(innerPadding),
+                                ) {
+                                    Box(
+                                        Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 28.dp),
+                                        contentAlignment = Alignment.TopEnd,
+                                    ) {
+                                        NavigationErrorPill()
+                                    }
+                                }
+                            else ->
+                                PyryNavHost(
+                                    startDestination = if (v) Routes.CHANNEL_LIST else Routes.WELCOME,
+                                    modifier = Modifier.padding(innerPadding).consumeWindowInsets(innerPadding),
+                                    openTarget = externalTarget.takeIf { v },
+                                    openTargetVersion = externalTargetVersion,
+                                    shareIntake = shareIntake,
+                                    onCancelShare = ::cancelShare,
+                                    pairingPrefill = pairingPrefill,
+                                )
+                        }
                     }
                 }
             }
@@ -457,7 +451,11 @@ internal fun PyryNavHost(
                 vm.lastHostUnpaired.collect { navController.returnToWelcome() }
             }
             if (shared?.shortcutId != null) {
-                Surface(modifier = Modifier.fillMaxSize()) {}
+                Surface(modifier = Modifier.fillMaxSize()) {
+                    Box(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 28.dp), contentAlignment = Alignment.TopEnd) {
+                        NavigationErrorPill()
+                    }
+                }
                 return@composable
             }
             ChannelListScreen(

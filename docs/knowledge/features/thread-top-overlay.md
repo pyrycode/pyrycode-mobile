@@ -53,7 +53,7 @@ The usage lead no longer names the agent ([Usage-limit indicator](usage-limit-in
 Since #1678, `agent = state.agent` selects the session-error copy independently of usage copy.
 
 Emits nothing when there is no pill to show (`usageLimit == null || usageLimitDismissed`, `mcpFailure == null`,
-`!showRePair`, `connectionState != Offline`, `sessionError == null`, `turnOutcome == null`, `transientError == null`, and `attentionPill == null`) — the overlay is an overlap (`Box` alignment, not a layout slot), so an empty overlay costs
+`!showRePair`, `connectionState != Offline`, `sessionError == null`, `turnOutcome == null`, `transientError == null`, `LocalNavigationErrorNotice.current?.currentMessage == null`, and `attentionPill == null`) — the overlay is an overlap (`Box` alignment, not a layout slot), so an empty overlay costs
 nothing and the message area draws exactly as if it were absent. Otherwise a `Column(horizontalAlignment =
 End, verticalArrangement = spacedBy(12.dp))` — Figma `541:2446`'s 12dp pill gap — with, top to bottom:
 
@@ -168,7 +168,7 @@ neighbors, including Offline and Re-pair.
 
 ### The transient error pill (#1747)
 
-The thread's local failures show as the last pill in the stack, below every persistent notice and the
+The thread's local failures show below every persistent notice and the
 session error and recovery pill, with the same 12 dp gap. These are new-session, archive, workspace and run-configuration
 failures, attachment size and count refusals, attachment-send failures, refused pasted or keyboard-inserted
 images, markdown-open failures, and the attachment no-app, open-failed and save-failed outcomes. Each shows
@@ -177,12 +177,29 @@ minimum height and a polite live region. It overlays the list without moving it.
 spacing follows the visible pill, not Retry's 48 dp target, and the error draws above that target so tapping
 it cannot run Retry.
 
-`TransientErrorNoticeState` (`TransientErrorNotice.kt`), remembered per conversation, owns the queue. Every
-failure joins one first-in, first-out queue in the order it happened, whichever route it came from, and each
+`TransientErrorNoticeState` (`TransientErrorNotice.kt`), remembered per conversation, owns the local queue. Every
+conversation-local failure joins that first-in, first-out queue in the order it happened, and each
 pill stays for the full Material Short time of 4 s, adjusted by the accessibility manager as a snackbar's would
 be. Expiry removes only that pill. Each occurrence has its own identity, so a repeated identical failure is
 announced again. Leaving the screen or switching conversation cancels the shown and queued pills. Saved
 confirmations and the dismissed-elsewhere prompt keep the bottom snackbar.
+
+Share capture failures and intake/selection count or size refusals reuse this inert Error treatment
+through `NavigationErrorPill` (#1824). They render after conversation-local transient errors with a 12dp
+gap, including inside the Offline following-notice region above Retry's expanded target. The reused
+pill retains bodySmall, errorContainer/error colors, 6dp corners, 8dp horizontal/4dp vertical padding
+and the overlay shadow; it has no X or action and announces politely.
+
+Their queue is separate from the conversation-local queue: `ShareErrorNoticeHost` remembers it above
+navigation, keyed by the intake ViewModel, and supplies it through nullable `LocalNavigationErrorNotice`.
+A destination change neither cancels nor restarts its remaining lifetime. Each occurrence receives its
+own full accessibility-adjusted 4-second Short lifetime and identity; disposing the host cancels its
+collector and all active/queued children. The collector enqueues each notice immediately rather than
+waiting for expiry before receiving the next failure. Standalone screens have a null provider and no
+navigation notice. See [Incoming shares](navigation.md#incoming-shares-1728) for picker, Direct Share and
+startup placement, and [share regression evidence](development-verification-emulator-evidence.md#share-failure-presentation-1824)
+for the actual collector/navigation coverage. A conversation-local queue would clear selection
+refusals at the very navigation boundary where the operator needs to read them.
 
 ## Placement in `ThreadScreen`
 

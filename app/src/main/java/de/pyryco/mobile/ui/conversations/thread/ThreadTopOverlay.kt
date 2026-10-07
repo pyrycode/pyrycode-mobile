@@ -74,6 +74,7 @@ internal fun ThreadTopOverlay(
     transientErrorOccurrence: Long = 0L,
     attentionPill: (@Composable () -> Unit)? = null,
 ) {
+    val navigationError = LocalNavigationErrorNotice.current?.currentMessage
     val usage = usageLimit?.takeUnless { usageLimitDismissed }
     val showOffline = connectionState == ConnectionState.Offline && !showRePair
     val mcp = mcpFailure?.takeUnless { showRePair || showOffline }
@@ -84,7 +85,8 @@ internal fun ThreadTopOverlay(
         !showOffline &&
         sessionError == null &&
         turnOutcome == null &&
-        transientError == null
+        transientError == null &&
+        navigationError == null
     ) {
         return
     }
@@ -119,8 +121,15 @@ internal fun ThreadTopOverlay(
                 agent = agent,
                 onCompact = onCompact,
                 followingNotice =
-                    transientError?.let { text ->
-                        { key(transientErrorOccurrence) { TransientErrorPill(text) } }
+                    if (transientError != null || navigationError != null) {
+                        {
+                            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(OverlayPillGap)) {
+                                transientError?.let { text -> key(transientErrorOccurrence) { TransientErrorPill(text) } }
+                                NavigationErrorPill()
+                            }
+                        }
+                    } else {
+                        null
                     },
             )
         }
