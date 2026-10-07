@@ -209,15 +209,20 @@ streaming text ahead of progressive display, through `setBoundedText`. The share
 `CopyTextControl` remains compact with its existing ambient tint and padding, and
 uses the same safeguard; it copies the block's source rather than the message.
 
-Each side action starts from a 48×48dp target centred on its glyph (11×12dp
-`ic_copy`, 13×12dp `ic_reply`), without expanding the drawn 13dp column or
-bubble. The two targets meet at the midpoint between glyph centres; every outer
-edge sits 24dp from its centre, so the pair's touch layout is 48×73dp. A tap just
-above the midpoint copies and just below it replies. `MessageActions` provides a
-zero `minimumTouchTargetSize` so neither target's platform expansion reaches into
-the other. The overflow is not clipped and is placed after the bubble so taps in
-the overlap act rather than toggle time. On a short row the pair overflows the
-row itself, so the copy glyph sits 12.5dp above the row's centre.
+Each side action has its own adjoining 48×48dp target (#1895); the pair's touch
+layout is 48×96dp. The 11×12dp `ic_copy` and 13×12dp `ic_reply` glyphs sit
+12.5dp above and below the shared edge, preserving their 25dp centre gap and
+bubble-relative centring without widening the drawn 13dp column or bubble.
+A tap just above the shared edge copies and just below it replies. There is no
+zero minimum-touch-target override. Horizontal target overflow remains unclipped
+and is placed after the bubble, so taps in the overlap act rather than toggle time.
+
+Short visible bubble surfaces have a 96dp minimum height, with their body/meta
+column vertically centred. Both targets fit inside that surface and its message
+row, keeping adjacent short rows' targets separate. Increasing only the row's
+blank space below a short surface breaks the visible 12dp newest-bubble rest gap;
+enlarge the surface instead. Long surfaces retain their content spacing and
+width contracts. See [minimum-dimension and pointer coverage](message-bubble-testing.md#testing).
 
 Reply (#1818) hands the immutable `Message` at tap time to `onReply`; the default
 is inert, so previews and standalone mounts need no fixture. `ThreadScreen` turns
