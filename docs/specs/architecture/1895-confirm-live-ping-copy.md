@@ -9,6 +9,15 @@
 - `docs/knowledge/features/development-verification-gates.md`: focused shared-test execution and fresh XML counts.
 - `docs/specs/architecture/1895-confirm-live-ping-copy.md`: this confirmation plan is the only intended branch change.
 
+## Design source
+
+**Figma:** https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=808-12242,
+the shared Message Actions anchor from #1818, read with design context and screenshot
+on 2026-10-07 for the accessibility rework. Copy is 11×12dp and Reply 13×12dp,
+stacked with centres 25dp apart in a narrow column. Preserve the existing primary
+tint, assets and bubble-relative centring. The invisible targets must each be
+48×48dp; short message rows may grow to contain them rather than overlap neighbours.
+
 ## Change
 
 Confirm #1878's landed repair on current main rather than duplicate it. The initial
@@ -55,8 +64,47 @@ complete the final main-merged checks. The dispatcher must run fresh full
 scripted and live gates before re-review and live acceptance respectively.
 This revision adds only confirmation work within the original size boundary.
 
+2026-10-07 — Re-review of `81e19e56`, findings 1 and 2, explicitly expands this
+confirmation ticket to repair inherited #1818 accessibility geometry and duplicated
+IME setup. `MessageActions` currently divides 73dp into two 36.5dp targets, which
+violates the minimum height even though the widths pass. Use a 96dp pair with two
+adjoining 48×48dp targets and retain the 25dp glyph-centre gap by placing glyphs
+12.5dp either side of the shared edge. Remove the zero minimum-touch-target override.
+`MessageContainer` reserves at least 96dp row height and vertically centres a shorter
+bubble; the targets stay inside the row so adjacent short messages cannot steal taps.
+Bubble width, timestamp toggling, source copy and reply callbacks retain their contracts.
+
+Files read for this revision: `MessageBubble.kt` (`MessageContainer`, `MessageActions`),
+`MessageBubbleTest.kt` (`assertSideGeometry`), `MessageReplyTargetsTest.kt` (`verify`),
+`MessageReplyImeDeviceTest.kt` (`ime`), `TestImeRule.kt` (`select`, `apply`),
+the #1818 plan and the message-bubble and verification feature overviews.
+In-flight #1766 overlaps only streaming rendering and its reveal test, not these blocks.
+The repair is approximately 300 written lines including revisions and tests, no new
+exported type, three test-rule constructor consumers, no new failure branch and the
+original two acceptance criteria. It remains one confirmation/repair deliverable.
+
+First strengthen shared geometry tests to require both dimensions for Copy and Reply
+on both roles at 320dp/412dp and while streaming; observe their height failure.
+Retain midpoint/outer-edge pointer routing, exact copy and reply source, glyph sizes,
+centres and timestamp isolation. Add a short-row containment/separation assertion.
+Run existing bubble, palette, selection, reply staging, timestamp and thread coverage,
+plus all eight unchanged `SideMessageCopyTest` regressions.
+
+Reuse `TestImeRule` with a default-off `selectBeforeTest` option in its outer `apply`
+try/finally. `MessageReplyImeDeviceTest` keeps rule order 0, selecting before the
+Compose activity rule (order 1) and restoring after its cleanup, including setup
+failure. Existing live/scripted consumers keep opt-in `select()` behaviour.
+Run the affected device class (real keyboard/insets cannot be proven by Robolectric),
+the scripted held-stream scenario and the named live ping method after the repair,
+inspecting fresh counted XML. The dispatcher still owns full scripted and live gates.
+No new coroutine, state, I/O boundary, dependency or product logging is introduced.
+
 ## Documentation handoff
 
 Pending for the documentation stage: record fresh #1895 full-suite counts, tested
 commit and named ping result in `docs/e2e-interactive-stream.md`, Verification
 status, and `docs/knowledge/features/message-bubble-testing.md`, Testing.
+
+Pending: revise `docs/knowledge/features/message-bubble.md`, side-action geometry,
+and `docs/knowledge/features/message-bubble-testing.md`, Testing, for the 48×48dp
+targets, short-row containment and minimum-dimension/pointer coverage.
