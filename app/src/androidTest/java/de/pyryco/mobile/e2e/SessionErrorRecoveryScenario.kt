@@ -4,7 +4,6 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasSetTextAction
@@ -24,7 +23,6 @@ import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.network.MessagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.WireRole
-import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
 import kotlinx.coroutines.delay
@@ -65,8 +63,8 @@ internal class SessionErrorRecoveryScenario(
         val conversation = fixture.value("conversationId")
         val held = fixture.value("heldMarker")
         val fresh = fixture.value("freshMarker")
-        val heldPrompt = "Without using tools, reply with exactly: recovered1731. $held"
-        val freshPrompt = "Without using tools, reply with exactly: recovered1731. $fresh"
+        val heldPrompt = sessionErrorRecoveryPrompt(held)
+        val freshPrompt = sessionErrorRecoveryPrompt(fresh)
         pair(fixture.value("pairCode"), fixture.value("channel"))
         SecondClientPeer(
             PairedServer(
@@ -135,9 +133,7 @@ internal class SessionErrorRecoveryScenario(
                 }
                 peer.awaitQueue(conversation, 10_000) { it.isEmpty() }
             }
-            val reply =
-                hasText("recovered1731", substring = true) and
-                    hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG) and hasClickAction())
+            val reply = sessionErrorReplyMatcher()
             await(reply, unmerged = true)
             compose.onAllNodes(reply, useUnmergedTree = true).onFirst().assertIsDisplayed()
             compose.waitUntil(20_000) { nodes(hasText(CRASHING)).isEmpty() && nodes(hasText(BLOCKED)).isEmpty() }

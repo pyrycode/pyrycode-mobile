@@ -116,7 +116,18 @@ class Case:
         if args.scripted:
             self.env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
             self.env.pop("ANTHROPIC_API_KEY", None)
+            # The canned echo is identical to the sent prompt and cannot prove assistant rendering.
+            reply = self.home / "recovery-reply.jsonl"
+            with reply.open("x") as output:
+                reply.chmod(0o600)
+                for frame in (
+                    {"type": "assistant", "message": {"id": "recovery-" + self.conversation,
+                     "role": "assistant", "content": [{"type": "text", "text": "recovered1731"}]}},
+                    {"type": "result", "subtype": "success", "session_id": self.session},
+                ):
+                    output.write(json.dumps(frame) + "\n")
             self.env.update(PYRY_FAKE_CLAUDE_STREAM_JSON="1",
+                            PYRY_FAKE_CLAUDE_STREAM_REPLAY_FIRST=str(reply),
                             PYRY_FAKE_CLAUDE_STDIN_LOG=str(self.home / "stdin"))
         elif os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
             # Match the existing isolated real-Claude harness. Never retain this file.

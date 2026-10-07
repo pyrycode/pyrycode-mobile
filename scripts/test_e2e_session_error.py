@@ -34,7 +34,13 @@ class SessionErrorControlTest(unittest.TestCase):
                     self.assertNotEqual(case.env["HOME"], os.environ.get("HOME"))
                     self.assertEqual(case.env["PYRY_E2E_CLAUDE_BIN_FILE"], str(case.selection))
                     self.assertEqual(case.env.get("PYRY_E2E_QUEUE_GIVE_UP_AFTER"), "3s" if arm == "dropped" else None)
-                    self.assertNotIn("PYRY_FAKE_CLAUDE_STREAM_REPLAY_FIRST", case.env)
+                    reply = Path(case.env["PYRY_FAKE_CLAUDE_STREAM_REPLAY_FIRST"])
+                    self.assertEqual(reply.parent, case.home)
+                    self.assertEqual(reply.stat().st_mode & 0o777, 0o600)
+                    assistant, result = [json.loads(line) for line in reply.read_text().splitlines()]
+                    self.assertEqual(assistant["message"]["role"], "assistant")
+                    self.assertEqual(assistant["message"]["content"], [{"type": "text", "text": "recovered1731"}])
+                    self.assertEqual(result["subtype"], "success")
                     self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", case.env)
                 finally:
                     case.close()
