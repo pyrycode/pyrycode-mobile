@@ -34,8 +34,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -331,7 +329,8 @@ fun ThreadScreen(
     val shownQuestion = questionState.takeIf { openRequest == null }
     // #1306: one call site for both prompt kinds, so a question → permission hand-over keeps one owner.
     if (questionState != null || openRequest != null) QuestionPromptProtection()
-    val snackbarHostState = remember { SnackbarHostState() }
+    val confirmationNotices = rememberTransientConfirmationNoticeState(state.conversationId)
+    val confirmationScope = key(state.conversationId) { rememberCoroutineScope() }
     val errorNotices = rememberTransientErrorNoticeState(state.conversationId)
     // Payload-free signals and local resources keep exception and daemon text out of notices. Each collector
     // queues its notice and returns, so signals keep their arrival order across routes.
@@ -375,9 +374,11 @@ fun ThreadScreen(
     val noticeScope = rememberCoroutineScope()
     val attachmentActions =
         rememberAttachmentActions(attachmentStates, onOpenMarkdownAttachment) { notice ->
-            noticeScope.launch {
-                val text = resources.getString(notice.message)
-                if (notice == AttachmentNotice.SAVED) snackbarHostState.showSnackbar(text) else errorNotices.show(text)
+            val text = resources.getString(notice.message)
+            if (notice == AttachmentNotice.SAVED) {
+                confirmationNotices.enqueue(confirmationScope, text)
+            } else {
+                noticeScope.launch { errorNotices.show(text) }
             }
         }
     // #1329: a tapped file that loaded ready opens or saves once, through the same actions as a ready row.
@@ -457,7 +458,6 @@ fun ThreadScreen(
             modifier = Modifier.fillMaxSize(),
             containerColor = if (frameColors.glow == null) frameColors.background else Color.Transparent,
             contentColor = MaterialTheme.colorScheme.onBackground,
-            snackbarHost = { SnackbarHost(snackbarHostState, Modifier.testTag("thread_confirmation_snackbar")) },
             topBar = {
                 ThreadTopAppBar(
                     title = state.displayName,
@@ -1011,6 +1011,8 @@ fun ThreadScreen(
                         onCompact = onCompact,
                         transientError = errorNotices.currentMessage,
                         transientErrorOccurrence = errorNotices.currentOccurrence,
+                        confirmation = confirmationNotices.currentMessage,
+                        confirmationOccurrence = confirmationNotices.currentOccurrence,
                     )
                 }
             }
@@ -1214,7 +1216,7 @@ fun ThreadScreen(
             // Keyed on modalId, so it never re-fires on unrelated recomposition. The host fold keeps this
             // conversation's latest dismissal until the next reconnect (#1337), so reopening the chat shows it again.
             LaunchedEffect(modalState.modalId) {
-                snackbarHostState.showSnackbar(reason)
+                confirmationNotices.enqueue(confirmationScope, reason)
             }
         }
         ModalUiState.Hidden -> Unit

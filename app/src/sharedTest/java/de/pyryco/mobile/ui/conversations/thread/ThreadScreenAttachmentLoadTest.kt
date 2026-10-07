@@ -9,11 +9,13 @@ import androidx.activity.result.ActivityResultRegistry
 import androidx.activity.result.ActivityResultRegistryOwner
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.longClick
@@ -29,6 +31,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
+import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.components.AttachmentAction
@@ -77,6 +80,7 @@ class ThreadScreenAttachmentLoadTest {
     private val requested = mutableListOf<Pair<MessageAttachment, AttachmentAction>>()
     private val markdownOpened = mutableListOf<String>()
     private val errors = Channel<Unit>(Channel.BUFFERED)
+    private var modal by mutableStateOf<ModalUiState>(ModalUiState.Hidden)
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Before fun clearCachedProviderRoots() {
@@ -129,6 +133,7 @@ class ThreadScreenAttachmentLoadTest {
                 PyrycodeMobileTheme {
                     ThreadScreen(
                         state = state,
+                        modalState = modal,
                         onBack = {},
                         onSendMessage = {},
                         connectionState = ConnectionState.Connected,
@@ -245,7 +250,7 @@ class ThreadScreenAttachmentLoadTest {
         awaitNotice(AttachmentNotice.SAVE_FAILED)
     }
 
-    @Test fun savedRemainsASnackbar_andCoexistsWithAnErrorPill() {
+    @Test fun savedUsesADefaultPill_andCoexistsWithAnErrorPill() {
         val source = File(context.cacheDir, "save-source").apply { writeText("saved bytes") }
         val kept = AttachmentSource.Kept(source)
         show(MessageAttachment(ID, "report.pdf"), mapOf(ID to AttachmentViewState.Ready(kept, null, null)))
@@ -265,9 +270,39 @@ class ThreadScreenAttachmentLoadTest {
         composeTestRule
             .onNodeWithText(saved)
             .assertIsDisplayed()
-            .assert(hasAnyAncestor(hasTestTag("thread_confirmation_snackbar")))
+            .assert(hasTestTag("transient_confirmation_notice"))
+            .assertHasNoClickAction()
         composeTestRule.onNodeWithTag("transient_error_notice").assertIsDisplayed()
         assertEquals("saved bytes", destination.readText())
+    }
+
+    @Test fun savedAndDismissals_shareArrivalOrder_acrossModalIdChanges() {
+        val source = File(context.cacheDir, "mixed-save-source").apply { writeText("bytes") }
+        val kept = AttachmentSource.Kept(source)
+        show(MessageAttachment(ID, "report.pdf"), mapOf(ID to AttachmentViewState.Ready(kept, null, null)))
+        composeTestRule.mainClock.autoAdvance = false
+        composeTestRule.runOnIdle { modal = ModalUiState.Dismissed("first", "allow", "remote") }
+        composeTestRule.mainClock.advanceTimeBy(64)
+        composeTestRule.waitForIdle()
+        composeTestRule.mainClock.advanceTimeByFrame()
+        deliver(AttachmentLoaded(AttachmentTarget(ID, "report.pdf", "application/pdf"), kept, AttachmentAction.SAVE))
+        val destination = File(context.cacheDir, "mixed-saved-report.pdf")
+        composeTestRule.runOnIdle { registry.dispatchResult(registry.requestCodes.last(), Uri.fromFile(destination)) }
+        composeTestRule.waitUntil(5_000) { destination.exists() }
+        composeTestRule.mainClock.advanceTimeBy(64)
+        composeTestRule.runOnIdle { modal = ModalUiState.Dismissed("second", "allow", "timeout") }
+        composeTestRule.mainClock.advanceTimeBy(64)
+        composeTestRule.waitForIdle()
+        composeTestRule.mainClock.advanceTimeByFrame()
+        composeTestRule.onNodeWithText("Resolved on another device").assert(hasTestTag("transient_confirmation_notice"))
+        composeTestRule.onNodeWithText("File saved").assertDoesNotExist()
+        composeTestRule.mainClock.advanceTimeBy(4_000)
+        composeTestRule.onNodeWithText("File saved").assert(hasTestTag("transient_confirmation_notice"))
+        composeTestRule.onNodeWithText("Request timed out").assertDoesNotExist()
+        composeTestRule.mainClock.advanceTimeBy(4_000)
+        composeTestRule.onNodeWithText("Request timed out").assert(hasTestTag("transient_confirmation_notice"))
+        composeTestRule.mainClock.advanceTimeBy(4_000)
+        composeTestRule.onNodeWithTag("transient_confirmation_notice").assertDoesNotExist()
     }
 
     private companion object {
