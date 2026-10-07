@@ -6,6 +6,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.content.ReceiveContentListener
 import androidx.compose.foundation.content.consume
 import androidx.compose.foundation.content.contentReceiver
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -36,22 +38,38 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
+import androidx.compose.ui.input.pointer.PointerId
+import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.theme.composerFieldContainer
 
 // Figma 16:8's `Input large` (347:6635): a 6dp-cornered container 52dp tall holding the message text
 // inset 16dp from the leading edge, and — overlapping its trailing edge 4dp in — a 48dp button drawn
 // as a 28dp filled circle glyph.
+internal const val REPLY_SUGGESTION_PLACEHOLDER_TAG = "reply-suggestion-placeholder"
+
 private val FieldCorner = RoundedCornerShape(6.dp)
 private val FieldMinHeight = 52.dp
 private val FieldLeadingInset = 16.dp
@@ -99,6 +117,8 @@ fun ThreadInputBar(
     sending: Boolean = false,
     onImagesReceived: ((List<Uri>, InputContentInfo?) -> Unit)? = null,
     enabled: Boolean = true,
+    suggestedReply: SuggestedReply? = null,
+    onSendSuggestedReply: (SuggestedReply) -> Boolean = { false },
 ) {
     val textInset = with(LocalDensity.current) { FieldLeadingInset.toPx() }
     // One button, two jobs (#643) — the placement desktop's #678 settled, replacing the standalone
@@ -156,6 +176,12 @@ fun ThreadInputBar(
             }
         }
     }
+    val offer = suggestedReply?.takeIf { text.isEmpty() && fieldState.text.isEmpty() && !isBusy }
+    val suggestionEnabled = offer != null && enabled && !sending
+    val haptic = LocalHapticFeedback.current
+    val currentOnSendSuggestedReply by rememberUpdatedState(onSendSuggestedReply)
+    val suggestionAction = stringResource(R.string.send_suggested_reply)
+    val sendDescription = stringResource(R.string.cd_send_message)
     val ownPackage = LocalContext.current.packageName
     val currentOnImagesReceived by rememberUpdatedState(onImagesReceived)
     // #934: a paste or a keyboard image insert offers the field a clip. Image content URIs from another
@@ -219,7 +245,8 @@ fun ThreadInputBar(
                     Box {
                         if (fieldState.text.isEmpty()) {
                             Text(
-                                text = stringResource(R.string.thread_input_placeholder),
+                                text = offer?.text ?: stringResource(R.string.thread_input_placeholder),
+                                modifier = if (offer != null) Modifier.testTag(REPLY_SUGGESTION_PLACEHOLDER_TAG) else Modifier,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color =
                                     MaterialTheme.colorScheme.onSurfaceVariant
@@ -230,31 +257,97 @@ fun ThreadInputBar(
                     }
                 },
             )
-            IconButton(
-                onClick = if (stopping) onInterrupt else onSend,
-                enabled = buttonEnabled,
-                modifier = Modifier.size(ButtonTouchSize),
-                colors =
-                    IconButtonDefaults.iconButtonColors(
-                        contentColor = MaterialTheme.colorScheme.primary,
-                        disabledContentColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.38f),
-                    ),
-            ) {
-                Icon(
-                    // Figma Message input button: Send 113:3543 and Action=Stop 114:3549.
-                    // Both use a full 28dp circle centered in the container-less 48dp button.
-                    painter =
-                        painterResource(if (stopping) R.drawable.ic_composer_stop else R.drawable.ic_composer_send),
-                    // The two descriptions both suites pin: "Send message" is the e2e thread-arrival
-                    // marker, "Stop the running turn" is what ScriptedThreadRenderTest drives.
-                    contentDescription =
-                        stringResource(
-                            if (stopping) R.string.cd_thread_interrupt else R.string.cd_send_message,
+            if (suggestionEnabled) {
+                // This surface owns the whole gesture: an IconButton's clickable would consume the hold.
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier =
+                        Modifier
+                            .size(ButtonTouchSize)
+                            .semantics(mergeDescendants = true) {
+                                role = Role.Button
+                                contentDescription = sendDescription
+                                customActions =
+                                    listOf(
+                                        CustomAccessibilityAction(suggestionAction) {
+                                            val submitted = currentOnSendSuggestedReply(offer)
+                                            if (submitted) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            submitted
+                                        },
+                                    )
+                            }.pointerInput(offer, text, fieldState.text.toString(), enabled, sending, isBusy) {
+                                awaitEachGesture {
+                                    val down = awaitFirstDown()
+                                    down.consume()
+                                    var endedBeforeThreshold = false
+                                    withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                                        awaitSuggestedRelease(down.id)
+                                        endedBeforeThreshold = true
+                                    }
+                                    if (!endedBeforeThreshold) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        RelayLog.d { "event=reply_suggestion_gesture state=armed" }
+                                        val release = awaitSuggestedRelease(down.id)
+                                        if (release != null) {
+                                            release.consume()
+                                            currentOnSendSuggestedReply(offer)
+                                        }
+                                    }
+                                }
+                            },
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_composer_send),
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(ButtonGlyphSize),
+                    )
+                }
+            } else {
+                IconButton(
+                    onClick = if (stopping) onInterrupt else onSend,
+                    enabled = buttonEnabled,
+                    modifier = Modifier.size(ButtonTouchSize),
+                    colors =
+                        IconButtonDefaults.iconButtonColors(
+                            contentColor = MaterialTheme.colorScheme.primary,
+                            disabledContentColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.38f),
                         ),
-                    modifier = Modifier.size(ButtonGlyphSize),
-                )
+                ) {
+                    Icon(
+                        // Figma Message input button: Send 113:3543 and Action=Stop 114:3549.
+                        // Both use a full 28dp circle centered in the container-less 48dp button.
+                        painter =
+                            painterResource(if (stopping) R.drawable.ic_composer_stop else R.drawable.ic_composer_send),
+                        // The two descriptions both suites pin: "Send message" is the e2e thread-arrival
+                        // marker, "Stop the running turn" is what ScriptedThreadRenderTest drives.
+                        contentDescription =
+                            stringResource(
+                                if (stopping) R.string.cd_thread_interrupt else R.string.cd_send_message,
+                            ),
+                        modifier = Modifier.size(ButtonGlyphSize),
+                    )
+                }
             }
         }
+    }
+}
+
+/** Strict bounds: leaving once cancels even if the pointer subsequently re-enters. */
+private suspend fun AwaitPointerEventScope.awaitSuggestedRelease(id: PointerId): PointerInputChange? {
+    while (true) {
+        val event = awaitPointerEvent()
+        val pointer = event.changes.firstOrNull { it.id == id } ?: return null
+        if (pointer.isConsumed ||
+            event.changes.any { it.id != id && it.pressed } ||
+            pointer.position.x < 0 ||
+            pointer.position.y < 0 ||
+            pointer.position.x >= size.width ||
+            pointer.position.y >= size.height
+        ) {
+            return null
+        }
+        if (!pointer.pressed) return pointer
     }
 }
 
