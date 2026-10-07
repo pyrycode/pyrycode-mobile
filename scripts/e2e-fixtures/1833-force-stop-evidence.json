@@ -1,24 +1,24 @@
 {
-  "started_utc": "2026-10-07T15:11:53Z",
+  "started_utc": "2026-10-07T16:15:19Z",
   "device_sdk": "33",
   "device_image": "google/sdk_gslim_arm64/emulator64_arm64:13/TE1A.220922.033/10836537:userdebug/dev-keys",
-  "app_revision": "fcc3f8c03c87615915fdd9bdba9b9522bf947f35",
+  "app_revision": "5b2e885c8b8309686096c894e871de96becf8d9e",
   "daemon_revision": "6019328b378cad587f69b7bc94de37febbdf8556",
   "daemon_version": "pyry dev",
-  "conversation_id": "ee37fbb5-23e6-4f8b-add0-067dd6ed4e79",
-  "synthetic_post_id": "e2e1833-stop-1791385911364",
-  "synthetic_post_text": "e2e1833-stop-1791385911364-new-000",
+  "conversation_id": "eb2a3b8b-a532-4e9f-90b0-ad1cc3219540",
+  "synthetic_post_id": "e2e1833-stop-1791389716749",
+  "synthetic_post_text": "e2e1833-stop-1791389716749-new-000",
   "result": "PASS",
-  "pid_before": "2679",
+  "pid_before": "2654",
   "process_stopped": true,
-  "stopped_utc": "2026-10-07T15:11:58Z",
-  "pid_after": "3142",
+  "stopped_utc": "2026-10-07T16:15:24Z",
+  "pid_after": "3170",
   "process_relaunched": true,
   "post_count": 1,
   "scrolling": false,
-  "relaunched_utc": "2026-10-07T15:12:04Z",
+  "relaunched_utc": "2026-10-07T16:15:29Z",
   "command": "PYRYCODE_SRC=<sibling checkout> PYRYCODE_RELAY_SRC=<sibling checkout> python3 scripts/e2e-force-stop-proof.py",
-  "artifact": "build/dispatcher-tests/force-stop-sm1crzqz",
+  "artifact": "build/dispatcher-tests/force-stop-wazfloc2",
   "preparation": {
     "executed": 1,
     "passed": 1,
@@ -28,5 +28,5 @@
     "sanitized_xml": "scripts/e2e-fixtures/1833-force-stop-preparation.xml",
     "xml_sha256": "9efc76bc3844406dd217d30e490b06a157a6a98a3c369ae4616d174c85fc7a5f"
   },
-  "scope": "Owned isolated real daemon; scripted child; zero real-Claude turns. Pairing and app cache retained across actual app stop/relaunch; durable home retained across daemon restart. Repaired cancellation ownership active."
+  "scope": "Owned isolated real daemon; scripted child; zero real-Claude turns. Pairing and app cache retained across actual app stop/relaunch; durable home retained across daemon restart. Emulator teardown reaps on ADB timeout/error and cancellation."
 }

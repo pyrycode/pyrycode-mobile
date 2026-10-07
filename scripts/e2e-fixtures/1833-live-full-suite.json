@@ -1,0 +1,35 @@
+{
+  "ticket": 1833,
+  "result": "PASS after same-tree flake re-run",
+  "app_revision": "5b2e885c8b8309686096c894e871de96becf8d9e",
+  "daemon_revision": "6019328b378cad587f69b7bc94de37febbdf8556",
+  "claude_version": "2.1.280",
+  "device": "pixel2Api33Atd",
+  "command": "ANDROID_GATE_WAIT_SECONDS=7200 PYRYCODE_SRC=<sibling checkout> PYRYCODE_RELAY_SRC=<sibling checkout> python3 scripts/android-test-gate.py live",
+  "artifact": "build/dispatcher-tests/live-m37we95m/dispatcher.xml",
+  "executed": 64,
+  "passed": 63,
+  "failed": 1,
+  "errors": 0,
+  "skipped": 0,
+  "named_method": "interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect",
+  "named_method_result": "PASS",
+  "failed_methods": [
+    "interactiveTurn_archiveRestore_roundTripsListMembership"
+  ],
+  "sanitized_xml": "scripts/e2e-fixtures/1833-live-full-suite.xml",
+  "xml_sha256": "a0d5db0dc308363f26d996b33e7b745f34f6b1ebd39989fcecffd0967cdea3ef",
+  "rerun": {
+    "command": "python3 scripts/android-test-gate.py live --tests de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_archiveRestore_roundTripsListMembership",
+    "artifact": "build/dispatcher-tests/live-31khvrr3/dispatcher.xml",
+    "executed": 1,
+    "passed": 1,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "sanitized_xml": "scripts/e2e-fixtures/1833-live-full-rerun.xml",
+    "xml_sha256": "0fb344caf814a78c7f561a22b9b908a4b64dfcc1a87b65e435be19851dcdf8e0",
+    "note": "Same-tree re-run passed; the method is tracked as flaky on #1870 and is untouched by this ticket."
+  },
+  "scope": "Hand-run full curated real-Claude suite through the repository's live gate. No credentials, cursors, daemon payloads or raw logcat published."
+}
