@@ -481,6 +481,64 @@ Both run on a device without substituted menu/clipboard providers or production 
 The live method is in the curated full suite; run the focused deterministic scenario with
 `python3 scripts/android-test-gate.py scripted selection-copy`. `scripted-all` includes it too.
 
+Reliability repair (#1854) addresses two observed failure conditions. In #1769 and #1861,
+the immediate clipboard comparison after the platform click read the unrelated baseline;
+the later #1731 occurrence repeated that signature. UI idleness did not fence the clipboard
+result. In #1785, baseline `setPrimaryClip` failed before selection with
+`SecurityException: Package android does not belong to 10098`: the instrumentation
+target-context manager supplied an operation package inconsistent with the app UID.
+The [investigation](https://github.com/pyrycode/pyrycode-mobile/issues/1854#issuecomment-6032487922)
+links each original failed/same-tree passing pair; the
+[later occurrence](https://github.com/pyrycode/pyrycode-mobile/issues/1854#issuecomment-6033946747)
+records #1731, whose Copy method passed on rerun even though another method still failed.
+Historical logs do not show whether those Copy writes eventually completed or how the
+target-context manager acquired `android` attribution. Pointer/post timing and context
+initialization contamination remain hypotheses. Android 13 uses the local floating toolbar,
+and resolved Compose 1.10.4 Copy launches undispatched with a synchronous native write;
+the suspend API does not establish a delayed-write cause.
+
+The shared helper now obtains Android's real clipboard from the running activity's
+independently scoped service cache, then observes the exact `cobalt` result on the UI thread
+within the existing timeout after one actual Copy click. It preserves independent baseline
+verification, finalized-row gating, measured word selection and the shorter-than-reply check.
+Exceptions propagate; an unchanged baseline or whole reply times out. It neither retries Copy
+nor substitutes the menu or clipboard. Device-only `FinishedReplyClipboardTest` demonstrates
+a delayed real-service replacement beyond an initial idle read, rejection of unchanged and
+whole-reply clips, and activity acquisition while the target manager has invalid attribution.
+The fixture uses a real manager/service and restores the instrumentation registry before UI
+operations; a failed private-field fixture is not evidence of the attribution condition.
+
+Counted repair evidence, inspected for the named methods:
+
+- Retained red XML `/tmp/verifier-1893/regressions-initial-red.xml`: **4 executed, 4 failed,
+  0 skipped**, including the delayed replacement's baseline mismatch. The corrected attribution
+  control `/tmp/verifier-1893/attribution-red.xml`: **1 executed, 1 failed, 0 skipped**, with the
+  actual package/UID exception at baseline seeding through the old acquisition path.
+- The builder's focused `scripted selection-copy` run on `7f40a090` at
+  2026-10-07T07:30:44 recorded **1 executed, 1 passed, 0 failed, 0 skipped** for the named
+  deterministic twin. Artifact paths in the now-removed builder worktree are recorded in
+  [PR #1893](https://github.com/pyrycode/pyrycode-mobile/pull/1893).
+  Fresh verifier `scripted-all` XML independently confirms the twin passed: **19 executed,
+  19 passed, 0 failed, 0 skipped** overall, with **1 executed, 1 passed, 0 failed, 0 skipped**
+  in `build/dispatcher-tests/scripted-all-x1nnqf8s/selection-copy-0-TEST-installed.xml`, retained
+  at `/tmp/verifier-1893/selection-copy.xml`; aggregate at `/tmp/verifier-1893/scripted-all.xml`.
+  The verifier UI run had **196 executed, 196 passed, 0 failed, 1 skipped**; all four clipboard
+  regressions executed and passed in `build/dispatcher-tests/ui-1x32sum3/dispatcher.xml`,
+  retained at `/tmp/verifier-1893/ui.xml`. See the
+  [verifier verdict](https://github.com/pyrycode/pyrycode-mobile/pull/1893#issuecomment-6033944931).
+- Dispatcher full live run `2026-10-07T12-24-32-472Z` tested `feature/1854` at `3e059504f933`
+  merged with `origin/main` at `0b688c854857`: **64 executed, 63 passed, 1 failed, 0 skipped**.
+  Its XML explicitly contains the passing
+  `InteractiveStreamE2ETest#interactiveTurn_finishedReply_systemCopyCopiesSelectedWord`.
+  The sole failure was `interactiveTurn_archiveRestore_roundTripsListMembership`; only that
+  method was rerun on the same tree, with **1 executed, 1 passed, 0 failed, 0 skipped**.
+  Copy passed in the original full run, with no focused live Copy run claimed. Reports are
+  `2026-10-07T12-24-32-472Z_real-claude-gate_#1854.log` and
+  `2026-10-07T12-24-32-472Z_real-claude-gate-rerun_#1854.log` under
+  `$AGENTS_REPO_PATH/logs/`, with companion `.stderr.log` diagnostics. The
+  [dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1854#issuecomment-6038270787)
+  accepted the gate after the unrelated rerun. This closes the Copy live handoff.
+
 **Formatted streaming markdown (#1766).**
 `InteractiveStreamE2ETest#interactiveTurn_markdownReply_rendersFormattedBody` asks real Claude for a
 reply holding emphasis, inline code, a fenced block and a table, waits for the settled bubble, and
@@ -4551,12 +4609,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
   remains unchanged.
 
 
-- **Finished-reply system Copy (#1674):** the live method
+- **Finished-reply system Copy (#1674, reliability #1854):** the live method
   `InteractiveStreamE2ETest#interactiveTurn_finishedReply_systemCopyCopiesSelectedWord` and
   `DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_systemCopyCopiesSelectedWord`
   share the platform selection assertion. Both named methods passed: the deterministic twin
   within `scripted-all`, and the live method within the dispatcher full suite. Counted evidence
-  and retained XML paths are recorded in [Verification status](#verification-status); no Copy
+  and retained XML paths for the reliability repair are recorded under
+  [Finished-reply partial Copy](#what-rung-3-is-made-of), alongside the historical
+  [Verification status](#verification-status). Activity-owned attribution and bounded exact-word
+  observation retain one real platform Copy action and propagate clipboard exceptions; no Copy
   coverage follow-up remains.
 
 

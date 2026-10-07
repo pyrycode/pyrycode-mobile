@@ -75,6 +75,22 @@ activity root cannot find the action after the long-press. Keep the known select
 unrelated clipboard baseline independent of the result assertion. A substituted toolbar test
 cannot establish this platform-menu behavior.
 
+For the shared finished-reply assertion, acquire the real clipboard from the running activity,
+not the instrumentation target context (#1854). The target manager's invalid `android`
+operation package caused Android's package/UID check to reject baseline seeding before selection.
+After one actual Copy click, observe the independently known selected word within the existing
+deadline on the UI thread: UI idleness alone previously left an immediate read seeing the old
+baseline. Retain exact baseline verification and exact-word/shorter-than-reply assertions;
+exceptions propagate and an unchanged baseline or whole reply must time out.
+
+`FinishedReplyClipboardTest` requires the real device service for attribution enforcement and
+delayed replacement. Its controlled delayed write proves the missing result fence, while a real
+manager with invalid target attribution proves the activity acquisition repair. Restore the
+instrumentation registry before UI operations. The historical logs establish neither eventual
+Copy completion nor the origin of invalid attribution; Android 13 uses a local toolbar and
+Compose 1.10.4 writes synchronously, so a suspend API alone proves no scheduling cause. See
+the [scenario contract and counted evidence](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
+
 `MessageMetaRowToggleTest` mounts the real thread for timestamp-only show/hide,
 single selection, streaming completion, nested links/code copy/attachments and
 independent side-copy semantics (#1817). Standalone fixtures retain their visible
