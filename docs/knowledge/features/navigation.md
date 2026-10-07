@@ -384,6 +384,18 @@ Screens take navigation as `() -> Unit` callbacks, not a `NavController`. This i
 - **No deep links, no animations.** `composable(Routes.X) { ... }` only — no `deepLinks = listOf(...)`, no custom `enterTransition` / `exitTransition`.
 ## Testing
 
+`SharePickerTest` accepts the pending share on Main before mounting `PyryNavHost`,
+matching fresh share-launch ordering. Mounting ordinary channel navigation first
+can start notification onboarding and leave `GrantPermissionsActivity` holding
+focus on the device; Robolectric does not expose that dialog. A destination route
+or a longer composer timeout cannot establish that the thread is rendered while
+another activity holds focus. Keep the route, exact merged composer text and
+single-consumption assertions after correcting launch order. The unknown-shortcut
+regression seeds a nonempty draft and checks that the ready picker retains the
+captured text/file while that draft and its empty attachment list stay unchanged.
+See [singleton fixture isolation](development-verification-test-scheduling.md#test-scheduling-and-harnesses)
+and [class evidence](development-verification-emulator-evidence.md#share-picker-fixture-isolation-1885).
+
 [`MainActivityInsetsTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/MainActivityInsetsTest.kt)
 launches the production Activity and varies injected nonzero bars, checking the
 Welcome title at one top inset + 300 dp (168 dp logo offset + 104 dp height + 28 dp

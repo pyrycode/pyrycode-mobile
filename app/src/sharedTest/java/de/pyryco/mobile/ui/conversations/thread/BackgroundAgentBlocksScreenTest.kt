@@ -120,7 +120,9 @@ class BackgroundAgentBlocksScreenTest {
             )
         tasks.apply(roster)
         state = state.copy(backgroundTasks = tasks.rosters.value["c"])
-        mount(listOf(tool("a", "Agent"), tool("child", "Read", "a"), user("Newer")), true)
+        // Two children, so "a"'s own run ("read"+"child2") can still collapse below it -- the root "a"
+        // itself never folds into it (#1827 follow-up).
+        mount(listOf(tool("a", "Agent"), tool("child", "Read", "a"), tool("child2", "Glob", "a"), user("Newer")), true)
         compose.onNodeWithText("Agent finished").assertIsDisplayed()
         val unrelated = """{"task_id":"other","tool_call_id":"","task_type":"local_agent","description":"","truncated_fields":null}"""
         for (replacement in listOf(emptyList(), listOf(unrelated))) {
@@ -149,8 +151,13 @@ class BackgroundAgentBlocksScreenTest {
     }
 
     @Test fun lateJoinPreservesExpandedRunAndToolBodyAcrossSplitAndFinish() {
-        mount(listOf(tool("outside", "Grep"), tool("a", "Agent"), tool("child", "Read", "a"), user("Newer")), true)
-        compose.onNodeWithText("Using tools: 3", substring = true).performClick()
+        // A second child ("child2") so that, once "a" joins the roster below, its own run of children can
+        // still collapse -- the root "a" itself never folds into it (#1827 follow-up).
+        mount(
+            listOf(tool("outside", "Grep"), tool("a", "Agent"), tool("child", "Read", "a"), tool("child2", "Glob", "a"), user("Newer")),
+            true,
+        )
+        compose.onNodeWithText("Using tools: 4", substring = true).performClick()
         compose.onNodeWithText("Agent").performClick()
         compose.runOnIdle {
             state =
@@ -170,32 +177,45 @@ class BackgroundAgentBlocksScreenTest {
         compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
         compose.onAllNodesWithText("original input", substring = true, useUnmergedTree = true).assertCountEquals(1)
         compose.onNodeWithText("Using tools: 2", substring = true).performClick()
-        compose.onAllNodesWithText("Agent").assertCountEquals(0)
+        // "a" always draws as itself (#1827 follow-up), so collapsing its children's run never hides it.
+        compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("Read", useUnmergedTree = true).assertDoesNotExist()
         compose.runOnIdle { state = state.copy(items = state.items + user("Another")) }
-        compose.onAllNodesWithText("Agent").assertCountEquals(0)
+        compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
         marker().performClick()
         compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
         compose.onAllNodesWithText("original input", substring = true, useUnmergedTree = true).assertCountEquals(1)
     }
 
     @Test fun lateJoinKeepsAPreviouslyCollapsedRunCollapsed() {
-        mount(listOf(tool("outside", "Grep"), tool("a", "Agent"), tool("child", "Read", "a"), user("Newer")), true)
+        // A second child ("child2") so "a"'s own run of children can collapse -- the root "a" itself never
+        // folds into it (#1827 follow-up), so it stays visible even while its children's run is collapsed.
+        mount(
+            listOf(tool("outside", "Grep"), tool("a", "Agent"), tool("child", "Read", "a"), tool("child2", "Glob", "a"), user("Newer")),
+            true,
+        )
         compose.runOnIdle { state = state.copy(items = state.items + launch()) }
         compose.onNodeWithText("Using tools: 2", substring = true).assertIsDisplayed()
-        compose.onAllNodesWithText("Agent").assertCountEquals(0)
+        compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("Read", useUnmergedTree = true).assertDoesNotExist()
     }
 
-    @Test fun lateJoinOfALoneAgentKeepsRunExpansionUntilItsChildArrives() {
+    @Test fun lateJoinOfALoneAgentLeavesItsPendingIntentParkedAndItsNewRunCollapsed() {
         mount(listOf(tool("outside", "Grep"), tool("a", "Agent"), user("Newer")), true)
         compose.onNodeWithText("Using tools: 2", substring = true).performClick()
         compose.runOnIdle { state = state.copy(items = state.items + launch()) }
         compose.onNodeWithText("Agent started, still working").assertIsDisplayed()
-        compose.runOnIdle { state = state.copy(items = state.items + tool("child", "Read", "a")) }
+        // "a" always draws as itself (#1827 follow-up), so its pending open intent -- parked on its own id
+        // while it had no children -- has nothing left to resolve into once children do arrive: the new
+        // run starts collapsed, same as any fresh one would.
+        compose.runOnIdle { state = state.copy(items = state.items + tool("child", "Read", "a") + tool("child2", "Glob", "a")) }
         compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
-        compose.onNodeWithText("Read", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("Using tools: 2", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Read", useUnmergedTree = true).assertDoesNotExist()
         compose.onNodeWithText("Using tools: 2", substring = true).performClick()
+        compose.onNodeWithText("Read", useUnmergedTree = true).assertIsDisplayed()
         compose.runOnIdle { state = state.copy(items = state.items + user("Later")) }
-        compose.onAllNodesWithText("Agent").assertCountEquals(0)
+        compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
     }
 
     @Test fun pendingLoneAgentExpansionSurvivesRestorationBeforeItsChildArrives() {
@@ -205,15 +225,17 @@ class BackgroundAgentBlocksScreenTest {
         compose.onNodeWithText("Agent started, still working").assertIsDisplayed()
 
         restoration.emulateSavedInstanceStateRestore()
-        compose.runOnIdle { state = state.copy(items = state.items + tool("child", "Read", "a")) }
+        // "a" always draws as itself (#1827 follow-up); its restored pending intent has nothing left to
+        // resolve into once children arrive, so their new run starts collapsed.
+        compose.runOnIdle { state = state.copy(items = state.items + tool("child", "Read", "a") + tool("child2", "Glob", "a")) }
         compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
-        compose.onNodeWithText("Read", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("Read", useUnmergedTree = true).assertDoesNotExist()
 
-        // Once spent, restored intent must not reopen a run the reader deliberately closes.
         compose.onNodeWithText("Using tools: 2", substring = true).performClick()
+        compose.onNodeWithText("Read", useUnmergedTree = true).assertIsDisplayed()
         restoration.emulateSavedInstanceStateRestore()
         compose.runOnIdle { state = state.copy(items = state.items + user("Later")) }
-        compose.onAllNodesWithText("Agent").assertCountEquals(0)
+        compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
     }
 
     @Test fun pendingLoneAgentExpansionDoesNotLeakToAnotherConversation() {
@@ -222,9 +244,11 @@ class BackgroundAgentBlocksScreenTest {
         compose.runOnIdle { state = state.copy(items = state.items + launch()) }
         compose.onNodeWithText("Agent started, still working").assertIsDisplayed()
         compose.runOnIdle { state = state.copy(conversationId = "another") }
-        compose.runOnIdle { state = state.copy(items = state.items + tool("child", "Read", "a")) }
+        compose.runOnIdle { state = state.copy(items = state.items + tool("child", "Read", "a") + tool("child2", "Glob", "a")) }
+        // "a" always draws as itself (#1827 follow-up), and a new child run never starts open regardless
+        // (see the lone-agent tests above), so there is nothing left for a leaked intent to reveal.
         compose.onNodeWithText("Using tools: 2", substring = true).assertIsDisplayed()
-        compose.onAllNodesWithText("Agent").assertCountEquals(0)
+        compose.onNodeWithText("Read", useUnmergedTree = true).assertDoesNotExist()
     }
 
     @Test fun agentBackfillCarriesAnOpenRunOfItsLoadedChildrenIntoTheBlock() {
@@ -234,7 +258,9 @@ class BackgroundAgentBlocksScreenTest {
         val input = compose.onAllNodesWithText("original input", substring = true, useUnmergedTree = true)
         input.assertCountEquals(1)
         compose.runOnIdle { state = state.copy(items = listOf(tool("a", "Agent"), launch()) + state.items) }
-        compose.onNodeWithText("Using tools: 3", substring = true).assertIsDisplayed()
+        // "a" joins the backfilled block but never joins its run itself (#1827 follow-up): only its two
+        // children, c1 and c2, are counted.
+        compose.onNodeWithText("Using tools: 2", substring = true).assertIsDisplayed()
         compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
         compose.onNodeWithText("Glob", useUnmergedTree = true).assertIsDisplayed()
         // The open Read body, plus the Agent header's own input subject.
@@ -263,8 +289,21 @@ class BackgroundAgentBlocksScreenTest {
     }
 
     @Test fun markerOpensItsCollapsedRunBeforeAndAfterFinishAndDoesNotMergeWithOrdinaryTool() {
-        mount(listOf(tool("a", "Agent"), launch(), user("Newer"), tool("outside", "Grep"), tool("child", "Read", "a")), true)
-        compose.onAllNodesWithText("Agent").assertCountEquals(0)
+        mount(
+            listOf(
+                tool("a", "Agent"),
+                launch(),
+                user("Newer"),
+                tool("outside", "Grep"),
+                tool("child", "Read", "a"),
+                tool("child2", "Glob", "a"),
+            ),
+            true,
+        )
+        // "a" always draws as itself (#1827 follow-up): it is visible before the reader even navigates to
+        // it, while its own two-child run stays collapsed and never merges with the ordinary tool row.
+        compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("Read", useUnmergedTree = true).assertDoesNotExist()
         marker().performClick()
         compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
         compose.onNodeWithText("Read", useUnmergedTree = true).assertIsDisplayed()
@@ -297,6 +336,8 @@ class BackgroundAgentBlocksScreenTest {
     }
 
     @Test fun twoRunningAgentsHaveSeparateRunsAndOneFinishLeavesTheOtherBelowLaterMessage() {
+        // Each agent's own root never folds into its run (#1827 follow-up), so each needs two children for
+        // its own run to form and collapse.
         mount(
             listOf(
                 tool("a", "Agent"),
@@ -305,7 +346,9 @@ class BackgroundAgentBlocksScreenTest {
                 launch().copy(taskId = "tb", toolCallId = "b", description = "Second agent"),
                 user("Newer"),
                 tool("child", "Read", "a"),
+                tool("child2", "Glob", "a"),
                 tool("second-child", "Read", "b"),
+                tool("second-child2", "Glob", "b"),
             ),
             true,
         )

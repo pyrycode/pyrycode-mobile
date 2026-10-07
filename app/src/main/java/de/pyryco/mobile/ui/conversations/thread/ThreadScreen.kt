@@ -654,9 +654,22 @@ fun ThreadScreen(
                                 (if (state.historyMarkers.any { it.beforeRow.isEmpty() }) 1 else 0) +
                                 (if (openRequest != null) PERMISSION_ROW_COUNT else 0) +
                                 (if (answerRejected) 1 else 0)
+                        // The agent's own root never joins its run (#1827 follow-up), so the run holding its
+                        // block's children is found by block membership below, not by the root's own id
+                        // being one of its tools.
+                        val blockByTool =
+                            remember(agentRows) {
+                                agentRows
+                                    .filterIsInstance<ThreadRow.Delivered>()
+                                    .filter { it.isToolRow() }
+                                    .associate { ((it.item as ThreadItem.MessageItem).message.id) to it.agentBlockId }
+                            }
                         LaunchedEffect(goToAgent, rows, promptRowCount) {
                             val agentId = goToAgent ?: return@LaunchedEffect
-                            val run = rows.filterIsInstance<ThreadRow.ToolRun>().firstOrNull { row -> row.tools.any { it.id == agentId } }
+                            val run =
+                                rows.filterIsInstance<ThreadRow.ToolRun>().firstOrNull { row ->
+                                    row.tools.any { blockByTool[it.id] == agentId }
+                                }
                             if (run != null && !run.expanded) {
                                 expandedRuns = expandedRuns + run.runId
                             } else {

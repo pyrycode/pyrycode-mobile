@@ -2126,7 +2126,9 @@ class ThreadViewModelTest {
                         .filterIsInstance<ThreadRow.Delivered>()
                         .mapNotNull { (it.item as? ThreadItem.MessageItem)?.message }
                         .filter { it.id == "child" }
-                assertEquals(if (expanded.isEmpty()) emptyList() else listOf(after), replies)
+                // "a" draws as itself, and its one prose child never meets the two-row fold threshold
+                // either (#1827 follow-up), so it is always visible regardless of expansion.
+                assertEquals(listOf(after), replies)
                 val visibleKeys = visible.mapIndexed { i, row -> row.listKey(i) }
                 assertEquals(visibleKeys.distinct(), visibleKeys)
             }
