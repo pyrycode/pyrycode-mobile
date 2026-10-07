@@ -3,9 +3,18 @@ package de.pyryco.mobile.data.repository
 import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.RelayLog
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
+import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 /**
@@ -13,6 +22,18 @@ import org.junit.Test
  * `archived_at`, and a `conversation_updated` record never does, so the merge decides what it keeps.
  */
 class ConversationListProjectionTest {
+    private val oldSink = RelayLog.sink
+
+    @Before
+    fun stubAndroidLog() {
+        RelayLog.sink = { _, _, _ -> }
+    }
+
+    @After
+    fun restoreLog() {
+        RelayLog.sink = oldSink
+    }
+
     @Test
     fun conversationUpdated_keepsTheStoredStampWhileArchived_andClearsItOnUnarchive() {
         val projection = ConversationListProjection()
@@ -34,6 +55,47 @@ class ConversationListProjectionTest {
         projection.upsertConversation(record(name = "renamed", archived = true))
         assertNull(projection.current().single().archivedAt)
     }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun earlyUpsertsNeverEstablishAbsenceUntilAFullSnapshotEvenWhenTheRowsAreEqual() =
+        runTest {
+            val projection = ConversationListProjection()
+            val observed = mutableListOf<Pair<List<de.pyryco.mobile.data.model.Conversation>, Boolean>>()
+            backgroundScope.launch { projection.observeSnapshots(ConversationFilter.All).collect { observed += it } }
+            runCurrent()
+            assertTrue(observed.isEmpty())
+            projection.upsertConversation(record("chat", archived = false))
+            runCurrent()
+            assertFalse(observed.last().second)
+            val loaded =
+                snapshot(STAMP).copy(
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"conversations":[{"id":"$ID","name":"chat","is_promoted":false,""" +
+                                """"is_archived":false,"cwd":"/p","last_message_ts":"$LAST_USED","last_used_at":"$LAST_USED"}]}""",
+                        ),
+                )
+            val before = projection.current()
+            projection.applySnapshot(loaded.copy(payload = MobileJson.parseToJsonElement("{}")))
+            runCurrent()
+            assertFalse(observed.last().second)
+            projection.applySnapshot(loaded)
+            runCurrent()
+            assertEquals(before, projection.current())
+            assertTrue(observed.last().second)
+            projection.upsertConversation(record("renamed", archived = false))
+            runCurrent()
+            assertTrue(observed.last().second)
+            assertEquals(
+                "renamed",
+                observed
+                    .last()
+                    .first
+                    .single()
+                    .name,
+            )
+        }
 
     private fun snapshot(archivedAt: String): Envelope =
         Envelope(

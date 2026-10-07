@@ -207,6 +207,17 @@ interface ConversationRepository {
     fun observeMcpStatus(conversationId: String): Flow<McpStatus> = flowOf(McpStatus())
 
     /**
+     * Latest next-reply state for this conversation/session pair on the live connection (#1865).
+     * Null means no state received; a reading with null text is an explicit clear retaining its revision.
+     * Fresh connections start absent. Late subscribers receive the current reading. Never persisted.
+     * The default keeps repositories without suggestion support absent.
+     */
+    fun observeReplySuggestion(
+        conversationId: String,
+        sessionId: String,
+    ): Flow<ReplySuggestion?> = flowOf(null)
+
+    /**
      * Ask once for [conversationId]'s current MCP status (#1343). Fire-and-forget: the answer is a report on
      * [observeMcpStatus], and a refusal as `mcp_status.unavailable` sets [McpStatus.unavailable]. When nothing
      * can be sent, nothing happens. Never retries, never throws.
@@ -374,6 +385,19 @@ interface ConversationRepository {
         conversationId: String,
         muted: Boolean,
     ): Unit = error("setMuted is not implemented for this ConversationRepository")
+
+    /** Live read facts only; absent before this connection reports them, never sourced from cache. */
+    fun observeReadMarks(conversationId: String): Flow<ConversationReadMarks?> = flowOf(null)
+
+    /**
+     * Confirm a shared read mark in the durable history id space. Success is the stored mark after
+     * the correlated update, which may be clamped below [upTo]. Failure never optimistically advances
+     * a mark. Cancellation propagates; callers own retries. Implementations without support fail.
+     */
+    suspend fun markConversationRead(
+        conversationId: String,
+        upTo: ULong,
+    ): Result<ULong> = Result.failure(UnsupportedOperationException("Daemon read marks are unavailable"))
 
     /**
      * Permanently removes the conversation from the store. Tolerant of unknown
@@ -1189,7 +1213,7 @@ data class HistoryPosition(
  * and it holds for **every** entry, not only the unrecognized ones. Nothing in the data layer logs
  * either field.
  *
- * @param id The **durable, per-conversation** log id: monotonic within one conversation and stable
+ * @param unsignedId The **durable, host/conversation-scoped** positive unsigned log id: monotonic within one conversation and stable
  *   across daemon restarts. **Never join it to a replay `event_id`** ([de.pyryco.mobile.data.network.Envelope.eventId]),
  *   which is the in-memory ring's per-process id. They are different sequences that both look like
  *   small integers, and some live frames carry no `event_id` at all.
@@ -1204,11 +1228,22 @@ data class HistoryPosition(
  *   client meets the two with no gap and no duplicate.
  */
 data class HistoryEntry(
-    val id: Long,
     val type: String,
     val payload: JsonElement,
     val timestamp: Instant,
-)
+    val unsignedId: ULong,
+) {
+    init {
+        require(unsignedId > 0u) { "Invalid durable history id" }
+    }
+
+    /** Source-compatible construction for existing positive signed fixtures. */
+    constructor(id: Long, type: String, payload: JsonElement, timestamp: Instant) :
+        this(type, payload, timestamp, id.also { require(it > 0) { "Invalid durable history id" } }.toULong())
+
+    /** Exact signed compatibility identity, or no claim when the durable id exceeds the signed range. */
+    val id: Long? get() = unsignedId.takeIf { it <= Long.MAX_VALUE.toULong() }?.toLong()
+}
 
 /**
  * The run configuration of one session (#590) — the return of [ConversationRepository.observeSessionSettings].
@@ -1845,3 +1880,16 @@ data class ThinkingProgress(
     val estimatedTokens: Long,
     val estimatedTokensDelta: Long,
 )
+
+/**
+ * Daemon-authored next-reply state (#1865). Text is untrusted inert data, never a URL, path or log value.
+ * An explicit clear keeps identity and revision with null [suggestedReply]; absence is a null reading.
+ */
+data class ReplySuggestion(
+    val conversationId: String,
+    val sessionId: String,
+    val revision: ULong,
+    val suggestedReply: String?,
+) {
+    override fun toString(): String = "ReplySuggestion(redacted)"
+}

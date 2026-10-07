@@ -74,6 +74,12 @@ pill · #1605 history tail gutter and spacing · #1606 Stop glyph and reference 
 for these captures against the updated frames; their verdicts are below, and the states #1500 could not cover moved
 to #1529.
 
+**#1619 routed defects (Reachable states, #1539).** #1622 queued-row spacing (drop-button loss already fixed by
+#1642) · #1623 (closed) / #1626 nested tool rows' Stop-vs-Send and path shortening, both frame-side questions ·
+#1624 (closed, fixed by #1848) / #1850 attachment Retry row's residual 8 px · #1625 (closed, fixed by #1848) ·
+\#1851 (fixed) the dismissal notice and thread/reader Saved confirmations now use a top-overlay Default pill;
+notice-only MATCH verdicts are recorded below.
+
 ## Composer and footer
 
 The status band, input and footer appear on every thread frame, and the four-tile attachment strip on `16:8`,
@@ -731,10 +737,10 @@ not a separate focused run; the deterministic scenario proves this pill's tap pa
 | Borders | match (none) |
 | Radii | match: 6 px corners |
 | Icon paths | match (none, no X) |
-| Component state | match: inert, expires like the thread pill. Saved still uses the bottom snackbar |
+| Component state | match: inert, expires like the thread pill. Saved now uses a Default overlay pill (#1851) |
 
-- **Routed:** none. The unresolved Saved and dismissed-elsewhere differences, and #1619's non-error scope
-  conflict, stay open; this entry does not settle them.
+- **Routed:** none for this Error arm. #1851 resolves the Saved and dismissed-elsewhere
+  differences with the notice-only comparisons below.
 
 ### History tail — Loading `689:4281`, Retry `689:4330`, Dead end `689:4379`, Offline `689:4427`
 
@@ -784,6 +790,199 @@ not a separate focused run; the deterministic scenario proves this pill's tap pa
 | Component state | match: sending, Send disabled |
 
 - **Routed:** none
+
+### Reachable states (#1539)
+
+Six frames in section *Reachable states · #1539 · 2026-10-02* (`696:4676`), captured and compared against `main`
+at `59eecec1` (includes #1848, which fixed the attachment tile colours/weights, the empty-thread text size and
+the last-row-to-band gap) with `ThreadDesignCaptureTest#queuedAndToolRowFramesAt412By892`,
+`#attachmentAndEmptyFramesAt412By892` and `#dismissalNoticeFrameAt412By892` on the full `pixel8Api35` image,
+`requireRealSystemBars=true`: 412x892 px, density/font scale 1.0, real 24 px bars, hardware accelerated. Every
+frame was re-exported with `get_screenshot` on 2026-10-06; the capture test rounds on the fake graph's demo
+seed, so the chat history visible above each row is not compared, only the state under audit. `1619-pixel8-results.xml`
+records 3 executed, 0 failures. The reader's "Couldn't open file" arm of `696:5101` is not recaptured here: it
+already has its own verdict above, taken by #1747. Earlier pipeline rounds on this ticket (PR #1627, since
+closed unmerged) captured these same six frames against an older `main`; this pass replaces that evidence with
+fresh captures against current `main`, per the rework instruction to judge against current `main` rather than
+older captures.
+
+### Queued message row — `696:4677`
+
+- **Owning ticket:** #1622; #1642 supplied the weighted action reservation that repaired the disappearing drop button.
+- **Capture:** `queued-messages.png`, plus `queued-long.png` (a third, longer row added as evidence) (412x892, 1.0)
+- **Side-by-side:** `queued-messages-side-by-side.png`, `queued-long-side-by-side.png`
+- **Overlay:** `queued-messages-overlay.png`, `queued-long-overlay.png`
+- **Verdict:** match (queued-row geometry and spacing)
+- #1622 refreshed both captures on full `pixel8Api35`, API 35, with hardware rendering, density/font scale
+  1.0 and real 24 px status/navigation bars (`syntheticBars=false` in both sidecars). The focused command was
+  `./gradlew :app:pixel8Api35DebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.design.ThreadDesignCaptureTest#queuedAndToolRowFramesAt412By892' -Pandroid.testInstrumentationRunnerArguments.requireRealSystemBars=true --console=plain`.
+  [1622-results.xml](1622-results.xml) records 1 executed/passed, 0 failures/errors and 0 skipped;
+  `queuedAndToolRowFramesAt412By892` is present and passed. This replaces the queued captures from the
+  three-method #1619 audit above, without replacing its other states.
+- Wrapping bubbles measure 200 px and successive bubbles have a 16 px gap. Close glyph ink spans
+  x=361–374, centred at x=368. #1642's `weight(1f, fill = false)` reserves action space; #1622 adds the
+  explicit 200 dp cap and symmetric 8 dp row padding while preserving the thread's 8 dp bottom compensation.
+  `QueuedMessageRowGeometryTest` additionally checks 20/16 dp bubble padding, 48 dp drop bounds and one
+  callback per centre/edge tap for short, wrapping and long unbroken text. Its 600 dp viewport case proves
+  the cap independently of the available width at 412 dp.
+- The [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1853#issuecomment-6024329699)
+  confirmed the retained comparisons and reference pixels. It did not independently refresh remote Figma;
+  the builder reports its fresh export was byte-identical to retained `figma-696-4677.png`.
+  Seeded history and surrounding chrome differ from the frame and are outside this queued-row verdict;
+  their existing audit ownership remains unchanged. Live queue/drop coverage remains #849.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | match: wrapping bubbles capped at 200 dp; drop has a 48 dp target ending at the 20 dp gutter, centred at x=368, including the long wrapping row |
+| Padding | match: 20 dp horizontal/16 dp vertical bubble padding |
+| Spacing | match: 16 px between queued bubbles |
+| Typography | match |
+| Colour | match |
+| Borders | match |
+| Radii | match |
+| Icon paths | match: waiting glyph, close X |
+| Component state | match: no Send-now button drawn. #1642's Send-now action is gated on the session reporting `capabilities.mid_turn_input: true`, absent on the capture's seeded session; its absence here is the approved, decided behaviour this README's "Approved additions without a separate frame" already records, not a mismatch |
+
+- **Routed:** none for the queued row; #1622 resolves its width/spacing contract and pins drop reachability.
+
+### Sub-agent tool rows — `696:4795`
+
+- **Owning ticket:** #1623 (closed, "change done in figma"); #1626 (open, frame-side questions)
+- **Capture:** `tool-rows-nested.png` (412x892, 1.0)
+- **Side-by-side:** `tool-rows-nested-side-by-side.png`
+- **Overlay:** `tool-rows-nested-overlay.png`
+- **Verdict:** match (row spacing); two aspects remain routed to #1626
+- #1623 closed on 2026-10-03 as a Figma-side change, but a same-day follow-up found the exported frame still
+  drew the rows 12 px apart. The frame exported fresh today draws every row joined with no gap, the same
+  `joinsNextToolRow` style the app draws (#1577): #1623's frame edit landed, just later than its own closure
+  comment implied.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | match: rows joined with shared/overlapping borders in both the app and the frame; row heights, the 16 px indent per nesting level and the 20 px right gutter match |
+| Padding | match |
+| Spacing | match: 0 px between rows in both, across the nesting-depth change from the Read failure to the second Agent call |
+| Typography | mismatch by design, routed #1626: the failed Read row's path keeps four segments (`shortenToolPath`); the frame shortens it to two |
+| Colour | match: statuses, the Grep result count, the elapsed reading |
+| Borders | match |
+| Radii | match |
+| Icon paths | match: running spinner, done check, failed outline |
+| Component state | mismatch by design, routed #1626: the frame shows Stop while the composer holds text; the app's rule shows Send with text (`ThreadInputBar`, #643). The status band's own wording ("Running Agent…") follows the app's strings per the existing `RunningTool` band-arm decision below ("No separate frame"), which is not a new mismatch |
+
+- **Routed:** #1626 (both remaining differences already tracked there; no new ticket needed)
+
+### Message attachment states — `696:4913`
+
+- **Owning ticket:** #1624 (closed, fixed by #1848); #1850 (Retry spacing fixed)
+- **Capture:** `attachment-states.png` (412x892, 1.0)
+- **Side-by-side:** `attachment-states-side-by-side.png`
+- **Overlay:** `attachment-states-overlay.png`
+- **Verdict:** match (Retry spacing corrected by #1850)
+- Fresh post-rework `ThreadDesignCaptureTest#attachmentAndEmptyFramesAt412By892` capture on 2026-10-07, full pixel8Api35,
+  real 24px bars, 412x892, density/font scale 1.0. `attachment-retry-1850-green.xml` records 1 executed/passed,
+  0 failures/errors/skips. The fresh Figma export is pixel-identical to `figma-696-4913.png`.
+- #1850 reduces Retry's layout allocation from 48dp to the frame's 40dp. The shared regression measures the
+  failed row at 72dp and its next-row top at 84dp, and proves the 48dp touch target with pointer taps beyond
+  both visible edges. In the hardware capture the glyph tops are 460/538/616px; Figma's are 436/514/592px.
+  Accounting for the app's 24px status bar, all three align exactly, with 78px tile-top pitch on both sides
+  of Retry. These consistent top-edge measurements supersede the earlier audit's 58/106/98px
+  pitch figures. #1848's colour, weight and name/state-dimming fixes remain in place.
+- Rework preserves the same normal-size pixels below the status bar while allowing Retry to grow with
+  enlarged text. Native-graphics shared tests at font scales 1.5 and 2 require a fully allocated paragraph
+  without visual overflow, compact-bubble containment and a touch target of at least 48dp.
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | match: placeholder/spinner and bubble outer size within 2 px |
+| Padding | match: the name-to-state gap is 5 px in both, for every tile |
+| Spacing | match: 40dp Retry layout, 78px glyph-top pitch in app and frame; 48dp touch target retained |
+| Typography | match: type label regular weight |
+| Colour | match: tile glyph/outline/type label in the primary colour, file name at full on-secondary-container strength, only the state line dimmed |
+| Borders | match |
+| Radii | match |
+| Icon paths | match |
+| Component state | match: Loading, Couldn't load file with Retry, File not found |
+
+- **Routed:** none (residual Retry spacing fixed by #1850)
+
+### Empty thread — `696:4989`
+
+- **Owning ticket:** #1625 (closed, fixed by #1848)
+- **Capture:** `empty-thread.png` (412x892, 1.0)
+- **Side-by-side:** `empty-thread-side-by-side.png`
+- **Overlay:** `empty-thread-overlay.png`
+- **Verdict:** match
+- #1848's switch from `bodyMedium` to `bodySmall` lands exactly on the frame: the side-by-side shows no
+  visible difference and the overlay shows no ghosting on "Send a message to get started".
+
+| Aspect | Verdict |
+|---|---|
+| Geometry | match |
+| Padding | match |
+| Spacing | match |
+| Typography | match: body-small |
+| Colour | match: on-surface-variant |
+| Borders | match (none) |
+| Radii | match (none) |
+| Icon paths | match (none) |
+| Component state | match |
+
+- **Routed:** none
+
+### Prompt resolved elsewhere (dismissal notice) — `696:5065`
+
+- **Owning ticket:** #1851
+- **Capture:** [prompt-resolved-elsewhere.png](../../confirmation-1851/prompt-resolved-elsewhere.png) (412 × 892, font scale 1)
+- **Comparison:** [notice surfaces](../../confirmation-1851/notice-surfaces.png), [geometry](../../confirmation-1851/prompt-resolved-elsewhere-geometry.txt)
+- **Verdict:** MATCH, notice surface only; supersedes the earlier bottom-snackbar mismatch.
+
+The host modal projection renders “Resolved on another device” through production
+`dismissReasonText`. Painted bounds are (218,121)–(392,145), 174 × 24dp.
+Removing the real 24px status inset aligns to Figma (219,97)–(392,121): the
+left/width difference is 1dp; all other edges match exactly. The Default pill is
+inert, has no X and expires; no bottom snackbar appears.
+
+### Thread Saved — `696:5065` (Default treatment and placement)
+
+- **Owning ticket:** #1851
+- **Capture:** [thread-saved.png](../../confirmation-1851/thread-saved.png) (412 × 892, font scale 1)
+- **Comparison:** [geometry](../../confirmation-1851/thread-saved-geometry.txt)
+- **Verdict:** MATCH, notice surface only.
+
+The actual attachment load/save action reaches “File saved” via a stubbed system
+create-document result and the production saver. Bounds are (317,121)–(392,145),
+75 × 24dp: 59dp text plus 8dp padding on each side. Placement and height match
+exactly; no separate Saved Figma arm defines a fixed width.
+
+### Reader notices — `696:5101` (Saved arm)
+
+- **Owning ticket:** #1851; #1747 retains the Error-arm verdict above
+- **Capture:** [reader-saved.png](../../confirmation-1851/reader-saved.png) (412 × 892, font scale 1)
+- **Comparison:** [geometry](../../confirmation-1851/reader-saved-geometry.txt)
+- **Verdict:** MATCH, notice surface only; supersedes the earlier Saved mismatch.
+
+The visible Save to device action reaches the production saver through a stubbed
+create-document result. Bounds are (317,121)–(392,145), 75 × 24dp. `696:5101`
+depicts Error “Couldn't save file”; it supplies reader placement, while `696:5065`
+supplies the required Default treatment. This capture does not establish the
+Save-failed arm, which remains outside #1851's three-state capture scope.
+
+For all three surfaces, the right gutter is exactly 20dp and clearance below the
+measured bar through its rule is 28dp. Padding is 8dp horizontal/4dp vertical;
+bodySmall uses 12sp/16sp/0.4sp tracking, Default `primaryContainer` /
+`onPrimaryContainer` pixels are exactly #134A74 / #CFE4FF, and corners use the
+shared 6dp token. Corner rasterization differs by 1px, within the 2dp tolerance.
+Native shared tests establish 12dp visible gaps below errors, including Offline,
+stopped-turn and navigation-error seams, and unchanged message/reader bounds.
+
+[Fresh full-device XML](../../confirmation-1851/capture-results.xml) names all three
+`ThreadDesignCaptureTest` methods: `dismissalNoticeFrameAt412By892`,
+`threadSavedFrameAt412By892`, `readerSavedFrameAt412By892`; 3 executed/passed,
+0 failed/errors/skipped on full `pixel8Api35`, `requireRealSystemBars=true`.
+The [capture record](../../confirmation-1851/README.md) retains hardware PNGs,
+viewport/inset sidecars and notice-only comparison details. The verifier's UI gate
+also passed all three methods: 194 executed/passed, 0 failed, 1 unrelated skipped.
+Other frame differences are outside this comparison; no routing follow-up remains.
 
 ### No separate frame
 

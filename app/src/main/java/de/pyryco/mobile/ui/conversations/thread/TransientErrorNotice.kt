@@ -4,11 +4,13 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalAccessibilityManager
 import androidx.compose.ui.platform.testTag
@@ -29,9 +31,10 @@ import kotlinx.coroutines.sync.withLock
 // Material 3 SnackbarDuration.Short, including its icons/text=true accessibility policy without controls.
 private const val SHORT_NOTICE_MILLIS = 4_000L
 
-/** Screen-local transient errors. Each caller owns its wait and cancellation, including queued notices. */
+/** Screen-local transient queue, reused independently for confirmations. Callers own cancellation. */
 @Stable
 class TransientErrorNoticeState internal constructor(
+    private val logEvent: String = "transient_error_notice",
     private val timeoutMillis: () -> Long,
 ) {
     private val mutex = Mutex()
@@ -47,11 +50,11 @@ class TransientErrorNoticeState internal constructor(
             try {
                 currentOccurrence++
                 currentMessage = message
-                RelayLog.d { "event=transient_error_notice phase=shown" }
+                RelayLog.d { "event=$logEvent phase=shown" }
                 delay(timeoutMillis())
             } finally {
                 currentMessage = null
-                RelayLog.d { "event=transient_error_notice phase=cleared" }
+                RelayLog.d { "event=$logEvent phase=cleared" }
             }
         }
     }
@@ -68,10 +71,22 @@ class TransientErrorNoticeState internal constructor(
 }
 
 @Composable
-internal fun rememberTransientErrorNoticeState(key: Any? = Unit): TransientErrorNoticeState {
+internal fun rememberTransientErrorNoticeState(key: Any? = Unit): TransientErrorNoticeState =
+    rememberNoticeState(key, "transient_error_notice")
+
+/** Separate queue and lifetime from errors, sharing their occurrence and accessibility policy. */
+@Composable
+internal fun rememberTransientConfirmationNoticeState(key: Any? = Unit): TransientErrorNoticeState =
+    rememberNoticeState(key, "transient_confirmation_notice")
+
+@Composable
+private fun rememberNoticeState(
+    key: Any?,
+    logEvent: String,
+): TransientErrorNoticeState {
     val accessibilityManager by rememberUpdatedState(LocalAccessibilityManager.current)
     return remember(key) {
-        TransientErrorNoticeState {
+        TransientErrorNoticeState(logEvent) {
             accessibilityManager?.calculateRecommendedTimeoutMillis(
                 originalTimeoutMillis = SHORT_NOTICE_MILLIS,
                 containsIcons = true,
@@ -93,5 +108,32 @@ internal fun TransientErrorPill(
         isError = true,
         // Preserve the frame's 24dp line box when shared typography trims short text; wrapped text grows.
         modifier = modifier.heightIn(min = 24.dp).testTag("transient_error_notice").semantics { liveRegion = LiveRegionMode.Polite },
+    )
+}
+
+/** Navigation-owned errors survive destination changes; screens only render this UI-local state. */
+internal val LocalNavigationErrorNotice = staticCompositionLocalOf<TransientErrorNoticeState?> { null }
+
+@Composable
+internal fun NavigationErrorPill(modifier: Modifier = Modifier) {
+    val notices = LocalNavigationErrorNotice.current ?: return
+    val message = notices.currentMessage ?: return
+    key(notices.currentOccurrence) { TransientErrorPill(message, modifier) }
+}
+
+/** Figma Default pill for client-owned confirmation copy, with no click or dismiss action. */
+@Composable
+internal fun TransientConfirmationPill(
+    text: String,
+    modifier: Modifier = Modifier,
+) {
+    NoticePill(
+        text = text,
+        isError = false,
+        modifier =
+            modifier
+                .heightIn(min = 24.dp)
+                .testTag("transient_confirmation_notice")
+                .semantics { liveRegion = LiveRegionMode.Polite },
     )
 }

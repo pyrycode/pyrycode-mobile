@@ -158,6 +158,20 @@ row. See [capability freshness and delivery placement](queued-backlog.md#sending
 Shared Compose coverage proves true/false/unknown visibility, independent labels/callbacks,
 and pointer reachability for wrapped text at narrow width.
 
+The bubble also has an explicit 200 dp maximum (#1622), with shared 20 dp horizontal/
+16 dp vertical padding. Weight reserves fixed action targets before measuring text;
+the maximum alone would not protect the controls when Send now reduces the available
+lane. Symmetric 8 dp row padding gives successive queued bubbles a 16 dp gap while
+preserving the thread's existing 8 dp bottom rest compensation. At 412 dp, drop's
+48 dp target ends at the 20 dp gutter and is centred at x=368.
+
+`QueuedMessageRowGeometryTest` checks padding, spacing and centre/edge drop taps for
+short, wrapping and long unbroken text. Keep its 600 dp viewport assertion: at 412 dp,
+the weighted lane already happened to leave a 200 dp bubble before the explicit cap,
+so testing only the reference width would miss an uncapped bubble on wider screens.
+The [queued-row capture verdict](../../../app/src/androidTest/assets/design-1220/thread/index.md#queued-message-row--6964677)
+retains the full API 35 real-bar comparisons; geometry tests alone do not prove those pixels.
+
 The fill follows [MessageBubble's theme mapping](message-bubble.md#token-mapping-figma-roles-against-this-apps-two-schemes):
 `#003355` under the app root's static dark palette; isolated light and
 wallpaper-themed previews use the selected scheme's `primaryContainer`. The 0.6 opacity applies to the whole row,
@@ -167,7 +181,7 @@ including its fill, explicit `onPrimaryContainer` text and interactive drop cont
 
 The bubble geometry is *consumed* from [`MessageBubble.kt`](message-bubble.md), not copied: `BubbleShape`,
 `BubbleHorizontalPadding`, `BubbleVerticalPadding` and `MessageRoleInset` are `internal` there specifically
-so this file need not redeclare them. Only `WaitingGlyphSize`, `WaitingGlyphGap`, `QueuedRowVerticalPadding`
+so this file need not redeclare them. Only `QueuedBubbleMaxWidth`, `WaitingGlyphSize`, `WaitingGlyphGap`, `QueuedRowVerticalPadding`
 and `QUEUED_ALPHA = 0.6f` remain file-private `val`s local to `QueuedMessageRow.kt` (the glyph has no
 shared equivalent elsewhere). `BacklogHorizontalPadding` / `BacklogRowSpacing` / the old section caption
 are gone with the section itself — the row now sits on [`MessageContentGutter`](message-bubble.md)

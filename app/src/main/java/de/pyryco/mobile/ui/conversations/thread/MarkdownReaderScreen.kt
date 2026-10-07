@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import android.content.ClipData
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,8 +16,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -330,7 +329,7 @@ private fun markdownClip(
  * the file name and the overflow menu (#1067), fixed, over a scrolling [MarkdownText] body. Copies act on
  * [document] and show no notice of their own, since the system confirms a copy; Open in another app (#1068)
  * hands [document] on and reports a failure in [errorNotices]; Save to device (#1069) writes [document] into
- * a document the operator picks. Saved uses [snackbarHostState]; failures use [errorNotices], shared
+ * a document the operator picks. Saved uses a screen-local Default queue; failures use [errorNotices], shared
  * with the caller for failed Refresh. All failures overlay the body below the measured header.
  */
 @Composable
@@ -339,9 +338,9 @@ fun MarkdownReaderScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     onRefresh: () -> Unit = {},
-    snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
     errorNotices: TransientErrorNoticeState = rememberTransientErrorNoticeState(),
 ) {
+    val confirmationNotices = rememberTransientConfirmationNoticeState()
     val clipboard = LocalClipboardManager.current
     val clipLabel = stringResource(R.string.markdown_reader_clip_label)
     val context = LocalContext.current
@@ -369,9 +368,11 @@ fun MarkdownReaderScreen(
     }
     val saveNote =
         rememberNoteSaver { notice ->
-            scope.launch {
-                val text = notices.getValue(notice)
-                if (notice == AttachmentNotice.SAVED) snackbarHostState.showSnackbar(text) else errorNotices.show(text)
+            val text = notices.getValue(notice)
+            if (notice == AttachmentNotice.SAVED) {
+                confirmationNotices.enqueue(scope, text)
+            } else {
+                scope.launch { errorNotices.show(text) }
             }
         }
     val chromeSource = remember { HazeState() }
@@ -424,18 +425,21 @@ fun MarkdownReaderScreen(
                         .onSizeChanged { barHeight = with(density) { it.height.toDp() } }
                         .chromeBackdrop(chromeSource, MaterialTheme.colorScheme.threadColors.headerBackdrop, top = true),
             )
-            errorNotices.currentMessage?.let { text ->
-                key(errorNotices.currentOccurrence) {
-                    TransientErrorPill(
-                        text,
-                        Modifier.align(Alignment.TopEnd).padding(start = BarGutter, top = barHeight + ReaderBodyTopGap, end = BarGutter),
-                    )
+            Column(
+                modifier =
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(start = BarGutter, top = barHeight + ReaderBodyTopGap, end = BarGutter),
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                errorNotices.currentMessage?.let { text ->
+                    key(errorNotices.currentOccurrence) { TransientErrorPill(text) }
+                }
+                confirmationNotices.currentMessage?.let { text ->
+                    key(confirmationNotices.currentOccurrence) { TransientConfirmationPill(text) }
                 }
             }
-            SnackbarHost(
-                hostState = snackbarHostState,
-                modifier = Modifier.align(Alignment.BottomCenter).testTag("reader_confirmation_snackbar"),
-            )
             if (menuExpanded) {
                 menuAnchor?.let { anchor ->
                     MarkdownReaderMenu(

@@ -8,18 +8,21 @@ import threading
 
 def serve(port_file):
     released = threading.Event()
+    reply_released = threading.Event()
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self, *_args):
             pass
 
         def do_GET(self):
-            if self.path == "/hold":
-                if not released.wait(180):
+            if self.path in ("/hold", "/hold-reply"):
+                release = reply_released if self.path == "/hold-reply" else released
+                if not release.wait(180):
                     self.send_error(408)
                     return
-            elif self.path == "/release":
-                released.set()
+            elif self.path in ("/release", "/release-reply"):
+                release = reply_released if self.path == "/release-reply" else released
+                release.set()
             else:
                 self.send_error(404)
                 return

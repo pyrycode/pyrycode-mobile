@@ -233,24 +233,24 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 | Status-band arms `Resetting`, `ApiRetry`, `Compacting`, `Working`, `RunningTool`, `Stalled` | `16:8` band, `134:5013` (decision on #1529) | no separate frame | › Gaps | #1312, #897, #803 | #1529 |
 | Send button's Stop variant | `114:3549` (decision on #1529) | no separate frame | › Gaps | #459, #643 | #1529 |
 | Top overlay Error pills: failed MCP server, non-warning usage limit | `347:6619` (decision on #1529) | no separate frame | › Gaps | #1345, #1002, #1115 | #1529 |
-| Prompt resolved elsewhere: dismissal notice | `696:5065` | frame only | not audited | #446, #1337 | #1539 |
-| Empty thread | `696:4989` | frame only | not audited (`switch-other-chat.png` shows it, unjudged) | none named (see `empty-thread-state.md`) | #1539 |
+| Prompt resolved elsewhere: dismissal notice | `696:5065` | audited, mismatch (Juhana's call) | `thread/index.md` › Prompt resolved elsewhere (dismissal notice) | #446, #1337 | #1619, #1851 |
+| Empty thread | `696:4989` | audited, match | `thread/index.md` › Empty thread | #1625 | #1619, #1625 |
 | Codex agent switch: Switching, Switch confirm | `578:3248`, `578:3442` | not shipped | › Codex agent switch | #1118 | #1118 (does not count toward parity while open) |
 
 ### Messages and tools
 
 | Surface or state | Node | Status | Audit row | Owner | Linked issues |
 |---|---|---|---|---|---|
-| Message meta row hidden until the bubble is tapped; at most one visible, hidden while streaming | `132:4446`, `132:4435` (decision on [#1621](https://github.com/pyrycode/pyrycode-mobile/issues/1621): the component keeps drawing the unchanged timestamp and copy row; the app hides it until tap) | no separate frame | not separately audited | #1621 | #1621 |
+| Only the timestamp is hidden until the bubble is tapped; at most one visible, hidden while streaming; copy is always beside the bubble | `132:4446`, `132:4435`; Message Actions `808:12242` (the [#1621](https://github.com/pyrycode/pyrycode-mobile/issues/1621) visibility decision now applies only to time; [#1817](https://github.com/pyrycode/pyrycode-mobile/issues/1817) keeps side copy visible, including streaming) | no separate timestamp frame | not separately audited | #1621, #1817 | #1621, #1817 |
 | Tool row, finished | `674:5853` | audited, match | `thread/index.md` › Tool row | #1208, #1315, #1316 | #1500 |
-| Tool row running and failed, nested sub-agent rows | `696:4795` | frame only | not audited | #811, #895, #896, #1315, #1316 | #1539 |
+| Tool row running and failed, nested sub-agent rows | `696:4795` | audited, match (two aspects routed as frame-side questions) | `thread/index.md` › Sub-agent tool rows | #1623, #1626 | #1619, #1626 |
 | Refusal row, collapsed | `620:1577` | audited, mismatch | › Notification text | #875 | #1494 |
 | Refusal switch back, armed | `646:4707` | audited, mismatch | › Refusal switch back | #1360 | #1494 |
 | Refusal expanded; switch back pending and failed | `620:1570`, `646:4694`, `646:4700` | component only | not audited | #875, #1360 | #1540 |
 | Session notice (warning) | `627:5466` | audited, match | › Session notice | #1113, #875 | none |
 | Unrecognized message, collapsed and expanded | `685:4112` | frame only | › Gaps | #608 | #1529 |
 | Compaction boundary row | `675:3682` rule (decision on #1529) | no separate frame | › Gaps | #874 | #1529 |
-| Queued message row, with its drop action | `696:4677` | frame only | not audited | #1161 | #1539 |
+| Queued message row, with its drop action | `696:4677` | audited, mismatch (spacing only) | `thread/index.md` › Queued message row | #1622 | #1619, #1622 |
 
 ### Attachments
 
@@ -260,7 +260,7 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 | Staged PDF tile while disconnected | `627:1740`, `627:4657`, `627:4910` | audited, mismatch | › Connecting, Reconnecting; › Offline | #1319 | #1532, #1495 |
 | Photo and PDF messages in bubbles | `16:8`, `620:1577`, File field `132:4605` | audited, mismatch | › Conversation Thread | #1290 | #1513, #1495 |
 | Strip while sending ("Uploading… N%") | `689:4475` | frame only | › Gaps | #1327 | #1529 |
-| Message attachment loading, failed with retry, not found | `696:4913` | frame only | not audited | #1290 | #1539 |
+| Message attachment loading, failed with retry, not found | `696:4913` | audited, mismatch (small residual) | `thread/index.md` › Message attachment states | #1624, #1850 | #1619, #1850 |
 | Message attachment not yet requested | `16:8` File field (decision on #1539) | no separate frame | not audited | #1290 | #1539 |
 | System file picker | none | out of scope | — | #933 | none |
 
@@ -270,7 +270,7 @@ Every screen, modal, sheet, menu and material UI state reachable from the `MainA
 |---|---|---|---|---|---|
 | Markdown Reader | `553:2574` | audited, mismatch | `thread/index.md` › Markdown Reader | #1291 | #1533 |
 | Linked Markdown reader (`Routes.MARKDOWN_LINK`, `LinkedMarkdownReaderDestination`, opened by `ThreadNavigation.OpenLinkedMarkdown`) | `553:2574` | audited, mismatch | as Markdown Reader: it draws the same `MarkdownReaderScreen` | #1291 | #1533 |
-| Reader notices (save failed, saved, open failed) | `696:5101` | frame only | not audited | #1291 | #1539 |
+| Reader notices (save failed, saved, open failed) | `696:5101` | audited, unverified (save failed) / mismatch (saved, Juhana's call) | `thread/index.md` › Reader error (open failed, match) and › Reader notices, Saved arm | #1291, #1747 | #1619, #1747, #1851 |
 | Reader overflow menu | `533:1958` (Juhana’s decision on #1667, supersedes #1539 / `675:5883`) | no separate frame | not audited | #1291 | #1667 |
 
 ### Archive
@@ -390,7 +390,6 @@ store-listing assets, not app surfaces, so they are outside the inventory too.
 
 | Surface | Evidence |
 |---|---|
-| Discussion list (`Routes.DISCUSSION_LIST`, `DiscussionListScreen` with its menu and promotion dialog) | the destination exists, but no `navigate` call targets `Routes.DISCUSSION_LIST` |
 | About (`Routes.ABOUT`, `AboutScreen`) | the destination exists, but no `navigate` call targets `Routes.ABOUT` |
 | Settings model, effort and theme pickers (`ModelPickerDialog`, `EffortPickerDialog`, `ThemePickerDialog`) | defined only; `SettingsScreen` takes no picker callback |
 | `PasteCodeDialog` | defined only; the scanner's paste link opens the Pair Screen |

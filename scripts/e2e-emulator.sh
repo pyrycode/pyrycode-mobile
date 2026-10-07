@@ -734,6 +734,14 @@ if [ -n "${DETERMINISTIC}" ]; then
       TEST_METHOD="interactiveTurn_seededChannel_systemCopyCopiesSelectedWord"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/selection-copy.jsonl}"
       ;;
+    direct-share)
+      TEST_METHOD="interactiveTurn_directShareShortcut_stagesBeforeExplicitSend"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/ping.jsonl}"
+      ;;
+    reply-suggestion)
+      TEST_METHOD="interactiveTurn_seededChannel_replySuggestionLongPressSends"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/reply-suggestion.jsonl}"
+      ;;
     ping)
       TEST_METHOD="interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/ping.jsonl}"
@@ -741,6 +749,12 @@ if [ -n "${DETERMINISTIC}" ]; then
     stream)
       TEST_METHOD="interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/stream.jsonl}"
+      FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/stream-end.jsonl}"  # completion follows the displayed-prefix checkpoint
+      ;;
+    reopen-stream)
+      TEST_METHOD="interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/reopen-stream-open.jsonl}"
+      FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/reopen-stream-done.jsonl}"
       ;;
     spinner)
       TEST_METHOD="interactiveTurn_seededChannel_showsThinkingSpinnerDuringTurn"
@@ -814,7 +828,7 @@ if [ -n "${DETERMINISTIC}" ]; then
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/context-overflow.jsonl}"
       ;;
     *)
-      die "unknown SCENARIO='${SCENARIO}' (expected: selection-copy | background-agent | ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order | tool-then-text | refusal | mcp-failed | context-overflow)"
+      die "unknown SCENARIO='${SCENARIO}' (expected: reopen-stream | selection-copy | background-agent | ping | stream | spinner | tool | tool-failed | tool-progress | reconnect | offline-retry | replay-order | tool-then-text | refusal | mcp-failed | context-overflow)"
       ;;
   esac
   log "deterministic scenario: ${SCENARIO} → ${TEST_METHOD}"
@@ -1001,6 +1015,12 @@ if [ -n "${DETERMINISTIC}" ]; then
   if [ -n "${FIXTURE_FILE_2}" ]; then
     REPLAY_ENV+=("PYRY_FAKE_CLAUDE_STREAM_REPLAY_SECOND=${FIXTURE_FILE_2}"
       "PYRY_FAKE_CLAUDE_STREAM_REPLAY_RELEASE=${REPLAY_RELEASE}")
+  fi
+  if [ "${SCENARIO}" = "reopen-stream" ]; then
+    # #1762: let the suffix compose while still streaming; result delivery needs enqueue #3.
+    E2E_HELD_RESULT_RELEASE="${WORK_DIR}/release-terminal-result"
+    REPLAY_ENV+=("E2E_HELD_RESULT_CHILD=${FAKE_BIN}" "E2E_HELD_RESULT_RELEASE=${E2E_HELD_RESULT_RELEASE}")
+    FAKE_BIN="${REPO_ROOT}/scripts/e2e-held-result.py"
   fi
   DAEMON_COMMAND+=("HOME=${ISO_HOME}" PYRY_ALLOW_INSECURE_RELAY=1 PYRY_MOBILE_V2=1
     "PYRY_RELAY_URL=${DAEMON_RELAY_URL}" "${REPLAY_ENV[@]}" "${PYRY_BIN}"
@@ -1386,6 +1406,11 @@ if [ -n "${DETERMINISTIC}" ] && [ -n "${FIXTURE_FILE_2}" ]; then
     fi
     touch "${REPLAY_RELEASE}"
     log "released second stream fragment"
+    if [ "${SCENARIO}" = "reopen-stream" ]; then
+      while [ "$(grep -cF 'send_message.enqueued' "${DAEMON_LOG}" 2>/dev/null || true)" -lt 3 ]; do sleep 0.2; done
+      touch "${E2E_HELD_RESULT_RELEASE}"
+      log "released terminal result after third enqueue"
+    fi
   ) &
   WATCHER_PID=$!
 fi
@@ -1425,6 +1450,7 @@ elif [ -n "${LIVE}" ]; then
   # the two already ignored workspace-switching scenarios. #1250 retired the peer workspace-label
   # method, so the active list and gate floor contain 41 methods after #1251.
   TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow,${TEST_CLASS}#interactiveTurn_saveAsChannel_promotesToChannelTier,${TEST_CLASS}#interactiveTurn_listArchiveEntry_opensArchived,${TEST_CLASS}#interactiveTurn_twoHostsCollidingConversationId_stayPerHost,${TEST_CLASS}#interactiveTurn_peerStartedTurn_continuesOnPhone,${TEST_CLASS}#interactiveTurn_peerQueue_staysConsistentAcrossClients,${TEST_CLASS}#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect,${TEST_CLASS}#interactiveTurn_offlineRetry_reconnectsSameHostAndReplies,${TEST_CLASS}#interactiveTurn_pingPrompt_statusSheetShowsRunningModel,${TEST_CLASS}#interactiveTurn_pingPrompt_footerShowsContextUsage,${TEST_CLASS}#interactiveTurn_modelChange_roundTripsAndStaysPerConversation,${TEST_CLASS}#interactiveTurn_inheritedEffort_footerShowsAppliedValueAfterTurn,${TEST_CLASS}#interactiveTurn_chosenEffort_appliesFromTheFirstTurn,${TEST_CLASS}#interactiveTurn_rememberedEffort_recalledAfterRestartIntoFreshChatAndChannel,${TEST_CLASS}#interactiveTurn_permissionHeldTool_statusAreaNamesRunningTool"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_replySuggestion_longPressSends"
   # #965: the stop method joins the list, so it holds 21 methods and 17 turns while #687 stays out.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain"
   # #1246: the operator-bypass method is selected again; its write and fresh reply decide settlement.
@@ -1451,6 +1477,7 @@ elif [ -n "${LIVE}" ]; then
   # phone-to-peer method last and the offered-file method before the background-task one (see their KDoc).
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_sharedContentFromAndroid_arrivesAtPeerWithItsBytes"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_directShareShortcut_arrivesAtPeerWithItsBytes"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart"
   # #1020: history replay now names a user message's files, so the peer's file after a history reload joins,
   # one turn (the peer's message). The list holds 32 methods and 34 turns.
@@ -1486,6 +1513,7 @@ elif [ -n "${LIVE}" ]; then
   # (pyrycode/pyrycode#2658). One turn, so the list holds 44 methods and 44 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundAgentProgress_showsOnRunningCard"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundAgent_followsBottomUntilFinished"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundAgent_replyStaysUnderAgent"
   # #1223: the phone's acknowledged choice in one chat applies before the first real turn in a new chat.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_rememberedModelAppliesToNewChatBeforeFirstMessage"
   # #1249 restores the discussion round trip and host-isolated Archive proof through the list toolbar.
@@ -1519,6 +1547,9 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_sendQueuedNow_reachesRunningTurn"
   # #1674: finished reply partial selection through Android's system Copy menu. One Claude turn.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_finishedReply_systemCopyCopiesSelectedWord"
+  # #1766: a real reply with emphasis, inline code, a fenced block and a table streams through the parser-led
+  # body and settles formatted with no lost text. One Claude turn.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_markdownReply_rendersFormattedBody"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi

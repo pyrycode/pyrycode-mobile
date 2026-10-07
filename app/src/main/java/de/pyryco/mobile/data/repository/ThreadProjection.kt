@@ -13,12 +13,14 @@ import de.pyryco.mobile.data.network.BannerPayloadDto
 import de.pyryco.mobile.data.network.CompactingPayloadDto
 import de.pyryco.mobile.data.network.CompactionBoundaryPayloadDto
 import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.MessagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.ModelRefusalFallbackPayloadDto
 import de.pyryco.mobile.data.network.ModelRefusalNoFallbackPayloadDto
 import de.pyryco.mobile.data.network.ToolDeniedPayloadDto
 import de.pyryco.mobile.data.network.ToolProgressPayloadDto
 import de.pyryco.mobile.data.network.UnrecognizedMessagePayloadDto
+import de.pyryco.mobile.data.network.WireRole
 import de.pyryco.mobile.data.network.failed
 import de.pyryco.mobile.data.network.toDenial
 import de.pyryco.mobile.data.network.toRow
@@ -175,11 +177,11 @@ internal class ThreadProjection(
     /**
      * `conversationId -> where this device's queued echoes stand` (#1558). A message sent while a turn runs
      * is drawn at tap time (#1355), but the daemon delivers it only after that turn ends, so [observe] reads
-     * each [OwnEchoQueue.parked] echo below every other row, and its delivery moves it to the end of the
-     * store once ([moveOwnEchoToEnd]) — on the drain's `queue_state` or the pushed `message`, whichever
-     * arrives first. An echo queued while idle is not parked and keeps its tap-time slot (#1636).
+     * each [OwnEchoQueue.parked] echo below every other row. A modern delivery fixes the entry's stream
+     * position at its push (#1655). [finalizeAssistantTurn] reserves a fallback slot after the waiting
+     * turn for older daemons, whose confirmation can arrive mid-reply. Idle echoes keep tap-time slots (#1636).
      *
-     * A parked echo removed while a turn is open waits hidden in [OwnEchoQueue.awaitingPush] until
+     * An unreserved parked echo removed while a turn is open waits hidden in [OwnEchoQueue.awaitingPush] until
      * the delivered push establishes placement, including a Send now from another paired client.
      * Local send-now intent, recorded before enqueue, also defers a busy echo across a turn ending.
      * Closed-turn removal retains ordinary settlement but keeps [OwnEchoQueue.placementPending]
@@ -192,8 +194,10 @@ internal class ThreadProjection(
         // Retain known joins independently of replacement panel state, without inventing launch positions.
         val backgroundTaskHints: Map<String, Map<String, BackgroundTaskRowDto>> = emptyMap(),
         val echoQueues: Map<String, OwnEchoQueue> = emptyMap(),
+        // A history end settles text but does not consume a live echo-reservation boundary.
+        val liveEndedTurns: Map<String, Set<String>> = emptyMap(),
         // Connection-local placement evidence, never a live event id or durable coverage marker.
-        val historyOrder: Map<String, Map<Any, Long>> = emptyMap(),
+        val historyOrder: Map<String, Map<Any, ULong>> = emptyMap(),
     )
 
     /**
@@ -291,29 +295,35 @@ internal class ThreadProjection(
      * identity is [withMessage]'s, id-only and role-agnostic. A held id returns the map unchanged, so
      * nothing re-emits.
      *
-     * The one exception is position (#1558): the push of an echo still [OwnEchoQueue.queued] is its delivery,
-     * so a [OwnEchoQueue.parked] one, unchanged, first moves to the end of the thread, after the turn it
-     * waited behind. One queued while idle stays where it was drawn (#1636).
-     * A busy echo settled by closed-turn queue removal moves again only when [sentNow] identifies
-     * Send now. Normal delivery keeps its settled slot even when the reply started before its push.
-     * [OwnEchoQueue.placementPending] retains eligibility until either kind of push consumes it.
+     * The exception is position (#1558): a field-present [queuedMessageId] consumes that exact entry
+     * and moves a pending parked own echo to the push's stream position once (#1655). It overrides a
+     * provisional legacy reservation or drain placement; entry identity alone never invents a turn boundary.
+     * A later entry reusing the held row id cannot move that already pushed own echo.
+     * Without the field, a [OwnEchoQueue.reserved] echo stays after its waiting turn, unless [sentNow]
+     * or local Send now intent requires push placement. [OwnEchoQueue.placementPending] retains eligibility
+     * across queue removal until the push consumes it. Idle-classified echoes keep tap-time slots (#1636).
      */
     fun appendLiveMessage(
         conversationId: String,
         message: Message,
         sentNow: Boolean = false,
+        queuedMessageId: Long? = null,
     ) {
         if (message.id in mintedMessageIds.value[conversationId].orEmpty()) trail.delivered(message.id)
         state.update { current ->
-            val echoes = current.echoQueues[conversationId]
+            val echoes = current.echoQueues[conversationId] ?: OwnEchoQueue()
             var rows = current.threads[conversationId].orEmpty()
             var queues = current.echoQueues
-            val pendingPlacement = echoes != null && (message.id in echoes.awaitingPush || message.id in echoes.placementPending)
-            if (echoes != null && (message.id in echoes.queued || pendingPlacement)) {
+            val modern = queuedMessageId != null
+            val firstPush = message.id !in echoes.pushed && (!modern || queuedMessageId !in echoes.consumedBacklog)
+            val pendingPlacement = message.id in echoes.awaitingPush || message.id in echoes.placementPending
+            if (message.role == Role.User && firstPush && (message.id in echoes.queued || pendingPlacement)) {
                 val needsPlacement =
-                    message.id in echoes.parked ||
-                        message.id in echoes.awaitingPush ||
-                        (sentNow && message.id in echoes.placementPending)
+                    (
+                        (message.id in echoes.parked || message.id in echoes.awaitingPush) &&
+                            (modern || message.id !in echoes.reserved || sentNow || message.id in echoes.sendNow)
+                    ) ||
+                        ((modern || sentNow) && message.id in echoes.placementPending)
                 if (needsPlacement) {
                     rows = rows.moveOwnEchoToEnd(conversationId, message.id)
                 }
@@ -326,6 +336,22 @@ internal class ThreadProjection(
                             sendNow = echoes.sendNow - message.id,
                             awaitingPush = echoes.awaitingPush - message.id,
                             placementPending = echoes.placementPending - message.id,
+                            reserved = echoes.reserved - message.id,
+                        )
+                )
+            }
+            // Queue consumption uses entry identity; row deduplication and ownership stay id-only.
+            if (message.role == Role.User) {
+                val entryId = queuedMessageId ?: echoes.backlog.firstOrNull { it.messageId == message.id }?.id
+                val next = queues[conversationId] ?: echoes
+                val own = message.id in mintedMessageIds.value[conversationId].orEmpty()
+                queues = queues + (
+                    conversationId to
+                        next.copy(
+                            backlog = next.backlog.filterNot { it.id == entryId },
+                            consumedBacklog = if (entryId != null) next.consumedBacklog + entryId else next.consumedBacklog,
+                            pushed = if (own) next.pushed + message.id else next.pushed,
+                            delivered = if (own) next.delivered + message.id else next.delivered,
                         )
                 )
             }
@@ -439,12 +465,12 @@ internal class ThreadProjection(
      * A boundary that fills the pending divider in place gives it a new identity; its daemon position, if a
      * history page supplied one, moves with it, so later pages still place rows around the divider.
      */
-    private fun Map<String, Map<Any, Long>>.withFilledDividerOrder(
+    private fun Map<String, Map<Any, ULong>>.withFilledDividerOrder(
         conversationId: String,
         fold: CompactionFold,
         before: List<ThreadItem>,
         after: List<ThreadItem>,
-    ): Map<String, Map<Any, Long>> {
+    ): Map<String, Map<Any, ULong>> {
         val order = this[conversationId] ?: return this
         val pendingAt = fold.pending ?: return this
         if (before.size != after.size) return this
@@ -601,11 +627,45 @@ internal class ThreadProjection(
      * that did not end cleanly leaves a [ThreadItem.StoppedTurn] stamped with its arrival instant, once
      * (#1356, see [withFinalizedTurn]). The turn is first recorded in [endedTurns], so a row of it that a
      * later merge brings in lands settled too (#1419).
+     *
+     * As the legacy fallback, on the first end reserve the FIFO head's own echo after this turn's rows (#1655).
+     * Only that head can start the next ordinary turn; later entries wait behind later turns. It
+     * still reads queued below live rows, but ordinary delivery cannot move it into the next reply.
+     * Repeated ends never reserve an echo admitted behind a newer turn.
      */
     fun finalizeAssistantTurn(event: LiveSessionEvent.TurnEnd) {
         recordEnded(event.conversationId, setOf(event.turnId))
-        updateThreads { current ->
-            current + (event.conversationId to current[event.conversationId].orEmpty().withFinalizedTurn(event, Clock.System.now()))
+        state.update { current ->
+            val liveEnds = current.liveEndedTurns[event.conversationId].orEmpty()
+            val echoes = current.echoQueues[event.conversationId]
+            var rows = current.threads[event.conversationId].orEmpty().withFinalizedTurn(event, Clock.System.now())
+            val reserve =
+                if (event.turnId !in liveEnds && echoes != null) {
+                    echoes.backlog.firstOrNull()?.messageId?.takeIf { id ->
+                        id in echoes.parked &&
+                            id !in echoes.reserved &&
+                            id in mintedMessageIds.value[event.conversationId].orEmpty() &&
+                            rows
+                                .filterIsInstance<ThreadItem.MessageItem>()
+                                .firstOrNull { it.message.id == id }
+                                ?.message
+                                ?.role == Role.User
+                    }
+                } else {
+                    null
+                }
+            if (reserve != null) rows = rows.moveOwnEchoToEnd(event.conversationId, reserve)
+            val queues =
+                if (echoes != null && reserve != null) {
+                    current.echoQueues + (event.conversationId to echoes.copy(reserved = echoes.reserved + reserve))
+                } else {
+                    current.echoQueues
+                }
+            current.copy(
+                threads = current.threads + (event.conversationId to rows),
+                echoQueues = queues,
+                liveEndedTurns = current.liveEndedTurns + (event.conversationId to (liveEnds + event.turnId)),
+            )
         }
     }
 
@@ -702,11 +762,11 @@ internal class ThreadProjection(
     /**
      * Track this device's queued echoes against [queue]'s current snapshots (#1558), after a `queue_state`
      * has been applied and [settleDrops] has run. In each conversation this device minted into, an echo the
-     * snapshot holds is [OwnEchoQueue.queued]. A busy echo leaving an open turn's backlog waits for its
+     * snapshot holds is [OwnEchoQueue.queued]. An unreserved busy echo leaving an open turn's backlog waits for its
      * delivered message in [OwnEchoQueue.awaitingPush], since the control may have come from a peer.
-     * Closed-turn removal moves the echo before it stops reading as queued, retaining ordinary drain's
-     * immediate settlement. Only a delivered Send now push corrects that position. A dropped echo has
-     * already been removed and its id spent, so the move finds nothing.
+     * A reserved echo retains its slot even when the next turn is open (#1655). Unreserved closed-turn
+     * removal moves the echo before it stops reading as queued. Only a delivered Send now push corrects
+     * that position. A dropped echo has already been removed and its id spent, so the move finds nothing.
      *
      * Only an echo first reported while [turnOpen] held for its conversation waits behind a turn (#1636): it
      * alone reads last and moves when it drains. One first reported while idle keeps its tap-time slot.
@@ -723,29 +783,38 @@ internal class ThreadProjection(
         queue: QueueProjection,
         turnOpen: Boolean,
     ) {
-        val inSnapshot = queue.current(conversationId).mapTo(HashSet()) { it.messageId }
+        val snapshot = queue.current(conversationId)
         // Rows and intent derive from one CAS input; retries have no nested writes or trail effects.
         var deliveredIds: Set<String> = emptySet()
         var queuedIds: Set<String> = emptySet()
         state.update { all ->
             val echoes = all.echoQueues[conversationId] ?: OwnEchoQueue()
+            val pendingEntries = snapshot.filterNot { it.id in echoes.consumedBacklog }
+            val inSnapshot = pendingEntries.mapTo(HashSet()) { it.messageId }
             val drained = echoes.queued - inSnapshot
             val minted = mintedMessageIds.value[conversationId].orEmpty()
-            val deferred = drained.intersect(echoes.behindTurn).filterTo(HashSet()) { turnOpen || it in echoes.sendNow }
+            val deferred =
+                drained.intersect(echoes.behindTurn).filterTo(HashSet()) {
+                    (turnOpen && it !in echoes.reserved) || it in echoes.sendNow
+                }
             val rows =
                 drained
-                    .filter { it in echoes.behindTurn && it !in deferred }
+                    .filter { it in echoes.behindTurn && it !in deferred && it !in echoes.reserved }
                     .fold(all.threads[conversationId].orEmpty()) { rows, id -> rows.moveOwnEchoToEnd(conversationId, id) }
             val delivered = echoes.delivered + (drained - deferred)
             val queued = inSnapshot.intersect(minted) - delivered
             val behindTurn = (echoes.behindTurn intersect queued) + if (turnOpen) queued - echoes.queued else emptySet()
+            val awaitingPush = echoes.awaitingPush + deferred
+            val placementPending = echoes.placementPending + drained.intersect(echoes.behindTurn).intersect(minted)
             val next =
                 echoes.copy(
                     queued = queued,
+                    backlog = pendingEntries,
                     delivered = delivered,
                     behindTurn = behindTurn,
-                    awaitingPush = echoes.awaitingPush + deferred,
-                    placementPending = echoes.placementPending + drained.intersect(echoes.behindTurn).intersect(minted),
+                    awaitingPush = awaitingPush,
+                    placementPending = placementPending,
+                    reserved = echoes.reserved intersect (queued + awaitingPush + placementPending),
                 )
             deliveredIds = drained.intersect(minted) - deferred
             queuedIds = next.queued
@@ -840,13 +909,67 @@ internal class ThreadProjection(
         if (page.entries.isEmpty()) return
         recordEnded(conversationId, endedTurnIds(page.entries, interactive))
         val reduced = reduceOrderedHistoryPage(page.entries, interactive)
+        // A stored modern user delivery is placement evidence before its live replay arrives.
+        val deliveries =
+            page.entries.mapNotNull { entry ->
+                if (entry.type != RemoteConversationRepository.TYPE_MESSAGE) return@mapNotNull null
+                try {
+                    MobileJson
+                        .decodeFromJsonElement<MessagePayloadDto>(entry.payload)
+                        .takeIf { it.role == WireRole.User && it.queuedMsgId != null }
+                } catch (e: IllegalArgumentException) {
+                    null // Match the reducer's silent malformed-entry boundary.
+                }
+            }
         state.update { current ->
-            val order = reduced.order + current.historyOrder[conversationId].orEmpty()
+            val order = reduced.unsignedOrder + current.historyOrder[conversationId].orEmpty()
             val existing = current.threads[conversationId].orEmpty()
-            val merged = existing.mergeOrderedHistoryRows(reduced.rows, order)
+            val echoes = current.echoQueues[conversationId] ?: OwnEchoQueue()
+            val pending = echoes.parked + echoes.awaitingPush + echoes.placementPending
+            val firstDeliveries =
+                deliveries
+                    .filter { it.messageId !in echoes.pushed && it.queuedMsgId !in echoes.consumedBacklog }
+                    .mapTo(HashSet()) { it.messageId }
+            // Only pending own user rows have provisional positions; keep their original objects at history's slot.
+            val provisional =
+                existing
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .filter {
+                        it.message.role == Role.User &&
+                            it.message.id in pending &&
+                            it.message.id in firstDeliveries &&
+                            it.message.id in mintedMessageIds.value[conversationId].orEmpty()
+                    }.associateBy { it.message.id }
+            val receiving = existing.filterNot { it is ThreadItem.MessageItem && it.message.id in provisional }
+            val merged =
+                receiving.mergeUnsignedHistoryRows(reduced.rows, order).map { row ->
+                    if (row is ThreadItem.MessageItem) provisional[row.message.id] ?: row else row
+                }
+            val settledEchoes =
+                deliveries.fold(echoes) { echoes, delivery ->
+                    val entryId = delivery.queuedMsgId ?: return@fold echoes
+                    val id = delivery.messageId
+                    val own =
+                        id in mintedMessageIds.value[conversationId].orEmpty() &&
+                            merged.filterIsInstance<ThreadItem.MessageItem>().any { it.message.id == id && it.message.role == Role.User }
+                    val settled = if (own) setOf(id) else emptySet()
+                    echoes.copy(
+                        backlog = echoes.backlog.filterNot { it.id == entryId },
+                        consumedBacklog = echoes.consumedBacklog + entryId,
+                        queued = echoes.queued - settled,
+                        delivered = echoes.delivered + settled,
+                        pushed = echoes.pushed + settled,
+                        behindTurn = echoes.behindTurn - settled,
+                        sendNow = echoes.sendNow - settled,
+                        awaitingPush = echoes.awaitingPush - settled,
+                        placementPending = echoes.placementPending - settled,
+                        reserved = echoes.reserved - settled,
+                    )
+                }
             current.copy(
                 threads = current.threads + (conversationId to merged.withSettledTurns(endedTurns.value[conversationId].orEmpty())),
                 historyOrder = current.historyOrder + (conversationId to order),
+                echoQueues = if (deliveries.isEmpty()) current.echoQueues else current.echoQueues + (conversationId to settledEchoes),
             )
         }
         settleEndedTurns(conversationId)
@@ -887,6 +1010,7 @@ internal class ThreadProjection(
             it.copy(
                 threads = it.threads - conversationId,
                 echoQueues = it.echoQueues - conversationId,
+                liveEndedTurns = it.liveEndedTurns - conversationId,
                 backgroundTaskHints = it.backgroundTaskHints - conversationId,
                 historyOrder =
                     it.historyOrder - conversationId,
@@ -906,7 +1030,7 @@ internal class ThreadProjection(
      * stops streaming once any row follows it, whichever write appended that row. This is the one read of
      * the store, so no reader sees an earlier segment still streaming.
      *
-     * This device's parked echoes, those queued behind a turn, read last (#1558, #1636), in thread order,
+     * This device's parked echoes, those queued behind a turn, read last (#1558, #1636), in backlog order,
      * below every row of the turn they wait behind, and the last-row rule runs over the rows without them,
      * so the running reply keeps streaming.
      */
@@ -940,15 +1064,22 @@ internal class ThreadProjection(
                             } else {
                                 row
                             }
-                        }.withParkedEchoesLast(echoes?.parked.orEmpty())
-                ThreadSnapshot(rows, suppressed, current.historyOrder[conversationId].orEmpty())
+                        }.withParkedEchoesLast(echoes?.parked.orEmpty(), echoes?.backlog.orEmpty().map { it.messageId })
+                val unsignedOrder = current.historyOrder[conversationId].orEmpty()
+                ThreadSnapshot(rows, suppressed, unsignedOrder.signedHistoryOrder(), unsignedOrder)
             }.distinctUntilChanged()
 
-    /** This thread as [observe] reads it: [parkedIds] user rows last, the rest through [withOnlyLastRowStreaming]. */
-    private fun List<ThreadItem>.withParkedEchoesLast(parkedIds: Set<String>): List<ThreadItem> {
+    /** Reserved store positions cannot change [backlog] display order; only [parkedIds] user rows read last. */
+    private fun List<ThreadItem>.withParkedEchoesLast(
+        parkedIds: Set<String>,
+        backlog: List<String>,
+    ): List<ThreadItem> {
         if (parkedIds.isEmpty()) return withOnlyLastRowStreaming()
         val (parked, rest) = partition { it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.id in parkedIds }
-        return if (parked.isEmpty()) withOnlyLastRowStreaming() else rest.withOnlyLastRowStreaming() + parked
+        // A reused row id takes its first pending entry's FIFO position, never the last one's.
+        val order = backlog.withIndex().reversed().associate { it.value to it.index }
+        val queuedRows = parked.sortedBy { order[(it as ThreadItem.MessageItem).message.id] ?: Int.MAX_VALUE }
+        return if (parked.isEmpty()) withOnlyLastRowStreaming() else rest.withOnlyLastRowStreaming() + queuedRows
     }
 
     /**
@@ -1025,7 +1156,7 @@ internal class ThreadProjection(
 
     /**
      * One conversation's own queued echoes (#1558). [queued] is the minted ids its latest snapshot holds;
-     * [delivered] is the ids already moved to the end, which a later snapshot repeating one (a legal
+     * [delivered] is the ids already confirmed, which a later snapshot repeating one (a legal
      * duplicate `message_id`) never queues again.
      *
      * [sendNow] holds locally requested delivery intents for busy echoes, independently of drops.
@@ -1033,21 +1164,36 @@ internal class ThreadProjection(
      * they are not yet reported delivered, and remain in the store
      * for identity and attachment metadata, hidden from the read and skipped by assistant deltas.
      * [placementPending] retains every busy echo removed before its delivered push, including a
-     * settled closed-turn drain. The first push consumes this membership and corrects placement only
-     * when it reports Send now. Ordinary and duplicate pushes cannot move it. Idle echoes never join it.
+     * settled closed-turn drain. The first push consumes this membership. A modern push corrects placement;
+     * a legacy push does so only for Send now. Duplicate pushes cannot move it. Idle echoes never join it.
      *
      * [behindTurn] is the [queued] ids first reported while a turn was open (#1636), and only those, the
-     * [parked] ones, read last and move on delivery. One queued while idle waits behind nothing: the daemon
+     * [parked] ones, read last until delivery reveals their reserved slot or moves them to the end.
+     * One queued while idle waits behind nothing: the daemon
      * delivers it at once, and its confirmation can arrive after its own reply began, so moving it then would
      * put it below the reply's start and split the reply around it.
+     *
+     * [reserved] holds parked echoes positioned after their waiting turn at its first end (#1655).
+     * Legacy ordinary confirmation preserves these slots even when the next reply has begun. Membership
+     * lasts until delivery, including across queue removal; modern pushes or Send now override it once.
+     * [backlog] retains snapshot FIFO entries, including peers, minus consumed entry ids. Only its
+     * head can reserve a legacy slot; a peer ahead of an own echo makes it wait for another turn.
+     * [consumedBacklog] records entry ids independently of row ids, including pushes before snapshots.
+     * It survives absent and stale snapshots for this connection. [pushed] records live or history delivery,
+     * preventing replay or another entry sharing a delivered own row's id from relocating that held row.
+     * Both die with the connection.
      */
     private data class OwnEchoQueue(
         val queued: Set<String> = emptySet(),
+        val backlog: List<QueuedMessage> = emptyList(),
+        val consumedBacklog: Set<Long> = emptySet(),
+        val pushed: Set<String> = emptySet(),
         val delivered: Set<String> = emptySet(),
         val behindTurn: Set<String> = emptySet(),
         val sendNow: Set<String> = emptySet(),
         val awaitingPush: Set<String> = emptySet(),
         val placementPending: Set<String> = emptySet(),
+        val reserved: Set<String> = emptySet(),
     ) {
         val parked: Set<String> get() = queued intersect behindTurn
     }

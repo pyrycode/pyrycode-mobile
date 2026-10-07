@@ -9,12 +9,14 @@ import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
+import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalAction
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Question
 import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.QuestionBatch
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.scopedTo
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
@@ -35,6 +37,7 @@ import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
+import de.pyryco.mobile.data.repository.ReplySuggestion
 import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.SessionFacts
 import de.pyryco.mobile.data.repository.SessionSettings
@@ -97,6 +100,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Instant
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.floor
+
+private const val THREAD_HISTORY_PAGE_SIZE = 200
 
 /**
  * The one `history.*` wire code this screen branches on (#778) — the daemon refused the cursor, so the
@@ -663,13 +668,18 @@ class ThreadViewModel(
     /**
      * Restores the history position saved when this thread was last open (#1354), so the first pull asks
      * past the rows the cache already drew instead of re-fetching the newest page. Reading asks nothing.
-     * [onDemandOlderHistory] and the `init` block's newest-page ask (#1572) wait for it, so no walk ask can
-     * carry the opening empty cursor once a saved one exists.
+     * Reader demand is dropped until this finishes; the `init` block's newest-page ask waits for it.
+     * No walk ask can carry the opening empty cursor once a saved one exists.
      */
     private val historySeed: Job =
         viewModelScope.launch {
             val saved = repository.readHistoryPosition(conversationId) ?: return@launch
-            historyDemand.update { it.restored(cursor = saved.cursor, atStart = saved.atStart) }
+            historyDemand.update {
+                it.restored(
+                    cursor = saved.cursor,
+                    atStart = saved.atStart && saved.coverage?.unsignedIncomplete != true,
+                )
+            }
             historyCoverage.value = saved.coverage ?: HistoryCoverage()
         }
 
@@ -960,6 +970,123 @@ class ThreadViewModel(
                 started = SharingStarted.WhileSubscribed(5_000),
                 initialValue = false,
             )
+
+    private val _suggestedReply = MutableStateFlow<SuggestedReply?>(null)
+    val suggestedReply: StateFlow<SuggestedReply?> = _suggestedReply.asStateFlow()
+    private var suggestionReading: ReplySuggestion? = null
+    private var suggestionSession: String? = null
+    private var suggestionBusy = false
+    private val invalidatedSuggestions = mutableMapOf<String, ULong>()
+    private val observedSuggestionRevisions = mutableMapOf<String, ULong>()
+
+    init {
+        viewModelScope.launch {
+            turnPhase.collect { phase ->
+                suggestionBusy = phase != LiveSessionEvent.TurnState.Phase.Idle
+                refreshSuggestedReply()
+            }
+        }
+        viewModelScope.launch { hostConnection.collect { refreshSuggestedReply() } }
+        viewModelScope.launch {
+            draftStore.drafts.map { it[serverId]?.get(conversationId).orEmpty() }.distinctUntilChanged().collect {
+                _suggestedReply.value = null
+                refreshSuggestedReply()
+            }
+        }
+        viewModelScope.launch {
+            _attachmentsSending.collect {
+                // Even a completed upload must not revive a token armed before it started.
+                _suggestedReply.value = null
+                refreshSuggestedReply()
+            }
+        }
+        viewModelScope.launch {
+            combine(conversations, settingsReadings) { _, reading ->
+                if (hostAvailable.value) {
+                    lastKnownSessionId.takeIf { it.isNotEmpty() }
+                        ?: reading.settings
+                            ?.takeUnless { it.held }
+                            ?.sessionId
+                            ?.takeIf { it.isNotEmpty() }
+                } else {
+                    null
+                }
+            }.distinctUntilChanged()
+                .onEach { session ->
+                    invalidateSuggestion("session")
+                    suggestionReading = null
+                    suggestionSession = session
+                }.flatMapLatest { session ->
+                    session?.let { repository.observeReplySuggestion(conversationId, it) } ?: flowOf(null)
+                }.collect { reading ->
+                    reading?.let {
+                        // #1865 never emits a decreasing revision within one connection. A lower one
+                        // therefore identifies a fresh daemon lifetime, whose watermarks start again.
+                        val previous = observedSuggestionRevisions[it.sessionId]
+                        if (previous != null && it.revision < previous) {
+                            invalidatedSuggestions.remove(it.sessionId)
+                        }
+                        observedSuggestionRevisions[it.sessionId] = it.revision
+                    }
+                    suggestionReading = reading
+                    refreshSuggestedReply()
+                }
+        }
+    }
+
+    private fun invalidateSuggestion(reason: String) {
+        // Teardown may emit absence before Offline or a session replacement reaches this collector.
+        suggestionSession?.let { session ->
+            observedSuggestionRevisions[session]?.let { revision ->
+                invalidatedSuggestions[session] =
+                    maxOf(invalidatedSuggestions[session] ?: 0uL, revision)
+            }
+        }
+        if (_suggestedReply.value != null) RelayLog.d { "event=reply_suggestion_hidden reason=$reason" }
+        _suggestedReply.value = null
+    }
+
+    private fun refreshSuggestedReply() {
+        if (suggestionBusy || hostConnection.value != ConnectionState.Connected) {
+            invalidateSuggestion(if (suggestionBusy) "turn" else "connection")
+            return
+        }
+        val reading = suggestionReading
+        val text = reading?.suggestedReply
+        if (reading == null ||
+            reading.conversationId != conversationId ||
+            reading.sessionId != suggestionSession ||
+            text.isNullOrBlank() ||
+            reading.revision <= (invalidatedSuggestions[reading.sessionId] ?: 0uL) ||
+            draftStore.draftFor(serverId, conversationId).isNotEmpty()
+        ) {
+            _suggestedReply.value = null
+            return
+        }
+        if (_suggestedReply.value?.reading != reading) {
+            _suggestedReply.value = SuggestedReply(text, reading)
+            RelayLog.d { "event=reply_suggestion_shown" }
+        }
+    }
+
+    /** Re-check and consume the exact offer before any asynchronous submission, never editing the draft. */
+    fun sendSuggestedReply(offer: SuggestedReply): Boolean {
+        if (_suggestedReply.value !== offer ||
+            offer.reading != suggestionReading ||
+            offer.reading.sessionId != suggestionSession ||
+            suggestionBusy ||
+            hostConnection.value != ConnectionState.Connected ||
+            _attachmentsSending.value ||
+            draftStore.draftFor(serverId, conversationId).isNotEmpty()
+        ) {
+            RelayLog.d { "event=reply_suggestion_send_skipped reason=ineligible" }
+            return false
+        }
+        invalidateSuggestion("consumed")
+        RelayLog.d { "event=reply_suggestion_submitted" }
+        submitMessage(offer.text) {}
+        return true
+    }
 
     private val _turnOutcome = MutableStateFlow<TurnRecoveryNotice?>(null)
 
@@ -1461,6 +1588,12 @@ class ThreadViewModel(
                 }
         }
 
+        // Raw arrivals can precede the eager availability projection. Readiness releases pending
+        // newest work without creating another arrival or reader demand.
+        viewModelScope.launch {
+            hostAvailable.filter { it }.collect { drainNewestPages() }
+        }
+
         // #1311: a drop and the return both end the round trip the local-send window was waiting on.
         // `drop(1)` skips the availability the thread opened on, which the flow hands every collector.
         viewModelScope.launch {
@@ -1486,6 +1619,16 @@ class ThreadViewModel(
                         is LiveSessionEvent.ToolResult -> "tool_result"
                         is LiveSessionEvent.ReplayGap -> "replay_gap"
                     }
+                if (event.conversationId == conversationId &&
+                    (
+                        event is LiveSessionEvent.AssistantDelta ||
+                            event is LiveSessionEvent.ToolUse ||
+                            event is LiveSessionEvent.ToolResult ||
+                            (event is LiveSessionEvent.TurnState && event.phase != LiveSessionEvent.TurnState.Phase.Idle)
+                    )
+                ) {
+                    invalidateSuggestion("turn")
+                }
                 setTurnOutcome(nextTurnOutcome(_turnOutcome.value, event), reason)
             }
         }
@@ -1576,6 +1719,7 @@ class ThreadViewModel(
      * Waiting or close on failure; acceptance still tells the screen to follow the newest end (#1314).
      */
     private suspend fun <T> sendInLocalWindow(send: suspend () -> T): T {
+        invalidateSuggestion("send")
         clearTurnOutcome("send")
         val generation = openLocalSendWindow()
         val sent =
@@ -1635,11 +1779,8 @@ class ThreadViewModel(
      */
     fun onDemandOlderHistory() {
         if (!historySeed.isCompleted) {
-            // #1354: a pull while the saved position is still being read asks once it has been.
-            viewModelScope.launch {
-                historySeed.join()
-                onDemandOlderHistory()
-            }
+            // Prefetch is movement-gated: completing the seed cannot replay an earlier movement.
+            RelayLog.d { "event=history_ask_skipped reason=seeding" }
             return
         }
         if (!hostAvailable.value) {
@@ -1716,7 +1857,7 @@ class ThreadViewModel(
     private fun launchNewestPageSideAsk() {
         viewModelScope.launch {
             try {
-                val page = repository.requestHistory(conversationId, cursor = "")
+                val page = repository.requestHistory(conversationId, cursor = "", limit = THREAD_HISTORY_PAGE_SIZE)
                 recordCoverage(page, newest = true)
             } catch (e: CancellationException) {
                 throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
@@ -1750,8 +1891,20 @@ class ThreadViewModel(
             try {
                 val page = fetchHistoryPage(claimed) ?: return@launch
                 historyCoverage.update { it.received(page, newest = claimed.cursor.isEmpty()) }
-                repository.writeHistoryPosition(conversationId, HistoryPosition(page.cursor, page.atStart, historyCoverage.value))
-                historyDemand.update { it.settled(pageCursor = page.cursor, atStart = page.atStart) }
+                val coverage = historyCoverage.value
+                val settled =
+                    if (page.atStart && coverage.unsignedIncomplete) {
+                        // Retain a usable walk and visible unknown state until signed consumers migrate.
+                        RelayLog.d { "event=history_completeness_unavailable reason=unsigned_identity" }
+                        claimed.failed(retryable = false)
+                    } else {
+                        claimed.settled(pageCursor = page.cursor, atStart = page.atStart)
+                    }
+                repository.writeHistoryPosition(
+                    conversationId,
+                    HistoryPosition(settled.cursor, settled.stoppedBy == HistoryWalkStop.AtStart, coverage),
+                )
+                historyDemand.update { settled }
             } finally {
                 drainNewestPages()
             }
@@ -1764,6 +1917,9 @@ class ThreadViewModel(
         target: Long? = null,
     ) {
         historyCoverage.update { it.received(page, newest, target) }
+        if (historyCoverage.value.unsignedIncomplete) {
+            historyDemand.update { if (it.stoppedBy == HistoryWalkStop.AtStart) it.copy(stoppedBy = null) else it }
+        }
         val walk = historyDemand.value
         repository.writeHistoryPosition(
             conversationId,
@@ -1779,7 +1935,11 @@ class ThreadViewModel(
         val cursor = coverage.cursorFor(anchor)
         viewModelScope.launch {
             try {
-                recordCoverage(repository.requestHistory(conversationId, cursor), newest = cursor.isEmpty(), target = anchor)
+                recordCoverage(
+                    repository.requestHistory(conversationId, cursor, limit = THREAD_HISTORY_PAGE_SIZE),
+                    newest = cursor.isEmpty(),
+                    target = anchor,
+                )
                 RelayLog.d { "event=history_gap_page_received" }
             } catch (error: CancellationException) {
                 throw error
@@ -1809,7 +1969,7 @@ class ThreadViewModel(
     /** Ask for the page at [claimed]'s cursor, or settle the failure and return `null`. */
     private suspend fun fetchHistoryPage(claimed: ThreadHistoryDemand): HistoryPage? {
         try {
-            return repository.requestHistory(conversationId, claimed.cursor)
+            return repository.requestHistory(conversationId, claimed.cursor, limit = THREAD_HISTORY_PAGE_SIZE)
         } catch (e: CancellationException) {
             throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
         } catch (e: RelayErrorException) {
@@ -1865,7 +2025,25 @@ class ThreadViewModel(
 
     /** Record an edit to this chat's composer (#789). Exact text; the store clears only on `""`. */
     fun onDraftChange(text: String) {
+        _suggestedReply.value = null
         draftStore.setDraft(serverId, conversationId, text)
+        refreshSuggestedReply()
+    }
+
+    /** Snapshot source into this destination's latest draft on Main, without sending or touching files. */
+    fun replyToMessage(message: Message): String? {
+        val label =
+            when (message.role) {
+                Role.User -> "User"
+                Role.Assistant -> "Assistant"
+                Role.Tool -> return null
+            }
+        val latest = draftStore.draftFor(serverId, conversationId)
+        val separator = if (latest.isNotEmpty() && !latest.endsWith('\n')) "\n" else ""
+        val quoted = latest + separator + label + ":\n\"" + message.content + "\"\n"
+        onDraftChange(quoted)
+        RelayLog.d { "event=message_reply_staged" }
+        return quoted
     }
 
     /**
@@ -1884,30 +2062,31 @@ class ThreadViewModel(
         val trimmed = text.trim()
         // #1328: text is required even with files pending, as on desktop; blank leaves them for the next send.
         if (trimmed.isEmpty()) return
+        submitMessage(trimmed) { withAttachments ->
+            if (!withAttachments || draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
+        }
+    }
+
+    private fun submitMessage(
+        text: String,
+        onReady: (Boolean) -> Unit,
+    ) {
+        invalidateSuggestion("send")
         val attachments = draftStore.attachmentsFor(serverId, conversationId)
         if (attachments.isNotEmpty()) {
-            // #1355: the guarded clear runs once the uploads succeed, before the send.
-            return sendWithAttachments(
-                trimmed,
-                attachments,
-                onUploaded = {
-                    if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
-                },
-                onSent = {},
-            )
+            return sendWithAttachments(text, attachments, onUploaded = { onReady(true) }, onSent = {})
         }
-        onDraftChange("")
+        onReady(false)
         launchGuardedRepoCall {
-            // #686: a message sent while this opening's recall write is outstanding follows it.
             effortRecall.awaitWrite()
-            sendInLocalWindow { repository.sendMessage(state.value.conversationId, trimmed) }
+            sendInLocalWindow { repository.sendMessage(conversationId, text) }
         }
     }
 
     /**
      * Send [text] naming [attachments], this chat's pending entries as they stood when send was tapped
-     * (#932). [text] is the trimmed text and never blank: [sendMessage] refuses that before reading the
-     * attachments (#1328); [onComposerCommand] passes its command.
+     * (#932). [text] is nonblank: ordinary drafts are trimmed, while [sendSuggestedReply] preserves the
+     * confirmed offer verbatim. [onComposerCommand] passes its command.
      *
      * Each entry without an acknowledged id is read and uploaded in order, and its id recorded in
      * [draftStore] as soon as the daemon acknowledges it, so a later failure never costs a retry that
@@ -2881,7 +3060,13 @@ class ThreadViewModel(
                 closeChannelInfo()
                 sendArchive()
             }
-            ThreadEvent.Delete -> pendingDeleteConfirm.value = true
+            ThreadEvent.Delete -> {
+                // Close the Channel Info Sheet if Delete was tapped from it (#1651), the same precedent
+                // Archive follows above: Figma draws the confirmation over the canvas, with no sheet behind
+                // the scrim.
+                closeChannelInfo()
+                pendingDeleteConfirm.value = true
+            }
             ThreadEvent.DeleteConfirm -> {
                 pendingDeleteConfirm.value = false
                 closeChannelInfo()

@@ -66,6 +66,7 @@ envelope back into Kotlin cannot distinguish an omitted payload from `JsonNull`.
 ### `HelloClientPayload` — the `hello` payload (in `noise_init` early-data)
 
 ```kotlin
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class HelloClientPayload(
     val role: String = "client",
@@ -73,12 +74,32 @@ data class HelloClientPayload(
     @SerialName("client_version") val clientVersion: String,
     @SerialName("protocol_versions") val protocolVersions: List<String> = listOf("v2"),
     val token: String,                                  // device-pairing SECRET — toString() redacts
-    val capabilities: List<String> = listOf(CAPABILITY_INTERACTIVE, CAPABILITY_MULTI_AGENT),  // #401, #1119
+    val capabilities: List<String> = listOf(CAPABILITY_INTERACTIVE, CAPABILITY_MULTI_AGENT, CAPABILITY_STOP_BACKGROUND_TASK),
     @SerialName("last_event_id") val lastEventId: Long? = null,       // #416: replay cursor, omit-when-null
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    @SerialName("client_features") val clientFeatures: String = "",
 )
 ```
 
-`role="client"`, `protocol_versions=["v2"]`, and `capabilities=["interactive","multi_agent"]` default but are always emitted. `token` is the device-pairing secret (see [Secret handling](#secret-handling)). `capabilities` (added [#401](../codebase/401.md), extended [#1119](https://github.com/pyrycode/pyrycode-mobile/issues/1119)) advertises the v2 features the phone understands — see [Capability negotiation](#capability-negotiation-401); it is **non-secret**, so the `toString` override surfaces it (only `token` stays `***`). `last_event_id` (added [#416](../codebase/416.md)) is the [replay cursor](replay-cursor.md): on reconnect the phone advertises the latest structured-stream `Envelope.eventId` it observed so the daemon replays the missed tail before the live stream resumes. It is modeled **byte-for-byte like `Envelope.eventId`** — nullable-defaulted, so `explicitNulls = false` **omits it when null** (a fresh connection that observed nothing leaves the field absent — never `0`/`null`, keeping that `hello` byte-identical to today) while a positive value rides as the server's `omitempty *uint64`. Non-secret (an event ordinal), so `toString` surfaces it too. The value is read **live at `hello`-build** via a supplier — see [Noise_IK session § hello](noise-ik-session.md).
+`role="client"`, `protocol_versions=["v2"]`, and `capabilities=["interactive","multi_agent","stop_background_task"]` default but are always emitted. `token` is the device-pairing secret (see [Secret handling](#secret-handling)). `capabilities` (added [#401](../codebase/401.md), extended [#1119](https://github.com/pyrycode/pyrycode-mobile/issues/1119)) advertises the v2 features the phone understands — see [Capability negotiation](#capability-negotiation-401); it is **non-secret**, so the `toString` override surfaces it (only `token` stays `***`). `last_event_id` (added [#416](../codebase/416.md)) is the [replay cursor](replay-cursor.md): on reconnect the phone advertises the latest structured-stream `Envelope.eventId` it observed so the daemon replays the missed tail before the live stream resumes. It is modeled **byte-for-byte like `Envelope.eventId`** — nullable-defaulted, so `explicitNulls = false` **omits it when null** (a fresh connection that observed nothing leaves the field absent — never `0`/`null`) while a positive value rides as the server's `omitempty *uint64`. Non-secret (an event ordinal), so `toString` surfaces it too. The value is read **live at `hello`-build** via a supplier — see [Noise_IK session § hello](noise-ik-session.md).
+
+`clientFeatures` (wire key `client_features`, [#1846](https://github.com/pyrycode/pyrycode-mobile/issues/1846))
+is optional description metadata, independent of capability negotiation. Missing
+values decode as the empty string; empty values encode with the key omitted.
+The property-level `@EncodeDefault(EncodeDefault.Mode.NEVER)` overrides
+`MobileJson.encodeDefaults = true`: `explicitNulls = false` cannot omit a
+non-null empty string. Nonempty strings round-trip verbatim without model-level
+trimming or admission validation. `MobileWireCodecTest` checks serialized key
+absence as well as round-trip values; a Kotlin round-trip alone would miss an
+accidentally emitted empty key. The existing `toString()` still redacts the token
+and does not expose the description.
+
+The [Noise session](noise-ik-session.md#hello--hello_ack-the-early-data) supplies
+the app-owned report explicitly; a default-constructed DTO stays empty. Prompt
+admission belongs to the daemon, so successful wire encoding does not prove a
+report will enter its system prompt. The wire fixture intentionally preserves
+characters that prompt admission would reject; separate assertions constrain the
+app constant to the stricter prompt rules.
 
 ### `HelloAckPayload` — the `hello_ack` payload (in `noise_resp` early-data)
 
@@ -101,12 +122,13 @@ Both Hello payloads carry an optional `capabilities: []string` (wire key `capabi
 ```kotlin
 internal const val CAPABILITY_INTERACTIVE = "interactive"     // the wire token (#401)
 internal const val CAPABILITY_MULTI_AGENT = "multi_agent"     // the wire token (#1119)
+internal const val CAPABILITY_STOP_BACKGROUND_TASK = "stop_background_task"
 ```
 
-- **Advertise** rides for free on `HelloClientPayload.capabilities`'s `listOf(CAPABILITY_INTERACTIVE, CAPABILITY_MULTI_AGENT)` default + `encodeDefaults = true` — exactly the `protocol_versions` mechanism, **confirmed by a wire test** (`"capabilities":["interactive","multi_agent"]` asserted literally, per the ticket's "don't assume it serialises" note), not trusted from the precedent.
+- **Advertise** rides for free on `HelloClientPayload.capabilities`'s `listOf(CAPABILITY_INTERACTIVE, CAPABILITY_MULTI_AGENT, CAPABILITY_STOP_BACKGROUND_TASK)` default + `encodeDefaults = true` — exactly the `protocol_versions` mechanism, **confirmed by a wire test** (`"capabilities":["interactive","multi_agent","stop_background_task"]` asserted literally, per the ticket's "don't assume it serialises" note), not trusted from the precedent.
 - **Surface** is the [Noise_IK session](noise-ik-session.md)'s job: `readResp` decodes `HelloAckPayload.capabilities` (a `List`), `.toSet()`s it (capabilities are a **membership set** — "is `interactive` granted?" — and a `Set` dedups a daemon that repeats an entry), and exposes it as `NoiseIkSession.negotiatedCapabilities`, which the [Noise session pump](noise-session-pump.md) carries onto `PumpState.Open.capabilities`.
 - **Surfacing-only.** [#401](../codebase/401.md) makes the negotiated set *readable*; it gates no decoding. The decode gate (#385) and the stall gate (#395) consume it. The daemon's echo is surfaced **verbatim** — a consuming gate treats it as *server-asserted* and is the place to re-derive the intersection before conferring authority.
-- `CAPABILITY_INTERACTIVE` and `CAPABILITY_MULTI_AGENT` are `internal` (single-module app; #385 imports the former for its membership check). Both are constants, not types — no `@SerialName`, no ktlint single-class-filename concern (`MobileWireModels.kt` already holds many top-level declarations).
+- `CAPABILITY_INTERACTIVE`, `CAPABILITY_MULTI_AGENT` and `CAPABILITY_STOP_BACKGROUND_TASK` are `internal` (single-module app; #385 imports the former for its membership check). All are constants, not types — no `@SerialName`, no ktlint single-class-filename concern (`MobileWireModels.kt` already holds many top-level declarations).
 - **`multi_agent` ([#1119](https://github.com/pyrycode/pyrycode-mobile/issues/1119)) unlocks Codex, not a new gate on the phone.** Without it, the daemon withholds every Codex conversation and every frame about one; with it, `conversations` rows can carry a non-Claude `agent` and `model_list` switches to the merged, agent-tagged list. Every field that grant unlocks — `agent` on a conversation row (#1108), `agent`/`family` on `model_list` (#1110), `capabilities` on `session_settings` (#1111) — decodes as an optional key with a Claude/absent default, so **no consumer on the phone checks `CAPABILITY_MULTI_AGENT in negotiatedCapabilities()`**; a daemon that grants only `interactive` simply never sends those keys and the phone behaves exactly as before. See [Application payloads § `agent`/`family`](mobile-protocol-v2-wire-layer-application-payloads.md).
 
 ### `QrPayload` — decoded pairing payload
@@ -138,6 +160,27 @@ val MobileJson: Json = Json {
 ```
 
 **Always (de)serialize via `MobileJson`, never a fresh `Json {}`.** A default `Json` would break the wire two ways: it omits fields equal to their Kotlin default (dropping `"v":2`), and it emits `"in_reply_to":null` instead of omitting the key. Both are invisible at compile time and pinned by guard tests. `ignoreUnknownKeys = true` is a conscious lenient-decode choice: a client tolerating server-added fields is safer for forward-compat than hard-failing.
+
+### Reply suggestion validation (#1865)
+
+`ReplySuggestionPayloads.kt` uses a manual `JsonElement` decoder at the inbound boundary.
+`MobileJson` has `explicitNulls = false`: nullable DTO decoding alone cannot distinguish a
+missing field from an explicit clear. Check key presence and exact primitive kinds before
+mutating state; a missing `suggested_reply` must never erase a held suggestion.
+
+The decoder requires canonical lowercase UUIDv4 conversation/session identities, an
+unquoted decimal integer revision from 1 through `ULong.MAX_VALUE`, and a string or
+explicit JSON null for `suggested_reply`. It rejects quoted, fractional, negative, zero
+and overflowing revisions. Accepted strings remain verbatim: nonblank, valid UTF-8 with
+no unpaired surrogate, no CR/LF, NEL, Unicode line or paragraph separator, and at most
+1024 UTF-8 bytes. The native contract does not inherit the fallback-only 240-code-point
+limit. Invalid payloads return null without retaining parser error text.
+
+The authoritative wire contract remains pyrycode `docs/protocol-mobile.md`, heading
+`reply_suggestion`. Mobile's [remote projection](remote-conversation-repository.md#status-projections-one-file-per-status-event)
+applies interactive gating and revision ordering and excludes this state from replay and
+history. Daemon text remains inert data and never enters logs; the
+[reading type](conversation-repository-shape.md#shape) redacts all fields in `toString()`.
 
 ### Base64 + pubkey helpers
 
@@ -202,6 +245,41 @@ Two invariants the override preserves:
 ## Application payloads (decoded on top of `Envelope`)
 
 Split into [Mobile Protocol v2 — wire models + codec — application payloads](mobile-protocol-v2-wire-layer-application-payloads.md) on 2026-09-22 to keep this document under the 50000-byte cap the docs guard enforces. That section, Application payloads (decoded on top of `Envelope`), moved there verbatim, headings and anchors intact.
+
+### Daemon read fields and confirmation
+
+The authoritative wire specification remains daemon
+[`docs/protocol-mobile.md`](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md),
+“Marking a conversation read”, “Application envelope” and the `conversations` /
+`conversation_updated` type-table rows. Mobile's DTOs and validation implement that
+contract (#1881); this topic records the client boundary and merge rules.
+
+`ConversationSummaryDto` accepts optional/default-null `read_up_to` and
+`latest_entry_id`; `ConversationResponseDto` accepts optional/default-null `read_up_to`.
+Absence or explicit null means unavailable, while integer zero is a known valid fact.
+An older daemon can omit the fields without changing the other conversation mappings.
+`conversation_updated` has no latest-id field, so both correlated replies and pushes
+must preserve the latest id already held from a list. The
+[remote read ledger](remote-conversation-repository.md#daemon-conversation-read-marks)
+merges supplied facts monotonically within one host connection generation.
+
+`ReadMarkIdSerializer` validates canonical unquoted decimal integers from zero through
+`ULong.MAX_VALUE`, retaining the full unsigned value without conversion through `Long`.
+Quoted numbers, negative/fractional/exponent tokens, booleans, composites, overflow and
+leading zeros are rejected. `MobileJson` accepts tokens such as `00`: checking only
+digits and range would admit malformed checkpoint zero. Keep explicit `00` and `01`
+probes alongside the other malformed kinds. Existing inbound guards drop malformed
+snapshots/pushes without ending the collector; diagnostics contain static outcomes,
+never ids, marks, payloads or parser exception text.
+
+`MarkConversationReadPayloadDto` encodes `mark_conversation_read` with `conversation_id`
+and an integer `up_to` in the durable history id space. Confirmation requires a
+`conversation_updated` whose `in_reply_to` names the request, whose conversation matches
+the target and whose `read_up_to` is present and valid. The daemon can clamp the requested
+id and still confirms no-op writes; callers receive the stored mark after the validated
+reply is folded. A bare ack, malformed reply or error cannot confirm an advance.
+See [confirmed repository writes](remote-conversation-repository.md#daemon-conversation-read-marks)
+for ownership, sanitized failures and retry behavior.
 
 ## What's deliberately absent
 

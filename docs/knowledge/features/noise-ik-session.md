@@ -77,9 +77,34 @@ NEW ──writeInit()──▶ AWAITING_RESP ──readResp()──▶ ESTABLISH
 
 The handshake carries application early-data, framed by the [#273](mobile-protocol-v2-wire-layer.md) wire models and **always (de)serialized via `MobileJson`** (a default `Json {}` would drop defaulted fields like `role`/`protocol_versions`, which is wire-breaking):
 
-- **`hello`** (in `noise_init`) — `HelloClientPayload(deviceName, clientVersion, token, lastEventId = lastEventId())` (`role = "client"`, `protocolVersions = ["v2"]`, and `capabilities = ["interactive", "multi_agent"]` default) inside `Envelope(id = 1, type = "hello", ts = <RFC3339>, payload)`. The daemon validates the token **inside the encrypted early-data**; the WebSocket upgrade also carries the required token [header](relay-ws-transport.md#headers). The `capabilities` default ([#401](../codebase/401.md), extended [#1119](https://github.com/pyrycode/pyrycode-mobile/issues/1119)) advertises the v2 features the phone understands and rides the wire via `MobileJson`'s `encodeDefaults` — see the [wire layer § Capability negotiation](mobile-protocol-v2-wire-layer.md#capability-negotiation-401). `lastEventId` ([#416](../codebase/416.md)) is the [replay cursor](replay-cursor.md), read **live** via the supplier here; a `null` (fresh connection, nothing observed) is **omitted on encode** by `explicitNulls = false`, so a fresh `hello` stays byte-identical to today.
+- **`hello`** (in `noise_init`) — `HelloClientPayload(deviceName = clientInfo.deviceName, clientVersion = clientInfo.clientVersion, token = token, clientFeatures = MOBILE_CLIENT_FEATURES, lastEventId = lastEventId())` (`role = "client"`, `protocolVersions = ["v2"]`, and `capabilities = ["interactive", "multi_agent", "stop_background_task"]` default) inside `Envelope(id = 1, type = "hello", ts = <RFC3339>, payload)`. The daemon validates the token **inside the encrypted early-data**; the WebSocket upgrade also carries the required token [header](relay-ws-transport.md#headers). The `capabilities` default ([#401](../codebase/401.md), extended [#1119](https://github.com/pyrycode/pyrycode-mobile/issues/1119)) advertises the v2 features the phone understands and rides the wire via `MobileJson`'s `encodeDefaults` — see the [wire layer § Capability negotiation](mobile-protocol-v2-wire-layer.md#capability-negotiation-401). `lastEventId` ([#416](../codebase/416.md)) is the [replay cursor](replay-cursor.md), read **live** via the supplier here; a `null` (fresh connection, nothing observed) is **omitted on encode** by `explicitNulls = false`, without emitting `last_event_id` as zero or null.
 - **`hello_ack`** (in `noise_resp`) — decode `Envelope`, require `type == "hello_ack"`, decode the whole `HelloAckPayload` (since [#401](../codebase/401.md) `parseHelloAck` returns the payload, not just `connId`). Any malformed/wrong-type/missing-`conn_id` → `NoiseSessionException("malformed hello_ack")` (a non-array `capabilities` is a malformed payload too → same fail-closed throw).
 - **Negotiated capabilities ([#401](../codebase/401.md))** — `readResp` extracts both `connId` and `capabilities.toSet()` from the decoded `hello_ack`. The set is surfaced on a **new property** `val negotiatedCapabilities: Set<String>`, mirroring `connId` exactly (written once before `state = ESTABLISHED`; **throws `IllegalStateException` until established**). The **wire `List` → surface `Set`** conversion happens once here, at the post-MAC trust crossing — capabilities are a membership set (`CAPABILITY_INTERACTIVE in negotiatedCapabilities` answers "is it granted?"), and a `Set` dedups a daemon that repeats an entry. A daemon that echoes none decodes to the empty default → empty set (not granted). This is **surfacing-only**: the session gates nothing on the set; the [pump](noise-session-pump.md) carries it onto `PumpState.Open.capabilities` for the eventual decode gate (#385) / stall gate (#395).
+
+`buildHello()` sends `MOBILE_CLIENT_FEATURES` from `MobileWireModels.kt` on
+every fresh connection, including reconnects ([#1846](https://github.com/pyrycode/pyrycode-mobile/issues/1846)).
+It is app-owned constant metadata, never sourced from user input, an intent or a
+daemon frame. The exact single-line report is:
+
+```text
+Markdown links to absolute paths of served .md or .markdown files open in the in-app reader. Wrap paths containing spaces in angle brackets: [Note](</Users/me/My Vault/note.md>). Paths in backticks are not links. Picked files and shared photos are uploaded to the daemon when Send is tapped; Claude receives their daemon-side paths with an instruction to use Read, not inline file contents.
+```
+
+This describes [markdown reader links](markdown-reader-screen.md) and
+[attachment delivery](attachment-upload.md); it does not guarantee Claude invokes
+Read or understands every attached file type. It grants no capability or authority
+and does not alter `hello_ack` negotiation. Identity, token redaction and token
+release after `writeInit()` retain their existing behavior. In-place re-key still
+uses empty early-data, so it sends neither this report nor another hello.
+
+The daemon independently admits the authenticated report for prompt composition.
+Its authoritative rules remain in pyrycode `docs/protocol-mobile.md`: wire
+retention permits 1024 bytes, while prompt admission requires nonblank text of at
+most 512 UTF-8 bytes with no C0 (U+0000–U+001F), DEL (U+007F), C1
+(U+0080–U+009F) controls or double quotes. The app report is 390 UTF-8 bytes and
+meets the stricter bound. Authentication and successful serialization alone do
+not establish prompt admissibility; the wire model preserves nonempty values
+[verbatim](mobile-protocol-v2-wire-layer.md#helloclientpayload--the-hello-payload-in-noise_init-early-data).
 
 The `Envelope.payload_encrypted` open seam from [#273](mobile-protocol-v2-wire-layer.md) is **resolved as: not here.** This session's transport surface is raw byte arrays; it never constructs an application `noise_msg` envelope. `payload_encrypted` belongs with the application message set ([#278](https://github.com/pyrycode/pyrycode-mobile/issues/278)) that builds those envelopes — adding it here would be speculative and untested.
 
@@ -175,6 +200,15 @@ key-buffer wiping and single-connection algorithms are unchanged.
 - **Replay** is inherently resisted by the monotonic transport nonce (the session never calls `setNonce` or resets a `CipherState`).
 
 ## Testing
+
+`NoiseIkSessionTest.handshake_eachConnectionSendsExactAdmissibleClientFeatures`
+decrypts two fresh connections through `TestResponder` and compares the report
+against an independent literal, alongside identity, token redaction and the
+unchanged capability list. Reading the constant or a DTO alone would not prove
+`buildHello()` sends it inside encrypted early-data. `MobileWireCodecTest` covers
+absent/empty omission, verbatim nonempty round-trip and the app constant's prompt
+admission constraints. These are hermetic wire/handshake proofs; they do not
+exercise real-Claude prompt rendering.
 
 `di/RelayConnectionFactoryTest.kt` exercises two explicit-record bundles with
 distinct real Noise responder keys and device keys while sharing a relay URL.

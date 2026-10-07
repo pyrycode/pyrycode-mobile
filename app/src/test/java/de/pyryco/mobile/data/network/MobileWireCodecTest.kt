@@ -3,6 +3,9 @@ package de.pyryco.mobile.data.network
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -127,6 +130,49 @@ class MobileWireCodecTest {
 
         val encoded = MobileJson.encodeToString(decoded)
         assertEquals(decoded, MobileJson.decodeFromString<HelloAckPayload>(encoded))
+    }
+
+    @Test
+    fun helloClientPayload_clientFeaturesRoundTripVerbatim() {
+        val features = "  Reader and uploads\n\u0085\"  "
+        val fixture =
+            JsonObject(
+                mapOf(
+                    "device_name" to JsonPrimitive("phone"),
+                    "client_version" to JsonPrimitive("1"),
+                    "token" to JsonPrimitive("secret"),
+                    "client_features" to JsonPrimitive(features),
+                ),
+            )
+        val hello = MobileJson.decodeFromString<HelloClientPayload>(fixture.toString())
+        assertEquals(features, hello.clientFeatures)
+        val encoded = MobileJson.parseToJsonElement(MobileJson.encodeToString(hello)).jsonObject
+        assertEquals(features, encoded["client_features"]?.jsonPrimitive?.content)
+        assertEquals(hello, MobileJson.decodeFromString<HelloClientPayload>(encoded.toString()))
+        assertFalse(hello.toString().contains("secret"))
+    }
+
+    @Test
+    fun helloClientPayload_absentOrEmptyClientFeaturesOmitKey() {
+        for (optionalField in listOf("", ",\"client_features\":\"\"")) {
+            val fixture = """{"device_name":"phone","client_version":"1","token":"secret"$optionalField}"""
+            val hello = MobileJson.decodeFromString<HelloClientPayload>(fixture)
+            assertEquals("", hello.clientFeatures)
+            assertFalse(MobileJson.parseToJsonElement(MobileJson.encodeToString(hello)).jsonObject.containsKey("client_features"))
+        }
+        val empty = HelloClientPayload(deviceName = "phone", clientVersion = "1", token = "secret", clientFeatures = "")
+        assertFalse(MobileJson.parseToJsonElement(MobileJson.encodeToString(empty)).jsonObject.containsKey("client_features"))
+    }
+
+    @Test
+    fun helloClientPayload_appFeaturesSatisfyPromptAdmission() {
+        val hello = HelloClientPayload(deviceName = "phone", clientVersion = "1", token = "secret", clientFeatures = MOBILE_CLIENT_FEATURES)
+        val encoded = MobileJson.parseToJsonElement(MobileJson.encodeToString(hello)).jsonObject
+        val features = encoded.getValue("client_features").jsonPrimitive.content
+        assertEquals(MOBILE_CLIENT_FEATURES, features)
+        assertTrue(features.isNotBlank())
+        assertTrue(features.toByteArray(Charsets.UTF_8).size <= 512)
+        assertFalse(features.any { it.code < 0x20 || it.code in 0x7f..0x9f || it == '"' })
     }
 
     @Test

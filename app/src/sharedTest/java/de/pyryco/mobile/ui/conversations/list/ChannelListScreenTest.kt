@@ -342,8 +342,11 @@ class ChannelListScreenTest {
         listOf(TREE_CHANNEL_ROW_TEST_TAG, TREE_CHAT_ROW_TEST_TAG).forEach { tag ->
             assertEquals("$tag left inset at $width", 12f, (bounds(hasTestTag(tag)).left - hostFold.left).value, 0.5f)
         }
+        // Figma 15:8 moved the section plus flush with the host pencil (#1203's 10dp trailing inset is
+        // gone): every pen and plus glyph in the current frame shares one right edge, 2px from the row's
+        // content edge, so the two controls' right edges now coincide.
         listOf(treeHostChannelAddTestTag("pyry"), treeHostChatAddTestTag("pyry")).forEach { tag ->
-            assertEquals("$tag right edge at $width", 10f, (hostPen.right - bounds(hasTestTag(tag)).right).value, 0.5f)
+            assertEquals("$tag right edge at $width", 0f, (hostPen.right - bounds(hasTestTag(tag)).right).value, 0.5f)
         }
     }
 

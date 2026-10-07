@@ -1,0 +1,1 @@
+barDp=DpRect(left=0.0.dp, top=24.0.dp, right=412.0.dp, bottom=93.0.dp) pillDp=DpRect(left=317.0.dp, top=121.0.dp, right=392.0.dp, bottom=145.0.dp) textDp=DpRect(left=325.0.dp, top=125.0.dp, right=384.0.dp, bottom=141.0.dp) cornersDp=6 typography=bodySmall colors=primaryContainer/onPrimaryContainer

@@ -26,6 +26,7 @@ import kotlinx.coroutines.withContext
 internal class SharePayload(
     val text: String,
     val uris: List<Uri>,
+    val shortcutId: String? = null,
 ) {
     override fun toString(): String = "SharePayload"
 
@@ -55,7 +56,20 @@ internal class SharePayload(
                         val clip = intent.clipData
                         if (clip == null) emptyList() else (0 until clip.itemCount).mapNotNull { clip.getItemAt(it).uri }
                     }
-                if (text.isBlank() && uris.isEmpty()) null else SharePayload(text, uris.distinct())
+                if (text.isBlank() &&
+                    uris.isEmpty()
+                ) {
+                    null
+                } else {
+                    SharePayload(
+                        text,
+                        uris.distinct(),
+                        (extras?.get(Intent.EXTRA_SHORTCUT_ID) as? String)?.takeIf {
+                            it.isNotBlank() &&
+                                it.length <= 256
+                        },
+                    )
+                }
             } catch (_: Exception) {
                 RelayLog.d { "event=share_intake outcome=malformed" }
                 null
@@ -70,6 +84,7 @@ internal class SharedContent(
     val text: String,
     val files: List<PickedAttachment>,
     val capturing: Boolean,
+    val shortcutId: String? = null,
 ) {
     override fun toString(): String = "SharedContent"
 }
@@ -89,7 +104,7 @@ internal class ShareIntakeViewModel(
     fun accept(payload: SharePayload) {
         cancel()
         val version = generation
-        pending.value = SharedContent(version, payload.text, emptyList(), true)
+        pending.value = SharedContent(version, payload.text, emptyList(), true, payload.shortcutId)
         RelayLog.d { "event=share_intake outcome=started count=${payload.uris.size}" }
         capturing =
             viewModelScope.launch {
@@ -107,22 +122,27 @@ internal class ShareIntakeViewModel(
                         withContext(io) { owned = capture(uri, failures::add) }
                         val current = pending.value?.takeIf { it.generation == version } ?: break
                         failures.forEach { noticeChannel.trySend(it.message to 0) }
-                        owned?.let { pending.value = SharedContent(version, current.text, current.files + it, true) }
+                        owned?.let { pending.value = SharedContent(version, current.text, current.files + it, true, current.shortcutId) }
                         owned = null
                     } finally {
                         owned?.ownedPaste?.release()
                     }
                 }
                 pending.value?.takeIf { it.generation == version }?.let {
-                    pending.value = SharedContent(version, it.text, it.files, false)
+                    pending.value = SharedContent(version, it.text, it.files, false, it.shortcutId)
                     RelayLog.d { "event=share_intake outcome=ready count=${it.files.size}" }
                 }
             }
     }
 
     /** Main-thread synchronous transfer, before navigation can suspend or a second tap can run. */
-    fun select(target: HostConversationTarget): Boolean {
-        val batch = pending.value?.takeUnless { it.capturing } ?: return false
+    fun select(
+        target: HostConversationTarget,
+        expectedGeneration: Long? = null,
+    ): Boolean {
+        val batch =
+            pending.value?.takeUnless { it.capturing || (expectedGeneration != null && it.generation != expectedGeneration) }
+                ?: return false
         pending.value = null
         generation++
         var refused = 0
@@ -153,6 +173,12 @@ internal class ShareIntakeViewModel(
         }
         RelayLog.d { "event=share_intake outcome=selected count=${batch.files.size}" }
         return true
+    }
+
+    fun fallback(expectedGeneration: Long) {
+        val batch = pending.value?.takeIf { it.generation == expectedGeneration } ?: return
+        pending.value = SharedContent(batch.generation, batch.text, batch.files, batch.capturing)
+        RelayLog.d { "event=share_shortcut_fallback" }
     }
 
     fun cancel() {

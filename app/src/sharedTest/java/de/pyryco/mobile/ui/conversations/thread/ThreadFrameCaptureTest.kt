@@ -16,6 +16,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.ForcedSize
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
@@ -313,11 +314,7 @@ class ThreadFrameCaptureTest {
         val back = rule.onNodeWithContentDescription(string(R.string.cd_back)).assertIsDisplayed().getUnclippedBoundsInRoot()
         val overflow = rule.onNodeWithContentDescription(string(R.string.cd_more_actions)).assertIsDisplayed().getUnclippedBoundsInRoot()
         capture("320x640-before-copy", prefix = "message-1207")
-        // #1621: the thread hides the meta row until the bubble is tapped.
-        rule
-            .onNodeWithText(message.message.content, substring = true)
-            .performScrollTo()
-            .performClick()
+        rule.onAllNodesWithText(" - ", substring = true, useUnmergedTree = true).assertCountEquals(0)
         val copy =
             rule
                 .onNodeWithContentDescription(string(R.string.cd_thread_copy_message))
@@ -328,11 +325,12 @@ class ThreadFrameCaptureTest {
         assertTrue(back.right <= overflow.left)
         assertTrue(messageRegion.height > 0.dp)
         assertTrue(copy.left >= messageRegion.left && copy.right <= messageRegion.right)
-        // Tap outside the 16dp visual row: Compose must still route the pointer to copy at 1.5x text.
+        // Copy is available before a bubble tap, including at the target edge at 1.5x text.
         rule.onNodeWithContentDescription(string(R.string.cd_thread_copy_message)).performTouchInput {
-            click(Offset(center.x, bottom + 14.dp.toPx()))
+            click(Offset(center.x, bottom - 1f))
         }
         assertEquals(message.message.content, clipboard.copiedText)
+        rule.onAllNodesWithText(" - ", substring = true, useUnmergedTree = true).assertCountEquals(0)
         capture("320x640-large-text")
         rule.onNodeWithContentDescription(string(R.string.cd_more_actions)).performClick()
         rule.onNodeWithText(string(R.string.thread_overflow_channel_info)).assertIsDisplayed()

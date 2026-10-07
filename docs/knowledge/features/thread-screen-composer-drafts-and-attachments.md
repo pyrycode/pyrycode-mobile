@@ -17,6 +17,66 @@ Unsent composer text is owned by `ComposerDraftStore` ([#789](https://github.com
 
 Both draft evictions are synchronous `MutableStateFlow.update` calls with no coroutine of their own; `ThreadViewModel.draft` picks up an eviction the same way it picks up any other emission, and a `StateFlow` dropping equal consecutive values means evicting one host's bucket cannot recompose another host's composer. No log line on either path carries draft text — a draft is private message content, and neither `ObservablePairedServerStore` nor `ComposerDraftStore` is a `data class`, so a bound `onHostRemoved` receiver can't render into a crash trace via a generated `toString()`.
 
+**Suggested-reply ownership (#1866).** `suggestedReply: StateFlow<SuggestedReply?>`
+is heap-only state in one destination ViewModel, separate from the draft store.
+An offer's identity belongs to that host/conversation opening: identical wire ids
+or text from another destination cannot authorize submission. Draft edits revoke
+the token without consuming the revision, so erasure may reveal a fresh token
+for the same current suggestion. Attachment-send changes likewise revoke tokens;
+the placeholder can stay visible while gesture/accessibility submission is blocked.
+See [input button confirmation](thread-input-bar.md#the-message-input-button--one-control-two-actions).
+
+**Reply quotes (#1818).** A bubble's side reply calls `ThreadViewModel.replyToMessage`,
+which reads the latest draft from `ComposerDraftStore` for this exact
+server/conversation pair, not from the derived `draft` flow, and appends the quote
+through `onDraftChange`. The quote is a `User:` or `Assistant:` line, then the full
+`Message.content` in straight double quotes with nothing escaped, then one newline,
+so the cursor lands on an empty line. A nonempty draft without a final newline gets
+one before the label. Content is the tap-time snapshot, so later streaming chunks do
+not rewrite it, and the 100,000-character clipboard bound does not apply. Tool rows
+return no quote. Pending attachments stay staged, nothing is sent, and the log line
+carries no text. Explicit Send then takes the ordinary path, including its outer
+whitespace trim.
+
+Focus is a one-shot hand-off. `ThreadScreen` keeps the returned quote as a pending
+reply, remembered per conversation and not saved. `ThreadInputBar` applies it to the
+field with the cursor at the end, requests focus, shows the keyboard and then clears
+it. Recomposition, later typing and reopening the conversation therefore do not
+replay the focus request. A remounted sole text field can inherit platform focus on
+its own, so the no-replay test counts keyboard-show requests and gives focus another
+target rather than asserting that the field is unfocused.
+
+Initial conversation snapshots deliberately omit `currentSessionId`. Resolve the
+active session from existing fresh, non-held `settingsReadings` until a transition
+sets `lastKnownSessionId`, which takes precedence thereafter. Reuse that settings
+subscription; another settings request is unnecessary. Switch suggestion reads
+with `flatMapLatest`, clearing the departing reading before observing the new
+session. The real repository harness establishes its session via `session_transition`.
+
+Eager turn/connection collectors invalidate suggestions even offscreen. A new
+turn, daemon null clear, session replacement or connection loss removes the offer.
+Consumption, turn, session and disconnect invalidation suppress the observed
+revision per session: idle or same-revision reconciliation cannot resurrect it;
+a newer valid revision can. **Repository absence must clear only the visible
+reading, preserving `observedSuggestionRevisions`.** Teardown can emit absence
+before Offline or session replacement reaches another collector. Deriving the
+invalidation watermark from the now-null reading would let the old revision
+reappear after reconnect or switching back. The null-before-Offline and
+null-before-session-replacement regressions in `ThreadViewModelReplySuggestionTest`
+pin this ordering alongside stale-token rejection.
+
+A lower revision identifies a fresh daemon/connection lifetime under the
+[#1865 repository contract](conversation-repository.md). It resets that session's
+local suppression, allowing a restarted daemon's revision 1 after a suppressed
+revision 50. Same-revision reconciliation remains suppressed and old identity
+tokens remain revoked. Keeping a watermark forever would hide valid suggestions
+after daemon restart; discarding it on absence would revive invalidated ones.
+`sendSuggestedReply` checks exact-empty store draft, current reading/session and
+token identity, idle phase, connectivity and attachment-send exclusion on Main,
+then consumes before suspension. Shared submission preserves suggested text
+verbatim, snapshots pending files normally and never edits a draft; text typed
+during upload survives. Ordinary typed sends retain trimming and guarded clearing.
+
 ### Composer pending attachments
 
 Beside the text map, `ComposerDraftStore` keeps a second `(serverId, conversationId)`-keyed map of

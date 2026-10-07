@@ -59,13 +59,12 @@ data class HistoryPagePayloadDto(
  * rather than an enum — an unrecognised type must survive the decode rather than fail it. Both are
  * replayed content and stay untrusted; see [HistoryEntry].
  *
- * [id] is the durable on-disk log id, a `Long` for the same reason a queued message's id is one (a
- * wire counter, not a `String` — the pyrycode#720 trap). It is **not** an `event_id` — see
- * [HistoryEntry.id].
+ * [id] is the exact unsigned durable on-disk log id, never an `event_id`. Strict numeric parsing
+ * rejects coercion; [toHistoryPage] rejects zero. See [HistoryEntry.unsignedId].
  */
 @Serializable
 data class HistoryEntryDto(
-    val id: Long,
+    @Serializable(with = ReadMarkIdSerializer::class) val id: ULong,
     val type: String,
     val payload: JsonElement,
     val ts: String,
@@ -75,8 +74,8 @@ data class HistoryEntryDto(
  * Map a decoded [HistoryPagePayloadDto] to its domain [HistoryPage], preserving the wire's
  * newest-first entry order verbatim (no re-sort, no re-key, no dedup — ordering is daemon-authoritative).
  *
- * `ts` → [HistoryEntry.timestamp] via `Instant.parse` is the **only** failure site after a successful
- * structural decode: a malformed timestamp throws [IllegalArgumentException] (kotlinx-datetime) rather
+ * Positive identity validation and `ts` → [HistoryEntry.timestamp] via `Instant.parse` can fail after
+ * structural decode: zero or a malformed timestamp throws [IllegalArgumentException] rather
  * than punning a default, exactly as [MessagePayloadDto.toMessage] does for an envelope `ts`. Both
  * failure kinds are scoped to the one awaiting caller and mutate nothing.
  */
@@ -85,7 +84,7 @@ fun HistoryPagePayloadDto.toHistoryPage(): HistoryPage =
         entries =
             entries.map { entry ->
                 HistoryEntry(
-                    id = entry.id,
+                    unsignedId = entry.id,
                     type = entry.type,
                     payload = entry.payload,
                     timestamp = Instant.parse(entry.ts),

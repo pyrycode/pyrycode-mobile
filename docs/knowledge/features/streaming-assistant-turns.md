@@ -210,6 +210,17 @@ segments existed.
   and caret removal on finalization. Neither observation has been executed for
   #1754; the local step and Compose-clock tests cover its timing contract.
 
+## Testing
+
+The held-stream deterministic scenario captures the displayed prefix's reply ID
+before sending the fixture-release message. That send is real user input and can
+produce another assistant turn after the fixture completes. Select exactly one
+assistant with the captured `held.id` for completion, retaining duplicate-ID
+rejection and the exact text, non-streaming, idle, displayed-body and caret checks.
+A conversation-wide assistant singleton can fail despite correct streaming (#1793).
+See the [stream scenario](../../e2e-interactive-stream.md#scenarios-454) for the
+causal release and its harness.
+
 ## Security
 
 `security-sensitive`. Two threats, both covered:

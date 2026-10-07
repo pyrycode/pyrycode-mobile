@@ -48,7 +48,7 @@ sealed interface ThreadRow {
     ) : ThreadRow
 
     /**
-     * A run of two or more adjacent tool rows, drawn as one "Using tools: N" header (#1635), produced by
+     * A run of adjacent tools or a joined Agent block, drawn as one "Using tools: N" header (#1635), produced by
      * [foldToolRuns]. Render-time only, like the queued fold.
      *
      * @param runId The run's first tool row's [Message.id] — its `tool_use_id`. New tool rows join a run
@@ -146,9 +146,15 @@ internal fun foldQueuedRows(
 
 /**
  * Fold each maximal run of two or more adjacent tool rows in [rows] into one [ThreadRow.ToolRun] (#1635),
- * the "Collapse assistant tool uses" setting's whole effect on the thread. Any other row ends a run, a lone
- * tool row passes through as itself, and a subagent's tool rows are tool rows, so they join the run they sit
- * in. A run whose id is in [expandedRuns] is followed by its own rows, unchanged, so they keep their keys,
+ * the "Collapse assistant tool uses" setting's whole effect on the thread. Outside joined background
+ * blocks, any other row ends a run and a lone tool row passes through as itself.
+ *
+ * A background Agent block's own root call is never part of that fold (#1827 follow-up): Figma
+ * `795:7158`/`789:10437` keep "Agent", its title and its status visible no matter how many rows its
+ * block later picks up, so the root always draws as itself, same as today. Its *other* rows — tool and
+ * assistant children alike — still fold together below it, so prose does not split the block or escape
+ * its visibility control, and a subagent's tool rows are tool rows, so they join the run they sit in. A
+ * run whose id is in [expandedRuns] is followed by its own rows, unchanged, so they keep their keys,
  * their nesting depth and their #1577 flush join.
  *
  * Runs after [foldQueuedRows]: a queued row is never a tool row, so it ends a run like any other. O(rows).
@@ -160,23 +166,31 @@ internal fun foldToolRuns(
     val folded = ArrayList<ThreadRow>(rows.size)
     var start = 0
     while (start < rows.size) {
+        val delivered = rows[start] as? ThreadRow.Delivered
+        val block = delivered?.agentBlockId
+        if (block != null && block == delivered.deliveredMessageId()) {
+            folded += rows[start]
+            start++
+            continue
+        }
         var end = start
         while (end < rows.size &&
-            rows[end].isToolRow() &&
-            (rows[end] as ThreadRow.Delivered).agentBlockId == (rows[start] as? ThreadRow.Delivered)?.agentBlockId
+            (rows[end].isToolRow() || block != null) &&
+            rows[end] is ThreadRow.Delivered &&
+            (rows[end] as ThreadRow.Delivered).agentBlockId == block
         ) {
             end++
         }
-        if (end - start >= 2) {
-            val run = rows.subList(start, end)
-            val tools = run.map { ((it as ThreadRow.Delivered).item as ThreadItem.MessageItem).message }
+        val run = rows.subList(start, end)
+        val tools = run.filter { it.isToolRow() }.map { ((it as ThreadRow.Delivered).item as ThreadItem.MessageItem).message }
+        if (end - start >= 2 && tools.isNotEmpty()) {
             val runId = tools.first().id
             val expanded = runId in expandedRuns
             folded += ThreadRow.ToolRun(runId = runId, tools = tools, expanded = expanded)
             if (expanded) folded += run
             start = end
         } else {
-            // Zero or one tool row: it, or the non-tool row that stopped the scan, draws as itself.
+            // Zero or one tool row, or a block remainder with no tool row at all: each row draws as itself.
             folded += rows[start]
             start++
         }
@@ -306,3 +320,6 @@ private fun ThreadItem.userEchoId(): String? =
 /** Tool outlines join only inside the same background block or ordinary run. */
 internal fun ThreadRow.joinsToolRow(next: ThreadRow?): Boolean =
     isToolRow() && next.isToolRow() && (this as ThreadRow.Delivered).agentBlockId == (next as ThreadRow.Delivered).agentBlockId
+
+/** This row's own [Message.id], for telling a background block's root row apart from its children in [foldToolRuns]. */
+private fun ThreadRow.Delivered.deliveredMessageId(): String? = (item as? ThreadItem.MessageItem)?.message?.id

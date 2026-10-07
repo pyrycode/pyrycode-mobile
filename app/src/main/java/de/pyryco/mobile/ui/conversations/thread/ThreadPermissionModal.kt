@@ -81,7 +81,7 @@ internal fun LazyListScope.permissionRequestItems(
     gutter: Modifier,
 ) {
     item(key = "permission-cancel:${open.modalId}") {
-        Box(gutter.testTag("permission-request-cancel"), contentAlignment = Alignment.TopStart) {
+        Box(gutter.padding(vertical = 4.dp).testTag("permission-request-cancel"), contentAlignment = Alignment.TopStart) {
             ModalCancelButton(
                 label = stringResource(R.string.modal_cancel),
                 onClick = { onCancel(open.modalId) },
@@ -89,8 +89,10 @@ internal fun LazyListScope.permissionRequestItems(
             )
         }
     }
+    // Figma 668:3186: the card sits flush on the stream's own top inset when it is the newest item, with no
+    // extra top gutter (#1601) — only a bottom gutter separates it from whatever follows.
     item(key = "permission-card:${open.modalId}") {
-        Box(gutter) {
+        Box(gutter.padding(bottom = 4.dp)) {
             PermissionRequestCard(open, armedOptionId, connected, onOption, alwaysAllowAccepted, onAlwaysAllowChanged)
         }
     }
@@ -120,10 +122,13 @@ private fun PermissionRequestCard(
             // Figma `639:2242`: the title is the card's first line, in the card's on-background content colour.
             Text(
                 text = open.title.take(MAX_PERMISSION_TEXT),
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleMedium.copy(lineHeightStyle = ContextLineBox),
                 modifier = Modifier.semantics { heading() }.testTag("permission-request-title"),
             )
-            Text(text = open.prompt.take(MAX_PERMISSION_TEXT), style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = open.prompt.take(MAX_PERMISSION_TEXT),
+                style = MaterialTheme.typography.bodyLarge.copy(lineHeightStyle = ContextLineBox),
+            )
             if (!open.context.isEmpty) PermissionContext(open.context)
             if (open.offersAlwaysAllow) {
                 AlwaysAllowOffer(
@@ -158,7 +163,7 @@ private fun PermissionRequestCard(
                         if (isArmed) {
                             Text(
                                 text = stringResource(R.string.modal_armed_option_hint, label),
-                                style = MaterialTheme.typography.labelMedium,
+                                style = MaterialTheme.typography.labelMedium.copy(lineHeightStyle = ContextLineBox),
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                             )
                         }
@@ -242,16 +247,25 @@ private fun AlwaysAllowOffer(
             }
             Text(
                 text = stringResource(R.string.modal_always_allow_label),
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.labelMedium.copy(lineHeightStyle = ContextLineBox),
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onBackground,
             )
         }
-        rules.forEach { rule -> Text(text = rule.take(MAX_PERMISSION_TEXT), style = MaterialTheme.typography.bodyMedium) }
+        rules.forEach { rule ->
+            Text(
+                text = rule.take(MAX_PERMISSION_TEXT),
+                style = MaterialTheme.typography.bodyMedium.copy(lineHeightStyle = ContextLineBox),
+            )
+        }
     }
 }
 
-/** Figma draws each context line in its full 20 dp line box; the theme's styles would trim it to the glyphs. */
+/**
+ * Figma draws every line on this card — title, prompt, context, the grant offer, an option's label, the
+ * armed confirm hint — in its full line box; the theme's styles would otherwise trim each to its glyphs,
+ * shaving a few px off the card's own rhythm and its height against the frame (#1601).
+ */
 private val ContextLineBox = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
 
 /**
@@ -328,7 +342,7 @@ private fun ModalOptionButton(
                 Text(
                     label,
                     modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyLarge.copy(lineHeightStyle = ContextLineBox),
                     fontWeight = FontWeight.Medium,
                     textAlign = TextAlign.Center,
                 )
@@ -349,7 +363,7 @@ private fun ModalOptionButton(
                 Text(
                     label,
                     modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyLarge.copy(lineHeightStyle = ContextLineBox),
                     fontWeight = FontWeight.Medium,
                     textAlign = TextAlign.Center,
                 )
@@ -371,7 +385,7 @@ private fun ModalOptionButton(
                 Text(
                     label,
                     modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyLarge.copy(lineHeightStyle = ContextLineBox),
                     fontWeight = FontWeight.Medium,
                     textAlign = TextAlign.Center,
                 )

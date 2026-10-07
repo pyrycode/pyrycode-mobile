@@ -7,8 +7,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * #1352's ask band measures distance from the reversed list's oldest end. #1562 gave the list top content
- * padding, which under `reverseLayout` lies past the oldest row; it must not widen the band.
+ * Prefetch measures the reversed list's loaded distance using exact edges or estimated unseen rows.
+ * Top content padding lies past the oldest row and must not widen the band.
  */
 class ThreadOldestEndBandTest {
     @Test
@@ -28,6 +28,45 @@ class ThreadOldestEndBandTest {
     fun an_oldest_row_not_laid_out_is_outside_the_band() {
         val info = FakeLayoutInfo(visibleItemsInfo = emptyList(), viewportEnd = VIEWPORT, after = PADDING)
         assertFalse(info.isNearOldestEnd(OLDEST, BAND.toFloat()))
+    }
+
+    @Test
+    fun hiddenOldestRowUsesMixedMeasuredHeightsAndSpacing() {
+        // Highest visible edge is at the viewport edge. Four unmeasured rows remain,
+        // estimated at the visible mean of 300px plus 10px spacing each.
+        val info =
+            FakeLayoutInfo(
+                visibleItemsInfo = listOf(FakeItem(24, 0, 200), FakeItem(25, 210, 400)),
+                viewportEnd = 610,
+                after = 0,
+            )
+        assertTrue(info.isNearOldestEnd(29, 1240f))
+        assertFalse(info.isNearOldestEnd(29, 1239f))
+    }
+
+    @Test
+    fun twoViewportThresholdChangesWithTheCurrentViewportHeight() {
+        val info = FakeLayoutInfo(listOf(FakeItem(26, 200, 300)), viewportEnd = 500, after = 0)
+        assertTrue(info.isNearOldestEnd(29, 2f * 500))
+        assertFalse(info.isNearOldestEnd(29, 2f * 400))
+    }
+
+    @Test
+    fun promptsAndTheTailDoNotBiasTheUnseenRowEstimate() {
+        val info =
+            FakeLayoutInfo(
+                listOf(FakeItem(0, -5000, 5000), FakeItem(5, 0, 100), FakeItem(7, 110, 5000)),
+                viewportEnd = 100,
+                after = 28,
+            )
+        assertTrue(info.isNearOldestEnd(6, 138f, firstHistoryIndex = 2))
+        assertFalse(info.isNearOldestEnd(6, 137f, firstHistoryIndex = 2))
+    }
+
+    @Test
+    fun emptyHistoryIsAlwaysPullable() {
+        val info = FakeLayoutInfo(emptyList(), viewportEnd = 600, after = 28)
+        assertTrue(info.isNearOldestEnd(-1, 1200f))
     }
 
     /** The oldest row [distanceFromEnd] px short of the scroll's oldest end, past [afterPadding] px of padding. */
@@ -55,6 +94,7 @@ class ThreadOldestEndBandTest {
         override val viewportStartOffset: Int = 0
         override val viewportEndOffset: Int = viewportEnd
         override val totalItemsCount: Int = OLDEST + 1
+        override val mainAxisItemSpacing: Int = 10
         override val reverseLayout: Boolean = true
         override val afterContentPadding: Int = after
     }

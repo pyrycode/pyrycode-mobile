@@ -74,9 +74,13 @@ never changes.
 The launch slot becomes a separately keyed `agent-start:<Agent message id>` marker: a Busy dot and
 “Agent started, still working”, or a Success dot and “Agent finished” for any terminal status,
 beside “Go to agent ↓”. The second line is an ellipsized launch description. The description is inert `Text`,
-bounded to 4096 characters and never logged. Tapping the marker opens a containing collapsed tool run,
-then a screen-owned effect scrolls to the Agent header in the reversed list. It leaves the tool body
-collapsed unless the reader had already opened it, and works before and after finish.
+bounded to 4096 characters and never logged. Tapping the marker only scrolls: a screen-owned effect finds
+the Agent header's row in the reversed list and scrolls to it. It never opens a collapsed run on the
+reader's behalf — the root header always draws as itself regardless (#1827 follow-up), and its own
+children's run opens only from its own tap, via `ToolRunRow`'s toggle — and works before and after finish.
+Navigation preserves the reader's collapse state. A placement test must assert that state after
+navigation and explicitly open the owned child run before inspecting its prose (#1904); reaching
+the always-visible Agent root does not prove that its children are visible.
 
 Running families sit below every ordinary and queued row. Multiple families keep unknown launches
 in their roster slots and sort known launches within the remaining slots; once all start history is
@@ -107,6 +111,51 @@ multiple agents, pagination/reload, cycles, unknown joins and unchanged reposito
 `BackgroundAgentBlocksScreenTest` covers marker navigation, placement and expansion transitions.
 See [cache-only limitations](thread-screen-previews-and-edge-cases.md#edge-cases--limitations)
 and [the live ladder](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
+
+### Attributed assistant prose in Agent blocks (#1827)
+
+`foldBackgroundAgentBlocks` also claims assistant rows whose nonempty `parentToolUseId` reaches a
+joined background Agent through the same memoised owner lookup it uses for tool rows. A claimed
+segment moves into that block once, in loaded order, keeping its message id and content. Distinct
+wire lanes stay distinct rows, so two agents' replies never concatenate. An empty parent, a parent
+naming no loaded tool, a cycle, or a task with no matching Agent row keeps the ordinary top-level
+assistant rendering. A retained finished block stays a match, so a reply does not leave its block
+when the agent settles. `ThreadScreen` draws claimed prose with the unchanged `MessageBubble`,
+indented by `MessageAreaRowSpacing` (16 dp) times the parent's tool depth plus one, and tags it
+`background-agent-child:<Agent id>` for the live and scripted proofs. Parent ids are inert grouping
+hints: they never trigger an action and are never logged.
+
+The ViewModel's live synthetic row carries attribution too. `ThreadFold.reduceDelta` keeps the
+lane's first nonempty parent on `StreamingTurn`, and `render` copies it onto the synthetic message,
+so a streaming child reply never shows in the main thread before the repository row arrives.
+A replayed or older delta still enriches unknown attribution before the text sequence guard drops
+its text. The first implementation learned the parent only on in-order appends, so a lane whose
+first delta had an empty parent and whose replay carried it stayed top-level and outside the
+block's collapse control until a repository snapshot repaired it. Attribution enrichment and text
+deduplication must stay independent here, as they already are in
+`HistoryPageReducer.withAssistantDelta`. A later conflicting hint never replaces a known parent.
+
+With collapse on, `foldToolRuns` keeps the Agent root separate and folds its contiguous child
+tool/prose rows into a run when there are at least two child rows and at least one tool. A prose-only family remains attached to the root without a child-tool
+run. The run's `tools` contain only tool messages, so prose does not change its count or status.
+Ownership identifies the Agent family; the first loaded owned child tool identifies its run.
+For direct children, select the first loaded `Role.Tool` message whose
+`toolCall.parentToolUseId` equals the Agent id, then use its message id in `tool-run:<runId>`.
+The root Agent id is not that run id. Match the clickable control beneath that tag rather than
+an arbitrary "Using tools: N" label (#1904). `BackgroundAgentProseScreenTest`'s
+`agentRunControlHasStableOwnershipWhenAnOrdinaryRunHasTheSameLabel` gives both independent runs
+two tools so their labels really match, and derives the owned run from loaded child ownership.
+The control hides and reveals its prose; collapse never drops it. With collapse off the prose
+is visible as a nested child. Gaps inside a block are covered under
+[the oldest-end history demand](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777).
+
+`BackgroundAgentProseTest` probes the production projection: two agents and a main lane; empty,
+unknown, untracked and cyclic parents; running to finished; roster replacement; late parent joins;
+replay; history overlap and reconnect. It asserts contents, ownership and unique row keys rather
+than total row counts, which include markers and headers. `BackgroundAgentProseScreenTest` covers
+collapse on and off, toggling, a prose-only block, the indent, two identically labelled runs, a long
+block whose early paragraph is disposed at the newest end, and the history-gap cases. The live and
+scripted proofs are in [the live ladder](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
 
 ### Consecutive tool rows sit flush (#1577)
 
@@ -168,7 +217,9 @@ header, "Using tools: N", with a down chevron. Tapping it expands to the header 
 followed by the run's own tool rows, flush, keeping their sub-agent indent — the same flush join
 [#1577](#consecutive-tool-rows-sit-flush-1577) gives adjacent tool rows elsewhere. A lone tool row
 with no tool neighbour, and every non-tool row (assistant text, a user message, a queued row, a
-delimiter, a banner), passes through untouched and ends a run. `ThreadRow?.isToolRow()` moved from a
+delimiter, a banner), passes through untouched and ends a run. Inside a joined background-agent block
+the exception is attributed prose: it stays in the block's run, and a lone Agent with prose forms one
+([#1827](#attributed-assistant-prose-in-agent-blocks-1827)). `ThreadRow?.isToolRow()` moved from a
 private helper in `ThreadScreen.kt` to `internal` in `ThreadRow.kt` so this fold and the #1577
 neighbour check share one predicate. With the setting off, `foldToolRuns` is skipped and the thread
 draws the projected rows without tool-run headers. Background-agent placement and block boundaries

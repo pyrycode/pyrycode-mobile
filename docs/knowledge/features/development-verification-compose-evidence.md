@@ -79,6 +79,8 @@ on Kotlin/Compose libraries supplied only by the target APK during
 instrumentation. The service declaration requires `BIND_INPUT_METHOD` and remains
 under `app/src/androidTest`.
 
+For a separate dialog, translate dialog-root bounds into screen coordinates before subtracting the Activity's effective `DesignCapture.insets()` status inset. Platform root insets alone omit ATD's synthetic bars and can turn a correct 312 dp screen-area origin into 336 dp. This geometry calculation is separate from proving real bars: retain `requireRealSystemBars=true` and nonblank pixels for visual evidence. Fresh managed-device captures may be in `app/build/intermediates/managed_device_android_test_additional_output/` while a legacy outputs folder still holds older ATD sidecars. Check timestamps, API and `syntheticBars` before retaining PNGs and metadata together. See [Delete evidence](../../../app/src/androidTest/assets/design-1220/list/1861-delete-evidence.txt).
+
 ATD can also report zero physical system-bar insets and return black framebuffer
 captures while geometry assertions pass. `MainActivityInsetsDeviceTest` injects
 24 dp bars only when both reported bars are zero, preserves incoming IME insets,

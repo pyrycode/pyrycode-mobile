@@ -57,6 +57,7 @@ import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.assertDpEquals
 import de.pyryco.mobile.ui.assertRectEqualsWithinPixel
 import de.pyryco.mobile.ui.conversations.components.STATUS_GLYPH_TEST_TAG
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -810,6 +811,31 @@ class ThreadScreenModalTest {
         assertTrue("the title sits above the prompt", top("Permission required") < top(openModal().prompt))
     }
 
+    // #1601: Figma 668:3186 draws the card flush on the stream's own top inset, the same y 97 the pill
+    // (#1599) and ThreadMessageAreaTopTest's offline pill keep, with no extra top gutter of its own.
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w412dp-h892dp")
+    fun open_request_card_sits_flush_on_the_stream_top() {
+        setContent(openModal())
+
+        val card = composeTestRule.onNodeWithTag("permission-request-card").getUnclippedBoundsInRoot()
+
+        assertStreamTop(card, "card")
+    }
+
+    private fun assertStreamTop(
+        bounds: DpRect,
+        item: String,
+    ) {
+        val header = composeTestRule.onNodeWithTag("thread-top-bar").getUnclippedBoundsInRoot()
+        assertDpEquals(69.dp, header.bottom, "header retains the frame's 69dp height")
+        assertDpEquals(28.dp, bounds.top - header.bottom, "$item keeps the 28dp clearance below the header")
+        // At density 2.625 the header's rounded 14/48/6/1dp segments total 182px, plus 74px
+        // for the 28dp clearance: 256px = 97.52381dp, 1.375px above the 97dp target.
+        assertDpEquals(97.dp, bounds.top, "$item top matches the frame's y 97", pixels = 2)
+    }
+
     @Test
     fun cancel_is_start_aligned_with_the_card() {
         setContent(openModal())
@@ -914,5 +940,21 @@ class ThreadScreenModalTest {
 
         composeTestRule.onNodeWithTag(PERMISSION_REJECTION_TEST_TAG).assertDoesNotExist()
         composeTestRule.onNodeWithText(string(R.string.permission_answer_rejected)).assertDoesNotExist()
+    }
+
+    // #1599: Figma 668:3054 draws the pill flush on the stream's own top inset (y 97 in the 412x892
+    // reference frame, as ThreadMessageAreaTopTest's offline pill also pins), 24dp tall — the item's own
+    // gutter must add no further top gap, and the pill's line-height-centred text must not get trimmed
+    // short of its 4+4dp padding plus bodySmall's 16dp line.
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w412dp-h892dp")
+    fun answer_rejected_pill_sits_flush_on_the_stream_top_at_its_frame_height() {
+        setContent(modalState = ModalUiState.Hidden, answerRejected = true)
+
+        val pill = composeTestRule.onNodeWithTag(PERMISSION_REJECTION_TEST_TAG).getUnclippedBoundsInRoot()
+
+        assertStreamTop(pill, "pill")
+        assertDpEquals(24.dp, pill.height, "pill height matches the frame's 24dp")
     }
 }

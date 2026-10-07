@@ -31,7 +31,9 @@ internal class DurableGapProof(
     private var finalRows: List<ThreadItem>? = null
     val prefix = "e2e1833-" + System.currentTimeMillis()
     val olderPost = "$prefix-a-000"
-    val newestPost = "$prefix-b-059"
+    private val batchSize = 120
+    val lastOlderPost = "$prefix-a-${(batchSize - 1).toString().padStart(3, '0')}"
+    val newestPost = "$prefix-b-${(batchSize - 1).toString().padStart(3, '0')}"
 
     fun cacheBaseline() {
         DurableHistoryProbe.begin(conversationId)
@@ -54,9 +56,9 @@ internal class DurableGapProof(
         name: String,
         completedReply: () -> Unit,
     ) {
-        fault.posts(name, "$prefix-a", 60)
+        fault.posts(name, "$prefix-a", batchSize)
         completedReply()
-        fault.posts(name, "$prefix-b", 60)
+        fault.posts(name, "$prefix-b", batchSize)
         // The same durable home survives, but a fresh process cannot replay the missing ring.
         fault.stop()
         fault.start()
@@ -78,10 +80,14 @@ internal class DurableGapProof(
                 )
             }
             rule.waitUntil(30_000) { messages().any { it == newestPost } && coverageGap() }
-            rule.onNodeWithText(newestPost, useUnmergedTree = true).assertIsDisplayed()
             assertEquals("only availability asks without a gesture", listOf(true), DurableHistoryProbe.asks())
             assertTrue("older post must be outside newest page and empty replay", olderPost !in messages())
             assertTrue("reply must be outside newest page and empty replay", messages().none { it.contains(replyText, ignoreCase = true) })
+            // A history page can retain the cached reader anchor. Reveal the already delivered row
+            // through semantics, which must not become history demand or certify replay coverage.
+            rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(newestPost))
+            rule.onNodeWithText(newestPost, useUnmergedTree = true).assertIsDisplayed()
+            assertEquals("newest row visibility is inert", listOf(true), DurableHistoryProbe.asks())
             var pulls = 0
             while (coverageGap()) {
                 assertTrue("bounded durable gap walk", pulls < 6)
@@ -102,8 +108,8 @@ internal class DurableGapProof(
             assertTrue("gap spans multiple older pages", pulls >= 2)
             val posts = messages().filter { it.startsWith(prefix) }
             val expected =
-                (0 until 60).map { "$prefix-a-${it.toString().padStart(3, '0')}" } +
-                    (0 until 60).map { "$prefix-b-${it.toString().padStart(3, '0')}" }
+                (0 until batchSize).map { "$prefix-a-${it.toString().padStart(3, '0')}" } +
+                    (0 until batchSize).map { "$prefix-b-${it.toString().padStart(3, '0')}" }
             assertEquals("chronological posts, each once", expected, posts)
             val rows = messages()
             assertTrue(
@@ -118,7 +124,8 @@ internal class DurableGapProof(
             assertEquals("completed reply once", 1, reply.size)
             assertTrue(
                 "reply between the two durable post batches",
-                reply.single() > rows.indexOf("$prefix-a-059") && reply.single() < rows.indexOf("$prefix-b-000"),
+                reply.single() > rows.indexOf(lastOlderPost) &&
+                    reply.single() < rows.indexOf("$prefix-b-000"),
             )
             rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(olderPost))
             rule.onNodeWithText(olderPost, useUnmergedTree = true).assertIsDisplayed()

@@ -16,11 +16,30 @@ first-arrival layout. Keep prefix, progress and incomplete-text assertions toget
 
 Standalone bubble fixtures omit `threadOpenedAt` and retain zero-start behavior.
 For first-arrival timestamp retention and realistic follow fixtures, see
-[thread testing](thread-screen-testing.md#testing). Reopen-specific real-Claude
-`InteractiveStreamE2ETest` coverage and its held-stream
-`DeterministicInteractiveStreamE2ETest` twin remain pending in
-[#1762](https://github.com/pyrycode/pyrycode-mobile/issues/1762); existing full-suite
-live execution does not establish those reopen observations.
+[thread testing](thread-screen-testing.md#testing). The device-only
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately`
+now proves immediate reopen and prefix retention through the isolated daemon/Noise/relay path.
+An eventual combined reply can hide a temporary reset through catch-up or finalization: witness
+an appended word composing with bounded reveal time, then assert the prefix remains displayed
+while the reply is still streaming and its turn non-idle. Release the suffix only after the
+reopen assertion, and fence the terminal result separately until after the suffix display
+checkpoint. Repository text alone is insufficient. See the
+[held-stream sequence and evidence](../../e2e-interactive-stream.md#scenarios-454).
+The real-Claude
+`InteractiveStreamE2ETest.interactiveTurn_reopenOngoingReply_showsArrivedPrefixImmediately`
+remains ignored and manual/unproven because Claude can finish during navigation; pausing
+Compose cannot hold the backend. A full curated live pass does not establish this excluded
+method's reopen observation. See the [manual promotion procedure](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
+
+End-to-end word-reveal coverage must witness displayed text while the same reply
+is still streaming: a final-body check can pass even if progressive display is broken.
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`
+therefore holds two arrived deltas until the displayed-prefix checkpoint, then uses
+an explicit second enqueue to release completion. Require reply identity, repository
+settlement and idle phase before checking the final body; a blinking caret's absence
+is insufficient. The real-Claude word-reveal twin remains ignored and manual because
+its transient window cannot be fenced. Keep cadence and catch-up deadlines in local
+step tests. See the [scenario and manual evidence limits](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
 
 `app/src/test/.../components/StreamingRevealStepTest.kt` covers the pure
 `nextStreamingRevealLength` helper: a short reply advances one word per 33 ms
@@ -56,7 +75,93 @@ activity root cannot find the action after the long-press. Keep the known select
 unrelated clipboard baseline independent of the result assertion. A substituted toolbar test
 cannot establish this platform-menu behavior.
 
-`MessageMetaRowToggleTest` mounts the real `ThreadScreen` to cover show/hide and single selection, streaming-to-finished taps, links and independently visible code copy, inert attachment states, and the screen-reader toggle and hidden-row timestamp/copy semantics. Standalone `MessageBubbleTest` and palette fixtures retain the visible-row default, so their streaming copy test does not describe thread behavior. `ThreadFrameCaptureTest.compactWidthAndEnlargedText_keepFrameControlsReachable` reveals the row before testing its copy pointer target. Compose semantics assertions do not establish TalkBack's spoken order on a device.
+For the shared finished-reply assertion, acquire the real clipboard from the running activity,
+not the instrumentation target context (#1854). The target manager's invalid `android`
+operation package caused Android's package/UID check to reject baseline seeding before selection.
+After one actual Copy click, observe the independently known selected word within the existing
+deadline on the UI thread: UI idleness alone previously left an immediate read seeing the old
+baseline. Retain exact baseline verification and exact-word/shorter-than-reply assertions;
+exceptions propagate and an unchanged baseline or whole reply must time out.
+
+`FinishedReplyClipboardTest` requires the real device service for attribution enforcement and
+delayed replacement. Its controlled delayed write proves the missing result fence, while a real
+manager with invalid target attribution proves the activity acquisition repair. Restore the
+instrumentation registry before UI operations. The historical logs establish neither eventual
+Copy completion nor the origin of invalid attribution; Android 13 uses a local toolbar and
+Compose 1.10.4 writes synchronously, so a suspend API alone proves no scheduling cause. See
+the [scenario contract and counted evidence](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
+
+`MessageMetaRowToggleTest` mounts the real thread for timestamp-only show/hide,
+single selection, streaming completion, nested links/code copy/attachments and
+independent side-copy semantics (#1817). Standalone fixtures retain their visible
+timestamp default for finished messages, but streaming always suppresses it.
+`ThreadFrameCaptureTest.compactWidthAndEnlargedText_keepFrameControlsReachable`
+checks side copy before revealing the timestamp, then checks pointer reachability
+and 320dp wrapping with enlarged text. A passing ATD capture and metadata sidecar
+do not prove frame pixels: synthetic bars can suppress PNG output. The #1817
+verifier did not inspect fresh full-frame pixels or perform manual TalkBack traversal.
+
+Side geometry tests measure the configured viewport rather than Robolectric's
+outer window, whose density can differ. Measure the bubble, 13dp column, 11×12dp
+glyph and 48dp target separately at 412dp and 320dp. Pointer tests include all
+target edges and overlap into the bubble; copy must win without toggling time.
+Scope source-copy selectors to the non-merging `message-row`, so another message
+or a fenced-code control cannot satisfy the assertion. Markdown and streaming
+append tests compare current source, including the 100,000-character bound.
+
+The live and scripted copy checks share
+`app/src/sharedTest/java/de/pyryco/mobile/e2e/SideMessageCopy.kt` (#1878).
+`assertSideMessageCopy` matches the complete `formatShortDateTime` value using
+the current locale and timezone, under the copied source row in the unmerged
+tree, both before and after copying. A screen-wide ` - ` substring also matches
+usage banners and message bodies; another row's visible timestamp must not count.
+After the before-copy check, dismiss available benign notice controls before
+setting the unrelated clipboard baseline and making the single pointer tap.
+Non-dismissible error notices remain visible. `assertIsDisplayed` alone cannot
+detect a [Top overlay](thread-top-overlay.md) physically covering that target.
+Retain the exact `message.content.take(100_000)` clipboard comparison.
+
+Since #1818 both side helpers tap through `sideMessageActionTapPoint` in
+`SideMessageReply.kt`. It returns the glyph's centre when that point is clear of
+the header, the composer and the pills under the `thread-top-overlay` tag.
+Otherwise it returns the nearest clear point inside the same action's own target,
+3dp away from the shared midpoint. It scrolls the list when no point is clear, and
+fails, naming the layout, when scrolling cannot help. A short thread starts at the
+overlay's own inset (#1509), so a pill that stays up covers the top of the first
+row, and the pair lifted the copy glyph 12.5dp into it. Two pills hit this. Every
+scripted run shows the non-dismissible failed-MCP pill, which covers the whole
+copy target of the short `hello` row. The held `stream` copy tap opened Channel
+info and the clipboard kept its baseline; the logcat showed
+`event=mcp_failure_acknowledged` where `event=message_copy` was expected. The
+scripted method therefore acknowledges that pill and closes Channel info first.
+On the live host, leftovers from earlier methods raise the other-conversation
+attention pill, which leaves the lower part of the copy target clear.
+`assertSideMessageReply` checks the exact staged draft, the end cursor, field
+focus and the hidden timestamp. ATD images omit a keyboard, so both stream
+methods select the test APK's keyboard through `TestImeRule` before asserting
+keyboard visibility.
+
+`SideMessageCopyTest` exercises this same helper in eight deterministic regressions:
+banner/body separators, another row's timestamp, timestamp rejection before copy
+and after clipboard write, incorrect source rejection, streaming trailing whitespace,
+the 100,000-character cap, and real-thread warning dismissal. The last uses native
+graphics and a forced 412dp viewport through `ThreadScreen`; inert banner fixtures
+keep their separator text present through both timestamp assertions. The retained
+old-helper report executed one regression and failed on two false timestamp matches;
+the repaired report executed/passed eight with zero failures or skips. See the
+[verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1880#issuecomment-6032131614).
+Focused live repair evidence does not replace dispatcher full-suite acceptance:
+record the full run's executed, failed and skipped counts and the named ping
+method's result separately, as in the [e2e ladder](../../e2e-interactive-stream.md#verification-status).
+
+Palette guards check actual glyph pixels and glyph-on-thread-background contrast
+at ≥3:1 across static and wallpaper light/dark, theme changes and completion.
+A tint-only assertion passed while the light icon was 1.61:1 against the thread.
+Use `threadColors.background`, including the static-dark canvas overlay, rather
+than the unmodified global background. Both side glyphs, copy and reply,
+are tinted `colorScheme.primary` directly, with no backing: that role reads through
+the matching theme rather than the inverted one, so it clears 3:1 against the thread
+background on its own.
 
 `app/src/sharedTest/.../components/MessageBubblePaletteTest.kt` uses native Canvas
 pixels at the 412dp reference width to check user, finalized assistant, streaming
@@ -72,7 +177,7 @@ assert the actual fill rather than only the theme token.
 `app/src/sharedTest/.../components/MessageBubbleTest.kt` (new, #644), the rung-2 component-render layer, with a file-local fake `ClipboardManager` provided through `LocalClipboardManager`:
 
 - `bothRoles_renderBodyAndOwnMetaRow` — both roles render their body text and their own meta row.
-- `roleAlignment_userSitsRightOfAssistant_andEachClearsTheOppositeInset` — reads both bodies' rects; the user body sits right of the assistant body and each clears the opposite root edge by at least `MessageRoleInset`.
+- `roleAlignment_userSitsRightOfAssistant_andEachClearsTheOppositeInset` — reads both bodies' rects; the user body sits right of the assistant body and each clears the opposite configured viewport edge by the delivered inset plus action reservation.
 - `shortAssistantBody_hugsItsContent_whileALongOneStillGrowsToTheLane` — the regression guard for [Fill vs. hug](message-bubble.md#fill-vs-hug-the-streaming-arm-keeps-fillmaxwidth-since-644), added in the rework cycle.
 - `copy_putsOnlyThatMessagesTextOnTheClipboard` / `copy_fromTheUserBubble_putsOnlyTheUserText_onTheClipboard` — tapping one bubble's copy control captures exactly that message's `content`, never the other's.
 - `copyControl_carriesItsAccessibleNameAndButtonRole` — addressable by `cd_thread_copy_message`, `Role.Button`.

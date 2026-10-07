@@ -56,6 +56,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.ExternalResource
+import org.junit.rules.RuleChain
 import org.junit.runner.RunWith
 import org.koin.core.context.GlobalContext
 import org.robolectric.annotation.GraphicsMode
@@ -65,7 +67,31 @@ import java.io.File
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class SharePickerTest {
-    @get:Rule val compose = createComposeRule()
+    private val compose = createComposeRule()
+
+    @get:Rule
+    val rules: RuleChain =
+        RuleChain
+            .outerRule(
+                object : ExternalResource() {
+                    override fun before() {
+                        ApplicationProvider.getApplicationContext<android.content.Context>()
+                        clearDrafts()
+                    }
+
+                    override fun after() {
+                        clearDrafts()
+                    }
+                },
+            ).around(compose)
+
+    private fun clearDrafts() {
+        val drafts = GlobalContext.get().get<ComposerDraftStore>()
+        // The outer rule cleans both text and files only after the thread composition has closed.
+        for (host in listOf("demo", "another-host")) {
+            drafts.clearConversation(host, "seed-channel-personal")
+        }
+    }
 
     @Test fun sharesReuseTheFoldedOfflineTreeAndOnlyRowsChooseTheirOwnHost() {
         val entries = listOf(entry("a", RelayLinkStatus.Connected), entry("b", RelayLinkStatus.Offline))
@@ -252,13 +278,13 @@ class SharePickerTest {
         val capture = CompletableDeferred<PickedAttachment>()
         val intake = ShareIntakeViewModel(drafts, { _, _ -> capture.await() }, Dispatchers.Main.immediate)
         lateinit var nav: NavHostController
+        compose.runOnIdle { intake.accept(SharePayload("shared text", listOf(Uri.parse("content://foreign/document")))) }
         compose.setContent {
             nav = rememberNavController()
             PyrycodeMobileTheme {
                 PyryNavHost(Routes.CHANNEL_LIST, navController = nav, shareIntake = intake)
             }
         }
-        compose.runOnIdle { intake.accept(SharePayload("shared text", listOf(Uri.parse("content://foreign/document")))) }
         compose.onNodeWithText("Share to…").assertIsDisplayed()
         compose.waitUntil(5_000) { compose.onAllNodes(hasText("Personal")).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("share-capturing").assertIsDisplayed()
@@ -291,6 +317,59 @@ class SharePickerTest {
         compose.runOnIdle { nav.popBackStack() }
         compose.onAllNodes(hasText("Share to…")).assertCountEquals(0)
         compose.runOnIdle { assertEquals("existing draft\nshared text", drafts.draftFor(target.serverId, target.conversationId)) }
+    }
+
+    @Test fun directShareWaitsForCaptureAndMergesTheExactDraftWithoutPickerOrReplay() {
+        val drafts = GlobalContext.get().get<ComposerDraftStore>()
+        val target = HostConversationTarget("demo", "seed-channel-personal")
+        val publisher = GlobalContext.get().get<SharingShortcuts>()
+        runBlocking { publisher.opened(target) }
+        val id = RecentShareTargets(4).id(target)
+        drafts.setDraft(target.serverId, target.conversationId, "existing")
+        val capture = CompletableDeferred<PickedAttachment>()
+        val intake = ShareIntakeViewModel(drafts, { _, _ -> capture.await() }, Dispatchers.Main.immediate)
+        lateinit var nav: NavHostController
+        compose.runOnIdle { intake.accept(SharePayload("direct", listOf(Uri.parse("content://foreign/file")), id)) }
+        compose.setContent {
+            nav = rememberNavController()
+            PyrycodeMobileTheme { PyryNavHost(Routes.CHANNEL_LIST, navController = nav, shareIntake = intake) }
+        }
+        compose.onAllNodes(hasText("Share to…")).assertCountEquals(0)
+        compose.runOnIdle {
+            assertEquals("existing", drafts.draftFor(target.serverId, target.conversationId))
+            capture.complete(file("direct.pdf", "application/pdf"))
+        }
+        compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.CONVERSATION_THREAD }
+        compose.runOnIdle {
+            assertEquals(target, Routes.target(nav.currentBackStackEntry?.arguments))
+            assertEquals("existing\ndirect", drafts.draftFor(target.serverId, target.conversationId))
+            assertEquals(1, drafts.attachmentsFor(target.serverId, target.conversationId).size)
+            assertEquals(false, intake.select(target))
+        }
+        compose.onAllNodes(hasText("Share to…")).assertCountEquals(0)
+        compose.onNode(hasSetTextAction()).assertTextContains("existing\ndirect")
+    }
+
+    @Test fun unknownDirectShareFallsBackWithCapturedBatchAndDraftUnchanged() {
+        val drafts = GlobalContext.get().get<ComposerDraftStore>()
+        val target = HostConversationTarget("demo", "seed-channel-personal")
+        val existingDraft = "existing draft\nkeep unchanged"
+        drafts.setDraft(target.serverId, target.conversationId, existingDraft)
+        val captured = file("keep.pdf", "application/pdf")
+        val intake = ShareIntakeViewModel(drafts, { _, _ -> captured }, Dispatchers.Main.immediate)
+        compose.runOnIdle { intake.accept(SharePayload("keep this", listOf(Uri.parse("content://foreign/keep")), "unknown")) }
+        compose.setContent { PyrycodeMobileTheme { PyryNavHost(Routes.CHANNEL_LIST, shareIntake = intake) } }
+        compose.waitUntil(5_000) { intake.state.value?.shortcutId == null }
+        compose.onNodeWithText("Share to…").assertIsDisplayed()
+        compose.onNodeWithTag("share-ready").assertIsDisplayed()
+        compose.onNodeWithText("1 file").assertIsDisplayed()
+        compose.onNodeWithText("keep.pdf").assertIsDisplayed()
+        compose.runOnIdle {
+            assertEquals("keep this", intake.state.value?.text)
+            assertEquals(listOf(captured), intake.state.value?.files)
+            assertEquals(existingDraft, drafts.draftFor(target.serverId, target.conversationId))
+            assertTrue(drafts.attachmentsFor(target.serverId, target.conversationId).isEmpty())
+        }
     }
 
     private fun file(

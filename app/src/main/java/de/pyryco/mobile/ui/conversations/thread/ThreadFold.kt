@@ -30,7 +30,7 @@ internal data class StreamingTurn(
     val turnId: String,
     /** Accumulated [LiveSessionEvent.AssistantDelta] text, in `seq` order. */
     val text: String,
-    /** Ordering/dup guard for the current turn — deltas with `seq <= lastSeq` are ignored. */
+    /** Text ordering/dup guard — deltas with `seq <= lastSeq` may still enrich attribution. */
     val lastSeq: Int,
     /** `turn_end` seen → render `isStreaming = false` (settled) but keep the item until the finished message. */
     val ended: Boolean,
@@ -38,6 +38,8 @@ internal data class StreamingTurn(
     val baselineAssistantIds: Set<String>,
     /** First delta arrival; preserved across appends and used by streaming reveal initialization. */
     val startedAt: Instant,
+    /** First nonempty grouping hint for this wire lane; never an action or a new identity. */
+    val parentToolUseId: String = "",
 )
 
 /** The fold accumulator: the latest finished projection plus the current [StreamingTurn]. */
@@ -102,26 +104,31 @@ private fun ThreadFold.reduceDelta(
     receivedAt: Instant,
 ): ThreadFold {
     val current = stream
-    return when {
-        // A new turn (or first delta) — supersedes any unfinalised prior turn.
-        current == null || current.turnId != delta.turnId ->
-            copy(
-                stream =
-                    StreamingTurn(
-                        turnId = delta.turnId,
-                        text = delta.text,
-                        lastSeq = delta.seq,
-                        ended = false,
-                        baselineAssistantIds = finished.assistantIds(),
-                        startedAt = receivedAt,
-                    ),
-            )
-        // In-order delta for the current turn — append.
-        delta.seq > current.lastSeq ->
-            copy(stream = current.copy(text = current.text + delta.text, lastSeq = delta.seq))
-        // Out-of-order or replayed delta — ignore (AC #2).
-        else -> this
+    // A new turn (or first delta) — supersedes any unfinalised prior turn.
+    if (current == null || current.turnId != delta.turnId) {
+        return copy(
+            stream =
+                StreamingTurn(
+                    turnId = delta.turnId,
+                    text = delta.text,
+                    lastSeq = delta.seq,
+                    ended = false,
+                    baselineAssistantIds = finished.assistantIds(),
+                    startedAt = receivedAt,
+                    parentToolUseId = delta.parentToolUseId,
+                ),
+        )
     }
+    // Replayed/older text stays ignored, but may carry the lane's first nonempty parent.
+    val attributed = current.copy(parentToolUseId = current.parentToolUseId.ifEmpty { delta.parentToolUseId })
+    return copy(
+        stream =
+            if (delta.seq > current.lastSeq) {
+                attributed.copy(text = current.text + delta.text, lastSeq = delta.seq)
+            } else {
+                attributed
+            },
+    )
 }
 
 /** Renders the fold to thread rows: the finished projection, plus the streaming turn appended last. */
@@ -146,6 +153,7 @@ internal fun ThreadFold.render(): List<ThreadItem> {
             content = turn.text,
             timestamp = turn.startedAt,
             isStreaming = !turn.ended,
+            parentToolUseId = turn.parentToolUseId,
         )
     return finished + ThreadItem.MessageItem(synthetic)
 }

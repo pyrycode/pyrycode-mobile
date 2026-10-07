@@ -15,6 +15,7 @@ import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
+import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.reconnected
 import de.pyryco.mobile.data.model.reduce
 import de.pyryco.mobile.data.network.MobileJson
@@ -2073,6 +2074,100 @@ class ThreadViewModelTest {
     // ---- #337: accumulate assistant_delta into a growing streaming MessageItem -------------------
 
     @Test
+    fun assistantDeltas_lateParentReplayMovesSyntheticIntoJoinedBlockBeforeRepositoryHandoff() =
+        runTest {
+            val repo = MessagesControllableRepo()
+            val ts = Instant.parse("2026-10-06T10:00:00Z")
+            val agent =
+                ThreadItem.MessageItem(
+                    Message(
+                        "a",
+                        "s",
+                        Role.Tool,
+                        "",
+                        ts,
+                        false,
+                        toolCall = ToolCall("Agent", "", "", inputFields = mapOf("run_in_background" to "true")),
+                    ),
+                )
+            val base = listOf(agent, ThreadItem.BackgroundTaskLifecycle("task-a", ts, "a", "Agent", "local_agent"))
+            repo.messages.value = base
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            val delta = LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "child", 0, "reply")
+            events.emit(delta)
+            advanceUntilIdle()
+            val before =
+                vm.state.value.items
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .single { it.message.id == "child" }
+                    .message
+            events.emit(delta.copy(parentToolUseId = "a"))
+            advanceUntilIdle()
+            val after =
+                vm.state.value.items
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .single { it.message.id == "child" }
+                    .message
+            assertEquals(before.copy(parentToolUseId = "a"), after)
+            assertEquals(base, repo.messages.value) // No repository emission repairs the synthetic.
+            val items = vm.state.value.items
+            val rows = foldBackgroundAgentBlocks(foldQueuedRows(items, emptyList()), items, null)
+            assertEquals("a", rows.filterIsInstance<ThreadRow.Delivered>().single { it.item == ThreadItem.MessageItem(after) }.agentBlockId)
+            val keys = rows.mapIndexed { i, row -> row.listKey(i) }
+            assertEquals(keys.distinct(), keys)
+            for (expanded in listOf(emptySet(), setOf("a"), emptySet())) {
+                val visible = foldToolRuns(rows, expanded)
+                val replies =
+                    visible
+                        .filterIsInstance<ThreadRow.Delivered>()
+                        .mapNotNull { (it.item as? ThreadItem.MessageItem)?.message }
+                        .filter { it.id == "child" }
+                // "a" draws as itself, and its one prose child never meets the two-row fold threshold
+                // either (#1827 follow-up), so it is always visible regardless of expansion.
+                assertEquals(listOf(after), replies)
+                val visibleKeys = visible.mapIndexed { i, row -> row.listKey(i) }
+                assertEquals(visibleKeys.distinct(), visibleKeys)
+            }
+            repo.messages.value = base + ThreadItem.MessageItem(after.copy(isStreaming = false))
+            advanceUntilIdle()
+            assertEquals(
+                listOf(after.copy(isStreaming = false)),
+                vm.state.value.items
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .filter { it.message.id == "child" }
+                    .map { it.message },
+            )
+            collector.cancel()
+        }
+
+    @Test
+    fun assistantDeltas_syntheticRowRetainsEachWireLanesParent() =
+        runTest {
+            val repo = MessagesControllableRepo()
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            for ((lane, parent) in listOf("main" to "", "child-a" to "agent-a", "child-b" to "agent-b")) {
+                events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, lane, 0, lane, parent))
+                advanceUntilIdle()
+                val message =
+                    vm.state.value.items
+                        .filterIsInstance<ThreadItem.MessageItem>()
+                        .single()
+                        .message
+                assertEquals(lane, message.id)
+                assertEquals(lane, message.content)
+                assertEquals(parent, message.parentToolUseId)
+            }
+            collector.cancel()
+        }
+
+    @Test
     fun assistantDeltas_produceSingleGrowingStreamingMessage() =
         runTest {
             val repo = MessagesControllableRepo()
@@ -3698,8 +3793,10 @@ class ThreadViewModelTest {
             navCollector.cancel()
         }
 
+    // #1651: Delete follows Archive's precedent — tapped from the Channel Info sheet, it closes that
+    // sheet too, so Figma's confirmation dialog draws over the canvas rather than over the sheet's scrim.
     @Test
-    fun onOverflowEvent_delete_opensConfirmDialogWithoutDeletingOrNavigating() =
+    fun onOverflowEvent_delete_opensConfirmDialogAndClosesTheSheetWithoutDeletingOrNavigating() =
         runTest {
             val repo = RecordingRepo()
             val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
@@ -3714,7 +3811,7 @@ class ThreadViewModelTest {
             advanceUntilIdle()
 
             assertTrue(vm.state.value.deleteConfirmVisible)
-            assertTrue(vm.state.value.channelInfoOpen)
+            assertFalse(vm.state.value.channelInfoOpen)
             assertTrue(repo.deleteCalls.isEmpty())
             assertTrue(navEvents.isEmpty())
             collector.cancel()
@@ -3722,7 +3819,7 @@ class ThreadViewModelTest {
         }
 
     @Test
-    fun onOverflowEvent_deleteDismiss_closesConfirmKeepsSheetWithoutDeleting() =
+    fun onOverflowEvent_deleteDismiss_closesConfirmWithoutReopeningTheSheetOrDeleting() =
         runTest {
             val repo = RecordingRepo()
             val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
@@ -3739,7 +3836,7 @@ class ThreadViewModelTest {
             advanceUntilIdle()
 
             assertFalse(vm.state.value.deleteConfirmVisible)
-            assertTrue(vm.state.value.channelInfoOpen)
+            assertFalse(vm.state.value.channelInfoOpen)
             assertTrue(repo.deleteCalls.isEmpty())
             collector.cancel()
         }
@@ -4260,6 +4357,7 @@ class ThreadViewModelTest {
             )
             assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
             collector.cancel()
+            assertEquals(List(repo.asks.size) { 200 }, repo.limits)
         }
 
     @Test
@@ -4288,10 +4386,11 @@ class ThreadViewModelTest {
                 List<HistoryPosition?>(3) { HistoryPosition("c1", atStart = false) },
                 repo.positionWrites.map { it?.copy(coverage = null) },
             )
+            assertEquals(List(repo.asks.size) { 200 }, repo.limits)
         }
 
     @Test
-    fun history_aPullBeforeTheOpeningAskClaimsTheSlot_isTheOnlyAsk() =
+    fun history_aPullBeforePositionSeedingIsDropped_andOnlyTheOpeningAskRuns() =
         runTest {
             val gate = CompletableDeferred<Unit>()
             val available = MutableStateFlow(true)
@@ -4301,7 +4400,7 @@ class ThreadViewModelTest {
             vm.onDemandOlderHistory()
             gate.complete(Unit)
             advanceUntilIdle()
-            // One ask from the newest; the opening ask found the walk already started and asked nothing.
+            // The pull is dropped while seeding; opening asks once from the newest after the seed arrives.
             assertEquals(listOf(""), repo.asks)
         }
 
@@ -4318,6 +4417,7 @@ class ThreadViewModelTest {
             advanceUntilIdle()
             // Echoed unexamined — the VM never parses or rebuilds what the daemon handed back.
             assertEquals(listOf("", "c1"), repo.asks)
+            assertEquals(List(repo.asks.size) { 200 }, repo.limits)
         }
 
     @Test
@@ -4448,6 +4548,7 @@ class ThreadViewModelTest {
             assertEquals(listOf("m1"), messageIds(vm))
             assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
             collector.cancel()
+            assertEquals(List(repo.asks.size) { 200 }, repo.limits)
         }
 
     @Test
@@ -4832,9 +4933,8 @@ class ThreadViewModelTest {
             gate.complete(Unit)
             advanceUntilIdle()
 
-            // #1572: the opening newest-page ask, waiting on the same read, claims the slot first and the
-            // waiting pulls are dropped under the single-request rule. No ask carried the empty cursor as
-            // the walk's: the next pull asks with the saved one.
+            // Prefetch during seeding was dropped. Only the opening newest-page ask waited for
+            // the seed; the next actual pull asks with the saved backwards cursor.
             assertEquals(listOf(""), repo.asks)
             assertEquals(listOf<HistoryPosition?>(repo.saved?.copy(coverage = null)), repo.positionWrites.map { it?.copy(coverage = null) })
             vm.onDemandOlderHistory()
@@ -5125,6 +5225,7 @@ class ThreadViewModelTest {
             assertEquals("oldest", repo.saved?.cursor)
             assertTrue(repo.saved?.atStart == true)
             assertTrue(logs.none { it.contains("seven") || it.contains("opaque-cursor-secret") })
+            assertEquals(List(repo.asks.size) { 200 }, repo.limits)
         }
 
     @Test
@@ -5217,6 +5318,7 @@ class ThreadViewModelTest {
         private val answer: suspend (String) -> HistoryPage,
     ) : ConversationRepository by delegate {
         val asks = mutableListOf<String>()
+        val limits = mutableListOf<Int>()
         val messages = MutableStateFlow<List<ThreadItem>>(emptyList())
 
         /** Every position write, in order; `null` is a clear. */
@@ -5243,6 +5345,7 @@ class ThreadViewModelTest {
             limit: Int,
         ): HistoryPage {
             asks += cursor
+            limits += limit
             return answer(cursor)
         }
     }

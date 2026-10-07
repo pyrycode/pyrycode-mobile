@@ -14,13 +14,14 @@ import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
-import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasProgressBarRangeInfo
 import androidx.compose.ui.test.hasScrollToIndexAction
@@ -53,11 +54,16 @@ import de.pyryco.mobile.data.model.BackgroundTaskProgress
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.BackgroundTaskUpdate
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
+import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.model.ToolCall
+import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.network.RelayErrorException
+import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.AttachmentContent
 import de.pyryco.mobile.data.repository.AttachmentFetchResult
 import de.pyryco.mobile.data.repository.AttachmentRetrievalResult
@@ -73,6 +79,7 @@ import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.LiveRefusalEvent
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
+import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.SlashCommandMenu
 import de.pyryco.mobile.data.repository.SlashCommandMenuRow
@@ -81,6 +88,7 @@ import de.pyryco.mobile.data.repository.UnrecognizedSite
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.di.ConversationViewing
 import de.pyryco.mobile.e2e.ActivityIntentStub
+import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.PickedAttachment
@@ -91,6 +99,7 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.Instant
 import org.junit.After
@@ -138,6 +147,15 @@ class ThreadDesignCaptureTest {
     private var readerNote = NOTE
     private val images = mutableListOf<Uri>()
     private var photo: File? = null
+
+    /** #1619: the override's queued backlog. */
+    private val queue = MutableStateFlow<List<QueuedMessage>>(emptyList())
+
+    /** #1619: false hides the fake's seeded messages, leaving only [extraItems]. */
+    private val seedShown = MutableStateFlow(true)
+
+    /** #1619: attachment ids the override's `retrieveAttachment` answers from these gates instead of the photo file. */
+    private val attachmentGates = mutableMapOf<String, CompletableDeferred<AttachmentRetrievalResult>>()
 
     /** Clears what outlives one test in this process: staged files, the draft, and the fake's per-channel readings. */
     @After fun clearStaged() {
@@ -825,6 +843,95 @@ class ThreadDesignCaptureTest {
         rule.waitUntil(5_000) { rule.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isEmpty() }
     }
 
+    /** #1619: the queued rows `696:4677`, with a longer row as evidence, and the sub-agent tool rows `696:4795`. */
+    @Test fun queuedAndToolRowFramesAt412By892() {
+        val preferences = GlobalContext.get().get<AppPreferences>()
+        val previousCollapse = runBlocking { preferences.collapseToolUses.first() }
+        try {
+            // The frame draws every tool row; isolate the phone-local default-on collapse preference.
+            runBlocking { preferences.setCollapseToolUses(false) }
+            openThread()
+            inputs.contextUsage.value = CONTEXT
+            thinking()
+            // No messageId, so both fold as unmatched rows after the thread's items.
+            val frameRows =
+                listOf(
+                    QueuedMessage(1, "Can you also update the migration tests once you're done?", at(20)),
+                    QueuedMessage(2, "Then push a draft PR.", at(21)),
+                )
+            queue.value = frameRows
+            await("Then push a draft PR.")
+            design.capture(FOLDER, "queued-messages", "696:4677")
+
+            queue.value = frameRows +
+                QueuedMessage(
+                    3,
+                    "Once the draft is up, also go through every remaining call site of the queue fold and check that each " +
+                        "one still compiles against the new signature before you ask anyone for a review.",
+                    at(22),
+                )
+            await("Once the draft is up", substring = true)
+            design.capture(FOLDER, "queued-long", "696:4677")
+
+            queue.value = emptyList()
+            extraItems.value = nestedTools()
+            await("Run the unit tests")
+            design.capture(FOLDER, "tool-rows-nested", "696:4795")
+        } finally {
+            runBlocking { preferences.setCollapseToolUses(previousCollapse) }
+        }
+    }
+
+    /** #1619: the message attachment states `696:4913`, then the empty thread `696:4989`. */
+    @Test fun attachmentAndEmptyFramesAt412By892() {
+        val files =
+            listOf(
+                MessageAttachment("design-log", "build-2026-10-02.log", "text/plain"),
+                MessageAttachment("design-crash", "crash-report-pixel8.pdf", "application/pdf"),
+                MessageAttachment("design-config", "old-config.yaml", "application/yaml"),
+            )
+        attachmentGates["design-crash-photo"] = CompletableDeferred()
+        attachmentGates["design-log"] = CompletableDeferred()
+        attachmentGates["design-crash"] = CompletableDeferred(AttachmentRetrievalResult.Unavailable)
+        attachmentGates["design-config"] = CompletableDeferred(AttachmentRetrievalResult.NotFound)
+        openThread()
+        inputs.contextUsage.value = CONTEXT
+        val photoMessage =
+            message(
+                "design-crash-message",
+                Role.User,
+                "Here's the crash on the Pixel.",
+                12,
+                MessageAttachment("design-crash-photo", "crash.png", "image/png"),
+            )
+        val filesMessage =
+            message("design-files", Role.Assistant, "Here are the logs from both runs and the old config.", 13)
+                .let { ThreadItem.MessageItem(it.message.copy(attachments = files)) }
+        extraItems.value = listOf(photoMessage, filesMessage)
+        await("Here are the logs from both runs and the old config.")
+        val vm = checkNotNull(inputs.thread.value)
+        files.forEach { vm.onAttachmentRequested(it, AttachmentAction.OPEN) }
+        await("Loading…")
+        await("Retry")
+        await("File not found")
+        design.capture(FOLDER, "attachment-states", "696:4913")
+
+        seedShown.value = false
+        extraItems.value = emptyList()
+        await("Send a message to get started")
+        design.capture(FOLDER, "empty-thread", "696:4989")
+    }
+
+    /** #1851: production dismissal as the frame's Default top-overlay pill. */
+    @Test fun dismissalNoticeFrameAt412By892() {
+        openThread()
+        inputs.contextUsage.value = CONTEXT
+        inputs.hostModal.value =
+            HostModalState(resolved = listOf(ModalUiState.Dismissed("design-modal", "allow", "remote", CONVERSATION)))
+        await("Resolved on another device")
+        captureConfirmation("prompt-resolved-elsewhere", "Resolved on another device", "thread-top-bar", "696:5065")
+    }
+
     /** #1747: reachable production reader failure, with real bars and unchanged body reservations. */
     @Test fun readerErrorFrameAt412By892() {
         openThread()
@@ -848,16 +955,91 @@ class ThreadDesignCaptureTest {
         rule.onNodeWithText("Builder Pipeline Plan").assertIsDisplayed()
     }
 
-    /**
-     * #1664: dismisses the snackbar showing [text] through the dismiss action Material3 gives each snackbar, then
-     * waits for it to leave. Waiting out its timer flaked: the 4 s delay runs on the rule's virtual clock, which
-     * `waitUntil` advances one frame per poll, so on a busy emulator the ~255 polls outlast the budget.
-     */
-    private fun dismissSnackbar(text: String) {
-        rule
-            .onNode(SemanticsMatcher.keyIsDefined(SemanticsActions.Dismiss) and hasAnyDescendant(hasText(text, substring = true)))
-            .performSemanticsAction(SemanticsActions.Dismiss)
-        rule.waitUntil(5_000) { rule.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isEmpty() }
+    @Test fun threadSavedFrameAt412By892() {
+        val file = MessageAttachment("design-save-file", "report.txt", "text/plain")
+        openThread()
+        extraItems.value = listOf(message("design-save-message", Role.Assistant, "Here is the report.", 12, file))
+        await("Here is the report.")
+        withSavedDocument { destination ->
+            checkNotNull(inputs.thread.value).onAttachmentRequested(file, AttachmentAction.SAVE)
+            await("File saved")
+            assertTrue("production save wrote its destination", destination.length() > 0)
+            captureConfirmation("thread-saved", "File saved", "thread-top-bar", "696:5065")
+        }
+    }
+
+    @Test fun readerSavedFrameAt412By892() {
+        openThread()
+        checkNotNull(inputs.thread.value).onOpenMarkdownLink("docs/Builder Pipeline - Plan.md")
+        await("Builder Pipeline Plan")
+        val before = rule.onNodeWithText("Builder Pipeline Plan").getUnclippedBoundsInRoot()
+        withSavedDocument { destination ->
+            rule.onNodeWithContentDescription("More actions").performClick()
+            rule.onNodeWithText("Save to device").performClick()
+            await("File saved")
+            assertEquals(readerNote, destination.readText())
+            assertEquals(before, rule.onNodeWithText("Builder Pipeline Plan").getUnclippedBoundsInRoot())
+            captureConfirmation("reader-saved", "File saved", "markdown-reader-top-bar", "696:5101")
+        }
+    }
+
+    /** The actual system-document result enters the production saver; only the destination is a fixture. */
+    private fun withSavedDocument(block: (File) -> Unit) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val destination = File.createTempFile("confirmation-1851-", ".txt", instrumentation.targetContext.cacheDir)
+        val stub =
+            ActivityIntentStub().apply {
+                answer(
+                    Intent.ACTION_CREATE_DOCUMENT,
+                ) { Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().setData(Uri.fromFile(destination))) }
+            }
+        instrumentation.addMonitor(stub)
+        try {
+            block(destination)
+            assertEquals(1, stub.answered.count { it.action == Intent.ACTION_CREATE_DOCUMENT })
+        } finally {
+            instrumentation.removeMonitor(stub)
+            destination.delete()
+        }
+    }
+
+    private fun captureConfirmation(
+        name: String,
+        text: String,
+        barTag: String,
+        figma: String,
+    ) {
+        val pillNode = rule.onNodeWithTag("transient_confirmation_notice")
+        pillNode
+            .assertIsDisplayed()
+            .assertHasNoClickAction()
+            .assert(SemanticsMatcher.keyNotDefined(SemanticsActions.Dismiss))
+        rule.onAllNodesWithTag("thread_confirmation_snackbar").assertCountEquals(0)
+        rule.onAllNodesWithTag("reader_confirmation_snackbar").assertCountEquals(0)
+        val bar = rule.onNodeWithTag(barTag).getUnclippedBoundsInRoot()
+        val pill = pillNode.getUnclippedBoundsInRoot()
+        val label = rule.onNodeWithText(text, useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertEquals(24f, (pill.bottom - pill.top).value, 0.5f)
+        assertEquals(28f, (pill.top - bar.bottom).value, 0.5f)
+        assertEquals(20f, (bar.right - pill.right).value, 0.5f)
+        assertEquals(8f, (label.left - pill.left).value, 0.5f)
+        assertEquals(8f, (pill.right - label.right).value, 0.5f)
+        assertEquals(4f, (label.top - pill.top).value, 0.5f)
+        assertEquals(4f, (pill.bottom - label.bottom).value, 0.5f)
+        val output =
+            File(
+                checkNotNull(InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")),
+                "design-1220/confirmation-1851",
+            ).apply {
+                mkdirs()
+            }
+        File(
+            output,
+            "$name-geometry.txt",
+        ).writeText("barDp=$bar pillDp=$pill textDp=$label cornersDp=6 typography=bodySmall colors=primaryContainer/onPrimaryContainer\n")
+        design.capture("confirmation-1851", name, figma)
+        rule.mainClock.advanceTimeBy(4_100)
+        rule.onNodeWithTag("transient_confirmation_notice").assertDoesNotExist()
     }
 
     private fun fake() = GlobalContext.get().get<FakeConversationRepository>()
@@ -875,7 +1057,11 @@ class ThreadDesignCaptureTest {
                     val repository =
                         object : ConversationRepository by fake {
                             override fun observeMessages(conversationId: String) =
-                                combine(fake.observeMessages(conversationId), extraItems) { items, extra -> items + extra }
+                                combine(fake.observeMessages(conversationId), extraItems, seedShown) { items, extra, seed ->
+                                    (if (seed) items else emptyList()) + extra
+                                }
+
+                            override fun observeQueue(conversationId: String) = queue
 
                             override fun observeLiveRefusalEvents(conversationId: String) = refusals
 
@@ -892,7 +1078,8 @@ class ThreadDesignCaptureTest {
                             override suspend fun retrieveAttachment(
                                 conversationId: String,
                                 attachmentId: String,
-                            ) = AttachmentRetrievalResult.Retrieved(photo ?: photoFile().also { photo = it }, "stone.png", "image/png")
+                            ) = attachmentGates[attachmentId]?.await()
+                                ?: AttachmentRetrievalResult.Retrieved(photo ?: photoFile().also { photo = it }, "stone.png", "image/png")
 
                             override suspend fun requestHistory(
                                 conversationId: String,
@@ -1038,6 +1225,60 @@ class ThreadDesignCaptureTest {
 
     private fun refusal() =
         ThreadItem.ModelRefusal("claude-opus-5-5", "claude-sonnet-5", "This request was declined on Opus.", false, at(3))
+
+    /** #1619: one tool row; [parent] is the `Agent` call that spawned it, `""` for the main thread. */
+    private fun tool(
+        id: String,
+        name: String,
+        fields: Map<String, String>,
+        status: ToolCallStatus,
+        parent: String = "",
+        detail: String? = null,
+        elapsed: Int? = null,
+    ) = ThreadItem.MessageItem(
+        Message(
+            id = id,
+            sessionId = "seed-session-pyrycode-mobile",
+            role = Role.Tool,
+            content = "",
+            timestamp = at(14),
+            isStreaming = false,
+            toolCall =
+                ToolCall(
+                    toolName = name,
+                    input = "",
+                    output = "",
+                    status = status,
+                    inputFields = fields,
+                    parentToolUseId = parent,
+                    elapsedSeconds = elapsed,
+                    resultDetail = detail,
+                ),
+        ),
+    )
+
+    /** #1619, `696:4795`: an Agent call whose subagent greps, fails a read and starts a second Agent that runs the tests. */
+    private fun nestedTools() =
+        listOf(
+            tool("design-agent-1", "Agent", mapOf("description" to "Survey the queue call sites"), ToolCallStatus.Running),
+            tool("design-grep", "Grep", mapOf("pattern" to "queue_state"), ToolCallStatus.Done, "design-agent-1", detail = "12 files"),
+            tool(
+                "design-read",
+                "Read",
+                mapOf("file_path" to "app/src/main/java/de/pyryco/mobile/ui/conversations/thread/QueueFold.kt"),
+                ToolCallStatus.Failed,
+                "design-agent-1",
+            ),
+            tool("design-agent-2", "Agent", mapOf("description" to "Check the rollback path"), ToolCallStatus.Running, "design-agent-1"),
+            tool(
+                "design-bash",
+                "Bash",
+                mapOf("description" to "Run the unit tests", "command" to "./gradlew testDebugUnitTest"),
+                ToolCallStatus.Running,
+                "design-agent-2",
+                elapsed = 14,
+            ),
+        )
 
     private fun settings(
         model: String,

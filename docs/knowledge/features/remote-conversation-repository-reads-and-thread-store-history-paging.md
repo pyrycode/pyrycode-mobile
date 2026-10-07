@@ -5,7 +5,7 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
 ## History pages fold into the same thread (#645)
 
 [#623](../codebase/623.md) landed `requestHistory` returning a decoded `HistoryPage` of `HistoryEntry`
-values (newest-first; each carrying a durable per-conversation log `id`, the stored frame's wire `type`,
+values (newest-first; each carrying a durable host/conversation-scoped `unsignedId`, the stored frame's wire `type`,
 its still-undecoded `payload`, and a `ts`) and deliberately stopped there. [#645](../codebase/645.md) is
 the fold its KDoc promised: `requestHistory` now also calls a private `mergeHistoryPage(conversationId,
 page)`, which reduces the page and merges it into `threadByConversation[conversationId]` inside one
@@ -16,15 +16,26 @@ the callers that now consume it.
 
 **Page order, middle insertion and assistant overlap (#1786).** A page is no longer assumed to be older
 than the thread. `reduceOrderedHistoryPage` decodes the page once, outside the update, and returns its rows
-with each row's daemon log id, taken from the contextual fold, so a failed compaction divider gets its
-falling edge's id. Inside the one `ProjectionState` update, `mergeOrderedHistoryRows` inserts only rows the
-thread lacks, so an older, newer or middle page lands in daemon order and a repeat page changes nothing.
-Held rows never move and are never sorted by timestamp. A missing row goes after its nearest shared
-predecessor or before its nearest shared successor. Held rows with known log ids bound that slot, so a
+with authoritative `unsignedOrder` and `unsignedClaims` for rows and individual assistant deltas,
+taken from the contextual fold, so a failed compaction divider gets its falling edge's id. Since #1909,
+`mergeUnsignedHistoryRows` compares exact `ULong` positions across `Long.MAX_VALUE` through the unsigned
+maximum. Inside the one `ProjectionState` update, it inserts only rows the thread lacks, so an older, newer or middle page lands in daemon order and a repeat page changes nothing.
+Established held rows retain their positions; pending own echoes with first modern delivery
+evidence use the exception below. The merge never sorts the whole thread by timestamp. A missing
+row goes after its nearest shared predecessor or before its nearest shared successor. Held rows with known log ids bound that slot, so a
 reused message id or a malformed entry cannot pull a row past a known position. With no shared row, log ids
-and then timestamps choose the slot. The log ids live in `ProjectionState.historyOrder`, are connection-local,
-are never compared with live event ids, and are dropped by `remove`. A boundary that fills a pending divider
-in place carries the divider's log id to its new identity.
+and then timestamps choose the slot. The unsigned placement map lives in `ProjectionState.historyOrder`
+and is connection-local, while the received ids themselves are durable. The source repository supplies host scope and each observation
+supplies conversation scope; replacing a projection cannot lend placement evidence to another scope.
+`remove` drops placement evidence. Live-only content, renderer keys and replay event ids supply no
+durable claims. A boundary that fills a pending divider in place carries its unsigned position unchanged
+to its new identity. `ThreadSnapshot` publishes rows, suppression and `unsignedHistoryOrder` from this
+same generation, deriving signed `historyOrder` only for representable positions.
+
+Late durable evidence for an already held live delta can still strand it beyond its history separator.
+This also reproduces with lower-range ids and remains tracked by [#1913](https://github.com/pyrycode/pyrycode-mobile/issues/1913).
+Unsigned overlap probes establish the held delta's durable position before surrounding pages; they do
+not prove that unresolved provisional placement is repaired.
 
 Assistant text merges per delta, identified by `(turnId, seq)`. Segments split into single-delta pieces by
 their recorded lengths; only missing sequences enter, before, between or after held ones. Adjacent pieces of
@@ -33,6 +44,56 @@ settled through the existing post-merge pass. Held text wins any overlap. A lega
 sequence records suppresses only text it demonstrably contains. Renderer keys stay unique without dropping
 text: ordinary ids claim keys first, then each turn's opener, then other segments, and a segment whose key a
 different identity holds takes a `~n` suffix.
+
+**Signed consumers must retain omitted-content uncertainty (#1909).** The positive unsigned
+[domain identity](data-model.md#historyentry--received-durable-identity-1909) is authoritative. Signed
+construction remains compatible through `Long.MAX_VALUE`, while `HistoryEntry.id` is null above it.
+Reducer `order` and snapshot `historyOrder` omit upper-range positions; reducer `claims` omits a whole
+claim set when any member is unrepresentable. The signed `mergeOrderedHistoryRows` entry point retains
+positive lower-range behavior. No compatibility view wraps, clamps or substitutes a different id.
+
+`HistoryCoverage.received` declines the entire page's claims if any entry has an unavailable signed id,
+including a mixed-range page, and sets `unknown=true` with sticky `unsignedIncomplete=true`. Merely
+filtering ids is insufficient: separately saved `atStart` can otherwise restore an unsupported page as
+complete. Later signed terminal pages cannot clear this uncertainty. A terminal backwards response
+retains the request cursor and enters a demandable `PermanentFailure` instead of `AtStart`; a side or
+gap response reopens a previously complete walk. Nonterminal cursor progression remains usable.
+
+Cache save/read and ViewModel seeding also refuse `atStart` while flagged. Preserve the flag and usable
+cursor even when non-rendering state frames or cache-excluded unrecognized rows leave no renderer rows
+or signed spans: an empty cache cannot prove completeness. Regression coverage must reopen a fresh
+file cache and ViewModel, receive a later signed terminal page and demand older history again; testing
+`received` alone or keeping one cacheable row misses this restore failure. Persisted unsigned coverage
+and cache identity remain #1910, gap anchors #1911 and foreground acknowledgement #1912; these guards
+do not establish upper-range coverage, restored order or seen state.
+
+**History establishes modern queued delivery (#1655).** A stored user `message` with a valid
+`queued_msg_id` can arrive with its answering delta 0 before the first live push, even before
+the waiting turn's live end. `mergeHistoryPage` decodes this evidence through `MessagePayloadDto`
+and consumes that exact entry in the **requested conversation**, independently of the payload's
+routing id. Omitted/malformed identity and non-user rows do not establish modern delivery.
+Queue-entry consumption does not broaden the renderer's message-id deduplication.
+
+Only first-delivery, pending, minted held user echoes have provisional positions. Remove those
+rows from the receiving list before `mergeUnsignedHistoryRows`, insert by incoming daemon
+order/delivery timestamp, then restore their exact held objects. Using their tap timestamps or
+retaining a legacy reserved slot can put an echo above the waiting turn's tool row. Content,
+attachment hints and original timestamp survive; idle, foreign/non-user and already delivered
+held rows keep their positions. This exception also handles two own echoes on the same page.
+
+Commit placement, exact entry consumption, first-delivery row identity and cleared queued/
+suppressed/reserved eligibility in the same CAS update. Otherwise the first replayed live push
+can move a history-established echo after its answering text, and the next delta starts another
+segment despite sequence deduplication. Test overlapping pages containing both the delivered row
+and answering delta 0 before and after the first push, and before the live end, asserting after
+each event. A user-only page does not expose this failure. See
+[queue placement and recorded evidence](queued-backlog.md#verification-evidence) and
+[assistant segments](remote-conversation-repository-assistant-reply-segments.md).
+
+History's `endedTurns` evidence settles late assistant rows; it does not consume the legacy
+fallback's live reservation boundary. `ProjectionState.liveEndedTurns` records live ends
+atomically with rows and echo metadata, so a history end cannot suppress the first live end's
+reservation and a repeated live end cannot reserve a newer pending echo. Both are connection-local.
 
 **One fold surface, not two.** The reduction reuses the live lane's own folds rather than mapping the
 page separately. `RemoteConversationRepositoryKt`'s `appendMessages` / `applyToolUse` / `applyToolResult`
@@ -124,12 +185,12 @@ payload (the sender is the operator by construction).
 
 **Three join keys, and the merge's key is deliberately the renderer's key, not structural equality.**
 The wire SSOT (pyrycode `docs/protocol-mobile.md` § *Conversation history (v2)*, sub-section *Joining a
-page to the live stream*) names three keys: `HistoryEntry.id` for page-against-page (unused directly by
-the merge — see below), the pair `(type, ts)` for page-against-live (not implemented by this ticket; the
+page to the live stream*) names three keys: durable `HistoryEntry.unsignedId` for page-against-page,
+the pair `(type, ts)` for page-against-live (not implemented by this ticket; the
 merge instead re-derives presence per row kind), and `message_id` for a stored `send_message` against its
-local echo. `mergeHistoryRows` never joins a `HistoryEntry.id` to a live `Envelope.eventId` — they are
-different sequences that both look like small integers, and neither appears in the merge at all. What the
-merge actually checks, per `ThreadItem` kind, is **the same key `ThreadScreen`'s `LazyColumn` uses to key
+local echo. `mergeUnsignedHistoryRows` never joins a `HistoryEntry.unsignedId` to a live `Envelope.eventId`: durable
+positions order received content, while replay ids belong to a different sequence. Deduplication, per
+`ThreadItem` kind, still checks **the same key `ThreadScreen`'s `LazyColumn` uses to key
 that row** — not `==`. This mattered in practice: the obvious dedup for a `SessionBoundary` is structural
 equality (every field is payload-derived, so a page twin equals its live twin), and it passes every
 overlap test — but at the time `ThreadScreen` keyed a boundary row on `(previousSessionId, newSessionId)`
@@ -144,11 +205,12 @@ key (`holdsBoundary`, `internal` since #775) and the list key both moved to the 
 of dropping it. A `MessageItem` joins on `message_id` alone, id-only and
 role-agnostic — one key serves a stored `message`/`send_message` entry, a `tool_use_id`, and a `turn_id`,
 and it is also `appendMessages`' existing live-lane dedup rule. An `UnrecognizedMessage` joins on its id,
-which the reducer derives as `"history-${entry.id}"` from the durable per-conversation log id — stable
+which the reducer derives as `"history-${entry.unsignedId}"` from the durable per-conversation log id — stable
 across re-reduction, and disjoint from the live lane's per-process-counter `"unrecognized-<n>"` namespace
 (see [Unrecognized message row](unrecognized-message-row.md)) so the two cannot collide by coincidence.
-For ordinary rows, the merge is a **prepend, never a re-sort** (never a timestamp sort — the thread
-is arrival-order by deliberate choice, see `applyToolUse`'s KDoc above). Duplicate ordinary rows keep
+Ordinary missing rows enter through the ordered merge described above; the receiving thread is
+never globally re-sorted. First modern deliveries of pending own echoes use that section's
+explicit provisional-position exception. Duplicate ordinary rows keep
 the held state, apart from missing attachment hints: in the narrow ask-versus-answer overlap window
 the protocol names, the live lane still owns the newer state.
 
@@ -366,7 +428,8 @@ seed a fresh backwards walk when a later availability page brings entries. Saved
 ordinary oldest-end demand, never demand for an unresolved gap. The shared `inFlight` flag still
 shows the oldest-end Loading row during a side ask, including on a stopped backwards walk.
 
-**Coverage is received `HistoryEntry.id` spans, including entries that render no row.** IDs are
+**Signed coverage is received `HistoryEntry.id` spans, including entries that render no row.** A page
+with an upper-range id instead retains unknown coverage through the compatibility guard above. IDs are
 host/conversation-scoped durable daemon ids; row identities, timestamps and live/ring ids establish
 no span. High-water is the maximum covered id before the newest ask. Overlap and adjacency coalesce;
 a hole exists only between received spans. Overlap elsewhere preserves unresolved holes. A known
@@ -387,9 +450,11 @@ resets only that walk when coverage exists, preserving gaps and their cursors fo
 with or without saved `atStart`. Its rows remain readable. After the newest page, one conservative
 marker sits at the verified span's older edge unless that page reports `at_start`. Pulls move the
 edge backwards. Matching a legacy whole-turn row or overlapping a verified span never closes
-unknown coverage without an older durable anchor: only `at_start`, including an empty terminal
-page, does. Arbitrary legacy holes cannot be inferred before received pages establish spans.
-An empty uncovered cache ignores old cursor/stop metadata and gets no conservative marker.
+ordinary legacy unknown coverage without an older durable anchor: only `at_start`, including an empty
+terminal page, does. Sticky unsigned uncertainty cannot be closed by signed terminal pages. Arbitrary
+legacy holes cannot be inferred before received pages establish spans.
+An empty uncovered cache ignores old cursor/stop metadata unless `unsignedIncomplete` is set; flagged
+coverage and its usable cursor survive even with no retained rows or signed spans.
 
 Markers sit between held older and newer content, before their newer row. A non-rendering newer
 span can leave a standalone marker at the newest content edge. Assistant deltas on opposite sides

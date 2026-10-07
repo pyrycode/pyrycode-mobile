@@ -6,22 +6,32 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.width
@@ -38,6 +48,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.GraphicsMode
 import androidx.compose.ui.semantics.Role as SemanticsRole
 
 /**
@@ -48,6 +59,7 @@ import androidx.compose.ui.semantics.Role as SemanticsRole
  * zone, so a literal would redden off a de-DE host. `MessageMetaRowFormatTest` owns the format, these
  * tests own the arrangement and the copy behaviour.
  */
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 @RunWith(AndroidJUnit4::class)
 class MessageBubbleTest {
     @get:Rule
@@ -103,6 +115,12 @@ class MessageBubbleTest {
         }
     }
 
+    @Test
+    fun reply_isAlwaysVisibleForBothRoles() {
+        setBothRoles()
+        composeTestRule.onAllNodesWithContentDescription("Reply to this message").assertCountEquals(2)
+    }
+
     // AC #1 (both roles render as bubbles) + AC #2 (each bubble ends with a meta row).
     @Test
     fun bothRoles_renderBodyAndOwnMetaRow() {
@@ -121,15 +139,15 @@ class MessageBubbleTest {
     }
 
     @Test
-    fun copy_hit_area_keeps_the_visible_metadata_row_at_body_small_height() {
+    fun sideCopy_hasADivided48dpTarget_outsideTheTimestampRow() {
         setBothRoles()
 
         val controls = composeTestRule.onAllNodesWithContentDescription(copyDescription)
         assertEquals(2, controls.fetchSemanticsNodes().size)
         repeat(2) { index ->
             val bounds = controls[index].getUnclippedBoundsInRoot()
-            assertTrue("copy hit area must be wider than its 11dp glyph", bounds.width > 11.dp)
-            assertTrue("copy hit area must stay within the 16dp metadata line", bounds.height <= 17.dp)
+            assertEquals(48f, bounds.width.value, 1f)
+            assertEquals(36.5f, bounds.height.value, 1f)
         }
     }
 
@@ -216,7 +234,7 @@ class MessageBubbleTest {
 
         val root = composeTestRule.onRoot().getUnclippedBoundsInRoot()
         // What an assistant bubble may occupy: the full width less both gutters and the trailing inset.
-        val lane = root.width - MessageContentGutter * 2 - MessageRoleInset
+        val lane = root.width - MessageContentGutter * 2 - 40.dp - 25.dp
         val bubbles = composeTestRule.onAllNodesWithTag(MESSAGE_BUBBLE_TEST_TAG, useUnmergedTree = true)
         val short = bubbles[0].getUnclippedBoundsInRoot().width
         val long = bubbles[1].getUnclippedBoundsInRoot().width
@@ -291,7 +309,7 @@ class MessageBubbleTest {
             PyrycodeMobileTheme(darkTheme = true) {
                 CompositionLocalProvider(LocalClipboardManager provides clipboard) {
                     Surface {
-                        MessageBubble(message(Role.Assistant, STREAMING_BODY, isStreaming = true))
+                        MessageBubble(message(Role.Assistant, STREAMING_BODY, isStreaming = true), metaRowVisible = false)
                     }
                 }
             }
@@ -367,6 +385,106 @@ class MessageBubbleTest {
         composeTestRule.runOnIdle { arrived.value += "word " }
         composeTestRule.mainClock.advanceTimeBy(512L)
         assertEquals(arrived.value.trimEnd(), revealedText())
+    }
+
+    @Test
+    fun sideCopy_at412dp_keepsThe307dpBubble_andDarkGeometry() = assertSideGeometry(412, true)
+
+    @Test
+    fun sideCopy_at320dp_wrapsWithoutOverlap_andLightGeometry() = assertSideGeometry(320, false)
+
+    @OptIn(ExperimentalTestApi::class)
+    private fun assertSideGeometry(
+        width: Int,
+        dark: Boolean,
+    ) {
+        val clipboard = RecordingClipboard()
+        var toggles = 0
+        composeTestRule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(width.dp, 892.dp))) {
+                PyrycodeMobileTheme(darkTheme = dark) {
+                    CompositionLocalProvider(LocalClipboardManager provides clipboard) {
+                        Surface(Modifier.fillMaxWidth().testTag("message-fixture")) {
+                            Column(Modifier.fillMaxWidth()) {
+                                listOf(Role.Assistant, Role.User).forEach { role ->
+                                    MessageBubble(message(role, LONG_BODY), metaRowVisible = false, onToggleMetaRow = { toggles++ })
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        val root = composeTestRule.onNodeWithTag("message-fixture").getUnclippedBoundsInRoot()
+        val bubbles = composeTestRule.onAllNodesWithTag(MESSAGE_BUBBLE_TEST_TAG)
+        val columns = composeTestRule.onAllNodesWithTag("message-actions", useUnmergedTree = true)
+        val glyphs = composeTestRule.onAllNodesWithTag("message-copy-glyph", useUnmergedTree = true)
+        val controls = composeTestRule.onAllNodesWithContentDescription(copyDescription)
+        repeat(2) { index ->
+            val bubble = bubbles[index].getUnclippedBoundsInRoot()
+            val column = columns[index].getUnclippedBoundsInRoot()
+            val glyph = glyphs[index].getUnclippedBoundsInRoot()
+            val target = controls[index].getUnclippedBoundsInRoot()
+            assertEquals(root.width.value - 105f, bubble.width.value, 1f)
+            assertEquals(13f, column.width.value, 1f)
+            assertEquals(bubble.height.value, column.height.value, 1f)
+            assertEquals(11f, glyph.width.value, 1f)
+            assertEquals(12f, glyph.height.value, 1f)
+            assertEquals(((bubble.top + bubble.bottom) / 2).value - 12.5f, ((glyph.top + glyph.bottom) / 2).value, 1f)
+            assertEquals(48f, target.width.value, 1f)
+            assertEquals(36.5f, target.height.value, 1f)
+            if (index == 0) {
+                assertEquals(20f, (bubble.left - root.left).value, 1f)
+                assertEquals(12f, (column.left - bubble.right).value, 1f)
+            } else {
+                assertEquals(20f, (root.right - bubble.right).value, 1f)
+                assertEquals(12f, (bubble.left - column.right).value, 1f)
+            }
+            assertTrue(target.left >= root.left && target.right <= root.right)
+            // Real pointer taps cover every side, including the strip overlapping the bubble.
+            controls[index].performTouchInput {
+                click(Offset(1f, center.y))
+                click(Offset(right - 1f, center.y))
+                click(Offset(center.x, 1f))
+                click(Offset(center.x, bottom - 1f))
+            }
+        }
+        assertEquals(List(8) { LONG_BODY }, clipboard.writes)
+        assertEquals("copy target must win over the bubble timestamp detector", 0, toggles)
+    }
+
+    @Test
+    fun streamingSideCopy_readsLatestMarkdownSource_andRetainsTheClipboardBound() {
+        composeTestRule.mainClock.autoAdvance = false
+        val content = mutableStateOf("**arrived** source")
+        val clipboard = RecordingClipboard()
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                CompositionLocalProvider(LocalClipboardManager provides clipboard) {
+                    MessageBubble(message(Role.Assistant, content.value, isStreaming = true), metaRowVisible = false)
+                }
+            }
+        }
+        composeTestRule.onNodeWithContentDescription(copyDescription).performClick()
+        composeTestRule.runOnIdle { content.value = "# later source " + "x".repeat(MAX_CLIPBOARD_CHARS) }
+        composeTestRule.mainClock.advanceTimeByFrame()
+        composeTestRule.onNodeWithContentDescription(copyDescription).performClick()
+        assertEquals(listOf("**arrived** source", content.value.take(MAX_CLIPBOARD_CHARS)), clipboard.writes)
+    }
+
+    @Test
+    fun finishedAssistantSideCopy_keepsMarkdownSource() {
+        val source = "**bold** and [link](https://example.com)"
+        val clipboard = RecordingClipboard()
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                CompositionLocalProvider(LocalClipboardManager provides clipboard) {
+                    MessageBubble(message(Role.Assistant, source), metaRowVisible = false)
+                }
+            }
+        }
+        composeTestRule.onNodeWithContentDescription(copyDescription).performClick()
+        assertEquals(listOf(source), clipboard.writes)
     }
 
     private companion object {

@@ -64,6 +64,62 @@ compile and both device gates, the next several verifier passes see no device
 evidence at all rather than a narrow one-file failure — run the guard and repair
 everything it reports before committing, not just the files touched this run.
 
+### Snackbar routing guard
+
+Failures use the top-overlay [Error pill](notice-pill.md), not a snackbar.
+[`SnackbarRoutingGuardTest`](../../../app/src/test/java/de/pyryco/mobile/verification/SnackbarRoutingGuardTest.kt)
+runs in normal JVM `test` / `check` verification (#1750). To run it alone:
+
+```bash
+./gradlew testDebugUnitTest --tests 'de.pyryco.mobile.verification.SnackbarRoutingGuardTest'
+```
+
+Gradle supplies `snackbarProductionSourceRoots` from all configured Android
+production source sets, including build-type and flavor roots. Only source-set
+names starting with `test` or `androidTest` are excluded: a production build type
+such as `latest` must still be scanned. Kotlin (`.kt` / `.kts`) and Java sources
+are explicit unit-task inputs, so source-only routing changes invalidate cached
+results. Project-relative roots, the app working directory and relative input
+path sensitivity preserve cache reuse across worktrees. Missing configuration
+or an empty scan fails.
+
+The test-only Kotlin compiler PSI parser rejects unclassified `showSnackbar` and
+`Snackbar` references, including callable references, aliased imports, classic
+Android `Snackbar.make` and direct Compose `Snackbar` content. Java references
+have no permitted classifications. Comments and plain string literals are not
+routes; expressions inside Kotlin string templates are inspected. This is a
+syntax contract, not whole-program dataflow analysis or a substitute for reviewing
+message producers.
+
+The remaining production snackbar route is `ArchivedDiscussionsScreen`'s
+`RestoreSucceeded` branch: the success resource formatted with the restored display
+name. #1851 migrated thread/reader Saved and thread `ModalUiState.Dismissed` to
+screen-local Default top-overlay pills. `ThreadScreen`, `MarkdownReaderScreen` and
+`ChannelListScreen` have no active snackbar route. The guard still contains the
+three exact historical thread/reader classifications; their presence does not
+mean those routes remain in production.
+
+For a new notice, first review whether its producer represents a failure. Route
+failures to Error pills. A new non-error snackbar needs an explicit classification
+in [`SnackbarRoutingGuard`](../../../app/src/test/java/de/pyryco/mobile/verification/SnackbarRoutingGuard.kt)
+and positive and negative controls in its test class. The classification pins
+both the owning screen/function and the complete callback or branch, including
+message derivation, Saved-only condition, effect key and enclosing `when` subject
+where applicable. Syntax tokens must match; only whitespace and comments are
+ignored. Review classification changes when refactoring an approved region;
+neutral-looking copy or a fixed count of snackbar calls cannot establish safety.
+
+Retained [commands and results](../../../app/src/test/resources/verification/snackbar-routing/commands-and-results.txt)
+and fresh post-blocker XML record 11 executed/passed tests, zero failures/errors/
+skips, and 302 scanned production files. The matching source-set negative control
+executed one test with one expected assertion failure, zero errors/skips, and
+303 scanned files: the injected `latest/LatestScreen.kt` route was rejected.
+`post-blocker-green.xml` includes both the production assertion and the
+neutral-copy added-error control. The test-only init script and fixture remain
+under test resources. The earlier MainActivity share-error failure is retained
+as historical evidence; #1824 fixed that production route without weakening the
+guard. See [the verifier verdict](https://github.com/pyrycode/pyrycode-mobile/pull/1875#issuecomment-6030551584).
+
 ## Where a screen test goes
 
 Compose screen tests live in `app/src/sharedTest/java`. Gradle adds that folder to
@@ -127,6 +183,13 @@ checks a Figma dp value uses `assertDpEquals` or `pixelDp()` from
 `ui/PixelSnapping.kt`, which allow one device pixel there and nothing at
 Robolectric's density 1. Rows stacked down a screen add their roundings up, so
 check a row against its neighbour rather than against the top of the screen.
+When the total position or height itself is a design target, retain it and
+justify any larger `pixels` allowance from the measured, independently rounded
+segments. Check the component gaps and line boxes separately within one pixel
+so a permissive total cannot hide a spacing regression. The
+[thread geometry examples](thread-screen-testing.md#testing) retain 97dp and
+60dp totals with measured two-pixel allowances; integral-density checks remain
+exact even with that allowance.
 The device also ignores `@Config` qualifiers and Robolectric's 320dp width,
 draws text with its own font, and runs at that density: a test that needs a
 412dp frame forces it with `ForcedSize`, scales pixel samples by the composition's
@@ -137,6 +200,11 @@ text's width positions. Line height is different: it is fixed by the design,
 not by the text inside it, so a test checks the height of a line and the
 vertical rhythm it sets exactly, allowing only the one device pixel
 `assertDpEquals` already grants for rounding.
+
+Fetch semantics nodes on the test thread before entering `runOnIdle` for
+main-thread text-layout access such as `GetTextLayoutResult`. A semantics query
+inside the callback can nest main-thread synchronization; a Robolectric pass
+does not establish device safety for that helper.
 
 A shared test class needs `@RunWith(AndroidJUnit4::class)`. The device runner
 does not require it, but without it the JVM runs the class outside Robolectric and

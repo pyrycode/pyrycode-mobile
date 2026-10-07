@@ -38,7 +38,7 @@ Split on 2026-09-05 to keep this document under the 50000-byte cap the docs guar
 - [Remote conversation repository — the Phase 4 `ConversationRepository` — screen snapshot, dequeue, interrupt and new session](remote-conversation-repository-control-sends.md) — `requestScreenSnapshot(conversationId) — the parser-independent screen-snapshot read (#375)`, `requestHistory(conversationId, cursor, limit) — the on-disk history page read (#623)`, `dropQueuedMessage(conversationId, queuedMessageId) — the dequeue_message outbound send (#466)`, `interrupt(conversationId) — explicitly targeted v2 interrupt`, `startNewSession() — explicitly targeted v2 new_session`, `answerQuestionBatch(questionBatchId, answers) / refuseQuestionBatch(questionBatchId) — the v2 question_answer / question_refused sends (#825)`
 - [Remote conversation repository — the Phase 4 `ConversationRepository` — state and concurrency, error handling and the hand-off](remote-conversation-repository-state-errors-and-handoff.md) — `State & concurrency model`, `Error handling`, `Hand-off — the live binding`
 
-The sections that stay here: `## Where it sits in the Phase 4 stack`, `## Status projections: one file per status event`, `## The repository split (#912–#916): complete`, `## The `SessionPump` consumed contract`, `## Stubs — none remain; every method is now live`, `## Testing`, `## Related`.
+The sections that stay here: `## Where it sits in the Phase 4 stack`, `## Status projections: one file per status event`, `## The repository split (#912–#916): complete`, `## The `SessionPump` consumed contract`, `## Stubs — none remain; every method is now live`, `## Daemon conversation read marks`, `## Testing`, `## Related`.
 
 ## Where it sits in the Phase 4 stack
 
@@ -134,6 +134,24 @@ or connection teardown; see [conversation session errors](remote-conversation-re
 for validation, observation and clearing rules.
 `dropQueuedMessage` reads `QueueProjection.current` to resolve the echo id before it sends.
 
+`ReplySuggestionProjection` (#1865) holds live/reconciled next-reply state, with one
+immutable-map entry per `(conversationId, sessionId)`. Validation completes before the
+atomic revision comparison and replacement: only a strictly higher revision replaces an
+entry, and a clear stays in the map so stale sets cannot revive it. Unrelated pairs do not
+re-emit the observed pair. Separate per-host remote instances isolate even identical pairs.
+The inbound `reply_suggestion` arm requires negotiated `interactive`; its
+[decoder checks presence and exact JSON kinds](mobile-protocol-v2-wire-layer.md#reply-suggestion-validation-1865).
+Malformed input changes neither text nor watermark and leaves the consumer alive.
+
+This projection stays outside `HostReadings` and persistent cache. Each fresh handshake
+constructs an empty projection, allowing lower revisions after a daemon restart; inbound
+consumer termination also resets text and watermarks. The cache wrapper forwards the
+observation by interface delegation without storing it. Suggestions bypass replay-cursor
+recording even when malformed, reject envelopes carrying `event_id`, and are never
+restored from history. Applying one calls no thread, live-session-event or turn-state
+operation. Diagnostics contain only static outcomes (accepted, stale, malformed, reset),
+with no text, identities, payloads or parser exceptions.
+
 A new status event takes the same shape: a new `…Projection.kt` holding its state, decoder and read,
 plus one field, one arm and one override in the repository. The split exists so that sibling tickets
 adding events in parallel stop editing the same lines of one very large file.
@@ -186,7 +204,7 @@ What the repository still owns, after #916:
 - **`RelayRequests`** — the one request-id counter and reply-waiter table every command class, and the
   repository's own remaining reads, share.
 - **The reads that fan out directly to a projection, with no command-class indirection**:
-  `observeConversations`, `observeMessages`, `observeLastMessage`, `observeStall`, `observeQueue`,
+  `observeConversations`, `observeReadMarks`, `observeMessages`, `observeLastMessage`, `observeStall`, `observeQueue`,
   `observeApiRetry`, `observeCompacting`, `observeResetting`, `observeUsageLimit`,
   `observeThinkingProgress`, `observeModelMenu`, `observeSlashCommandMenu`, `observeAnnouncedModel`,
   `observeSessionFacts`, `observeAttachmentOffers` (#898) and `observeMcpStatus` (#1343, plus its three
@@ -248,6 +266,48 @@ mutation-consuming affordance needs its own reachability check before the flag c
 gating consumer reads it (through the [facade](stable-conversation-repository.md)) to hide these actions
 until that milestone lands. See [`../codebase/507.md`](../codebase/507.md).
 
+## Daemon conversation read marks
+
+`observeReadMarks(conversationId)` exposes `ConversationReadMarks(readUpTo: ULong?,
+latestEntryId: ULong?)` in the durable history id space (#1881). It emits null until
+either live fact is heard. A null field means unavailable; zero is a valid known
+value. Only a present `readUpTo` establishes daemon read-mark support on this
+connection, so a latest-id-only reading or cached conversation cannot establish it.
+Local `ReadPosition` remains the fallback. These repository facts support agreement
+between phone and desktop; viewport eligibility, attention dots and notification
+cancellation belong to the dependent UI slices.
+
+`ConversationListProjection` keeps rows and a conversation-keyed fact ledger in one
+atomic state. List snapshots replace rows while merging each supplied fact by unsigned
+maximum. Both ordinary correlated updates and unsolicited `conversation_updated`
+pushes merge the read mark and preserve the latest durable id held from a list:
+updates supply no latest id. Omitted fields never erase held facts. Empty or excluding
+snapshots retain the ledger, so a stale reappearance cannot regress either fact.
+This monotonic rule applies within one host connection generation. Separate remote
+instances isolate hosts even when conversation ids match; a fresh connection starts
+with no facts. Read marks stay outside persistent cache and `HostReadings`.
+
+`markConversationRead(conversationId, upTo: ULong): Result<ULong>` delegates to
+`ConversationCommands`. It registers the request identity before sending and waits for
+its correlated `conversation_updated`. The command validates the reply type, target
+conversation and present valid read mark before folding the update and completing the
+waiter. A plain ack, wrong target/type or missing/malformed mark fails without folding.
+Unsolicited pushes can update observation but cannot complete the request. The returned
+value is the stored monotonic mark after confirmation, which may be clamped below the
+requested id or unchanged for a no-op; sending alone never advances the projection.
+Server errors, send refusal and transport teardown return sanitized failures; caller
+cancellation propagates. The repository performs no retry: the viewport slice owns it.
+See [wire validation and confirmation](mobile-protocol-v2-wire-layer.md#daemon-read-fields-and-confirmation).
+
+The [stable facade](stable-conversation-repository.md) switches observation to the
+current live delegate with null while disconnected. A write snapshots its entry
+delegate once, returns failure when absent and never retries on a replacement. Cache
+wrappers forward both methods without restoring read facts. The fake uses its numbered
+conversation history, applying `max(held, min(upTo, latest))` atomically and failing for
+unknown conversations. Both `startNewSession` and `changeWorkspace` retain messages,
+authored boundaries and the checkpoint: replacing history while retaining the mark
+would reset latest ids and put new unread entries behind an already-read checkpoint.
+
 ## Testing
 
 JVM unit only (`app/src/test/.../data/repository/RemoteConversationRepositoryTest.kt`, `./gradlew test`),
@@ -265,6 +325,25 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
 > projection-dependent assertions empty; `runCurrent()` drains the whole current-time cascade
 > deterministically. See [[remote-repo-test-runcurrent-not-advanceuntilidle]] and
 > [`codebase/312.md`](../codebase/312.md) § Lessons learned.
+
+`RemoteConversationRepositoryReplySuggestionTest` uses the real decoder/repository and
+channel-backed fake pumps for 13 invariant probes. Coverage includes late subscription
+after set and clear, every arrival order with duplicate/decreasing revisions, retained
+clear watermarks and reconciled null, independent conversations/sessions/hosts, malformed
+high revisions followed by lower valid updates, exact ASCII/multibyte byte limits and the
+full unsigned revision range. It also probes non-interactive/default absence, connection
+termination, [facade replacement](stable-conversation-repository.md#testing), cache
+passthrough without storage access, and diagnostic redaction. The no-thread/turn probe
+feeds both an event-id-bearing suggestion and a history entry: checking text alone would
+miss accidental replay-cursor advancement, thread rows or live turn events.
+
+`ConversationReadMarksTest` probes list/push arrival permutations, stale and duplicate
+facts, empty/excluding snapshots, unsigned bounds, malformed input followed by valid
+input, host/generation isolation, exact outbound integer JSON and confirmed-write
+failures. Its two session-rotation regressions exercise repeated `startNewSession` and
+`changeWorkspace` calls: assert retained old history ids, an unchanged latest id at
+rotation, and new entries above the checkpoint that can be marked. Clamping tests
+without a session boundary cannot catch a history reset.
 
 ## Related
 

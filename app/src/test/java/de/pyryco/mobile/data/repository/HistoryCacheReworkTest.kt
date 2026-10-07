@@ -33,6 +33,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import kotlin.time.Duration.Companion.minutes
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class HistoryCacheReworkTest {
@@ -93,6 +94,224 @@ class HistoryCacheReworkTest {
             return answer(cursor).also { projection.mergeHistoryPage(conversationId, it, true) }
         }
     }
+
+    @Test fun unsignedTerminalHistory_staysIncompleteAcrossWalkCacheAndReopen() =
+        unsignedHistoryRemainsIncomplete(mixed = false, previouslyComplete = false)
+
+    @Test fun mixedTerminalHistory_staysIncompleteAcrossWalkCacheAndReopen() =
+        unsignedHistoryRemainsIncomplete(mixed = true, previouslyComplete = false)
+
+    @Test fun unsignedNewestHistory_reopensPreviouslyCompleteWalkAndSurvivesSignedTerminalPage() =
+        unsignedHistoryRemainsIncomplete(mixed = true, previouslyComplete = true)
+
+    @Test fun mixedNonterminalHistory_preservesCursorAndUnknownCoverageAfterSignedTerminalPage() =
+        unsignedHistoryRemainsIncomplete(mixed = true, previouslyComplete = false, terminal = false)
+
+    @Test fun unsignedStateOnlyHistory_keepsUncertaintyAndCursorThroughEmptyCacheReopen() =
+        emptyUnsignedCacheRemainsIncomplete("turn_state", """{"conversation_id":"c","state":"idle"}""")
+
+    @Test fun unsignedUncacheableHistory_keepsUncertaintyAndCursorThroughEmptyCacheReopen() =
+        emptyUnsignedCacheRemainsIncomplete(
+            "unrecognized_message",
+            """{"conversation_id":"c","site":"undecodable","message_type":"","raw":"inert","truncated":false}""",
+        )
+
+    private fun emptyUnsignedCacheRemainsIncomplete(
+        type: String,
+        payload: String,
+    ) = runTest {
+        val unsupported =
+            HistoryPage(
+                listOf(
+                    HistoryEntry(
+                        type = type,
+                        payload = MobileJson.parseToJsonElement(payload),
+                        timestamp = Instant.fromEpochSeconds(1),
+                        unsignedId = ULong.MAX_VALUE,
+                    ),
+                ),
+                "older-upper",
+                false,
+            )
+        val live = Live().apply { answer = { unsupported } }
+        val vm =
+            ThreadViewModel(
+                SavedStateHandle(mapOf("conversationId" to "c")),
+                CachingConversationRepository(live, disk(), "h"),
+                FakeConnectionStateSource(),
+                ComposerDraftStore(),
+                repositoryAvailable = flowOf(true),
+            )
+        val store = ViewModelStore().apply { put("vm", vm) }
+        val reader = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+        advanceUntilIdle()
+        assertEquals(listOf(""), live.asks)
+        assertEquals(
+            if (type == "turn_state") 0 else 1,
+            live.projection
+                .observe("c")
+                .first()
+                .size,
+        )
+        assertTrue("cache policy must retain no renderer rows", disk().readThread("h", "c").isEmpty())
+        val saved = disk().readHistoryPosition("h", "c") ?: error("missing saved metadata")
+        assertEquals("older-upper", saved.cursor)
+        assertTrue(
+            saved.coverage
+                ?.spans
+                .orEmpty()
+                .isEmpty(),
+        )
+        assertTrue(saved.coverage?.unsignedIncomplete == true)
+        assertTrue(saved.coverage?.unknown == true)
+        assertFalse(saved.atStart)
+        store.clear()
+        reader.cancel()
+
+        val lower = page(1).copy(cursor = "", atStart = true)
+        val reopenedLive = Live().apply { answer = { lower } }
+        val repository = CachingConversationRepository(reopenedLive, disk(), "h")
+        assertEquals("empty cache must preserve its coverage and cursor", saved, repository.readHistoryPosition("c"))
+        val reopened =
+            ThreadViewModel(
+                SavedStateHandle(mapOf("conversationId" to "c")),
+                repository,
+                FakeConnectionStateSource(),
+                ComposerDraftStore(),
+                repositoryAvailable = flowOf(true),
+            )
+        val reopenedStore = ViewModelStore().apply { put("vm", reopened) }
+        val reopenedReader = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { reopened.state.collect {} }
+        advanceUntilIdle()
+        repeat(2) {
+            val afterLower = disk().readHistoryPosition("h", "c") ?: error("missing reopened metadata")
+            assertTrue("signed terminal page must retain omitted-content uncertainty", afterLower.coverage?.unsignedIncomplete == true)
+            assertTrue(afterLower.coverage?.unknown == true)
+            assertFalse("signed terminal page cannot certify completeness", afterLower.atStart)
+            assertEquals(saved.cursor, afterLower.cursor)
+            reopened.onDemandOlderHistory()
+            advanceUntilIdle()
+        }
+        assertEquals(
+            "older demand must remain available with the saved cursor",
+            listOf("", "older-upper", "older-upper"),
+            reopenedLive.asks,
+        )
+        reopenedStore.clear()
+        reopenedReader.cancel()
+    }
+
+    private fun unsignedHistoryRemainsIncomplete(
+        mixed: Boolean,
+        previouslyComplete: Boolean,
+        terminal: Boolean = true,
+    ) = runTest {
+        val lower = page(1).copy(cursor = "", atStart = true)
+        if (previouslyComplete) {
+            disk().writeThread("h", "c", rows(lower))
+            disk().writeHistoryPosition("h", "c", HistoryPosition("", true, HistoryCoverage().received(lower)))
+        }
+        val upper =
+            HistoryEntry(
+                type = "send_message",
+                payload = MobileJson.parseToJsonElement("""{"conversation_id":"c","message_id":"upper","text":"upper"}"""),
+                timestamp = Instant.fromEpochSeconds(1),
+                unsignedId = Long.MAX_VALUE.toULong() + 1u,
+            )
+        val unsupported =
+            HistoryPage(listOf(upper) + if (mixed) lower.entries else emptyList(), if (terminal) "" else "older", terminal)
+        val live = Live().apply { answer = { unsupported } }
+        val repository = CachingConversationRepository(live, disk(), "h")
+        val vm =
+            ThreadViewModel(
+                SavedStateHandle(mapOf("conversationId" to "c")),
+                repository,
+                FakeConnectionStateSource(),
+                ComposerDraftStore(),
+                repositoryAvailable = flowOf(true),
+            )
+        val store = ViewModelStore().apply { put("vm", vm) }
+        val reader = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+        advanceUntilIdle()
+        assertEquals(listOf(""), live.asks)
+        val saved = CachingConversationRepository(Live(), disk(), "h").readHistoryPosition("c") ?: error("missing position")
+        assertTrue("omitted ids must mark fresh and previously complete coverage unknown", saved.coverage?.unknown == true)
+        assertFalse("unsupported terminal pages cannot persist completeness", saved.atStart)
+        assertEquals(if (terminal) "" else "older", saved.cursor)
+        assertEquals(if (previouslyComplete) listOf(HistorySpan(1, 1)) else emptyList<HistorySpan>(), saved.coverage?.spans)
+        live.answer = { lower }
+        vm.onDemandOlderHistory()
+        advanceUntilIdle()
+        assertEquals("ordinary older demand must remain available", 2, live.asks.size)
+        val afterLower = disk().readHistoryPosition("h", "c") ?: error("missing position")
+        assertTrue("a signed terminal page cannot certify omitted upper content", afterLower.coverage?.unknown == true)
+        assertFalse(afterLower.atStart)
+        assertEquals(saved.cursor, afterLower.cursor)
+        store.clear()
+        reader.cancel()
+
+        val reopenedLive = Live().apply { answer = { lower } }
+        val reopened =
+            ThreadViewModel(
+                SavedStateHandle(mapOf("conversationId" to "c")),
+                CachingConversationRepository(reopenedLive, disk(), "h"),
+                FakeConnectionStateSource(),
+                ComposerDraftStore(),
+                repositoryAvailable = flowOf(true),
+            )
+        val reopenedStore = ViewModelStore().apply { put("vm", reopened) }
+        val reopenedReader = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { reopened.state.collect {} }
+        advanceUntilIdle()
+        reopened.onDemandOlderHistory()
+        advanceUntilIdle()
+        assertEquals("restore cannot disable older demand", 2, reopenedLive.asks.size)
+        assertTrue(disk().readHistoryPosition("h", "c")?.coverage?.unknown == true)
+        assertFalse(disk().readHistoryPosition("h", "c")?.atStart ?: true)
+        reopenedStore.clear()
+        reopenedReader.cancel()
+    }
+
+    @Test fun incompleteSignedPosition_cannotCertifyCompleteCacheOnWriteOrRead() =
+        runTest {
+            val received = page(1)
+            val coverage = HistoryCoverage(unknown = true, unsignedIncomplete = true).received(received)
+            val unsafe = HistoryPosition("", true, coverage)
+            val live = Live().apply { projection.mergeHistoryPage("c", received, true) }
+            val repository = CachingConversationRepository(live, disk(), "h")
+            repository.writeHistoryPosition("c", unsafe)
+            assertFalse(disk().readHistoryPosition("h", "c")?.atStart ?: true)
+            // Read independently saved contradictory metadata through a fresh cache instance.
+            disk().writeHistoryPosition("h", "c", unsafe)
+            val restored = CachingConversationRepository(Live(), disk(), "h").readHistoryPosition("c") ?: error("missing state")
+            assertFalse(restored.atStart)
+            assertTrue(restored.coverage?.unknown == true)
+        }
+
+    @Test fun incompleteSignedPosition_cannotStopViewModelSeedFromAnotherRepository() =
+        runTest {
+            val live = Live().apply { answer = { page(1).copy(cursor = "", atStart = true) } }
+            val repository =
+                object : ConversationRepository by live {
+                    override suspend fun readHistoryPosition(conversationId: String) =
+                        HistoryPosition("", true, HistoryCoverage(unknown = true, unsignedIncomplete = true))
+                }
+            val vm =
+                ThreadViewModel(
+                    SavedStateHandle(mapOf("conversationId" to "c")),
+                    repository,
+                    FakeConnectionStateSource(),
+                    ComposerDraftStore(),
+                    repositoryAvailable = flowOf(true),
+                )
+            val store = ViewModelStore().apply { put("vm", vm) }
+            val reader = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+            advanceUntilIdle()
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+            assertEquals(listOf("", ""), live.asks)
+            store.clear()
+            reader.cancel()
+        }
 
     @Test fun restoredOlderGapWithoutSharedRows_staysChronologicalAfterReconnectAndFreshRestore() =
         runTest {
@@ -202,7 +421,9 @@ class HistoryCacheReworkTest {
     @Test fun stateWriteAfterTrimmingCannotRestoreSavedCursor() = trimmingResetsWalk(HistoryPosition("past-discarded", false))
 
     private fun trimmingResetsWalk(saved: HistoryPosition) =
-        runTest {
+        // Crossing the real 100,000-row cap rewrites and reloads disk records; the full-suite
+        // verifier exceeded runTest's one-minute default before these assertions could finish.
+        runTest(timeout = 3.minutes) {
             val old = page(1)
             val coverage = HistoryCoverage().received(old).boundTo(rows(old))
             disk().writeThread("h", "c", rows(old))

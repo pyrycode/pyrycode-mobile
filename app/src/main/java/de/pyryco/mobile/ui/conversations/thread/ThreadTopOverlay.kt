@@ -50,6 +50,7 @@ private val OverlayPillGap = 12.dp
  * precedence over the offline pill because a network retry cannot repair a rejected pairing. With none of
  * them, nothing is emitted. Session errors and stopped-turn recovery advice follow these persistent
  * notices; [transientError] follows all persistent notices and expires independently under the screen's queue.
+ * [confirmation] follows every other notice, with its own occurrence and independent screen-local queue.
  *
  * [mcpFailure] (#1345) is the Claude-authored name of a failed MCP server: an Error pill with no X whose tap
  * runs [onOpenMcpFailure]. It is never drawn beside the pairing or offline pill.
@@ -73,7 +74,10 @@ internal fun ThreadTopOverlay(
     transientError: String? = null,
     transientErrorOccurrence: Long = 0L,
     attentionPill: (@Composable () -> Unit)? = null,
+    confirmation: String? = null,
+    confirmationOccurrence: Long = 0L,
 ) {
+    val navigationError = LocalNavigationErrorNotice.current?.currentMessage
     val usage = usageLimit?.takeUnless { usageLimitDismissed }
     val showOffline = connectionState == ConnectionState.Offline && !showRePair
     val mcp = mcpFailure?.takeUnless { showRePair || showOffline }
@@ -84,7 +88,9 @@ internal fun ThreadTopOverlay(
         !showOffline &&
         sessionError == null &&
         turnOutcome == null &&
-        transientError == null
+        transientError == null &&
+        navigationError == null &&
+        confirmation == null
     ) {
         return
     }
@@ -119,13 +125,21 @@ internal fun ThreadTopOverlay(
                 agent = agent,
                 onCompact = onCompact,
                 followingNotice =
-                    transientError?.let { text ->
-                        { key(transientErrorOccurrence) { TransientErrorPill(text) } }
+                    if (transientError != null || navigationError != null || confirmation != null) {
+                        {
+                            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(OverlayPillGap)) {
+                                transientError?.let { text -> key(transientErrorOccurrence) { TransientErrorPill(text) } }
+                                NavigationErrorPill()
+                                confirmation?.let { text -> key(confirmationOccurrence) { TransientConfirmationPill(text) } }
+                            }
+                        }
+                    } else {
+                        null
                     },
             )
         }
         Column(
-            modifier = modifier.fillMaxWidth(),
+            modifier = modifier.fillMaxWidth().testTag("thread-top-overlay"),
             horizontalAlignment = Alignment.End,
             verticalArrangement = Arrangement.spacedBy(OverlayPillGap),
         ) {

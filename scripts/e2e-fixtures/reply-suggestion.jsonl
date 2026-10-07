@@ -1,0 +1,3 @@
+{"type":"assistant","message":{"id":"ping-1","stop_reason":"end_turn","content":[{"type":"text","text":"ping"}]}}
+{"type":"result","subtype":"success","is_error":false,"session_id":"43143143-4314-4314-8314-431431431431"}
+{"type":"prompt_suggestion","suggestion":"  Explain the next step  ","uuid":"6a1c3f0e-2b4d-4e8f-9a7b-1c2d3e4f5a6b","session_id":"43143143-4314-4314-8314-431431431431"}

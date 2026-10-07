@@ -35,6 +35,8 @@ data class HistoryCoverage(
     val deltaLengths: Map<String, Int> = emptyMap(),
     val deltaHashes: Map<String, String> = emptyMap(),
     @Transient val deltaText: Map<String, String> = emptyMap(),
+    /** Sticky until unsigned coverage migration: a signed terminal page cannot cover omitted ids. */
+    val unsignedIncomplete: Boolean = false,
 ) {
     val highWater: Long get() = spans.maxOfOrNull { it.last } ?: 0
     val unknownEdge: Long? get() = if (unknown) spans.minOfOrNull { it.first } else null
@@ -62,9 +64,11 @@ data class HistoryCoverage(
         newest: Boolean = false,
         target: Long? = null,
     ): HistoryCoverage {
+        // Until coverage is unsigned, neither positions nor terminal completeness of this page are claims.
+        if (page.entries.any { it.id == null }) return copy(unknown = true, unsignedIncomplete = true)
         val received =
             page.entries
-                .map { it.id }
+                .mapNotNull { it.id }
                 .filter { it > 0 }
                 .distinct()
                 .sorted()
@@ -111,7 +115,7 @@ data class HistoryCoverage(
             gaps = nextGaps,
             cursors = received.firstOrNull()?.let { cursors + (it to page.cursor) } ?: cursors,
             walks = if (target != null) walks + (target to page.cursor) else walks,
-            unknown = unknown && !page.atStart,
+            unknown = unsignedIncomplete || unknown && !page.atStart,
             newestCursor = if (newest) page.cursor else newestCursor,
             rowOrder = order + rowOrder,
             rowEntries =

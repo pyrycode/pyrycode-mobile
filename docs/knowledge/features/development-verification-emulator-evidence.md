@@ -228,6 +228,81 @@ alongside the daemon's `daemon.log` by timestamp; neither side logs the other's
 cause, so correlating by time is what tells a phone-side, relay-side or network
 ending apart.
 
+## Share failure presentation (#1824)
+
+Local share refusals are deterministic presentation outcomes. `ShareErrorNoticeTest` under
+`app/src/sharedTest` drives the actual `ShareErrorNoticeHost` collector and `PyryNavHost` with an
+injected capture function, rather than injecting text directly into a pill. Its nine tests cover
+unreadable capture, repeated capture/size formatting, intake count refusal, selection count and size
+refusals across picker-to-thread navigation, Direct Share capture/count failures, accessibility extension
+and persistent-notice stacking. Assertions check copy, inert polite semantics, occurrence identity,
+expiry, absence of a snackbar ancestor, measured 20dp gutters/28dp clearance, unchanged row bounds on
+expiry and no Retry callback from tapping the overlapping inert error surface. The accessibility fixture
+checks the Short policy `(4000, icons=true, text=true, controls=false)` and extends it to 12000ms.
+A screen-only pill test would miss a collector removed by navigation; a row comparison must distinguish
+the picker's header-induced movement from movement caused by showing or clearing the notice.
+
+The [PR testing record](https://github.com/pyrycode/pyrycode-mobile/pull/1872) and
+[verifier's counted XML review](https://github.com/pyrycode/pyrycode-mobile/pull/1872#issuecomment-6030009563)
+record the 2026-10-07 evidence at reviewed commit `2aa34f33ee3a5bdbc38a06a261d70d6fc1e36e10`:
+
+- Focused/retained JVM classes: **112 executed/passed, 0 failed/errors, 0 skipped**:
+  `ShareErrorNoticeTest` (9), `ShareIntakeTest` (9), `ShareActivityTest` (2), `SharePickerTest` (6),
+  `TransientErrorNoticeStateTest` (4), `ThreadTransientErrorTest` (12), `ThreadTopOverlayTest` (17),
+  `ChannelListScreenTest` (47), `CreateChatFailureNoticeTest` (4) and `NoticePillTest` (2).
+  Existing intake, activity, picker and ownership regressions were retained.
+- Full JVM suite: **4637 executed/passed, 0 failed/errors, 0 skipped**. The verifier read
+  `app/build/test-results/testDebugUnitTest/` from `./gradlew check` and confirmed all nine
+  `ShareErrorNoticeTest` methods passed. The builder's XML-derived summaries remain in
+  `/tmp/builder-1824/focused-counts.json`, `pill-counts.json` and `final-counts.json`;
+  these temporary paths are local evidence locations, not committed artifacts.
+- Dispatcher UI gate, `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui`:
+  **192 executed/passed, 0 failed/errors, 1 skipped** in
+  `build/dispatcher-tests/ui-qr4mxhl4/dispatcher.xml`. Only
+  `RenameDialogCaptureTest.renameAtFigmaViewport` was skipped; it is not a pass.
+- Dispatcher scripted gate, `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all`:
+  **19 executed/passed, 0 failed/errors, 0 skipped** in
+  `build/dispatcher-tests/scripted-all-7k77vfy9/dispatcher.xml`, including `direct-share`, with
+  zero real Claude turns. This gate supplements the JVM failure-presentation proof.
+
+No real-Claude run is claimed here. The unchanged rung-3
+`InteractiveStreamE2ETest.interactiveTurn_sharedContentFromAndroid_arrivesAtPeerWithItsBytes`
+covers successful sharing and delivery; this slice adds no rung-3 scenario or rung-4 twin.
+The builder records Figma comparisons; the verifier checked source reuse and deterministic geometry
+but lacked independent remote Figma context/screenshots and received no new share-error capture artifact.
+See [navigation](navigation.md#incoming-shares-1728) and
+[transient overlay lifetimes](thread-top-overlay.md#the-transient-error-pill-1747) for behavior.
+
+## Share picker fixture isolation (#1885)
+
+`SharePickerTest` remains in `app/src/sharedTest`, covering picker transfer,
+Direct Share and unknown-shortcut fallback. The
+[verifier's counted review](https://github.com/pyrycode/pyrycode-mobile/pull/1894#issuecomment-6033743941)
+records the following complete-class evidence on 2026-10-07:
+
+- Robolectric, dispatcher `./gradlew check`: **6 executed/passed, 0 failed/errors,
+  0 skipped**. The verifier inspected fresh
+  `app/build/test-results/testDebugUnitTest/TEST-de.pyryco.mobile.ui.conversations.share.SharePickerTest.xml`,
+  timestamp `2026-10-07T07:33:56.891Z`.
+- Managed Android 13, focused complete-class
+  `:app:pixel2Api33AtdDebugAndroidTest --rerun` with instrumentation `class` set to
+  `de.pyryco.mobile.ui.conversations.share.SharePickerTest` and `notPackage` set to
+  `de.pyryco.mobile.e2e`: **6 executed/passed, 0 failed/errors, 0 skipped**.
+  The contemporaneous XML parse of `TEST-pixel2Api33Atd-_app-.xml`, timestamp
+  `2026-10-07T07:30:24`, lists all six methods as passed. Later device execution
+  replaced the original XML; the verifier inspected the successful command output
+  and recorded per-method parse, retained locally in
+  `/tmp/verifier-1894/managed-class-recorded-evidence.txt`, rather than claiming a
+  new device run.
+
+`unknownDirectShareFallsBackWithCapturedBatchAndDraftUnchanged` is explicitly
+confirmed passed in both runs; the device parse also confirms both transfer
+methods passed. The separate dispatcher UI gate (**192 executed/passed, 0 failed,
+1 skipped**) and scripted-all gate (**19 executed/passed, 0 failed, 0 skipped**)
+supplement these results; they do not establish the focused sharedTest class pass.
+See [fixture ownership](development-verification-test-scheduling.md#test-scheduling-and-harnesses)
+and [share-launch ordering](navigation.md#testing).
+
 ## Documentation evidence
 
 Record the failure that would otherwise recur, its cause and the check that catches
