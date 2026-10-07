@@ -105,6 +105,26 @@ Non-dismissible error notices remain visible. `assertIsDisplayed` alone cannot
 detect a [Top overlay](thread-top-overlay.md) physically covering that target.
 Retain the exact `message.content.take(100_000)` clipboard comparison.
 
+Since #1818 both side helpers tap through `sideMessageActionTapPoint` in
+`SideMessageReply.kt`. It returns the glyph's centre when that point is clear of
+the header, the composer and the pills under the `thread-top-overlay` tag.
+Otherwise it returns the nearest clear point inside the same action's own target,
+3dp away from the shared midpoint. It scrolls the list when no point is clear, and
+fails, naming the layout, when scrolling cannot help. A short thread starts at the
+overlay's own inset (#1509), so a pill that stays up covers the top of the first
+row, and the pair lifted the copy glyph 12.5dp into it. Two pills hit this. Every
+scripted run shows the non-dismissible failed-MCP pill, which covers the whole
+copy target of the short `hello` row. The held `stream` copy tap opened Channel
+info and the clipboard kept its baseline; the logcat showed
+`event=mcp_failure_acknowledged` where `event=message_copy` was expected. The
+scripted method therefore acknowledges that pill and closes Channel info first.
+On the live host, leftovers from earlier methods raise the other-conversation
+attention pill, which leaves the lower part of the copy target clear.
+`assertSideMessageReply` checks the exact staged draft, the end cursor, field
+focus and the hidden timestamp. ATD images omit a keyboard, so both stream
+methods select the test APK's keyboard through `TestImeRule` before asserting
+keyboard visibility.
+
 `SideMessageCopyTest` exercises this same helper in eight deterministic regressions:
 banner/body separators, another row's timestamp, timestamp rejection before copy
 and after clipboard write, incorrect source rejection, streaming trailing whitespace,
@@ -122,9 +142,10 @@ Palette guards check actual glyph pixels and glyph-on-thread-background contrast
 at ≥3:1 across static and wallpaper light/dark, theme changes and completion.
 A tint-only assertion passed while the light icon was 1.61:1 against the thread.
 Use `threadColors.background`, including the static-dark canvas overlay, rather
-than the unmodified global background. The glyph is tinted `colorScheme.primary`
-directly, with no backing: that role reads through the matching theme rather
-than the inverted one, so it clears 3:1 against the thread background on its own.
+than the unmodified global background. Both side glyphs, copy and reply,
+are tinted `colorScheme.primary` directly, with no backing: that role reads through
+the matching theme rather than the inverted one, so it clears 3:1 against the thread
+background on its own.
 
 `app/src/sharedTest/.../components/MessageBubblePaletteTest.kt` uses native Canvas
 pixels at the 412dp reference width to check user, finalized assistant, streaming
