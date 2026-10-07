@@ -270,6 +270,25 @@ ViewModel and never replays a consumed one. Process death drops it, as it drops 
 limits are in [Composer pending attachments](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments).
 `ShareActivityTest` covers fresh and new intents, recreation, both Back paths and an ordinary launch.
 
+Since [#1824](../../specs/architecture/1824-share-error-pills.md), `ShareErrorNoticeHost` wraps the
+activity content above navigation and collects `ShareIntakeViewModel.notices` into an Error-pill queue,
+replacing the root snackbar. Capture failures and intake count refusals appear on the ordinary picker;
+selection count/size refusals remain visible after the synchronous transfer navigates to the thread.
+The host preserves resource copy, plural counts and `formatMegabytes(AttachmentUploadLimit.MAX_BYTES)`;
+no exception, URI, filename or shared text enters the notice. Share failures have no permitted non-error
+snackbar classification. The source-routing guard integration remains owned by #1750.
+
+`LocalNavigationErrorNotice` supplies this presentation state; `NavigationErrorPill` renders it in the
+channel list/picker and thread. The picker uses its own measured header through the divider, rather than
+adopting the thread layout: the overlay has 20dp side gutters and 28dp header clearance, with 12dp after
+existing notices, and never reflows rows. The concealed Direct Share surface and the startup surface
+while paired-host storage loads also draw the pill with 20dp/28dp padding. Collecting only inside a
+picker or thread would lose selection errors when that destination leaves composition. The queue
+survives destination changes, but host disposal cancels active and queued notices; see
+[transient error lifetimes](thread-top-overlay.md#the-transient-error-pill-1747).
+`ShareErrorNoticeTest` drives the production collector and navigation graph; its retained coverage and
+counted results are recorded in [verification evidence](development-verification-emulator-evidence.md#share-failure-presentation-1824).
+
 Since [#1729](../../specs/architecture/1729-direct-share-shortcuts.md), opening an active thread from a
 list row, notification, launcher shortcut or direct share records the exact host/conversation pair in
 `SharingShortcuts`. Its atomic ledger under `noBackupFilesDir` retains at most four targets globally,

@@ -71,6 +71,8 @@ import de.pyryco.mobile.ui.conversations.components.OptionsOverlayPlacement
 import de.pyryco.mobile.ui.conversations.components.TreeConversationRow
 import de.pyryco.mobile.ui.conversations.components.TreeHostRow
 import de.pyryco.mobile.ui.conversations.components.TreeHostSectionRow
+import de.pyryco.mobile.ui.conversations.thread.LocalNavigationErrorNotice
+import de.pyryco.mobile.ui.conversations.thread.NavigationErrorPill
 import de.pyryco.mobile.ui.host.HostEditorModal
 import de.pyryco.mobile.ui.theme.LocalStaticDarkPalette
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -324,6 +326,7 @@ fun ChannelListScreen(
     shareHeader: (@Composable () -> Unit)? = null,
     conversationSelectionEnabled: Boolean = true,
 ) {
+    val navigationError = LocalNavigationErrorNotice.current?.currentMessage
     val colors = MaterialTheme.colorScheme
     var createChatFailureVisible by remember { mutableStateOf(false) }
     val accessibilityManager = LocalAccessibilityManager.current
@@ -384,25 +387,29 @@ fun ChannelListScreen(
                         conversationSelectionEnabled = conversationSelectionEnabled,
                     )
                 }
-                if (createChatFailureVisible && shareHeader == null) {
+                if ((createChatFailureVisible && shareHeader == null) || navigationError != null) {
                     // #1604 authorises reuse of Figma 685:4337 below this screen's measured header.
-                    Box(
+                    Column(
                         Modifier.fillMaxWidth().padding(
                             start = TreeGutter,
                             end = TreeGutter,
                             top = inner.calculateTopPadding() + 28.dp,
                         ),
-                        contentAlignment = Alignment.TopEnd,
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        // The shared pill's trimmed line box is 22dp versus Figma's 24dp at 1x (#1757).
-                        NoticePill(
-                            text = createChatFailure,
-                            isError = true,
-                            modifier =
-                                Modifier.testTag("channel-list-create-chat-error").semantics {
-                                    liveRegion = LiveRegionMode.Polite
-                                },
-                        )
+                        if (createChatFailureVisible && shareHeader == null) {
+                            // The shared pill's trimmed line box is 22dp versus Figma's 24dp at 1x (#1757).
+                            NoticePill(
+                                text = createChatFailure,
+                                isError = true,
+                                modifier =
+                                    Modifier.testTag("channel-list-create-chat-error").semantics {
+                                        liveRegion = LiveRegionMode.Polite
+                                    },
+                            )
+                        }
+                        NavigationErrorPill()
                     }
                 }
             }
