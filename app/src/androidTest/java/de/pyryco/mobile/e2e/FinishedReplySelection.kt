@@ -1,9 +1,11 @@
 package de.pyryco.mobile.e2e
 
+import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithText
@@ -15,7 +17,6 @@ import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.click
 import androidx.test.espresso.matcher.RootMatchers.isPlatformPopup
 import androidx.test.espresso.matcher.ViewMatchers.withText
-import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -30,7 +31,7 @@ internal const val SELECTION_PROMPT =
     "Reply with exactly these three words on one line, plain text, no punctuation or explanation: amber cobalt jade"
 
 /** Real pointer selection and Android's floating Copy menu; no substituted toolbar or clipboard. */
-internal fun ComposeTestRule.assertFinishedReplySystemCopy(
+internal fun AndroidComposeTestRule<*, *>.assertFinishedReplySystemCopy(
     repository: ConversationRepository,
     conversationId: String,
     timeoutMillis: Long,
@@ -62,8 +63,8 @@ internal fun ComposeTestRule.assertFinishedReplySystemCopy(
     val offset = reply.indexOf(word) + word.length / 2
     val press = layout.getBoundingBox(offset).center
 
-    val context = InstrumentationRegistry.getInstrumentation().targetContext
-    val clipboard = context.getSystemService(ClipboardManager::class.java)
+    val context = activity
+    val clipboard = activity.selectionClipboard()
     runOnIdle { clipboard.setPrimaryClip(ClipData.newPlainText("selection baseline", "unrelated clipboard baseline")) }
     runOnIdle {
         assertEquals(
@@ -81,6 +82,26 @@ internal fun ComposeTestRule.assertFinishedReplySystemCopy(
     onView(withText(context.getString(android.R.string.copy)))
         .inRoot(isPlatformPopup())
         .perform(click())
+    assertSelectedWordOnClipboard(clipboard, reply, word, timeoutMillis)
+}
+
+internal fun Activity.selectionClipboard(): ClipboardManager = getSystemService(ClipboardManager::class.java)
+
+internal fun ComposeTestRule.assertSelectedWordOnClipboard(
+    clipboard: ClipboardManager,
+    reply: String,
+    word: String,
+    timeoutMillis: Long,
+) {
+    // UI idleness is not the clipboard-result contract. Observe the actual selected-word write.
+    waitUntil("system Copy replaces the unrelated baseline with the selected word", timeoutMillis) {
+        runOnIdle {
+            clipboard.primaryClip
+                ?.getItemAt(0)
+                ?.text
+                ?.toString() == word
+        }
+    }
     runOnIdle {
         val copied =
             clipboard.primaryClip

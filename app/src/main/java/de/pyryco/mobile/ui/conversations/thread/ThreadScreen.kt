@@ -79,6 +79,7 @@ import androidx.compose.ui.window.DialogProperties
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
+import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
@@ -258,6 +259,7 @@ fun ThreadScreen(
     // bar owned its own text.
     draft: String = "",
     onDraftChange: (String) -> Unit = {},
+    onReplyToMessage: (Message) -> String? = { null },
     suggestedReply: SuggestedReply? = null,
     onSendSuggestedReply: (SuggestedReply) -> Boolean = { false },
     // #1342: the open Channel info sheet's System prompt state (ThreadViewModel.systemPrompt); its edits,
@@ -322,6 +324,7 @@ fun ThreadScreen(
                 { onComposerCommand(ComposerAction.CompactSession) }
             }
         }
+    var pendingReplyDraft by remember(state.conversationId) { mutableStateOf<String?>(null) }
     val threadOpenedAt = remember(state.conversationId) { Clock.System.now() }
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
@@ -524,6 +527,8 @@ fun ThreadScreen(
                     }
                     ThreadInputBar(
                         text = draft,
+                        replyDraft = pendingReplyDraft,
+                        onReplyConsumed = { pendingReplyDraft = null },
                         suggestedReply = suggestedReply,
                         onSendSuggestedReply = onSendSuggestedReply,
                         onTextChange = onDraftChange,
@@ -884,6 +889,7 @@ fun ThreadScreen(
                                                 is ThreadItem.MessageItem ->
                                                     MessageBubble(
                                                         message = item.message,
+                                                        onReply = { pendingReplyDraft = onReplyToMessage(it) },
                                                         modifier =
                                                             if (row.agentBlockId ==
                                                                 item.message.id

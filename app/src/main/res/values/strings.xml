@@ -219,6 +219,7 @@
     <string name="thread_history_offline_label">Older messages require a connection.</string>
     <string name="thread_interrupt_label">Stop</string>
     <string name="cd_thread_interrupt">Stop the running turn</string>
+    <string name="cd_thread_reply_message">Reply to this message</string>
     <string name="cd_thread_copy_message">Copy this message</string>
     <string name="cd_thread_message_sent">Sent %1$s</string>
     <string name="thread_message_show_details">Show time</string>
