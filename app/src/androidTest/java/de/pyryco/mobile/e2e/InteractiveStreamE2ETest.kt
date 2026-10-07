@@ -427,10 +427,15 @@ class InteractiveStreamE2ETest {
 
         // 3. Create a fresh discussion → the app navigates into its thread. The send button (only on
         //    the thread) is the marker that we have arrived.
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val before = hostConversationIds(serverId)
         createChat()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
+
+        val conversationId = newHostConversationId(serverId, before)
+        val repository = hostRepository(serverId)
 
         // 4. Type the constrained prompt into the only editable field, then send.
         composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
@@ -438,6 +443,21 @@ class InteractiveStreamE2ETest {
 
         // 5. Match the displayed reply itself; queued prompt removal cannot offset this signal.
         composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+        val messages =
+            runBlocking {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    repository
+                        .observeMessages(conversationId)
+                        .first { rows ->
+                            rows.filterIsInstance<ThreadItem.MessageItem>().any {
+                                it.message.role == Role.Assistant && !it.message.isStreaming && it.message.content.isNotBlank()
+                            }
+                        }.filterIsInstance<ThreadItem.MessageItem>()
+                        .map { it.message }
+                }
+            }
+        composeTestRule.assertSideMessageCopy(messages.single { it.role == Role.User && it.content == PING_PROMPT })
+        composeTestRule.assertSideMessageCopy(messages.single { it.role == Role.Assistant })
     }
 
     /**

@@ -63,3 +63,7 @@ Pending for documentation stage:
 - `app/src/androidTest/assets/design-1220/README.md`, #1621 row: timestamp alone hides until tap; copy always beside the bubble, citing #1817.
 - `docs/knowledge/features/message-bubble.md`: side copy placement, streaming availability and timestamp-only toggle.
 - Record fresh dispatcher full live-suite evidence for the named ping method, including executed, failed and skipped counts.
+
+## Revisions
+
+- 2026-10-07: Shared tests exposed metadata assumptions in attachment, selection and palette fixtures. Those assertions now identify timestamp text directly, while side-copy geometry and tint are checked separately. Added `SideMessageCopy.kt` as a shared device assertion for live ping and held streaming, and a non-merging `message-row` tag to scope copy to its own source. Forced-size geometry is measured inside the configured viewport, avoiding the outer Robolectric window's different density. The behavior and state contracts are unchanged.

@@ -1,25 +1,18 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
@@ -32,11 +25,8 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
 
-private val MetaRowSpacing = 8.dp
-private val CopyGlyphWidth = 11.dp
-
-// Keep the visible meta row at the design's 16dp. Compose expands clickable pointer hit testing
-// toward its minimum touch target without enlarging layout; a compact-width pointer test covers it.
+// Keep fenced-code copy compact. Compose expands pointer hit testing toward its minimum touch
+// target without enlarging layout; side-message copy defines its own explicit 48dp target.
 private val CopyTouchHorizontalPadding = 6.dp
 private val CopyTouchVerticalPadding = 2.dp
 
@@ -95,8 +85,7 @@ internal fun rememberFormattedTimestamp(timestamp: Instant): String {
 
 /**
  * The one clipboard write behind every copy affordance: [text] bounded by [MAX_CLIPBOARD_CHARS]. Shared
- * by [CopyTextControl] and the bubble's screen-reader copy action (#1621), so both put the same text on
- * the clipboard.
+ * by [CopyTextControl] and the bubble's side copy control, so both put the same text on the clipboard.
  */
 internal fun ClipboardManager.setBoundedText(text: String) {
     setText(AnnotatedString(text.take(MAX_CLIPBOARD_CHARS)))
@@ -137,46 +126,16 @@ internal fun CopyTextControl(
     }
 }
 
-/**
- * The trailing row of the design's shared `Message` component (Figma node `132:4446` for the assistant
- * instance, `132:4435` for the user one): that message's own timestamp and a copy control, 8dp apart.
- *
- * Deliberately wrap-content rather than `fillMaxWidth()`. The design's meta row is `w-full`, but CSS
- * resolves that against the *parent's* width while Compose's `fillMaxWidth` resolves against the
- * incoming max constraint — which would stretch every bubble to the full 272dp lane and lose the
- * shrink-wrap the design's short instances have. Which side the row lands on is therefore the caller's
- * to say, with `Modifier.align(...)` inside the bubble's `Column`.
- *
- * [copyText] is passed explicitly rather than derived from a rendered child so that an assistant bubble
- * copies its markdown source, not the parsed output.
- */
+/** The optional timestamp below a message body; no action or action-width reservation. */
 @Composable
 internal fun MessageMetaRow(
     timestamp: Instant,
-    copyText: String,
     modifier: Modifier = Modifier,
 ) {
-    // One colour for both children: the control inherits the label's tint through the ambient.
-    val metaColor = LocalContentColor.current.copy(alpha = META_CONTENT_ALPHA)
-    val formattedTimestamp = rememberFormattedTimestamp(timestamp)
-    BoxWithConstraints(modifier = modifier) {
-        val timestampMaxWidth = (maxWidth - CopyGlyphWidth - CopyTouchHorizontalPadding * 2 - MetaRowSpacing).coerceAtLeast(0.dp)
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(MetaRowSpacing),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = formattedTimestamp,
-                modifier = Modifier.widthIn(max = timestampMaxWidth),
-                style = MaterialTheme.typography.bodySmall,
-                color = metaColor,
-            )
-            CompositionLocalProvider(LocalContentColor provides metaColor) {
-                CopyTextControl(
-                    text = copyText,
-                    contentDescription = stringResource(R.string.cd_thread_copy_message),
-                )
-            }
-        }
-    }
+    Text(
+        text = rememberFormattedTimestamp(timestamp),
+        modifier = modifier,
+        style = MaterialTheme.typography.bodySmall,
+        color = LocalContentColor.current.copy(alpha = META_CONTENT_ALPHA),
+    )
 }
