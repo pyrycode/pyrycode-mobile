@@ -14,6 +14,7 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
@@ -43,8 +44,7 @@ internal fun ComposeTestRule.assertSideMessageReply(
         onNode(hasContentDescription(context.getString(R.string.cd_thread_reply_message)) and hasAnyAncestor(sourceRow))
             .assertIsDisplayed()
     val glyph = onNode(hasTestTag("message-reply-glyph") and hasAnyAncestor(sourceRow), useUnmergedTree = true).fetchSemanticsNode()
-    val tap = glyph.boundsInRoot.center - reply.fetchSemanticsNode().boundsInRoot.topLeft
-    reply.performTouchInput { click(tap) }
+    onRoot().performTouchInput { click(glyph.boundsInRoot.center) }
     waitUntil(5_000) {
         onNode(hasSetTextAction()).fetchSemanticsNode().config[SemanticsProperties.EditableText].text == expectedDraft
     }

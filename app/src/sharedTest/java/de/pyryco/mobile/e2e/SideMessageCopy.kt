@@ -11,6 +11,7 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeTestRule
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
@@ -45,8 +46,7 @@ internal fun ComposeTestRule.assertSideMessageCopy(message: Message) {
     repeat(notices.fetchSemanticsNodes().size) { notices[0].performClick() }
     runOnIdle { clipboard.setPrimaryClip(ClipData.newPlainText("copy baseline", "unrelated baseline")) }
     val glyph = onNode(hasTestTag("message-copy-glyph") and hasAnyAncestor(sourceRow), useUnmergedTree = true).fetchSemanticsNode()
-    val tap = glyph.boundsInRoot.center - copy.fetchSemanticsNode().boundsInRoot.topLeft
-    copy.performTouchInput { click(tap) }
+    onRoot().performTouchInput { click(glyph.boundsInRoot.center) }
     runOnIdle {
         assertEquals(
             message.content.take(100_000),
