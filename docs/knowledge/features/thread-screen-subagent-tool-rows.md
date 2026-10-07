@@ -78,6 +78,9 @@ bounded to 4096 characters and never logged. Tapping the marker only scrolls: a 
 the Agent header's row in the reversed list and scrolls to it. It never opens a collapsed run on the
 reader's behalf — the root header always draws as itself regardless (#1827 follow-up), and its own
 children's run opens only from its own tap, via `ToolRunRow`'s toggle — and works before and after finish.
+Navigation preserves the reader's collapse state. A placement test must assert that state after
+navigation and explicitly open the owned child run before inspecting its prose (#1904); reaching
+the always-visible Agent root does not prove that its children are visible.
 
 Running families sit below every ordinary and queued row. Multiple families keep unknown launches
 in their roster slots and sort known launches within the remaining slots; once all start history is
@@ -132,12 +135,18 @@ block's collapse control until a repository snapshot repaired it. Attribution en
 deduplication must stay independent here, as they already are in
 `HistoryPageReducer.withAssistantDelta`. A later conflicting hint never replaces a known parent.
 
-With collapse on, `foldToolRuns` treats a contiguous joined block as one run, including its prose
-and a lone Agent whose only children are prose. The run's `tools` stay tool messages only, so the
-count, status and first-tool run identity are unchanged. The block's existing run control hides
-and reveals the prose; collapse never drops it. With collapse off the prose is visible as a nested
-child. Each run header carries a `tool-run:<runId>` tag, so a test can pick the Agent's run when
-another run shows the same "Using tools: N" label. Gaps inside a block are covered under
+With collapse on, `foldToolRuns` keeps the Agent root separate and folds its contiguous child
+tool/prose rows into a run when there are at least two child rows and at least one tool. A prose-only family remains attached to the root without a child-tool
+run. The run's `tools` contain only tool messages, so prose does not change its count or status.
+Ownership identifies the Agent family; the first loaded owned child tool identifies its run.
+For direct children, select the first loaded `Role.Tool` message whose
+`toolCall.parentToolUseId` equals the Agent id, then use its message id in `tool-run:<runId>`.
+The root Agent id is not that run id. Match the clickable control beneath that tag rather than
+an arbitrary "Using tools: N" label (#1904). `BackgroundAgentProseScreenTest`'s
+`agentRunControlHasStableOwnershipWhenAnOrdinaryRunHasTheSameLabel` gives both independent runs
+two tools so their labels really match, and derives the owned run from loaded child ownership.
+The control hides and reveals its prose; collapse never drops it. With collapse off the prose
+is visible as a nested child. Gaps inside a block are covered under
 [the oldest-end history demand](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777).
 
 `BackgroundAgentProseTest` probes the production projection: two agents and a main lane; empty,
