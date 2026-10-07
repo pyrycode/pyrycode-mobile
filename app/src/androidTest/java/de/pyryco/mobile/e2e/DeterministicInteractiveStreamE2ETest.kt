@@ -833,6 +833,11 @@ class DeterministicInteractiveStreamE2ETest {
         val agent = composeTestRule.onNode(header).fetchSemanticsNode().boundsInRoot
         val after = composeTestRule.onNodeWithText("after1783", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         assertTrue("terminal block must settle before the following reply", agent.bottom <= after.top)
+        // Navigation and completion preserve the child run we deliberately closed above.
+        composeTestRule.onAllNodesWithText("child1827-after", useUnmergedTree = true).assertCountEquals(0)
+        val childRun = hasTestTag("tool-run:child1783") and hasClickAction()
+        list.performScrollToNode(childRun)
+        composeTestRule.onNode(childRun).performClick()
         list.performScrollToNode(hasText("child1827-after"))
         composeTestRule.onNode(hasText("child1827-after") and hasAnyAncestor(child), useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onAllNodesWithText("child1827-after", useUnmergedTree = true).assertCountEquals(1)
