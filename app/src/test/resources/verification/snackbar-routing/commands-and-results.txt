@@ -15,3 +15,11 @@ Exit 1; 1 executed, 1 expected assertion failure, 0 errors/skips. The test-only 
 Final main-merge blocker:
 ./gradlew testDebugUnitTest --console=plain
 After merging main 39520003 (#1728), exit 1; 4,349 executed across 361 classes, 1 failure, 0 errors/skips. Only SnackbarRoutingGuardTest.productionSourcesContainOnlyClassifiedNonErrorRoutes fails. It checks 294 production files and rejects MainActivity's new share-error snackbar. Fix ticket #1824 is OPEN and linked as a native blocker of #1750. See main-share-error.xml. No production assertion is ignored or weakened.
+
+Blocker resolution and fresh verification, 2026-10-07:
+#1824 is CLOSED and merged through main d6a0fa8f; the original guard and controls are unchanged.
+./gradlew -Pkotlin.daemon.jvmargs=-Xmx4g testDebugUnitTest --tests 'de.pyryco.mobile.verification.SnackbarRoutingGuardTest' lint assembleDebug --console=plain
+Exit 0; 11 executed/passed, 0 failures/errors/skips. 302 production files checked, 0 unclassified routes. Lint and assembleDebug passed. See post-blocker-green.xml.
+./gradlew -Pkotlin.daemon.jvmargs=-Xmx4g testDebugUnitTest --tests 'de.pyryco.mobile.verification.SnackbarRoutingGuardTest.productionSourcesContainOnlyClassifiedNonErrorRoutes' --init-script app/src/test/resources/verification/snackbar-routing/production-source-set-control.gradle --console=plain
+Exit 1; 1 executed, 1 expected assertion failure, 0 errors/skips. 303 files checked; latest/LatestScreen.kt is rejected as an unclassified showSnackbar route. See post-blocker-source-set-negative.xml.
+The initial focused run was terminated with exit 143 after the shared 2 GB Kotlin compiler saturated its heap; no tests executed. A temporary 4 GB compiler heap completed the rerun without changing repository settings.
