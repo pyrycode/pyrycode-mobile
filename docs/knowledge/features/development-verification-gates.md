@@ -91,18 +91,13 @@ routes; expressions inside Kotlin string templates are inspected. This is a
 syntax contract, not whole-program dataflow analysis or a substitute for reviewing
 message producers.
 
-The four permitted non-error regions are:
-
-- `ThreadScreen`'s attachment callback: only `AttachmentNotice.SAVED` reaches the
-  snackbar; other attachment notices reach Error pills.
-- `MarkdownReaderScreen`'s note-save callback: the same Saved-only split.
-- `ThreadScreen`'s `ModalUiState.Dismissed` branch: the dismissed-elsewhere reason
-  from `dismissReasonText`, in the effect keyed by `modalId`.
-- `ArchivedDiscussionsScreen`'s `RestoreSucceeded` branch: the success resource
-  formatted with the restored display name.
-
-`ChannelListScreen` has no permitted snackbar route. These classifications do
-not migrate non-error notices to Default pills or alter presentation lifetimes.
+The remaining production snackbar route is `ArchivedDiscussionsScreen`'s
+`RestoreSucceeded` branch: the success resource formatted with the restored display
+name. #1851 migrated thread/reader Saved and thread `ModalUiState.Dismissed` to
+screen-local Default top-overlay pills. `ThreadScreen`, `MarkdownReaderScreen` and
+`ChannelListScreen` have no active snackbar route. The guard still contains the
+three exact historical thread/reader classifications; their presence does not
+mean those routes remain in production.
 
 For a new notice, first review whether its producer represents a failure. Route
 failures to Error pills. A new non-error snackbar needs an explicit classification

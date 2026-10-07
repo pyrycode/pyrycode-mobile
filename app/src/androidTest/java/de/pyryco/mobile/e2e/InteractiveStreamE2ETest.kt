@@ -26,11 +26,14 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasAnySibling
@@ -6067,6 +6070,18 @@ class InteractiveStreamE2ETest {
             awaitReadyAttachmentRow(documentName, REPLY_TIMEOUT_MS, poll = ::pullForOlderHistory)
             composeTestRule.onAllNodes(readyAttachmentRow(documentName)).assertCountEquals(1)
             assertOpensAndSaves(stub, documentName, sha256(document), inserted)
+            // #1851: successful saving confirms at the top, using the inert Default surface.
+            val savedPill =
+                composeTestRule
+                    .onNodeWithText(savedNotice)
+                    .assert(hasTestTag("transient_confirmation_notice"))
+                    .assertIsDisplayed()
+                    .assertHasNoClickAction()
+                    .getUnclippedBoundsInRoot()
+            val bar = composeTestRule.onNodeWithTag("thread-top-bar").getUnclippedBoundsInRoot()
+            assertTrue("saved confirmation is below the top bar", savedPill.top >= bar.bottom)
+            assertEquals("saved confirmation uses the right overlay gutter", 20f, (bar.right - savedPill.right).value, 2f)
+            composeTestRule.onAllNodesWithTag("thread_confirmation_snackbar").assertCountEquals(0)
         } finally {
             instrumentation.removeMonitor(stub)
             deleteFixtures(inserted)

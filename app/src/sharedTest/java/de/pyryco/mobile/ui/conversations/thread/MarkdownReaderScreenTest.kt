@@ -19,7 +19,6 @@ import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
-import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -50,6 +49,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
+import org.robolectric.annotation.GraphicsMode
 import java.io.File
 
 /** #1027: the in-app markdown reader — its name bar, its rendered body, its way back, and the tap that opens it. */
@@ -293,6 +293,76 @@ class MarkdownReaderScreenTest {
         composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty() }
     }
 
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Test
+    fun readerSavedOccurrences_keepFullTimes_belowIndependentErrors_andCancelOnExit() {
+        val registry = PickerRegistry()
+        val owner =
+            object : ActivityResultRegistryOwner {
+                override val activityResultRegistry = registry
+            }
+        val visible = mutableStateOf(true)
+        composeRule.setContent {
+            CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner) {
+                PyrycodeMobileTheme(dynamicColor = false) {
+                    if (visible.value) {
+                        RefreshableMarkdownReader(
+                            initial = MarkdownDocument("Plan.md", "# Plan"),
+                            reread = { null },
+                            onBack = {},
+                        )
+                    }
+                }
+            }
+        }
+        composeRule.mainClock.autoAdvance = false
+        val headingBefore = composeRule.onNodeWithText("Plan").getUnclippedBoundsInRoot()
+
+        fun save(index: Int) {
+            composeRule.mainClock.autoAdvance = true
+            choose(saveToDevice)
+            composeRule.mainClock.autoAdvance = false
+            val destination = File(context.cacheDir, "repeat-reader-$index.md")
+            composeRule.runOnIdle { registry.dispatchResult(registry.launches.last().first, Uri.fromFile(destination)) }
+            composeRule.waitUntil(5_000) {
+                composeRule.mainClock.advanceTimeByFrame()
+                destination.exists() && composeRule.onAllNodesWithText(saved).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeRule.mainClock.advanceTimeBy(64)
+        }
+        save(1)
+        val first = composeRule.onNodeWithTag("transient_confirmation_notice").fetchSemanticsNode().id
+        save(2)
+        composeRule.mainClock.autoAdvance = true
+        choose(refresh)
+        composeRule.mainClock.autoAdvance = false
+        composeRule.mainClock.advanceTimeBy(64)
+        val error = composeRule.onNodeWithTag("transient_error_notice").assertIsDisplayed().getUnclippedBoundsInRoot()
+        val confirmation = composeRule.onNodeWithTag("transient_confirmation_notice").assertHasNoClickAction()
+        val pill = confirmation.getUnclippedBoundsInRoot()
+        assertEquals(12f, (pill.top - error.bottom).value, 0.5f)
+        assertEquals(24f, (pill.bottom - pill.top).value, 0.5f)
+        assertEquals(headingBefore, composeRule.onNodeWithText("Plan").getUnclippedBoundsInRoot())
+        composeRule.onNodeWithTag("reader_confirmation_snackbar").assertDoesNotExist()
+        composeRule.mainClock.advanceTimeBy(3_000)
+        assertEquals(first, confirmation.fetchSemanticsNode().id)
+        composeRule.mainClock.advanceTimeBy(1_100)
+        val second = composeRule.onNodeWithTag("transient_confirmation_notice").fetchSemanticsNode().id
+        assertNotEquals(first, second)
+        composeRule.mainClock.advanceTimeBy(3_000)
+        assertEquals(second, composeRule.onNodeWithTag("transient_confirmation_notice").fetchSemanticsNode().id)
+        composeRule.mainClock.advanceTimeBy(1_000)
+        composeRule.onNodeWithTag("transient_confirmation_notice").assertDoesNotExist()
+        save(3)
+        save(4)
+        composeRule.runOnIdle { visible.value = false }
+        composeRule.mainClock.advanceTimeBy(64)
+        composeRule.runOnIdle { visible.value = true }
+        composeRule.mainClock.advanceTimeBy(8_100)
+        composeRule.onNodeWithTag("transient_confirmation_notice").assertDoesNotExist()
+        composeRule.onNodeWithText("Plan").assertIsDisplayed()
+    }
+
     @Test
     fun saveToDevice_opensTheCreateDocumentPicker_withTheNotesNameAndMarkdownType() {
         val registry = PickerRegistry()
@@ -317,7 +387,7 @@ class MarkdownReaderScreenTest {
         answer(registry, Uri.fromFile(destination))
 
         awaitText(saved)
-        composeRule.onNodeWithText(saved).assert(hasAnyAncestor(hasTestTag("reader_confirmation_snackbar")))
+        composeRule.onNodeWithText(saved).assert(hasTestTag("transient_confirmation_notice")).assertHasNoClickAction()
         assertArrayEquals(text.toByteArray(Charsets.UTF_8), destination.readBytes())
         composeRule.onNodeWithText(saveFailed).assertDoesNotExist()
     }
