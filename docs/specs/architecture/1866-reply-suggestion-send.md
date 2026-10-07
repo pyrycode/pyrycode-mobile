@@ -78,14 +78,23 @@ Add a rung-4 deterministic native-suggestion fixture/scenario if the existing fa
 - [Cryptography] Existing Noise/TLS and Keystore boundaries are unchanged; no new randomness or key use.
 - [Network/IO] Ordinary `sendMessage` and attachment uploads preserve encrypted transport, bounds and existing error outcomes. No new inbound decoder or verb.
 - [Errors/logs] Log only static lifecycle and reject codes; never suggestion text, draft, decrypted bytes, credentials or attachment metadata.
-- [Concurrency] Identity must be rechecked and consumed synchronously before any upload/send suspension. Pointer cancellation alone is insufficient: the ViewModel rejects stale tokens after draft, session, turn, clear and connection changes.
+- [Concurrency] Identity must be rechecked and consumed synchronously before any upload/send suspension. Pointer cancellation alone is insufficient: the ViewModel rejects stale tokens after draft, session, turn, clear and connection changes. Invalidation uses the session's last observed revision even after repository absence removes the current reading, so teardown and connection collector ordering cannot revive an invalidated offer.
 - [Threat model] Hostile daemon text remains inert until deliberate submission (prompt-injection residual risk is unchanged). A malicious relay can delay/drop but cannot authorize a stale token; disconnect invalidates it. Rooted-device token theft remains covered by existing Keystore storage. Suggestions are intentionally visible to screenshots/accessibility like conversation text, but never entered into the IME as a draft.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-07
+
+## Documentation handoff
+
+Pending for the documentation stage:
+
+- `docs/knowledge/features/thread-input-bar.md`, "The message-input button" and "Draft binding": inert suggestions, exact-empty eligibility, threshold haptic/release confirmation, cancellation, named accessibility submission, verbatim text and local consumption.
+- `docs/knowledge/features/thread-screen-composer-drafts-and-attachments.md`, "Composer draft ownership": active-session resolution, per-destination token ownership, revision suppression and daemon restart behavior. Repository absence must retain the revision needed by later invalidation collectors.
+- `docs/e2e-interactive-stream.md`, rung-3 and rung-4 coverage/evidence sections: the new live method, `reply-suggestion` scripted fixture/scenario and real repository-to-screen coverage; record fresh dispatcher live counts when available. No wire schema change.
 
 ## Revisions
 
 - 2026-10-07: `ConversationsPayload.toConversations` deliberately leaves `currentSessionId` empty on initial snapshots. Resolve the initial active session from the existing fresh `settingsReadings` instead of assuming the snapshot supplies it; `lastKnownSessionId` from transitions takes precedence afterward. Reuse those readings rather than creating another session-settings request subscription. The real repository harness establishes its session through `session_transition`.
 - 2026-10-07: The existing fakeclaude JSONL seam accepts `prompt_suggestion` after a successful result. Add the rung-4 `reply-suggestion` fixture and scenario; this resolves the open question without a sibling-repository edit. Keep the placeholder visible during attachment sending while revoking the action token and disabling gesture/accessibility submission.
 - 2026-10-07: The fresh-lifetime probe failed: carrying a suppressed revision 50 across a daemon restart rejected the new lifetime's valid revision 1. Track the last observed revision per session. #1865 guarantees a decrease can only arrive from a fresh connection repository, so that decrease resets local suppression for the session while same-revision reconciliation remains suppressed. Old offer identity tokens remain revoked. The focused probe guards both behaviors.
+- 2026-10-07: Verifier finding 1 exposed null-before-Offline and null-before-session-replacement ordering: `invalidateSuggestion` used the current reading after it had disappeared. Both new probes failed before the fix. Use `observedSuggestionRevisions` for the departing/current session's invalidation watermark; repository absence clears only the visible reading, never revision history. Same-revision reconciliation stays suppressed, lower-revision fresh lifetimes remain valid, and old tokens stay rejected. No in-flight branch overlaps these rework files.

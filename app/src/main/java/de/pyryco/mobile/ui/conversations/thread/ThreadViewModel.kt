@@ -1028,9 +1028,12 @@ class ThreadViewModel(
     }
 
     private fun invalidateSuggestion(reason: String) {
-        suggestionReading?.let { reading ->
-            invalidatedSuggestions[reading.sessionId] =
-                maxOf(invalidatedSuggestions[reading.sessionId] ?: 0uL, reading.revision)
+        // Teardown may emit absence before Offline or a session replacement reaches this collector.
+        suggestionSession?.let { session ->
+            observedSuggestionRevisions[session]?.let { revision ->
+                invalidatedSuggestions[session] =
+                    maxOf(invalidatedSuggestions[session] ?: 0uL, revision)
+            }
         }
         if (_suggestedReply.value != null) RelayLog.d { "event=reply_suggestion_hidden reason=$reason" }
         _suggestedReply.value = null

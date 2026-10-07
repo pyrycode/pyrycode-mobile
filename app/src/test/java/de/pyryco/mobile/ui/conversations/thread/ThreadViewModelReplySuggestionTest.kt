@@ -234,6 +234,53 @@ class ThreadViewModelReplySuggestionTest {
             assertFalse(vm.sendSuggestedReply(old))
         }
 
+    @Test fun repositoryAbsenceBeforeOffline_keepsSameRevisionInvalidated_andAllowsFreshLifetime() =
+        runTest {
+            val repo = Repository()
+            val connection = FakeConnectionStateSource()
+            val vm = vm(repo, connection)
+            repo.set(50u, "old lifetime")
+            val old = requireNotNull(vm.suggestedReply.value)
+            repo.readings.value = emptyMap()
+            assertNull(vm.suggestedReply.value)
+            assertFalse(vm.sendSuggestedReply(old))
+            connection.emit(ConnectionState.Offline)
+            connection.emit(ConnectionState.Connected)
+            repo.set(50u, "old lifetime")
+            assertNull(vm.suggestedReply.value)
+            assertFalse(vm.sendSuggestedReply(old))
+            assertTrue(repo.sends.isEmpty())
+            repo.readings.value = emptyMap()
+            repo.set(1u, "fresh lifetime")
+            val fresh = requireNotNull(vm.suggestedReply.value)
+            assertEquals("fresh lifetime", fresh.text)
+            assertFalse(vm.sendSuggestedReply(old))
+            assertTrue(vm.sendSuggestedReply(fresh))
+            assertFalse(vm.sendSuggestedReply(fresh))
+            assertEquals(listOf("fresh lifetime"), repo.sends)
+        }
+
+    @Test fun repositoryAbsenceBeforeSessionReplacement_keepsPreviousSessionRevisionInvalidated() =
+        runTest {
+            val repo = Repository()
+            val vm = vm(repo)
+            repo.set(50u, "first session")
+            val first = requireNotNull(vm.suggestedReply.value)
+            repo.readings.value = emptyMap()
+            repo.sessions.value = "s2"
+            repo.set(8u, "second session", session = "s2")
+            val second = requireNotNull(vm.suggestedReply.value)
+            repo.readings.value = emptyMap()
+            repo.sessions.value = "s1"
+            repo.set(50u, "first session")
+            assertNull(vm.suggestedReply.value)
+            assertFalse(vm.sendSuggestedReply(first))
+            assertFalse(vm.sendSuggestedReply(second))
+            assertTrue(repo.sends.isEmpty())
+            repo.set(51u, "newer first session")
+            assertEquals("newer first session", vm.suggestedReply.value?.text)
+        }
+
     @Test fun hostAndDestinationTokensCannotAuthorizeAnotherViewModel() =
         runTest {
             val a = Repository()
