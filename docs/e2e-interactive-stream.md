@@ -3111,6 +3111,29 @@ The UI gate separately recorded **192 executed, 192 passed, 0 failed, 1 skipped*
 the skipped rename capture supplies no suggestion evidence. Deterministic passes
 are distinct from the real-Claude acceptance above.
 
+**Accessible side actions and ping confirmation (#1895, 2026-10-07).** The
+dispatcher full live command
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`
+tested `275e5071cafc3aa93aa6a6014219a3d0ad785e31` merged with `origin/main`
+at `093847a07b2e`: **64 executed, 63 passed, 1 failed, 0 skipped** (exit 1).
+The fresh JUnit gate report `2026-10-07T14-22-04-161Z` explicitly records
+`InteractiveStreamE2ETest.interactiveTurn_pingPrompt_streamsPingReplyIntoThread`
+as **executed and passed in the full suite**, including displayed reply,
+exact-source copy, row-scoped timestamps and reply/IME checks. No daemon-revision
+annotation was supplied. Archive/restore was the sole failure and passed on the
+dispatcher's same-tree rerun (**1 executed, 1 passed**). The dispatcher accepted
+the gate after rerun; the original full-suite failure remains recorded. See
+[counted live evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1895#issuecomment-6040513528).
+
+On that head, the verifier UI gate recorded **199 executed/passed, 0 failed,
+1 skipped**: the reply/IME device method passed, and the rename capture was
+skipped. Full scripted coverage recorded **21 executed/passed, 0 failed,
+0 skipped**, including held multi-delta stream and background-Agent scenarios.
+Unit/shared reports recorded **4,775 executed/passed, 0 failed, 1 skipped**,
+including all **8 unchanged side-copy regressions**; the inherited history skip
+is tracked by #1913. See [verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1916#issuecomment-6039977236)
+and [action geometry coverage](knowledge/features/message-bubble-testing.md#testing).
+
 **Side-copy selector and notice repair (#1878, 2026-10-07).** The dispatcher full
 live command `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`
 tested `9b55c94b107c` merged with `origin/main` at `6efbbaffc162`:

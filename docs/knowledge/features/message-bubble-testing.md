@@ -102,12 +102,27 @@ do not prove frame pixels: synthetic bars can suppress PNG output. The #1817
 verifier did not inspect fresh full-frame pixels or perform manual TalkBack traversal.
 
 Side geometry tests measure the configured viewport rather than Robolectric's
-outer window, whose density can differ. Measure the bubble, 13dp column, 11×12dp
-glyph and 48dp target separately at 412dp and 320dp. Pointer tests include all
-target edges and overlap into the bubble; copy must win without toggling time.
+outer window, whose density can differ. Measure the bubble, 13dp column,
+11×12dp Copy and 13×12dp Reply glyphs separately from their adjoining 48×48dp
+targets. `MessageBubbleTest` and `MessageReplyTargetsTest` require both target
+dimensions for both roles at 320dp/412dp, including short/long surfaces and
+streaming. A width-only check missed the former 36.5dp target heights. Assert the
+25dp glyph-centre gap, bubble-relative centring, containment within the visible
+surface and row, and separation from the preceding row's targets. Pointer checks
+cover both sides of the shared edge, every outer edge and overlap into the bubble;
+copy and reply must route independently with exact source and no timestamp toggle.
 Scope source-copy selectors to the non-merging `message-row`, so another message
 or a fenced-code control cannot satisfy the assertion. Markdown and streaming
 append tests compare current source, including the 100,000-character bound.
+
+The 96dp minimum short surface retains the 12dp visible rest gap. Keep
+`BackgroundAgentRestGapTest` alongside action geometry checks: invisible trailing
+row space can satisfy containment while breaking the gap. Taller rows reduce the
+lazy-list viewport; explicitly reveal the owned target and position pointer taps
+clear of the composer before retaining ownership/collapse assertions. Semantic
+visibility alone includes the area behind the composer. History fixtures must
+position a fresh touch inside the oldest-end demand window without issuing an
+earlier touch, retaining the zero-demand then exact one-demand assertions.
 
 The live and scripted copy checks share
 `app/src/sharedTest/java/de/pyryco/mobile/e2e/SideMessageCopy.kt` (#1878).
@@ -140,6 +155,10 @@ attention pill, which leaves the lower part of the copy target clear.
 focus and the hidden timestamp. ATD images omit a keyboard, so both stream
 methods select the test APK's keyboard through `TestImeRule` before asserting
 keyboard visibility.
+`MessageReplyImeDeviceTest` reuses `TestImeRule(selectBeforeTest = true)` at
+rule order 0, outside the Compose activity rule at order 1. Selection happens
+before activity setup and restoration after cleanup, including setup failure;
+live/scripted callers retain default-off, explicit `select()` behavior.
 
 `SideMessageCopyTest` exercises this same helper in eight deterministic regressions:
 banner/body separators, another row's timestamp, timestamp rejection before copy
@@ -153,6 +172,26 @@ the repaired report executed/passed eight with zero failures or skips. See the
 Focused live repair evidence does not replace dispatcher full-suite acceptance:
 record the full run's executed, failed and skipped counts and the named ping
 method's result separately, as in the [e2e ladder](../../e2e-interactive-stream.md#verification-status).
+
+Fresh #1895 evidence on `275e5071cafc3aa93aa6a6014219a3d0ad785e31`, based on
+main `093847a07b2e`, records **4,775 unit/shared executed/passed, 0 failed,
+1 skipped**, including all **8 unchanged `SideMessageCopyTest` regressions**,
+5 reply-target cases and 15 bubble cases passed. The inherited history skip is
+tracked by #1913. The UI gate records **199 executed/passed, 0 failed, 1 skipped**;
+`MessageReplyImeDeviceTest.pointerReplyOpensImeAndTypingContinuesAtEndWithoutSending`
+passed, while the rename capture was skipped. The full scripted gate records
+**21 executed/passed, 0 failed, 0 skipped**, including held-stream and
+background-Agent scenarios. See [verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1916#issuecomment-6039977236).
+
+The dispatcher full real-Claude report `2026-10-07T14-22-04-161Z` tested that
+branch head merged with main `093847a07b2e`: **64 executed, 63 passed, 1 failed,
+0 skipped**. `InteractiveStreamE2ETest.interactiveTurn_pingPrompt_streamsPingReplyIntoThread`
+executed and passed in that full suite, preserving displayed reply, exact source,
+row-scoped before/after timestamps and reply/IME checks. Archive/restore alone
+failed, then passed on the same-tree rerun (**1 executed/passed**); the dispatcher
+accepted the gate after that rerun. This is not a failure-free original full run
+or a separate focused ping run. See [live gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1895#issuecomment-6040513528)
+and [verification status](../../e2e-interactive-stream.md#verification-status).
 
 Palette guards check actual glyph pixels and glyph-on-thread-background contrast
 at ≥3:1 across static and wallpaper light/dark, theme changes and completion.
