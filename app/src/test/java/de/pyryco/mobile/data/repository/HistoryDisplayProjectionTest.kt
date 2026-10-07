@@ -14,6 +14,21 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 class HistoryDisplayProjectionTest {
+    @Test fun leadingLifecycleInvariant_targetsFirstDisplayedRow_andNeverOccupiesASpan() {
+        val (coverage, rows) = fragmentedHistoryFixture(listOf(9000, 9001, 17000, 17999))
+        val lifecycle = ThreadItem.BackgroundTaskLifecycle("task", Instant.fromEpochSeconds(0))
+        val held = listOf(lifecycle) + rows
+        val projection = coverage.projectDisplay(held)
+        assertEquals(held, projection.rows)
+        assertEquals(listOf(35998uL, 36002uL), projection.markers.map { it.anchor })
+        assertEquals(rows.take(2), projection.markers.map { it.displayRow })
+        assertEquals(rows.take(2).map { it.historyKeys().first() }, projection.markers.map { it.beforeRow })
+        assertTrue(coverage.projectDisplay(listOf(lifecycle)).markers.isEmpty())
+        assertEquals("selected-gap", coverage.cursorForUnsigned(35998uL))
+        assertEquals("internal-gap", coverage.cursorForUnsigned(36002uL))
+        assertEquals(17999, coverage.unsignedGaps.size)
+    }
+
     @Test fun restoredSparseCoverage_projectsOnlyAdjacentContent_andOneNearestOldestEdge() {
         val (coverage, rows) = fragmentedHistoryFixture(listOf(9000, 9001, 17000, 17999))
         var preparations = 0

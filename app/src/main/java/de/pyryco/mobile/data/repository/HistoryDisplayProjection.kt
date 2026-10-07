@@ -14,6 +14,7 @@ internal data class HistoryDisplayMarker(
 private data class PreparedHistoryRow(
     val item: ThreadItem,
     val keys: List<String>,
+    val displayed: Boolean,
 )
 
 /** Display eligibility never modifies the received coverage or its independent cursor walks. */
@@ -22,13 +23,18 @@ internal fun HistoryCoverage.projectDisplay(
     keysFor: ((ThreadItem) -> List<String>)? = null,
     positionFor: (String) -> ULong? = unsignedPositions()::get,
     checkActive: () -> Unit = {},
+    isDisplayed: (ThreadItem) -> Boolean = { it !is ThreadItem.BackgroundTaskLifecycle },
 ): HistoryDisplayProjection {
     if (rows.isEmpty()) return HistoryDisplayProjection(rows, emptyList())
-    val prepared = prepareDisplayRows(rows, keysFor, positionFor, checkActive)
+    val prepared = prepareDisplayRows(rows, keysFor, positionFor, checkActive, isDisplayed)
+    val oldestRow =
+        prepared.firstOrNull { it.displayed && it.keys.isNotEmpty() }
+            ?: return HistoryDisplayProjection(prepared.map { it.item }, emptyList())
     val firstBySpan = HashMap<Int, PreparedHistoryRow>()
     var oldestPosition: ULong? = null
     for (row in prepared) {
         checkActive()
+        if (!row.displayed) continue
         for (key in row.keys) {
             checkActive()
             val position = positionFor(key) ?: continue
@@ -57,7 +63,7 @@ internal fun HistoryCoverage.projectDisplay(
     if (oldestEdge !=
         null
     ) {
-        markers += oldestEdge to HistoryDisplayMarker(oldestAnchor, prepared.first().keys.first(), prepared.first().item)
+        markers += oldestEdge to HistoryDisplayMarker(oldestAnchor, oldestRow.keys.first(), oldestRow.item)
     }
     checkActive()
     return HistoryDisplayProjection(prepared.map { it.item }, markers.sortedBy { it.first }.map { it.second })
@@ -75,16 +81,18 @@ private fun HistoryCoverage.prepareDisplayRows(
     keysFor: ((ThreadItem) -> List<String>)?,
     positionFor: (String) -> ULong?,
     checkActive: () -> Unit,
+    isDisplayed: (ThreadItem) -> Boolean = { true },
 ): List<PreparedHistoryRow> {
     val reserved = rows.filterIsInstance<ThreadItem.MessageItem>().mapTo(HashSet()) { it.message.id }
     return buildList {
         for (row in rows) {
             checkActive()
+            val displayed = isDisplayed(row)
             val keys = keysFor?.invoke(row) ?: row.cancellableHistoryKeys(checkActive)
             val message = (row as? ThreadItem.MessageItem)?.message
             val segment = message?.segment
             if (segment == null || unsignedGaps.isEmpty()) {
-                add(PreparedHistoryRow(row, keys))
+                add(PreparedHistoryRow(row, keys, displayed))
                 continue
             }
             val positions =
@@ -100,7 +108,7 @@ private fun HistoryCoverage.prepareDisplayRows(
                     before >= 0 && after > before
                 }
             if (boundaries.isEmpty()) {
-                add(PreparedHistoryRow(row, keys))
+                add(PreparedHistoryRow(row, keys, displayed))
                 continue
             }
             var offset = 0
@@ -133,6 +141,7 @@ private fun HistoryCoverage.prepareDisplayRows(
                             ),
                         ),
                         keys.subList(first, last),
+                        displayed,
                     ),
                 )
             }

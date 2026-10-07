@@ -18,8 +18,12 @@ import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.HistoryPosition
+import de.pyryco.mobile.data.repository.QueuedMessage
+import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.historyKeys
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -31,11 +35,32 @@ class ThreadFragmentedHistoryDeviceTest {
     @get:Rule val composeRule = createComposeRule()
 
     @Test fun sparseFragmentedRestore_opensEditsAndScrolls_onePagePerPull() {
-        val (coverage, rows) = fragmentedHistoryFixture(listOf(9000, 9001, 17000, 17999))
+        val (base, rows) = fragmentedHistoryFixture(listOf(9000, 9001, 17000, 17999))
+        val queuedShadows =
+            rows.take(2).mapIndexed { index, row ->
+                ThreadItem.MessageItem((row as ThreadItem.MessageItem).message.copy(id = "queued-$index"))
+            }
+        val coverage =
+            base.copy(
+                unsignedRowOrder =
+                    base.unsignedRowOrder +
+                        queuedShadows.zip(rows).associate { (queued, delivered) ->
+                            queued.historyKeys().first() to base.unsignedRowOrder.getValue(delivered.historyKeys().first())
+                        },
+            )
+        val held =
+            listOf(ThreadItem.BackgroundTaskLifecycle("task", Instant.fromEpochSeconds(0)), queuedShadows[0], rows[0], queuedShadows[1]) +
+                rows.drop(1)
+        val queue =
+            queuedShadows.mapIndexed { index, row ->
+                QueuedMessage(index.toLong(), row.message.content, row.message.timestamp, row.message.id)
+            }
         val asks = mutableListOf<Pair<String, Int>>()
         val repo =
             object : ConversationRepository by FakeConversationRepository() {
-                override fun observeMessages(conversationId: String) = flowOf(rows)
+                override fun observeMessages(conversationId: String) = flowOf(held)
+
+                override fun observeQueue(conversationId: String) = flowOf(queue)
 
                 override suspend fun readHistoryPosition(conversationId: String) = HistoryPosition("oldest", true, coverage)
 
@@ -78,12 +103,17 @@ class ThreadFragmentedHistoryDeviceTest {
                     )
                 }
             }
-            composeRule.waitUntil(15000) { vm.state.value.items.size == 4 && vm.state.value.historyMarkers.size == 2 }
+            composeRule.waitUntil(15000) { vm.state.value.items.size == held.size && vm.state.value.historyMarkers.size == 2 }
             composeRule.runOnIdle {
                 assertEquals(
                     listOf(35998uL, 36002uL),
                     vm.state.value.historyMarkers
                         .map { it.unsignedAnchor },
+                )
+                assertEquals(
+                    rows.take(2),
+                    vm.state.value.historyMarkers
+                        .map { it.displayRow },
                 )
                 assertEquals(listOf("" to 200), asks)
             }

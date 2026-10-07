@@ -102,6 +102,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Instant
+import java.util.IdentityHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.floor
 
@@ -749,7 +750,18 @@ class ThreadViewModel(
             } else {
                 withContext(projectionDispatcher) {
                     val context = currentCoroutineContext()
-                    val display = coverage.projectDisplay(items, checkActive = { context.ensureActive() })
+                    // Use the render fold's one-to-one queue correlation and lifecycle filtering.
+                    val delivered = IdentityHashMap<ThreadItem, Unit>()
+                    foldQueuedRows(items, content.queued).forEach { row ->
+                        context.ensureActive()
+                        if (row is ThreadRow.Delivered) delivered[row.item] = Unit
+                    }
+                    val display =
+                        coverage.projectDisplay(
+                            items,
+                            checkActive = { context.ensureActive() },
+                            isDisplayed = { it in delivered },
+                        )
                     RelayLog.d { "event=history_display_projected rows=${display.rows.size} markers=${display.markers.size}" }
                     content.copy(
                         items = display.rows,
