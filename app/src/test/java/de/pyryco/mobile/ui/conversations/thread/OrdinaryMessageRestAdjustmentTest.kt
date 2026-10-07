@@ -14,7 +14,12 @@ import org.junit.Test
  * #1630: the composer's bottom content padding backs out exactly the extra trailing space a last row
  * carries of its own, so the gap from the newest row to the status band reads as the frames' 16dp
  * regardless of which row kind is last. A pure function, so this is a JVM unit test: no Compose rendering
- * needed to pin the four cases Figma names (696:4795, 696:4913, 696:4677, and the plain-bubble control).
+ * needed to pin the cases Figma names (696:4913, 696:4677, and the plain-bubble control).
+ *
+ * A tool-call row needs no adjustment at all, nested in a background Agent block or not — its own trailing
+ * space already equals the target gap. [BackgroundAgentRestGapTest] is the companion screen test proving
+ * that in a real composition, after an over-eager 12dp branch here (release 4592) double-subtracted and
+ * pulled a running Agent block's single un-folded row under the status band.
  */
 class OrdinaryMessageRestAdjustmentTest {
     private val ts: Instant = Instant.parse("2026-10-02T10:00:00Z")
@@ -48,15 +53,15 @@ class OrdinaryMessageRestAdjustmentTest {
     }
 
     @Test
-    fun `a nested tool row rests 12dp over the baseline, Figma 696-4795`() {
+    fun `a nested tool row inside a background Agent block needs no adjustment`() {
         val toolCall = ToolCall(toolName = "read_file", input = "a.kt", output = "ok")
         val row = ThreadRow.Delivered(ThreadItem.MessageItem(message(toolCall = toolCall)), agentBlockId = "agent-1")
 
-        assertEquals(12.dp, ordinaryMessageRestAdjustment(row, promptRows = 0))
+        assertEquals(0.dp, ordinaryMessageRestAdjustment(row, promptRows = 0))
     }
 
     @Test
-    fun `a top-level tool row with no agent block is not treated as the ordinary case`() {
+    fun `a top-level tool row with no agent block needs no adjustment either`() {
         val toolCall = ToolCall(toolName = "read_file", input = "a.kt", output = "ok")
         val row = ThreadRow.Delivered(ThreadItem.MessageItem(message(toolCall = toolCall)))
 

@@ -221,8 +221,8 @@
     <string name="cd_thread_interrupt">Stop the running turn</string>
     <string name="cd_thread_copy_message">Copy this message</string>
     <string name="cd_thread_message_sent">Sent %1$s</string>
-    <string name="thread_message_show_details">Show time and copy</string>
-    <string name="thread_message_hide_details">Hide time and copy</string>
+    <string name="thread_message_show_details">Show time</string>
+    <string name="thread_message_hide_details">Hide time</string>
     <string name="cd_thread_copy_code">Copy this code block</string>
     <string name="thread_queued_state_desc">Waiting to send</string>
     <string name="cd_thread_queued_drop">Drop this queued message</string>

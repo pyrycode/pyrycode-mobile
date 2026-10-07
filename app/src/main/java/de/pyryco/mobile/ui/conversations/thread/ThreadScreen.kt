@@ -658,9 +658,22 @@ fun ThreadScreen(
                                 (if (state.historyMarkers.any { it.beforeRow.isEmpty() }) 1 else 0) +
                                 (if (openRequest != null) PERMISSION_ROW_COUNT else 0) +
                                 (if (answerRejected) 1 else 0)
+                        // The agent's own root never joins its run (#1827 follow-up), so the run holding its
+                        // block's children is found by block membership below, not by the root's own id
+                        // being one of its tools.
+                        val blockByTool =
+                            remember(agentRows) {
+                                agentRows
+                                    .filterIsInstance<ThreadRow.Delivered>()
+                                    .filter { it.isToolRow() }
+                                    .associate { ((it.item as ThreadItem.MessageItem).message.id) to it.agentBlockId }
+                            }
                         LaunchedEffect(goToAgent, rows, promptRowCount) {
                             val agentId = goToAgent ?: return@LaunchedEffect
-                            val run = rows.filterIsInstance<ThreadRow.ToolRun>().firstOrNull { row -> row.tools.any { it.id == agentId } }
+                            val run =
+                                rows.filterIsInstance<ThreadRow.ToolRun>().firstOrNull { row ->
+                                    row.tools.any { blockByTool[it.id] == agentId }
+                                }
                             if (run != null && !run.expanded) {
                                 expandedRuns = expandedRuns + run.runId
                             } else {
@@ -1415,9 +1428,14 @@ private fun ThreadStatusArea(
 /**
  * The extra trailing space under the newest row to drop from the composer's bottom content padding, so the
  * gap to the status band reads as the frames' 16dp regardless of which row kind sits last (#1630). A plain
- * `BubbleFrame` rests at 4dp over that baseline; a nested tool row, a bubble carrying attachments, and a
- * queued row each rest further over it (12dp, 16dp, 8dp) by their own extra bottom space, which this backs
- * back out. Only the newest rendered row matters — anything behind it does not touch the band.
+ * `BubbleFrame` rests at 4dp over that baseline; a bubble carrying attachments and a queued row each rest
+ * further over it (16dp, 8dp) by their own extra bottom space, which this backs back out. Any tool-call row
+ * — nested in a background Agent block or not — already rests at the documented gap with no adjustment: its
+ * own trailing space ([de.pyryco.mobile.ui.conversations.components.MessageRowVerticalSpacing]) already
+ * equals the target, so backing out a further 12dp (as this once did for a tool call carrying a non-null
+ * `agentBlockId`) double-subtracted and pulled the row under the band — the newest-row cutoff seen on
+ * release 4592, screen-proofed in `BackgroundAgentRestGapTest`. Only the newest rendered row matters —
+ * anything behind it does not touch the band.
  */
 internal fun ordinaryMessageRestAdjustment(
     row: ThreadRow?,
@@ -1429,7 +1447,6 @@ internal fun ordinaryMessageRestAdjustment(
     val message = (delivered.item as? ThreadItem.MessageItem)?.message ?: return 0.dp
     return when {
         message.attachments.isNotEmpty() -> 16.dp
-        message.toolCall != null && delivered.agentBlockId != null -> 12.dp
         message.toolCall == null -> 4.dp
         else -> 0.dp
     }

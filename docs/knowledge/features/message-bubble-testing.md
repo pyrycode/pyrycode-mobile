@@ -75,7 +75,56 @@ activity root cannot find the action after the long-press. Keep the known select
 unrelated clipboard baseline independent of the result assertion. A substituted toolbar test
 cannot establish this platform-menu behavior.
 
-`MessageMetaRowToggleTest` mounts the real `ThreadScreen` to cover show/hide and single selection, streaming-to-finished taps, links and independently visible code copy, inert attachment states, and the screen-reader toggle and hidden-row timestamp/copy semantics. Standalone `MessageBubbleTest` and palette fixtures retain the visible-row default, so their streaming copy test does not describe thread behavior. `ThreadFrameCaptureTest.compactWidthAndEnlargedText_keepFrameControlsReachable` reveals the row before testing its copy pointer target. Compose semantics assertions do not establish TalkBack's spoken order on a device.
+`MessageMetaRowToggleTest` mounts the real thread for timestamp-only show/hide,
+single selection, streaming completion, nested links/code copy/attachments and
+independent side-copy semantics (#1817). Standalone fixtures retain their visible
+timestamp default for finished messages, but streaming always suppresses it.
+`ThreadFrameCaptureTest.compactWidthAndEnlargedText_keepFrameControlsReachable`
+checks side copy before revealing the timestamp, then checks pointer reachability
+and 320dp wrapping with enlarged text. A passing ATD capture and metadata sidecar
+do not prove frame pixels: synthetic bars can suppress PNG output. The #1817
+verifier did not inspect fresh full-frame pixels or perform manual TalkBack traversal.
+
+Side geometry tests measure the configured viewport rather than Robolectric's
+outer window, whose density can differ. Measure the bubble, 13dp column, 11×12dp
+glyph and 48dp target separately at 412dp and 320dp. Pointer tests include all
+target edges and overlap into the bubble; copy must win without toggling time.
+Scope source-copy selectors to the non-merging `message-row`, so another message
+or a fenced-code control cannot satisfy the assertion. Markdown and streaming
+append tests compare current source, including the 100,000-character bound.
+
+The live and scripted copy checks share
+`app/src/sharedTest/java/de/pyryco/mobile/e2e/SideMessageCopy.kt` (#1878).
+`assertSideMessageCopy` matches the complete `formatShortDateTime` value using
+the current locale and timezone, under the copied source row in the unmerged
+tree, both before and after copying. A screen-wide ` - ` substring also matches
+usage banners and message bodies; another row's visible timestamp must not count.
+After the before-copy check, dismiss available benign notice controls before
+setting the unrelated clipboard baseline and making the single pointer tap.
+Non-dismissible error notices remain visible. `assertIsDisplayed` alone cannot
+detect a [Top overlay](thread-top-overlay.md) physically covering that target.
+Retain the exact `message.content.take(100_000)` clipboard comparison.
+
+`SideMessageCopyTest` exercises this same helper in eight deterministic regressions:
+banner/body separators, another row's timestamp, timestamp rejection before copy
+and after clipboard write, incorrect source rejection, streaming trailing whitespace,
+the 100,000-character cap, and real-thread warning dismissal. The last uses native
+graphics and a forced 412dp viewport through `ThreadScreen`; inert banner fixtures
+keep their separator text present through both timestamp assertions. The retained
+old-helper report executed one regression and failed on two false timestamp matches;
+the repaired report executed/passed eight with zero failures or skips. See the
+[verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1880#issuecomment-6032131614).
+Focused live repair evidence does not replace dispatcher full-suite acceptance:
+record the full run's executed, failed and skipped counts and the named ping
+method's result separately, as in the [e2e ladder](../../e2e-interactive-stream.md#verification-status).
+
+Palette guards check actual glyph pixels and glyph-on-thread-background contrast
+at ≥3:1 across static and wallpaper light/dark, theme changes and completion.
+A tint-only assertion passed while the light icon was 1.61:1 against the thread.
+Use `threadColors.background`, including the static-dark canvas overlay, rather
+than the unmodified global background. The glyph is tinted `colorScheme.primary`
+directly, with no backing: that role reads through the matching theme rather
+than the inverted one, so it clears 3:1 against the thread background on its own.
 
 `app/src/sharedTest/.../components/MessageBubblePaletteTest.kt` uses native Canvas
 pixels at the 412dp reference width to check user, finalized assistant, streaming
@@ -91,7 +140,7 @@ assert the actual fill rather than only the theme token.
 `app/src/sharedTest/.../components/MessageBubbleTest.kt` (new, #644), the rung-2 component-render layer, with a file-local fake `ClipboardManager` provided through `LocalClipboardManager`:
 
 - `bothRoles_renderBodyAndOwnMetaRow` — both roles render their body text and their own meta row.
-- `roleAlignment_userSitsRightOfAssistant_andEachClearsTheOppositeInset` — reads both bodies' rects; the user body sits right of the assistant body and each clears the opposite root edge by at least `MessageRoleInset`.
+- `roleAlignment_userSitsRightOfAssistant_andEachClearsTheOppositeInset` — reads both bodies' rects; the user body sits right of the assistant body and each clears the opposite configured viewport edge by the delivered inset plus action reservation.
 - `shortAssistantBody_hugsItsContent_whileALongOneStillGrowsToTheLane` — the regression guard for [Fill vs. hug](message-bubble.md#fill-vs-hug-the-streaming-arm-keeps-fillmaxwidth-since-644), added in the rework cycle.
 - `copy_putsOnlyThatMessagesTextOnTheClipboard` / `copy_fromTheUserBubble_putsOnlyTheUserText_onTheClipboard` — tapping one bubble's copy control captures exactly that message's `content`, never the other's.
 - `copyControl_carriesItsAccessibleNameAndButtonRole` — addressable by `cd_thread_copy_message`, `Role.Button`.
