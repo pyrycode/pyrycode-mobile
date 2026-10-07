@@ -63,3 +63,7 @@ None.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-07
+
+## Revisions
+
+- 2026-10-07: also render the navigation notice on the startup surface while paired-host storage is loading. The old root snackbar could announce failures before the navigation graph composed; keeping a pill on that surface preserves active-screen visibility without changing startup or share capture.
