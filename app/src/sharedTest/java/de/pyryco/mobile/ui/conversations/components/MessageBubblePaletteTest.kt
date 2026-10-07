@@ -138,8 +138,9 @@ class MessageBubblePaletteTest {
         assertEquals(dark to wallpaper, renderedMode)
         assertEquals(3, bubbles.size)
         val queued = rule.onNodeWithText("Queued", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-        val glyphs = rule.onAllNodesWithTag("message-copy-glyph", useUnmergedTree = true).fetchSemanticsNodes() +
-            rule.onAllNodesWithTag("message-reply-glyph", useUnmergedTree = true).fetchSemanticsNodes()
+        val glyphs =
+            rule.onAllNodesWithTag("message-copy-glyph", useUnmergedTree = true).fetchSemanticsNodes() +
+                rule.onAllNodesWithTag("message-reply-glyph", useUnmergedTree = true).fetchSemanticsNodes()
         assertEquals(6, glyphs.size)
 
         fun contrast(

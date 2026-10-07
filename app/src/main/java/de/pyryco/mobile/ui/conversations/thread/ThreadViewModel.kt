@@ -1,8 +1,5 @@
 package de.pyryco.mobile.ui.conversations.thread
 
-import de.pyryco.mobile.data.model.Message
-import de.pyryco.mobile.data.model.Role
-
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -12,12 +9,14 @@ import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.HostModalState
 import de.pyryco.mobile.data.model.LiveSessionEvent
+import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalAction
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Question
 import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.QuestionBatch
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.scopedTo
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
@@ -2007,11 +2006,12 @@ class ThreadViewModel(
 
     /** Snapshot source into this destination's latest draft on Main, without sending or touching files. */
     fun replyToMessage(message: Message): String? {
-        val label = when (message.role) {
-            Role.User -> "User"
-            Role.Assistant -> "Assistant"
-            Role.Tool -> return null
-        }
+        val label =
+            when (message.role) {
+                Role.User -> "User"
+                Role.Assistant -> "Assistant"
+                Role.Tool -> return null
+            }
         val latest = draftStore.draftFor(serverId, conversationId)
         val separator = if (latest.isNotEmpty() && !latest.endsWith('\n')) "\n" else ""
         val quoted = latest + separator + label + ":\n\"" + message.content + "\"\n"

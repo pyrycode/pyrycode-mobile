@@ -17,11 +17,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -29,9 +29,9 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
-import androidx.compose.ui.platform.ViewConfiguration
-import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -39,8 +39,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Message
@@ -105,6 +105,9 @@ private const val STREAMING_CARET_BLINK_PERIOD_MS: Long = 500L
  * the meta row until the bubble is tapped and owns which message shows it; the defaults keep the row
  * drawn and the bubble inert, as every other host had it. A non-null [onToggleMetaRow] is the bubble's
  * tap and its screen-reader click.
+ *
+ * [onReply] receives the immutable message source at tap time; the host stages it in its own draft.
+ * Tool rows never expose this action. The default leaves previews and standalone mounts inert.
  */
 @Composable
 fun MessageBubble(
@@ -395,15 +398,19 @@ private fun MessageContainer(
 
 /** The full touch layout overflows the drawn column; its two targets meet without expansion. */
 @Composable
-private fun MessageActions(message: Message, onReply: (Message) -> Unit) {
+private fun MessageActions(
+    message: Message,
+    onReply: (Message) -> Unit,
+) {
     val clipboard = LocalClipboardManager.current
     val labels = listOf(stringResource(R.string.cd_thread_copy_message), stringResource(R.string.cd_thread_reply_message))
     val configuration = LocalViewConfiguration.current
-    val dividedTargets = remember(configuration) {
-        object : ViewConfiguration by configuration {
-            override val minimumTouchTargetSize = DpSize.Zero
+    val dividedTargets =
+        remember(configuration) {
+            object : ViewConfiguration by configuration {
+                override val minimumTouchTargetSize = DpSize.Zero
+            }
         }
-    }
     Box(modifier = Modifier.testTag("message-actions"), contentAlignment = Alignment.Center) {
         CompositionLocalProvider(LocalViewConfiguration provides dividedTargets) {
             Layout(
@@ -411,28 +418,34 @@ private fun MessageActions(message: Message, onReply: (Message) -> Unit) {
                 content = {
                     repeat(2) { index ->
                         Layout(
-                            modifier = Modifier
-                                .semantics { contentDescription = labels[index] }
-                                .clickable(role = androidx.compose.ui.semantics.Role.Button) {
-                                    if (index == 0) {
-                                        clipboard.setBoundedText(message.content)
-                                        RelayLog.d { "event=message_copy" }
-                                    } else {
-                                        onReply(message)
-                                    }
-                                },
+                            modifier =
+                                Modifier
+                                    .semantics { contentDescription = labels[index] }
+                                    .clickable(role = androidx.compose.ui.semantics.Role.Button) {
+                                        if (index == 0) {
+                                            clipboard.setBoundedText(message.content)
+                                            RelayLog.d { "event=message_copy" }
+                                        } else {
+                                            onReply(message)
+                                        }
+                                    },
                             content = {
-                            // The inverted accent is paired with its matching surface for contrast.
-                            Box(Modifier.background(MaterialTheme.colorScheme.inverseSurface)
-                                .padding(horizontal = if (index == 0) 1.dp else 0.dp, vertical = 1.dp)) {
-                                Icon(
-                                    painter = painterResource(if (index == 0) R.drawable.ic_copy else R.drawable.ic_reply),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(width = if (index == 0) 11.dp else 13.dp, height = 12.dp)
-                                        .testTag(if (index == 0) "message-copy-glyph" else "message-reply-glyph"),
-                                    tint = MaterialTheme.colorScheme.inversePrimary,
-                                )
-                            }
+                                // The inverted accent is paired with its matching surface for contrast.
+                                Box(
+                                    Modifier
+                                        .background(MaterialTheme.colorScheme.inverseSurface)
+                                        .padding(horizontal = if (index == 0) 1.dp else 0.dp, vertical = 1.dp),
+                                ) {
+                                    Icon(
+                                        painter = painterResource(if (index == 0) R.drawable.ic_copy else R.drawable.ic_reply),
+                                        contentDescription = null,
+                                        modifier =
+                                            Modifier
+                                                .size(width = if (index == 0) 11.dp else 13.dp, height = 12.dp)
+                                                .testTag(if (index == 0) "message-copy-glyph" else "message-reply-glyph"),
+                                        tint = MaterialTheme.colorScheme.inversePrimary,
+                                    )
+                                }
                             },
                         ) { children, targetConstraints ->
                             val glyph = children.single().measure(targetConstraints.copy(minWidth = 0, minHeight = 0))

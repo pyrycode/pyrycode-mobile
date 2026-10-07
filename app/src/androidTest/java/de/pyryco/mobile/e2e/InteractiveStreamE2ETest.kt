@@ -19,8 +19,6 @@ import android.os.SystemClock
 import android.provider.MediaStore
 import android.service.notification.StatusBarNotification
 import android.util.Log
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -72,6 +70,8 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso
@@ -497,9 +497,12 @@ class InteractiveStreamE2ETest {
                 ViewCompat.getRootWindowInsets(composeTestRule.activity.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
             }
         }
-        assertEquals(messages, runBlocking { repository.observeMessages(conversationId).first() }
-            .filterIsInstance<ThreadItem.MessageItem>().map { it.message })
-
+        assertEquals(
+            messages,
+            runBlocking { repository.observeMessages(conversationId).first() }
+                .filterIsInstance<ThreadItem.MessageItem>()
+                .map { it.message },
+        )
     }
 
     /**

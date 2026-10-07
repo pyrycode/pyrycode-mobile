@@ -9,18 +9,25 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.SemanticsProperties
-import androidx.compose.ui.test.*
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.ForcedSize
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.DpSize
-import androidx.compose.ui.unit.width
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.width
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -34,12 +41,22 @@ class MessageReplyTargetsTest {
     private val replies = mutableListOf<Message>()
     private val copies = mutableListOf<String>()
     private var toggles = 0
-    private val clipboard = object : ClipboardManager {
-        override fun setText(annotatedString: AnnotatedString) { copies += annotatedString.text }
-        override fun getText(): AnnotatedString? = null
-        override fun hasText() = false
-    }
-    private fun verify(width: Int, content: String, streaming: Boolean = false) {
+    private val clipboard =
+        object : ClipboardManager {
+            override fun setText(annotatedString: AnnotatedString) {
+                copies += annotatedString.text
+            }
+
+            override fun getText(): AnnotatedString? = null
+
+            override fun hasText() = false
+        }
+
+    private fun verify(
+        width: Int,
+        content: String,
+        streaming: Boolean = false,
+    ) {
         rule.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(width.dp, 892.dp))) {
                 PyrycodeMobileTheme {
@@ -47,8 +64,19 @@ class MessageReplyTargetsTest {
                         Surface {
                             Column(Modifier.padding(vertical = 30.dp)) {
                                 listOf(Role.User, Role.Assistant).forEach { role ->
-                                    MessageBubble(Message(role.name, "s", role, content, Instant.parse("2026-10-07T00:00:00Z"), isStreaming = streaming),
-                                        metaRowVisible = false, onToggleMetaRow = { toggles++ }, onReply = { replies += it })
+                                    MessageBubble(
+                                        Message(
+                                            role.name,
+                                            "s",
+                                            role,
+                                            content,
+                                            Instant.parse("2026-10-07T00:00:00Z"),
+                                            isStreaming = streaming,
+                                        ),
+                                        metaRowVisible = false,
+                                        onToggleMetaRow = { toggles++ },
+                                        onReply = { replies += it },
+                                    )
                                 }
                             }
                         }
@@ -76,8 +104,28 @@ class MessageReplyTargetsTest {
             assertEquals(24f, r.bottom.value - ry, 1f)
             assertEquals(13f, rg.width.value, 1f)
             // Actual pointer events on both sides of the shared edge, then each outer boundary.
-            copy.performTouchInput { click(Offset(center.x, bottom - 1f)); click(Offset(center.x, 1f)); click(Offset(1f, center.y)); click(Offset(right - 1f, center.y)) }
-            reply.performTouchInput { click(Offset(center.x, 1f)); click(Offset(center.x, bottom - 1f)); click(Offset(1f, center.y)); click(Offset(right - 1f, center.y)) }
+            copy.performTouchInput {
+                click(Offset(center.x, bottom - 1f))
+                click(Offset(center.x, 1f))
+                click(Offset(1f, center.y))
+                click(
+                    Offset(
+                        right - 1f,
+                        center.y,
+                    ),
+                )
+            }
+            reply.performTouchInput {
+                click(Offset(center.x, 1f))
+                click(Offset(center.x, bottom - 1f))
+                click(Offset(1f, center.y))
+                click(
+                    Offset(
+                        right - 1f,
+                        center.y,
+                    ),
+                )
+            }
             assertEquals((index + 1) * 4, copies.size)
             assertEquals((index + 1) * 4, replies.size)
         }
@@ -85,7 +133,10 @@ class MessageReplyTargetsTest {
         assertEquals(List(4) { Role.User } + List(4) { Role.Assistant }, replies.map { it.role })
         assertEquals(0, toggles)
     }
+
     @Test fun shortBubbleTargetsAt320dp() = verify(320, "Hi")
+
     @Test fun longBubbleTargetsAt412dp() = verify(412, "long content ".repeat(16))
+
     @Test fun streamingTargetsRemainAvailable() = verify(320, "arrived", streaming = true)
 }
