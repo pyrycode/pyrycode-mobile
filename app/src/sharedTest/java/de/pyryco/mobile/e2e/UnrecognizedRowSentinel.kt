@@ -1,6 +1,7 @@
 package de.pyryco.mobile.e2e
 
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UnrecognizedSite
 import kotlinx.coroutines.flow.Flow
@@ -228,7 +229,19 @@ internal class TappingConversationRepository(
     private val delegate: ConversationRepository,
 ) : ConversationRepository by delegate {
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
-        delegate.observeMessages(conversationId).onEach(UnrecognizedRowRecorder::record)
+        delegate.observeMessages(conversationId).onEach { rows ->
+            UnrecognizedRowRecorder.record(rows)
+            DurableHistoryProbe.record(conversationId, rows)
+        }
+
+    override suspend fun requestHistory(
+        conversationId: String,
+        cursor: String,
+        limit: Int,
+    ): HistoryPage {
+        DurableHistoryProbe.asked(conversationId, cursor.isEmpty())
+        return delegate.requestHistory(conversationId, cursor, limit).also { DurableHistoryProbe.received(conversationId) }
+    }
 }
 
 /** Rows enumerated in a finding; a flood must not produce megabytes of instrumentation output. */
