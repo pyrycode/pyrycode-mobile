@@ -4,11 +4,13 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalAccessibilityManager
 import androidx.compose.ui.platform.testTag
@@ -94,4 +96,14 @@ internal fun TransientErrorPill(
         // Preserve the frame's 24dp line box when shared typography trims short text; wrapped text grows.
         modifier = modifier.heightIn(min = 24.dp).testTag("transient_error_notice").semantics { liveRegion = LiveRegionMode.Polite },
     )
+}
+
+/** Navigation-owned errors survive destination changes; screens only render this UI-local state. */
+internal val LocalNavigationErrorNotice = staticCompositionLocalOf<TransientErrorNoticeState?> { null }
+
+@Composable
+internal fun NavigationErrorPill(modifier: Modifier = Modifier) {
+    val notices = LocalNavigationErrorNotice.current ?: return
+    val message = notices.currentMessage ?: return
+    key(notices.currentOccurrence) { TransientErrorPill(message, modifier) }
 }
