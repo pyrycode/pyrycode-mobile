@@ -1,0 +1,22 @@
+{
+  "ticket": 1833,
+  "result": "PASS",
+  "app_revision": "d9a00dc76f0acb5efe219b89dfb15a6cf4032660",
+  "daemon_revision": "6019328b378cad587f69b7bc94de37febbdf8556",
+  "device": "pixel2Api33Atd",
+  "scenario": "ping",
+  "command": "ANDROID_GATE_WAIT_SECONDS=2700 PYRYCODE_SRC=<sibling checkout> PYRYCODE_RELAY_SRC=<sibling checkout> python3 scripts/android-test-gate.py scripted ping",
+  "artifact": "build/dispatcher-tests/scripted-h46425u8/dispatcher.xml",
+  "executed": 2,
+  "passed": 2,
+  "failed": 0,
+  "errors": 0,
+  "skipped": 0,
+  "passed_methods": [
+    "interactiveTurn_seededChannel_durableGapCatchUp",
+    "interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread"
+  ],
+  "xml_sha256": "2be93d70ced22e17ad3a81d4e7c6ad4ade91f8a81e3e4e97edf8a68e63b00b83",
+  "scope": "Owned isolated daemon and managed emulator; durable home/cache retained; replay emptied; zero real-Claude turns. Strong durable baseline fence active. No credentials, cursors or entry payloads.",
+  "sanitized_xml": "scripts/e2e-fixtures/1833-gap-reconnect-pass.xml"
+}
