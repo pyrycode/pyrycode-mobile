@@ -1213,7 +1213,7 @@ data class HistoryPosition(
  * and it holds for **every** entry, not only the unrecognized ones. Nothing in the data layer logs
  * either field.
  *
- * @param id The **durable, per-conversation** log id: monotonic within one conversation and stable
+ * @param unsignedId The **durable, host/conversation-scoped** positive unsigned log id: monotonic within one conversation and stable
  *   across daemon restarts. **Never join it to a replay `event_id`** ([de.pyryco.mobile.data.network.Envelope.eventId]),
  *   which is the in-memory ring's per-process id. They are different sequences that both look like
  *   small integers, and some live frames carry no `event_id` at all.
@@ -1228,11 +1228,22 @@ data class HistoryPosition(
  *   client meets the two with no gap and no duplicate.
  */
 data class HistoryEntry(
-    val id: Long,
     val type: String,
     val payload: JsonElement,
     val timestamp: Instant,
-)
+    val unsignedId: ULong,
+) {
+    init {
+        require(unsignedId > 0u) { "Invalid durable history id" }
+    }
+
+    /** Source-compatible construction for existing positive signed fixtures. */
+    constructor(id: Long, type: String, payload: JsonElement, timestamp: Instant) :
+        this(type, payload, timestamp, id.also { require(it > 0) { "Invalid durable history id" } }.toULong())
+
+    /** Exact signed compatibility identity, or no claim when the durable id exceeds the signed range. */
+    val id: Long? get() = unsignedId.takeIf { it <= Long.MAX_VALUE.toULong() }?.toLong()
+}
 
 /**
  * The run configuration of one session (#590) — the return of [ConversationRepository.observeSessionSettings].

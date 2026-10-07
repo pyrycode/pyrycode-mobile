@@ -387,7 +387,7 @@ class ConversationReadMarksTest {
                 fake
                     .requestHistory(id, "", 100)
                     .entries
-                    .maxOf { it.id }
+                    .maxOf { requireNotNull(it.id) }
                     .toULong()
             assertEquals(ConversationReadMarks(0uL, latest), fake.observeReadMarks(id).first())
             assertEquals(1uL, fake.markConversationRead(id, 1uL).getOrThrow())
@@ -451,7 +451,7 @@ class ConversationReadMarksTest {
             assertEquals(historyBefore, historyAfter.drop(1))
             assertEquals(ConversationReadMarks(latest, latest + 1uL), fake.observeReadMarks(id).first())
             assertEquals(latest, fake.markConversationRead(id, 0uL).getOrThrow())
-            assertEquals(latest + 1uL, fake.markConversationRead(id, newEntry.id.toULong()).getOrThrow())
+            assertEquals(latest + 1uL, fake.markConversationRead(id, requireNotNull(newEntry.id).toULong()).getOrThrow())
             assertEquals(ConversationReadMarks(latest + 1uL, latest + 1uL), fake.observeReadMarks(id).first())
         }
     }
