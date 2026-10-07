@@ -17,3 +17,7 @@ Give SharePickerTest an outer JUnit fixture rule that clears its demo and altern
 ## Testing strategy
 
 Use the existing managed-device class run to reproduce the leaked state before the repair. Run the complete SharePickerTest class under Robolectric and the managed Android 13 device after the repair; inspect fresh XML counts and the formerly failing method. Existing transfer and single-consumption assertions remain intact. Run lint, assembleDebug, Android test compilation and Spotless for the touched shared test, then the required final whole unit/shared suite, assembleDebug and pre-verify after merging main. This is test fixture work with no new operator flow, so no live scenario is needed.
+
+## Revisions
+
+- 2026-10-07: The baseline device class ran six methods with three failures: leaked draft text, a leftover attachment and a direct-share composer lookup during navigation's root gap. After pair cleanup, both state failures passed, while `directShareWaitsForCaptureAndMergesTheExactDraftWithoutPickerOrReplay` still reached its text assertion before a Compose root existed. Wait for the editable composer node with root-optional polling before retaining the exact merged-text assertion; the destination route alone does not prove the thread has rendered on the device.
