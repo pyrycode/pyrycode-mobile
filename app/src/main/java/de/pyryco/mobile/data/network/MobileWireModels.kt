@@ -79,6 +79,13 @@ internal const val CAPABILITY_STOP_BACKGROUND_TASK = "stop_background_task"
  */
 internal const val CAPABILITY_MULTI_AGENT = "multi_agent"
 
+/** App-owned report for `hello.client_features`; prompt admission is defined in pyrycode `docs/protocol-mobile.md`. */
+internal const val MOBILE_CLIENT_FEATURES =
+    "Markdown links to absolute paths of served .md or .markdown files open in the in-app reader. " +
+        "Wrap paths containing spaces in angle brackets: [Note](</Users/me/My Vault/note.md>). " +
+        "Paths in backticks are not links. Picked files and shared photos are uploaded to the daemon when Send is tapped; " +
+        "Claude receives their daemon-side paths with an instruction to use Read, not inline file contents."
+
 /**
  * Payload of the `hello` envelope, sent as `noise_init` early-data.
  *
@@ -100,7 +107,11 @@ internal const val CAPABILITY_MULTI_AGENT = "multi_agent"
  * *uint64`. The phone advertises only the cursor it itself recorded through [ReplayCursor.record]'s
  * positive guard — never a conversation id, never an unvalidated server value. Non-secret (an event
  * ordinal), so [toString] surfaces it alongside [capabilities].
+ *
+ * [clientFeatures] is an optional, verbatim self-report, independent of negotiated capabilities.
+ * Missing decodes as empty; empty is omitted on encode, matching the daemon's `omitempty` string.
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class HelloClientPayload(
     val role: String = "client",
@@ -110,6 +121,7 @@ data class HelloClientPayload(
     val token: String,
     val capabilities: List<String> = listOf(CAPABILITY_INTERACTIVE, CAPABILITY_MULTI_AGENT, CAPABILITY_STOP_BACKGROUND_TASK),
     @SerialName("last_event_id") val lastEventId: Long? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) @SerialName("client_features") val clientFeatures: String = "",
 ) {
     override fun toString(): String =
         "HelloClientPayload(role=$role, deviceName=$deviceName, " +
