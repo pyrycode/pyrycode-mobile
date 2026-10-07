@@ -46,7 +46,16 @@ instead: `ThreadRow.Delivered` re-enters the pre-#782 `when (item)` dispatch on 
 [#1112](https://github.com/pyrycode/pyrycode-mobile/issues/1112) — see [Session boundary delimiter § The
 agent name](session-boundary-delimiter.md#edge-cases--limitations)), `UnrecognizedMessage` →
 `UnrecognizedMessageRow(item = item)`),
-`ThreadRow.Queued` → `QueuedMessageRow(text = row.text, onDrop = { onDropQueued(row.queuedMessageId) })`.
+`ThreadRow.Queued` → `QueuedMessageRow`, binding Cancel to `onDropQueued(row.queuedMessageId)`
+and Send now to `onSendQueuedNow(row.queuedMessageId)` only when the fresh session capability
+supports it. The [queued component](queued-backlog-section.md#styling) owns the waiting glyph,
+left Send now/Cancel column and bubble: only waiting/bubble dim to 60%, while the Primary
+actions remain opaque. The independent adjoining 48×48dp targets meet at the bubble midpoint;
+a paired row reserves a 96dp minimum bubble height, and Cancel-only centres one target with
+a 48dp minimum. Width, wrapping, queue ownership and callback behavior stay with their
+existing components. [Queued-row verification](queued-backlog-section.md#testing) records
+the palette/production captures, gradient contrast regression and both existing queue
+methods' full-live results.
 The screen does **not** re-dispatch by `Message.role`; [`MessageBubble`](message-bubble.md) owns that
 selection internally. The `LazyColumn` passes `verticalArrangement = Arrangement.Top` (#1509; before
 that it took the reversed-list default, `Arrangement.Bottom`, which pinned a stream shorter than the
