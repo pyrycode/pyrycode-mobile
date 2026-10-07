@@ -273,6 +273,36 @@ but lacked independent remote Figma context/screenshots and received no new shar
 See [navigation](navigation.md#incoming-shares-1728) and
 [transient overlay lifetimes](thread-top-overlay.md#the-transient-error-pill-1747) for behavior.
 
+## Share picker fixture isolation (#1885)
+
+`SharePickerTest` remains in `app/src/sharedTest`, covering picker transfer,
+Direct Share and unknown-shortcut fallback. The
+[verifier's counted review](https://github.com/pyrycode/pyrycode-mobile/pull/1894#issuecomment-6033743941)
+records the following complete-class evidence on 2026-10-07:
+
+- Robolectric, dispatcher `./gradlew check`: **6 executed/passed, 0 failed/errors,
+  0 skipped**. The verifier inspected fresh
+  `app/build/test-results/testDebugUnitTest/TEST-de.pyryco.mobile.ui.conversations.share.SharePickerTest.xml`,
+  timestamp `2026-10-07T07:33:56.891Z`.
+- Managed Android 13, focused complete-class
+  `:app:pixel2Api33AtdDebugAndroidTest --rerun` with instrumentation `class` set to
+  `de.pyryco.mobile.ui.conversations.share.SharePickerTest` and `notPackage` set to
+  `de.pyryco.mobile.e2e`: **6 executed/passed, 0 failed/errors, 0 skipped**.
+  The contemporaneous XML parse of `TEST-pixel2Api33Atd-_app-.xml`, timestamp
+  `2026-10-07T07:30:24`, lists all six methods as passed. Later device execution
+  replaced the original XML; the verifier inspected the successful command output
+  and recorded per-method parse, retained locally in
+  `/tmp/verifier-1894/managed-class-recorded-evidence.txt`, rather than claiming a
+  new device run.
+
+`unknownDirectShareFallsBackWithCapturedBatchAndDraftUnchanged` is explicitly
+confirmed passed in both runs; the device parse also confirms both transfer
+methods passed. The separate dispatcher UI gate (**192 executed/passed, 0 failed,
+1 skipped**) and scripted-all gate (**19 executed/passed, 0 failed, 0 skipped**)
+supplement these results; they do not establish the focused sharedTest class pass.
+See [fixture ownership](development-verification-test-scheduling.md#test-scheduling-and-harnesses)
+and [share-launch ordering](navigation.md#testing).
+
 ## Documentation evidence
 
 Record the failure that would otherwise recur, its cause and the check that catches

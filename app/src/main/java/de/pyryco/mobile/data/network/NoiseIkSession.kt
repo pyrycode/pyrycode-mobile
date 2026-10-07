@@ -309,6 +309,7 @@ class NoiseIkSession(
                 deviceName = clientInfo.deviceName,
                 clientVersion = clientInfo.clientVersion,
                 token = token,
+                clientFeatures = MOBILE_CLIENT_FEATURES,
                 lastEventId = lastEventId(), // live read at hello-build (#416); null → omitted on encode
             )
         val envelope =

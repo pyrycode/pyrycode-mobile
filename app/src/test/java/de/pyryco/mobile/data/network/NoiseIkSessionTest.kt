@@ -7,6 +7,8 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -54,6 +56,43 @@ class NoiseIkSessionTest {
         val hello = MobileJson.decodeFromJsonElement<HelloClientPayload>(envelope.payload)
         assertEquals("secret-tok", hello.token)
         assertEquals("Pixel-Test", hello.deviceName)
+    }
+
+    @Test
+    fun handshake_eachConnectionSendsExactAdmissibleClientFeatures() {
+        val expected =
+            "Markdown links to absolute paths of served .md or .markdown files open in the in-app reader. " +
+                "Wrap paths containing spaces in angle brackets: [Note](</Users/me/My Vault/note.md>). " +
+                "Paths in backticks are not links. Picked files and shared photos are uploaded to the daemon when Send is tapped; " +
+                "Claude receives their daemon-side paths with an instruction to use Read, not inline file contents."
+        repeat(2) {
+            val responder = TestResponder()
+            val session = NoiseIkSession(newPrivateKey(), responder.staticPublicKey, "secret-tok", clientInfo)
+            try {
+                val init = session.writeInit()
+                assertFalse(String(init, Charsets.ISO_8859_1).contains(expected))
+                val envelope = MobileJson.decodeFromString<Envelope>(responder.readInit(init))
+                val features =
+                    envelope.payload.jsonObject["client_features"]
+                        ?.jsonPrimitive
+                        ?.content
+                assertEquals(expected, features)
+                val text = requireNotNull(features)
+                assertTrue(text.isNotBlank())
+                assertTrue(text.toByteArray(Charsets.UTF_8).size <= 512)
+                assertFalse(text.any { it.code < 0x20 || it.code in 0x7f..0x9f || it == '"' })
+                val hello = MobileJson.decodeFromJsonElement<HelloClientPayload>(envelope.payload)
+                assertEquals("client", hello.role)
+                assertEquals(clientInfo.deviceName, hello.deviceName)
+                assertEquals(clientInfo.clientVersion, hello.clientVersion)
+                assertEquals(listOf("v2"), hello.protocolVersions)
+                assertEquals("secret-tok", hello.token)
+                assertFalse(hello.toString().contains("secret-tok"))
+                assertEquals(listOf("interactive", "multi_agent", "stop_background_task"), hello.capabilities)
+            } finally {
+                session.close()
+            }
+        }
     }
 
     // ---- AC #2: transport round-trip + ciphertext length -----------------------

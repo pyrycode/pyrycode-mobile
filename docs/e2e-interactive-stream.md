@@ -6,6 +6,19 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
 
 ## The ladder (reliable → flaky)
 
+**Suggested next reply (#1866).** Rung 3 adds
+`InteractiveStreamE2ETest.interactiveTurn_replySuggestion_longPressSends`; rung 4
+adds `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_replySuggestionLongPressSends`
+(`reply-suggestion`, `reply-suggestion.jsonl`). Both observe the actual repository
+offer after a successful turn, assert the empty composer's exact placeholder,
+long-press/release Send, require one verbatim user message, then observe a newer
+revisioned daemon clear and the removed placeholder. The live method is in the
+configured full suite; the scripted twin uses native `prompt_suggestion` output
+and zero real-Claude turns. Shared `ScriptedReplySuggestionTest` separately covers
+set/clear and conversation/session isolation through the real repository-to-screen
+harness. See [counted evidence](#verification-status) and
+[input eligibility](knowledge/features/thread-input-bar.md#the-message-input-button--one-control-two-actions).
+
 Side-message copy (#1817) extends the existing rung-3
 `InteractiveStreamE2ETest.interactiveTurn_pingPrompt_streamsPingReplyIntoThread`:
 sent user and received assistant side buttons copy repository source while timestamps
@@ -14,6 +27,12 @@ remain hidden. The rung-4 held `stream` method,
 also copies arrived source during streaming and after completion. This adds no
 scenario or real-Claude turn; the pre-ship command remains
 `python3 scripts/android-test-gate.py live`.
+
+The shared helper repair (#1878) keeps both scenarios' reply and exact-source
+pointer-copy checks. Timestamp absence is scoped to the source row's complete
+localized value, and dismissible notices are cleared before the copy tap so a
+usage warning cannot cover it. The helper and its eight deterministic regressions
+live in shared tests; see [copy testing](knowledge/features/message-bubble-testing.md#testing).
 
 Recent-conversation Direct Share (#1729) is covered at rung 3 by
 `InteractiveStreamE2ETest.interactiveTurn_directShareShortcut_arrivesAtPeerWithItsBytes` and at rung 4
@@ -308,6 +327,15 @@ delimiter positioned between the two cross-session messages, driven through the 
 | Parser-gap sentinel non-vacuity (a scripted row makes the guard fire; the finding names `site` + a sanitized `message_type` and never the payload body; an unrecognized `site` token drops) — `pushUnrecognizedMessage` scripting + `unrecognizedMessageEnvelope` builder, the one builder assembled through `kotlinx.serialization` rather than string interpolation because `raw` is itself JSON | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#586), `ScriptedUnrecognizedMessageTest.kt` (#586) |
 
 ## What rung 3 is made of
+
+**Suggested-reply confirmation (#1866).**
+`InteractiveStreamE2ETest.interactiveTurn_replySuggestion_longPressSends` sends
+ping in a fresh discussion, waits for its real reply and daemon suggestion, then
+uses the shared repository-backed long-press assertions described in
+[the ladder](#the-ladder-reliable--flaky). This is a durable post-turn offer;
+gesture cancellation and haptic counts belong to focused shared tests. A
+successful scripted twin proves the controlled native-suggestion path, while the
+real daemon/Claude offer requires its own named live result.
 
 **Word-reveal observation (#1765, manual).**
 `InteractiveStreamE2ETest.interactiveTurn_wordReveal_displaysArrivedTextBeforeFinalReply`
@@ -2054,7 +2082,7 @@ host-prompt handlers. Scripted runs and unrelated live subsets retain their exis
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the current selector has 63 runnable `@Test` methods. The historical
+incantation to remember — the current selector has 64 runnable `@Test` methods. The historical
 inventory below describes the pre-#1193 forty-four-method set; ignored methods are excluded from
 the current selector as described under the model and effort settings round trip. It covered ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
@@ -2183,7 +2211,7 @@ Its deterministic `background-agent` twin supplements that proof without real Cl
 The same applies to `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_replyStaysUnderAgent`
 (#1827), which uses the fixture's separate `/hold-reply` and `/release-reply` endpoints.
 
-`LIVE=1` runs a **curated set of 63 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of 64 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -2259,7 +2287,7 @@ main-only base run, identifies daemon bug pyrycode#2785, and clears the live gat
 The full suite retains its one failure; manual USB evidence and the Android 16 driver failure
 above are separate from this automated named pass.
 
-**What it runs.** The current curated selector passes 63 runnable methods as a comma-separated
+**What it runs.** The current curated selector passes 64 runnable methods as a comma-separated
 `class#method` list. Its source of truth is `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET`, checked
 against `LIVE_MINIMUM` in `scripts/android-test-gate.py`. The #481
 `InteractiveStreamE2ETest#interactiveTurn_toolPrompt_rendersToolStepInThread` now rides this full
@@ -2561,6 +2589,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 
 | `SCENARIO` | asserts | raw fragment(s) | fragments |
 | --- | --- | --- | --- |
+| `reply-suggestion` (#1866) | actual suggestion placeholder, long-press/release, one verbatim user message and newer daemon clear | `reply-suggestion.jsonl` (successful result followed by native `prompt_suggestion`) | one |
 | `stop-background-task` (#1830) | opening the retained running row and tapping Stop removes its row/count | existing fakeclaude canned-roster rider and `stop_task` handler | no replay fragments or second-message release |
 | `background-agent` (#1783, #1827) | background lifecycle moves a loaded tool family, marker navigation opens its run, and finish settles it before later text; attributed child prose stays in the run through closed, open and closed states while unmatched and main prose stay top-level | `background-agent-open.jsonl` + `background-agent-finish.jsonl` | **two** (release on second send) |
 | `selection-copy` (#1674) | finished assistant prose copies only the long-pressed word through Android’s system menu | `selection-copy.jsonl` | one |
@@ -2867,6 +2896,52 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+**Suggested next reply (#1866, 2026-10-07).** The latest dispatcher full live
+run `2026-10-07T07-38-01-314Z` used
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on
+`feature/1866` at `b48248887685`, merged with `origin/main` at `220f24cab04b`.
+The fresh supplied JUnit gate report explicitly lists
+`InteractiveStreamE2ETest.interactiveTurn_replySuggestion_longPressSends` as
+**executed and passed in that full suite**: **64 executed, 63 passed, 1 failed,
+0 skipped**, exit 1 in 35m 7s. The unrelated archive/restore method failed once
+then passed on the dispatcher's same-tree rerun (**1 executed, 1 passed**).
+The dispatcher accepted the gate after that rerun; the original full run still
+had one failure. This is full-suite evidence, with no separate focused live run
+claimed and no daemon-revision annotation supplied. See the
+[latest issue gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1866#issuecomment-6033830269).
+The earlier live attempt recorded the suggestion method failing once and passing
+on rerun; the latest full run supplies its direct pass.
+
+The [verifier's fresh XML evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1873#issuecomment-6030986718)
+on the same feature commit records `scripted-all`: **20 executed, 20 passed,
+0 failed, 0 skipped**, including
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_replySuggestionLongPressSends`
+executed once and passed (`reply-suggestion-0-TEST-installed.xml`). The JVM suite
+executed/passed **4,667**, failed/skipped **0**, including
+`ThreadViewModelReplySuggestionTest` **9/9**, `ThreadInputBarSuggestionTest`
+**8/8** and real repository-to-screen `ScriptedReplySuggestionTest` **2/2**.
+The UI gate separately recorded **192 executed, 192 passed, 0 failed, 1 skipped**;
+the skipped rename capture supplies no suggestion evidence. Deterministic passes
+are distinct from the real-Claude acceptance above.
+
+**Side-copy selector and notice repair (#1878, 2026-10-07).** The dispatcher full
+live command `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`
+tested `9b55c94b107c` merged with `origin/main` at `6efbbaffc162`:
+**63 executed, 61 passed, 2 failed, 0 skipped**. The supplied fresh JUnit gate
+report explicitly records
+`InteractiveStreamE2ETest.interactiveTurn_pingPrompt_streamsPingReplyIntoThread`
+as **passed in the full suite**, with its reply and both side-copy checks retained.
+The two failures were delete-conversation and archive/restore; both passed on the
+dispatcher's same-tree rerun. The dispatcher accepted the gate, but the original
+full run still had two failures. See [counted gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1878#issuecomment-6032410265).
+The report identity is `2026-10-07T06-12-15-017Z`; no daemon revision annotation
+was supplied. The verifier's `scripted-all` run executed/passed **19, failed 0,
+skipped 0**, including the held-stream copy scenario. The builder's focused ping
+pass (**1 executed, 0 failed, 0 skipped**) is separate repair evidence, not the
+full-suite result. [Verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1880#issuecomment-6032131614)
+also confirms the old-helper regression failed (**1 executed, 1 failed, 0 skipped**)
+and all eight repaired shared regressions passed (**8 executed, 0 failed, 0 skipped**).
 
 **Side-message copy (#1817, 2026-10-07).** The fresh dispatcher full live command
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` ran
@@ -4254,6 +4329,24 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Suggested next reply (#1866):** rung-3
+  `InteractiveStreamE2ETest.interactiveTurn_replySuggestion_longPressSends` and
+  rung-4 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_replySuggestionLongPressSends`
+  (`reply-suggestion`) cover the actual offer, explicit hold/release, verbatim
+  user echo and daemon clear. Real repository-to-screen set/clear and isolation
+  remain in `ScriptedReplySuggestionTest`. [Fresh counted evidence](#verification-status)
+  closes the live handoff; no coverage follow-up remains. The pre-ship command
+  stays `python3 scripts/android-test-gate.py live`; no wire schema change.
+
+- **Side-copy selector and notice repair (#1878):** the existing rung-3
+  `InteractiveStreamE2ETest.interactiveTurn_pingPrompt_streamsPingReplyIntoThread`
+  and rung-4
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`
+  retain reply/source-copy assertions with row-scoped timestamps and notice
+  preparation. [Counted evidence](#verification-status) closes the repair's
+  full-live handoff. No new scenario or real-Claude turn is added; the pre-ship
+  command remains `python3 scripts/android-test-gate.py live`.
 
 - **Side-message copy (#1817):** the rung-3 ping method and rung-4 held `stream`
   method named in [the ladder](#the-ladder-reliable--flaky) cover source copy with
