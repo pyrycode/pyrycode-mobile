@@ -214,7 +214,7 @@ class QueuedBacklogTest {
         val target = 48.dp - pixelDp().dp
         assertTrue("send $sendBounds", (sendBounds.right - sendBounds.left) >= target && (sendBounds.bottom - sendBounds.top) >= target)
         assertTrue("drop $dropBounds", (dropBounds.right - dropBounds.left) >= target && (dropBounds.bottom - dropBounds.top) >= target)
-        assertTrue(sendBounds.right <= dropBounds.left)
+        assertTrue(sendBounds.bottom <= dropBounds.top)
         send.performTouchInput { click(center) }
         assertEquals(1, sends)
         assertEquals(0, drops)
