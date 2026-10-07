@@ -615,7 +615,11 @@ class DeterministicInteractiveStreamE2ETest {
                             }
                         }
                     repository.observeTurnPhase(conversationId).first { it == LiveSessionEvent.TurnState.Phase.Idle }
-                    rows.filterIsInstance<ThreadItem.MessageItem>().single { it.message.role == Role.Assistant }.message
+                    // The release prompt can produce its own reply; select the captured fixture.
+                    rows
+                        .filterIsInstance<ThreadItem.MessageItem>()
+                        .single { it.message.role == Role.Assistant && it.message.id == held.id }
+                        .message
                 }
             }
         assertEquals(held.id, finished.id)
@@ -764,7 +768,24 @@ class DeterministicInteractiveStreamE2ETest {
         val go = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_go_to)
         val marker = hasText(go) and hasClickAction()
         val header = hasTestTag("background-agent:agent1783")
+        val child = hasTestTag("background-agent-child:agent1783")
+        val prose = hasText("child1827-before")
+        val run = hasText("Using tools:", substring = true) and hasClickAction()
+        val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodesWithText(running).fetchSemanticsNodes().isNotEmpty() }
+        list.performScrollToNode(hasText("unmatched1827"))
+        composeTestRule.onNodeWithText("unmatched1827").assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText("unmatched1827") and hasAnyAncestor(child), useUnmergedTree = true).assertCountEquals(0)
+        list.performScrollToNode(run)
+        composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(0)
+        composeTestRule.onNode(run).performClick()
+        list.performScrollToNode(prose)
+        composeTestRule.onNode(prose and hasAnyAncestor(child), useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(1)
+        list.performScrollToNode(run)
+        composeTestRule.onNode(run).performClick()
+        composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(0)
+        list.performScrollToNode(marker)
         composeTestRule.onNode(marker).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
         composeTestRule.onNode(header).assertIsDisplayed()
@@ -778,6 +799,9 @@ class DeterministicInteractiveStreamE2ETest {
         val agent = composeTestRule.onNode(header).fetchSemanticsNode().boundsInRoot
         val after = composeTestRule.onNodeWithText("after1783", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         assertTrue("terminal block must settle before the following reply", agent.bottom <= after.top)
+        list.performScrollToNode(hasText("child1827-after"))
+        composeTestRule.onNode(hasText("child1827-after") and hasAnyAncestor(child), useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onAllNodesWithText("child1827-after", useUnmergedTree = true).assertCountEquals(1)
     }
 
     /**

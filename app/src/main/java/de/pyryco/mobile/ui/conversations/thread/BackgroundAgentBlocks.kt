@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.repository.ThreadItem
 
@@ -73,10 +74,17 @@ internal fun foldBackgroundAgentBlocks(
     }
     val blocks = roots.keys.associateWith { mutableListOf<ThreadRow>() }
     val rootPositions = mutableMapOf<String, Int>()
+    val claimed = mutableSetOf<String>()
     rows.forEachIndexed { index, row ->
         val message = ((row as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)?.message
-        val root = message?.id?.let { owner[it] }
-        if (root != null) {
+        val root =
+            when (message?.role) {
+                Role.Tool -> owner[message.id]
+                Role.Assistant -> message.parentToolUseId.takeIf { it.isNotEmpty() }?.let { owner[it] }
+                else -> null
+            }
+        if (root != null && message != null) {
+            claimed += message.id
             val task = roots.getValue(root)
             val projected =
                 if (message.id == root) {
@@ -104,7 +112,7 @@ internal fun foldBackgroundAgentBlocks(
                 val task = roots.getValue(checkNotNull(id))
                 result += ThreadRow.AgentStartMarker(id, task.description.orEmpty().take(4096), task.finished)
             }
-            id?.let { owner[it] } != null -> Unit
+            id in claimed -> Unit
             else -> result += row
         }
     }

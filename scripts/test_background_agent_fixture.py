@@ -30,6 +30,14 @@ class BackgroundAgentFixtureTest(unittest.TestCase):
                     self.assertFalse(held.done())
                     self.assertEqual(urlopen(base + "/release", timeout=2).read(), b"background_agent_released")
                     self.assertEqual(held.result(timeout=2), b"background_agent_released")
+                    # The full live suite already released #1783 before the reply proof starts.
+                    reply = pool.submit(lambda: urlopen(base + "/hold-reply", timeout=5).read())
+                    time.sleep(.1)
+                    self.assertFalse(reply.done())
+                    self.assertEqual(urlopen(base + "/release", timeout=2).read(), b"background_agent_released")
+                    self.assertFalse(reply.done())
+                    self.assertEqual(urlopen(base + "/release-reply", timeout=2).read(), b"background_agent_released")
+                    self.assertEqual(reply.result(timeout=2), b"background_agent_released")
             finally:
                 process.terminate()
                 process.wait(timeout=5)
