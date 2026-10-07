@@ -3,13 +3,23 @@ package de.pyryco.mobile.data.repository
 import de.pyryco.mobile.data.network.ApiRetryPayloadDto
 import de.pyryco.mobile.data.network.BannerPayloadDto
 import de.pyryco.mobile.data.network.CompactingPayloadDto
+import de.pyryco.mobile.data.network.ContextUsagePayloadDto
+import de.pyryco.mobile.data.network.McpStatusPayloadDto
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.ModelAnnouncedPayloadDto
+import de.pyryco.mobile.data.network.ModelListPayloadDto
 import de.pyryco.mobile.data.network.ResettingPayloadDto
+import de.pyryco.mobile.data.network.SessionFactsPayloadDto
+import de.pyryco.mobile.data.network.SlashCommandListPayloadDto
 import de.pyryco.mobile.data.network.StallPayloadDto
 import de.pyryco.mobile.data.network.ThinkingProgressPayloadDto
 import de.pyryco.mobile.data.network.TurnEndPayloadDto
 import de.pyryco.mobile.data.network.TurnStatePayloadDto
 import de.pyryco.mobile.data.network.toEvent
+import de.pyryco.mobile.data.network.toFacts
+import de.pyryco.mobile.data.network.toMenu
+import de.pyryco.mobile.data.network.toReading
+import de.pyryco.mobile.data.network.toReport
 import de.pyryco.mobile.data.network.toStatus
 import kotlinx.serialization.json.decodeFromJsonElement
 
@@ -133,6 +143,12 @@ internal fun understoodNonvisualEntry(
     if (!interactive) return null
     return try {
         when (entry.type) {
+            "model_list" -> MobileJson.decodeFromJsonElement<ModelListPayloadDto>(entry.payload).toMenu().let { true }
+            "slash_command_list" -> MobileJson.decodeFromJsonElement<SlashCommandListPayloadDto>(entry.payload).toMenu().let { true }
+            "mcp_status" -> MobileJson.decodeFromJsonElement<McpStatusPayloadDto>(entry.payload).toReport()?.let { true }
+            "context_usage" -> MobileJson.decodeFromJsonElement<ContextUsagePayloadDto>(entry.payload).toReading()?.let { true }
+            "model_announced" -> MobileJson.decodeFromJsonElement<ModelAnnouncedPayloadDto>(entry.payload).toReading()?.let { true }
+            "session_facts" -> MobileJson.decodeFromJsonElement<SessionFactsPayloadDto>(entry.payload).toFacts().let { true }
             "turn_state" -> MobileJson.decodeFromJsonElement<TurnStatePayloadDto>(entry.payload).toEvent()?.let { true }
             "turn_end" -> MobileJson.decodeFromJsonElement<TurnEndPayloadDto>(entry.payload).toEvent().let { true }
             "api_retry" -> MobileJson.decodeFromJsonElement<ApiRetryPayloadDto>(entry.payload).let { true }

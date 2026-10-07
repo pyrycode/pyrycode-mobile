@@ -9,6 +9,39 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ThreadReadClaimsTest {
+    @Test fun decodedStateMetadataDoesNotBlockVisibleReplyButMalformedMetadataDoes() {
+        val metadata =
+            listOf(
+                entry(1u, "model_list", """{"conversation_id":"c","models":[],"dropped_models":0}"""),
+                entry(2u, "slash_command_list", """{"conversation_id":"c","commands":[],"dropped_commands":0}"""),
+                entry(3u, "mcp_status", """{"conversation_id":"c","servers":[],"dropped_servers":0}"""),
+            )
+        val reply = entry(4u, "message", """{"conversation_id":"c","message_id":"m","role":"assistant","text":"seen"}""")
+        val tail = entry(5u, "context_usage", """{"conversation_id":"c","total_tokens":1,"max_tokens":10,"percentage":10}""")
+        val entries = metadata + reply + tail
+        val reduced = reduceOrderedHistoryPage(entries, true)
+        assertEquals(5uL, ThreadReadEvidence().received(entries, reduced, reduced.rows).checkpoint(reduced.rows.single(), 0u))
+        for (source in metadata) {
+            val broken = entries.map { if (it == source) entry(it.unsignedId, it.type, "{}") else it }
+            val bad = reduceOrderedHistoryPage(broken, true)
+            assertNull(ThreadReadEvidence().received(broken, bad, bad.rows).checkpoint(bad.rows.single(), 0u))
+        }
+        val malformedTail = entries.dropLast(1) + entry(5u, "context_usage", "{}")
+        val badTail = reduceOrderedHistoryPage(malformedTail, true)
+        assertEquals(4uL, ThreadReadEvidence().received(malformedTail, badTail, badTail.rows).checkpoint(badTail.rows.single(), 0u))
+        for ((type, payload) in listOf(
+            "model_announced" to """{"conversation_id":"c","model":"m","truncated":false}""",
+            "session_facts" to """{"conversation_id":"c","claude_code_version":"v","permission_mode":"default","truncated_fields":null}""",
+        )) {
+            val fact = entry(5u, type, payload)
+            val page = reduceOrderedHistoryPage(listOf(reply, fact), true)
+            assertEquals(5uL, ThreadReadEvidence().received(listOf(reply, fact), page, page.rows).checkpoint(page.rows.single(), 0u))
+            val broken = entry(5u, type, "{}")
+            val bad = reduceOrderedHistoryPage(listOf(reply, broken), true)
+            assertEquals(4uL, ThreadReadEvidence().received(listOf(reply, broken), bad, bad.rows).checkpoint(bad.rows.single(), 0u))
+        }
+    }
+
     @Test fun receivedNonvisualTailExtendsOnlyContinuousUnderstoodEntries() {
         val visible = entry(11u, "message", """{"conversation_id":"c","message_id":"m","role":"user","text":"seen"}""")
         val state = entry(12u, "turn_state", """{"conversation_id":"c","state":"idle"}""")

@@ -44,6 +44,7 @@ import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
+import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.threadSnapshots
 import de.pyryco.mobile.di.HostConversationSource
@@ -57,6 +58,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -429,11 +431,11 @@ class DeterministicInteractiveStreamE2ETest {
             .assertIsDisplayed()
         // #1912: the scripted reply must be confirmed as read after it is rendered in the foreground.
         val repository =
-            requireNotNull(
+            StableConversationRepository(
                 GlobalContext
                     .get()
                     .get<RelayRepositoryCoordinator>()
-                    .currentRepository.value,
+                    .currentRepository,
             )
         runBlocking {
             val conversationId =
@@ -445,7 +447,7 @@ class DeterministicInteractiveStreamE2ETest {
                         .id
                 }
             val checkpoint =
-                withTimeout(REPLY_TIMEOUT_MS) {
+                withTimeoutOrNull(REPLY_TIMEOUT_MS) {
                     repository
                         .threadSnapshots(conversationId)
                         .mapNotNull { snapshot ->
@@ -456,6 +458,14 @@ class DeterministicInteractiveStreamE2ETest {
                             reply?.let { snapshot.readEvidence.checkpoint(it, 0uL) }
                         }.first()
                 }
+            if (checkpoint == null) {
+                val evidence = repository.threadSnapshots(conversationId).first().readEvidence
+                error(
+                    "No reply checkpoint: versions=${evidence.versions.size}, barriers=${evidence.facts.values.count {
+                        it == null
+                    }}, unidentified=${evidence.unidentified.size}",
+                )
+            }
             withTimeout(REPLY_TIMEOUT_MS) {
                 repository.observeReadMarks(conversationId).first { facts ->
                     (facts?.readUpTo ?: 0uL) >= checkpoint
