@@ -651,6 +651,7 @@ internal fun PyryNavHost(
                     onRetryOlderHistory = vm::onRetryOlderHistory,
                     draft = draft,
                     onDraftChange = vm::onDraftChange,
+                    onReplyToMessage = vm::replyToMessage,
                     systemPrompt = systemPrompt,
                     // #933: the composer's attachment picker and strip, over the same per-chat draft store.
                     attachments = pendingAttachments,

@@ -70,6 +70,8 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso
@@ -238,6 +240,10 @@ class InteractiveStreamE2ETest {
 
     @get:Rule
     val composeTestRule = createAndroidComposeRule<MainActivity>()
+
+    /** #1818: reply's keyboard check needs a real IME, which ATD images omit; selected per method. */
+    @get:Rule
+    val testIme = TestImeRule()
 
     /**
      * #586: fails **any** scenario in this class during which the daemon reported a claude message kind
@@ -438,6 +444,7 @@ class InteractiveStreamE2ETest {
 
     @Test
     fun interactiveTurn_pingPrompt_streamsPingReplyIntoThread() {
+        testIme.select()
         // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
         awaitChannelList()
 
@@ -476,8 +483,31 @@ class InteractiveStreamE2ETest {
                         .map { it.message }
                 }
             }
-        composeTestRule.assertSideMessageCopy(messages.single { it.role == Role.User && it.content == PING_PROMPT })
-        composeTestRule.assertSideMessageCopy(messages.single { it.role == Role.Assistant })
+        val user = messages.single { it.role == Role.User && it.content == PING_PROMPT }
+        val assistant = messages.single { it.role == Role.Assistant }
+        composeTestRule.assertSideMessageCopy(user)
+        composeTestRule.assertSideMessageCopy(assistant)
+        val userQuote = "User:\n\"${user.content}\"\n"
+        composeTestRule.assertSideMessageReply(user, userQuote)
+        composeTestRule.waitUntil(5_000) {
+            composeTestRule.runOnIdle {
+                ViewCompat.getRootWindowInsets(composeTestRule.activity.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+            }
+        }
+        composeTestRule.onNode(hasSetTextAction()).performTextInput("answer")
+        val appended = userQuote + "answer\nAssistant:\n\"${assistant.content}\"\n"
+        composeTestRule.assertSideMessageReply(assistant, appended)
+        composeTestRule.waitUntil(5_000) {
+            composeTestRule.runOnIdle {
+                ViewCompat.getRootWindowInsets(composeTestRule.activity.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+            }
+        }
+        assertEquals(
+            messages,
+            runBlocking { repository.observeMessages(conversationId).first() }
+                .filterIsInstance<ThreadItem.MessageItem>()
+                .map { it.message },
+        )
     }
 
     /**

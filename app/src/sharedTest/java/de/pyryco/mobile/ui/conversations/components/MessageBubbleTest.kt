@@ -16,6 +16,7 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
@@ -114,6 +115,12 @@ class MessageBubbleTest {
         }
     }
 
+    @Test
+    fun reply_isAlwaysVisibleForBothRoles() {
+        setBothRoles()
+        composeTestRule.onAllNodesWithContentDescription("Reply to this message").assertCountEquals(2)
+    }
+
     // AC #1 (both roles render as bubbles) + AC #2 (each bubble ends with a meta row).
     @Test
     fun bothRoles_renderBodyAndOwnMetaRow() {
@@ -132,7 +139,7 @@ class MessageBubbleTest {
     }
 
     @Test
-    fun sideCopy_hasA48dpTarget_outsideTheTimestampRow() {
+    fun sideCopy_hasADivided48dpTarget_outsideTheTimestampRow() {
         setBothRoles()
 
         val controls = composeTestRule.onAllNodesWithContentDescription(copyDescription)
@@ -140,7 +147,7 @@ class MessageBubbleTest {
         repeat(2) { index ->
             val bounds = controls[index].getUnclippedBoundsInRoot()
             assertEquals(48f, bounds.width.value, 1f)
-            assertEquals(48f, bounds.height.value, 1f)
+            assertEquals(36.5f, bounds.height.value, 1f)
         }
     }
 
@@ -423,9 +430,9 @@ class MessageBubbleTest {
             assertEquals(bubble.height.value, column.height.value, 1f)
             assertEquals(11f, glyph.width.value, 1f)
             assertEquals(12f, glyph.height.value, 1f)
-            assertEquals(((bubble.top + bubble.bottom) / 2).value, ((glyph.top + glyph.bottom) / 2).value, 1f)
+            assertEquals(((bubble.top + bubble.bottom) / 2).value - 12.5f, ((glyph.top + glyph.bottom) / 2).value, 1f)
             assertEquals(48f, target.width.value, 1f)
-            assertEquals(48f, target.height.value, 1f)
+            assertEquals(36.5f, target.height.value, 1f)
             if (index == 0) {
                 assertEquals(20f, (bubble.left - root.left).value, 1f)
                 assertEquals(12f, (column.left - bubble.right).value, 1f)
