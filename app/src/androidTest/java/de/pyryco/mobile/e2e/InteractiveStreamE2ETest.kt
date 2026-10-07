@@ -4485,8 +4485,17 @@ class InteractiveStreamE2ETest {
             val changed = (before.keys intersect after.keys).filter { it != nameA && before[it] != after[it] }
             assertTrue("rows other than A changed state after A's turn: ${changed.size}", changed.isEmpty())
 
-            // 3. AC-1: opening A and returning to the list reads it.
+            // The peer's durable latest id is only the assertion target, never the phone's sight proof.
+            val beforePhoneRead = peerStep(peer, "read A's daemon facts") { peer.readMarks(chatA, THREAD_TIMEOUT_MS) }
+            val replyCheckpoint = requireNotNull(beforePhoneRead.latestEntryId) { "daemon omitted latest durable id" }
+            assertTrue("real reply has durable history", replyCheckpoint > 0u)
+            assertTrue("list view must leave the real reply unread", (beforePhoneRead.readUpTo ?: 0uL) < replyCheckpoint)
+
+            // 3. Read the actual reply at the newest end, and observe the confirmed mark from the peer.
             openChatRow(nameA)
+            peerStep(peer, "observe the phone's confirmed read of A") { peer.awaitReadMark(chatA, replyCheckpoint, THREAD_TIMEOUT_MS) }
+            val afterPhoneRead = peerStep(peer, "confirm A's stored read fact") { peer.readMarks(chatA, THREAD_TIMEOUT_MS) }
+            assertTrue("phone read advances the shared durable mark", (afterPhoneRead.readUpTo ?: 0uL) >= replyCheckpoint)
             leaveThread()
             awaitRowAttention(nameA, idle, "A after it was opened")
 

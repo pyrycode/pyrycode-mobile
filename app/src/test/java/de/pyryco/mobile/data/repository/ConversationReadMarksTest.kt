@@ -456,6 +456,49 @@ class ConversationReadMarksTest {
         }
     }
 
+    @Test fun liveAndReplayDurableReceiptRaisesLatestIndependentlyOfViewport() =
+        runTest {
+            val pump = Pump()
+            val repository = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            pump.push(snapshot(row("a", "0", "0")))
+            val direct =
+                Envelope(
+                    901,
+                    "message",
+                    TS,
+                    MobileJson.parseToJsonElement("""{"conversation_id":"a","message_id":"m","role":"user","text":"received"}"""),
+                    eventId = 5001,
+                    historyEntryId = 41u,
+                )
+            pump.push(direct)
+            runCurrent()
+            val held = repository.observeThreadSnapshot("a").first()
+            assertEquals(ConversationReadMarks(0u, 41u), repository.observeReadMarks("a").first())
+            assertEquals(41uL, held.readEvidence.checkpoint(held.rows.single(), 0u))
+            assertTrue(pump.sent.none { it.type == "mark_conversation_read" || it.type == "request_history" })
+            pump.push(direct.copy(id = 902, eventId = 7001))
+            runCurrent()
+            val replay = repository.observeThreadSnapshot("a").first()
+            assertEquals(held.rows, replay.rows)
+            assertEquals(41uL, replay.readEvidence.checkpoint(replay.rows.single(), 0u))
+            pump.push(
+                direct.copy(
+                    id = 903,
+                    eventId = 7002,
+                    historyEntryId = null,
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"a","message_id":"n","role":"user","text":"unidentified"}""",
+                        ),
+                ),
+            )
+            runCurrent()
+            val missing = repository.observeThreadSnapshot("a").first()
+            assertNull(missing.readEvidence.checkpoint(missing.rows.last(), 0u))
+            assertEquals(41uL, repository.observeReadMarks("a").first()?.latestEntryId)
+            assertTrue(pump.sent.none { it.type == "mark_conversation_read" || it.type == "request_history" })
+        }
+
     private fun TestScope.repo(pump: Pump) = RemoteConversationRepository(pump, backgroundScope)
 
     private fun row(

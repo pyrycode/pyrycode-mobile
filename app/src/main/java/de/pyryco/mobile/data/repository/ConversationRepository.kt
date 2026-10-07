@@ -399,6 +399,14 @@ interface ConversationRepository {
         upTo: ULong,
     ): Result<ULong> = Result.failure(UnsupportedOperationException("Daemon read marks are unavailable"))
 
+    /** Queue already-qualified sight; process-owned facades may retain it across disconnection. */
+    suspend fun acknowledgeReadCheckpoint(
+        conversationId: String,
+        checkpoint: ULong,
+    ) {
+        markConversationRead(conversationId, checkpoint)
+    }
+
     /**
      * Permanently removes the conversation from the store. Tolerant of unknown
      * ids: calling `delete` on an id that is not present is a silent no-op.

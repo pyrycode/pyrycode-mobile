@@ -661,6 +661,10 @@ fun ThreadScreen(
                         // #896: a subagent's tool rows indent under the Agent/Task call that spawned them.
                         val toolDepths = remember(state.items) { toolNestingDepths(state.items) }
                         val listState = rememberLazyListState()
+                        val laidOutVersions = remember(listState) { mutableStateMapOf<ThreadRow, Boolean>() }
+                        val trailingEdges = remember(listState) { mutableStateMapOf<ThreadItem, Float>() }
+                        var messageViewport by remember(listState) { mutableStateOf<Rect?>(null) }
+                        val revealedVersions = remember(listState) { mutableStateMapOf<ThreadItem, Boolean>() }
                         val promptRowCount =
                             (shownQuestion?.let { it.batch.questions.size + 2 } ?: 0) +
                                 (if (state.historyMarkers.any { it.beforeRow.isEmpty() }) 1 else 0) +
@@ -685,6 +689,22 @@ fun ThreadScreen(
                             rows.lastOrNull { row ->
                                 ((row as? ThreadRow.Delivered)?.item as? ThreadItem.Banner)?.level != BannerLevel.Info
                             }
+                        val readRow = newestRenderedRow as? ThreadRow.Delivered
+                        val readItem = readRow?.item
+                        ThreadReadViewport(
+                            state = state,
+                            listState = listState,
+                            rowKey = newestRenderedRow?.listKey(rows.indexOf(newestRenderedRow)),
+                            row = readItem,
+                            laidOut = readRow != null && laidOutVersions[readRow] == true,
+                            trailingEdge = readItem?.let { trailingEdges[it] },
+                            viewport = messageViewport,
+                            revealed = readItem !is ThreadItem.MessageItem || revealedVersions[readItem] == true,
+                            headerHeight = headerHeight,
+                            composerHeight = composerHeight,
+                            visible = modalState == ModalUiState.Hidden && !state.channelInfoOpen,
+                            onEvent = onOverflowEvent,
+                        )
                         val restAdjustment = ordinaryMessageRestAdjustment(newestRenderedRow, promptRowCount)
                         var previousRestAdjustment by remember(listState) { mutableStateOf(restAdjustment) }
                         SideEffect {
@@ -794,7 +814,11 @@ fun ThreadScreen(
                         val rowRelocationSpec = LocalBringIntoViewSpec.current
                         ThreadMessageList(
                             state = listState,
-                            modifier = Modifier.fillMaxSize().olderHistoryPull(listPull),
+                            modifier =
+                                Modifier.fillMaxSize().olderHistoryPull(listPull).onGloballyPositioned {
+                                    val origin = it.positionInWindow()
+                                    messageViewport = Rect(origin.x, origin.y, origin.x + it.size.width, origin.y + it.size.height)
+                                },
                             headerHeight = headerHeight,
                             composerHeight = composerHeight,
                             // Padding follows measured chrome; the drawing viewport continues underneath both bars.
@@ -888,7 +912,18 @@ fun ThreadScreen(
                                 key = { reversedIndex, row -> row.listKey(rows.size - 1 - reversedIndex) },
                             ) { reversedIndex, row ->
                                 val chronologicalIndex = rows.size - 1 - reversedIndex
-                                ThreadRowContent(rowRelocationSpec) {
+                                ThreadRowContent(
+                                    rowRelocationSpec,
+                                    Modifier.onGloballyPositioned {
+                                        laidOutVersions[row] = true
+                                        val item = (row as? ThreadRow.Delivered)?.item
+                                        if (item != null &&
+                                            item !is ThreadItem.MessageItem
+                                        ) {
+                                            trailingEdges[item] = it.positionInWindow().y + it.size.height
+                                        }
+                                    },
+                                ) {
                                     historyMarkersFor(row, gapMarkers).forEach { marker ->
                                         HistoryGapRow(
                                             marker.unsignedAnchor,
@@ -904,6 +939,8 @@ fun ThreadScreen(
                                                 is ThreadItem.MessageItem ->
                                                     MessageBubble(
                                                         message = item.message,
+                                                        onContentPresented = { revealedVersions[item] = true },
+                                                        onContentTrailingEdge = { _, bottom -> trailingEdges[item] = bottom },
                                                         onReply = { pendingReplyDraft = onReplyToMessage(it) },
                                                         modifier =
                                                             if (row.agentBlockId ==
@@ -1250,9 +1287,10 @@ fun ThreadScreen(
 @Composable
 private fun ThreadRowContent(
     relocationSpec: BringIntoViewSpec,
+    modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
-    CompositionLocalProvider(LocalBringIntoViewSpec provides relocationSpec) { Column { content() } }
+    CompositionLocalProvider(LocalBringIntoViewSpec provides relocationSpec) { Column(modifier) { content() } }
 }
 
 /** Keep the drawing viewport full size while relocating focus between the measured chrome surfaces. */

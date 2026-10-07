@@ -174,6 +174,52 @@ class SecondClientPeer(
         return RetrievedAttachment(decoded.first().filename, bytes)
     }
 
+    /** Live durable facts from this peer's own daemon connection; never infer them from rows. */
+    internal suspend fun readMarks(
+        conversationId: String,
+        timeoutMs: Long,
+    ): de.pyryco.mobile.data.repository.ConversationReadMarks {
+        val reply = exchange("list_conversations", kotlinx.serialization.json.JsonObject(emptyMap()), timeoutMs, resend = true)
+        check(reply.type == "conversations") { "peer read facts unavailable" }
+        val rows =
+            MobileJson.decodeFromJsonElement(
+                de.pyryco.mobile.data.network.ConversationsPayload
+                    .serializer(),
+                reply.payload,
+            )
+        val row = rows.conversations.first { it.id == conversationId }
+        return de.pyryco.mobile.data.repository
+            .ConversationReadMarks(row.readUpTo, row.latestEntryId)
+    }
+
+    internal suspend fun awaitReadMark(
+        conversationId: String,
+        checkpoint: ULong,
+        timeoutMs: Long,
+    ) {
+        awaiting("conversation read mark", timeoutMs) {
+            received.first { frames ->
+                frames.any { envelope ->
+                    if (envelope.type != "conversation_updated") {
+                        false
+                    } else {
+                        val record =
+                            try {
+                                MobileJson.decodeFromJsonElement(
+                                    de.pyryco.mobile.data.network.ConversationResponseDto
+                                        .serializer(),
+                                    envelope.payload,
+                                )
+                            } catch (error: IllegalArgumentException) {
+                                null
+                            }
+                        record?.id == conversationId && (record.readUpTo ?: 0uL) >= checkpoint
+                    }
+                }
+            }
+        }
+    }
+
     /**
      * Every entry of [conversationId]'s history as this device sees it (#1016), newest first: `request_history`
      * pages walked from the newest, each page's cursor echoed verbatim, until one says `at_start`.

@@ -57,6 +57,9 @@ data class Envelope(
     @EncodeDefault(EncodeDefault.Mode.NEVER) val payload: JsonElement = JsonNull,
     @SerialName("in_reply_to") val inReplyTo: Long? = null,
     @SerialName("event_id") val eventId: Long? = null,
+    @SerialName("history_entry_id")
+    @Serializable(with = ReadMarkIdSerializer::class)
+    val historyEntryId: ULong? = null,
 )
 
 /**

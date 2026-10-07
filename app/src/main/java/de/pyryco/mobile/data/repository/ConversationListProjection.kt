@@ -275,6 +275,18 @@ internal class ConversationListProjection {
     fun observeReadMarks(conversationId: String): Flow<ConversationReadMarks?> =
         projection.map { it.readMarks[conversationId] }.distinctUntilChanged()
 
+    fun recordLatestEntry(
+        conversationId: String,
+        id: ULong,
+    ) {
+        if (id == 0uL) return
+        projection.update { current ->
+            val marks = current.readMarks.toMutableMap()
+            mergeReadMarks(marks, conversationId, ConversationReadMarks(null, id))
+            current.copy(readMarks = marks)
+        }
+    }
+
     fun currentReadMark(conversationId: String): ULong? = projection.value.readMarks[conversationId]?.readUpTo
 
     private fun mergeReadMarks(

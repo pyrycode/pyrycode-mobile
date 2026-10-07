@@ -9,8 +9,10 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.RelayLog
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -71,7 +73,8 @@ class CachingConversationRepository(
     private val cache: ConversationCache,
     private val serverId: String,
     private val attachments: AttachmentStore? = null,
-) : ConversationRepository by delegate {
+) : ConversationRepository by delegate,
+    ThreadSnapshotSource {
     // Ids this destination deleted. The thread that issued the delete keeps collecting until its PopBack,
     // and a write from that collector after the removal would put the rows straight back.
     private val deleted = ConcurrentHashMap.newKeySet<String>()
@@ -79,6 +82,12 @@ class CachingConversationRepository(
     private val drawnThreads = ConcurrentHashMap<String, List<ThreadItem>>()
 
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
+        observeThreadSnapshot(conversationId)
+            .map {
+                it.rows
+            }.distinctUntilChanged()
+
+    override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> =
         flow {
             var base = cache.readThread(serverId, conversationId)
             var baseOrder =
@@ -113,7 +122,7 @@ class CachingConversationRepository(
                 lastDrawn = drawn
                 lastOrder = snapshot.unsignedHistoryOrder
                 drawnThreads[conversationId] = drawn
-                emit(drawn)
+                emit(snapshot.copy(rows = drawn))
                 val cacheable = cacheableThreadRows(drawn)
                 if (cacheable != lastWritten && conversationId !in deleted) {
                     // A failed write leaves lastWritten behind, so the next change retries it. The cache is

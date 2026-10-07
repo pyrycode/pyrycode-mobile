@@ -47,6 +47,7 @@ import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.data.repository.historyKeys
+import de.pyryco.mobile.data.repository.threadSnapshots
 import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentSource
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
@@ -805,6 +806,10 @@ class ThreadViewModel(
             uiState.copy(mcpStatus = mcp)
         }.combine(combine(channelEditor.state, hostAvailable, ::Pair)) { uiState, (editor, available) ->
             uiState.copy(channelEditor = editor, hostAvailable = available)
+        }.combine(
+            combine(repository.threadSnapshots(conversationId), repository.observeReadMarks(conversationId), ::Pair),
+        ) { uiState, (snapshot, marks) ->
+            uiState.copy(readEvidence = snapshot.readEvidence, readUpTo = marks?.readUpTo)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -3059,8 +3064,19 @@ class ThreadViewModel(
         }
     }
 
+    private var highestQualifiedRead = 0uL
+
     fun onOverflowEvent(event: ThreadEvent) {
         when (event) {
+            is ThreadEvent.NewestContentPresented -> {
+                // The composition sampled sight and daemon support together before dispatch.
+                val checkpoint = event.checkpoint
+                if (checkpoint <= highestQualifiedRead) return
+                highestQualifiedRead = checkpoint
+                viewModelScope.launch(
+                    start = CoroutineStart.UNDISPATCHED,
+                ) { repository.acknowledgeReadCheckpoint(conversationId, checkpoint) }
+            }
             is ThreadEvent.BackgroundTaskToggle -> toggleBackgroundTask(event.taskId)
             is ThreadEvent.BackgroundTaskStop -> sendBackgroundTaskStop(event.taskId)
             ThreadEvent.Archive -> {

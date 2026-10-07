@@ -425,6 +425,30 @@ class DeterministicInteractiveStreamE2ETest {
             .onAllNodesWithText(PING, substring = true, ignoreCase = true)
             .onFirst()
             .assertIsDisplayed()
+        // #1912: the scripted reply must be confirmed as read after it is rendered in the foreground.
+        val repository =
+            requireNotNull(
+                GlobalContext
+                    .get()
+                    .get<RelayRepositoryCoordinator>()
+                    .currentRepository.value,
+            )
+        runBlocking {
+            val conversationId =
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    repository
+                        .observeConversations(ConversationFilter.All)
+                        .first { rows -> rows.any { it.name == SEED_CHANNEL_NAME } }
+                        .single { it.name == SEED_CHANNEL_NAME }
+                        .id
+                }
+            withTimeout(REPLY_TIMEOUT_MS) {
+                repository.observeReadMarks(conversationId).first { facts ->
+                    val latest = facts?.latestEntryId
+                    latest != null && latest > 0uL && (facts.readUpTo ?: 0uL) >= latest
+                }
+            }
+        }
     }
 
     /**

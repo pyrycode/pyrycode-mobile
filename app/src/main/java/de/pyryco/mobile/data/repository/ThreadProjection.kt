@@ -198,6 +198,7 @@ internal class ThreadProjection(
         val liveEndedTurns: Map<String, Set<String>> = emptyMap(),
         // Connection-local placement evidence, never a live event id or durable coverage marker.
         val historyOrder: Map<String, Map<Any, ULong>> = emptyMap(),
+        val readEvidence: Map<String, ThreadReadEvidence> = emptyMap(),
     )
 
     /**
@@ -223,6 +224,57 @@ internal class ThreadProjection(
      * not density.
      */
     private val unrecognizedRowId = AtomicLong(0)
+
+    fun readRows(conversationId: String): List<ThreadItem> = state.value.threads[conversationId].orEmpty()
+
+    /** The inbound caller supplies its before-version; a concurrent unrelated row gains no claim. */
+    fun recordReadEnvelope(
+        envelope: Envelope,
+        interactive: Boolean,
+        before: List<ThreadItem>,
+    ) {
+        val payload = envelope.payload as? kotlinx.serialization.json.JsonObject ?: return
+        val conversation =
+            (payload["conversation_id"] as? kotlinx.serialization.json.JsonPrimitive)
+                ?.takeIf { it.isString }
+                ?.content
+                ?.takeIf { it.isNotEmpty() } ?: return
+        val id = envelope.historyEntryId?.takeIf { it > 0u }
+        if (id == null) {
+            if (envelope.type in READ_METADATA_TYPES) return
+            state.update { current ->
+                val evidence = current.readEvidence[conversation] ?: ThreadReadEvidence()
+                current.copy(
+                    readEvidence =
+                        current.readEvidence + (
+                            conversation to
+                                evidence.copy(
+                                    unidentified = evidence.unidentified + Triple(envelope.type, envelope.ts, envelope.payload),
+                                )
+                        ),
+                )
+            }
+            return
+        }
+        val timestamp =
+            try {
+                Instant.parse(envelope.ts)
+            } catch (error: IllegalArgumentException) {
+                null
+            }
+        state.update { current ->
+            val evidence = current.readEvidence[conversation] ?: ThreadReadEvidence()
+            val next =
+                if (timestamp == null) {
+                    evidence.copy(facts = evidence.facts + (id to null))
+                } else {
+                    val entry = HistoryEntry(unsignedId = id, type = envelope.type, payload = envelope.payload, timestamp = timestamp)
+                    val reduced = reduceOrderedHistoryPage(listOf(entry), interactive, before)
+                    evidence.received(listOf(entry), reduced, current.threads[conversation].orEmpty())
+                }
+            current.copy(readEvidence = current.readEvidence + (conversation to next))
+        }
+    }
 
     /** Apply one `unrecognized_message` envelope (#609): decode it, then fold its row. A malformed one is dropped. */
     fun applyUnrecognizedMessage(envelope: Envelope) {
@@ -969,6 +1021,12 @@ internal class ThreadProjection(
             current.copy(
                 threads = current.threads + (conversationId to merged.withSettledTurns(endedTurns.value[conversationId].orEmpty())),
                 historyOrder = current.historyOrder + (conversationId to order),
+                readEvidence =
+                    current.readEvidence +
+                        (
+                            conversationId to
+                                (current.readEvidence[conversationId] ?: ThreadReadEvidence()).received(page.entries, reduced, merged)
+                        ),
                 echoQueues = if (deliveries.isEmpty()) current.echoQueues else current.echoQueues + (conversationId to settledEchoes),
             )
         }
@@ -1066,7 +1124,13 @@ internal class ThreadProjection(
                             }
                         }.withParkedEchoesLast(echoes?.parked.orEmpty(), echoes?.backlog.orEmpty().map { it.messageId })
                 val unsignedOrder = current.historyOrder[conversationId].orEmpty()
-                ThreadSnapshot(rows, suppressed, unsignedOrder.signedHistoryOrder(), unsignedOrder)
+                ThreadSnapshot(
+                    rows,
+                    suppressed,
+                    unsignedOrder.signedHistoryOrder(),
+                    unsignedOrder,
+                    current.readEvidence[conversationId] ?: ThreadReadEvidence(),
+                )
             }.distinctUntilChanged()
 
     /** Reserved store positions cannot change [backlog] display order; only [parkedIds] user rows read last. */
@@ -1244,3 +1308,19 @@ internal class ThreadProjection(
             null
         }
 }
+
+private val READ_METADATA_TYPES =
+    setOf(
+        "context_usage",
+        "session_facts",
+        "session_settings",
+        "session_settings_updated",
+        "model_announced",
+        "model_list",
+        "slash_commands",
+        "reply_suggestion",
+        "queue_state",
+        "mcp_status",
+        "background_task_roster",
+        "conversation_updated",
+    )

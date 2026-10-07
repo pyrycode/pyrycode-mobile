@@ -79,3 +79,15 @@ Pending documentation stage: update `docs/knowledge/features/thread-screen.md`, 
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-07
+
+## Revisions
+
+2026-10-07: The wire envelope currently discards the named daemon foundations' optional `history_entry_id`. Retain it with the existing strict unsigned serializer, independently of the signed connection and replay fields. The two initial regressions executed and failed (zero skipped), covering discarded upper-range identity and a finalized row missing its `turn_end` claim; red XML is retained in `/tmp/builder-1912/red.xml`.
+
+2026-10-07: Keep `markConversationRead` as the confirmed Result-returning command. The separate `acknowledgeReadCheckpoint` presentation sink queues previously qualified work in the host-bound process holder, avoiding a false confirmation or a fabricated command failure while a write is pending. Missing identities reconcile only against received entries matching type, timestamp and payload.
+
+2026-10-07: A lazy item's bounds include trailing spacing, and chrome initially measures zero. Qualification now requires measured nonzero chrome and the actual bubble surface's un-clipped trailing edge in window coordinates, within the IME-constrained list viewport. This preserves resting geometry without treating padded/obscured layout bounds as content. The event captures its immutable qualified checkpoint before dispatch, so a concurrent unseen row update cannot increase it or erase already-qualified work. Superseded version bindings are dropped from the current snapshot; old snapshots retain their own immutable proof without retaining every streaming text version for the process lifetime.
+
+2026-10-07: Row-version claims are separate from `ReducedHistoryPage.unsignedClaims`, whose per-delta sets remain unchanged for coverage/gap fragmentation. `readClaims` includes row-changing finalization/tool updates without assigning their ids to an unrelated first delta. Bubble qualification measures the inner visible content column, excluding decorative surface padding; existing resting surfaces extend into the composer's translucent top padding while their readable content stays clear.
+
+2026-10-07: Observe lifecycle through `Lifecycle.currentStateFlow`; the deterministic STARTED-to-RESUMED probe exposed stale callback qualification. Queue the captured event with an undispatched launch so destination disposal cannot cancel the handoff before process ownership begins. Extend the existing scripted ping scenario with confirmed daemon read facts as the deterministic twin; fresh full live proof remains dispatcher-owned.

@@ -34,6 +34,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -114,6 +116,7 @@ fun ToolCallRow(
     modifier: Modifier = Modifier,
     subagentDepth: Int = 0,
     joinsNextToolRow: Boolean = false,
+    onTrailingEdge: (Float) -> Unit = {},
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     ToolCallRowContent(
@@ -123,6 +126,7 @@ fun ToolCallRow(
         modifier = modifier,
         subagentDepth = subagentDepth,
         joinsNextToolRow = joinsNextToolRow,
+        onTrailingEdge = onTrailingEdge,
     )
 }
 
@@ -140,6 +144,7 @@ private fun ToolCallRowContent(
     modifier: Modifier = Modifier,
     subagentDepth: Int = 0,
     joinsNextToolRow: Boolean = false,
+    onTrailingEdge: (Float) -> Unit = {},
 ) {
     val clickLabel = stringResource(if (expanded) R.string.tool_row_collapse else R.string.tool_row_expand)
     val subagentDescription =
@@ -149,6 +154,7 @@ private fun ToolCallRowContent(
             modifier
                 .fillMaxWidth()
                 .then(if (joinsNextToolRow) Modifier.overlapNextByBorder() else Modifier.padding(bottom = MessageRowVerticalSpacing))
+                .onGloballyPositioned { onTrailingEdge(it.positionInWindow().y + it.size.height) }
                 .testTag(TOOL_ROW_TAG),
         shape = ToolCallShape,
         color = MaterialTheme.colorScheme.background,

@@ -211,6 +211,11 @@ val appModule =
         // Registered as its own resolvable type only; conversationRepositoryModule (#350) flag-selects
         // whether this facade or the Fake wins the ConversationRepository binding.
         single { StableConversationRepository(get<RelayConnectionRegistry>().currentRepository) }
+        single {
+            de.pyryco.mobile.data.repository
+                .ReadCheckpointRetries(kotlinx.coroutines.Dispatchers.Main.immediate)
+        } onClose
+            { it?.dispose() }
         // #789: unsent composer text, one store for the app process. App-scoped rather than
         // destination-scoped is the whole point — a draft has to outlive the back-stack entry that
         // typed it. Holds no connection and no disk handle, so it is unaffected by reconnects and by
@@ -320,6 +325,7 @@ fun hostConversationModule(
                 // #932: resolved when a thread is built, not with the factory, so a container without a
                 // ContentResolver can still build the factory for its other destinations.
                 attachmentReader = inject(),
+                readRetries = get(),
             )
         }
         // #877: one viewing tracker per app, shared by the thread destinations and the host source.
@@ -384,6 +390,7 @@ internal class ThreadDestinationFactory(
     private val cache: ConversationCache? = null,
     private val attachments: AttachmentStore? = null,
     private val attachmentReader: Lazy<AttachmentReader>,
+    private val readRetries: de.pyryco.mobile.data.repository.ReadCheckpointRetries? = null,
 ) {
     val hostConnections get() = registry.hostConnections
 
@@ -412,7 +419,8 @@ internal class ThreadDestinationFactory(
         } else {
             val repositories = bundle?.coordinator?.currentRepository ?: MutableStateFlow(null)
             // #1317: the host's pushed readings stay readable while it is disconnected, until its pairing ends.
-            val stable = StableConversationRepository(repositories, bundle?.coordinator?.hostReadings)
+            val stable =
+                StableConversationRepository(repositories, bundle?.coordinator?.hostReadings, readRetries.takeIf { bundle != null })
             // #797: the thread cache sits under the hook, not in it, so an instrumentation decorator
             // (E2eTestApplication's TappingConversationRepository) observes the restored thread too. A
             // blank owner gets no cache, so no rows are ever filed under the empty id.
