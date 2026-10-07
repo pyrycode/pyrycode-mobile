@@ -46,6 +46,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import kotlin.math.roundToInt
 
 /** The list side of the history walk (#777): the oldest-end affordance and the reader's pull (#1352). */
 @RunWith(AndroidJUnit4::class)
@@ -651,6 +652,21 @@ class ThreadScreenHistoryTest {
         maxViewports: Float = Float.POSITIVE_INFINITY,
     ) {
         val viewport = composeRule.onNode(hasScrollToIndexAction()).fetchSemanticsNode().boundsInRoot
+        val visible = visibleScreenRows()
+        val (olderNumber, olderTop) = visible.first()
+        val pitch = screenRowPitch(visible)
+        val headerBottom =
+            composeRule
+                .onNodeWithTag("thread-top-bar")
+                .fetchSemanticsNode()
+                .boundsInRoot.bottom
+        val distance = headerBottom - (olderTop - (olderNumber - 1) * pitch)
+        val viewports = distance / viewport.height
+        assertTrue("Hidden history is $viewports viewports; expected $minViewports..$maxViewports", viewports in minViewports..maxViewports)
+    }
+
+    private fun visibleScreenRows(): List<Pair<Int, Float>> {
+        val viewport = composeRule.onNode(hasScrollToIndexAction()).fetchSemanticsNode().boundsInRoot
         val visible =
             composeRule
                 .onAllNodes(hasText("Row ", substring = true))
@@ -662,22 +678,18 @@ class ThreadScreenHistoryTest {
                         .text
                         .removePrefix("Row ")
                         .removeSuffix(".")
-                        .toInt() to
-                        node.boundsInRoot.top
+                        .toInt() to node.boundsInRoot.top
                 }.sortedBy { it.first }
         assertTrue("Need two fully measured uniform rows: $visible", visible.size >= 2)
+        return visible
+    }
+
+    private fun screenRowPitch(visible: List<Pair<Int, Float>>): Float {
         val (olderNumber, olderTop) = visible.first()
         val (newerNumber, newerTop) = visible.last()
         val pitch = (newerTop - olderTop) / (newerNumber - olderNumber)
         assertTrue("Row pitch must be positive", pitch > 0f)
-        val headerBottom =
-            composeRule
-                .onNodeWithTag("thread-top-bar")
-                .fetchSemanticsNode()
-                .boundsInRoot.bottom
-        val distance = headerBottom - (olderTop - (olderNumber - 1) * pitch)
-        val viewports = distance / viewport.height
-        assertTrue("Hidden history is $viewports viewports; expected $minViewports..$maxViewports", viewports in minViewports..maxViewports)
+        return pitch
     }
 
     private fun positionScreenFromOldest(
@@ -685,10 +697,22 @@ class ThreadScreenHistoryTest {
         viewports: Float,
     ) {
         val list = composeRule.onNode(hasScrollToIndexAction())
-        list.performScrollToIndex(count - 1)
-        val distance = list.fetchSemanticsNode().boundsInRoot.height * viewports
-        // Negative semantics y follows reverse-layout indices toward newer content.
-        list.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, -distance) }
+        // Jump by measured row pitch: a large animated ScrollBy can still be settling on a device.
+        list.performScrollToIndex(0)
+        composeRule.waitForIdle()
+        val viewport = list.fetchSemanticsNode().boundsInRoot
+        val visible = visibleScreenRows()
+        val pitch = screenRowPitch(visible)
+        val (number, top) = visible.last()
+        val headerBottom =
+            composeRule
+                .onNodeWithTag("thread-top-bar")
+                .fetchSemanticsNode()
+                .boundsInRoot.bottom
+        val currentDistance = headerBottom - (top - (number - 1) * pitch)
+        val targetNumber = number + ((viewports * viewport.height - currentDistance) / pitch).roundToInt()
+        assertTrue("Fixture must contain the target row $targetNumber", targetNumber in 1..count)
+        list.performScrollToIndex(count - targetNumber)
         composeRule.waitForIdle()
     }
 

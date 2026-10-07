@@ -17,3 +17,9 @@ Repair only the four named methods and their local fixture helpers. Give full-th
 ## Testing strategy
 
 Reproduce the four existing tests before repair, including the managed-device density failure. Run the four repaired methods on Robolectric and the managed Pixel 2 API 33 ATD device, retaining fresh XML counts for each. Run the whole history class on Robolectric to cover shared helper integration; unrelated retry geometry is owned by #1887. Run lint, assembleDebug, androidTest Kotlin compilation, formatting and the final whole unit/shared suite plus `scripts/pre-verify.py --gradle`. This is test-only work with no UI change, operator-facing flow, live scenario or documentation requirement.
+
+## Revisions
+
+### 2026-10-07 — Use measured row jumps for full-thread positioning
+
+The first repaired managed-device run passed three methods, but the two-viewport method's second setup measured only 0.55 viewports after requesting a three-viewport animated semantics scroll. Keep the range assertion and replace that setup animation with an immediate `ScrollToIndex` target calculated from measured row pitch, viewport and header geometry. Assert the fixture contains the target row and wait for each jump to settle. Both requested ranges remain independently measured before the actual gesture; production paging stays unchanged.
