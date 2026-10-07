@@ -1,0 +1,47 @@
+Ticket #1861: fresh rework Default Delete comparison to Figma 673:3665
+Default captured 2026-10-07T00:31:29 UTC; compact captured 2026-10-07T00:28:19 UTC.
+Fresh real-bar XML completion timestamp: 2026-10-07T00:32:27 UTC.
+Full captured implementation/test revision: 5eecf2dc5d95c585481c9facf61da0a12440fa61 (includes fix 9d912dcc and the final main merge).
+Configured device: pixel8Api35, Pixel 8 profile, API 35, google_apis_playstore arm64-v8a.
+Runtime model: sdk_gphone64_arm64; density 1, static dark, real 24 px status/navigation bars.
+Command:
+./gradlew :app:pixel8Api35DebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.design.ListDesignCaptureTest#listFramesAt412By892,de.pyryco.mobile.design.ListDesignCaptureTest#listFramesAt320By700LargeText' -Pandroid.testInstrumentationRunnerArguments.requireRealSystemBars=true --console=plain
+Exit 0: 2 executed, 2 passed, 0 failed, 0 errors, 0 skipped.
+Both named methods passed. Fresh XML retained as 1861-delete-results.xml; retained XML line endings are normalized to LF.
+Fresh raw PNGs and sidecars came from app/build/intermediates/managed_device_android_test_additional_output/debugAndroidTest/pixel8Api35DebugAndroidTest/design-1220/list/.
+The legacy app/build/outputs additional-output directory still contained older ATD metadata; it was not used as evidence.
+
+Both walks reach Delete through Channel Info and verify Cancel, actual Back, a far outside tap and physical taps 12 dp beside both surface edges. Each dismissal keeps Channel Info closed and leaves the fake conversation undeleted. Compact body/actions remain complete and reachable at actual 320x700 and 1.5 font scale.
+ATD repair verification: pixel2Api33Atd, same two methods, exit 0; 2 executed/passed, 0 failed/errors/skipped. Fresh XML completion timestamp 2026-10-07T00:22:45 UTC; retained as 1861-delete-atd-results.xml. The previous default ATD run reproduced expected 312 / actual 336 with 1 executed, 1 failed, 0 skipped.
+Shared focused tests: 24 executed/passed, 0 failed/errors/skipped. Both new platform touch tests beside the surface failed with zero dismissal callbacks before fix 9d912dcc, then each emitted exactly one DeleteDismiss. Existing action-extension pointer tests preserve single confirm/dismiss callbacks.
+
+Default solid-fill screen bounds: (48,336)..(364,556), 316x220.
+After removing the real 24 px status inset: top-left (48,312), exactly the reference.
+Surface fill RGB (39,42,47), MaterialTheme.colorScheme.surfaceContainerHigh, matches the reference.
+Corners: 28 dp MaterialTheme.shapes.extraLarge; app/reference solid-fill corner profiles differ by at most 1 px over the first 28 rows.
+Content padding 24 dp, title/body gap 16 dp, body/actions gap 24 dp and action gap 8 dp pass native shared assertions within 1 dp.
+Three body lines use untrimmed headlineSmall 24/32, bodyMedium 14/20 and labelLarge 14/20 line boxes with onSurface, onSurfaceVariant and primary tokens.
+Actions retain at least 48 dp touch targets. The compact capture is 320x700 at actual 1.5 text, with a growing surface, complete body and both readable actions.
+Verdict: surface size/position and corners PASS within 2 dp; spacing PASS within 1 dp; frame colour/type role tokens MATCH.
+
+Only Default Delete 673:3665 is the complete visual audit. The populated fake thread behind its scrim is fixture content; Channel Info is absent. Compact pixels support readability.
+Comparison regenerated from the fresh app crop against the retained Figma 673:3665 export retrieved on 2026-10-07. Figma left/app right in 1861-delete-surface-side-by-side.png; overlay retained alongside it.
+Generation command:
+python3 scripts/design-compare.py app/src/androidTest/assets/design-1220/list/1861-app-delete-surface.png app/src/androidTest/assets/design-1220/list/1861-figma-delete-surface.png app/src/androidTest/assets/design-1220/list/1861-delete-surface
+
+Final unit/shared suite after the last main merge: 4549 executed/passed, 0 failed/errors/skipped; assembleDebug passed. Lint and Android-test compilation passed. Pre-verify --gradle passed, including forced Spotless and all Kotlin compiles.
+Pending dispatcher acceptance: full live suite must execute and pass de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_deleteConversation_removesFromListAndClosesThread with fresh executed/failed/skipped counts and named-method confirmation. No focused builder live run is required.
+Pending documentation: list/index.md, Delete confirmation 673:3665 entry, new measurements, tolerance verdict and this provenance.
+
+SHA-256:
+fcffcc493dc69ec8c92d2744753d47cd9c29313736102879d9d7725ebe4da769  1861-app-delete-surface.png
+58b795c5224b859164e1c21fd7c15fada61fe3d1b17c4542d13aa8ce2151492f  1861-delete-atd-results.xml
+17f5c8a834f31d44d449a929b0adcbbaeb9f099d66306dc351aad55d9328185d  1861-delete-confirmation-compact.png
+968d0321be21bd432b76e29e6d23f1795b9c45c9e71984798ec4580dc8823252  1861-delete-confirmation-compact.txt
+e997097131567c82a961ea142f9df58c5731602ad339d84acfbe238b20d6c5e5  1861-delete-confirmation.png
+01124a2777df13ce69e7ab187eeb54ddded2ba8d11031af2a9a8d8ab12ce21d8  1861-delete-confirmation.txt
+b74d705ed40b22e55093a171c2a2ec1533a9d28c78d6896d2f3cf3248ab0568e  1861-delete-results.xml
+63fa10c30d5ee6104ede4fd99595dc9702b71f2ff9bf37c8486361536f8ec4c6  1861-delete-surface-overlay.png
+519b1def30446d8db648d4db72a625e60427be4af929f46967aa3fea6d4f25c7  1861-delete-surface-side-by-side.png
+2ea2c7ce7124b0980f075daec50421fbdcec881253a5a16848f9bc52fb9bd7b4  1861-figma-673-3665.png
+05ab17b5b1e2223985c1ad9d34a2c8d2f3fc80bea539ccdac3a332486fc23b95  1861-figma-delete-surface.png

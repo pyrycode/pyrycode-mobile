@@ -22,18 +22,21 @@ import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -69,8 +72,12 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.offset
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
@@ -1526,21 +1533,66 @@ private fun DeleteConfirmationDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
+    val lineHeight = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
+    Dialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.delete_dialog_title)) },
-        text = { Text(stringResource(R.string.delete_dialog_body, displayName)) },
-        confirmButton = {
-            TextButton(onClick = onConfirm) {
-                Text(stringResource(R.string.delete_dialog_confirm))
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier =
+                Modifier
+                    // Reserve screen clearance without counting transparent margins as dialog content.
+                    .layout { measurable, constraints ->
+                        val placeable = measurable.measure(constraints.offset(horizontal = -48.dp.roundToPx()))
+                        layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
+                    }.widthIn(max = 316.dp)
+                    .fillMaxWidth()
+                    .testTag("delete-dialog-surface"),
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ) {
+            Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp)) {
+                Text(
+                    stringResource(R.string.delete_dialog_title),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                    style = MaterialTheme.typography.headlineSmall.copy(lineHeightStyle = lineHeight),
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    stringResource(R.string.delete_dialog_body, displayName),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
+                    style = MaterialTheme.typography.bodyMedium.copy(lineHeightStyle = lineHeight),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                ) {
+                    // Figma 673:3672 reserves 40 dp; the 48 dp targets extend into the blank gaps.
+                    TextButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.frameHeightWithTouchOverflow(top = 4.dp, bottom = 4.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                    ) {
+                        Text(
+                            stringResource(R.string.delete_dialog_cancel),
+                            style = MaterialTheme.typography.labelLarge.copy(lineHeightStyle = lineHeight),
+                        )
+                    }
+                    TextButton(
+                        onClick = onConfirm,
+                        modifier = Modifier.frameHeightWithTouchOverflow(top = 4.dp, bottom = 4.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                    ) {
+                        Text(
+                            stringResource(R.string.delete_dialog_confirm),
+                            style = MaterialTheme.typography.labelLarge.copy(lineHeightStyle = lineHeight),
+                        )
+                    }
+                }
             }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.delete_dialog_cancel))
-            }
-        },
-    )
+        }
+    }
 }
 
 private fun ThreadItem.timestamp(): Instant =
