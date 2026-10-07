@@ -15,9 +15,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -227,17 +229,21 @@ class MessageBubbleSelectionTest {
         }
 
         messages.forEach { message ->
-            composeTestRule.onNodeWithContentDescription(copyMessage).assertDoesNotExist()
+            composeTestRule.onAllNodesWithText(" - ", substring = true, useUnmergedTree = true).assertCountEquals(0)
+            composeTestRule.onAllNodesWithContentDescription(copyMessage).assertCountEquals(2)
             composeTestRule.mainClock.advanceTimeBy(500)
             composeTestRule.onNodeWithText(message.content).performTouchInput { click() }
-            composeTestRule.onNodeWithContentDescription(copyMessage).assertExists()
+            composeTestRule.onAllNodesWithText(" - ", substring = true, useUnmergedTree = true).assertCountEquals(1)
+            composeTestRule.onAllNodesWithContentDescription(copyMessage).assertCountEquals(2)
             // Separate single taps from Compose's double-tap word-selection gesture.
             composeTestRule.mainClock.advanceTimeBy(500)
             composeTestRule.onNodeWithText(message.content).performTouchInput { click() }
-            composeTestRule.onNodeWithContentDescription(copyMessage).assertDoesNotExist()
+            composeTestRule.onAllNodesWithText(" - ", substring = true, useUnmergedTree = true).assertCountEquals(0)
+            composeTestRule.onAllNodesWithContentDescription(copyMessage).assertCountEquals(2)
 
             assertEquals(message.content, longPressAndCopy(message.content))
-            composeTestRule.onNodeWithContentDescription(copyMessage).assertDoesNotExist()
+            composeTestRule.onAllNodesWithText(" - ", substring = true, useUnmergedTree = true).assertCountEquals(0)
+            composeTestRule.onAllNodesWithContentDescription(copyMessage).assertCountEquals(2)
             composeTestRule.onRoot().performTouchInput { click(Offset(1f, 1f)) }
         }
     }

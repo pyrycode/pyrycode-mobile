@@ -1,14 +1,19 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -21,21 +26,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.theme.assistantBubbleContainer
 import de.pyryco.mobile.ui.theme.userBubbleContainer
@@ -51,13 +58,13 @@ internal val BubbleHorizontalPadding = 20.dp // `Message` px-[20px]
 internal val BubbleVerticalPadding = 16.dp // `Message` py-[16px]
 internal val BubbleContentSpacing = 12.dp // `Message` gap-[12px] — body to meta row
 
-// The frame's 412dp reference width carries a 20dp gutter on each edge, leaving the 372dp content area;
-// each role container then insets its *opposite* edge by 100dp (`pr-[100px]` / `pl-[100px]`), which caps
-// a bubble at 272dp there. The inset is the mechanism and 272dp is its value at the reference width, so
-// there is no separate max-width constant to drift away from it. The gutter lives on the component
-// because ThreadScreen's LazyColumn applies none and this ticket does not touch it.
+// Delivered bubbles use the new side-action geometry; queued rows retain their existing inset.
 internal val MessageContentGutter = 20.dp
 internal val MessageRoleInset = 100.dp
+private val DeliveredMessageRoleInset = 40.dp
+private val MessageActionsGap = 12.dp
+private val MessageActionsWidth = 13.dp
+private val MessageCopyTargetSize = 48.dp
 
 // #896: the frame has no subagent grouping, so each nesting level steps a tool row in by the
 // `Message area` gap it already uses between rows.
@@ -146,7 +153,7 @@ fun MessageBubble(
 
 /**
  * The design's `User message container` (Figma node `114:3559`): right-aligned, leading edge inset by
- * [MessageRoleInset], using the theme's user bubble fill and `onPrimaryContainer` content.
+ * [DeliveredMessageRoleInset], using the theme's user bubble fill and `onPrimaryContainer` content.
  *
  * Content stays unparsed plain [Text] — the user wrote it, it is not a markdown source.
  */
@@ -178,7 +185,7 @@ private fun UserMessageBubble(
 
 /**
  * The design's `Assistant message container` (Figma node `114:3558`): left-aligned, trailing edge inset
- * by [MessageRoleInset], using the theme's assistant bubble fill and `onSecondaryContainer` content.
+ * by [DeliveredMessageRoleInset], using the theme's assistant bubble fill and `onSecondaryContainer` content.
  *
  * The body keeps both renderers it has had since #184 — the progressive-reveal [StreamingAssistantBody]
  * while `isStreaming`, the static [MarkdownText] once finalized. Neither is wrapped in its own
@@ -221,7 +228,7 @@ private fun AssistantMessage(
             )
         } else if (!message.hasNoBody()) {
             // No `fillMaxWidth()`. It sets minWidth = maxWidth, which pinned every finalized assistant
-            // bubble to the full lane and made 272dp a fixed width rather than the maximum the design
+            // bubble to the full lane and made the maximum a fixed width rather than the cap the design
             // specifies — the frame's short assistant instance (`I533:1956;132:4539`) is 205dp. Without
             // it `MarkdownText`'s `Column` wraps its widest child, while `CodeBlock` carries its own
             // `fillMaxWidth()`, so a fenced block still spans the bubble and only prose hugs.
@@ -233,12 +240,12 @@ private fun AssistantMessage(
 /**
  * The shared `Message` component both roles render through, plus the role container that positions it.
  *
- * The only per-role inputs are [alignment] and the two colours; the geometry — gutter, [MessageRoleInset]
+ * The only per-role inputs are [alignment] and the two colours; the geometry — gutter, [DeliveredMessageRoleInset]
  * on the opposite edge, 6dp corners, 20/16 inner padding, 12dp between body and meta row — is identical,
  * which is what makes the two bubbles read as one family.
  *
- * The meta row is handed [Message.content] directly, never anything read back out of [body], so an
- * assistant bubble copies its markdown source rather than the parsed render.
+ * The side copy control reads [Message.content] directly, including source still arriving, rather than
+ * text read back out of [body]. The meta row contains only the timestamp.
  *
  * [attachments] fills the design's `Slot` above the body (#984, moved above it by #1513 so the attachment
  * the text talks about is in view first), and only when the message has any: a text-only bubble lays out
@@ -248,14 +255,14 @@ private fun AssistantMessage(
  * crosses into another bubble; the attachments and the meta row stay outside it. A streaming body is not,
  * so a selection never holds offsets into text still arriving, and neither is a message with no body.
  * The system Copy action writes the selection
- * without the [MAX_CLIPBOARD_CHARS] bound the meta row applies; that is accepted for text the user chose.
+ * without the [MAX_CLIPBOARD_CHARS] bound the side copy applies; that is accepted for text the user chose.
  *
  * [metaRow] (#1621) says whether the meta row is drawn and what a tap on the bubble does. The tap is a
  * `pointerInput` detector rather than `clickable`: `clickable` merges every descendant into one semantics
  * node, which would read a whole reply as one TalkBack stop. A nested target that handles its own tap — a
  * link span, an attachment, the code block's copy — consumes the down event first, so it never toggles
- * the row. While the row is hidden the bubble itself carries the timestamp and a copy action for a screen
- * reader.
+ * the row. While the timestamp is hidden the bubble describes it for a screen reader; copy is a
+ * separate labelled side button for both streaming and finished messages.
  */
 @Composable
 private fun MessageContainer(
@@ -269,12 +276,11 @@ private fun MessageContainer(
     body: @Composable () -> Unit,
 ) {
     val isUserSide = alignment == Alignment.End
-    val onToggle = metaRow.onToggle
+    val visible = metaRow.visible && !message.isStreaming
+    val onToggle = metaRow.onToggle.takeUnless { message.isStreaming }
     val toggleLabel =
-        stringResource(if (metaRow.visible) R.string.thread_message_hide_details else R.string.thread_message_show_details)
+        stringResource(if (visible) R.string.thread_message_hide_details else R.string.thread_message_show_details)
     val sentDescription = stringResource(R.string.cd_thread_message_sent, rememberFormattedTimestamp(message.timestamp))
-    val copyLabel = stringResource(R.string.cd_thread_copy_message)
-    val clipboard = LocalClipboardManager.current
     // Keyed on Unit with the latest lambda read at tap time, so a host passing a fresh lambda each
     // recomposition does not restart the gesture detector.
     val currentOnToggle by rememberUpdatedState(onToggle)
@@ -282,83 +288,132 @@ private fun MessageContainer(
         if (onToggle == null) {
             Modifier
         } else {
-            Modifier.pointerInput(Unit) { detectTapGestures(onTap = { currentOnToggle?.invoke() }) }
+            Modifier.pointerInput(Unit) {
+                detectTapGestures(onTap = {
+                    currentOnToggle?.let {
+                        RelayLog.d { "event=message_timestamp_toggle" }
+                        it()
+                    }
+                })
+            }
         }
-    Row(
+    Layout(
         modifier =
             modifier
                 .fillMaxWidth()
                 .padding(
-                    start = MessageContentGutter + if (isUserSide) MessageRoleInset else 0.dp,
-                    end = MessageContentGutter + if (isUserSide) 0.dp else MessageRoleInset,
-                    bottom = MessageAreaRowSpacing,
-                ),
-        // One child, so the zero spacing carries nothing; this is how a Row takes an
-        // Alignment.Horizontal parameter rather than a hardcoded Arrangement.Start / .End.
-        horizontalArrangement = Arrangement.spacedBy(0.dp, alignment),
-    ) {
-        Surface(
-            modifier =
-                Modifier
-                    .shadow(4.dp, BubbleShape)
-                    .testTag(MESSAGE_BUBBLE_TEST_TAG)
-                    .then(tap)
-                    .semantics {
-                        if (onToggle != null) {
-                            onClick(label = toggleLabel) {
-                                onToggle()
-                                true
-                            }
-                        }
-                        if (!metaRow.visible) {
-                            contentDescription = sentDescription
-                        }
-                        // A streaming reply has no toggle, and no copy either: a copy always takes the finished text.
-                        if (!metaRow.visible && onToggle != null) {
-                            customActions =
-                                listOf(
-                                    CustomAccessibilityAction(copyLabel) {
-                                        clipboard.setBoundedText(message.content)
-                                        true
-                                    },
-                                )
-                        }
-                    },
-            shape = BubbleShape,
-            color = bubbleColor,
-            contentColor = bubbleContentColor,
-        ) {
-            Column(
+                    horizontal = MessageContentGutter,
+                ).padding(bottom = MessageAreaRowSpacing)
+                .testTag("message-row"),
+        content = {
+            Surface(
                 modifier =
-                    Modifier.padding(
-                        horizontal = BubbleHorizontalPadding,
-                        vertical = BubbleVerticalPadding,
-                    ),
-                verticalArrangement = Arrangement.spacedBy(BubbleContentSpacing),
-                // The design puts `items-start` on the `Message` column for *both* roles — a short
-                // user body is left-aligned inside its bubble — and `justify-end` on the user's meta
-                // row alone. So the column aligns Start and the meta row overrides for its own side.
-                horizontalAlignment = Alignment.Start,
+                    Modifier
+                        .shadow(4.dp, BubbleShape)
+                        .testTag(MESSAGE_BUBBLE_TEST_TAG)
+                        .then(tap)
+                        .semantics {
+                            if (onToggle != null) {
+                                onClick(label = toggleLabel) {
+                                    RelayLog.d { "event=message_timestamp_toggle" }
+                                    onToggle()
+                                    true
+                                }
+                            }
+                            if (!visible) {
+                                contentDescription = sentDescription
+                            }
+                        },
+                shape = BubbleShape,
+                color = bubbleColor,
+                contentColor = bubbleContentColor,
             ) {
-                if (message.attachments.isNotEmpty()) attachments()
-                // A body-less message keeps the plain path: an empty wrapper would still take a gap on
-                // both sides in this column.
-                if (message.isStreaming || message.hasNoBody()) {
-                    body()
-                } else {
-                    // SelectionContainer stacks its children, so the column keeps a user body's
-                    // paragraphs apart. No width modifier: the finished bubble still hugs its content.
-                    SelectionContainer {
-                        Column(verticalArrangement = Arrangement.spacedBy(BubbleContentSpacing)) { body() }
+                Column(
+                    modifier =
+                        Modifier.padding(
+                            horizontal = BubbleHorizontalPadding,
+                            vertical = BubbleVerticalPadding,
+                        ),
+                    verticalArrangement = Arrangement.spacedBy(BubbleContentSpacing),
+                    // The design puts `items-start` on the `Message` column for *both* roles — a short
+                    // user body is left-aligned inside its bubble — and `justify-end` on the user's meta
+                    // row alone. So the column aligns Start and the meta row overrides for its own side.
+                    horizontalAlignment = Alignment.Start,
+                ) {
+                    if (message.attachments.isNotEmpty()) attachments()
+                    // A body-less message keeps the plain path: an empty wrapper would still take a gap on
+                    // both sides in this column.
+                    if (message.isStreaming || message.hasNoBody()) {
+                        body()
+                    } else {
+                        // SelectionContainer stacks its children, so the column keeps a user body's
+                        // paragraphs apart. No width modifier: the finished bubble still hugs its content.
+                        SelectionContainer {
+                            Column(verticalArrangement = Arrangement.spacedBy(BubbleContentSpacing)) { body() }
+                        }
+                    }
+                    if (visible) {
+                        MessageMetaRow(
+                            timestamp = message.timestamp,
+                            modifier = Modifier.align(alignment),
+                        )
                     }
                 }
-                if (metaRow.visible) {
-                    MessageMetaRow(
-                        timestamp = message.timestamp,
-                        copyText = message.content,
-                        modifier = Modifier.align(alignment),
-                    )
-                }
+            }
+            MessageActions(message.content)
+        },
+    ) { measurables, constraints ->
+        val actionsWidth = MessageActionsWidth.roundToPx()
+        val gap = MessageActionsGap.roundToPx()
+        val reserved = DeliveredMessageRoleInset.roundToPx() + actionsWidth + gap
+        val bubble =
+            measurables[0].measure(
+                constraints.copy(minWidth = 0, minHeight = 0, maxWidth = (constraints.maxWidth - reserved).coerceAtLeast(0)),
+            )
+        val actions = measurables[1].measure(Constraints.fixed(actionsWidth, bubble.height))
+        layout(constraints.maxWidth, bubble.height) {
+            val bubbleX = if (isUserSide) constraints.maxWidth - bubble.width else 0
+            bubble.placeRelative(bubbleX, 0)
+            // Placed after the surface so the extended target wins where it overlaps the bubble.
+            actions.placeRelative(if (isUserSide) bubbleX - gap - actionsWidth else bubble.width + gap, 0)
+        }
+    }
+}
+
+/** Drawn column geometry stays separate from the 48dp clickable target. No clipping here. */
+@Composable
+private fun MessageActions(text: String) {
+    val clipboard = LocalClipboardManager.current
+    val copyLabel = stringResource(R.string.cd_thread_copy_message)
+    Box(modifier = Modifier.testTag("message-actions"), contentAlignment = Alignment.Center) {
+        Box(
+            modifier =
+                Modifier
+                    .requiredSize(MessageCopyTargetSize)
+                    .semantics {
+                        contentDescription = copyLabel
+                    }.clickable(role = androidx.compose.ui.semantics.Role.Button) {
+                        clipboard.setBoundedText(text)
+                        RelayLog.d { "event=message_copy" }
+                    },
+            contentAlignment = Alignment.Center,
+        ) {
+            // #1817 accessibility resolution: the Figma tint needs a contrasting adjacent surface.
+            // Keep the backing within the column, leaving the glyph and extended target unchanged.
+            Box(
+                modifier =
+                    Modifier
+                        .size(width = MessageActionsWidth, height = 14.dp)
+                        .background(MaterialTheme.colorScheme.inverseSurface, MaterialTheme.shapes.extraSmall)
+                        .testTag("message-copy-backing"),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_copy),
+                    contentDescription = null,
+                    modifier = Modifier.size(width = 11.dp, height = 12.dp).testTag("message-copy-glyph"),
+                    tint = MaterialTheme.colorScheme.inversePrimary,
+                )
             }
         }
     }
@@ -541,9 +596,8 @@ private fun MessageBubbleDarkPreview() {
 }
 
 // Narrow-width check, the peer of SessionBoundaryDelimiterNarrowPreview: at 320dp the 20dp gutters and
-// the 100dp role inset leave a 180dp bubble, so the meta row's timestamp-plus-glyph is the widest thing
-// in it and sets the bubble's floor. Kept reviewable because that is the width at which the design's
-// generous insets bite hardest.
+// the 40dp role inset and 25dp action reservation leave a 215dp maximum bubble. Timestamp text
+// can wrap independently; the copy glyph remains outside the bubble.
 @Preview(name = "MessageBubble — Narrow", showBackground = true, widthDp = 320)
 @Composable
 private fun MessageBubbleNarrowPreview() {

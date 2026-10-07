@@ -171,7 +171,7 @@ class MessageAttachmentsTest {
 
         // 160dp square, or as wide as the bubble's content allows on a narrower screen (this one is 320dp).
         val root = composeTestRule.onRoot().getUnclippedBoundsInRoot()
-        val content = root.width - MessageContentGutter * 2 - MessageRoleInset - BubbleHorizontalPadding * 2
+        val content = root.width - MessageContentGutter * 2 - (40.dp + 25.dp) - BubbleHorizontalPadding * 2
         assertEquals(minOf(160.dp, content).value, loading.width.value, 0.5f)
         assertEquals(loading.width.value, loading.height.value, 0.5f)
         assertEquals(loading, loaded)
@@ -209,9 +209,9 @@ class MessageAttachmentsTest {
 
         val root = composeTestRule.onRoot().getUnclippedBoundsInRoot()
         val bubble = composeTestRule.onNodeWithTag(MESSAGE_BUBBLE_TEST_TAG).getUnclippedBoundsInRoot()
-        val lane = root.width - MessageContentGutter * 2 - MessageRoleInset
+        val lane = root.width - MessageContentGutter * 2 - (40.dp + 25.dp)
         assertTrue("bubble ${bubble.width} wider than its lane $lane", bubble.width <= lane + 0.5.dp)
-        assertTrue(bubble.right <= root.right - MessageContentGutter - MessageRoleInset + 0.5.dp)
+        assertTrue(bubble.right <= root.right - MessageContentGutter - (40.dp + 25.dp) + 0.5.dp)
         // The semantics keep the whole name; what is drawn stays on one line inside the bubble.
         val label = composeTestRule.onNodeWithText(name, useUnmergedTree = true).getUnclippedBoundsInRoot()
         assertTrue(label.right <= bubble.right)
@@ -436,10 +436,8 @@ class MessageAttachmentsTest {
         render(message(MessageAttachment(A1, "photo.png", "image/png"), role = Role.User, content = "")) { emptyMap() }
 
         val image = composeTestRule.onNodeWithTag(MESSAGE_ATTACHMENT_IMAGE_TEST_TAG).getUnclippedBoundsInRoot()
-        val copyDescription =
-            InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_thread_copy_message)
-        val metaCopy = composeTestRule.onNodeWithContentDescription(copyDescription).getUnclippedBoundsInRoot()
-        assertEquals(BubbleContentSpacing.value, (metaCopy.top - image.bottom).value, 1.5f)
+        val timestamp = composeTestRule.onAllNodesWithText(" - ", substring = true, useUnmergedTree = true)[0].getUnclippedBoundsInRoot()
+        assertEquals(BubbleContentSpacing.value, (timestamp.top - image.bottom).value, 1.5f)
     }
 
     @Test
@@ -532,7 +530,7 @@ class MessageAttachmentsTest {
 
         val image = composeTestRule.onNodeWithTag(MESSAGE_ATTACHMENT_IMAGE_TEST_TAG).getUnclippedBoundsInRoot()
         val text = composeTestRule.onNodeWithText("Here you go", useUnmergedTree = true).getUnclippedBoundsInRoot()
-        val meta = composeTestRule.onNodeWithContentDescription("Copy this message").getUnclippedBoundsInRoot()
+        val meta = composeTestRule.onAllNodesWithText(" - ", substring = true, useUnmergedTree = true)[0].getUnclippedBoundsInRoot()
         assertTrue("image ${image.bottom} not above text ${text.top}", image.bottom <= text.top)
         assertTrue("text ${text.bottom} not above meta row ${meta.top}", text.bottom <= meta.top)
     }
