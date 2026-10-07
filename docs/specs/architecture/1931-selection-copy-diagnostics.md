@@ -47,8 +47,14 @@ Dispatcher handoff: a fresh full live suite (`all`) must include and pass `Inter
 ## Open Questions
 
 - Historical trigger remains unestablished by retained evidence; diagnostics are the authorized evidence-insufficiency path, not proof of a platform repair.
-- Resolve during implementation which selection range Android/Compose exposes publicly; report unknown rather than infer from teardown or copied text.
+- Resolved: the finished selectable body exposes no public `TextSelectionRange` in the passing scripted and focused live runs. Record `range=unknown`, and retain actual press geometry and observed clipboard outcome rather than invent selection offsets.
 
 ## Documentation handoff
 
 Pending documentation stage: update `docs/knowledge/features/message-bubble-testing.md`, “Testing”, and `docs/e2e-interactive-stream.md`, “Finished-reply partial Copy (#1674)”, with the evidence boundary, bounded diagnostic fields and counted deterministic and dispatcher-produced full live evidence. No historical cause claim without demonstrated evidence.
+
+## Revisions
+
+### 2026-10-08 — distinguish popup root geometry from screen geometry
+
+Inspection of the passing scripted trace shows Android's `getGlobalVisibleRect` uses the popup root coordinate system, so that rectangle cannot be compared directly with the body window rectangle. Record the menu's actual screen rectangle through `getLocationOnScreen` as well as its root-visible rectangle, and name the body coordinate system explicitly. Record the menu's shown/visible state after the click too, so a recurrence can distinguish a still-open menu from one dismissed without the expected clipboard result. The platform click itself stays unchanged. The focused live reproduction with the two preceding scenarios passed all three selected methods; it does not establish the historical trigger or replace full dispatcher live acceptance.
