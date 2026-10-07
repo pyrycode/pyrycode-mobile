@@ -433,12 +433,14 @@ fun ThreadScreen(
         if (openMenu == null) openControl = null
     }
     // #885: the input field's text-aligned window bounds, where the slash-command suggestions anchor.
+    var typeAheadVisible by remember(state.conversationId) { mutableStateOf(false) }
     var inputAnchor by remember { mutableStateOf<Rect?>(null) }
     val imeVisible = WindowInsets.isImeVisible
     val scheme = MaterialTheme.colorScheme
     val frameColors = scheme.threadColors
     val chromeSource = remember { HazeState() }
     val density = LocalDensity.current
+    var topOverlayHeight by remember { mutableStateOf(0.dp) }
     var composerHeight by remember { mutableStateOf(0.dp) }
     val frameBackground =
         Modifier.drawWithCache {
@@ -696,7 +698,7 @@ fun ThreadScreen(
                         val readRow = newestRenderedRow as? ThreadRow.Delivered
                         val readItem = readRow?.item
                         ThreadReadViewport(
-                            state = state,
+                            state = state.copy(readEvidence = state.readEvidence?.forBackgroundAgentRows(state.items, agentRows)),
                             listState = listState,
                             rowKey = newestRenderedRow?.listKey(rows.indexOf(newestRenderedRow)),
                             row = readItem,
@@ -704,9 +706,15 @@ fun ThreadScreen(
                             trailingEdge = readItem?.let { trailingEdges[it] },
                             viewport = messageViewport,
                             revealed = readItem !is ThreadItem.MessageItem || revealedVersions[readItem] == true,
-                            headerHeight = headerHeight,
+                            headerHeight = maxOf(headerHeight, topOverlayHeight),
                             composerHeight = composerHeight,
-                            visible = modalState == ModalUiState.Hidden && !state.channelInfoOpen,
+                            visible =
+                                modalState == ModalUiState.Hidden && shownQuestion == null &&
+                                    !state.channelInfoOpen && !backgroundTasksOpen && !sheetVisible &&
+                                    !state.showRenameDialog && state.channelEditor == null &&
+                                    state.saveAsChannelDialog == null && !state.deleteConfirmVisible &&
+                                    !state.workspacePickerVisible && !overflowExpanded && openMenu == null &&
+                                    !typeAheadVisible,
                             onEvent = onOverflowEvent,
                         )
                         val restAdjustment = ordinaryMessageRestAdjustment(newestRenderedRow, promptRowCount)
@@ -1059,30 +1067,31 @@ fun ThreadScreen(
                             }
                         }
                     }
-                    ThreadTopOverlay(
-                        attentionPill = attentionPill,
-                        usageLimit = usageLimit,
-                        usageLimitDismissed = usageLimit?.dismissalKey() in dismissedUsageLimits,
-                        onDismissUsageLimit = { usageLimit?.let(onDismissUsageLimit) },
-                        showRePair = showRePair,
-                        onRePair = onRePair,
-                        connectionState = connectionState,
-                        onRetryConnection = onRetry,
-                        modifier =
-                            Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(start = ComposerGutter, top = headerHeight + TopOverlayTopGap, end = ComposerGutter),
-                        mcpFailure = mcpFailure,
-                        onOpenMcpFailure = onOpenMcpFailure,
-                        sessionError = sessionError,
-                        agent = state.agent,
-                        turnOutcome = turnOutcome,
-                        onCompact = onCompact,
-                        transientError = errorNotices.currentMessage,
-                        transientErrorOccurrence = errorNotices.currentOccurrence,
-                        confirmation = confirmationNotices.currentMessage,
-                        confirmationOccurrence = confirmationNotices.currentOccurrence,
-                    )
+                    Box(Modifier.align(Alignment.TopEnd).onSizeChanged { topOverlayHeight = with(density) { it.height.toDp() } }) {
+                        ThreadTopOverlay(
+                            attentionPill = attentionPill,
+                            usageLimit = usageLimit,
+                            usageLimitDismissed = usageLimit?.dismissalKey() in dismissedUsageLimits,
+                            onDismissUsageLimit = { usageLimit?.let(onDismissUsageLimit) },
+                            showRePair = showRePair,
+                            onRePair = onRePair,
+                            connectionState = connectionState,
+                            onRetryConnection = onRetry,
+                            modifier =
+                                Modifier
+                                    .padding(start = ComposerGutter, top = headerHeight + TopOverlayTopGap, end = ComposerGutter),
+                            mcpFailure = mcpFailure,
+                            onOpenMcpFailure = onOpenMcpFailure,
+                            sessionError = sessionError,
+                            agent = state.agent,
+                            turnOutcome = turnOutcome,
+                            onCompact = onCompact,
+                            transientError = errorNotices.currentMessage,
+                            transientErrorOccurrence = errorNotices.currentOccurrence,
+                            confirmation = confirmationNotices.currentMessage,
+                            confirmationOccurrence = confirmationNotices.currentOccurrence,
+                        )
+                    }
                 }
             }
         }
@@ -1139,6 +1148,7 @@ fun ThreadScreen(
             imeVisible = imeVisible,
             onComplete = onDraftChange,
             resetKey = state.conversationId,
+            onVisibilityChanged = { typeAheadVisible = it },
         )
     }
     if (backgroundTasksOpen) {

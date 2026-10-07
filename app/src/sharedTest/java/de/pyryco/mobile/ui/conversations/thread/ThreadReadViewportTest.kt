@@ -25,7 +25,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
-class ThreadReadViewportTest {
+open class ThreadReadViewportTest {
     @get:Rule val compose = createComposeRule()
 
     private class Owner : LifecycleOwner {
@@ -33,7 +33,7 @@ class ThreadReadViewportTest {
         override val lifecycle: Lifecycle = registry
     }
 
-    @Test fun foregroundCheckpoint_requiresResumedDestinationAndDoesNotRepeat() {
+    @Test open fun foregroundCheckpoint_requiresResumedDestinationAndDoesNotRepeat() {
         val owner = Owner().apply { registry.currentState = Lifecycle.State.STARTED }
         val state = mutableStateOf(state())
         val events = mutableListOf<ThreadEvent.NewestContentPresented>()
@@ -78,7 +78,7 @@ class ThreadReadViewportTest {
         compose.runOnIdle { assertEquals(2, events.size) }
     }
 
-    @Test fun foregroundCheckpoint_excludesScrolledAwayRowUpdates() {
+    @Test open fun foregroundCheckpoint_excludesScrolledAwayRowUpdates() {
         val owner = Owner().apply { registry.currentState = Lifecycle.State.RESUMED }
         val state = mutableStateOf(state())
         val events = mutableListOf<ThreadEvent.NewestContentPresented>()
@@ -103,6 +103,34 @@ class ThreadReadViewportTest {
             state.value = state.value.copy(items = state.value.items.dropLast(1) + updated, readEvidence = evidence(updated, 41u))
         }
         compose.runOnIdle { assertEquals(1, events.size) }
+    }
+
+    @Test open fun foregroundCheckpoint_excludesReplyArrivingBehindRenameDialog() {
+        val owner = Owner().apply { registry.currentState = Lifecycle.State.RESUMED }
+        val state = mutableStateOf(state())
+        val events = mutableListOf<ThreadEvent.NewestContentPresented>()
+        compose.setContent {
+            CompositionLocalProvider(LocalLifecycleOwner provides owner) {
+                PyrycodeMobileTheme {
+                    ThreadScreen(state.value, {}, {}, ConnectionState.Connected, {}, onOverflowEvent = {
+                        if (it is ThreadEvent.NewestContentPresented) events += it
+                    })
+                }
+            }
+        }
+        compose.waitUntil(5000) { events.size == 1 }
+        compose.runOnIdle { state.value = state.value.copy(showRenameDialog = true) }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            val newest = row(31)
+            state.value = state.value.copy(items = state.value.items + newest, readEvidence = evidence(newest, 41u))
+        }
+        compose.waitForIdle()
+        compose.runOnIdle { assertEquals(1, events.size) }
+        compose.runOnIdle { state.value = state.value.copy(showRenameDialog = false) }
+        compose.waitForIdle()
+        compose.waitUntil(5000) { events.size == 2 }
+        compose.runOnIdle { assertEquals(41uL, events.last().checkpoint) }
     }
 
     @Test fun viewportEdgeExcludesComposerAndImeAndAllowsTallRowTrailingEdge() {

@@ -455,6 +455,7 @@ class RemoteConversationRepository(
         val payload = envelope.payload as? JsonObject
         val conversation = (payload?.get("conversation_id") as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty()
         val before = threadProjection.readRows(conversation)
+        val compaction = threadProjection.readCompactionFold(conversation)
         try {
             routeInbound(envelope)
         } finally {
@@ -462,7 +463,7 @@ class RemoteConversationRepository(
                 ?.takeIf {
                     it > 0u && conversation.isNotEmpty()
                 }?.let { conversationListProjection.recordLatestEntry(conversation, it) }
-            threadProjection.recordReadEnvelope(envelope, CAPABILITY_INTERACTIVE in negotiatedCapabilities(), before)
+            threadProjection.recordReadEnvelope(envelope, CAPABILITY_INTERACTIVE in negotiatedCapabilities(), before, compaction)
         }
     }
 

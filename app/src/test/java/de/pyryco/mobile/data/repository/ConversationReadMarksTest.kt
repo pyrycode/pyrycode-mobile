@@ -560,6 +560,67 @@ class ConversationReadMarksTest {
             assertEquals(81uL, held.readEvidence.checkpoint(held.rows.single(), 0u))
         }
 
+    @Test fun liveCompactionEdgesAndBoundaryFillRequireTheirPresentedVersions() =
+        runTest {
+            val pump = Pump()
+            val repository = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+
+            fun push(
+                id: ULong,
+                type: String,
+                payload: String,
+            ) {
+                pump.push(
+                    Envelope(
+                        900 + id.toLong(),
+                        type,
+                        TS,
+                        MobileJson.parseToJsonElement(payload),
+                        eventId = 7000 + id.toLong(),
+                        historyEntryId = id,
+                    ),
+                )
+            }
+            push(1u, "message", """{"conversation_id":"a","message_id":"m","role":"user","text":"seen"}""")
+            push(2u, "compacting", """{"conversation_id":"a","active":true}""")
+            runCurrent()
+            val rising = repository.observeThreadSnapshot("a").first()
+            assertEquals(2uL, rising.readEvidence.checkpoint(rising.rows.single(), 0u))
+            push(3u, "compacting", """{"conversation_id":"a","active":false}""")
+            runCurrent()
+            val falling = repository.observeThreadSnapshot("a").first()
+            assertTrue(falling.rows.last() is ThreadItem.CompactionBoundary)
+            assertEquals(2uL, falling.readEvidence.checkpoint(falling.rows.first(), 0u))
+            assertEquals(3uL, falling.readEvidence.checkpoint(falling.rows.last(), 0u))
+            push(4u, "compaction_boundary", """{"conversation_id":"a","trigger":"auto","pre_tokens":20}""")
+            runCurrent()
+            val filled = repository.observeThreadSnapshot("a").first()
+            assertEquals(4uL, filled.readEvidence.checkpoint(filled.rows.last(), 0u))
+            assertNull(filled.readEvidence.checkpoint(falling.rows.last(), 0u))
+        }
+
+    @Test fun unsuccessfulLiveTurnEndBindsActualSummaryWithoutGrantingChangedReport() =
+        runTest {
+            for (fields in listOf("\"is_error\":true", "\"outcome\":\"cancelled\"")) {
+                val pump = Pump()
+                val repository = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+                pump.push(
+                    Envelope(
+                        901,
+                        "turn_end",
+                        TS,
+                        MobileJson.parseToJsonElement("""{"conversation_id":"a","turn_id":"t","stop_reason":"end_turn",$fields}"""),
+                        historyEntryId = 1u,
+                    ),
+                )
+                runCurrent()
+                val snapshot = repository.observeThreadSnapshot("a").first()
+                val summary = snapshot.rows.single() as ThreadItem.StoppedTurn
+                assertEquals(1uL, snapshot.readEvidence.checkpoint(summary, 0u))
+                assertNull(snapshot.readEvidence.checkpoint(summary.copy(reason = "unseen"), 0u))
+            }
+        }
+
     private fun TestScope.repo(pump: Pump) = RemoteConversationRepository(pump, backgroundScope)
 
     private fun row(

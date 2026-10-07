@@ -705,6 +705,12 @@ class ThreadViewModel(
                 if (!available) lastKnownSessionId = ""
             }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    // One receipt subscription feeds both the rows and their read evidence, so opening a thread backfills once.
+    private val receivedThread =
+        repository
+            .threadSnapshots(conversationId)
+            .shareIn(viewModelScope, SharingStarted.WhileSubscribed(replayExpirationMillis = 0), replay = 1)
+
     /**
      * The thread rows (#337): the #313 finished-message projection from [ConversationRepository.observeMessages]
      * folded together with the live `assistant_delta` stream so an in-flight turn renders as a single
@@ -718,7 +724,7 @@ class ThreadViewModel(
      */
     private val threadItems: Flow<List<ThreadItem>> =
         merge(
-            repository.observeMessages(conversationId).map(ThreadInput::Finished),
+            receivedThread.map { it.rows }.distinctUntilChanged().map(ThreadInput::Finished),
             liveSessionEvents.map { ThreadInput.Live(it) },
         ).scan(ThreadFold(emptyList(), null)) { fold, input -> fold.reduce(input, conversationId) }
             .map { it.render() }
@@ -830,7 +836,7 @@ class ThreadViewModel(
             uiState.copy(channelEditor = editor, hostAvailable = available)
         }.combine(
             combine(
-                repository.threadSnapshots(conversationId),
+                receivedThread,
                 repository.observeReadMarks(conversationId),
                 flow<HistoryCoverage?> {
                     emit(null)

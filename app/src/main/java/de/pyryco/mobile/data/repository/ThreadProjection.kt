@@ -227,11 +227,14 @@ internal class ThreadProjection(
 
     fun readRows(conversationId: String): List<ThreadItem> = state.value.threads[conversationId].orEmpty()
 
+    fun readCompactionFold(conversationId: String): CompactionFold = compactionFolds.value[conversationId] ?: CompactionFold()
+
     /** The inbound caller supplies its before-version; a concurrent unrelated row gains no claim. */
     fun recordReadEnvelope(
         envelope: Envelope,
         interactive: Boolean,
         before: List<ThreadItem>,
+        compaction: CompactionFold = CompactionFold(),
     ) {
         val payload = envelope.payload as? kotlinx.serialization.json.JsonObject ?: return
         val conversation =
@@ -249,7 +252,13 @@ internal class ThreadProjection(
                         current.readEvidence + (
                             conversation to
                                 evidence.copy(
-                                    unidentified = evidence.unidentified + Triple(envelope.type, envelope.ts, envelope.payload),
+                                    unidentified =
+                                        evidence.unidentified +
+                                            Triple(
+                                                envelope.type,
+                                                normalizeReadTimestamp(envelope.ts),
+                                                envelope.payload,
+                                            ),
                                 )
                         ),
                 )
@@ -269,7 +278,7 @@ internal class ThreadProjection(
                     evidence.copy(facts = evidence.facts + (id to null))
                 } else {
                     val entry = HistoryEntry(unsignedId = id, type = envelope.type, payload = envelope.payload, timestamp = timestamp)
-                    val reduced = reduceOrderedHistoryPage(listOf(entry), interactive, before)
+                    val reduced = reduceOrderedHistoryPage(listOf(entry), interactive, before, compaction)
                     evidence.received(listOf(entry), reduced, current.threads[conversation].orEmpty())
                 }
             current.copy(readEvidence = current.readEvidence + (conversation to next))

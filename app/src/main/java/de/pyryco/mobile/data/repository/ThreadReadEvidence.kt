@@ -1,6 +1,8 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.network.ApiRetryPayloadDto
+import de.pyryco.mobile.data.network.BackgroundTaskStartedPayloadDto
+import de.pyryco.mobile.data.network.BackgroundTaskUpdatedPayloadDto
 import de.pyryco.mobile.data.network.BannerPayloadDto
 import de.pyryco.mobile.data.network.CompactingPayloadDto
 import de.pyryco.mobile.data.network.ContextUsagePayloadDto
@@ -133,6 +135,9 @@ private fun ThreadItem.represents(source: ThreadItem): Boolean {
     ) {
         return copy(id = source.id, occurredAt = source.occurredAt) == source
     }
+    if (this is ThreadItem.StoppedTurn && source is ThreadItem.StoppedTurn) {
+        return copy(occurredAt = source.occurredAt) == source
+    }
     return this == source
 }
 
@@ -144,6 +149,18 @@ internal fun understoodNonvisualEntry(
     if (!interactive) return null
     return try {
         when (entry.type) {
+            "background_task_started" ->
+                MobileJson
+                    .decodeFromJsonElement<BackgroundTaskStartedPayloadDto>(entry.payload)
+                    .let {
+                        it.taskId.isNotEmpty()
+                    }.takeIf { it }
+            "background_task_updated" ->
+                MobileJson
+                    .decodeFromJsonElement<BackgroundTaskUpdatedPayloadDto>(entry.payload)
+                    .let {
+                        it.taskId.isNotEmpty()
+                    }.takeIf { it }
             "model_list" -> MobileJson.decodeFromJsonElement<ModelListPayloadDto>(entry.payload).toMenu().let { true }
             "slash_command_list" -> MobileJson.decodeFromJsonElement<SlashCommandListPayloadDto>(entry.payload).toMenu().let { true }
             "mcp_status" -> MobileJson.decodeFromJsonElement<McpStatusPayloadDto>(entry.payload).toReport()?.let { true }
@@ -172,3 +189,13 @@ internal fun understoodNonvisualEntry(
 
 internal fun ThreadItem.isReadContent(): Boolean =
     this !is ThreadItem.BackgroundTaskLifecycle && (this !is ThreadItem.Banner || level != BannerLevel.Info)
+
+/** History parsing canonicalizes valid instants; malformed timestamps must remain unresolved. */
+internal fun normalizeReadTimestamp(timestamp: String): String =
+    try {
+        kotlinx.datetime.Instant
+            .parse(timestamp)
+            .toString()
+    } catch (error: IllegalArgumentException) {
+        timestamp
+    }

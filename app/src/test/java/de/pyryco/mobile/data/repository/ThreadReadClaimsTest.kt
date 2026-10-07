@@ -2,6 +2,7 @@ package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import kotlinx.coroutines.flow.first
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -153,6 +154,53 @@ class ThreadReadClaimsTest {
         assertEquals(61uL, held.checkpoint(initial.rows.single(), 0u))
         assertNull(next.checkpoint(initial.rows.single(), 0u))
         assertEquals(62uL, next.checkpoint(updated.rows.single(), 0u))
+    }
+
+    @Test fun missingIdentityReconcilesNoncanonicalValidFractionalTimestamp() =
+        kotlinx.coroutines.test.runTest {
+            val projection = ThreadProjection()
+            val rawTimestamp = "2026-10-07T00:00:00.1234Z"
+            val source =
+                entry(
+                    1u,
+                    "message",
+                    """{"conversation_id":"c","message_id":"m","role":"user","text":"seen"}""",
+                ).copy(timestamp = Instant.parse(rawTimestamp))
+            val reduced = reduceOrderedHistoryPage(listOf(source), true)
+            projection.appendMessages(reduced.rows.filterIsInstance<ThreadItem.MessageItem>().map { "c" to it.message })
+            projection.recordReadEnvelope(Envelope(901, source.type, rawTimestamp, source.payload), true, emptyList())
+            projection.mergeHistoryPage("c", HistoryPage(listOf(source), "", true), true)
+            val snapshot = projection.observeSnapshot("c").first()
+            assertEquals(1uL, snapshot.readEvidence.checkpoint(snapshot.rows.single(), 0u))
+        }
+
+    @Test fun ordinaryBackgroundLifecycleTailIsNonvisualButMalformedReceiptBlocks() {
+        val visible = entry(1u, "message", """{"conversation_id":"c","message_id":"m","role":"user","text":"seen"}""")
+        val start =
+            entry(
+                2u,
+                "background_task_started",
+                """{"conversation_id":"c","task_id":"task","tool_call_id":"shell","description":"work","task_type":"local_bash","truncated_fields":null}""",
+            )
+        val patch =
+            entry(
+                3u,
+                "background_task_updated",
+                """{"conversation_id":"c","task_id":"task","patch":"progress","status":"","summary":"","truncated_fields":null}""",
+            )
+        val end =
+            entry(
+                4u,
+                "background_task_updated",
+                """{"conversation_id":"c","task_id":"task","patch":"","status":"completed","summary":"done","truncated_fields":null}""",
+            )
+        val entries = listOf(end, patch, start, visible)
+        val page = reduceOrderedHistoryPage(entries, true)
+        val evidence = ThreadReadEvidence().received(entries, page, page.rows)
+        assertEquals(4uL, evidence.checkpoint(page.rows.first(), 0u))
+        val broken = entries.map { if (it == start) it.copy(payload = MobileJson.parseToJsonElement("{}")) else it }
+        val bad = reduceOrderedHistoryPage(broken, true)
+        assertEquals(1uL, ThreadReadEvidence().received(broken, bad, bad.rows).checkpoint(bad.rows.first(), 0u))
     }
 
     private fun entry(

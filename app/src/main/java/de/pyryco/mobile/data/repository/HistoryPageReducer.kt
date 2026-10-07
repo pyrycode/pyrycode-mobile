@@ -507,8 +507,9 @@ internal fun reduceOrderedHistoryPage(
     entries: List<HistoryEntry>,
     interactive: Boolean,
     initialRows: List<ThreadItem> = emptyList(),
+    initialCompaction: CompactionFold = CompactionFold(),
 ): ReducedHistoryPage {
-    var compaction = CompactionFold()
+    var compaction = initialCompaction
     val order = HashMap<Any, ULong>()
     val claims = HashMap<Any, MutableSet<ULong>>()
     val readFacts = HashMap<ULong, Boolean?>()
