@@ -150,8 +150,8 @@ fun MessageBubble(
                 metaRow,
                 threadOpenedAt,
                 onReply,
-                modifier,
                 onContentPresented,
+                modifier,
                 onContentTrailingEdge,
             )
         // The gutter is applied here rather than inside ToolCallRow: moving it into the components left

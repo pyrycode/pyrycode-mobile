@@ -75,7 +75,7 @@ class ThreadReadClaimsTest {
         for (page in listOf(listOf(a, b, c), listOf(c, b, a), listOf(b, a, c), listOf(c, a, b))) {
             val reduced = reduceOrderedHistoryPage(page, true)
             val evidence = ThreadReadEvidence().received(page, reduced, reduced.rows)
-            val newest = reduced.rows.last()
+            val newest = reduced.rows.filterIsInstance<ThreadItem.MessageItem>().single { it.message.id == "c" }
             assertEquals(53uL, evidence.checkpoint(newest, 0u))
             for (overlap in listOf(listOf(a), listOf(b), listOf(c), page)) {
                 val replay = reduceOrderedHistoryPage(overlap, true, reduced.rows)
@@ -84,6 +84,29 @@ class ThreadReadClaimsTest {
                 assertNull(repeated.checkpoint(newest, 53u))
             }
         }
+    }
+
+    @Test
+    fun presentedToolUseDoesNotGrantUnseenToolResult() {
+        val use =
+            entry(
+                61u,
+                "tool_use",
+                """{"conversation_id":"c","turn_id":"t","tool_use_id":"tool","name":"Read","input_summary":"a.kt"}""",
+            )
+        val result =
+            entry(
+                62u,
+                "tool_result",
+                """{"conversation_id":"c","turn_id":"t","tool_use_id":"tool","is_error":false,"result_summary":"done"}""",
+            )
+        val initial = reduceOrderedHistoryPage(listOf(use), true)
+        val held = ThreadReadEvidence().received(listOf(use), initial, initial.rows)
+        val updated = reduceOrderedHistoryPage(listOf(result), true, initial.rows)
+        val next = held.received(listOf(result), updated, updated.rows)
+        assertEquals(61uL, held.checkpoint(initial.rows.single(), 0u))
+        assertNull(next.checkpoint(initial.rows.single(), 0u))
+        assertEquals(62uL, next.checkpoint(updated.rows.single(), 0u))
     }
 
     private fun entry(
