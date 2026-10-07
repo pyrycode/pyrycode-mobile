@@ -40,6 +40,8 @@ import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.historyKeys
 import de.pyryco.mobile.ui.conversations.components.MessageAreaRowSpacing
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
+import java.util.Collections
+import java.util.IdentityHashMap
 
 // #777: the oldest-end loading row, sized to ThinkingIndicator's shipped spinner-and-label idiom and
 // inset on the same 20dp content gutter as the rest of the thread.
@@ -143,18 +145,36 @@ internal fun historyMarkersFor(
     markers: List<ThreadHistoryMarker>,
 ): List<ThreadHistoryMarker> {
     if (row is ThreadRow.ToolRun && row.expanded) return emptyList()
+    val legacy = markers.filter { it.displayRow == null }
     val keys =
-        when (row) {
-            is ThreadRow.Delivered -> row.item.historyKeys()
-            is ThreadRow.ToolRun ->
-                row.tools
-                    .firstOrNull()
-                    ?.let { ThreadItem.MessageItem(it).historyKeys() }
-                    .orEmpty()
-            else -> emptyList()
+        if (legacy.isEmpty()) {
+            emptyList()
+        } else {
+            when (row) {
+                is ThreadRow.Delivered -> row.item.historyKeys()
+                is ThreadRow.ToolRun ->
+                    row.tools
+                        .firstOrNull()
+                        ?.let { ThreadItem.MessageItem(it).historyKeys() }
+                        .orEmpty()
+                else -> emptyList()
+            }
         }
-    return markers.filter { it.beforeRow in keys }
+    return markers.filter { marker ->
+        marker.displayRow?.let { target ->
+            when (row) {
+                is ThreadRow.Delivered -> sameDisplayRow(row.item, target)
+                is ThreadRow.ToolRun -> (target as? ThreadItem.MessageItem)?.message?.id == row.tools.firstOrNull()?.id
+                else -> false
+            }
+        } ?: (marker.beforeRow in keys)
+    }
 }
+
+private fun sameDisplayRow(
+    item: ThreadItem,
+    target: ThreadItem,
+): Boolean = item === target || item is ThreadItem.MessageItem && target is ThreadItem.MessageItem && item.message.id == target.message.id
 
 /** Hidden block gaps stay pullable at their run header; opening restores their original child anchors. */
 internal fun foldedAgentHistoryMarkers(
@@ -167,6 +187,28 @@ internal fun foldedAgentHistoryMarkers(
             .filterIsInstance<ThreadRow.Delivered>()
             .filter { it.isToolRow() }
             .associate { (it.item as ThreadItem.MessageItem).message.id to it.agentBlockId }
+    val closedTargets =
+        folded
+            .filterIsInstance<ThreadRow.ToolRun>()
+            .filter { !it.expanded }
+            .mapNotNull { run ->
+                blockByTool[run.runId]?.let { it to ThreadItem.MessageItem(run.tools.first()) }
+            }.toMap()
+    if (closedTargets.isEmpty()) return markers
+    val preparedTargets = HashMap<String, ThreadItem>()
+    original.filterIsInstance<ThreadRow.Delivered>().forEach { row ->
+        closedTargets[row.agentBlockId]?.let { target ->
+            (row.item as? ThreadItem.MessageItem)?.message?.id?.let { preparedTargets[it] = target }
+        }
+    }
+    if (markers.all { it.displayRow != null }) {
+        return markers.map { marker ->
+            marker.copy(
+                displayRow =
+                    preparedTargets[(marker.displayRow as? ThreadItem.MessageItem)?.message?.id] ?: marker.displayRow,
+            )
+        }
+    }
     val closed =
         folded
             .filterIsInstance<ThreadRow.ToolRun>()
@@ -182,7 +224,12 @@ internal fun foldedAgentHistoryMarkers(
                 row.item.historyKeys().forEach { put(it, target) }
             }
         }
-    return markers.map { marker -> marker.copy(beforeRow = targets[marker.beforeRow] ?: marker.beforeRow) }
+    return markers.map { marker ->
+        marker.copy(
+            beforeRow = targets[marker.beforeRow] ?: marker.beforeRow,
+            displayRow = preparedTargets[(marker.displayRow as? ThreadItem.MessageItem)?.message?.id] ?: marker.displayRow,
+        )
+    }
 }
 
 /** A marker's first newer tool stays visible; unrelated runs keep their existing collapse policy. */
@@ -190,11 +237,24 @@ internal fun foldHistoryToolRuns(
     rows: List<ThreadRow>,
     expanded: Set<String>,
     markers: List<ThreadHistoryMarker>,
-): List<ThreadRow> =
-    buildList {
+): List<ThreadRow> {
+    val preparedTargets = Collections.newSetFromMap(IdentityHashMap<ThreadItem, Boolean>())
+    markers.mapNotNullTo(preparedTargets) { it.displayRow }
+    val preparedMessageIds = preparedTargets.mapNotNullTo(HashSet()) { (it as? ThreadItem.MessageItem)?.message?.id }
+    val legacyKeys = markers.filter { it.displayRow == null }.mapTo(HashSet()) { it.beforeRow }
+    return buildList {
         var start = 0
         rows.forEachIndexed { index, row ->
-            if ((row as? ThreadRow.Delivered)?.agentBlockId == null && historyMarkersFor(row, markers).isNotEmpty()) {
+            val delivered = row as? ThreadRow.Delivered
+            val targeted =
+                delivered != null &&
+                    (
+                        delivered.item in preparedTargets ||
+                            (delivered.item as? ThreadItem.MessageItem)?.message?.id in preparedMessageIds ||
+                            legacyKeys.isNotEmpty() &&
+                            delivered.item.historyKeys().any { it in legacyKeys }
+                    )
+            if (delivered?.agentBlockId == null && targeted) {
                 addAll(foldToolRuns(rows.subList(start, index), expanded))
                 add(row)
                 start = index + 1
@@ -202,6 +262,7 @@ internal fun foldHistoryToolRuns(
         }
         addAll(foldToolRuns(rows.subList(start, rows.size), expanded))
     }
+}
 
 internal const val HISTORY_NEWEST_GAPS_KEY = "history-newest-gaps"
 

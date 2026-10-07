@@ -159,7 +159,7 @@ fun CompactionBoundaryDivider(item: ThreadItem.CompactionBoundary, modifier: Mod
   `CachedCompaction(preTokens, postTokens, manual, occurredAt, failed)`, a `null` token count omitted on
   encode and read back as `null`; `failed` (#1358) is defaulted `false` on the cached record, so a thread
   document written before #1358 still decodes and every row it holds reads as not failed. See
-  [Conversation cache § The contract](conversation-cache.md#the-contract). Before #1353 this row was
+  [Conversation cache § The contract](conversation-cache-contract.md#the-contract). Before #1353 this row was
   excluded here and restored only by history replay joined to a live arrival of the same frame on the
   envelope's `ts` — see [Remote conversation repository § The
   compaction-boundary decode+fold seam](remote-conversation-repository-live-stream-and-modals.md#the-compaction-boundary-decodefold-seam-874)

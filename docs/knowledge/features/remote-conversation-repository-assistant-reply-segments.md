@@ -160,7 +160,7 @@ prefix/middle/suffix overlap in both arrival directions, non-recoverable legacy 
 repeated merges. Assertions cover parent, text, keys and held separators/order, alongside older-page
 prepend, duplicate live replay and conversation isolation. Comparing the attributed script with its
 parentless counterpart catches accidental changes to identity or placement. See
-[the cache thread document](conversation-cache.md#layout) for disk-only unknown attribution and
+[the cache thread document](conversation-cache-layout.md#layout) for disk-only unknown attribution and
 in-memory reconnect retention.
 
 ### The cache's segment record
