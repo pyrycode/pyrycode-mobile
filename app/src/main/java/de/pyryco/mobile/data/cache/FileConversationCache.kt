@@ -23,6 +23,11 @@ import kotlinx.coroutines.withContext
 import kotlinx.datetime.Instant
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
@@ -132,7 +137,9 @@ class FileConversationCache(
         withContext(ioDispatcher) {
             mutex.withLock {
                 try {
-                    decodeThreadDocument(threadDocumentFor(serverId, conversationId))?.history?.toDomain()
+                    decodeThreadDocument(threadDocumentFor(serverId, conversationId))?.let { stored ->
+                        stored.history?.copy(coverage = stored.history.coverage?.retainedBy(stored.rows.map { it.toDomain() }))?.toDomain()
+                    }
                 } catch (error: Exception) {
                     val code = failureCode(error) ?: throw error
                     RelayLog.d { "conversation_cache operation=read_history status=failed code=$code" }
@@ -255,9 +262,12 @@ class FileConversationCache(
 
     private fun readThreadRecord(document: File): CachedThread? {
         if (!document.isFile) return null
-        val stored = MobileJson.decodeFromString<CachedThread>(document.readText())
+        val raw =
+            MobileJson.parseToJsonElement(document.readText()) as? JsonObject ?: throw IllegalArgumentException("invalid thread document")
+        // Optional metadata must not participate in row decoding: malformed claims leave rows readable.
+        val stored = MobileJson.decodeFromJsonElement<CachedThread>(JsonObject(raw - "history"))
         require(stored.version == VERSION) { "unsupported conversation cache version" }
-        return stored
+        return stored.copy(history = decodeHistory(raw["history"]))
     }
 
     /**
@@ -298,12 +308,29 @@ class FileConversationCache(
     private fun storedHistoryOrNull(document: File): CachedHistoryPosition? {
         if (!document.isFile) return null
         return try {
-            MobileJson
-                .decodeFromString<CachedThreadHeader>(document.readText())
-                .takeIf { it.version == VERSION }
-                ?.history
+            val raw = MobileJson.decodeFromString<CachedThreadHeader>(document.readText())
+            raw.takeIf { it.version == VERSION }?.history?.let(::decodeHistory)
         } catch (error: Exception) {
             failureCode(error) ?: throw error
+            null
+        }
+    }
+
+    private fun decodeHistory(element: JsonElement?): CachedHistoryPosition? {
+        if (element == null || element == JsonNull) return null
+        return try {
+            val raw = element as? JsonObject ?: throw IllegalArgumentException("invalid history metadata")
+            val coverage = raw["coverage"]
+            val compatible =
+                if (coverage is JsonObject && "spans" !in coverage) {
+                    JsonObject(raw + ("coverage" to JsonObject(coverage + ("spans" to JsonArray(emptyList())))))
+                } else {
+                    raw
+                }
+            MobileJson.decodeFromJsonElement<CachedHistoryPosition>(compatible).also { it.coverage?.validated() }
+        } catch (error: Exception) {
+            val code = failureCode(error) ?: throw error
+            RelayLog.d { "conversation_cache operation=read_history_metadata status=failed code=$code" }
             null
         }
     }
@@ -507,7 +534,7 @@ private data class CachedThread(
 @Serializable
 private data class CachedThreadHeader(
     val version: Int,
-    val history: CachedHistoryPosition? = null,
+    val history: JsonElement? = null,
 )
 
 /** A [HistoryPosition] (#1354). [cursor] is opaque and stays out of [toString]. */

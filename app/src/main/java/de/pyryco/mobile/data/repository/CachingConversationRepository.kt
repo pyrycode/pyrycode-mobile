@@ -82,14 +82,14 @@ class CachingConversationRepository(
         flow {
             var base = cache.readThread(serverId, conversationId)
             var baseOrder =
-                base.receivedHistoryOrder(
+                base.receivedUnsignedHistoryOrder(
                     cache
                         .readHistoryPosition(serverId, conversationId)
                         ?.coverage
-                        ?.positions()
+                        ?.unsignedPositions()
                         .orEmpty(),
                 )
-            var lastOrder = emptyMap<Any, Long>()
+            var lastOrder = emptyMap<Any, ULong>()
             var lastWritten = base
             var lastDrawn = base
             delegate.threadSnapshots(conversationId).collect { snapshot ->
@@ -109,9 +109,9 @@ class CachingConversationRepository(
                                 it.message.id in snapshot.suppressedUserMessageIds
                         }
                     }
-                val drawn = live.mergeCachedRows(restored, baseOrder + snapshot.historyOrder)
+                val drawn = live.mergeUnsignedCachedRows(restored, baseOrder + snapshot.unsignedHistoryOrder)
                 lastDrawn = drawn
-                lastOrder = snapshot.historyOrder
+                lastOrder = snapshot.unsignedHistoryOrder
                 drawnThreads[conversationId] = drawn
                 emit(drawn)
                 val cacheable = cacheableThreadRows(drawn)
@@ -141,7 +141,7 @@ class CachingConversationRepository(
             saved?.coverage?.unsignedIncomplete != true &&
             saved
                 ?.coverage
-                ?.spans
+                ?.unsignedSpans
                 .orEmpty()
                 .isEmpty()
         ) {
@@ -179,8 +179,10 @@ class CachingConversationRepository(
                 base.filterNot {
                     it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.id in snapshot.suppressedUserMessageIds
                 }
-            val order = (snapshot.rows + restored).receivedHistoryOrder(position.coverage.positions()) + snapshot.historyOrder
-            val rows = snapshot.rows.mergeCachedRows(restored, order)
+            val order =
+                (snapshot.rows + restored).receivedUnsignedHistoryOrder(position.coverage.unsignedPositions()) +
+                    snapshot.unsignedHistoryOrder
+            val rows = snapshot.rows.mergeUnsignedCachedRows(restored, order)
             if (cache.writeThread(serverId, conversationId, rows).isFailure) {
                 RelayLog.d { "event=history_rows_write_failed" }
                 return@withLock

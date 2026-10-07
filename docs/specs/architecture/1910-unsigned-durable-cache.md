@@ -2,11 +2,11 @@
 
 ## Files read
 
-- `data/repository/HistoryCoverage.kt`: `received`, `boundTo`, `retainedBy`, interval removal, and signed display helpers establish coverage and retention.
-- `data/repository/HistoryPageReducer.kt`: `ReducedHistoryPage`, `mergeRows`, `mergeCachedRows`, and `receivedHistoryOrder` already have unsigned reduction/ordering beneath signed cache adapters.
-- `data/repository/ThreadSnapshotSource.kt`: `ThreadSnapshot.unsignedHistoryOrder` supplies rows and unsigned order atomically.
-- `data/repository/CachingConversationRepository.kt`: `observeMessages` and `writeHistoryPosition` restore fixed merge bases and write rows before state under `historyWrites`.
-- `data/cache/FileConversationCache.kt`: thread records, header reads, atomic replacement, and position writes preserve host/conversation isolation and retention.
+- `app/src/main/java/de/pyryco/mobile/data/repository/HistoryCoverage.kt`: `received`, `boundTo`, `retainedBy`, interval removal, and signed display helpers establish coverage and retention.
+- `app/src/main/java/de/pyryco/mobile/data/repository/HistoryPageReducer.kt`: `ReducedHistoryPage`, `mergeRows`, `mergeCachedRows`, and `receivedHistoryOrder` already have unsigned reduction/ordering beneath signed cache adapters.
+- `app/src/main/java/de/pyryco/mobile/data/repository/ThreadSnapshotSource.kt`: `ThreadSnapshot.unsignedHistoryOrder` supplies rows and unsigned order atomically.
+- `app/src/main/java/de/pyryco/mobile/data/repository/CachingConversationRepository.kt`: `observeMessages` and `writeHistoryPosition` restore fixed merge bases and write rows before state under `historyWrites`.
+- `app/src/main/java/de/pyryco/mobile/data/cache/FileConversationCache.kt`: thread records, header reads, atomic replacement, and position writes preserve host/conversation isolation and retention.
 - `HistoryCoverageTest`, `UnsignedHistoryTest`, `HistoryCacheReworkTest`, `FileConversationCacheThreadTest`, and `CachingConversationRepositoryTest`: signed fixtures, partial fills, legacy rows, trimming and failed-write safeguards.
 - `docs/knowledge/features/conversation-cache.md`: saved position and two-writer rules require exact content proofs and untrimmed caller input.
 - `docs/knowledge/features/caching-conversation-repository.md`: disjoint gap fills need persisted durable order, including equal timestamps; fixed merge bases prevent resurrection.
@@ -53,3 +53,9 @@ Pending for the documentation stage:
 - `docs/knowledge/features/conversation-cache.md`, “The saved history position”: unsigned metadata and positive signed legacy compatibility.
 - `docs/knowledge/features/caching-conversation-repository.md`: unsigned restore/order contract and conservative signed UI view.
 - `docs/knowledge/features/remote-conversation-repository-reads-and-thread-store-history-paging.md`, saved-position section: unsigned coverage, cursor/walk anchors and legacy compatibility.
+
+## Revisions
+
+- 2026-10-07: Keep the primary constructor's required unsigned spans last, avoiding JVM erasure collision with the defaulted signed secondary constructor. Legacy documents that omitted empty spans receive an empty default in optional metadata decoding. Signed properties are transient immutable projections computed once per coverage instance, avoiding repeated map construction in existing display consumers.
+
+- 2026-10-07: The malformed-metadata invariant probe exposed an admitted order id outside its row's producing-entry set. Disk validation now requires that relationship in addition to span membership and retained proofs; the probe remains unchanged. Span membership uses binary search over normalized spans to keep validation proportional to claims times log spans rather than claims times spans.
