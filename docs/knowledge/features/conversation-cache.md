@@ -64,7 +64,7 @@ replace**, like `writeConversations` is a whole-host replace, and it always stor
 `cacheableThreadRows(rows)` — never the caller's raw list — so no caller can persist an
 unrecognized, streaming or in-flight-tool row by constructing a `ThreadItem` list itself.
 
-**The saved history position (#1354, extended by #1832).** `HistoryPosition(cursor, atStart,
+**The saved history position (#1354, extended by #1832 and #1910).** `HistoryPosition(cursor, atStart,
 coverage = null)` lives inside the thread document beside its rows, under the same host and
 conversation namespace. `coverage` stores received durable spans, known gaps, unknown legacy
 coverage, page-edge/per-gap/newest cursors and content-free row identity/order/retention metadata.
@@ -72,12 +72,27 @@ High-water is derived from the highest retained span; live/ring ids and legacy r
 never certify durable ids. No raw excluded envelopes are persisted. Removal of the thread or host
 also removes this metadata. Cursors and entry content never reach logs or exception prose.
 
+Span endpoints, gap anchors/edges, row/delta order and producing-entry sets, page-edge cursors and
+walk anchors retain exact unsigned ids through `ULong.MAX_VALUE`. `unsignedHighWater` derives from
+`unsignedSpans`. Stored field names remain unchanged (`spans`, `gaps`, `rowOrder`, `rowEntries`,
+`cursors`, `walks`, `unknown`), so positive signed numeric documents still load without a format
+rewrite; older metadata that omitted empty spans defaults to an empty list. Signed construction
+and lower-range projections remain compatible, while upper-range evidence keeps the signed UI
+view conservatively unknown through sticky `unsignedIncomplete` and suppresses saved `atStart`.
+This does not discard authoritative unsigned claims or make `unsignedUnknown` true.
+
+Optional history metadata is decoded separately from rows. Invalid numeric or structural metadata
+discards the saved position with a content-free diagnostic; retained rows remain readable. A row's
+order id must belong to its producing-entry set, and all claimed ids must be covered. Claims are
+then checked against retained content, so metadata cannot certify removed rows.
+
 The [caching wrapper](caching-conversation-repository.md#the-saved-history-position-1354) restores
 old nonempty documents without coverage as unknown, even with saved `atStart`; their rows stay
 readable. After the newest page a conservative marker tracks the verified span's older edge.
 Matching legacy rows or verified overlap proves deduplication, never completeness: unknown
 coverage without an older durable anchor closes only on `at_start`, including an empty terminal
-page. An empty uncovered cache ignores old backwards metadata and gets no conservative marker.
+page. An empty uncovered cache ignores old backwards metadata unless `unsignedIncomplete` is set;
+that flag and its usable cursor survive even when no rows remain.
 Known holes require continuous received coverage joining their older anchor. See
 [resuming history](remote-conversation-repository-reads-and-thread-store-history-paging.md#resuming-from-the-saved-position-1354)
 for lazy demand and marker/cursor behavior.
@@ -270,6 +285,9 @@ Ordinary row proofs hash the exact cache-policy record, including retained tool 
 attachments; an earliest order id or message text alone cannot prove all mutable producers.
 Assistant deltas use fragment-specific proofs. A received delta already present inside a legacy
 whole-turn row binds to ordered, non-overlapping text offsets and the retained whole-row hash.
+The whole-row hash proves custody of that row, not each delta: every alias also needs overflow-safe
+bounds and a matching fragment hash, with slices ordered by unsigned durable id. Restore and stale
+writers apply the same checks; overlapping, reversed or mismatched slices cannot retain claims.
 Only hashes, offsets and lengths persist; received delta text remains transient. Such a match
 proves retention, never legacy completeness. Missing or changed proofs remove claims, so cache
 policy exclusions cannot silently certify discarded cacheable content. Received non-rendering

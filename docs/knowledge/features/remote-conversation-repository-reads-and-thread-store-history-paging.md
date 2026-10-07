@@ -52,10 +52,11 @@ Reducer `order` and snapshot `historyOrder` omit upper-range positions; reducer 
 claim set when any member is unrepresentable. The signed `mergeOrderedHistoryRows` entry point retains
 positive lower-range behavior. No compatibility view wraps, clamps or substitutes a different id.
 
-`HistoryCoverage.received` declines the entire page's claims if any entry has an unavailable signed id,
-including a mixed-range page, and sets `unknown=true` with sticky `unsignedIncomplete=true`. Merely
-filtering ids is insufficient: separately saved `atStart` can otherwise restore an unsupported page as
-complete. Later signed terminal pages cannot clear this uncertainty. A terminal backwards response
+Since #1910 `HistoryCoverage.received` delegates to `receivedUnsigned`, retaining the entire page's
+exact unsigned claims, including mixed-range pages. Its signed projection sets `unknown=true` with
+sticky `unsignedIncomplete=true` when upper-range evidence arrives. Merely filtering ids is
+insufficient: separately saved `atStart` can otherwise restore omitted signed content as complete.
+Later terminal pages cannot clear this signed-view uncertainty. A terminal backwards response
 retains the request cursor and enters a demandable `PermanentFailure` instead of `AtStart`; a side or
 gap response reopens a previously complete walk. Nonterminal cursor progression remains usable.
 
@@ -63,9 +64,10 @@ Cache save/read and ViewModel seeding also refuse `atStart` while flagged. Prese
 cursor even when non-rendering state frames or cache-excluded unrecognized rows leave no renderer rows
 or signed spans: an empty cache cannot prove completeness. Regression coverage must reopen a fresh
 file cache and ViewModel, receive a later signed terminal page and demand older history again; testing
-`received` alone or keeping one cacheable row misses this restore failure. Persisted unsigned coverage
-and cache identity remain #1910, gap anchors #1911 and foreground acknowledgement #1912; these guards
-do not establish upper-range coverage, restored order or seen state.
+`received` alone or keeping one cacheable row misses this restore failure. Unsigned persistence and
+restored order are described under [saved position](#resuming-from-the-saved-position-1354).
+The UI gap-anchor migration remains #1911 and foreground acknowledgement #1912; conservative signed
+guards do not establish upper-range marker targeting or seen state.
 
 **History establishes modern queued delivery (#1655).** A stored user `message` with a valid
 `queued_msg_id` can arrive with its answering delta 0 before the first live push, even before
@@ -428,14 +430,25 @@ seed a fresh backwards walk when a later availability page brings entries. Saved
 ordinary oldest-end demand, never demand for an unresolved gap. The shared `inFlight` flag still
 shows the oldest-end Loading row during a side ask, including on a stopped backwards walk.
 
-**Signed coverage is received `HistoryEntry.id` spans, including entries that render no row.** A page
-with an upper-range id instead retains unknown coverage through the compatibility guard above. IDs are
-host/conversation-scoped durable daemon ids; row identities, timestamps and live/ring ids establish
-no span. High-water is the maximum covered id before the newest ask. Overlap and adjacency coalesce;
+**Coverage is received `HistoryEntry.unsignedId` spans, including entries that render no row (#1910).**
+`unsignedSpans`, `unsignedGaps`, row/delta order and producing-entry sets, page-edge cursors and
+walk anchors preserve exact positive unsigned positions through `ULong.MAX_VALUE`. IDs are
+host/conversation-scoped durable daemon ids; row identities, timestamps, list latest ids and
+live/ring ids establish no span. `unsignedHighWater` is the maximum covered id before the newest
+ask. Overlap and adjacency coalesce without incrementing the maximum;
 a hole exists only between received spans. Overlap elsewhere preserves unresolved holes. A known
 gap closes only when received coverage continuously joins its older anchor. If a page splits a
 hole, each resulting hole keeps an anchor in its immediately older merged span, so both remain
 targetable rather than inheriting the same old anchor.
+
+Positive signed cache documents retain rows and usable coverage under the unchanged serialized
+field names. Signed construction and lower-range readers remain source-compatible: spans expose
+only their representable portion and gaps/cursor anchors omit unrepresentable ids. Upper-range
+evidence sets sticky `unsignedIncomplete` so the signed UI stays conservatively unknown and cannot
+restore `AtStart`. Authoritative `unsignedUnknown` can still close on `at_start`; the compatibility
+flag does not erase unsigned coverage or restored order. Malformed optional metadata discards the
+saved position independently of readable retained rows, which restore as legacy unknown.
+Restoration, position writes and page receipt send no read command and initiate no history fetch.
 
 Each gap retains an opaque walk cursor, starting from the page immediately above it. A cursorless
 hole uses the nearest stored page-edge cursor above it; cursors are never constructed from entry
@@ -451,7 +464,7 @@ with or without saved `atStart`. Its rows remain readable. After the newest page
 marker sits at the verified span's older edge unless that page reports `at_start`. Pulls move the
 edge backwards. Matching a legacy whole-turn row or overlapping a verified span never closes
 ordinary legacy unknown coverage without an older durable anchor: only `at_start`, including an empty
-terminal page, does. Sticky unsigned uncertainty cannot be closed by signed terminal pages. Arbitrary
+terminal page, does. Sticky signed-view uncertainty cannot be closed by terminal pages. Arbitrary
 legacy holes cannot be inferred before received pages establish spans.
 An empty uncovered cache ignores old cursor/stop metadata unless `unsignedIncomplete` is set; flagged
 coverage and its usable cursor survive even with no retained rows or signed spans.
@@ -465,9 +478,9 @@ for the first-crossed gesture rule.
 
 The repository still performs the one atomic row merge; coverage inspection never renders a page
 again. History fills dedupe held live and legacy content through #1786's reconciliation. Both cache
-merge paths need restored and live durable ordering: shared-neighbour placement alone misplaces a
+merge paths need restored and live unsigned durable ordering: shared-neighbour placement alone misplaces a
 disjoint older-gap page, especially with equal timestamps. `ThreadSnapshot` supplies rows,
-suppression and durable order from the same projection generation. See [cache reconciliation](caching-conversation-repository.md#how-the-restore-merges-with-live-rows).
+suppression and `unsignedHistoryOrder` from the same projection generation. See [cache reconciliation](caching-conversation-repository.md#how-the-restore-merges-with-live-rows).
 
 **Rows must reach disk before state can certify them.** The caching wrapper now writes the
 reconciled cacheable rows before coverage/position, replacing #1354's accepted window where
