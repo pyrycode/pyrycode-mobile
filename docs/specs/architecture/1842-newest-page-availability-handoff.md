@@ -7,11 +7,13 @@
 - `app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModelTest.kt`: `HistoryRepo` and existing open, reconnect, cancellation, coverage and reader-demand regressions.
 - `app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadHistoryDemandTest.kt`: slot settlement and saved-position contracts.
 - `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreenHistoryTest.kt`: marker visibility and page arrival are inert without reader movement.
+- `app/src/test/java/de/pyryco/mobile/data/repository/HistoryCacheReworkTest.kt`: `trimmingResetsWalk` crosses the real 100,000-row cache cap and reloads saved cursor/stop and coverage through fresh file-cache instances.
 - `docs/knowledge/features/thread-screen-oldest-end-history-demand.md`: availability arrivals queue newest work; older and gap paging remain reader-driven.
 - `docs/e2e-interactive-stream.md`: rung-4 owned-daemon proof; rung-3 remains with #1833.
 - #1833 at `6c887a66`: `DurableGapProof`, `DurableHistoryProbe`, `TappingConversationRepository`, `DaemonFaultControl.posts`, and the owned post/peer/ping selection helpers.
 
 Overlap: #1818 adds a separate ViewModel action; #1731 and #1766 add separate script branches; #1833 owns the proof being reused. These are local/additive overlaps, with no dependency on unmerged production work.
+Rework overlap: #1909 adds separate unsigned-history cases in `HistoryCacheReworkTest`; the timeout adjustment stays local to `trimmingResetsWalk` and needs none of that branch's changes.
 
 ## Context
 
@@ -58,3 +60,12 @@ Sizing: approximately 900 written lines including reused test support, schedulin
 2026-10-07: The enlarged fixture passed newest-page exclusion, multi-page reader catch-up, deduplication and settled-reply checks, then failed reply placement between the batches. The owned `channel.post` control acknowledges acceptance before asynchronous delivery finishes. The protocol confirms posts themselves emit no `turn_end`; retain the existing reply wait and additionally wait for the peer to observe the first batch's final `assistant_delta` before sending the reply. This certifies the intended durable ordering without requesting history or weakening any assertion. The protocol source is the sibling `pyrycode/docs/protocol-mobile.md`, `assistant_delta`; daemon acceptance/delivery are `channelDelivery.accept` and its delivery loop.
 
 2026-10-07: First-batch observation passed, but the final reply-placement assertion failed again (two executed, original ping passed, durable failed, none skipped). The preceding revision misread the post-completion contract: the current protocol's `assistant_delta` and `turn_end` sections and `channelPostEmitterV2.complete` explicitly include post completion with `producer: channel_post`. The generic peer wait was returning an already recorded post completion before the interactive reply finished. Retain first-batch observation and require a bounded non-post `turn_end` for this conversation's only interactive reply before accepting the newer batch. All delivery, exclusion, gesture, ordering and deduplication assertions remain unchanged.
+
+2026-10-07: Verifier findings 1 and 2 identify the two real-file `trimmingResetsWalk` cases exceeding `runTest`'s one-minute wall deadline. They construct no ViewModel or concurrent collector: the body reconciles 100,001 rows, writes the production 100,000-row retained document and reloads it through a fresh repository. The verifier's baseline took 39.524/38.726 seconds; its PR failures took 65.889/71.487 seconds. A fresh unchanged rework run passed both in 17.082/15.043 seconds, confirming load-sensitive execution duration rather than a deterministic suspended handoff. Give only this helper a bounded three-minute deadline; retain the production row cap, disk implementation, restore path and every trimming, saved-position, coverage and reader-demand assertion. Run both named cases and their full class, then the whole unit/shared suite, to provide fresh counted evidence. No cache production change is needed. Total written work remains below 1,600 lines.
+
+## Documentation handoff
+
+Pending for the documentation stage, carrying forward the verifier's handoff:
+
+- `docs/knowledge/features/thread-screen-oldest-end-history-demand.md`, "The oldest-end history demand": record the confirmed free-slot/pending-arrival failure and readiness-to-drain handoff; retain one arrival per transition, single-slot delivery and reader-driven older paging.
+- `docs/e2e-interactive-stream.md`, scripted ping guidance: document the durable twin, 120-post batches, inert semantics reveal and producer-aware completion wait. Keep #1833's ownership of live and external force-stop evidence.
