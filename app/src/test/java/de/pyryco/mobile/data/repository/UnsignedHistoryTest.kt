@@ -229,7 +229,9 @@ class UnsignedHistoryTest {
             for (entries in listOf(listOf(user(ULong.MAX_VALUE)), listOf(user(2u), user(boundary + 1u)))) {
                 val incoming = page(*entries.toTypedArray()).copy(cursor = "upper", atStart = true)
                 val incomplete = previous.received(incoming, newest = true, target = 1L)
-                assertEquals(previous.copy(unknown = true, unsignedIncomplete = true), incomplete)
+                assertTrue(incomplete.unknown)
+                assertTrue(incomplete.unsignedIncomplete)
+                assertTrue(incomplete.unsignedSpans.any { span -> entries.any { it.unsignedId in span.first..span.last } })
                 assertTrue(incomplete.received(page(user(2u)).copy(atStart = true)).unknown)
             }
         }

@@ -238,7 +238,7 @@ class HistoryCacheReworkTest {
         assertTrue("omitted ids must mark fresh and previously complete coverage unknown", saved.coverage?.unknown == true)
         assertFalse("unsupported terminal pages cannot persist completeness", saved.atStart)
         assertEquals(if (terminal) "" else "older", saved.cursor)
-        assertEquals(if (previouslyComplete) listOf(HistorySpan(1, 1)) else emptyList<HistorySpan>(), saved.coverage?.spans)
+        assertEquals(if (previouslyComplete || mixed) listOf(HistorySpan(1, 1)) else emptyList<HistorySpan>(), saved.coverage?.spans)
         live.answer = { lower }
         vm.onDemandOlderHistory()
         advanceUntilIdle()

@@ -92,22 +92,22 @@ bound, single-flight and failure handling; this file only covers the wiring.
 ## How the restore merges with live rows
 
 `observeMessages` merges through
-[`mergeCachedRows`](remote-conversation-repository-reads-and-thread-store-history-paging.md)
-(`HistoryPageReducer.kt`), a sibling of the history walk's `mergeHistoryRows` built for this
+[`mergeUnsignedCachedRows`](remote-conversation-repository-reads-and-thread-store-history-paging.md)
+(`HistoryPageReducer.kt`), a sibling of the history walk's `mergeUnsignedHistoryRows` built for this
 wrapper's own direction: paging normally prepends an *older* page onto what is on screen; here the
 restored rows are the older set and the live projection is the receiver:
 
 ```
-drawn = snapshot.rows.mergeCachedRows(restoredWithoutSuppressedUserEchoes, baseOrder + snapshot.historyOrder)
+drawn = snapshot.rows.mergeUnsignedCachedRows(restoredWithoutSuppressedUserEchoes, baseOrder + snapshot.unsignedHistoryOrder)
 ```
 
-`mergeCachedRows` shares `mergeHistoryRows`'s join (`message_id` for a message, covering a
+`mergeUnsignedCachedRows` shares `mergeUnsignedHistoryRows`'s join (`message_id` for a message, covering a
 `tool_use_id` and a `turn_id`; the `(previousSessionId, newSessionId, occurredAt)` triple for a
 boundary) and its [attachment-reference hint fill](remote-conversation-repository-reads-and-thread-store-history-paging.md),
 so a restored row the daemon re-delivers is never drawn twice and a sent row's names come back even
 when the live side's replayed copy has none. Merging into an empty live projection returns the
 restored rows after suppression filtering. The disconnected case falls out of the same merge
-that handles a reconnect. Where it differs from `mergeHistoryRows`: a row *only* the cache
+that handles a reconnect. Where it differs from `mergeUnsignedHistoryRows`: a row *only* the cache
 holds does not always go to the front. It goes right after the live copy of the nearest cached row
 above it that the live side also holds, and, without durable order, goes in front when it has no such anchor — the
 older rows a reconnect's newest page does not reach, or a page that does not overlap the cache at
@@ -117,14 +117,20 @@ Since #1786 both merges share one reconciliation. A cache-only row can also go b
 and cache-only assistant text merges per `(turnId, seq)` delta, so a restored reply missing a middle or
 suffix sequence gains only the missing text, on the correct side of tool and user rows. A legacy whole-turn
 row written before segments existed dedupes only text it demonstrably contains and keeps distinct text.
-Since #1832 restored coverage supplies durable row/delta ordering, combined with the live
-snapshot's received order. Both the observer merge and the position writer's fallback merge need
+Since #1910 restored coverage supplies exact unsigned row/delta ordering through
+`receivedUnsignedHistoryOrder(coverage.unsignedPositions())`, combined with the live snapshot's
+`unsignedHistoryOrder`. Both the observer merge and the position writer's fallback merge need
 it: a disjoint older-gap page with no shared row anchor otherwise lands on the wrong side of cached
 content, and equal timestamps cannot repair that. `ThreadSnapshot` forwards rows, suppression and
 order from the same projection generation. Shared neighbours and timestamps remain fallback evidence
 for rows without durable order; live rows are never sorted. The lookup stays key-indexed on large
 threads. The fixed connection merge base and
 the deliberate-removal suppression below are unchanged, so a removed live row is not resurrected.
+
+Unsigned positions preserve ordering across the signed boundary and through `ULong.MAX_VALUE`,
+including held rows on both sides of an unresolved gap and split assistant deltas. The signed
+restore adapter and unsigned adapter share one identity resolver for delta splitting and hashed
+identity lookup; a change to one path must not silently alter which logical rows the other finds.
 
 `BackgroundTaskLifecycle` (#1782) is also retained in the last-drawn **in-memory** base at a
 connection boundary, although disk restore never supplies it. Reconnect backfills missing launch
@@ -314,14 +320,20 @@ suspended writers cannot recreate the document. A fresh destination has a fresh 
 ## The saved history position (#1354)
 
 `readHistoryPosition` uses the wrapper's host namespace. Since #1832 it also reads whether cached
-rows exist: an empty cache without spans returns no position, ignoring an old cursor/stop. A
-nonempty legacy cache with null coverage returns `HistoryCoverage(unknown = true)`, with or
+rows exist: an empty cache without unsigned spans or sticky `unsignedIncomplete` returns no
+position, ignoring an old cursor/stop. A nonempty legacy cache with null coverage returns
+`HistoryCoverage(unknown = true)`, with or
 without saved `atStart`, while keeping its rows readable. Neither row identity nor that stop
 certifies received entry ids. After the newest page the marker moves with the verified older
 edge; matching legacy text and verified overlap leave unknown coverage unresolved. Only
 `at_start`, including an empty terminal page, closes unknown coverage without an older durable
-anchor. Existing spans, gaps, high-water (derived from spans), unknown state and opaque cursors
-round-trip with the position. See [history resumption](remote-conversation-repository-reads-and-thread-store-history-paging.md#resuming-from-the-saved-position-1354).
+anchor. Unsigned spans, gaps, row/delta producing-entry claims, cursor/walk anchors and unknown
+state round-trip with the position; `unsignedHighWater` derives from unsigned spans. Existing
+positive signed metadata remains readable, and malformed optional metadata falls back to legacy
+unknown without hiding rows. Signed readers expose only representable evidence. Upper-range
+evidence keeps their `unknown`/`unsignedIncomplete` true and saved `atStart` false even after a
+terminal page; the authoritative unsigned claims and `unsignedUnknown` remain independent.
+See [history resumption](remote-conversation-repository-reads-and-thread-store-history-paging.md#resuming-from-the-saved-position-1354).
 
 **Coverage saves write reconciled rows before state.** `writeHistoryPosition` obtains the current
 delegate snapshot, then holds `historyWrites` across selecting held drawn rows (or a fallback
@@ -331,6 +343,9 @@ state. Coverage binds to exact retained row/delta proofs; the file writer valida
 stored rows again. Interruption between writes leaves older conservative state, never new claims
 for rows absent from storage. Excluded transient/raw-envelope rows stay excluded; only metadata
 persists. Delta matches inside legacy whole turns prove retention, not completeness.
+Their whole-row proof alone is insufficient: restore and stale binding also require bounded,
+non-overlapping slices in unsigned durable order with matching fragment hashes. Removing a
+maximum-id producer terminates the retained interval rather than wrapping its successor to zero.
 
 The complete operation passes untrimmed rows and uses shared cache-policy trim accounting. If
 rows exceed the cap, the later position write also resets backwards cursor to empty and `atStart`
@@ -343,8 +358,15 @@ This replaces #1354's accepted position-before-row window and unresolved saved-p
 Newest asks preserve coverage and queue behind outstanding asks; reader pulls fill one targeted
 gap page at a time without changing the ordinary backwards walk. Cursor refusal preserves gap
 metadata while resetting only the refused walk. Failures log static events without cursors, entry
-content or row proofs. Independent live, deterministic multi-page-gap and external force-stop
-proof remains with [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833).
+content or row proofs.
+
+[#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) proves the saved position across
+real process death. The external force-stop proof stops the actual app process without clearing
+data, posts while it is dead, relaunches it under a new PID and finds the post drawn once without
+scrolling, so the cached rows and saved position survived and only the newest page was needed. The
+live and scripted gap proofs keep the cached baseline rows readable through reconnect while reader
+pulls fill the durable gap. See the [#1833
+evidence](../../e2e-interactive-stream.md#verification-status).
 
 ## Wiring — under `decorateRepository`, not in it
 
@@ -462,8 +484,17 @@ row.
 - Gated deletion during fallback reads, between row/state writes, coverage-null writes and observer
   writes cannot recreate disk content; late writes are also rejected.
 
-These probes use production merges and fresh file-cache instances. Independent live/force-stop
-proof belongs to #1833 and is not established by these tests.
+These probes use production merges and fresh file-cache instances. Device proof is separate: #1833's
+live, scripted and external force-stop runs, recorded in the [#1833
+evidence](../../e2e-interactive-stream.md#verification-status). The JVM probes do not establish
+those results.
+
+`UnsignedHistoryCoverageTest` and `UnsignedHistoryCacheTest` exercise signed-boundary/max-id
+adjacency, maximum removal, overlap and split gap anchors, partial fills across fresh restores,
+split-delta deduplication, positive signed documents, malformed metadata, trim resets and failed
+writes. Restore probes assert no history request or read command. Legacy-alias regressions include
+valid controls and reject overlapping slices, unsafe bounds, mismatched hashes, reversed durable
+order and missing slice metadata on both restore and stale writes.
 
 No Compose UI test for the original restore: restored rows draw through the same composables a
 live row does, below the

@@ -1,0 +1,9 @@
+<testsuite name="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" tests="1" failures="1" errors="0" skipped="0">
+  <testcase name="interactiveTurn_archiveRestore_roundTripsListMembership" classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" time="32.583">
+    <failure>androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 30000 ms
+at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidComposeUiTestImpl.waitUntil(ComposeUiTest.android.kt:809)
+at androidx.compose.ui.test.junit4.AndroidComposeTestRule.waitUntil(AndroidComposeTestRule.android.kt:378)
+at de.pyryco.mobile.e2e.InteractiveStreamE2ETest.interactiveTurn_archiveRestore_roundTripsListMembership(InteractiveStreamE2ETest.kt:1656)
+</failure>
+  </testcase>
+</testsuite>

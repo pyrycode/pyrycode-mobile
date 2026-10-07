@@ -139,7 +139,7 @@ class MessageBubbleTest {
     }
 
     @Test
-    fun sideCopy_hasADivided48dpTarget_outsideTheTimestampRow() {
+    fun sideCopy_hasA48dpSquareTarget_outsideTheTimestampRow() {
         setBothRoles()
 
         val controls = composeTestRule.onAllNodesWithContentDescription(copyDescription)
@@ -147,7 +147,7 @@ class MessageBubbleTest {
         repeat(2) { index ->
             val bounds = controls[index].getUnclippedBoundsInRoot()
             assertEquals(48f, bounds.width.value, 1f)
-            assertEquals(36.5f, bounds.height.value, 1f)
+            assertEquals(48f, bounds.height.value, 1f)
         }
     }
 
@@ -432,7 +432,7 @@ class MessageBubbleTest {
             assertEquals(12f, glyph.height.value, 1f)
             assertEquals(((bubble.top + bubble.bottom) / 2).value - 12.5f, ((glyph.top + glyph.bottom) / 2).value, 1f)
             assertEquals(48f, target.width.value, 1f)
-            assertEquals(36.5f, target.height.value, 1f)
+            assertEquals(48f, target.height.value, 1f)
             if (index == 0) {
                 assertEquals(20f, (bubble.left - root.left).value, 1f)
                 assertEquals(12f, (column.left - bubble.right).value, 1f)

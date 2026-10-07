@@ -7,6 +7,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -180,12 +181,16 @@ class BackgroundAgentBlocksScreenTest {
         compose.runOnIdle { state = state.copy(items = state.items + finish() + user("Later")) }
         compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
         compose.onAllNodesWithText("original input", substring = true, useUnmergedTree = true).assertCountEquals(1)
-        compose.onNodeWithText("Using tools: 2", substring = true).performClick()
+        val childRun = hasText("Using tools: 2", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:child"))
+        // The list extends behind the composer; rest at the newest end so the header's tap is clear.
+        list().performScrollToIndex(0)
+        compose.onNode(childRun).performClick()
         // "a" always draws as itself (#1827 follow-up), so collapsing its children's run never hides it.
         compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
         compose.onNodeWithText("Read", useUnmergedTree = true).assertDoesNotExist()
         compose.runOnIdle { state = state.copy(items = state.items + user("Another")) }
         compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
+        list().performScrollToNode(hasText("Go to agent ↓"))
         marker().performClick()
         compose.onNodeWithText("Agent", useUnmergedTree = true).assertIsDisplayed()
         compose.onAllNodesWithText("original input", substring = true, useUnmergedTree = true).assertCountEquals(1)

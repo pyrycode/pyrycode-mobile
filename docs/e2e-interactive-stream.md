@@ -12,8 +12,10 @@ to scripted `ping` alongside the original
 `interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread` in the same harness.
 It proves newest-page delivery after daemon replay is emptied and multi-page older catch-up
 through reader pulls. See [scripted ping guidance](#scripted-ping-durable-gap-proof-1842).
-The rung-3 `InteractiveStreamE2ETest` operator-flow extension and external app force-stop
-proof remain owned by [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833).
+[#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) strengthens rung-3
+`InteractiveStreamE2ETest.interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect` with the same
+multi-page durable gap and real-Claude turns, and adds an external app force-stop proof that a
+host process drives. See [the force-stop procedure](#external-app-force-stop-proof-1833).
 
 **Suggested next reply (#1866).** Rung 3 adds
 `InteractiveStreamE2ETest.interactiveTurn_replySuggestion_longPressSends`; rung 4
@@ -632,7 +634,8 @@ durable post-conditions: the unique name is gone from the list and the thread ha
 #532 delete wire against a real daemon; **zero** claude turns — create/rename/delete are daemon
 round-trips); and an **archive/restore** scenario (#551 —
 `interactiveTurn_archiveRestore_roundTripsListMembership`: rename a scratch discussion to a runtime-unique
-name, confirm it is present on the channel list, archive it from the thread (overflow → "Archive",
+name, locate its exact chat row across the whole active lazy list (#1870), archive it from the thread
+(overflow → "Archive",
 **immediate — no confirm**) and assert it is **gone** from the list, then restore it (list toolbar → "Open
 archive" → the Archived screen's restore affordance) and assert it is **back** in the list — the round
 trip closes; proving the #549 archive/unarchive wire, the #556 archive-from-thread and #557 restore
@@ -826,13 +829,27 @@ inversion — then its **re-appearance** after restore is a second, opposite inv
 attributable to the restore. Two structural differences from the delete twin: **archive is immediate** —
 the "Archive" item sits directly in the thread overflow (no confirm dialog, no Channel-Info sheet, so
 **none** of #554's "Delete"-collision disambiguation), and **restore navigates to a second screen** (channel
-list → "Open archive" → the Archived screen, which opens on the **Discussions** tab by
-default → the renamed discussion is on it, no tab tap). The one gotcha is the **restore-coroutine
-cancellation race**: `RestoreRequested` runs `viewModelScope.launch { repository.unarchive(id); … }` scoped
+list → header menu → Archive → the Archived screen, which opens on **Channels** → explicitly select
+**Discussions** before locating the renamed discussion). The **restore-coroutine
+cancellation race** remains a separate prerequisite: `RestoreRequested` launches `repository.unarchive(id)`
+scoped
 to the **Archived screen's** ViewModel, so the test waits for the **"Restored" success snackbar** before
 navigating back — otherwise `popBackStack` would cancel a launched-but-unstarted `unarchive` and the closing
 presence check would flake to a timeout. Total real-claude cost: **zero** turns — create/rename/archive/restore
 are all daemon round-trips, and the durable identity is the typed name, so no ping is sent.
+
+Both active-list presence observations use `awaitArchiveRoundTripChat` (#1870): search the scroll
+container beneath the active-list marker for the exact chat-tagged name, scroll it into view and
+assert it is displayed. A renamed, active chat can be outside `LazyColumn`'s composed semantics;
+waiting for a global text node cannot establish complete list membership. Only the specific
+missing-node assertion keeps the bounded observation open for a pending projection; other failures
+propagate, and a genuinely absent chat still times out. Re-entry taps the discovered row. The
+active absence, Archive presence, restore-success guard and `finally` cleanup remain intact.
+`ArchiveRoundTripChatTest.presenceFindsChatBeyondViewportBeforeAndAfterRestore` mounts the production
+list with 24 preceding chats and exercises this same helper before archive and after simulated
+restore; its absent-chat negative control prevents a discovery repair from accepting missing membership.
+This shared screen regression is separate from a rung-4 daemon scenario. See
+[Verification status](#verification-status) for diagnosis and counted red/green and full-live evidence.
 
 The **change-workspace** scenario (#562) is likewise **always-on** (not `@Ignore`d): the recorded workspace
 is a **durable** fact — the `WorkspaceChip` re-label survives the turn — so, like #554's / #551's list
@@ -1138,6 +1155,27 @@ scripts/android-test-gate.py live`, 2026-09-23; branch `feature/861` at `24c9490
 `origin/main` at `148b9f7225`) re-proved the same thirteen scenarios with step 6's reopen dropped — see
 the dedicated entry below. The live run that closed #1352 (dispatcher real-claude gate, 2026-10-02)
 re-proved this scenario, among fifty executed with none failed, with the reconnect re-ask gone.
+
+**[#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) makes the gap durable.** Ring
+replay alone could satisfy the scenario above, so it never showed that missed older content comes
+from durable history. The chat is now promoted to a channel, so host posts can address it. After the
+phone settles its ping it cycles its link once and waits until its cache holds a durable claim for
+each baseline message (`DurableGapProof.cacheBaseline`). Nonempty coverage can predate the settled
+ping, so coverage alone is no fence. While the phone is offline the owned daemon accepts two batches
+of 120 synthetic posts, with the peer's real-Claude `OFFLINE_PROMPT` turn between them. The fences
+match the [scripted twin](#scripted-ping-durable-gap-proof-1842): the reply waits for the first
+batch's last post `assistant_delta`, and the second batch waits for the second `turn_end` whose
+`producer` is not `channel_post`. The owned daemon then restarts with its durable home kept, which
+empties its replay ring. On reconnect the open thread must ask once for the newest page without a
+gesture and show a gap marker, while the oldest post and the peer's reply stay absent. Physical
+reader pulls then fetch one older page each until the marker closes. The offline list, reopen and
+readability steps and the settled-cache wait are unchanged. Still two real-Claude turns.
+
+The rendered checks matter as much as the repository ones. Repository chronology can pass while the
+thread drops, duplicates or misplaces the recovered reply. Both this method and the twin reveal the
+cached rows, the recovered prompt and reply and the posts beside them, assert each is drawn once,
+and compare the reverse lazy list's scroll coordinate with each revealed node's position, so order
+holds across viewports. Each reveal must issue no history request.
 
 The **offscreen-reply-survives-reconnect** scenario (#1581 —
 `interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk`) is likewise **always-on**: it
@@ -2738,6 +2776,43 @@ exactly-once reply, settled reply, reply placement between batches and held cach
 These checks prove delivery and reader demand rather than automatic viewport following. See
 [the history-demand contract](knowledge/features/thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777).
 
+### External app force-stop proof (#1833)
+
+Stopping the app also kills its instrumentation, so no device test can prove real app process death.
+Rebuilding the instrumentation's object graph proves a different boundary. A host process drives
+this proof instead:
+
+```bash
+PYRYCODE_SRC=<pyrycode checkout> PYRYCODE_RELAY_SRC=<relay checkout> python3 scripts/e2e-force-stop-proof.py
+```
+
+It is a hand-run proof, not a configured gate, and it spends no real-Claude turn: the isolated
+daemon runs a scripted child and channel posts are host-side. It builds both APKs, takes the
+host-wide device hold, boots its own emulator from the managed `pixel2Api33Atd` AVD and installs
+once. `EXTERNAL_FORCE_STOP_PROOF=1` makes `scripts/e2e-emulator.sh` select only
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_externalForceStop_preparesSettledChannel`;
+ordinary `ping` keeps both of its methods. The preparation method promotes a fresh channel, posts
+one synthetic baseline message, waits until the phone cache holds it settled and writes the channel
+name, prefix and conversation id to an app-private fixture.
+
+After instrumentation exits, the harness runs the proof's owned worker. It opens the channel through
+UI Automator, records the app PID, force-stops the app without clearing data and requires the PID to
+be gone. It then posts one run-unique message through the owned daemon controller and restarts that
+daemon, so only durable history can deliver it. It relaunches the app, opens the channel and
+requires the new post drawn exactly once without scrolling, under a new PID. Evidence is an
+allowlist: daemon version and revision, app revision, device SDK and image, conversation id, the
+synthetic identifier and text, PID transitions and result. No raw UI dump, payload, cursor or
+credential is kept.
+
+Failure and cancellation must not leave owned processes running or release the device early.
+Python's `subprocess.run` kills a Bash child with SIGKILL when interrupted, which skips the
+harness's EXIT trap. The proof starts the harness in its own session, forwards cancellation as
+SIGTERM to that group and waits while the EXIT trap reaps the daemon, relay and controller. The
+harness's INT and TERM traps only exit, so cleanup runs once, from EXIT. Emulator teardown then
+reaps the emulator even when ADB times out or fails; see [owned emulator
+evidence](knowledge/features/development-verification-emulator-evidence.md). A SIGKILL of the proof
+itself runs no cleanup, though the kernel still drops the device lock.
+
 ### Reopen-stream proof (#1762)
 
 `reopen-stream` selects
@@ -3030,6 +3105,52 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
+**Archive/restore viewport synchronization (#1870, 2026-10-07).** At diagnostic mobile revision
+`a7d76be0b7ea68c0aa30ef3a34bbbb0b25192849`, daemon
+`6019328b378cad587f69b7bc94de37febbdf8556`, the full diagnostic run in
+`build/dispatcher-tests/live-uhj5_ye4/` executed **64, passed 63, failed 1, skipped 0**.
+The named archive/restore method failed at its first active-list presence wait after Rename → Back,
+before archive. Its raw stack and logcat report
+`renamed=true active=true visible_before_scroll=false found_after_scroll=true`, establishing an
+off-viewport discovery defect. [Retained raw excerpts and provenance](../app/src/androidTest/assets/archive-restore-1870/provenance.txt)
+survive cleanup of the original builder worktree. The committed `ArchiveRoundTripChatTest` XML
+records **2 executed, 1 passed, 1 failed, 0 skipped** before repair and **2 executed, 2 passed,
+0 failed, 0 skipped** afterward; `presenceFindsChatBeyondViewportBeforeAndAfterRestore` passes
+in the green report, and `absentChatStillFailsThePresenceObservation` passes in both.
+
+The fresh post-verifier full live run tested `feature/1870` at
+`a8737819faf724a97d9ad13b43a2bacdd3f94a02` merged with `origin/main` at `9b69a10d96d6`.
+The dispatcher's method-level JUnit gate report explicitly records
+`InteractiveStreamE2ETest#interactiveTurn_archiveRestore_roundTripsListMembership` as executed
+and passed in that full suite: **64 executed, 63 passed, 1 failed, 0 skipped**, exit 1 in 25m 11s.
+Only `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain` failed; its same-tree
+rerun executed **1, passed 1, failed 0, skipped 0**. The dispatcher
+[accepted the gate after that unrelated rerun](https://github.com/pyrycode/pyrycode-mobile/issues/1870#issuecomment-6043483454);
+this is not a zero-failure full-suite run or a focused archive/restore acceptance run.
+The full report artifact is
+`/Users/juhanailmoniemi/WorkSpace/Projects/pyrycode-mobile-agents/logs/2026-10-07T17-18-12-892Z_real-claude-gate_#1870.log`;
+the same-tree rerun uses the matching `real-claude-gate-rerun_#1870.log`. No daemon-revision annotation
+was recorded for this acceptance run. Evidence here comes from the supplied dispatcher gate report
+and issue gate comment; the committed pre-repair diagnostic excerpts are not live acceptance evidence.
+
+**Durable gap across reconnect and process death (#1833, 2026-10-07).** All runs are at
+`feature/1833` `5b2e885c`, with the isolated daemon at pyrycode `6019328b` on `pixel2Api33Atd`.
+Hand-run scripted `ping` executed **2, passed 2, failed 0, skipped 0**, passing both
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread`
+and `interactiveTurn_seededChannel_durableGapCatchUp`. The external force-stop proof passed: its
+preparation method executed **1, passed 1, failed 0, skipped 0**, the actual app PID went from
+present to absent and was replaced after relaunch, and the run-unique post was drawn once without
+scrolling. A hand-run fresh full live suite through the repository's live gate, `python3
+scripts/android-test-gate.py live` with Claude Code 2.1.280, executed **64, passed 63, failed 1,
+skipped 0**. Its report names
+`InteractiveStreamE2ETest.interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect` as executed and
+passed. The one failure, `interactiveTurn_archiveRestore_roundTripsListMembership`, timed out
+waiting for a renamed chat on the list; this ticket does not touch it, it passed a same-tree re-run
+(1 executed, 1 passed), and it is tracked as flaky on
+[#1870](https://github.com/pyrycode/pyrycode-mobile/issues/1870). Sanitized XML, checksums and
+revisions are retained under `scripts/e2e-fixtures/1833-*`. The script tests, including the
+ADB-failure teardown tests, ran 168 with none failing.
+
 **Reconnect newest-page handoff (#1842, 2026-10-07).** The
 [verifier verdict](https://github.com/pyrycode/pyrycode-mobile/pull/1915#issuecomment-6038977116)
 and retained fresh builder XML confirm focused scripted `ping` at `4d6411cf` executed
@@ -3110,6 +3231,29 @@ executed/passed **4,667**, failed/skipped **0**, including
 The UI gate separately recorded **192 executed, 192 passed, 0 failed, 1 skipped**;
 the skipped rename capture supplies no suggestion evidence. Deterministic passes
 are distinct from the real-Claude acceptance above.
+
+**Accessible side actions and ping confirmation (#1895, 2026-10-07).** The
+dispatcher full live command
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`
+tested `275e5071cafc3aa93aa6a6014219a3d0ad785e31` merged with `origin/main`
+at `093847a07b2e`: **64 executed, 63 passed, 1 failed, 0 skipped** (exit 1).
+The fresh JUnit gate report `2026-10-07T14-22-04-161Z` explicitly records
+`InteractiveStreamE2ETest.interactiveTurn_pingPrompt_streamsPingReplyIntoThread`
+as **executed and passed in the full suite**, including displayed reply,
+exact-source copy, row-scoped timestamps and reply/IME checks. No daemon-revision
+annotation was supplied. Archive/restore was the sole failure and passed on the
+dispatcher's same-tree rerun (**1 executed, 1 passed**). The dispatcher accepted
+the gate after rerun; the original full-suite failure remains recorded. See
+[counted live evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1895#issuecomment-6040513528).
+
+On that head, the verifier UI gate recorded **199 executed/passed, 0 failed,
+1 skipped**: the reply/IME device method passed, and the rename capture was
+skipped. Full scripted coverage recorded **21 executed/passed, 0 failed,
+0 skipped**, including held multi-delta stream and background-Agent scenarios.
+Unit/shared reports recorded **4,775 executed/passed, 0 failed, 1 skipped**,
+including all **8 unchanged side-copy regressions**; the inherited history skip
+is tracked by #1913. See [verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1916#issuecomment-6039977236)
+and [action geometry coverage](knowledge/features/message-bubble-testing.md#testing).
 
 **Side-copy selector and notice repair (#1878, 2026-10-07).** The dispatcher full
 live command `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`
@@ -4537,12 +4681,22 @@ The remaining checks here are specific to a real relay or real Claude execution:
 
 ## Follow-ups to ticket
 
+- **Archive/restore viewport discovery (#1870):** the existing rung-3
+  `InteractiveStreamE2ETest#interactiveTurn_archiveRestore_roundTripsListMembership` now discovers
+  the exact active chat across the lazy list before archive and after completed restore.
+  `ArchiveRoundTripChatTest` forces an off-viewport row and preserves an absent-chat negative control;
+  no rung-4 `DeterministicInteractiveStreamE2ETest` scenario is added. The named live method passed
+  in the fresh full run [recorded above](#verification-status); the dispatcher accepted the gate
+  after rerunning the unrelated stop-running-turn failure. No coverage follow-up remains for this
+  repair. The pre-ship command stays `python3 scripts/android-test-gate.py live`.
+
 - **Durable reconnect catch-up (#1842):** rung-4
   `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_durableGapCatchUp`
   is selected by ordinary `ping` and configured `scripted-all`, alongside the original ping.
   [Counted evidence](#verification-status) closes this deterministic delivery repair.
-  [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) retains the rung-3
-  `InteractiveStreamE2ETest` operator-flow extension and external app force-stop proof.
+  [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) closed the rung-3
+  `InteractiveStreamE2ETest` operator-flow extension and the
+  [external app force-stop proof](#external-app-force-stop-proof-1833).
   The pre-ship command remains `python3 scripts/android-test-gate.py live`.
 
 - **Default confirmation pills (#1851):** the existing rung-3
