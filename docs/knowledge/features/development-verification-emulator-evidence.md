@@ -47,6 +47,16 @@ source only if its escapes are typed in upper case.
 
 ## Emulator and real evidence
 
+Instrumentation retains its Application/Koin graph and saved host selection across methods.
+Stopping a private fixture daemon leaves its phone pairing saved and potentially selected,
+so a passing scenario can break the next test. Register ownership of the exact fixture server
+id before pairing starts, then remove that entry in guaranteed cleanup before daemon teardown,
+including assertion and partial-pairing failures. Remove each arm before beginning another.
+`SessionErrorRecoveryScenario` (#1731) snapshots preceding saved entries/order and the selected
+connection, then requires unchanged entries, the same connection bundle and Connected state
+in that same process. A fresh process or successful recovery reply alone cannot prove cleanup.
+See [recovery evidence](../../e2e-interactive-stream.md#session-error-recovery-1731).
+
 An instrumented test proves behavior in its fixture. It does not prove camera
 binding, lifecycle timing, relay compatibility or a real daemon round trip. The
 dispatcher runs the UI gate and each zero-real-Claude scripted scenario before

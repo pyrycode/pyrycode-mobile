@@ -192,6 +192,12 @@ class DeterministicInteractiveStreamE2ETest {
             .targetContext
             .getString(R.string.cd_thread_tool_running_elapsed, TOOL_NAME, HEARTBEAT_ELAPSED)
 
+    /** #1731: private tagged daemons retain their Runner and session through failure release. */
+    @Test
+    fun interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog() {
+        SessionErrorRecoveryScenario(composeTestRule).run()
+    }
+
     /** #1674: selection-copy runs the live selection assertion on a fixed finished multi-word reply. */
     @Test
     fun interactiveTurn_seededChannel_systemCopyCopiesSelectedWord() {

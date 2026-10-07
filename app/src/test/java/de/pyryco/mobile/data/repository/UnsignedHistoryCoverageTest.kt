@@ -1,5 +1,9 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.model.AssistantSegment
+import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.model.SegmentDelta
 import de.pyryco.mobile.data.network.MobileJson
 import kotlinx.datetime.Instant
 import kotlinx.serialization.encodeToString
@@ -36,6 +40,50 @@ class UnsignedHistoryCoverageTest {
     )
 
     private fun restore(state: HistoryCoverage) = MobileJson.decodeFromString<HistoryCoverage>(MobileJson.encodeToString(state))
+
+    @Test fun markerInvariant_assistantFragmentsUseUnsignedBoundariesAndRejoinOnlyOnContinuousReceipt() {
+        for (anchor in listOf(boundary, ULong.MAX_VALUE - 2u)) {
+            val row =
+                ThreadItem.MessageItem(
+                    Message(
+                        "t",
+                        "s",
+                        Role.Assistant,
+                        "ac",
+                        Instant.fromEpochSeconds(1),
+                        false,
+                        segment =
+                            AssistantSegment(
+                                "t",
+                                listOf(
+                                    SegmentDelta(0, 1),
+                                    SegmentDelta(2, 1),
+                                ),
+                            ),
+                    ),
+                )
+            val state =
+                HistoryCoverage(
+                    unsignedSpans = listOf(UnsignedHistorySpan(anchor, anchor), UnsignedHistorySpan(anchor + 2u, anchor + 2u)),
+                    unsignedGaps = listOf(UnsignedHistoryGap(anchor, anchor + 2u)),
+                    unsignedRowOrder = row.historyKeys().zip(listOf(anchor, anchor + 2u)).toMap(),
+                )
+            val fragments = state.displayRows(listOf(row)).filterIsInstance<ThreadItem.MessageItem>()
+            assertEquals(listOf("a", "c"), fragments.map { it.message.content })
+            assertEquals(2, fragments.map { it.message.id }.distinct().size)
+            assertEquals(
+                listOf(
+                    "a",
+                    "c",
+                ),
+                restore(state.received(page(anchor))).displayRows(listOf(row)).filterIsInstance<ThreadItem.MessageItem>().map {
+                    it.message.content
+                },
+            )
+            assertEquals(listOf(row), restore(state.received(page(anchor + 1u))).displayRows(listOf(row)))
+            assertEquals("ac", row.message.content)
+        }
+    }
 
     @Test fun receivedIdentityInvariant_maximumSurvivesCoverageSerialization() {
         val encoded = MobileJson.encodeToString(HistoryCoverage().received(page(ULong.MAX_VALUE)))

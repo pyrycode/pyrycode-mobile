@@ -12,6 +12,18 @@ import org.junit.Test
  */
 class ThreadHistoryDemandTest {
     @Test
+    fun markerCompatibility_preservesSignedConstructionWithoutNarrowingUpperAnchors() {
+        val signed = ThreadHistoryMarker(Long.MAX_VALUE, "row")
+        assertEquals(Long.MAX_VALUE, signed.anchor)
+        assertEquals(Long.MAX_VALUE.toULong(), signed.unsignedAnchor)
+        assertEquals(signed, ThreadHistoryMarker(beforeRow = "row", unsignedAnchor = Long.MAX_VALUE.toULong()))
+        val upper = ThreadHistoryMarker(beforeRow = "row", unsignedAnchor = ULong.MAX_VALUE)
+        assertEquals(ULong.MAX_VALUE, upper.unsignedAnchor)
+        org.junit.Assert.assertThrows(IllegalStateException::class.java) { upper.anchor }
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { ThreadHistoryMarker(-1, "row") }
+    }
+
+    @Test
     fun freshDemand_asksFromTheNewest() {
         val demand = ThreadHistoryDemand()
         assertTrue(demand.canAsk)

@@ -40,8 +40,11 @@ import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.ThreadProjection
 import de.pyryco.mobile.data.repository.UsageLimitReading
+import de.pyryco.mobile.data.repository.historyKeys
 import de.pyryco.mobile.data.repository.mergeCachedRows
+import de.pyryco.mobile.data.repository.mergeIdentity
 import de.pyryco.mobile.data.repository.reduceHistoryPage
 import de.pyryco.mobile.ui.conversations.ThrowingConversationRepository
 import kotlinx.coroutines.CancellationException
@@ -80,11 +83,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
-@OptIn(ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class, kotlin.ExperimentalUnsignedTypes::class)
 class ThreadViewModelTest {
     /**
      * The history walk's breadcrumbs (#778), captured rather than printed. Required, not optional:
@@ -5269,6 +5273,440 @@ class ThreadViewModelTest {
             assertFalse(repo.saved?.coverage?.unknown == true)
             collector.cancel()
         }
+
+    @Test
+    fun history_restoredUnsignedGaps_projectAtTheirExactNewerRows() =
+        runTest {
+            val boundary = Long.MAX_VALUE.toULong()
+            val old = unsignedPage(boundary - 1u, cursor = "oldest")
+            val middle = unsignedPage(boundary + 3u, cursor = "middle")
+            val newest = unsignedPage(ULong.MAX_VALUE, cursor = "newest")
+            val coverage = HistoryCoverage().received(old).received(middle).received(newest, newest = true)
+            val repo = HistoryRepo(saved = HistoryPosition("oldest", false, coverage)) { newest }
+            repo.messages.value =
+                reduceHistoryPage(
+                    (old.entries + middle.entries + newest.entries).sortedByDescending { it.unsignedId },
+                    true,
+                )
+            val vm = makeVm(historyHandle(), repo)
+            val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals("both restored durable gaps must render", 2, vm.state.value.historyMarkers.size)
+            assertEquals(listOf(""), repo.asks)
+            assertEquals(
+                listOf(boundary - 1u, boundary + 3u),
+                vm.state.value.historyMarkers
+                    .map { it.unsignedAnchor },
+            )
+            assertEquals(
+                repo.messages.value
+                    .drop(1)
+                    .map { it.historyKeys().first() },
+                vm.state.value.historyMarkers
+                    .map { it.beforeRow },
+            )
+            collector.cancel()
+        }
+
+    @Test
+    fun history_signedAdapterTargetsCrossBoundaryGap_nonRenderingReceiptClosesOnlyThatGap() =
+        runTest {
+            val anchor = Long.MAX_VALUE.toULong()
+            val old = unsignedPage(anchor, cursor = "independent")
+            val newest = unsignedPage(anchor + 2u, cursor = "crossing-opaque")
+            val fill =
+                unsignedPage(anchor + 1u, cursor = "covered").let { page ->
+                    page.copy(entries = page.entries.map { it.copy(type = "future", payload = MobileJson.parseToJsonElement("{}")) })
+                }
+            for (arrival in listOf(listOf(old, newest), listOf(newest, old))) {
+                val coverage = arrival.fold(HistoryCoverage()) { state, page -> state.received(page) }
+                val repo =
+                    HistoryRepo(saved = HistoryPosition("independent", false, coverage)) { cursor ->
+                        if (cursor.isEmpty()) newest else fill
+                    }
+                val vm = makeVm(historyHandle(), repo)
+                val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+                advanceUntilIdle()
+                assertEquals(
+                    listOf(anchor),
+                    vm.state.value.historyMarkers
+                        .map { it.unsignedAnchor },
+                )
+                assertEquals(
+                    "",
+                    vm.state.value.historyMarkers
+                        .single()
+                        .beforeRow,
+                )
+                vm.onDemandHistoryGap(Long.MAX_VALUE)
+                advanceUntilIdle()
+                assertEquals(listOf("", "crossing-opaque"), repo.asks)
+                assertTrue(
+                    vm.state.value.historyMarkers
+                        .isEmpty(),
+                )
+                assertEquals("independent", repo.saved?.cursor)
+                collector.cancel()
+            }
+        }
+
+    @Test
+    fun history_unsignedTargetedFill_preservesOtherGapHeldRowsAndBackwardsWalk() =
+        runTest {
+            val lower = Long.MAX_VALUE.toULong() - 1u
+            val upper = ULong.MAX_VALUE - 8u
+            val old = unsignedPage(lower, cursor = "oldest")
+            val middle = unsignedPage(upper, cursor = "middle-opaque")
+            val newest = unsignedPage(ULong.MAX_VALUE, cursor = "upper-opaque")
+            val projection = ThreadProjection()
+            for (page in listOf(newest, old, middle)) projection.mergeHistoryPage(ACTIVE_CONV, page, true)
+            var response = CompletableDeferred<HistoryPage>()
+            lateinit var repo: HistoryRepo
+            repo =
+                HistoryRepo(
+                    saved =
+                        HistoryPosition(
+                            "independent",
+                            false,
+                            HistoryCoverage().received(old).received(middle).received(newest, newest = true),
+                        ),
+                ) { cursor ->
+                    val page = if (cursor.isEmpty()) newest else response.await()
+                    projection.mergeHistoryPage(ACTIVE_CONV, page, true)
+                    repo.messages.value = projection.observe(ACTIVE_CONV).first()
+                    page
+                }
+            repo.messages.value = projection.observe(ACTIVE_CONV).first()
+            val held = repo.messages.value.toList()
+            val vm = makeVm(historyHandle(), repo)
+            val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+            advanceUntilIdle()
+            vm.onDemandUnsignedHistoryGap(upper)
+            vm.onDemandUnsignedHistoryGap(lower)
+            advanceUntilIdle()
+            assertEquals(listOf("", "upper-opaque"), repo.asks)
+            response.complete(unsignedPage(ULong.MAX_VALUE - 2u, ULong.MAX_VALUE - 1u, cursor = "partial-opaque"))
+            advanceUntilIdle()
+            assertEquals(
+                listOf(lower, upper),
+                vm.state.value.historyMarkers
+                    .map { it.unsignedAnchor },
+            )
+            assertEquals("partial-opaque", repo.saved?.coverage?.cursorForUnsigned(upper))
+            assertEquals("middle-opaque", repo.saved?.coverage?.cursorForUnsigned(lower))
+            assertEquals("independent", repo.saved?.cursor)
+            for (row in held) assertSame(row, repo.messages.value.first { it.mergeIdentity() == row.mergeIdentity() })
+            assertEquals(
+                repo.messages.value.size,
+                repo.messages.value
+                    .map { it.mergeIdentity() }
+                    .distinct()
+                    .size,
+            )
+            // Replayed/overlapping receipt changes neither gap identity nor the independent walk.
+            vm.onDemandUnsignedHistoryGap(upper)
+            advanceUntilIdle()
+            assertEquals(listOf("", "upper-opaque", "partial-opaque"), repo.asks)
+            assertEquals(
+                listOf(lower, upper),
+                vm.state.value.historyMarkers
+                    .map { it.unsignedAnchor },
+            )
+            response = CompletableDeferred()
+            vm.onDemandUnsignedHistoryGap(upper)
+            advanceUntilIdle()
+            response.complete(unsignedPage(*(1uL..5uL).map { upper + it }.toULongArray(), cursor = "filled-opaque"))
+            advanceUntilIdle()
+            assertEquals(
+                listOf(lower),
+                vm.state.value.historyMarkers
+                    .map { it.unsignedAnchor },
+            )
+            assertEquals("independent", repo.saved?.cursor)
+            assertEquals(List(repo.asks.size) { 200 }, repo.limits)
+            assertEquals(
+                (listOf(lower) + (0uL..8uL).map { upper + it }).map { "m$it" },
+                repo.messages.value
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .map { it.message.id },
+            )
+            for (row in held) assertSame(row, repo.messages.value.first { it.mergeIdentity() == row.mergeIdentity() })
+            val asks = repo.asks.toList()
+            vm.onDemandUnsignedHistoryGap(upper)
+            advanceUntilIdle()
+            assertEquals(asks, repo.asks)
+            collector.cancel()
+        }
+
+    @Test
+    fun history_unsignedAssistantPartialFill_keepsMarkerBetweenHeldFragments() =
+        runTest {
+            for (anchor in listOf(Long.MAX_VALUE.toULong() - 1u, Long.MAX_VALUE.toULong() + 1u, ULong.MAX_VALUE - 4u)) {
+                assertUnsignedAssistantPartialFill(anchor, restoreAfterFill = false)
+            }
+        }
+
+    @Test
+    fun history_restoredUnsignedAssistantPartialFill_keepsMarkerBetweenHeldFragments() =
+        runTest {
+            for (anchor in listOf(Long.MAX_VALUE.toULong() - 1u, Long.MAX_VALUE.toULong() + 1u, ULong.MAX_VALUE - 4u)) {
+                assertUnsignedAssistantPartialFill(anchor, restoreAfterFill = true)
+            }
+        }
+
+    private suspend fun TestScope.assertUnsignedAssistantPartialFill(
+        anchor: ULong,
+        restoreAfterFill: Boolean,
+    ) {
+        fun deltaPage(
+            seq: Int,
+            text: String,
+            cursor: String,
+        ) = HistoryPage(
+            listOf(
+                HistoryEntry(
+                    unsignedId = anchor + seq.toULong(),
+                    type = "assistant_delta",
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"$ACTIVE_CONV","turn_id":"t","seq":$seq,"text":"$text"}""",
+                        ),
+                    timestamp = Instant.fromEpochSeconds(1),
+                ),
+            ),
+            cursor,
+            false,
+        )
+        val old = deltaPage(0, "a", "oldest")
+        val newest = deltaPage(4, "e", "newest-opaque")
+        val partial = deltaPage(1, "b", "partial-opaque")
+        val projection = ThreadProjection()
+        for (page in listOf(old, newest)) projection.mergeHistoryPage(ACTIVE_CONV, page, true)
+        projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd(ACTIVE_CONV, "t", "end_turn"))
+        lateinit var repo: HistoryRepo
+        repo =
+            HistoryRepo(
+                saved = HistoryPosition("independent", false, HistoryCoverage().received(old).received(newest, newest = true)),
+            ) { cursor ->
+                val page = if (cursor.isEmpty()) newest else partial
+                projection.mergeHistoryPage(ACTIVE_CONV, page, true)
+                repo.messages.value = projection.observe(ACTIVE_CONV).first()
+                page
+            }
+        repo.messages.value = projection.observe(ACTIVE_CONV).first()
+        val vm = makeVm(historyHandle(), repo)
+        val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+        advanceUntilIdle()
+        assertEquals(
+            listOf("a", "e"),
+            vm.state.value.items
+                .filterIsInstance<ThreadItem.MessageItem>()
+                .map { it.message.content },
+        )
+        vm.onDemandUnsignedHistoryGap(anchor)
+        advanceUntilIdle()
+        assertEquals(listOf("", "newest-opaque"), repo.asks)
+        assertEquals(
+            "abe",
+            repo.messages.value
+                .filterIsInstance<ThreadItem.MessageItem>()
+                .single()
+                .message.content,
+        )
+        val saved = requireNotNull(repo.saved)
+        assertEquals("independent", saved.cursor)
+        assertEquals("partial-opaque", saved.coverage?.cursorForUnsigned(anchor))
+        if (restoreAfterFill) {
+            collector.cancel()
+            val coverage = requireNotNull(saved.coverage).boundTo(repo.messages.value)
+            val restored =
+                MobileJson
+                    .decodeFromString(
+                        HistoryCoverage.serializer(),
+                        MobileJson.encodeToString(HistoryCoverage.serializer(), coverage),
+                    ).validated(repo.messages.value)
+            val reopenedRepo = HistoryRepo(saved = saved.copy(coverage = restored)) { error("Restoration must not ask") }
+            reopenedRepo.messages.value = repo.messages.value
+            val reopened = makeVm(historyHandle(), reopenedRepo, repositoryAvailable = flowOf(false))
+            val reopenedCollector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { reopened.state.collect {} }
+            advanceUntilIdle()
+            assertUnsignedAssistantGapPlacement(reopened.state.value, anchor)
+            assertTrue(reopenedRepo.asks.isEmpty())
+            assertEquals("partial-opaque", reopenedRepo.saved?.coverage?.cursorForUnsigned(anchor))
+            reopenedCollector.cancel()
+        } else {
+            assertUnsignedAssistantGapPlacement(vm.state.value, anchor)
+            // Replay neither moves the still-open gap nor duplicates its held text.
+            vm.onDemandUnsignedHistoryGap(anchor)
+            advanceUntilIdle()
+            assertUnsignedAssistantGapPlacement(vm.state.value, anchor)
+            assertEquals(listOf("", "newest-opaque", "partial-opaque"), repo.asks)
+            assertEquals("independent", repo.saved?.cursor)
+            collector.cancel()
+        }
+    }
+
+    private fun assertUnsignedAssistantGapPlacement(
+        state: ThreadUiState,
+        anchor: ULong,
+    ) {
+        val fragments = state.items.filterIsInstance<ThreadItem.MessageItem>()
+        assertEquals(listOf("ab", "e"), fragments.map { it.message.content })
+        assertEquals(
+            listOf(0, 1),
+            fragments
+                .first()
+                .message.segment
+                ?.deltas
+                ?.map { it.seq },
+        )
+        assertEquals(
+            listOf(4),
+            fragments
+                .last()
+                .message.segment
+                ?.deltas
+                ?.map { it.seq },
+        )
+        assertEquals(2, fragments.map { it.message.id }.distinct().size)
+        assertEquals(
+            ThreadHistoryMarker(beforeRow = fragments.last().historyKeys().first(), unsignedAnchor = anchor),
+            state.historyMarkers.single(),
+        )
+    }
+
+    @Test
+    fun history_unsignedRefusalAndReconnect_restoreExactAnchorAndOpaqueFallback() =
+        runTest {
+            val anchor = ULong.MAX_VALUE - 4u
+            val old = unsignedPage(anchor, cursor = "independent")
+            val newest = unsignedPage(ULong.MAX_VALUE, cursor = "refused-opaque")
+            val coverage = HistoryCoverage().received(old).received(newest, newest = true)
+            val restored =
+                MobileJson.decodeFromString(
+                    HistoryCoverage.serializer(),
+                    MobileJson.encodeToString(HistoryCoverage.serializer(), coverage),
+                )
+            val available = MutableStateFlow(true)
+            val repo =
+                HistoryRepo(saved = HistoryPosition("independent", false, restored)) { cursor ->
+                    if (cursor.isNotEmpty()) throw RelayErrorException("history.invalid_cursor", false, "untrusted")
+                    newest
+                }
+            val vm = makeVm(historyHandle(), repo, repositoryAvailable = available)
+            val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals(
+                listOf(anchor),
+                vm.state.value.historyMarkers
+                    .map { it.unsignedAnchor },
+            )
+            vm.onDemandUnsignedHistoryGap(anchor)
+            advanceUntilIdle()
+            assertEquals(listOf("", "refused-opaque"), repo.asks)
+            assertEquals("", repo.saved?.coverage?.cursorForUnsigned(anchor))
+            assertEquals("independent", repo.saved?.cursor)
+            assertEquals(
+                listOf(anchor),
+                vm.state.value.historyMarkers
+                    .map { it.unsignedAnchor },
+            )
+            // A fresh destination must echo the persisted fallback without inventing a signed anchor.
+            val seeded =
+                MobileJson.decodeFromString(
+                    HistoryCoverage.serializer(),
+                    MobileJson.encodeToString(HistoryCoverage.serializer(), requireNotNull(repo.saved?.coverage)),
+                )
+            val reopenedRepo = HistoryRepo(saved = HistoryPosition("independent", false, seeded)) { newest }
+            val reopened = makeVm(historyHandle(), reopenedRepo, repositoryAvailable = flowOf(false))
+            val reopenedCollector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { reopened.state.collect {} }
+            advanceUntilIdle()
+            assertEquals(
+                listOf(anchor),
+                reopened.state.value.historyMarkers
+                    .map { it.unsignedAnchor },
+            )
+            assertTrue(reopenedRepo.asks.isEmpty())
+            available.value = false
+            advanceUntilIdle()
+            vm.onDemandUnsignedHistoryGap(anchor)
+            advanceUntilIdle()
+            assertEquals(2, repo.asks.size)
+            available.value = true
+            advanceUntilIdle()
+            assertEquals(listOf("", "refused-opaque", ""), repo.asks)
+            assertEquals(
+                listOf(anchor),
+                vm.state.value.historyMarkers
+                    .map { it.unsignedAnchor },
+            )
+            vm.onDemandUnsignedHistoryGap(anchor)
+            advanceUntilIdle()
+            assertEquals(listOf("", "refused-opaque", "", ""), repo.asks)
+            assertEquals("independent", repo.saved?.cursor)
+            collector.cancel()
+            reopenedCollector.cancel()
+        }
+
+    @Test
+    fun history_unsignedUnknownCoverage_movesOnOverlapAndClosesOnlyOnTerminalReceipt() =
+        runTest {
+            val edge = Long.MAX_VALUE.toULong() + 2u
+            var reply = unsignedPage(edge, cursor = "unknown-opaque")
+            val repo =
+                HistoryRepo(
+                    saved =
+                        HistoryPosition(
+                            "independent",
+                            false,
+                            HistoryCoverage(unknown = true).received(reply),
+                        ),
+                ) { reply }
+            val vm = makeVm(historyHandle(), repo)
+            val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals(
+                listOf(0uL),
+                vm.state.value.historyMarkers
+                    .map { it.unsignedAnchor },
+            )
+            reply = unsignedPage(edge - 1u, edge, cursor = "terminal-opaque")
+            vm.onDemandUnsignedHistoryGap(0u)
+            advanceUntilIdle()
+            assertEquals(edge - 1u, repo.saved?.coverage?.unsignedUnknownEdge)
+            assertEquals(
+                listOf(0uL),
+                vm.state.value.historyMarkers
+                    .map { it.unsignedAnchor },
+            )
+            reply = HistoryPage(emptyList(), "", true)
+            vm.onDemandUnsignedHistoryGap(0u)
+            advanceUntilIdle()
+            assertTrue(
+                vm.state.value.historyMarkers
+                    .isEmpty(),
+            )
+            assertEquals(listOf("", "unknown-opaque", "terminal-opaque"), repo.asks)
+            assertEquals("independent", repo.saved?.cursor)
+            collector.cancel()
+        }
+
+    @OptIn(kotlin.ExperimentalUnsignedTypes::class)
+    private fun unsignedPage(
+        vararg ids: ULong,
+        cursor: String,
+    ) = HistoryPage(
+        ids.sortedDescending().map { id ->
+            HistoryEntry(
+                unsignedId = id,
+                type = "send_message",
+                payload = MobileJson.parseToJsonElement("""{"conversation_id":"$ACTIVE_CONV","message_id":"m$id","text":"message $id"}"""),
+                timestamp = Instant.fromEpochSeconds(1),
+            )
+        },
+        cursor,
+        false,
+    )
 
     private fun durablePage(
         vararg ids: Long,

@@ -737,17 +737,17 @@ class ThreadViewModel(
             historyCoverage,
         ) { items, queued, demand, connected, coverage ->
             val display = coverage.displayRows(items)
-            val positions = coverage.positions()
+            val positions = coverage.unsignedPositions()
             val markers =
-                (coverage.gaps.map { it.anchor to it.edge } + listOfNotNull(coverage.unknownEdge?.let { 0L to it }))
+                (coverage.unsignedGaps.map { it.anchor to it.edge } + listOfNotNull(coverage.unsignedUnknownEdge?.let { 0uL to it }))
                     .sortedBy { it.second }
                     .map { (anchor, edge) ->
                         val row =
                             display
-                                .firstOrNull { row -> row.historyKeys().any { (positions[it] ?: 0) >= edge } }
+                                .firstOrNull { row -> row.historyKeys().any { (positions[it] ?: 0uL) >= edge } }
                                 ?.historyKeys()
                                 ?.firstOrNull()
-                        ThreadHistoryMarker(anchor, row.orEmpty())
+                        ThreadHistoryMarker(beforeRow = row.orEmpty(), unsignedAnchor = anchor)
                     }
             ThreadContent(display, queued, demand.tail(connected), markers)
         }
@@ -1914,9 +1914,9 @@ class ThreadViewModel(
     private suspend fun recordCoverage(
         page: HistoryPage,
         newest: Boolean = false,
-        target: Long? = null,
+        target: ULong? = null,
     ) {
-        historyCoverage.update { it.received(page, newest, target) }
+        historyCoverage.update { it.receivedUnsigned(page, newest, target) }
         if (historyCoverage.value.unsignedIncomplete) {
             historyDemand.update { if (it.stoppedBy == HistoryWalkStop.AtStart) it.copy(stoppedBy = null) else it }
         }
@@ -1928,11 +1928,21 @@ class ThreadViewModel(
     }
 
     fun onDemandHistoryGap(anchor: Long) {
+        if (anchor >= 0) onDemandUnsignedHistoryGap(anchor.toULong())
+    }
+
+    fun onDemandUnsignedHistoryGap(anchor: ULong) {
         if (!historySeed.isCompleted || !hostAvailable.value) return
         val coverage = historyCoverage.value
-        if (anchor == 0L && coverage.unknownEdge == null || anchor != 0L && coverage.gaps.none { it.anchor == anchor }) return
+        if (anchor == 0uL &&
+            coverage.unsignedUnknownEdge == null ||
+            anchor != 0uL &&
+            coverage.unsignedGaps.none { it.anchor == anchor }
+        ) {
+            return
+        }
         claimHistorySlot { if (!it.inFlight) it.askingNewest() else null } ?: return
-        val cursor = coverage.cursorFor(anchor)
+        val cursor = coverage.cursorForUnsigned(anchor)
         viewModelScope.launch {
             try {
                 recordCoverage(
@@ -1945,7 +1955,7 @@ class ThreadViewModel(
                 throw error
             } catch (error: RelayErrorException) {
                 if (error.code == HISTORY_INVALID_CURSOR && cursor.isNotEmpty()) {
-                    historyCoverage.update { it.refused(anchor) }
+                    historyCoverage.update { it.refusedUnsigned(anchor) }
                     val walk = historyDemand.value
                     repository.writeHistoryPosition(
                         conversationId,

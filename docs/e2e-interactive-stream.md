@@ -277,10 +277,14 @@ Attributed background-agent prose (#1827) is covered at rung 3 by
    not `lastUsedAt`, decides the order; the old order would put the first-archived (newer-by-last-use) chat
    on top instead. Zero claude turns. In the curated `LIVE=1` list in `scripts/e2e-emulator.sh`, which
    raised `LIVE_MINIMUM` by one.
-   **Pending session-error recovery:** [#1731](https://github.com/pyrycode/pyrycode-mobile/issues/1731)
-   owns `InteractiveStreamE2ETest.interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog`.
-   The live harness currently lacks a reproducible daemon failure trigger; this method
-   is not implemented or in the curated gate. Its deterministic twin is also pending.
+   **Session-error recovery (#1731):**
+   `InteractiveStreamE2ETest.interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog`
+   is in the curated live gate. Its rung-4 twin is
+   `DeterministicInteractiveStreamE2ETest.interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog`,
+   registered as scripted `session-error` and included in scripted-all with zero real-Claude turns.
+   Both use separate private tagged daemons for retained and dropped backlog, the phone's send flow
+   and shipped Error pills. The [daemon-owned control contract](https://github.com/pyrycode/pyrycode/blob/main/docs/knowledge/features/e2e-realclaude.md#test-infrastructure)
+   shipped in pyrycode#2859 / PR #2863. See [recovery evidence and boundaries](#session-error-recovery-1731).
    **Pending coverage:** #679 owns **cross-device** Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
    ending B while A continues. #965 proves only the **single-device** case — the phone stopping its own
@@ -2339,6 +2343,19 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
+The curated selector includes
+`InteractiveStreamE2ETest.interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog` (#1731).
+`scripts/e2e-emulator.sh` builds its separate `e2e_realclaude`-tagged daemon and starts
+`scripts/e2e-session-error.py` only when recovery is selected. Each arm owns a private daemon;
+release changes executable selection at the next spawn while retaining its Runner and bound
+session. Other scenarios keep their ordinary binaries and settings. Missing producer controls,
+a failed tagged build or unavailable recovery executable fail explicitly. No extra dispatcher
+flag is needed; the pre-ship command remains `python3 scripts/android-test-gate.py live`.
+The deterministic twin runs with `python3 scripts/android-test-gate.py scripted session-error`
+and is registered in scripted-all. Follow the
+[daemon Test infrastructure contract](https://github.com/pyrycode/pyrycode/blob/main/docs/knowledge/features/e2e-realclaude.md#test-infrastructure)
+for producer behavior, and [the recovery evidence](#session-error-recovery-1731) for counted results.
+
 The full selector includes
 `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished` (#1783).
 Its bounded loopback hold/release fixture is started by `scripts/e2e-emulator.sh`; no separate
@@ -2348,7 +2365,7 @@ Its deterministic `background-agent` twin supplements that proof without real Cl
 The same applies to `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_replyStaysUnderAgent`
 (#1827), which uses the fixture's separate `/hold-reply` and `/release-reply` endpoints.
 
-`LIVE=1` runs a **curated set of 64 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of 65 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -4908,19 +4925,6 @@ The remaining checks here are specific to a real relay or real Claude execution:
   `DeterministicInteractiveStreamE2ETest` twin was added; the existing scripted ping scenario retains
   its top-menu panel assertion.
 
-- **Session-error recovery — pending (#1731):**
-  `InteractiveStreamE2ETest.interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog`
-  must prove real daemon → live relay → phone recovery for retained crash-loop backlog
-  without resend, and for abandoned delivery followed by a fresh send. #1678 proves
-  only rung 2. The separate daemon-owned prerequisite is an isolated test-only control
-  that triggers startup failure, holds retained backlog, advances to give-up/drop,
-  and releases failure for real-Claude recovery; its issue number awaits daemon-owner
-  filing. The current live harness has no reproducible trigger. A rung-4 twin in
-  `DeterministicInteractiveStreamE2ETest` remains pending until that control/fixture
-  can hold both states. Neither scenario is part of the pre-ship selector; keep
-  `python3 scripts/android-test-gate.py live` unchanged until runnable coverage lands.
-  An ignored manual method or skipped run supplies no live proof.
-
 - **Coverage — updated:** [#1631](https://github.com/pyrycode/pyrycode-mobile/issues/1631)
   extends `InteractiveStreamE2ETest.interactiveTurn_backgroundTask_countsInActionsMenuAndPanel`
   with the top-menu opener while a task runs. Its rung-4 coverage is
@@ -5888,6 +5892,95 @@ explanation as a current limitation. Compaction status ("Compacting conversation
   fold concatenates in arrival order, correct within a single connection); and a `make`/Gradle wrapper
   for the orchestration plus fork-sync of any shared `bin/` script per the org convention.
 - **Recover `pyrycode#642`** (the parked wire-level run) for the pipeline, or note it there.
+
+### Session-error recovery (#1731)
+
+Rung 3 is
+`InteractiveStreamE2ETest.interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog`;
+rung 4 is
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog`
+(scripted `session-error`). Both are runnable gate entries. The daemon-owned prerequisite
+[pyrycode#2859](https://github.com/pyrycode/pyrycode/issues/2859) shipped in
+[PR #2863](https://github.com/pyrycode/pyrycode/pull/2863); the authoritative
+[Test infrastructure contract](https://github.com/pyrycode/pyrycode/blob/main/docs/knowledge/features/e2e-realclaude.md#test-infrastructure)
+owns tagged selection and same-Runner release. `SessionErrorRecoveryScenario` consumes that
+contract through the real daemon/relay/app path, without repository, ViewModel or UI injection.
+
+Retained backlog requires conversation-scoped `session.child_crashing`, exact copy
+“Claude keeps failing to start. Your message is waiting.”, absent Sending/Waiting and the
+same undelivered queue identity. Release before give-up delivers that message once without
+resend; a finished `recovered1731` reply renders and the pill clears. Dropped backlog requires
+`session.blocked`, exact copy “Claude did not pick up the last message. It was not delivered.”,
+absent local status and an empty queue. After automatic child recovery, only a fresh phone
+send is delivered. Completed child inputs independently count held/fresh markers as **1/0**
+for retained and **0/1** for dropped. Each arm checks unchanged daemon PID, Runner `started_at`
+and persisted session binding through release and completion.
+
+Observe closed-stdin readiness before sending and the queued identity before opening the
+first-exit fence; an unread open pipe can otherwise falsely acknowledge delivery. All waits
+are bounded state observations. Only the dropped private daemon receives the shipped `3s`
+give-up setting; retained uses the default. Give-up can publish blocked before child_crashing,
+so assert its pill and empty backlog immediately after blocked, then require the crash notice
+before release. A settled optimistic user row can remain after give-up: absence of its queued
+state, delivery IDs and completed child inputs prove non-delivery, not disappearance of text.
+
+#### Counted evidence (2026-10-07)
+
+The [final verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1874#issuecomment-6044169282)
+reviews `31c36c867488c806c1b18a1b26cb91327cc22d13`, against main `72255c68fb4e`.
+Both methods compile. The dispatcher supplied these fresh full-suite results:
+
+| Gate | Executed | Passed | Failed | Errors | Skipped | Recovery method |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| UI | 199 | 199 | 0 | 0 | 1 | Not run |
+| Scripted-all | 22 | 22 | 0 | 0 | 0 | Deterministic twin passed once |
+| Live | 65 | 65 | 0 | 0 | 0 | Live method passed once |
+
+Scripted-all ran with
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all`.
+The verifier inspected `build/dispatcher-tests/scripted-all-cymkk7c9/dispatcher.xml` and
+`session-error-0-TEST-installed.xml`, confirming the fully qualified deterministic method
+passed without failure/error/skip. Its TestRunner start/finish were in PID 2325. The UI
+report is `build/dispatcher-tests/ui-6a92rtav/dispatcher.xml`; the unrelated
+`RenameDialogCaptureTest.renameAtFigmaViewport` skip supplies no capture proof.
+
+The verifier also inspected `build/session-error-evidence/pyry-e2e.KmOZQo/context.json`
+and both arms' `daemon.log`, `control.jsonl` and `child-transcript.jsonl`. Context identifies
+daemon revision `6019328b378cad587f69b7bc94de37febbdf8556`, tag `e2e_realclaude` and
+binary SHA-256 `f08b97aa3df5f4bc0521fec800087ad754e945bb4401081101d46a012068a46c`.
+Control observations preserve each arm's daemon/Runner/session identity; restart counts
+advance from 0 to 5 retained and 0 to 4 dropped. Dropped recovery observes a running
+replacement child before the fresh send. Completed inputs confirm **1/0** and **0/1**
+marker counts; logs show crash/backoff recovery and dropped-only queue give-up. This is
+real-daemon/scripted-Claude evidence with zero real-Claude turns.
+
+The later [dispatcher live PASS](https://github.com/pyrycode/pyrycode-mobile/issues/1731#issuecomment-6044528584)
+ran `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on
+`feature/1731` at `31c36c867488`, merged with `origin/main` at `72255c68fb4e`:
+**65 executed/passed, 0 failed, 0 errors, 0 skipped**, exit 0 in 20m 53s.
+The retained JUnit XML in dispatcher `logs/2026-10-07T18-24-52-849Z_real-claude-gate_#1731.log`
+contains the fully qualified live recovery method and
+`InteractiveStreamE2ETest.interactiveTurn_toolPrompt_rendersToolStepInThread`, both passed
+with no failure/error/skipped child. These are named results from the full suite.
+The diagnostic log of the same stem (`.stderr.log`) records
+`build/dispatcher-tests/live-ztsaeae1/dispatcher.xml` and recovery artifacts at
+`build/session-error-evidence/pyry-e2e.NPsYxL/` in the live-gate worktree. It prints daemon
+revision `6019328b378cad587f69b7bc94de37febbdf8556`; the XML itself has no daemon-revision
+annotation. Recovery artifacts use the same `context.json` and per-arm daemon/control/completed
+transcript files. That worktree is no longer present during documentation, so its live
+control files and tagged digest were not independently inspected here; the scripted digest
+above must not be attributed to the live binary.
+
+The focused builder isolation repair on `61a3a4bb5` selected recovery followed by tool-prompt:
+**2 executed/passed, 0 failed/errors/skipped**, reported in the
+[PR](https://github.com/pyrycode/pyrycode-mobile/pull/1874), with
+`build/dispatcher-tests/live-ty3hf_k5/dispatcher.xml` and
+`build/session-error-evidence/pyry-e2e.zXCbiz/`. TestRunner ordering was reported in PID 2865.
+Those focused artifacts were not independently available to the verifier or documentation.
+The later full dispatcher live result supplies current-head acceptance; compilation, rung 2,
+rung 4 and the focused repair remain distinct evidence. No separate focused dispatcher run
+is claimed. Ignored negative controls and the transient real-Claude spinner remain manual;
+these two recovery arms add no proof for other session-error codes or other Android versions.
 
 ## Constraints
 
