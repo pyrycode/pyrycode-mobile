@@ -19,8 +19,9 @@ than the thread. `reduceOrderedHistoryPage` decodes the page once, outside the u
 with each row's daemon log id, taken from the contextual fold, so a failed compaction divider gets its
 falling edge's id. Inside the one `ProjectionState` update, `mergeOrderedHistoryRows` inserts only rows the
 thread lacks, so an older, newer or middle page lands in daemon order and a repeat page changes nothing.
-Held rows never move and are never sorted by timestamp. A missing row goes after its nearest shared
-predecessor or before its nearest shared successor. Held rows with known log ids bound that slot, so a
+Established held rows retain their positions; pending own echoes with first modern delivery
+evidence use the exception below. The merge never sorts the whole thread by timestamp. A missing
+row goes after its nearest shared predecessor or before its nearest shared successor. Held rows with known log ids bound that slot, so a
 reused message id or a malformed entry cannot pull a row past a known position. With no shared row, log ids
 and then timestamps choose the slot. The log ids live in `ProjectionState.historyOrder`, are connection-local,
 are never compared with live event ids, and are dropped by `remove`. A boundary that fills a pending divider
@@ -33,6 +34,34 @@ settled through the existing post-merge pass. Held text wins any overlap. A lega
 sequence records suppresses only text it demonstrably contains. Renderer keys stay unique without dropping
 text: ordinary ids claim keys first, then each turn's opener, then other segments, and a segment whose key a
 different identity holds takes a `~n` suffix.
+
+**History establishes modern queued delivery (#1655).** A stored user `message` with a valid
+`queued_msg_id` can arrive with its answering delta 0 before the first live push, even before
+the waiting turn's live end. `mergeHistoryPage` decodes this evidence through `MessagePayloadDto`
+and consumes that exact entry in the **requested conversation**, independently of the payload's
+routing id. Omitted/malformed identity and non-user rows do not establish modern delivery.
+Queue-entry consumption does not broaden the renderer's message-id deduplication.
+
+Only first-delivery, pending, minted held user echoes have provisional positions. Remove those
+rows from the receiving list before `mergeOrderedHistoryRows`, insert by incoming daemon
+order/delivery timestamp, then restore their exact held objects. Using their tap timestamps or
+retaining a legacy reserved slot can put an echo above the waiting turn's tool row. Content,
+attachment hints and original timestamp survive; idle, foreign/non-user and already delivered
+held rows keep their positions. This exception also handles two own echoes on the same page.
+
+Commit placement, exact entry consumption, first-delivery row identity and cleared queued/
+suppressed/reserved eligibility in the same CAS update. Otherwise the first replayed live push
+can move a history-established echo after its answering text, and the next delta starts another
+segment despite sequence deduplication. Test overlapping pages containing both the delivered row
+and answering delta 0 before and after the first push, and before the live end, asserting after
+each event. A user-only page does not expose this failure. See
+[queue placement and recorded evidence](queued-backlog.md#verification-evidence) and
+[assistant segments](remote-conversation-repository-assistant-reply-segments.md).
+
+History's `endedTurns` evidence settles late assistant rows; it does not consume the legacy
+fallback's live reservation boundary. `ProjectionState.liveEndedTurns` records live ends
+atomically with rows and echo metadata, so a history end cannot suppress the first live end's
+reservation and a repeated live end cannot reserve a newer pending echo. Both are connection-local.
 
 **One fold surface, not two.** The reduction reuses the live lane's own folds rather than mapping the
 page separately. `RemoteConversationRepositoryKt`'s `appendMessages` / `applyToolUse` / `applyToolResult`
@@ -147,8 +176,9 @@ and it is also `appendMessages`' existing live-lane dedup rule. An `Unrecognized
 which the reducer derives as `"history-${entry.id}"` from the durable per-conversation log id — stable
 across re-reduction, and disjoint from the live lane's per-process-counter `"unrecognized-<n>"` namespace
 (see [Unrecognized message row](unrecognized-message-row.md)) so the two cannot collide by coincidence.
-For ordinary rows, the merge is a **prepend, never a re-sort** (never a timestamp sort — the thread
-is arrival-order by deliberate choice, see `applyToolUse`'s KDoc above). Duplicate ordinary rows keep
+Ordinary missing rows enter through the ordered merge described above; the receiving thread is
+never globally re-sorted. First modern deliveries of pending own echoes use that section's
+explicit provisional-position exception. Duplicate ordinary rows keep
 the held state, apart from missing attachment hints: in the narrow ask-versus-answer overlap window
 the protocol names, the live lane still owns the newer state.
 
