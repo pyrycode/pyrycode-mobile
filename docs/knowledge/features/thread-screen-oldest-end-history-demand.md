@@ -51,8 +51,9 @@ The newest reply now retains durable entry coverage and page-edge cursors. A sid
 independent backwards cursor/stop untouched; a newest page that is also that walk's next page seeds
 it normally. High-water and known/unknown gaps survive restore and reconnect. Coverage concerns
 received entry ids, including non-rendering envelopes, never row ids or live frames. Overlap or
-adjacency creates no hole; overlap elsewhere never erases a known hole. A known marker closes only
-when coverage joins its older durable anchor. Nonempty legacy caches remain unknown despite saved
+adjacency creates no hole; overlap elsewhere never erases a known hole. A known gap closes only
+when coverage joins its older durable anchor; marker visibility does not certify coverage.
+Nonempty legacy caches remain unknown despite saved
 `atStart`, matching rows or verified overlap; only `at_start`, including an empty terminal page,
 closes that unknown region. Empty uncovered caches get no conservative marker. See
 [Resuming from the saved position](remote-conversation-repository-reads-and-thread-store-history-paging.md#resuming-from-the-saved-position-1354)
@@ -60,16 +61,42 @@ for the coverage and migration contract.
 
 **Gap markers reuse the oldest-end loading label style.** `HistoryGapRow` shows “Load earlier
 messages”, centred in `bodySmall` / `onSurfaceVariant` with the same gutter and padding, without a
-count. Entries are not messages: one assistant reply can span many envelopes. Markers sit before
-their newer content, between held older/newer rows. Display-only assistant fragments allow a marker
-inside a split turn; tool folding keeps the first newer tool row visible. Non-rendering spans can
-place a standalone marker at the newest content edge, including a thread with no message rows.
+count. Entries are not messages: one assistant reply can span many envelopes. Since
+[#1917](../../specs/architecture/1917-fragmented-history-projection.md), an internal marker sits
+before the first displayed row in the covered span immediately newer than its gap, only when both
+immediately adjacent spans contain delivered content. Display-only assistant fragments count and
+retain text on both sides of a hole. Lifecycle evidence and queued echoes cannot occupy a span or
+target a marker; prompt and tail rows are not history. Projection uses `foldQueuedRows` with the
+same queue snapshot and one-to-one correlation as rendering, carrying eligibility through fragment
+copies. Queue changes update placement even when held items do not change.
+
+Nonempty displayed history gets at most one marker above its oldest row: the nearest unresolved
+edge at or before its oldest durable position, with a known gap preferred over unknown coverage
+at a shared edge. Empty eligible history has no gap markers. Gaps missing either adjacent side
+produce no internal marker or per-gap row-key scan. Hidden gaps remain authoritative and can become
+visible when their adjacent content is later displayed; absence of a marker never certifies coverage.
+
+**Preparation and targeting stay off main.** Each projection prepares a held row's history keys
+once, reusing delta keys for assistant fragments and marker lookup. Binary searches of normalized
+unsigned spans and first-row indexes replace gap-by-row/delta scans. `threadContent` combines item,
+queue and coverage snapshots, then uses `mapLatest` and an injected Default worker for eligibility,
+fragment preparation, hashing and projection. Cancellation checks stop superseded work; an older
+projection cannot publish over a later input, and destination exit cancels pending work through
+`viewModelScope`. The no-gap/no-unknown path needs no keys. Projection itself initiates no fetch.
+
+Projected markers carry a prepared display-row reference beside the stable history key and exact
+unsigned anchor. Tool folding uses identity sets and collision-safe message ids (Agent attribution
+can copy message rows), so render consumers do not hash every row again for each gap. Ordinary tool
+folding keeps the targeted first newer row visible. Manually constructed markers without a prepared
+target retain the history-key fallback; moving hashing to a worker alone would leave that render
+hot path on main.
 
 A joined background-agent block is the exception to that split
 ([#1827](thread-screen-subagent-tool-rows.md#attributed-assistant-prose-in-agent-blocks-1827)).
 `foldHistoryToolRuns` keeps the block whole across a gap, because splitting it let child prose escape
 its closed Agent run. `foldedAgentHistoryMarkers` instead moves a marker attached to a hidden block row
-onto the closed run header. The marker keeps its original anchor and cursor, so a pull there asks for
+onto the closed run header by retargeting its prepared row reference. The marker keeps its stable
+history key, original anchor and cursor, so a pull there asks for
 the same gap. An expanded run header claims no marker: opening the run returns each marker to its
 original delivered row. A header that also kept its first tool's marker drew one durable gap twice
 when open, and unique row keys alone did not catch it. `BackgroundAgentProseTest` and

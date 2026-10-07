@@ -56,7 +56,7 @@ thinking, usage limit, modals, archive, unarchive and every other one-shot keep 
 behaviour unchanged. Nothing restored can reopen a permission prompt or restart an indicator,
 because nothing outside those three overrides is touched at all. Archive and unarchive deliberately
 stay delegation: they are not removals, so neither can reach a cache-clearing path (see [Conversation
-cache § Removal on unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost) for the
+cache § Removal on unpair](conversation-cache-removal.md#removal-on-unpair--forgetremovedhost) for the
 wording this mirrors).
 
 `requestHostSystemPrompt` and `setHostSystemPrompt` (#1774) also pass through by
@@ -151,7 +151,7 @@ The evidence remains invisible: `foldQueuedRows` excludes it before tool groupin
 `ThreadProjection.observeRowCounts` excludes it from visible-growth signals, and Channel info's
 creation timestamp skips it. Scalar lifecycle writes preserve queue/echo bookkeeping through the
 same atomic `ProjectionState`. Process death loses these markers; reconnect/history can reconstruct
-them. The disk schema stays unchanged, and [cache filtering and trim accounting](conversation-cache.md#the-thread-documents-two-writers-1354)
+them. The disk schema stays unchanged, and [cache filtering and trim accounting](conversation-cache-layout.md#the-thread-documents-two-writers-1354)
 both exclude them, so evidence alone cannot clear a saved history position.
 
 For queue delivery (#1642), `ThreadSnapshotSource` supplies visible rows and
@@ -241,7 +241,7 @@ After the rebase, `cacheableThreadRows(drawn)` equals whatever the previous emis
 wrote, so a disconnect **writes nothing** — the only exception is retrying an earlier failed
 write. `settledThreadRows` (not `cacheableThreadRows`) is the rebase's own function: it drops only
 in-flight rows and applies no row-count bound, so a thread longer than
-[`MAX_CACHED_THREAD_ROWS`](conversation-cache.md#the-contract) does not visibly shrink on screen
+[`MAX_CACHED_THREAD_ROWS`](conversation-cache-contract.md#the-contract) does not visibly shrink on screen
 the moment its connection drops.
 
 **Accepted residual:** the rebased base can carry a queued send's echo that the live side would
@@ -264,7 +264,7 @@ silently disappearing; this cannot produce a duplicate key or a crash. Deferred,
 
 The write is the thread **as drawn** — restored-plus-live with exclusions applied — never the
 live projection alone: right after a reconnect the live side holds only the newest page, and
-writing it alone would shrink the cache. [`cacheableThreadRows`](conversation-cache.md#the-contract)
+writing it alone would shrink the cache. [`cacheableThreadRows`](conversation-cache-contract.md#the-contract)
 is the single definition of what may reach disk, shared with `ConversationCache`'s own write path
 so the two can never disagree; the wrapper only decides *when* to call it, and, since #1354,
 `writeThread` itself applies `cacheableThreadRows` to what it is handed — see below.
@@ -274,7 +274,7 @@ so the two can never disagree; the wrapper only decides *when* to call it, and, 
 *whether* to write, but the call itself passes `drawn`, because `writeThread`'s own contract is to
 do the trimming and to drop a saved history position when that trim moves the oldest kept row away
 from it (see [Conversation cache § The thread document's two
-writers](conversation-cache.md#the-thread-documents-two-writers-1354)). A first version of this
+writers](conversation-cache-layout.md#the-thread-documents-two-writers-1354)). A first version of this
 change kept passing `cacheable` here, which meant the cache never actually saw a thread get
 trimmed — a verifier finding on PR #1470: the direct-to-cache test that wrote 100001 rows passed,
 but a thread that reached the same size through this wrapper kept a position that no longer
@@ -525,14 +525,14 @@ per the dispatcher gate on PR #837's re-review.
 - [Attachment retrieval](attachment-retrieval.md) (#899) — `AttachmentStore`, the host-keyed store this
   wrapper's `retrieveAttachment` delegates to: its layout, single-flight, bound and failure handling
 - [Paired server store § Wiring & usage](paired-server-store.md#wiring--usage) and [Conversation
-  cache § Removal on unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost) — the
+  cache § Removal on unpair](conversation-cache-removal.md#removal-on-unpair--forgetremovedhost) — the
   sibling removal path, `forgetRemovedHost`, that this wrapper's `delete` does not go through
 - [Ticket #1354](https://github.com/pyrycode/pyrycode-mobile/issues/1354) and its plan,
   `docs/specs/architecture/1354-saved-history-position.md` — the saved history position
   (`readHistoryPosition`/`writeHistoryPosition`, § above), the `observeMessages` → `writeThread`
   untrimmed-rows contract, extended by #1832's durable coverage and row-before-state ordering; see
   [Conversation cache § The
-  thread document's two writers](conversation-cache.md#the-thread-documents-two-writers-1354) for
+  thread document's two writers](conversation-cache-layout.md#the-thread-documents-two-writers-1354) for
   the cache-side half
 - Split from [#647](https://github.com/pyrycode/pyrycode-mobile/issues/647); ticket
   [#797](../../specs/architecture/797-thread-row-cache.md) (this doc);

@@ -252,13 +252,40 @@ scripted recovery child returns that distinct reply instead of echoing the promp
 the list, the chip, the empty state and the status row § `LazyColumn(reverseLayout = true)`
 ](thread-screen-how-it-works-list-and-status-row.md#lazycolumnreverselayout--true--established-in-126-populated-in-246-dimmed-in-136-nested-in-a-column-since-201-rows-folded-with-the-queued-backlog-since-782):
 `verticalArrangement = Arrangement.Top` so a stream shorter than the viewport starts under the header
-instead of resting on the composer. Two cases, each asserting the content's top sits near
-`thread-message-region`'s top and that empty space remains below it: a one-message thread, and a thread
-holding only a pending permission request (asserted against `permission-request-card`, the same fixture
-shape `ThreadScreenModalTest` seeds). Both failed before the fix — the content started 358 px and 149 px
-below the region top on a bottom-anchored list — and pass after it. `ThreadScreenFollowTest` and
-`ThreadScreenHistoryTest` needed no changes: a short list still reports `FollowNewestEnd`'s first-visible
-index and offset as 0, and the oldest row still sits at the viewport's far edge for `isNearOldestEnd`.
+instead of resting on the composer. The one-message case measures the outer surface via
+`MESSAGE_BUBBLE_TEST_TAG` with `useUnmergedTree = true`; the pending-permission case
+measures `permission-request-card`. Both require the surface's top relative to
+`thread-message-region` to equal the fixture's 69dp header plus 28dp clearance,
+allowing at most two pixels for accumulated rounding. Both retain `bottomGap > topGap`
+to require spare space below the surface.
+
+Measure the surface rather than its body text: the accessible 96dp minimum bubble
+vertically centres its contents, so text position does not locate the row's top edge.
+Before #1928's assertion repair, the focused Android 13 diagnosis executed two cases,
+with one failure and zero skips. At density 2.625, the surface started at 256px,
+only 1.375px above the 254.625px target, while text started at 361px and exceeded
+the stale text-padding range. Production layout and Copy/Reply targets needed no change.
+
+The [#1928 verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1932#issuecomment-6047659101)
+and fresh retained XML confirm both methods executed and passed once per runner:
+
+- Focused JVM: **2 executed/passed, 0 failed/errors/skipped**, XML timestamp
+  `2026-10-07T21:13:14.221Z`, retained at
+  `/tmp/builder-1928/jvm-focused-green/TEST-de.pyryco.mobile.ui.conversations.thread.ThreadScreenShortStreamTest.xml`.
+- Focused managed Android 13: **2 executed/passed, 0 failed/errors/skipped**, XML timestamp
+  `2026-10-07T21:14:25`, retained at
+  `/tmp/builder-1928/device-focused-green/TEST-pixel2Api33Atd-_app-.xml`.
+
+The temporary `Arrangement.Bottom` JVM negative control executed two cases and
+failed both, with zero skips: surface gaps were 469px and 251px against 97px.
+The mutation was reverted before the fresh passing runs. Retain that rejection
+when changing geometry assertions; a broad text-padding range can conceal displaced rows.
+The routine dispatcher UI gate does not execute this shared class; the next full
+main in-depth device sweep remains dispatcher-owned after merge.
+`ThreadScreenFollowTest` and `ThreadScreenHistoryTest` needed no changes for the
+original arrangement repair: a short list still reports `FollowNewestEnd`'s
+first-visible index and offset as 0, and the oldest row still sits at the
+viewport's far edge for `isNearOldestEnd`.
 
 ### `ThreadViewModel` re-sourcing (#807)
 

@@ -471,7 +471,8 @@ resets only that walk when coverage exists, preserving gaps and their cursors fo
 
 **Legacy rows prove identity, not completeness.** A nonempty cache without coverage is unknown,
 with or without saved `atStart`. Its rows remain readable. After the newest page, one conservative
-marker sits at the verified span's older edge unless that page reports `at_start`. Pulls move the
+marker can sit at the verified span's older edge, subject to displayed-row eligibility, unless
+that page reports `at_start`. Pulls move the
 edge backwards. Matching a legacy whole-turn row or overlapping a verified span never closes
 ordinary legacy unknown coverage without an older durable anchor: only `at_start`, including an empty
 terminal page, does. Sticky signed-view uncertainty cannot be closed by terminal pages. Arbitrary
@@ -479,18 +480,27 @@ legacy holes cannot be inferred before received pages establish spans.
 An empty uncovered cache ignores old cursor/stop metadata unless `unsignedIncomplete` is set; flagged
 coverage and its usable cursor survive even with no retained rows or signed spans.
 
-Markers sit between held older and newer content, before their newer row. A non-rendering newer
-span can leave a standalone marker at the newest content edge. Assistant deltas on opposite sides
-of a hole use display-only fragments so the marker fits between them without changing retained
-repository rows. Fragment boundaries use unsigned delta order and adjacent received-span endpoints,
+**Visible markers are a projection of unresolved coverage (#1917).** An internal marker requires
+delivered content in both immediately adjacent covered spans and targets the first displayed row
+in the newer span. Lifecycle evidence and queued echoes cannot establish either occupancy or targets;
+queue changes reproject placement. Nonempty displayed history shows at most one marker above its
+oldest row, selecting the nearest unresolved edge at or before its oldest durable position and
+preferring a known gap over unknown coverage at a shared edge. Empty eligible history shows none.
+Hidden gaps retain their exact unsigned anchors and opaque cursors across restore and reconnect;
+marker disappearance does not join spans or certify missing content. Cache schema, retention and
+persistence policy are unchanged; the suspected cache-retention fragmentation source is unconfirmed.
+
+Assistant deltas on opposite sides of a hole use display-only fragments so an eligible marker fits
+between them without changing retained repository rows. Fragment boundaries use unsigned delta order
+and adjacent received-span endpoints,
 not the retained demand anchor. After partial fill that anchor can lie inside the extended older
 span: deltas at `A` and `A+4`, followed by `A+1`, must display `A,A+1` / marker / `A+4` while still
 targeting `A`. Comparing against `A` would rejoin held text across the unresolved hole and put the
 marker before the whole reply; serialization would preserve that error. The partial-fill and
 serialized-restoration ViewModel regressions assert fragment content, exact placement and unchanged
-opaque cursor identity across the signed boundary, upper range and maximum boundary. Known and
-unknown markers sharing a row/edge sort by their durable newer edge,
-keeping unknown coverage chronologically older. See [reader targeting](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777)
+opaque cursor identity across the signed boundary, upper range and maximum boundary. Projected
+markers sort by durable newer edge; the oldest-edge rule suppresses unknown coverage when a known
+gap shares that edge. See [reader targeting](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777)
 for the first-crossed gesture rule.
 
 The repository still performs the one atomic row merge; coverage inspection never renders a page
@@ -503,7 +513,7 @@ suppression and `unsignedHistoryOrder` from the same projection generation. See 
 reconciled cacheable rows before coverage/position, replacing #1354's accepted window where
 position could reach disk before rows. Failed row writes cannot advance claims; interruption between writes leaves older,
 conservative state. Trimming and changed/missing retained rows invalidate coverage, and the later
-state write must retain the trim's backwards cursor/stop reset. See [the two file writers](conversation-cache.md#the-thread-documents-two-writers-1354)
+state write must retain the trim's backwards cursor/stop reset. See [the two file writers](conversation-cache-layout.md#the-thread-documents-two-writers-1354)
 and [the wrapper's saved position](caching-conversation-repository.md#the-saved-history-position-1354).
 [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) retains ownership of the rung-3 live
 durable-gap operator-flow proof; #1911 adds no live scenario. It supplies the device proof these JVM
