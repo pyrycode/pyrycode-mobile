@@ -3,15 +3,18 @@ package de.pyryco.mobile.data.repository
 import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.RelayLog
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 /**
@@ -19,6 +22,18 @@ import org.junit.Test
  * `archived_at`, and a `conversation_updated` record never does, so the merge decides what it keeps.
  */
 class ConversationListProjectionTest {
+    private val oldSink = RelayLog.sink
+
+    @Before
+    fun stubAndroidLog() {
+        RelayLog.sink = { _, _, _ -> }
+    }
+
+    @After
+    fun restoreLog() {
+        RelayLog.sink = oldSink
+    }
+
     @Test
     fun conversationUpdated_keepsTheStoredStampWhileArchived_andClearsItOnUnarchive() {
         val projection = ConversationListProjection()

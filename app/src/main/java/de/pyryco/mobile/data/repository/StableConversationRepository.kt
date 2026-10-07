@@ -308,6 +308,17 @@ class StableConversationRepository(
         muted: Boolean,
     ): Unit = live.setMuted(conversationId, muted)
 
+    override fun observeReadMarks(conversationId: String): Flow<ConversationReadMarks?> =
+        switchToLive(null) { it.observeReadMarks(conversationId) }
+
+    override suspend fun markConversationRead(
+        conversationId: String,
+        upTo: ULong,
+    ): Result<ULong> {
+        val repository = currentRepository.value ?: return Result.failure(IllegalStateException(NOT_CONNECTED))
+        return repository.markConversationRead(conversationId, upTo)
+    }
+
     override suspend fun delete(conversationId: String): Unit = live.delete(conversationId)
 
     override suspend fun rename(
