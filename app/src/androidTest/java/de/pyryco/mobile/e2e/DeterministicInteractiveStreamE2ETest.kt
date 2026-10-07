@@ -1000,13 +1000,41 @@ class DeterministicInteractiveStreamE2ETest {
         val after = composeTestRule.onNodeWithText("after1783", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         assertTrue("terminal block must settle before the following reply", agent.bottom <= after.top)
         // Navigation preserves collapse state; explicitly open the owned run to inspect its reply.
-        list.performScrollToNode(run)
-        composeTestRule.onNode(closedRun).assertExists()
         composeTestRule.onAllNodesWithText("child1827-after", useUnmergedTree = true).assertCountEquals(0)
-        composeTestRule.onNode(closedRun).performClick()
-        list.performScrollToNode(hasText("child1827-after"))
-        composeTestRule.onNode(hasText("child1827-after") and hasAnyAncestor(child), useUnmergedTree = true).assertIsDisplayed()
-        composeTestRule.onAllNodesWithText("child1827-after", useUnmergedTree = true).assertCountEquals(1)
+        val repository =
+            requireNotNull(
+                GlobalContext
+                    .get()
+                    .get<RelayRepositoryCoordinator>()
+                    .currentRepository.value,
+            )
+        val conversationId =
+            runBlocking {
+                repository
+                    .observeConversations(ConversationFilter.All)
+                    .first()
+                    .single { it.name == SEED_CHANNEL_NAME }
+                    .id
+            }
+        val ownedMessages =
+            runBlocking { repository.observeMessages(conversationId).first() }
+                .filterIsInstance<ThreadItem.MessageItem>()
+                .map { it.message }
+                .filter {
+                    it.role == Role.Tool &&
+                        it.toolCall?.parentToolUseId == "agent1783" ||
+                        it.role == Role.Assistant &&
+                        it.parentToolUseId == "agent1783"
+                }
+        composeTestRule.verifyAgentRunNavigation(
+            agentId = "agent1783",
+            runId = ownedMessages.first { it.role == Role.Tool }.id,
+            childIds = ownedMessages.map { it.id },
+            ownedChild = hasText("child1827-after") and hasAnyAncestor(child),
+            goLabel = go,
+            expandLabel = expandLabel,
+            collapseLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.tool_run_collapse),
+        )
     }
 
     /**
