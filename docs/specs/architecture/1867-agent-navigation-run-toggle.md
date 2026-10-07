@@ -53,6 +53,10 @@ Run lint, assemble, Android-test compilation and Spotless; after the final main 
 
 - Does the current live symptom reproduce? Resolve from fresh diagnostic execution; preserve the historical-cause limitation even when it passes.
 
+## Revisions
+
+2026-10-07 — The stale root-id negative control executed one test and failed at the owned run lookup, as intended. With the correct child id, the long-block probe delivered its open tap (all 26 child keys entered the list) but disposed the header before an on-screen label wait could succeed. Await the list-membership transition first, then scroll the existing owned header into composition once and assert its expansion semantics. This fixes the proof's disposal assumption without an app change, additional tap, scroll retry or sleep. The scripted twin obtains actual child message ids from its repository snapshot rather than assuming fixture text equals generated assistant message identity.
+
 ## Documentation handoff
 
 Pending for the documentation stage: update `docs/e2e-interactive-stream.md`, “Background Agent follows the newest end (#1783)” and the close-after-navigation open-item note, with the established outcome, current scroll-only then explicit open/close sequence, and fresh live-gate evidence/counts. Retain any unresolved historical-cause limitation. If app behavior changes, update the affected navigation/expansion description in `docs/knowledge/features/thread-screen-subagent-tool-rows.md`. Documentation records evidence produced during development and by the dispatcher; it does not produce live proof.

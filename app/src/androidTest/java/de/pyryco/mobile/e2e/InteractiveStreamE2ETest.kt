@@ -5258,11 +5258,13 @@ class InteractiveStreamE2ETest {
             runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
             openChatRow(name)
             val hold = "curl --max-time 180 --silent --show-error $fixture/hold"
+            val childReply = "agent1783_done"
             sendFromPhone(
                 "Use Agent once with run_in_background=true, subagent_type=general-purpose and description=Held background agent. " +
                     "Give it exactly these instructions: first make two separate foreground Bash calls, " +
                     "each running printf agent1783_ready. Then run Bash with timeout 180000 in the foreground: $hold . " +
-                    "Wait for that command to finish, then reply done. Do not use any other tool yourself or wait for the agent. " +
+                    "Wait for that command to finish, then reply exactly $childReply as your own ordinary assistant paragraph. " +
+                    "Do not use any other tool yourself or wait for the agent. " +
                     "End your own turn immediately with exactly: launched1783.",
             )
             val launched =
@@ -5349,9 +5351,36 @@ class InteractiveStreamE2ETest {
             }
             composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(marker)
             composeTestRule.onNodeWithText(string(R.string.agent_finished)).assertIsDisplayed()
-            composeTestRule.onNode(marker).performClick()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
-            composeTestRule.onNode(header).assertIsDisplayed()
+            val ownedMessages =
+                runBlocking {
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        hostRepository().observeMessages(chat).first { items ->
+                            items.filterIsInstance<ThreadItem.MessageItem>().any {
+                                it.message.role == Role.Assistant &&
+                                    it.message.parentToolUseId == agentId &&
+                                    childReply in it.message.content &&
+                                    !it.message.isStreaming
+                            }
+                        }
+                    }
+                }.filterIsInstance<ThreadItem.MessageItem>().map { it.message }.filter {
+                    it.role == Role.Tool &&
+                        it.toolCall?.parentToolUseId == agentId ||
+                        it.role == Role.Assistant &&
+                        it.parentToolUseId == agentId
+                }
+            val runId = ownedMessages.first { it.role == Role.Tool }.id
+            val proofRun = System.currentTimeMillis()
+            composeTestRule.verifyAgentRunNavigation(
+                agentId = agentId,
+                runId = runId,
+                childIds = ownedMessages.map { it.id },
+                ownedChild = hasText(childReply) and hasAnyAncestor(hasTestTag("background-agent-child:$agentId")),
+                goLabel = go,
+                expandLabel = string(R.string.tool_run_expand),
+                collapseLabel = string(R.string.tool_run_collapse),
+                evidence = { Log.i("AgentRunProof", "proof_run=$proofRun $it") },
+            )
             // The expanded family can exceed the viewport once it contains prose, so compare list
             // positions rather than on-screen bounds. The thread list is reversed: a newer row has a
             // smaller index.
@@ -5367,7 +5396,7 @@ class InteractiveStreamE2ETest {
                     .onFirst()
                     .fetchSemanticsNode()
                     .config[SemanticsProperties.IndexForKey]
-            val agentIndex = indexForKey("msg:$agentId").takeIf { it >= 0 } ?: indexForKey("tool-run:$agentId")
+            val agentIndex = indexForKey("msg:$agentId")
             val laterIndex = indexForKey("msg:$laterId")
             assertTrue("settled Agent ($agentIndex) and later message ($laterIndex) must be listed", agentIndex >= 0 && laterIndex >= 0)
             assertTrue("later phone message must render below the settled Agent", laterIndex < agentIndex)
