@@ -499,6 +499,39 @@ class ConversationReadMarksTest {
             assertTrue(pump.sent.none { it.type == "mark_conversation_read" || it.type == "request_history" })
         }
 
+    @Test
+    fun nonvisualBannerTailRetainsPresentedStreamingContentClaims() =
+        runTest {
+            val pump = Pump()
+            val repository = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            pump.push(snapshot(row("a", "0", "0")))
+            pump.push(
+                Envelope(
+                    501,
+                    "assistant_delta",
+                    TS,
+                    MobileJson.parseToJsonElement("""{"conversation_id":"a","turn_id":"t","seq":0,"text":"seen"}"""),
+                    historyEntryId = 71u,
+                ),
+            )
+            pump.push(
+                Envelope(
+                    502,
+                    "banner",
+                    TS,
+                    MobileJson.parseToJsonElement(
+                        """{"conversation_id":"a","level":"info","text":"inert","truncated":false,"stops_turn":false}""",
+                    ),
+                    historyEntryId = 72u,
+                ),
+            )
+            runCurrent()
+            val held = repository.observeThreadSnapshot("a").first()
+            val presented = held.rows.filterIsInstance<ThreadItem.MessageItem>().single()
+            assertFalse(presented.message.isStreaming)
+            assertEquals(72uL, held.readEvidence.checkpoint(presented, 0u))
+        }
+
     private fun TestScope.repo(pump: Pump) = RemoteConversationRepository(pump, backgroundScope)
 
     private fun row(

@@ -93,3 +93,5 @@ Pending documentation stage: update `docs/knowledge/features/thread-screen.md`, 
 2026-10-07: Observe lifecycle through `Lifecycle.currentStateFlow`; the deterministic STARTED-to-RESUMED probe exposed stale callback qualification. Queue the captured event with an undispatched launch so destination disposal cannot cancel the handoff before process ownership begins. Extend the existing scripted ping scenario with confirmed daemon read facts as the deterministic twin; fresh full live proof remains dispatcher-owned.
 
 2026-10-07: Keep viewport measurement/reveal bindings bounded to the current immutable rows as well. Superseded streaming text versions are removed after composition so a long foreground turn does not retain every previous string in UI-local maps.
+
+2026-10-07: A new repository probe failed because the existing read projection settles a streaming message when an info banner follows it. Bind the snapshot's presentation-only settled copy to the same producing claims only when every other message field is identical. This preserves nonvisual-tail advancement without granting a later text/tool update an older version's claims.

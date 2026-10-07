@@ -1129,7 +1129,7 @@ internal class ThreadProjection(
                     suppressed,
                     unsignedOrder.signedHistoryOrder(),
                     unsignedOrder,
-                    current.readEvidence[conversationId] ?: ThreadReadEvidence(),
+                    (current.readEvidence[conversationId] ?: ThreadReadEvidence()).presentedAs(rows),
                 )
             }.distinctUntilChanged()
 

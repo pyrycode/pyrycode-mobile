@@ -24,6 +24,25 @@ data class ThreadReadEvidence internal constructor(
 ) {
     override fun toString(): String = "ThreadReadEvidence(<redacted>)"
 
+    /** Presentation may settle streaming chrome without changing any represented content. */
+    internal fun presentedAs(rows: List<ThreadItem>): ThreadReadEvidence {
+        val presented =
+            rows
+                .mapNotNull { row ->
+                    val ids =
+                        versions[row] ?: if (row is ThreadItem.MessageItem && !row.message.isStreaming) {
+                            versions.entries
+                                .firstOrNull { (source, _) ->
+                                    source is ThreadItem.MessageItem && source.message.copy(isStreaming = false) == row.message
+                                }?.value
+                        } else {
+                            null
+                        }
+                    ids?.let { row to it }
+                }.toMap()
+        return copy(versions = presented)
+    }
+
     internal fun checkpoint(
         presented: ThreadItem,
         confirmed: ULong,
