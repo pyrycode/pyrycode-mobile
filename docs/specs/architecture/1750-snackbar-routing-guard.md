@@ -1,0 +1,62 @@
+# Snackbar routing guard (#1750)
+
+## Files read
+
+- `app/build.gradle.kts`: unit-test configuration and source sets provide the normal `check` integration.
+- `gradle/libs.versions.toml`: the Kotlin version supplies the matching test-only compiler parser.
+- `ThreadScreen.kt`: `ThreadScreen` permits only attachment Saved and `ModalUiState.Dismissed` snackbar routes.
+- `MarkdownReaderScreen.kt`: `MarkdownReaderScreen` permits only the Saved arm of `rememberNoteSaver`.
+- `ArchivedDiscussionsScreen.kt`: `ArchivedDiscussionsScreen` permits only `ArchivedDiscussionsEffect.RestoreSucceeded`.
+- `ChannelListScreen.kt`: `ChannelListScreen` has no snackbar after #1748.
+- `docs/knowledge/features/development-verification-gates.md`: source checks belong in normal JVM verification; executed counts are required evidence.
+- `docs/knowledge/features/thread-screen.md`, `markdown-reader-screen.md`, `archived-discussions-screen.md`, and `channel-list-screen.md`: migrations #1747–#1749 landed; no presentation or lifetime changes belong here.
+
+## Context
+
+All three blockers are closed and their migrations are on the starting tree. The remaining four routes are non-errors. A future screen must not silently introduce a snackbar failure route. This is one test-gate deliverable, estimated at roughly 350–450 written lines including the plan and controls, with no production edits, exported production types, consumer changes, or error-state branches. No overlapping remote feature branch changes the planned files.
+
+## Design
+
+Add `SnackbarRoutingGuard` and `SnackbarRoutingGuardTest` under `app/src/test/java/de/pyryco/mobile/verification/`. Use Kotlin's compiler PSI parser, as a test-only dependency aligned with the existing Kotlin version, rather than a keyword or call-count heuristic. Walk every production Kotlin/Java source root configured by Android, including build-type and flavor roots. Supply those roots through a Gradle unit-test system property and register their source files as task inputs, so source-only changes invalidate cached test results.
+
+Every Kotlin `showSnackbar` reference must sit inside an explicitly classified syntax region in its owning screen and function. Classifications pin the complete attachment callback (message derivation and Saved-only conditional), the complete dismissed-modal branch (reason derivation and keyed effect), or the complete restore-success branch (success type and resource). Branch classifications also pin the enclosing `when` subject. Compare syntax tokens, ignoring only whitespace and comments. This retains string-template expressions, callable references, backtick names and aliased imports in the inspected syntax. Any unmatched reference fails with its source path and offset. Java snackbar references have no classifications and fail closed.
+
+The allowlist documents why each route is a non-error. New notices require an explicit routing classification and positive/negative controls in this test gate; changing source shape requires reviewing the classification. No Error-pill or snackbar production code changes. This is a local source contract, not whole-program dataflow analysis or a replacement for review of message producers.
+
+## State and concurrency model
+
+The gate runs synchronously in the existing JVM test task. Its parser environment is disposed after each test; it introduces no app state, flows, jobs, or runtime dependencies.
+
+## Error handling
+
+Missing root configuration or an empty production-source scan fails rather than producing a vacuous pass. Unclassified snackbar references are assertion failures. Unsupported Java routes are rejected rather than guessed safe.
+
+## Testing strategy
+
+Write controls first and observe the added error-route control fail against an initially permissive guard. Then implement classification and run all controls plus the real production-source assertion. Controls cover all permitted routes, a new screen with neutral-looking failure copy, an added error arm in an existing screen, reversed/widened Saved guards, altered message derivation, restore failure, changed modal reason, callable references/aliases, comments/formatting, and string interpolation. Tests are JVM-only, so no device, scripted, or real-Claude scenario is needed for this gate-only ticket.
+
+Run focused `testDebugUnitTest`, lint, assembleDebug, and Spotless. After the last merge of main and push, run the complete JVM suite, assembleDebug, and `scripts/pre-verify.py --gradle` with the draft PR body. Retain positive and negative-control XML/results under test resources so the evidence survives the worktree.
+
+## Open Questions
+
+None.
+
+## Documentation handoff
+
+Pending for the documentation stage: document how the guard runs, its permitted routes, and how a new notice is classified in `docs/knowledge/features/development-verification-gates.md` under “Gradle and source checks”.
+
+## Revisions
+
+- 2026-10-05: source review showed that checking only `showSnackbar` would leave classic Android `Snackbar.make` and direct Compose `Snackbar` content unchecked. Reject unclassified `Snackbar` references as well, with Kotlin and Java controls. Java uses the compiler's Java PSI parser so comments and string literals cannot become false routes.
+- 2026-10-05: use project-relative source roots and relative input path sensitivity with an explicit test working directory. Absolute root properties would make otherwise identical test results miss the shared build cache across worktrees.
+- 2026-10-05: an injected `latest` production build type exposed a scan gap: excluding names containing “test” silently omitted its added snackbar route. Exclude only Android's test-component source-set prefixes (`test` and `androidTest`). A test-resource init script injects the build type and its test-only Kotlin fixture; the production assertion must fail when run with that script. Retain its failed-task XML beside the ordinary positive result.
+
+## Blocker handoff
+
+The final merge of main (`39520003`, #1728) introduced a production share-error snackbar in `MainActivity.onCreate`: its `shareIntake.notices` collector routes capture failures and count/size refusals through `snackbar.showSnackbar`. The guard correctly rejects this new route. The merged whole suite executed 4,349 tests across 361 classes, with one failure (the production source assertion), zero errors and zero skips; its scan checked 294 files. Before this main update, all 4,333 tests passed.
+
+Open blocker #1824 owns moving these production share errors to Error pills. It is linked natively as a blocker of #1750. Do not permit this error route or ignore the production assertion. The failing guard-class XML is retained as `app/src/test/resources/verification/snackbar-routing/main-share-error.xml`. The implementation and controls are pushed on `feature/1750`; no PR is opened while the core acceptance gate is red on main. Once #1824 lands, merge its fix, rerun the focused and final checks (including `scripts/pre-verify.py --gradle`), and open the PR. The documentation handoff above remains pending for its owning stage.
+
+### Resolution, 2026-10-07
+
+#1824 is closed and its fix is merged through main `d6a0fa8f`. `MainActivity.onCreate` now mounts `ShareErrorNoticeHost`, which routes intake failures to the existing transient Error-pill state. Resume verification with the original snackbar classifications and production assertion unchanged; retain fresh positive and source-set negative-control evidence alongside the historical failure. The documentation stage still owns the documentation handoff.
