@@ -5048,22 +5048,25 @@ class InteractiveStreamE2ETest {
                         !peer.field(it, "status").isNullOrEmpty()
                 },
             )
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                runBlocking { hostRepository().observeMessages(chat).first() }.any {
-                    it is ThreadItem.MessageItem && it.message.role == Role.Assistant && token in it.message.content
-                }
-            }
-            val held =
-                runBlocking { hostRepository().observeMessages(chat).first() }
-                    .filterIsInstance<ThreadItem.MessageItem>()
-                    .map { it.message }
-                    .filter { it.role == Role.Assistant && token in it.content }
+            val loaded =
+                runBlocking {
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        hostRepository().observeMessages(chat).first { items ->
+                            val messages = items.filterIsInstance<ThreadItem.MessageItem>().map { it.message }
+                            messages.any { it.role == Role.Assistant && token in it.content } &&
+                                messages.any { it.role == Role.Tool && it.toolCall?.parentToolUseId == agentId }
+                        }
+                    }
+                }.filterIsInstance<ThreadItem.MessageItem>().map { it.message }
+            val held = loaded.filter { it.role == Role.Assistant && token in it.content }
             assertEquals("one attributed reply segment", 1, held.size)
             assertEquals(agentId, held.single().parentToolUseId)
+            // The root Agent stays separate; its run is keyed by the first loaded child tool.
+            val runId = loaded.first { it.role == Role.Tool && it.toolCall?.parentToolUseId == agentId }.id
             // Exact paragraph matching excludes the user prompt that names the requested token.
             val reply = hasText(token)
             val child = hasTestTag("background-agent-child:$agentId")
-            val run = hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:$agentId"))
+            val run = hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:$runId"))
             val expandLabel = string(R.string.tool_run_expand)
             val closedRun =
                 run and

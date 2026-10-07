@@ -2,8 +2,10 @@ package de.pyryco.mobile.e2e
 
 import android.content.pm.ShortcutManager
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -905,7 +907,14 @@ class DeterministicInteractiveStreamE2ETest {
         val header = hasTestTag("background-agent:agent1783")
         val child = hasTestTag("background-agent-child:agent1783")
         val prose = hasText("child1827-before")
-        val run = hasText("Using tools:", substring = true) and hasClickAction()
+        // The fixture's child1783 tool owns the run identity; the Agent root stays separate.
+        val run = hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:child1783"))
+        val expandLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.tool_run_expand)
+        val closedRun =
+            run and
+                SemanticsMatcher("closed owned Agent run") {
+                    it.config.getOrNull(SemanticsActions.OnClick)?.label == expandLabel
+                }
         val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodesWithText(running).fetchSemanticsNodes().isNotEmpty() }
         list.performScrollToNode(hasText("unmatched1827"))
@@ -913,7 +922,7 @@ class DeterministicInteractiveStreamE2ETest {
         composeTestRule.onAllNodes(hasText("unmatched1827") and hasAnyAncestor(child), useUnmergedTree = true).assertCountEquals(0)
         list.performScrollToNode(run)
         composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(0)
-        composeTestRule.onNode(run).performClick()
+        composeTestRule.onNode(closedRun).performClick()
         list.performScrollToNode(prose)
         composeTestRule.onNode(prose and hasAnyAncestor(child), useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(1)
@@ -924,6 +933,9 @@ class DeterministicInteractiveStreamE2ETest {
         composeTestRule.onNode(marker).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
         composeTestRule.onNode(header).assertIsDisplayed()
+        composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(0)
+        list.performScrollToNode(run)
+        composeTestRule.onNode(closedRun).assertExists()
         typeAndSend("release1783")
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodesWithText("after1783").fetchSemanticsNodes().isNotEmpty() }
         composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(marker)
@@ -934,6 +946,11 @@ class DeterministicInteractiveStreamE2ETest {
         val agent = composeTestRule.onNode(header).fetchSemanticsNode().boundsInRoot
         val after = composeTestRule.onNodeWithText("after1783", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         assertTrue("terminal block must settle before the following reply", agent.bottom <= after.top)
+        // Navigation preserves collapse state; explicitly open the owned run to inspect its reply.
+        list.performScrollToNode(run)
+        composeTestRule.onNode(closedRun).assertExists()
+        composeTestRule.onAllNodesWithText("child1827-after", useUnmergedTree = true).assertCountEquals(0)
+        composeTestRule.onNode(closedRun).performClick()
         list.performScrollToNode(hasText("child1827-after"))
         composeTestRule.onNode(hasText("child1827-after") and hasAnyAncestor(child), useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onAllNodesWithText("child1827-after", useUnmergedTree = true).assertCountEquals(1)
