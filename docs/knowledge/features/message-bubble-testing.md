@@ -93,12 +93,13 @@ Scope source-copy selectors to the non-merging `message-row`, so another message
 or a fenced-code control cannot satisfy the assertion. Markdown and streaming
 append tests compare current source, including the 100,000-character bound.
 
-Palette guards check actual glyph/backing pixels and both contrast boundaries
+Palette guards check actual glyph pixels and glyph-on-thread-background contrast
 at ≥3:1 across static and wallpaper light/dark, theme changes and completion.
 A tint-only assertion passed while the light icon was 1.61:1 against the thread.
 Use `threadColors.background`, including the static-dark canvas overlay, rather
-than the unmodified global background. The 13×14dp `inverseSurface` backing keeps
-the specified `inversePrimary` glyph accessible without changing layout.
+than the unmodified global background. The glyph is tinted `colorScheme.primary`
+directly, with no backing: that role reads through the matching theme rather
+than the inverted one, so it clears 3:1 against the thread background on its own.
 
 `app/src/sharedTest/.../components/MessageBubblePaletteTest.kt` uses native Canvas
 pixels at the 412dp reference width to check user, finalized assistant, streaming
