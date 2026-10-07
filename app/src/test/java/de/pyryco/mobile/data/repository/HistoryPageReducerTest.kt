@@ -25,6 +25,27 @@ import org.junit.Test
  * under test.
  */
 class HistoryPageReducerTest {
+    @Test
+    fun reduce_storedDeliveryWithQueueIdentity_needsNoNewDomainState() {
+        val legacy = messagePayload("mine", "user", "stored")
+        val modern = legacy.dropLast(1) + ",\"queued_msg_id\":42}"
+        assertEquals(
+            reduceHistoryPage(listOf(entry(1, "message", legacy)), interactive = true),
+            reduceHistoryPage(listOf(entry(1, "message", modern)), interactive = true),
+        )
+    }
+
+    @Test
+    fun reduce_malformedQueueIdentity_dropsOnlyThatStoredEntry() {
+        val malformed = messagePayload("bad", "user", "bad").dropLast(1) + ",\"queued_msg_id\":true}"
+        val rows =
+            reduceHistoryPage(
+                listOf(entry(2, "message", messagePayload("good", "user", "good")), entry(1, "message", malformed)),
+                interactive = true,
+            )
+        assertEquals(listOf("good"), rows.messageIds())
+    }
+
     // ---- AC #1: a page reduces oldest-first --------------------------------------------------------
 
     @Test
