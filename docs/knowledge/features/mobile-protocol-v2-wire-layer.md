@@ -139,6 +139,27 @@ val MobileJson: Json = Json {
 
 **Always (de)serialize via `MobileJson`, never a fresh `Json {}`.** A default `Json` would break the wire two ways: it omits fields equal to their Kotlin default (dropping `"v":2`), and it emits `"in_reply_to":null` instead of omitting the key. Both are invisible at compile time and pinned by guard tests. `ignoreUnknownKeys = true` is a conscious lenient-decode choice: a client tolerating server-added fields is safer for forward-compat than hard-failing.
 
+### Reply suggestion validation (#1865)
+
+`ReplySuggestionPayloads.kt` uses a manual `JsonElement` decoder at the inbound boundary.
+`MobileJson` has `explicitNulls = false`: nullable DTO decoding alone cannot distinguish a
+missing field from an explicit clear. Check key presence and exact primitive kinds before
+mutating state; a missing `suggested_reply` must never erase a held suggestion.
+
+The decoder requires canonical lowercase UUIDv4 conversation/session identities, an
+unquoted decimal integer revision from 1 through `ULong.MAX_VALUE`, and a string or
+explicit JSON null for `suggested_reply`. It rejects quoted, fractional, negative, zero
+and overflowing revisions. Accepted strings remain verbatim: nonblank, valid UTF-8 with
+no unpaired surrogate, no CR/LF, NEL, Unicode line or paragraph separator, and at most
+1024 UTF-8 bytes. The native contract does not inherit the fallback-only 240-code-point
+limit. Invalid payloads return null without retaining parser error text.
+
+The authoritative wire contract remains pyrycode `docs/protocol-mobile.md`, heading
+`reply_suggestion`. Mobile's [remote projection](remote-conversation-repository.md#status-projections-one-file-per-status-event)
+applies interactive gating and revision ordering and excludes this state from replay and
+history. Daemon text remains inert data and never enters logs; the
+[reading type](conversation-repository-shape.md#shape) redacts all fields in `toString()`.
+
 ### Base64 + pubkey helpers
 
 ```kotlin

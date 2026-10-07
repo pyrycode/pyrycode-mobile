@@ -110,7 +110,7 @@ an over-limit value; that stays the live repository's `require(...)` — and `se
 
 ### Cold reads — `flatMapLatest` switch with an empty fallback
 
-The four stream reads share one private helper rather than four repeated `flatMapLatest` blocks:
+Live-only stream reads share one private helper:
 
 ```kotlin
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -125,6 +125,12 @@ private fun <T> switchToLive(whenAbsent: T, select: (ConversationRepository) -> 
   supplied. Errors never enter that holder. Switching cancels the old observation;
   detached old-repository updates cannot leak into the facade and a fresh remote
   starts empty without resending. See [session-error clearing rules](remote-conversation-repository-state-errors-and-handoff.md#conversation-session-errors-1677).
+- `observeReplySuggestion(conversationId, sessionId)` (#1865) →
+  `switchToLive<ReplySuggestion?>(null) { … }`, including when `heldReadings` is supplied.
+  Suggestions never enter `HostReadings`. Disconnect emits absence; replacing a delegate
+  cancels the old observation and observes the new connection's empty state, even without
+  an intervening null delegate. Its first reconciled set or clear can have a lower revision
+  than the old connection. See [reading semantics](conversation-repository-shape.md#shape).
 - `observeStall(id)` (#395) → `switchToLive(false) { … }` — no live connection reports "not stalled";
   `flatMapLatest` cancel-old-on-switch means a stall from a prior connection never leaks across a
   reconnect (each connection's remote repo starts with an empty stall set, #351). See
@@ -380,6 +386,11 @@ proof (full reply on connection 1 → invalidated reading in the gap and at conn
 `request_model_list`; host A's held settings/menu never surface through host B) lives in
 `RelayRepositoryCoordinatorTest`, not here — see [its Testing
 section](relay-repository-coordinator.md#testing).
+
+`RemoteConversationRepositoryReplySuggestionTest` exercises this facade with real remote
+repositories and shared `HostReadings`: disconnect, direct delegate replacement, detached
+old-pump updates, an empty new delegate, a lower new revision and a reconciled clear.
+See the [remote invariant probes](remote-conversation-repository.md#testing).
 
 ## Related
 

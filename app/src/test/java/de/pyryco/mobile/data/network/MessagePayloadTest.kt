@@ -32,6 +32,32 @@ class MessagePayloadTest {
     ): Envelope = Envelope(id = 1, type = "message", ts = ts, payload = payload)
 
     @Test
+    fun queuedEntryIdentity_roundTripsWithoutAddingItToLegacyMessages() {
+        for (field in listOf("", ",\"queued_msg_id\":41", ",\"queued_msg_id\":9223372036854775807")) {
+            val payload =
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"c1","message_id":"m1","role":"user","text":"hello"$field}""",
+                )
+            val dto = MobileJson.decodeFromJsonElement<MessagePayloadDto>(payload)
+            assertEquals(payload.jsonObject["queued_msg_id"], MobileJson.encodeToJsonElement(dto).jsonObject["queued_msg_id"])
+            assertEquals("m1", dto.toMessage(envelopeFor(payload), "").id)
+        }
+    }
+
+    @Test
+    fun queuedEntryIdentity_malformedValuesFailAtDecode() {
+        for (value in listOf("1.5", "true", "[]", "{}", "\"bad\"", "9223372036854775808")) {
+            val payload =
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"c1","message_id":"m1","role":"user","text":"hello","queued_msg_id":$value}""",
+                )
+            assertThrows(SerializationException::class.java) {
+                MobileJson.decodeFromJsonElement<MessagePayloadDto>(payload)
+            }
+        }
+    }
+
+    @Test
     fun deliveryKind_trueMeansSendNowAndOrdinaryOrOlderMessagesDefaultFalse() {
         for ((field, expected) in listOf("" to false, ",\"sent_now\":false" to false, ",\"sent_now\":true" to true)) {
             val payload =

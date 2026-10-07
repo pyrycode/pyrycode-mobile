@@ -15,17 +15,20 @@ Split on 2026-09-05 to keep this document under the 50000-byte cap the docs guar
 - [Thread screen — previews and edge cases](thread-screen-previews-and-edge-cases.md) — `Previews`, `Edge cases / limitations`
 - [Thread screen — composer drafts and attachments](thread-screen-composer-drafts-and-attachments.md) — split out 2026-09-24: `Composer draft ownership`, `Composer pending attachments`
 
-The sections that stay here: `## What it does`, `Queued rows expose an independent **Send now** action before drop only when the current
+The sections that stay here: `## What it does`, `## Wiring` (minus the two subsections
+above), `## Configuration`, `## Related`.
+
+## What it does
+
+Queued rows expose an independent **Send now** action before drop only when the current
 session's fresh capability report explicitly enables mid-turn input (#1642). Settings replacement,
 session change and owning-host disconnect invalidate stale support. A tap uses the destination's
 repository without confirmation or optimistic row movement; failure uses drop's existing inert
-treatment. Backlog removal does not establish delivered position: the later user-message push does,
-and a late tap can open the next turn. See [queue control and ordering](queued-backlog.md#sending-a-queued-entry-now-1642)
+treatment. Backlog removal does not establish delivered position: the first modern delivered
+push or stored history delivery does, and a late tap can open the next turn. Parked own echoes
+read below the running turn in snapshot FIFO order, independent of temporary store reservations.
+Delayed drain snapshots cannot move an established delivery into its answering reply (#1655). See [queue control and ordering](queued-backlog.md#sending-a-queued-entry-now-1642)
 and [row geometry/accessibility](queued-backlog-section.md#styling).
-
-## Wiring` (minus the two subsections above), `## Configuration`, `## Related`.
-
-## What it does
 
 Opening or reopening a thread shows the current text of a streaming row created
 before opening immediately, even if it has never received `turn_end`. Appended

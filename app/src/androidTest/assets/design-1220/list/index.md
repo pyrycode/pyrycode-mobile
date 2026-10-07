@@ -392,24 +392,26 @@ This judges notice reuse, not Archive-frame or app-wide parity.
 
 ### Delete confirmation — `673:3665`
 
-- **Owning ticket:** #227
-- **Capture:** `delete-confirmation.png`, `delete-confirmation-compact.png` · **Side-by-side:** `delete-confirmation-side-by-side.png` · **Overlay:** `delete-confirmation-overlay.png`
-- Opened from Channel Info's Delete, below the sheet's fold, after the `channel-info` capture.
+- **Owning tickets:** #227 (flow), #1848 (close Channel Info), #1861 (geometry).
+- **Fresh evidence:** [default capture](1861-delete-confirmation.png), [sidecar](1861-delete-confirmation.txt), [compact capture](1861-delete-confirmation-compact.png), [compact sidecar](1861-delete-confirmation-compact.txt), [Figma export](1861-figma-673-3665.png), [surface comparison](1861-delete-surface-side-by-side.png) and [overlay](1861-delete-surface-overlay.png). These supersede the #1504 Delete measurements only; other modal states retain their own evidence.
+- **Provenance:** captured implementation/test revision `5eecf2dc5d95c585481c9facf61da0a12440fa61`, full `pixel8Api35` API 35 `google_apis_playstore` image, density 1, static dark, real 24 px status/navigation bars, `requireRealSystemBars=true`. Default captured 2026-10-07 00:31:29 UTC; compact 00:28:19 UTC. [Fresh XML](1861-delete-results.xml), timestamp 00:32:27 UTC, records 2 executed/passed, 0 failed, 0 errors, 0 skipped: `ListDesignCaptureTest.listFramesAt412By892` and `listFramesAt320By700LargeText`. The builder's `--rerun` selected these two methods; it was not the entire device suite. [Run command, hashes and measurements](1861-delete-evidence.txt) retain full provenance.
+- Reached through Channel Info → Delete in `ListDesignCaptureTest.walk`, using the frame name `kitchenclaw refactor`. Complete visual audit covers Default Delete only. The comparison uses the retained Figma export; the verifier did not independently retrieve Figma.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | mismatch: the dialog surface (39,42,47) measures 320x228 at x 46–365, y 308–535 with the bar removed, against 316x220 at x 48–363, y 312–531: 4 px wider and 8 px taller, centred on the same point, so it reaches 2 px past the frame on each side and 4 px above and below. Title 30 px below the dialog's top and title to first body line 47 px in both |
-| Padding | mismatch: text starts 24 px inside the dialog's left edge against 25 (body x 70 against 73, title x 72 against 74); button text bottom to the dialog's bottom edge 43 px against 39; button text right edge 38 px inside the right edge against 37 |
-| Spacing | mismatch: last body line top to the buttons' text top 58 px against 54; with the 43 px bottom inset this is the 8 px of extra height |
-| Typography | match: headline, body, buttons |
-| Colour | match: dialog surface (39,42,47), primary buttons |
+| Geometry | pass: solid surface bounds (48,336)..(364,556), 316×220 dp; removing the real 24 px status inset gives (48,312), exactly the frame; size and position within 2 dp |
+| Padding | pass: 24 dp content padding, within 1 dp |
+| Spacing | pass: 16 dp title-to-body, 24 dp body-to-actions and 8 dp between actions, native shared assertions within 1 dp; three untrimmed body lines occupy 60 dp |
+| Typography | match: headlineSmall 24/32, bodyMedium 14/20, labelLarge 14/20; untrimmed line boxes preserve theme values |
+| Colour | match: surfaceContainerHigh #272A2F, onSurface #E0E2E8 title, onSurfaceVariant #C2C7CF body, primary #9DCBFC actions |
 | Borders | match (none) |
-| Radii | match: dialog corners |
+| Radii | pass: 28 dp extraLarge corners; solid-fill corner profiles differ from Figma by at most 1 px, within 2 dp |
 | Icon paths | match (none) |
-| Component state | mismatch: the Channel Info sheet stays open under the scrim; the frame draws the dialog over the bare canvas |
+| Component state | match: Channel Info is closed behind the scrim; fixture thread content is not part of the modal audit |
 
-- **Compact:** the body wraps to four lines; the dialog and both buttons stay on screen.
-- **Routed:** #1651 (size 320x228 against 316x220, the 43 px bottom inset, the button gap, the 24 px text inset, and the sheet behind the scrim)
+- **Accessibility and dismissal:** 40 dp visible actions retain at least 48 dp touch targets extending into blank space. The actual 320×700 dp / 1.5× text capture shows a growing 272×400 dp surface with complete body and both readable, reachable actions. Both device walks check Cancel, actual Back, far outside taps and physical taps 12 dp beside both surface edges; dismissal leaves Channel Info closed and the fake conversation undeleted. Shared fake checks confirm single confirm/dismiss callbacks.
+- **Repair evidence:** [ATD XML](1861-delete-atd-results.xml), 2026-10-07 00:22:45 UTC: both capture methods executed/passed, 2 executed, 0 failed/errors/skipped. [Verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1863#issuecomment-6028660713) also records the configured UI gate: 192 executed/passed, 0 failed/errors, 1 skipped, including both methods.
+- **Routed:** the previous #1651 Delete geometry and sheet-state mismatches are resolved by #1848 and #1861.
 
 ### Host rows: disconnected, re-pair required, update required — `672:3493`
 
