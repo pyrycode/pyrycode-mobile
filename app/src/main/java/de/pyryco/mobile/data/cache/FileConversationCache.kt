@@ -267,7 +267,7 @@ class FileConversationCache(
         // Optional metadata must not participate in row decoding: malformed claims leave rows readable.
         val stored = MobileJson.decodeFromJsonElement<CachedThread>(JsonObject(raw - "history"))
         require(stored.version == VERSION) { "unsupported conversation cache version" }
-        return stored.copy(history = decodeHistory(raw["history"]))
+        return stored.copy(history = decodeHistory(raw["history"], stored.rows.map { it.toDomain() }))
     }
 
     /**
@@ -316,7 +316,10 @@ class FileConversationCache(
         }
     }
 
-    private fun decodeHistory(element: JsonElement?): CachedHistoryPosition? {
+    private fun decodeHistory(
+        element: JsonElement?,
+        rows: List<ThreadItem>? = null,
+    ): CachedHistoryPosition? {
         if (element == null || element == JsonNull) return null
         return try {
             val raw = element as? JsonObject ?: throw IllegalArgumentException("invalid history metadata")
@@ -327,7 +330,7 @@ class FileConversationCache(
                 } else {
                     raw
                 }
-            MobileJson.decodeFromJsonElement<CachedHistoryPosition>(compatible).also { it.coverage?.validated() }
+            MobileJson.decodeFromJsonElement<CachedHistoryPosition>(compatible).also { it.coverage?.validated(rows) }
         } catch (error: Exception) {
             val code = failureCode(error) ?: throw error
             RelayLog.d { "conversation_cache operation=read_history_metadata status=failed code=$code" }

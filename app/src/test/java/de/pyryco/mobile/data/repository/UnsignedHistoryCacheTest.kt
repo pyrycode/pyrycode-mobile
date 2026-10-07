@@ -3,6 +3,8 @@ package de.pyryco.mobile.data.repository
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.FileConversationCache
 import de.pyryco.mobile.data.cache.MAX_CACHED_THREAD_ROWS
+import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
 import kotlinx.coroutines.flow.Flow
@@ -251,6 +253,113 @@ class UnsignedHistoryCacheTest {
                 assertEquals(held, disk().readThread("h", "c"))
                 assertNull(disk().readHistoryPosition("h", "c"))
                 assertTrue(CachingConversationRepository(Live(), disk(), "h").readHistoryPosition("c")?.coverage?.unsignedUnknown == true)
+            }
+        }
+
+    private fun legacyBindings(first: ULong): Pair<List<ThreadItem>, HistoryCoverage> {
+        val held = listOf(ThreadItem.MessageItem(Message("t", "s", Role.Assistant, "ab", Instant.fromEpochSeconds(1), false)))
+        val entries =
+            listOf("a", "b").mapIndexed { index, text ->
+                HistoryEntry(
+                    type = "assistant_delta",
+                    payload = MobileJson.parseToJsonElement("""{"conversation_id":"c","turn_id":"t","seq":$index,"text":"$text"}"""),
+                    timestamp = Instant.fromEpochSeconds(1),
+                    unsignedId = first + index.toULong(),
+                )
+            }
+        val state = HistoryCoverage().receivedUnsigned(HistoryPage(entries.reversed(), "old", true)).boundTo(held)
+        return held to state.copy(deltaText = emptyMap())
+    }
+
+    private fun malformedLegacyBindings(first: ULong): List<Pair<List<ThreadItem>, HistoryCoverage>> {
+        val (held, state) = legacyBindings(first)
+        val keys =
+            state.unsignedRowOrder.entries
+                .sortedBy { it.value }
+                .map { it.key }
+        val oneCharacter = held.map { (it as ThreadItem.MessageItem).copy(message = it.message.copy(content = "a")) }
+        val wholeProof = historyRowProofs(oneCharacter).values.single()
+        return listOf(
+            oneCharacter to
+                state.copy(
+                    proofs = state.proofs.mapValues { wholeProof },
+                    legacyOffsets = keys.associateWith { 0 },
+                    deltaHashes = keys.associateWith { state.deltaHashes.getValue(keys.first()) },
+                ),
+            held to state.copy(legacyOffsets = keys.associateWith { Int.MAX_VALUE }),
+            held to state.copy(deltaLengths = keys.associateWith { Int.MAX_VALUE }),
+            held to state.copy(deltaHashes = state.deltaHashes + (keys.first() to state.deltaHashes.getValue(keys.last()))),
+            held to
+                state.copy(
+                    legacyOffsets = mapOf(keys.first() to 1, keys.last() to 0),
+                    deltaHashes =
+                        mapOf(
+                            keys.first() to state.deltaHashes.getValue(keys.last()),
+                            keys.last() to state.deltaHashes.getValue(keys.first()),
+                        ),
+                ),
+            held to state.copy(deltaHashes = emptyMap()),
+            held to state.copy(legacyOffsets = emptyMap()),
+        )
+    }
+
+    @Test fun retainedClaimsInvariant_invalidLegacySlicesRejectMetadataWithoutLosingRows() =
+        runTest {
+            for (first in listOf(1uL, boundary, ULong.MAX_VALUE - 1u)) {
+                for ((held, state) in malformedLegacyBindings(first)) {
+                    disk().writeThread("h", "c", held).getOrThrow()
+                    val file = tmp.root.walkTopDown().first { it.isFile }
+                    val raw = MobileJson.parseToJsonElement(file.readText()) as kotlinx.serialization.json.JsonObject
+                    val history =
+                        MobileJson.parseToJsonElement(
+                            """{"cursor":"old","atStart":true,"coverage":${MobileJson.encodeToString(state)}}""",
+                        )
+                    file.writeText(
+                        kotlinx.serialization.json
+                            .JsonObject(raw + ("history" to history))
+                            .toString(),
+                    )
+                    assertEquals(held, disk().readThread("h", "c"))
+                    assertNull(disk().readHistoryPosition("h", "c"))
+                    val seed = CachingConversationRepository(Live(), disk(), "h").readHistoryPosition("c")
+                    assertTrue(seed?.coverage?.unsignedUnknown == true)
+                    disk().writeThread("h", "c", held).getOrThrow()
+                    val rewritten = disk().readHistoryPosition("h", "c")?.coverage ?: error("missing conservative row rewrite")
+                    assertTrue(rewritten.unsignedUnknown)
+                    assertTrue(rewritten.unsignedSpans != state.unsignedSpans)
+                }
+            }
+        }
+
+    @Test fun retainedClaimsInvariant_staleLegacySlicesCannotRecertifyMissingContent() =
+        runTest {
+            for (first in listOf(1uL, boundary, ULong.MAX_VALUE - 1u)) {
+                for ((held, state) in malformedLegacyBindings(first)) {
+                    for (retained in listOf(state.retainedBy(held), state.boundTo(held))) {
+                        assertTrue(retained.unsignedUnknown)
+                        assertTrue(retained.unsignedSpans != state.unsignedSpans)
+                    }
+                    disk().writeThread("h", "c", held).getOrThrow()
+                    disk().writeHistoryPosition("h", "c", HistoryPosition("old", true, state)).getOrThrow()
+                    val restored = disk().readHistoryPosition("h", "c")?.coverage ?: error("missing conservative coverage")
+                    assertTrue(restored.unsignedUnknown)
+                    assertTrue(restored.unsignedSpans != state.unsignedSpans)
+                }
+            }
+        }
+
+    @Test fun retainedClaimsInvariant_validLegacySlicesSurviveRoundTripAndStaleBinding() =
+        runTest {
+            for (first in listOf(1uL, boundary, ULong.MAX_VALUE - 1u)) {
+                val (held, state) = legacyBindings(first)
+                assertEquals(listOf(UnsignedHistorySpan(first, first + 1u)), state.unsignedSpans)
+                assertFalse(state.unsignedUnknown)
+                assertEquals(state, state.retainedBy(held))
+                assertEquals(state, state.boundTo(held))
+                disk().writeThread("h", "c", held).getOrThrow()
+                disk().writeHistoryPosition("h", "c", HistoryPosition("old", true, state)).getOrThrow()
+                assertEquals(held, disk().readThread("h", "c"))
+                assertEquals(state, disk().readHistoryPosition("h", "c")?.coverage)
             }
         }
 

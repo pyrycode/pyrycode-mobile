@@ -255,7 +255,9 @@ data class HistoryCoverage(
     /** Bind claims to the exact logical message/delta content retained by cache policy. */
     fun boundTo(rows: List<ThreadItem>): HistoryCoverage {
         val kept = cacheableThreadRows(rows)
-        val available = historyRowProofs(kept).toMutableMap()
+        val direct = historyRowProofs(kept)
+        val available = direct.toMutableMap()
+        val savedBindings = legacyBindingProofs(kept, direct)
         val offsets = legacyOffsets.toMutableMap()
         val legacy =
             kept
@@ -271,14 +273,14 @@ data class HistoryCoverage(
                 if (key in available) return@forEachIndexed
                 val text = deltaText[key]
                 if (text == null) {
-                    if (proofs[key] == proof) {
+                    if (key in savedBindings) {
                         available[key] = proof
-                        offset = maxOf(offset, (offsets[key] ?: 0) + (deltaLengths[key] ?: 0))
+                        offset = offsets.getValue(key) + deltaLengths.getValue(key)
                     }
                 } else {
                     val next =
                         ordered.drop(index + 1).firstNotNullOfOrNull { entry ->
-                            offsets[entry.key]?.takeIf { proofs[entry.key] == proof }
+                            offsets[entry.key]?.takeIf { entry.key in savedBindings }
                         } ?: message.content.length
                     val at = message.content.indexOf(text, offset)
                     if (at >= 0 && at + text.length <= next) {
@@ -289,6 +291,8 @@ data class HistoryCoverage(
                 }
             }
         }
+        val verified = copy(proofs = available, legacyOffsets = offsets).legacyBindingProofs(kept, direct)
+        (legacyKeys.keys - direct.keys - verified.keys).forEach(available::remove)
         val missing = unsignedRowOrder.keys - available.keys
         return withoutRows(missing).copy(
             proofs = available.filterKeys { it in unsignedRowOrder && it !in missing },
@@ -299,16 +303,54 @@ data class HistoryCoverage(
 
     /** A stale writer or trim cannot retain coverage for content it removed. */
     fun retainedBy(rows: List<ThreadItem>): HistoryCoverage {
-        val available = historyRowProofs(cacheableThreadRows(rows)).toMutableMap()
-        legacyKeys.forEach { (key, alias) ->
-            if (key !in available && available[alias] == proofs[key]) available[alias]?.let { available[key] = it }
-        }
+        val kept = cacheableThreadRows(rows)
+        val direct = historyRowProofs(kept)
+        val available = direct + legacyBindingProofs(kept, direct)
         val missing =
             proofs
                 .filter { (key, proof) ->
                     available[key] != proof && (deltaHashes[key] == null || available[key] != deltaHashes[key])
                 }.keys
         return withoutRows(missing).copy(proofs = proofs.mapValues { (key, proof) -> available[key] ?: proof } - missing)
+    }
+
+    /** A whole-row proof admits an alias only with its own ordered, retained fragment. */
+    private fun legacyBindingProofs(
+        rows: List<ThreadItem>,
+        direct: Map<String, String>,
+    ): Map<String, String> {
+        val legacy =
+            rows
+                .filterIsInstance<ThreadItem.MessageItem>()
+                .filter { it.message.segment == null }
+                .associateBy { historyIdentity(it.mergeIdentity()) }
+        return buildMap {
+            legacyKeys.entries.groupBy { it.value }.forEach { (alias, keys) ->
+                val content = legacy[alias]?.message?.content ?: return@forEach
+                val proof = direct[alias] ?: return@forEach
+                var end = 0L
+                var previous: ULong? = null
+                keys.sortedBy { unsignedRowOrder[it.key] ?: ULong.MAX_VALUE }.forEach binding@{ (key, _) ->
+                    if (key in direct) return@binding
+                    val order = unsignedRowOrder[key] ?: return@binding
+                    val offset = legacyOffsets[key]?.toLong() ?: return@binding
+                    val length = deltaLengths[key]?.toLong() ?: return@binding
+                    val next = offset + length
+                    if (proofs[key] != proof ||
+                        offset < end ||
+                        length < 0 ||
+                        next > content.length ||
+                        previous?.let { order <= it } == true ||
+                        deltaHashes[key] != historyHash(content.substring(offset.toInt(), next.toInt()))
+                    ) {
+                        return@binding
+                    }
+                    put(key, proof)
+                    end = next
+                    previous = order
+                }
+            }
+        }
     }
 
     private fun withoutRows(missing: Set<String>): HistoryCoverage {
@@ -354,7 +396,7 @@ data class HistoryCoverage(
     internal fun positions(): Map<String, Long> = unsignedPositions().mapNotNull { (key, id) -> id.signedId()?.let { key to it } }.toMap()
 
     /** Validate optional disk claims independently from the retained rows. */
-    internal fun validated(): HistoryCoverage {
+    internal fun validated(rows: List<ThreadItem>? = null): HistoryCoverage {
         require(
             unsignedSpans.all { it.first > 0u && it.first <= it.last } && normalize(unsignedSpans) == unsignedSpans,
         ) { "invalid history spans" }
@@ -387,6 +429,11 @@ data class HistoryCoverage(
                 deltaLengths.values.all { it >= 0 } &&
                 legacyOffsets.values.all { it >= 0 },
         ) { "invalid history anchors" }
+        if (rows != null) {
+            val direct = historyRowProofs(rows)
+            val aliased = legacyKeys.keys - direct.keys
+            require(legacyBindingProofs(rows, direct).keys == aliased) { "invalid history legacy bindings" }
+        }
         return this
     }
 
