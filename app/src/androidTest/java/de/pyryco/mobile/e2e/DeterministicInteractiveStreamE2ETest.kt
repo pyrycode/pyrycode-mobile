@@ -35,6 +35,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Role
@@ -276,6 +277,73 @@ class DeterministicInteractiveStreamE2ETest {
                 }
             }
         composeTestRule.assertReplySuggestionLongPress(repository, conversation, REPLY_TIMEOUT_MS)
+    }
+
+    /** Zero-Claude durable twin runs beside the original ping scenario, with its own channel. */
+    @Test
+    fun interactiveTurn_seededChannel_durableGapCatchUp() {
+        arriveInSeededThread()
+        val args = InstrumentationRegistry.getArguments()
+        val serverId = requireNotNull(args.getString("serverId"))
+        val repo =
+            requireNotNull(
+                GlobalContext
+                    .get()
+                    .get<RelayRepositoryCoordinator>()
+                    .currentRepository.value,
+            )
+        val name = "e2e-gap-" + System.currentTimeMillis()
+        val conversation = runBlocking { repo.createDiscussion().also { repo.promote(it.id, name) } }
+        val fault = DaemonFaultControl()
+        fault.posts(name, "e2e1833-baseline", 1)
+        composeTestRule.onNodeWithContentDescription("Back").performClick()
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) { composeTestRule.onAllNodesWithText(name).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onNodeWithText(name).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText("e2e1833-baseline-000").fetchSemanticsNodes().isNotEmpty()
+        }
+        val proof = DurableGapProof(composeTestRule, serverId, conversation.id)
+        proof.cacheBaseline()
+        val peer =
+            SecondClientPeer(
+                PairedServer(
+                    serverId,
+                    requireNotNull(args.getString("peerToken")),
+                    requireNotNull(args.getString("relayUrl")),
+                    requireNotNull(args.getString("serverStaticPublicKey")),
+                ),
+            )
+        try {
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            severLink()
+            composeTestRule.onNodeWithText("e2e1833-baseline-000").assertIsDisplayed()
+            proof.missPages(name) {
+                runBlocking {
+                    withTimeout(REPLY_TIMEOUT_MS) {
+                        while (peer.recorded(conversation.id).none {
+                                it.type == "assistant_delta" && peer.field(it, "text") == proof.lastOlderPost
+                            }
+                        ) {
+                            kotlinx.coroutines.delay(50)
+                        }
+                    }
+                    peer.sendMessage(conversation.id, "e2e1833-completed-turn", THREAD_TIMEOUT_MS)
+                    withTimeout(REPLY_TIMEOUT_MS) {
+                        while (peer.recorded(conversation.id).none {
+                                it.type == "turn_end" && peer.field(it, "producer") != "channel_post"
+                            }
+                        ) {
+                            delay(50)
+                        }
+                    }
+                }
+            }
+            proof.catchUp(::restoreLink, "ping")
+            assertEquals("cached older row retained", 1, proof.messages().count { it == "e2e1833-baseline-000" })
+        } finally {
+            peer.close()
+            DurableHistoryProbe.end()
+        }
     }
 
     @Test

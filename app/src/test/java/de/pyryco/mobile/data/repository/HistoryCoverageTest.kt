@@ -22,6 +22,25 @@ class HistoryCoverageTest {
         atStart,
     )
 
+    @Test fun durableGapInvariant_persistedCoverageKeepsEachGapCursor_acrossRestartBetweenEveryPage() {
+        fun restore(state: HistoryCoverage): HistoryCoverage =
+            kotlinx.serialization.json.Json.decodeFromString(
+                HistoryCoverage.serializer(),
+                kotlinx.serialization.json.Json
+                    .encodeToString(HistoryCoverage.serializer(), state),
+            )
+        var state = restore(HistoryCoverage().received(page(1, 2)))
+        state = restore(state.received(page(8, 9, cursor = "gap-seven"), newest = true))
+        for ((ids, next) in listOf(listOf(6L, 7L) to "gap-five", listOf(4L, 5L) to "gap-three")) {
+            val incoming = page(*ids.toLongArray(), cursor = next)
+            state = restore(state.received(incoming, target = 2))
+            state = restore(state.received(incoming, target = 2))
+            assertEquals(next, state.cursorFor(2))
+            assertEquals(1, state.gaps.size)
+        }
+        assertTrue(restore(state.received(page(3), target = 2)).gaps.isEmpty())
+    }
+
     @Test fun receivedIdsIncludeNonRenderingEntries_andAdjacencyCreatesNoGap() {
         val state = HistoryCoverage().received(page(1, 2)).received(page(3, 4), newest = true)
         assertEquals(listOf(HistorySpan(1, 4)), state.spans)
