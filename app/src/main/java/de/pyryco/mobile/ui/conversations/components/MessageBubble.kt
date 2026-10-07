@@ -17,10 +17,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -29,8 +27,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalViewConfiguration
-import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -39,7 +35,6 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Constraints
-import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Message
@@ -70,7 +65,7 @@ private val MessageActionsGap = 12.dp
 private val MessageActionsWidth = 13.dp
 private val MessageActionTargetSize = 48.dp
 private val MessageActionCentreGap = 25.dp
-private val MessageActionPairHeight = MessageActionTargetSize + MessageActionCentreGap
+private val MessageActionPairHeight = MessageActionTargetSize * 2
 
 // #896: the frame has no subagent grouping, so each nesting level steps a tool row in by the
 // `Message area` gap it already uses between rows.
@@ -385,17 +380,18 @@ private fun MessageContainer(
             measurables[0].measure(
                 constraints.copy(minWidth = 0, minHeight = 0, maxWidth = (constraints.maxWidth - reserved).coerceAtLeast(0)),
             )
-        val actions = measurables[1].measure(Constraints.fixed(actionsWidth, bubble.height))
-        layout(constraints.maxWidth, bubble.height) {
+        val rowHeight = maxOf(bubble.height, MessageActionPairHeight.roundToPx())
+        val actions = measurables[1].measure(Constraints.fixed(actionsWidth, rowHeight))
+        layout(constraints.maxWidth, rowHeight) {
             val bubbleX = if (isUserSide) constraints.maxWidth - bubble.width else 0
-            bubble.placeRelative(bubbleX, 0)
+            bubble.placeRelative(bubbleX, (rowHeight - bubble.height) / 2)
             // Placed after the surface so the extended target wins where it overlaps the bubble.
             actions.placeRelative(if (isUserSide) bubbleX - gap - actionsWidth else bubble.width + gap, 0)
         }
     }
 }
 
-/** The full touch layout overflows the drawn column; its two targets meet without expansion. */
+/** Two adjoining 48dp targets surround the glyph pair without overlapping neighbouring rows. */
 @Composable
 private fun MessageActions(
     message: Message,
@@ -403,68 +399,59 @@ private fun MessageActions(
 ) {
     val clipboard = LocalClipboardManager.current
     val labels = listOf(stringResource(R.string.cd_thread_copy_message), stringResource(R.string.cd_thread_reply_message))
-    val configuration = LocalViewConfiguration.current
-    val dividedTargets =
-        remember(configuration) {
-            object : ViewConfiguration by configuration {
-                override val minimumTouchTargetSize = DpSize.Zero
-            }
-        }
     Box(modifier = Modifier.testTag("message-actions"), contentAlignment = Alignment.Center) {
-        CompositionLocalProvider(LocalViewConfiguration provides dividedTargets) {
-            Layout(
-                modifier = Modifier.requiredSize(MessageActionTargetSize, MessageActionPairHeight),
-                content = {
-                    repeat(2) { index ->
-                        Layout(
-                            modifier =
-                                Modifier
-                                    .semantics { contentDescription = labels[index] }
-                                    .clickable(role = androidx.compose.ui.semantics.Role.Button) {
-                                        if (index == 0) {
-                                            clipboard.setBoundedText(message.content)
-                                            RelayLog.d { "event=message_copy" }
-                                        } else {
-                                            onReply(message)
-                                        }
-                                    },
-                            content = {
-                                // Figma 620:1577 draws each glyph alone, no backing. `primary` clears 3:1
-                                // against the thread background in every palette (#1889); see
-                                // message-bubble.md's action contrast section for the figures.
-                                Icon(
-                                    painter = painterResource(if (index == 0) R.drawable.ic_copy else R.drawable.ic_reply),
-                                    contentDescription = null,
-                                    modifier =
-                                        Modifier
-                                            .size(width = if (index == 0) 11.dp else 13.dp, height = 12.dp)
-                                            .testTag(if (index == 0) "message-copy-glyph" else "message-reply-glyph"),
-                                    tint = MaterialTheme.colorScheme.primary,
-                                )
-                            },
-                        ) { children, targetConstraints ->
-                            val glyph = children.single().measure(targetConstraints.copy(minWidth = 0, minHeight = 0))
-                            val outerRadius = (MessageActionTargetSize / 2).toPx()
-                            val centreY = if (index == 0) outerRadius else targetConstraints.maxHeight - outerRadius
-                            val glyphX = (targetConstraints.maxWidth - glyph.width) / 2f
-                            val glyphY = centreY - glyph.height / 2f
-                            layout(targetConstraints.maxWidth, targetConstraints.maxHeight) {
-                                glyph.placeRelativeWithLayer(glyphX.toInt(), glyphY.toInt()) {
-                                    translationX = glyphX - glyphX.toInt()
-                                    translationY = glyphY - glyphY.toInt()
-                                }
+        Layout(
+            modifier = Modifier.requiredSize(MessageActionTargetSize, MessageActionPairHeight),
+            content = {
+                repeat(2) { index ->
+                    Layout(
+                        modifier =
+                            Modifier
+                                .semantics { contentDescription = labels[index] }
+                                .clickable(role = androidx.compose.ui.semantics.Role.Button) {
+                                    if (index == 0) {
+                                        clipboard.setBoundedText(message.content)
+                                        RelayLog.d { "event=message_copy" }
+                                    } else {
+                                        onReply(message)
+                                    }
+                                },
+                        content = {
+                            // Figma 620:1577 draws each glyph alone, no backing. `primary` clears 3:1
+                            // against the thread background in every palette (#1889); see
+                            // message-bubble.md's action contrast section for the figures.
+                            Icon(
+                                painter = painterResource(if (index == 0) R.drawable.ic_copy else R.drawable.ic_reply),
+                                contentDescription = null,
+                                modifier =
+                                    Modifier
+                                        .size(width = if (index == 0) 11.dp else 13.dp, height = 12.dp)
+                                        .testTag(if (index == 0) "message-copy-glyph" else "message-reply-glyph"),
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        },
+                    ) { children, targetConstraints ->
+                        val glyph = children.single().measure(targetConstraints.copy(minWidth = 0, minHeight = 0))
+                        val halfGlyphGap = (MessageActionCentreGap / 2).toPx()
+                        val centreY = if (index == 0) targetConstraints.maxHeight - halfGlyphGap else halfGlyphGap
+                        val glyphX = (targetConstraints.maxWidth - glyph.width) / 2f
+                        val glyphY = centreY - glyph.height / 2f
+                        layout(targetConstraints.maxWidth, targetConstraints.maxHeight) {
+                            glyph.placeRelativeWithLayer(glyphX.toInt(), glyphY.toInt()) {
+                                translationX = glyphX - glyphX.toInt()
+                                translationY = glyphY - glyphY.toInt()
                             }
                         }
                     }
-                },
-            ) { measurables, constraints ->
-                val midpoint = constraints.maxHeight / 2
-                val top = measurables[0].measure(Constraints.fixed(constraints.maxWidth, midpoint))
-                val bottom = measurables[1].measure(Constraints.fixed(constraints.maxWidth, constraints.maxHeight - midpoint))
-                layout(constraints.maxWidth, constraints.maxHeight) {
-                    top.placeRelative(0, 0)
-                    bottom.placeRelative(0, midpoint)
                 }
+            },
+        ) { measurables, constraints ->
+            val midpoint = constraints.maxHeight / 2
+            val top = measurables[0].measure(Constraints.fixed(constraints.maxWidth, midpoint))
+            val bottom = measurables[1].measure(Constraints.fixed(constraints.maxWidth, constraints.maxHeight - midpoint))
+            layout(constraints.maxWidth, constraints.maxHeight) {
+                top.placeRelative(0, 0)
+                bottom.placeRelative(0, midpoint)
             }
         }
     }
