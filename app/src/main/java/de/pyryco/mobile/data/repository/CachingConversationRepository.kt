@@ -145,7 +145,7 @@ class CachingConversationRepository(
         ) {
             return null
         }
-        if (saved?.coverage != null) return saved
+        if (saved?.coverage != null) return saved.copy(atStart = saved.atStart && !saved.coverage.unsignedIncomplete)
         return (saved ?: HistoryPosition("", false)).copy(coverage = HistoryCoverage(unknown = true))
     }
 
@@ -185,14 +185,15 @@ class CachingConversationRepository(
             }
             if (conversationId in deleted) return@withLock
             val trimmed = threadRowsWereTrimmed(rows)
+            val coverage = position.coverage.boundTo(rows)
             cache
                 .writeHistoryPosition(
                     serverId,
                     conversationId,
                     position.copy(
                         cursor = if (trimmed) "" else position.cursor,
-                        atStart = if (trimmed) false else position.atStart,
-                        coverage = position.coverage.boundTo(rows),
+                        atStart = !trimmed && !coverage.unsignedIncomplete && position.atStart,
+                        coverage = coverage,
                     ),
                 ).onFailure { RelayLog.d { "event=history_position_write_failed" } }
         }

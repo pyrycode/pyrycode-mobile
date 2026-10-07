@@ -225,12 +225,15 @@ class UnsignedHistoryTest {
 
     @Test
     fun signedCoverage_declinesUpperRangeTerminalAndMixedPagesWithoutFalseCompleteness() {
-        val previous = HistoryCoverage(unknown = true).received(page(user(1u)))
-        for (entries in listOf(listOf(user(ULong.MAX_VALUE)), listOf(user(2u), user(boundary + 1u)))) {
-            val incoming = page(*entries.toTypedArray()).copy(cursor = "upper", atStart = true)
-            assertEquals(previous, previous.received(incoming, newest = true, target = 1L))
-            assertTrue(previous.received(incoming).unknown)
+        for (previous in listOf(HistoryCoverage(), HistoryCoverage().received(page(user(1u)).copy(atStart = true)))) {
+            for (entries in listOf(listOf(user(ULong.MAX_VALUE)), listOf(user(2u), user(boundary + 1u)))) {
+                val incoming = page(*entries.toTypedArray()).copy(cursor = "upper", atStart = true)
+                val incomplete = previous.received(incoming, newest = true, target = 1L)
+                assertEquals(previous.copy(unknown = true, unsignedIncomplete = true), incomplete)
+                assertTrue(incomplete.received(page(user(2u)).copy(atStart = true)).unknown)
+            }
         }
+        val previous = HistoryCoverage(unknown = true).received(page(user(1u)))
         val lower = previous.received(page(user(2u)).copy(atStart = true))
         assertEquals(listOf(HistorySpan(1L, 2L)), lower.spans)
         assertFalse(lower.unknown)

@@ -10,6 +10,8 @@
 - `app/src/main/java/de/pyryco/mobile/data/repository/ThreadSnapshotSource.kt`: `ThreadSnapshot` supplies cache consumers with signed positions today.
 - `app/src/main/java/de/pyryco/mobile/data/repository/HistoryCoverage.kt`: `received` certifies signed coverage and must remain conservative for unsupported pages.
 - `app/src/main/java/de/pyryco/mobile/data/repository/CachingConversationRepository.kt`: signed snapshot order feeds existing cache joins; this consumer is not migrated.
+- `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModel.kt`: `launchHistoryAsk`, `recordCoverage` and `historySeed` independently settle/save/restore the signed walk.
+- `app/src/test/java/de/pyryco/mobile/data/repository/HistoryCacheReworkTest.kt`: production ViewModel and fresh file-cache regressions for conservative completeness.
 - `app/src/test/java/de/pyryco/mobile/data/network/HistoryPayloadsTest.kt`, `data/repository/HistoryReconciliationTest.kt`, `ThreadProjectionTest.kt` and `RemoteConversationRepositoryTest.kt`: current decoding, reconciliation, contextual folds and request failure routing.
 - `docs/knowledge/features/data-model.md` and `remote-conversation-repository-reads-and-thread-store-history-paging.md`: preserve the contextual fold and held-row placement; a row key is not coverage proof.
 - Sibling `pyrycode/docs/protocol-mobile.md`, “A history entry”, “Joining a page to the live stream” and “Security model”: authoritative wire contract. The dispatch worktree resolves this sibling via `PYRYCODE_SRC`.
@@ -32,15 +34,15 @@ Sizing: about 750–950 written lines including the plan and probes, six product
 
 `ProjectionState` holds unsigned order per conversation. Divider identity transfer carries unsigned order unchanged. `observeSnapshot` publishes unsigned and representable signed positions alongside rows/suppression from the same generation. The source repository supplies host scope and the observation argument supplies conversation scope; these maps are not globally scoped identity stores. Live connection/ring ids and row keys never create claims.
 
-`HistoryCoverage.received` declines a whole page containing an unrepresentable id. This deliberately conservative compatibility guard preserves prior coverage, cursors and unknown completeness rather than allowing an upper-range terminal page to certify signed coverage. Fully representable pages retain current behavior. No persisted schema migration.
+`HistoryCoverage.received` declines claims from a whole page containing an unrepresentable id and marks coverage unknown with a sticky `unsignedIncomplete` compatibility flag. Later signed terminal pages cannot clear this uncertainty. `ThreadViewModel` prevents terminal walk settlement for incomplete signed coverage, retaining the request cursor and a demandable failure state; side and gap asks reopen a previously complete walk. Cache writes, cache reads and ViewModel seeding reject `atStart` whenever this flag is present. Existing lower-range behavior and opaque cursor handling remain; the additive flag records omitted-content uncertainty without migrating any ids or persisted unsigned claims.
 
 ## State and concurrency model
 
-No new jobs, flows, scopes, dispatchers or persistence. `ThreadProjection` continues its atomic `MutableStateFlow.update` merge with the current generation's held rows and unsigned order. Snapshot derivation reads both maps and rows together. Connection shutdown/remove discards the projection exactly as before; durable numeric identities remain daemon-authored and reusable across reconnect, never synthesized from connection-local state.
+No new jobs, flows, scopes or dispatchers. The existing coverage record gains only the omitted-content compatibility flag, defaulted for prior cache documents. `ThreadProjection` continues its atomic `MutableStateFlow.update` merge with the current generation's held rows and unsigned order. Snapshot derivation reads both maps and rows together. Connection shutdown/remove discards the projection exactly as before; durable numeric identities remain daemon-authored and reusable across reconnect, never synthesized from connection-local state.
 
 ## Error handling
 
-Strict structural decoding rejects noninteger/non-numeric, negative and overflowing identities; positive domain validation rejects zero. Exceptions have static content-free messages and stay within the existing awaiting request Result boundary. Malformed per-entry payloads still cost only their existing reducer entry. Timestamp parsing semantics remain unchanged. No new logs contain ids, timestamps or raw payload text; existing history request lifecycle logs remain the diagnostics surface.
+Strict structural decoding rejects noninteger/non-numeric, negative and overflowing identities; positive domain validation rejects zero. Exceptions have static content-free messages and stay within the existing awaiting request Result boundary. Malformed per-entry payloads still cost only their existing reducer entry. Timestamp parsing semantics remain unchanged. Unsigned-incomplete terminal settlement reuses the existing permanent-failure walk state, retaining a cursor and ordinary reader demand. A static `history_completeness_unavailable` event classifies this compatibility rejection. No logs contain ids, timestamps or raw payload text.
 
 ## Testing strategy
 
@@ -50,10 +52,10 @@ First run a decoder regression against current code and observe the upper-range 
 - All arrival permutations of disjoint equal/reversed-clock pages across the boundary, empty/singleton pages, start/middle/end overlap and repeated delivery, preserving held rows on both sides.
 - Folded assistant deltas across the boundary with duplicate/replayed deltas and tool separators, plus contextual compaction divider identity transfer.
 - Same row/numeric keys in different conversations and projection instances; live-only rows have no durable claims. Reconnect by constructing a fresh projection between deliveries.
-- Signed snapshot/reducer views omit upper ids; mixed upper-range pages cannot advance signed coverage or unknown completeness.
+- Signed snapshot/reducer views omit upper ids. Fresh upper-only/mixed pages and previously complete coverage cannot certify completeness through ViewModel settlement, cache write/read or reopen. Later signed terminal pages retain unsigned uncertainty; nonterminal cursor progression remains usable.
 - Correlated malformed-id request followed by a valid upper-id request proves collector survival.
 
-Run focused decoder, reducer, history/projection, coverage/cache and remote-repository unit classes with nonzero counts; lint, assembleDebug and forced Spotless. No Compose/device/scripted/live scenario is required: this is a data foundation preserving operator-facing behavior. After the final merge/push run the whole unit/shared suite, assembleDebug and `scripts/pre-verify.py --gradle` against the prepared PR body.
+Run focused decoder, reducer, history/projection, coverage/cache and remote-repository unit classes with nonzero counts; lint, assembleDebug and forced Spotless. No new Compose/device/scripted/live scenario is required: this is a data foundation preserving operator-facing behavior. After the final merge/push run the whole unit/shared suite, assembleDebug and `scripts/pre-verify.py --gradle` against the prepared PR body.
 
 ## Open Questions
 
@@ -74,7 +76,7 @@ Pending for the documentation stage:
 
 - [Trust boundaries] MUST FIX addressed in design: default numeric coercion or signed wrap could certify a different history entry. `ReadMarkIdSerializer` strictly parses uint64 JSON tokens; `HistoryEntry` rejects zero and signed construction rejects nonpositive ids. Probe malformed and boundary values.
 - [Tokens, secrets and credentials] No secret fields, credential storage or authentication changes. Numeric history ids are not capabilities; never use them outside host/conversation scope.
-- [Files and storage] No new files or cache schema. `HistoryCoverage.received` ignores unsupported whole pages so persisted claims cannot certify truncated upper-range identity or false terminal completeness. Migration is deferred to dependent coverage/cache/paging work.
+- [Files and storage] MUST FIX addressed after verifier finding 1: declining page claims alone did not constrain the independently saved `atStart`. Persist sticky `unsignedIncomplete` beside unknown coverage, preserve it through signed terminal pages and row binding/retention, and guard receive, walk settlement, cache save/read and ViewModel seed. Fresh upper-only/mixed pages and previously complete coverage are tested through real `FileConversationCache` instances and ViewModels. No unsigned persisted identity migration is introduced; #1910 owns it.
 - [Android attack surface] No Android component, intent, deep link, keyboard, provider or WebView changes; existing inert thread render paths remain.
 - [Cryptography] No cryptographic primitive, key or nonce changes. Existing Noise authentication keeps the relay outside the plaintext identity boundary.
 - [Network and I/O] Existing envelope caps, request timeouts, TLS and reconnect policy remain. Strict parsing rejects hostile numeric tokens without logging their content; request failure does not terminate inbound collection.
@@ -90,3 +92,5 @@ Pending for the documentation stage:
 - 2026-10-07: Kotlin erases `ULong` and `Long` constructor parameters to the same JVM signature. Put `unsignedId` last in the primary constructor, retaining the original signed secondary constructor's parameter order. Named unsigned construction and all existing signed fixtures remain supported; identity/projection contracts are unchanged.
 - 2026-10-07: Compilation identified two signed-only read-mark fixture reads as well as the fake-history accumulator; use `requireNotNull` on their unchanged lower-range inputs. No constructor fixtures or production read-mark paths migrate.
 - 2026-10-07: The reverse singleton/live-overlap probe exposed pre-existing late placement behavior also reproduced with ids 1–4. File #1913 and retain `lateDurableEvidence_doesNotStrandLiveDeltaBeyondItsHistorySeparator` ignored against it; repairing provisional live placements would change reconciliation outside this representation ticket. The unsigned overlap probe establishes the held live delta's durable position before surrounding pages and still tests both page orders, replay and exact claims.
+
+- 2026-10-07: Verifier finding 1 proved that separately persisted `atStart` bypassed the page-claim guard. Add sticky omitted-unsigned-content uncertainty and guard walk receive/save/settle/restore, including side asks after complete history and later signed terminal pages. Three production ViewModel/cache regressions failed first on missing unknown coverage. Security review updated to cover both completeness channels. Local additive overlap exists with #1818 and #1842 in `ThreadViewModel`.
