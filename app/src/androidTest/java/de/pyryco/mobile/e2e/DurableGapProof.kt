@@ -51,7 +51,9 @@ internal class DurableGapProof(
                     val rows = cache.readThread(serverId, conversationId).filterIsInstance<ThreadItem.MessageItem>()
                     val coverage = cache.readHistoryPosition(serverId, conversationId)?.coverage
                     // A stale opening page can cover state frames without covering the settled ping.
-                    if (rows.isNotEmpty() && coverage != null && coverage.spans.isNotEmpty() &&
+                    if (rows.isNotEmpty() &&
+                        coverage != null &&
+                        coverage.spans.isNotEmpty() &&
                         rows.all { row -> row.historyKeys().all { coverage.rowEntries[it].orEmpty().isNotEmpty() } }
                     ) {
                         break
