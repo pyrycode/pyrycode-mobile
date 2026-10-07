@@ -313,6 +313,9 @@ fun ThreadScreen(
     // MainActivity → vm::onOpenMarkdownLink; a failed read reuses [markdownOpenFailures].
     onOpenMarkdownLink: (String) -> Unit = {},
     attentionPill: (@Composable () -> Unit)? = null,
+    onDemandUnsignedHistoryGap: (ULong) -> Unit = { anchor ->
+        if (anchor <= Long.MAX_VALUE.toULong()) onDemandHistoryGap(anchor.toLong())
+    },
 ) {
     // #1357: the context notice's Compact pill takes the Actions menu's path, and no tap while
     // the published menu proves the command absent.
@@ -629,9 +632,9 @@ fun ThreadScreen(
                     // Movement can prefetch after a page settles; arrival alone never asks.
                     // The ViewModel remains the authoritative single-flight and termination gate.
                     val demandOlderHistory by rememberUpdatedState(onDemandOlderHistory)
-                    val demandHistoryGap by rememberUpdatedState(onDemandHistoryGap)
+                    val demandHistoryGap by rememberUpdatedState(onDemandUnsignedHistoryGap)
                     val gapMarkers by rememberUpdatedState(displayedHistoryMarkers)
-                    val gapHeights = remember(state.conversationId) { mutableStateMapOf<Long, Int>() }
+                    val gapHeights = remember(state.conversationId) { mutableStateMapOf<ULong, Int>() }
                     val historyLoading by rememberUpdatedState(state.historyTail == ThreadHistoryTail.Loading)
                     val pullForOlderHistory = { if (!historyLoading) demandOlderHistory() }
                     if (!state.hasMessages &&
@@ -741,7 +744,7 @@ fun ThreadScreen(
                                                 )
                                             if (marker != null) {
                                                 gapDemanded = true
-                                                demandHistoryGap(marker.anchor)
+                                                demandHistoryGap(marker.unsignedAnchor)
                                             } else {
                                                 demandOlderHistory()
                                             }
@@ -866,7 +869,13 @@ fun ThreadScreen(
                                 item(key = HISTORY_NEWEST_GAPS_KEY) {
                                     Column {
                                         gapMarkers.filter { it.beforeRow.isEmpty() }.forEach { marker ->
-                                            HistoryGapRow(marker.anchor, Modifier.onSizeChanged { gapHeights[marker.anchor] = it.height })
+                                            HistoryGapRow(
+                                                marker.unsignedAnchor,
+                                                Modifier.onSizeChanged {
+                                                    gapHeights[marker.unsignedAnchor] =
+                                                        it.height
+                                                },
+                                            )
                                         }
                                     }
                                 }
@@ -881,7 +890,13 @@ fun ThreadScreen(
                                 val chronologicalIndex = rows.size - 1 - reversedIndex
                                 ThreadRowContent(rowRelocationSpec) {
                                     historyMarkersFor(row, gapMarkers).forEach { marker ->
-                                        HistoryGapRow(marker.anchor, Modifier.onSizeChanged { gapHeights[marker.anchor] = it.height })
+                                        HistoryGapRow(
+                                            marker.unsignedAnchor,
+                                            Modifier.onSizeChanged {
+                                                gapHeights[marker.unsignedAnchor] =
+                                                    it.height
+                                            },
+                                        )
                                     }
                                     when (row) {
                                         is ThreadRow.Delivered ->

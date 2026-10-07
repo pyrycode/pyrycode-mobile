@@ -19,9 +19,21 @@ internal const val MAX_HISTORY_PAGES = 100
 
 /** Local marker identity plus the hashed logical row immediately above the uncovered interval. */
 data class ThreadHistoryMarker(
-    val anchor: Long,
     val beforeRow: String,
-)
+    val unsignedAnchor: ULong,
+) {
+    constructor(anchor: Long, beforeRow: String) : this(
+        beforeRow,
+        anchor.also { require(it >= 0) { "invalid signed history anchor" } }.toULong(),
+    )
+
+    /** Lower-range compatibility only; upper ids must be read through [unsignedAnchor]. */
+    val anchor: Long
+        get() {
+            check(unsignedAnchor <= Long.MAX_VALUE.toULong()) { "unsigned history anchor requires unsigned consumer" }
+            return unsignedAnchor.toLong()
+        }
+}
 
 /**
  * Why a history walk stopped, or `null` while it is still walking (#777, split by #778).

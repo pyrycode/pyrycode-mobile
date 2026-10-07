@@ -210,7 +210,7 @@ internal fun visibleHistoryMarker(
     rows: List<ThreadRow>,
     promptRows: Int,
     markers: List<ThreadHistoryMarker>,
-    heights: Map<Long, Int> = emptyMap(),
+    heights: Map<ULong, Int> = emptyMap(),
 ): ThreadHistoryMarker? =
     layout.visibleItemsInfo.sortedBy { it.index }.firstNotNullOfOrNull { item ->
         val row = rows.getOrNull(rows.lastIndex - (item.index - promptRows))
@@ -223,7 +223,7 @@ internal fun visibleHistoryMarker(
             }
         attached
             .mapNotNull { marker ->
-                val height = heights[marker.anchor] ?: 0
+                val height = heights[marker.unsignedAnchor] ?: 0
                 val visible =
                     edge - height < layout.viewportEndOffset &&
                         edge > layout.viewportStartOffset ||
@@ -236,7 +236,7 @@ internal fun visibleHistoryMarker(
 
 @Composable
 internal fun HistoryGapRow(
-    anchor: Long,
+    anchor: ULong,
     modifier: Modifier = Modifier,
 ) {
     Row(

@@ -64,3 +64,11 @@ Pending documentation stage:
 
 - `docs/knowledge/features/thread-screen-oldest-end-history-demand.md`, “The oldest-end history demand”: completed unsigned marker placement, measured selection, dispatch and refused cursor path; retain #1833 live-evidence ownership.
 - `docs/knowledge/features/remote-conversation-repository-reads-and-thread-store-history-paging.md`, “Resuming from the saved position”: unsigned restored gap targeting and display fragments with unchanged opaque cursors and unknown-coverage rules; retain #1833 live-evidence ownership.
+
+## Revisions
+
+2026-10-07: Unchanged-production regression executed one, failed one and skipped none: two restored received gaps produced only one marker. Red XML is retained at `/tmp/builder-1911/red.xml`. Migration includes `HistoryCoverage.displayRows`, whose signed fragment boundary lookups otherwise hide an upper-range gap inside a joined assistant row.
+
+2026-10-07: Kotlin erases unsigned and signed ids to the same JVM constructor shape. The unsigned marker primary constructor puts `beforeRow` first, and named unsigned arguments distinguish it from the retained `(anchor: Long, beforeRow: String)` constructor without adding a dummy state field.
+
+2026-10-07: Finished scope recount is approximately 650 written lines including plan and tests, six production files, no new exported types, seven production call sites and two compatibility reject checks. All size limits hold. The signed constructor/accessor and callback fixtures remain in place; the unsigned screen callback is appended to preserve positional caller compatibility.

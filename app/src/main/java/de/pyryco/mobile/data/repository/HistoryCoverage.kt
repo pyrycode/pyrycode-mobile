@@ -439,16 +439,16 @@ data class HistoryCoverage(
 
     /** Separate display fragments at verified holes; repository rows and cache identities stay held. */
     internal fun displayRows(rows: List<ThreadItem>): List<ThreadItem> {
-        if (gaps.isEmpty()) return rows
+        if (unsignedGaps.isEmpty()) return rows
         val reserved = rows.filterIsInstance<ThreadItem.MessageItem>().mapTo(HashSet()) { it.message.id }
         return rows.flatMap { row ->
             val message = (row as? ThreadItem.MessageItem)?.message ?: return@flatMap listOf(row)
             val segment = message.segment ?: return@flatMap listOf(row)
             val boundaries =
                 segment.deltas.indices.drop(1).filter { index ->
-                    val before = rowOrder[historyIdentity(listOf("delta", segment.turnId, segment.deltas[index - 1].seq))]
-                    val after = rowOrder[historyIdentity(listOf("delta", segment.turnId, segment.deltas[index].seq))]
-                    before != null && after != null && gaps.any { before <= it.anchor && after >= it.edge }
+                    val before = unsignedRowOrder[historyIdentity(listOf("delta", segment.turnId, segment.deltas[index - 1].seq))]
+                    val after = unsignedRowOrder[historyIdentity(listOf("delta", segment.turnId, segment.deltas[index].seq))]
+                    before != null && after != null && unsignedGaps.any { before <= it.anchor && after >= it.edge }
                 }
             if (boundaries.isEmpty()) return@flatMap listOf(row)
             var offset = 0
