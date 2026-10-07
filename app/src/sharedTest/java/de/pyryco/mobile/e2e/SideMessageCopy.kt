@@ -11,6 +11,7 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeTestRule
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.platform.app.InstrumentationRegistry
@@ -36,6 +37,9 @@ internal fun ComposeTestRule.assertSideMessageCopy(message: Message) {
                 hasAnyAncestor(sourceRow),
         ).performScrollTo().assertIsDisplayed()
     onAllNodes(timestamp, useUnmergedTree = true).assertCountEquals(0)
+    // A dismissible Top overlay notice can cover the target despite assertIsDisplayed succeeding.
+    val notices = onAllNodes(hasContentDescription(context.getString(R.string.thread_notice_dismiss)))
+    repeat(notices.fetchSemanticsNodes().size) { notices[0].performClick() }
     runOnIdle { clipboard.setPrimaryClip(ClipData.newPlainText("copy baseline", "unrelated baseline")) }
     copy.performTouchInput { click(center) }
     runOnIdle {

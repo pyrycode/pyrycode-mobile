@@ -9,13 +9,25 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.conversations.components.MessageBubble
+import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
+import de.pyryco.mobile.ui.conversations.thread.ThreadUiState
+import de.pyryco.mobile.ui.conversations.thread.UsageLimitDismissals
+import de.pyryco.mobile.ui.conversations.thread.dismissalKey
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -24,6 +36,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.GraphicsMode
 
 /** Exercises the same copy assertion as the live and scripted scenarios, without daemon traffic. */
 @RunWith(AndroidJUnit4::class)
@@ -99,6 +112,39 @@ class SideMessageCopyTest {
     fun anotherRowsTimestamp_doesNotCountAsCopiedMessagesTimestamp() {
         showMessages(otherTimestamp = true)
         composeRule.assertSideMessageCopy(message)
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Test
+    fun realThreadWarningOverlay_isDismissedBeforeThePointerCopy() {
+        val sent = message.copy(role = Role.User, content = "Reply with exactly the word: ping (nothing else).")
+        val warning = UsageLimitReading("allowed_warning", "seven_day", 0L, 0.8, null)
+        var dismissed by mutableStateOf(emptySet<UsageLimitDismissals.Key>())
+        composeRule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, 732.dp))) {
+                PyrycodeMobileTheme {
+                    ThreadScreen(
+                        state =
+                            ThreadUiState(
+                                conversationId = "conversation",
+                                displayName = "Ping",
+                                hasMessages = true,
+                                items = listOf(sent, message.copy(id = "reply", content = "ping")).map { ThreadItem.MessageItem(it) },
+                            ),
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                        usageLimit = warning,
+                        dismissedUsageLimits = dismissed,
+                        onDismissUsageLimit = { dismissed = dismissed + it.dismissalKey() },
+                    )
+                }
+            }
+        }
+        composeRule.assertSideMessageCopy(sent)
+        composeRule.runOnIdle { assertEquals(setOf(warning.dismissalKey()), dismissed) }
     }
 
     @Test
