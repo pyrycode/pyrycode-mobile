@@ -58,3 +58,7 @@ Pending documentation stage: update `docs/knowledge/features/message-bubble-test
 ### 2026-10-08 — distinguish popup root geometry from screen geometry
 
 Inspection of the passing scripted trace shows Android's `getGlobalVisibleRect` uses the popup root coordinate system, so that rectangle cannot be compared directly with the body window rectangle. Record the menu's actual screen rectangle through `getLocationOnScreen` as well as its root-visible rectangle, and name the body coordinate system explicitly. Record the menu's shown/visible state after the click too, so a recurrence can distinguish a still-open menu from one dismissed without the expected clipboard result. The platform click itself stays unchanged. The focused live reproduction with the two preceding scenarios passed all three selected methods; it does not establish the historical trigger or replace full dispatcher live acceptance.
+
+### 2026-10-08 — visibility alone is not dismissal evidence
+
+The final merged-branch scripted pass recorded `shown=true` and `visible=true` after Copy while the exact selected word was on the clipboard. Withdraw the interpretation that these flags alone distinguish an open popup from a dismissed one: a retained View tree can still report them. Add `isAttachedToWindow` to both menu checkpoints. Record these as API observations, not proof that a callback ran or a popup was dismissed; the exact clipboard assertion remains the Copy success contract.

@@ -143,7 +143,7 @@ private fun View.copyMenuStatus(): String {
     val location = IntArray(2)
     getLocationOnScreen(location)
     val screenBounds = Rect(location[0], location[1], location[0] + width, location[1] + height)
-    return "menuScreen=$screenBounds rootVisible=$rootVisibleBounds visible=$visible shown=$isShown " +
+    return "menuScreen=$screenBounds rootVisible=$rootVisibleBounds visible=$visible shown=$isShown attached=$isAttachedToWindow " +
         "enabled=$isEnabled menuWindowFocused=${hasWindowFocus()} menuPackage=${context.opPackageName}"
 }
 
