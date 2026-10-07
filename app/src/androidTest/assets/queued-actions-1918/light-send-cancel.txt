@@ -1,1 +1,1 @@
-figma=848:9517 theme=LIGHT wallpaper=false sendNow=true sizePx=412x892 viewportDp=412x892 hardwareAccelerated=true actions=inversePrimary bubbleAndClockAlpha=0.6
+figma=848:9517 theme=LIGHT wallpaper=false sendNow=true sizePx=412x892 viewportDp=412x892 hardwareAccelerated=true actions=primary bubbleAndClockAlpha=0.6

@@ -4,14 +4,17 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.view.View
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -35,8 +38,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.width
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.repository.QueuedMessage
+import de.pyryco.mobile.data.repository.SessionCapabilities
+import de.pyryco.mobile.ui.conversations.thread.ThreadRunConfig
+import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
+import de.pyryco.mobile.ui.conversations.thread.ThreadUiState
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.theme.userBubbleContainer
+import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -227,60 +237,161 @@ class QueuedMessageRowGeometryTest {
     fun palettes_keepActionsOpaqueAndOnlyBubbleAndWaitingDimmed() {
         var dark by mutableStateOf(false)
         var paired by mutableStateOf(true)
+        var productionCanvas by mutableStateOf(false)
+        var showRows by mutableStateOf(true)
         var view: View? = null
         var tint = Color.Unspecified
         var fill = Color.Unspecified
-        var background = Color.Unspecified
         var waitingTint = Color.Unspecified
+        val rows = listOf(SHORT, WRAPPING, "unbroken".repeat(20))
         rule.setContent {
-            PyrycodeMobileTheme(darkTheme = dark, dynamicColor = false) {
-                view = LocalView.current
-                tint = MaterialTheme.colorScheme.inversePrimary
-                fill = MaterialTheme.colorScheme.userBubbleContainer
-                background = MaterialTheme.colorScheme.background
-                waitingTint = MaterialTheme.colorScheme.onSurfaceVariant
-                Surface(color = background) { QueuedMessageRow(SHORT, {}, onSendNow = if (paired) ({}) else null) }
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, 892.dp))) {
+                PyrycodeMobileTheme(darkTheme = dark, dynamicColor = false) {
+                    view = LocalView.current
+                    tint = MaterialTheme.colorScheme.primary
+                    fill = MaterialTheme.colorScheme.userBubbleContainer
+                    waitingTint = MaterialTheme.colorScheme.onSurfaceVariant
+                    if (productionCanvas) {
+                        // Exercise ThreadScreen's actual radial gradient, scrim and queued-row placement.
+                        ThreadScreen(
+                            state =
+                                ThreadUiState(
+                                    conversationId = "contrast-fixture",
+                                    displayName = "Queued contrast",
+                                    isPromoted = true,
+                                    hasMessages = true,
+                                    queuedMessages =
+                                        if (showRows) {
+                                            rows.mapIndexed { index, text ->
+                                                QueuedMessage(index.toLong(), text, Instant.parse("2026-10-07T12:00:00Z"))
+                                            }
+                                        } else {
+                                            emptyList()
+                                        },
+                                    runConfig =
+                                        ThreadRunConfig(
+                                            sessionId = "contrast-session",
+                                            settingsAvailable = true,
+                                            capabilities = SessionCapabilities(emptyList(), emptyList(), midTurnInput = paired),
+                                        ),
+                                ),
+                            onBack = {},
+                            onSendMessage = {},
+                            connectionState = ConnectionState.Connected,
+                            onRetry = {},
+                        )
+                    } else {
+                        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                            Column {
+                                if (showRows) rows.forEach { QueuedMessageRow(it, {}, onSendNow = if (paired) ({}) else null) }
+                            }
+                        }
+                    }
+                }
             }
         }
-        for (isDark in listOf(false, true)) {
-            for (hasSend in listOf(true, false)) {
-                rule.runOnIdle {
-                    dark = isDark
-                    paired = hasSend
-                }
-                val glyphs = listOf("queued-cancel-glyph") + if (hasSend) listOf("queued-send-glyph") else emptyList()
-                val glyphBounds = glyphs.map { rule.onNodeWithTag(it, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot }
-                val bubble = rule.onNodeWithTag("queued-bubble", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-                val waiting = rule.onNodeWithTag("queued-waiting-glyph", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-                rule.runOnIdle {
-                    val root = checkNotNull(view)
-                    val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
-                    root.draw(Canvas(bitmap))
 
-                    fun matches(
-                        actual: Int,
-                        expected: Color,
-                    ): Boolean {
-                        val color = Color(actual)
-                        return kotlin.math.abs(color.red - expected.red) <= 1.1f / 255f &&
-                            kotlin.math.abs(color.green - expected.green) <= 1.1f / 255f &&
-                            kotlin.math.abs(color.blue - expected.blue) <= 1.1f / 255f
+        fun matches(
+            actual: Color,
+            expected: Color,
+        ): Boolean =
+            kotlin.math.abs(actual.red - expected.red) <= 1.1f / 255f &&
+                kotlin.math.abs(actual.green - expected.green) <= 1.1f / 255f &&
+                kotlin.math.abs(actual.blue - expected.blue) <= 1.1f / 255f
+
+        fun contrast(
+            first: Color,
+            second: Color,
+        ): Float = (maxOf(first.luminance(), second.luminance()) + 0.05f) / (minOf(first.luminance(), second.luminance()) + 0.05f)
+
+        fun snapshot(): Bitmap =
+            rule.runOnIdle {
+                val root = checkNotNull(view)
+                Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888).also { root.draw(Canvas(it)) }
+            }
+
+        for (isProduction in listOf(false, true)) {
+            for (isDark in listOf(false, true)) {
+                for (hasSend in listOf(true, false)) {
+                    rule.runOnIdle {
+                        productionCanvas = isProduction
+                        dark = isDark
+                        paired = hasSend
+                        showRows = true
                     }
+                    val tags = listOf("queued-cancel-glyph") + if (hasSend) listOf("queued-send-glyph") else emptyList()
+                    val glyphs =
+                        tags.flatMap { tag ->
+                            rule.onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes().map { tag to it.boundsInRoot }
+                        }
+                    assertEquals(if (hasSend) 6 else 3, glyphs.size)
+                    val bubbles =
+                        rule
+                            .onAllNodesWithTag(
+                                "queued-bubble",
+                                useUnmergedTree = true,
+                            ).fetchSemanticsNodes()
+                            .map { it.boundsInRoot }
+                    val waiting =
+                        rule
+                            .onAllNodesWithTag(
+                                "queued-waiting-glyph",
+                                useUnmergedTree = true,
+                            ).fetchSemanticsNodes()
+                            .map { it.boundsInRoot }
+                    val painted = snapshot()
+                    // A second render without rows measures the canvas at exactly the same pixels,
+                    // including the gradient under each glyph rather than a nominal flat surface.
+                    rule.runOnIdle { showRows = false }
+                    val canvas = snapshot()
+
+                    fun background(
+                        x: Int,
+                        y: Int,
+                    ) = Color(canvas.getPixel(x, y))
 
                     fun hasPaint(
                         bounds: androidx.compose.ui.geometry.Rect,
-                        expected: Color,
+                        expected: (Int, Int) -> Color,
                     ): Boolean =
                         (bounds.top.toInt() until bounds.bottom.toInt()).any { y ->
-                            (bounds.left.toInt() until bounds.right.toInt()).any { x -> matches(bitmap.getPixel(x, y), expected) }
+                            (bounds.left.toInt() until bounds.right.toInt()).any { x ->
+                                matches(Color(painted.getPixel(x, y)), expected(x, y))
+                            }
                         }
                     try {
-                        glyphBounds.forEach { assertTrue("full-opacity inversePrimary glyph", hasPaint(it, tint)) }
-                        val dimFill = fill.copy(alpha = 0.6f).compositeOver(background)
-                        assertTrue("dimmed bubble", matches(bitmap.getPixel((bubble.left + 12).toInt(), (bubble.top + 8).toInt()), dimFill))
-                        assertTrue("dimmed waiting glyph", hasPaint(waiting, waitingTint.copy(alpha = 0.6f).compositeOver(background)))
+                        val mode = "production=$isProduction dark=$isDark sendNow=$hasSend"
+                        glyphs.forEach { (tag, bounds) ->
+                            val pixels =
+                                (bounds.top.toInt() until bounds.bottom.toInt()).flatMap { y ->
+                                    (bounds.left.toInt() until bounds.right.toInt()).map { x -> x to y }
+                                }
+                            // The highest-contrast rendered pixel finds solid glyph paint, excluding AA edges.
+                            val foreground =
+                                pixels
+                                    .maxBy { (x, y) -> contrast(Color(painted.getPixel(x, y)), background(x, y)) }
+                                    .let { (x, y) -> Color(painted.getPixel(x, y)) }
+                            val minimumContrast = pixels.minOf { (x, y) -> contrast(foreground, background(x, y)) }
+                            assertTrue("$tag $mode contrast must be at least 3:1; got $minimumContrast", minimumContrast >= 3f)
+                            assertTrue("$tag $mode full-opacity primary glyph", hasPaint(bounds) { _, _ -> tint })
+                        }
+                        bubbles.forEach { bounds ->
+                            val x = (bounds.left + 12).toInt()
+                            val y = (bounds.top + 8).toInt()
+                            val dimFill = fill.copy(alpha = 0.6f).compositeOver(background(x, y))
+                            assertTrue("dimmed bubble $mode", matches(Color(painted.getPixel(x, y)), dimFill))
+                        }
+                        waiting.forEach { bounds ->
+                            assertTrue(
+                                "dimmed waiting glyph $mode",
+                                hasPaint(bounds) { x, y ->
+                                    waitingTint.copy(alpha = 0.6f).compositeOver(background(x, y))
+                                },
+                            )
+                        }
                     } finally {
-                        bitmap.recycle()
+                        painted.recycle()
+                        canvas.recycle()
                     }
                 }
             }

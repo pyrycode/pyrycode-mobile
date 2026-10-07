@@ -974,7 +974,7 @@ class ThreadDesignCaptureTest {
                         "figma=848:9517 theme=$theme wallpaper=false sendNow=$enabled " +
                             "sizePx=${bitmap.width}x${bitmap.height} viewportDp=412x892 " +
                             "hardwareAccelerated=${design.view.isHardwareAccelerated} " +
-                            "actions=inversePrimary bubbleAndClockAlpha=0.6\n",
+                            "actions=primary bubbleAndClockAlpha=0.6\n",
                     )
                 } finally {
                     bitmap.recycle()

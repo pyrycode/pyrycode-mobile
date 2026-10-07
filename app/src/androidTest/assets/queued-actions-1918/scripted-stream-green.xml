@@ -1,0 +1,1 @@
+<testsuites><testsuite name="de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest" tests="1" failures="0" errors="0" skipped="0" time="9.503"><testcase classname="de.pyryco.mobile.e2e.DeterministicInteractiveStreamE2ETest" name="interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread" /></testsuite></testsuites>

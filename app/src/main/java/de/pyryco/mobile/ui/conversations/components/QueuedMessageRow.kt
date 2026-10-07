@@ -179,7 +179,9 @@ private fun QueuedActions(
                                         .size(
                                             QueuedActionGlyph,
                                         ).testTag(if (send) "queued-send-glyph" else "queued-cancel-glyph"),
-                                tint = MaterialTheme.colorScheme.inversePrimary,
+                                // Figma's inversePrimary falls below 3:1 on the thread canvas.
+                                // Use the copy/reply Primary contrast resolution, without a backing.
+                                tint = MaterialTheme.colorScheme.primary,
                             )
                         },
                     ) { children, targetConstraints ->
