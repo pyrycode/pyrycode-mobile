@@ -32,6 +32,7 @@ import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.repository.BackgroundTaskProjection
 import de.pyryco.mobile.data.repository.FinishedBackgroundTasks
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.e2e.verifyAgentRunNavigation
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -355,6 +356,28 @@ class BackgroundAgentBlocksScreenTest {
         // The run still opens on its own tap -- only the marker's auto-expand side effect was removed.
         compose.onNodeWithText("Using tools: 2", substring = true).performClick()
         compose.onNodeWithText("Read", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test fun settledNavigationThenOwnedPointerTapsOpenAndCloseALongChildRun() {
+        val paragraphs =
+            (0 until 24).map { n ->
+                ThreadItem.MessageItem(Message("prose$n", "s", Role.Assistant, "Owned paragraph $n", ts, false, parentToolUseId = "a"))
+            }
+        mount(
+            listOf(tool("a", "Agent"), launch(), tool("child", "Read", "a"), tool("child2", "Glob", "a")) +
+                paragraphs + finish() + user("Later"),
+            true,
+        )
+        compose.verifyAgentRunNavigation(
+            agentId = "a",
+            runId = "child",
+            childIds = listOf("child", "child2") + paragraphs.map { it.message.id },
+            ownedChild = hasText("Owned paragraph 0") and hasAnyAncestor(hasTestTag("background-agent-child:a")),
+            goLabel = "Go to agent ↓",
+            expandLabel = "Show tool uses",
+            collapseLabel = "Hide tool uses",
+            evidence = { println(it) },
+        )
     }
 
     @Test fun rosterBeforeStartMovesBlockAndBackfillNeverDuplicatesIt() {
