@@ -12,8 +12,10 @@ to scripted `ping` alongside the original
 `interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread` in the same harness.
 It proves newest-page delivery after daemon replay is emptied and multi-page older catch-up
 through reader pulls. See [scripted ping guidance](#scripted-ping-durable-gap-proof-1842).
-The rung-3 `InteractiveStreamE2ETest` operator-flow extension and external app force-stop
-proof remain owned by [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833).
+[#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) strengthens rung-3
+`InteractiveStreamE2ETest.interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect` with the same
+multi-page durable gap and real-Claude turns, and adds an external app force-stop proof that a
+host process drives. See [the force-stop procedure](#external-app-force-stop-proof-1833).
 
 **Suggested next reply (#1866).** Rung 3 adds
 `InteractiveStreamE2ETest.interactiveTurn_replySuggestion_longPressSends`; rung 4
@@ -1138,6 +1140,27 @@ scripts/android-test-gate.py live`, 2026-09-23; branch `feature/861` at `24c9490
 `origin/main` at `148b9f7225`) re-proved the same thirteen scenarios with step 6's reopen dropped — see
 the dedicated entry below. The live run that closed #1352 (dispatcher real-claude gate, 2026-10-02)
 re-proved this scenario, among fifty executed with none failed, with the reconnect re-ask gone.
+
+**[#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) makes the gap durable.** Ring
+replay alone could satisfy the scenario above, so it never showed that missed older content comes
+from durable history. The chat is now promoted to a channel, so host posts can address it. After the
+phone settles its ping it cycles its link once and waits until its cache holds a durable claim for
+each baseline message (`DurableGapProof.cacheBaseline`). Nonempty coverage can predate the settled
+ping, so coverage alone is no fence. While the phone is offline the owned daemon accepts two batches
+of 120 synthetic posts, with the peer's real-Claude `OFFLINE_PROMPT` turn between them. The fences
+match the [scripted twin](#scripted-ping-durable-gap-proof-1842): the reply waits for the first
+batch's last post `assistant_delta`, and the second batch waits for the second `turn_end` whose
+`producer` is not `channel_post`. The owned daemon then restarts with its durable home kept, which
+empties its replay ring. On reconnect the open thread must ask once for the newest page without a
+gesture and show a gap marker, while the oldest post and the peer's reply stay absent. Physical
+reader pulls then fetch one older page each until the marker closes. The offline list, reopen and
+readability steps and the settled-cache wait are unchanged. Still two real-Claude turns.
+
+The rendered checks matter as much as the repository ones. Repository chronology can pass while the
+thread drops, duplicates or misplaces the recovered reply. Both this method and the twin reveal the
+cached rows, the recovered prompt and reply and the posts beside them, assert each is drawn once,
+and compare the reverse lazy list's scroll coordinate with each revealed node's position, so order
+holds across viewports. Each reveal must issue no history request.
 
 The **offscreen-reply-survives-reconnect** scenario (#1581 —
 `interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk`) is likewise **always-on**: it
@@ -2738,6 +2761,43 @@ exactly-once reply, settled reply, reply placement between batches and held cach
 These checks prove delivery and reader demand rather than automatic viewport following. See
 [the history-demand contract](knowledge/features/thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777).
 
+### External app force-stop proof (#1833)
+
+Stopping the app also kills its instrumentation, so no device test can prove real app process death.
+Rebuilding the instrumentation's object graph proves a different boundary. A host process drives
+this proof instead:
+
+```bash
+PYRYCODE_SRC=<pyrycode checkout> PYRYCODE_RELAY_SRC=<relay checkout> python3 scripts/e2e-force-stop-proof.py
+```
+
+It is a hand-run proof, not a configured gate, and it spends no real-Claude turn: the isolated
+daemon runs a scripted child and channel posts are host-side. It builds both APKs, takes the
+host-wide device hold, boots its own emulator from the managed `pixel2Api33Atd` AVD and installs
+once. `EXTERNAL_FORCE_STOP_PROOF=1` makes `scripts/e2e-emulator.sh` select only
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_externalForceStop_preparesSettledChannel`;
+ordinary `ping` keeps both of its methods. The preparation method promotes a fresh channel, posts
+one synthetic baseline message, waits until the phone cache holds it settled and writes the channel
+name, prefix and conversation id to an app-private fixture.
+
+After instrumentation exits, the harness runs the proof's owned worker. It opens the channel through
+UI Automator, records the app PID, force-stops the app without clearing data and requires the PID to
+be gone. It then posts one run-unique message through the owned daemon controller and restarts that
+daemon, so only durable history can deliver it. It relaunches the app, opens the channel and
+requires the new post drawn exactly once without scrolling, under a new PID. Evidence is an
+allowlist: daemon version and revision, app revision, device SDK and image, conversation id, the
+synthetic identifier and text, PID transitions and result. No raw UI dump, payload, cursor or
+credential is kept.
+
+Failure and cancellation must not leave owned processes running or release the device early.
+Python's `subprocess.run` kills a Bash child with SIGKILL when interrupted, which skips the
+harness's EXIT trap. The proof starts the harness in its own session, forwards cancellation as
+SIGTERM to that group and waits while the EXIT trap reaps the daemon, relay and controller. The
+harness's INT and TERM traps only exit, so cleanup runs once, from EXIT. Emulator teardown then
+reaps the emulator even when ADB times out or fails; see [owned emulator
+evidence](knowledge/features/development-verification-emulator-evidence.md). A SIGKILL of the proof
+itself runs no cleanup, though the kernel still drops the device lock.
+
 ### Reopen-stream proof (#1762)
 
 `reopen-stream` selects
@@ -3029,6 +3089,24 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+**Durable gap across reconnect and process death (#1833, 2026-10-07).** All runs are at
+`feature/1833` `5b2e885c`, with the isolated daemon at pyrycode `6019328b` on `pixel2Api33Atd`.
+Hand-run scripted `ping` executed **2, passed 2, failed 0, skipped 0**, passing both
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread`
+and `interactiveTurn_seededChannel_durableGapCatchUp`. The external force-stop proof passed: its
+preparation method executed **1, passed 1, failed 0, skipped 0**, the actual app PID went from
+present to absent and was replaced after relaunch, and the run-unique post was drawn once without
+scrolling. A hand-run fresh full live suite through the repository's live gate, `python3
+scripts/android-test-gate.py live` with Claude Code 2.1.280, executed **64, passed 63, failed 1,
+skipped 0**. Its report names
+`InteractiveStreamE2ETest.interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect` as executed and
+passed. The one failure, `interactiveTurn_archiveRestore_roundTripsListMembership`, timed out
+waiting for a renamed chat on the list; this ticket does not touch it, it passed a same-tree re-run
+(1 executed, 1 passed), and it is tracked as flaky on
+[#1870](https://github.com/pyrycode/pyrycode-mobile/issues/1870). Sanitized XML, checksums and
+revisions are retained under `scripts/e2e-fixtures/1833-*`. The script tests, including the
+ADB-failure teardown tests, ran 168 with none failing.
 
 **Reconnect newest-page handoff (#1842, 2026-10-07).** The
 [verifier verdict](https://github.com/pyrycode/pyrycode-mobile/pull/1915#issuecomment-6038977116)
@@ -4564,8 +4642,9 @@ The remaining checks here are specific to a real relay or real Claude execution:
   `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_durableGapCatchUp`
   is selected by ordinary `ping` and configured `scripted-all`, alongside the original ping.
   [Counted evidence](#verification-status) closes this deterministic delivery repair.
-  [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) retains the rung-3
-  `InteractiveStreamE2ETest` operator-flow extension and external app force-stop proof.
+  [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) closed the rung-3
+  `InteractiveStreamE2ETest` operator-flow extension and the
+  [external app force-stop proof](#external-app-force-stop-proof-1833).
   The pre-ship command remains `python3 scripts/android-test-gate.py live`.
 
 - **Default confirmation pills (#1851):** the existing rung-3

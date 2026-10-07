@@ -475,5 +475,11 @@ position could reach disk before rows. Failed row writes cannot advance claims; 
 conservative state. Trimming and changed/missing retained rows invalidate coverage, and the later
 state write must retain the trim's backwards cursor/stop reset. See [the two file writers](conversation-cache.md#the-thread-documents-two-writers-1354)
 and [the wrapper's saved position](caching-conversation-repository.md#the-saved-history-position-1354).
-Independent live, deterministic multi-page-gap and external force-stop proof belongs to
-[#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833); #1832 does not establish those results.
+[#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) supplies the device proof these JVM
+tests cannot. After the owned daemon restarts with its durable home kept and its replay ring
+emptied, both the real-Claude offline-read method and its scripted twin show one newest ask without
+a gesture, a remaining gap marker, one older page per physical reader pull, and every missed post
+and the completed reply drawn once in order. The external force-stop proof shows a post made while
+the app process was dead arriving once after relaunch, without scrolling, with the saved cache
+intact. Counts and revisions are in the [#1833
+evidence](../../e2e-interactive-stream.md#verification-status).

@@ -343,8 +343,15 @@ This replaces #1354's accepted position-before-row window and unresolved saved-p
 Newest asks preserve coverage and queue behind outstanding asks; reader pulls fill one targeted
 gap page at a time without changing the ordinary backwards walk. Cursor refusal preserves gap
 metadata while resetting only the refused walk. Failures log static events without cursors, entry
-content or row proofs. Independent live, deterministic multi-page-gap and external force-stop
-proof remains with [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833).
+content or row proofs.
+
+[#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) proves the saved position across
+real process death. The external force-stop proof stops the actual app process without clearing
+data, posts while it is dead, relaunches it under a new PID and finds the post drawn once without
+scrolling, so the cached rows and saved position survived and only the newest page was needed. The
+live and scripted gap proofs keep the cached baseline rows readable through reconnect while reader
+pulls fill the durable gap. See the [#1833
+evidence](../../e2e-interactive-stream.md#verification-status).
 
 ## Wiring — under `decorateRepository`, not in it
 
@@ -462,8 +469,10 @@ row.
 - Gated deletion during fallback reads, between row/state writes, coverage-null writes and observer
   writes cannot recreate disk content; late writes are also rejected.
 
-These probes use production merges and fresh file-cache instances. Independent live/force-stop
-proof belongs to #1833 and is not established by these tests.
+These probes use production merges and fresh file-cache instances. Device proof is separate: #1833's
+live, scripted and external force-stop runs, recorded in the [#1833
+evidence](../../e2e-interactive-stream.md#verification-status). The JVM probes do not establish
+those results.
 
 No Compose UI test for the original restore: restored rows draw through the same composables a
 live row does, below the
