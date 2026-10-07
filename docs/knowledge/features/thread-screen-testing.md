@@ -71,6 +71,20 @@ Before physical clicks, wait for host focus after resizing, move the target into
 the clear area, assert selection, and restore actions to the newest resting end.
 Follow-test swipes must start between the bars to reach the list.
 
+`ThreadScreenHistoryTest` measures the [two-current-viewport prefetch band](thread-screen-oldest-end-history-demand.md)
+before and after reader movement. Uniform fixtures need enough rows for the measured
+outside position; a fixed count of short rows or raw-pixel drag can exercise a different
+range at device density. Estimate row pitch only from fully visible rows that pass
+`isDisplayed()`: lazy prefetch can retain an unplaced row's old semantic bounds, making
+an offscreen older row appear below a newer row and corrupting the distance estimate.
+Use settled, immediate index jumps for setup, assert the intended range with a margin,
+and scale touch movement to the measured viewport while keeping it between the bars.
+For drag-distance assertions, pause before releasing so a continuing fling does not
+change the measured range. Keep no-demand outside, one-demand inside with the oldest
+row hidden, and exact held-page index/offset anchoring with another demand only after
+further movement. See [#1886's review](https://github.com/pyrycode/pyrycode-mobile/pull/1901#issuecomment-6034934763)
+for the four methods' Robolectric and managed-device execution evidence.
+
 `ThreadChromeTest` covers measured draft/attachment resizing, resting gaps, blank
 chrome isolation, gradual attachment swipes and long-press selection/dragging.
 `ThreadMessageAreaTopTest`, `ThreadFrameTest`, `ThreadScreenShortStreamTest` and
