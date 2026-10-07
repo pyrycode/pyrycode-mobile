@@ -15,6 +15,12 @@ also copies arrived source during streaming and after completion. This adds no
 scenario or real-Claude turn; the pre-ship command remains
 `python3 scripts/android-test-gate.py live`.
 
+The shared helper repair (#1878) keeps both scenarios' reply and exact-source
+pointer-copy checks. Timestamp absence is scoped to the source row's complete
+localized value, and dismissible notices are cleared before the copy tap so a
+usage warning cannot cover it. The helper and its eight deterministic regressions
+live in shared tests; see [copy testing](knowledge/features/message-bubble-testing.md#testing).
+
 Recent-conversation Direct Share (#1729) is covered at rung 3 by
 `InteractiveStreamE2ETest.interactiveTurn_directShareShortcut_arrivesAtPeerWithItsBytes` and at rung 4
 by `DeterministicInteractiveStreamE2ETest.interactiveTurn_directShareShortcut_stagesBeforeExplicitSend`
@@ -2868,6 +2874,24 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
+**Side-copy selector and notice repair (#1878, 2026-10-07).** The dispatcher full
+live command `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`
+tested `9b55c94b107c` merged with `origin/main` at `6efbbaffc162`:
+**63 executed, 61 passed, 2 failed, 0 skipped**. The supplied fresh JUnit gate
+report explicitly records
+`InteractiveStreamE2ETest.interactiveTurn_pingPrompt_streamsPingReplyIntoThread`
+as **passed in the full suite**, with its reply and both side-copy checks retained.
+The two failures were delete-conversation and archive/restore; both passed on the
+dispatcher's same-tree rerun. The dispatcher accepted the gate, but the original
+full run still had two failures. See [counted gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1878#issuecomment-6032410265).
+The report identity is `2026-10-07T06-12-15-017Z`; no daemon revision annotation
+was supplied. The verifier's `scripted-all` run executed/passed **19, failed 0,
+skipped 0**, including the held-stream copy scenario. The builder's focused ping
+pass (**1 executed, 0 failed, 0 skipped**) is separate repair evidence, not the
+full-suite result. [Verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1880#issuecomment-6032131614)
+also confirms the old-helper regression failed (**1 executed, 1 failed, 0 skipped**)
+and all eight repaired shared regressions passed (**8 executed, 0 failed, 0 skipped**).
+
 **Side-message copy (#1817, 2026-10-07).** The fresh dispatcher full live command
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` ran
 branch `7f8898f6f0` merged with `origin/main` at `574a015f2d`: **63 executed,
@@ -4254,6 +4278,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Side-copy selector and notice repair (#1878):** the existing rung-3
+  `InteractiveStreamE2ETest.interactiveTurn_pingPrompt_streamsPingReplyIntoThread`
+  and rung-4
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`
+  retain reply/source-copy assertions with row-scoped timestamps and notice
+  preparation. [Counted evidence](#verification-status) closes the repair's
+  full-live handoff. No new scenario or real-Claude turn is added; the pre-ship
+  command remains `python3 scripts/android-test-gate.py live`.
 
 - **Side-message copy (#1817):** the rung-3 ping method and rung-4 held `stream`
   method named in [the ladder](#the-ladder-reliable--flaky) cover source copy with
