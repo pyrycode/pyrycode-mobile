@@ -91,6 +91,49 @@ Copy completion nor the origin of invalid attribution; Android 13 uses a local t
 Compose 1.10.4 writes synchronously, so a suspend API alone proves no scheduling cause. See
 the [scenario contract and counted evidence](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
 
+The #1931 recurrence still does not establish a platform trigger: the #1918 full run
+timed out after Copy (**65 executed, 2 failed, 0 skipped**) and the same-tree rerun
+passed (**2 executed, 0 failed, 0 skipped**), without retaining the selection or
+clipboard outcome. The repair makes that evidence loss actionable, rather than
+claiming to fix an unobserved selection/Copy cause. See the
+[investigation](https://github.com/pyrycode/pyrycode-mobile/issues/1931#issuecomment-6047772841).
+
+`FinishedReplySelection` records content-free checkpoints at the measured press,
+after selection, and immediately before/after the single platform Copy action.
+They include body bounds in window coordinates, local press and layout size,
+public selection range (explicitly `unknown` when unavailable), activity focus,
+finishing/destroyed state, focused-view class and operation package. Menu fields
+include screen bounds, root-visible bounds, shown/visible/attached/enabled flags,
+window focus and operation package. Popup-root bounds cannot be compared directly
+with body window bounds. Retained menu flags do not prove callback delivery or
+popup dismissal, and post-teardown focus cannot establish focus at Copy.
+
+Each UI-thread clipboard observation reads one snapshot and classifies absent,
+zero-item, non-text, baseline, selected-word, whole-reply, empty-text, known-reply
+span or unrelated-text outcomes. Metadata includes item count, text length and clip
+timestamp; unrelated text gets only a SHA-256 of its first 256 characters, with no
+raw text or label. Retain at most six outcome transitions, the observation count
+and latest outcome. Timeout diagnostics include these and the final activity
+checkpoint before teardown, preserving the original timeout as cause. A null read
+does not establish empty system storage or focus loss. Clipboard exceptions still
+propagate, and the deadline, one-Copy action and exact success contract remain intact.
+
+A control requiring baseline history must release its real replacement from the
+helper's recorded baseline snapshot (`onBaselineObserved`), not a timer or an earlier
+independent read. `wrongWordAfterBaseline_reportsTheLastOutcomeAndFocusBeforeTeardown`
+delays assertion start by one second and releases `jade` via `CompletableDeferred`;
+it requires baseline history, the final wrong-word outcome and before-teardown focus.
+Device controls also retain delayed success, attribution enforcement, unchanged
+baseline/whole-reply rejection, absent/non-text outcomes and bounded private-text
+metadata. The repaired focused class passed **8 executed, 8 passed, 0 failed,
+0 skipped**. Fresh verifier UI coverage passed all eight controls within **205
+executed, 205 passed, 0 failed, 1 skipped**; `scripted-all` passed the named selection
+twin within **22 executed, 22 passed, 0 failed, 0 skipped**. The subsequent full
+dispatcher live suite passed the named live Copy method within **65 executed,
+65 passed, 0 failed, 0 skipped**. See the
+[scenario evidence](../../e2e-interactive-stream.md#what-rung-3-is-made-of) for reports
+and the remaining historical evidence boundary.
+
 `MessageMetaRowToggleTest` mounts the real thread for timestamp-only show/hide,
 single selection, streaming completion, nested links/code copy/attachments and
 independent side-copy semantics (#1817). Standalone fixtures retain their visible
