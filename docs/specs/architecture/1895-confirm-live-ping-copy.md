@@ -113,6 +113,10 @@ Run `BackgroundAgentRestGapTest`, `BackgroundAgentBlocksScreenTest`,
 If a fixture loses a lazy-list node because fewer taller rows fit, explicitly scroll
 the owned target into view before the same ownership/collapse assertion; do not
 change grouping, navigation, follow or history production logic to rescue the fixture.
+The history fixture's fresh backwards-walk touch must start within the actual
+oldest-end demand window; position there without a touch after the held gap gesture
+ends, assert no demand yet, then retain the exact one-demand assertion for the fresh
+touch. Taller rows changed the viewport distance, not the gesture's ownership contract.
 
 ## Documentation handoff
 

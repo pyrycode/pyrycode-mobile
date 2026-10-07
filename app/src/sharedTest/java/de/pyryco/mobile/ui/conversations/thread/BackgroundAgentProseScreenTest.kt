@@ -165,12 +165,14 @@ class BackgroundAgentProseScreenTest {
         compose.onNode(agentRun).performClick()
         reveal("Child")
         compose.onAllNodesWithText("Child").assertCountEquals(1)
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(ordinaryRun)
         compose.onNodeWithTag("tool-run:outside").assertExists()
         compose.onNode(ordinaryRun).performClick()
-        reveal("Using tools: 2")
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(agentRun)
         compose.onNode(agentRun).performClick()
         compose.onNodeWithText("Child").assertDoesNotExist()
         compose.onNodeWithText("Child after tool").assertDoesNotExist()
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasTestTag("tool-run:outside"))
         compose.onNodeWithTag("tool-run:outside").assertExists()
     }
 

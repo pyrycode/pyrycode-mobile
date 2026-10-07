@@ -103,6 +103,7 @@ class MessageReplyTargetsTest {
             val row = rule.onAllNodesWithTag("message-row")[index].getUnclippedBoundsInRoot()
             assertTrue("copy target stays inside its message row", c.top >= row.top)
             assertTrue("reply target stays inside its message row", r.bottom <= row.bottom)
+            assertTrue("action targets fit the visible surface height", c.top >= bubble.top && r.bottom <= bubble.bottom)
             if (index > 0) {
                 val precedingReply = rule.onAllNodesWithContentDescription("Reply to this message")[index - 1].getUnclippedBoundsInRoot()
                 assertTrue("adjacent rows have separate action targets", c.top >= precedingReply.bottom)

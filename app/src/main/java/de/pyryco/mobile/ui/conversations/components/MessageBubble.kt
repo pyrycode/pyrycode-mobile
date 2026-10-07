@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
@@ -319,6 +320,7 @@ private fun MessageContainer(
             Surface(
                 modifier =
                     Modifier
+                        .heightIn(min = MessageActionPairHeight)
                         .shadow(4.dp, BubbleShape)
                         .testTag(MESSAGE_BUBBLE_TEST_TAG)
                         .then(tap)
@@ -344,7 +346,7 @@ private fun MessageContainer(
                             horizontal = BubbleHorizontalPadding,
                             vertical = BubbleVerticalPadding,
                         ),
-                    verticalArrangement = Arrangement.spacedBy(BubbleContentSpacing),
+                    verticalArrangement = Arrangement.spacedBy(BubbleContentSpacing, Alignment.CenterVertically),
                     // The design puts `items-start` on the `Message` column for *both* roles — a short
                     // user body is left-aligned inside its bubble — and `justify-end` on the user's meta
                     // row alone. So the column aligns Start and the meta row overrides for its own side.

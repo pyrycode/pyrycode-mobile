@@ -129,7 +129,11 @@ class ThreadScreenHistoryTest {
             advanceEventTime(200)
             up()
         }
-        // A fresh touch is free to select the backwards walk now that the marker is absent.
+        // Taller accessible message rows put this position outside the oldest-end pull window.
+        // Enter that window without a touch, then prove a fresh touch can select the backwards walk.
+        composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(items.lastIndex - 2)
+        composeRule.onNodeWithTag("history-gap:20").assertIsNotDisplayed()
+        composeRule.runOnIdle { assertEquals(0, oldest) }
         pullTowardOlder(fraction = 0.1f)
         composeRule.runOnIdle { assertEquals(1, oldest) }
     }
