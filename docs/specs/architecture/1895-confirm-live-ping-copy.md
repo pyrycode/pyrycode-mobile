@@ -37,6 +37,24 @@ gate (`all` in the PR's Live tests section), confirm the named ping method ran
 and passed, and record executed/failed/skipped counts and the tested commit.
 Keep `needs-real-claude`; deterministic regressions do not establish live success.
 
+## Revisions
+
+2026-10-07 — Verifier finding 1 names the scripted background-Agent scenario's
+final `child1827-after` scroll. The test closed the child run and then relied on
+`Go to agent` to reopen it, although navigation preserves collapse state.
+Upstream #1904's `13605325` repairs that scenario by selecting the owned child
+run, asserting its closed state after navigation, and explicitly opening it
+before the final ownership and unique-visibility assertions. Merge `0b688c85`
+landed the repair on main; branch merge `d34b1174` already includes it. No
+additional implementation, fixture, assertion weakening or skip is planned.
+
+Compare fresh focused `background-agent` execution on this merged tree with
+the reviewed main baseline `4a523704` in an isolated temporary worktree. Record
+both counted reports in the PR, rerun `SideMessageCopyTest` unchanged, and
+complete the final main-merged checks. The dispatcher must run fresh full
+scripted and live gates before re-review and live acceptance respectively.
+This revision adds only confirmation work within the original size boundary.
+
 ## Documentation handoff
 
 Pending for the documentation stage: record fresh #1895 full-suite counts, tested
