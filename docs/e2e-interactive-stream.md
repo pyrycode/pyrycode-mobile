@@ -445,6 +445,13 @@ Do not build a live check on closing the Agent run right after "Go to agent ↓"
 2026-10-07 a tap on the open run, centred clear of the chrome, left it open at the same position two
 seconds later, while the JVM screen tests close it after the same navigation. The cause is not
 established. The #1783 scenario therefore compares list positions instead of closing the run first.
+As of a same-day follow-up, "Go to agent ↓" no longer opens the run at all — it only scrolls to the
+block's root row (the root always draws as itself regardless, #1827 follow-up); a reader opens the run
+with its own separate tap, same as any other collapsed run. That removes the compounding auto-expand
+this investigation's close attempt raced against, so it may also explain or resolve the stuck-open
+symptom above, but that is not established — #1867's restored live assertion should now tap the run's
+own control directly (not rely on navigation to open it first) and still wants a fresh dispatcher-owned
+live run to confirm before it is trusted.
 
 **Finished-reply partial Copy (#1674).**
 `InteractiveStreamE2ETest#interactiveTurn_finishedReply_systemCopyCopiesSelectedWord`

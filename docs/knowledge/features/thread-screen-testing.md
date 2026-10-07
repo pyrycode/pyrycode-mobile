@@ -4,6 +4,39 @@ Split out of [Thread screen](thread-screen.md) on 2026-09-05 to keep that docume
 
 ## Testing
 
+Shared geometry tests must prove device portability as well as Robolectric
+correctness. `ThreadDeleteGeometryTest` fetches its text semantics node on the
+test thread before invoking `GetTextLayoutResult` in `runOnIdle`; querying
+semantics inside that main-thread callback nests synchronization and can pass
+on Robolectric while failing on the device. Keep type-role and long-name
+clipping assertions alongside the geometry checks.
+
+`ThreadScreenModalTest` retains the 97dp stream-top and 24dp rejected-pill
+targets. At density 2.625, the header's rounded 14/48/6/1dp segments total
+182px, and its 28dp clearance adds 74px: 256px is 97.52381dp, 1.375px above
+the stream-top target. `ThreadScreenHistoryTest` retains the 60dp retry-row
+target: its 20dp line (53px), two 12dp insets (32px each) and 16dp gutter
+(42px) total 159px, 1.5px above that target. These totals justify two pixels
+in `assertDpEquals`, with separate one-pixel checks for the 69dp header,
+28dp clearance, retry line, both insets and gutter. Integral-density checks
+remain exact. See [pixel-snapping guidance](development-verification-gates.md#where-a-screen-test-goes).
+
+The [#1887 verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1903#issuecomment-6035607800)
+and retained focused XML confirm 74 JVM and 9 managed-device tests executed
+and passed, with zero failures, errors or skips, including all six delete
+geometry methods. Each affected method passed once on each runner
+(executed/failed/skipped: 1/0/0):
+
+- `ThreadDeleteGeometryTest.default_matches_frame_geometry_and_type_roles`
+- `ThreadDeleteGeometryTest.long_name_grows_surface_without_clipping_body`
+- `ThreadScreenModalTest.open_request_card_sits_flush_on_the_stream_top`
+- `ThreadScreenModalTest.answer_rejected_pill_sits_flush_on_the_stream_top_at_its_frame_height`
+- `ThreadScreenHistoryTest.retryRow_keepsItsLabelsFullLineBox_andLeavesTheStandard16dpGapBelowIt`
+
+The baseline device run failed all five while Robolectric passed them. The
+routine dispatcher UI gate did not run these shared methods; its suite totals
+are not their device evidence. Coverage remains in `sharedTest`.
+
 `ThreadStreamingRevealTest` pauses the Compose clock through the real
 `ThreadScreen`: pre-open text is immediate, appended text retains its prefix and
 reveals progressively, and reopening before catch-up shows all arrived text.
