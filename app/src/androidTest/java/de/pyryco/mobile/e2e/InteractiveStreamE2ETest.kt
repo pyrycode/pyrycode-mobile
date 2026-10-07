@@ -19,6 +19,7 @@ import android.os.SystemClock
 import android.provider.MediaStore
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import android.view.inspector.WindowInspector
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -1475,6 +1476,9 @@ class InteractiveStreamE2ETest {
      */
     @Test
     fun interactiveTurn_deleteConversation_removesFromListAndClosesThread() {
+        var stage = "initial_list"
+        var diagnosticName: String? = null
+        try {
         // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
         awaitChannelList()
 
@@ -1495,6 +1499,8 @@ class InteractiveStreamE2ETest {
         //    the pre-filled+selected auto-name (performTextReplacement, not performTextInput) so the field
         //    holds exactly the unique name, then Save.
         val uniqueName = CONVERSATION_NAME_PREFIX + System.currentTimeMillis()
+        diagnosticName = uniqueName
+        stage = "rename"
         composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(RENAME_ITEM).fetchSemanticsNodes().isNotEmpty()
@@ -1506,6 +1512,7 @@ class InteractiveStreamE2ETest {
         composeTestRule.onNode(hasSetTextAction() and isFocused()).performTextReplacement(uniqueName)
         composeTestRule.onNodeWithText(RENAME_SAVE).performClick()
 
+        stage = "presence"
         // 5. Presence check (AC-3): back to the list, wait for it, then confirm the unique name is displayed on
         //    a recents row. The rename reply (conversation_updated) upserts → observeConversations re-emits with
         //    the new name; the waitUntil covers that round-trip. This is the genuine presence observation on the
@@ -1517,6 +1524,7 @@ class InteractiveStreamE2ETest {
         }
         composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().assertIsDisplayed()
 
+        stage = "reenter"
         // 6. Re-enter the thread by tapping the recents row (a 2nd presence observation — it can only succeed if
         //    the name is on the list). The merged DiscussionPreviewRow carries the name as text and is clickable.
         composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().performClick()
@@ -1524,6 +1532,8 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
 
+        stage = "channel_info"
+        deletionDiagnostic(stage, diagnosticName)
         // 7. Open Channel info → tap the sheet's Delete. "Channel info" is ungated; the sheet's Delete
         //    ActionCell is unique while only the sheet is open. Tapping it opens the confirm dialog OVER the
         //    still-composed sheet (ThreadEvent.Delete leaves pendingChannelInfo true) → two "Delete" nodes.
@@ -1539,6 +1549,7 @@ class InteractiveStreamE2ETest {
         }
         composeTestRule.onNodeWithText(DELETE_ACTION).performScrollTo().performClick()
 
+        stage = "confirm_dialog"
         // 8. Confirm the delete. Wait for the dialog's unique title, then tap the CONFIRM "Delete" — the sheet's
         //    "Delete" is also on screen, so disambiguate by the dialog's sibling "Cancel" button (the sheet has
         //    none). If the button-row tree differs on first run, pick another unambiguous anchor rooted at the
@@ -1546,10 +1557,14 @@ class InteractiveStreamE2ETest {
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(DELETE_DIALOG_TITLE).fetchSemanticsNodes().isNotEmpty()
         }
+        stage = "confirm_click"
+        deletionDiagnostic(stage, diagnosticName)
         composeTestRule
             .onNode(hasText(DELETE_ACTION) and hasAnySibling(hasText(DELETE_DIALOG_CANCEL)))
             .performClick()
 
+        stage = "post_delete_list"
+        deletionDiagnostic(stage, diagnosticName)
         // 9. Both durable post-conditions (AC-2). After DeleteConfirm → repository.delete → PopBack: wait for the
         //    list marker (the thread has popped back), then assert the unique name is gone from the list. delete
         //    completes (conversation_deleted → removeConversation clears all projections) BEFORE PopBack fires
@@ -1557,6 +1572,29 @@ class InteractiveStreamE2ETest {
         //    a direct assertCountEquals(0). Tolerant: presence/absence, generous timeout — never a delta count.
         awaitChannelList()
         composeTestRule.onAllNodesWithText(uniqueName, substring = true).assertCountEquals(0)
+        } catch (failure: Throwable) {
+            runCatching { deletionDiagnostic("failed_$stage", diagnosticName) }
+                .onFailure { Log.w("DeleteDiagnostic", "event=diagnostic_failed code=${it.javaClass.simpleName}") }
+            throw failure
+        }
+    }
+
+    /** Temporary #1888 probe: content-free state without altering the drive or swallowing failures. */
+    private fun deletionDiagnostic(stage: String, uniqueName: String?) {
+        val windows = composeTestRule.runOnIdle {
+            WindowInspector.getGlobalWindowViews().map { "${it.hasWindowFocus()}:${it.visibility}:${it.isAttachedToWindow}" }
+        }
+        fun nodes(matcher: SemanticsMatcher) = composeTestRule.onAllNodes(matcher).fetchSemanticsNodes()
+        val list = nodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).size
+        val send = nodes(hasContentDescription(CD_SEND_MESSAGE)).size
+        val more = nodes(hasContentDescription(CD_MORE_ACTIONS)).map { it.boundsInRoot }
+        val menu = nodes(hasText(CHANNEL_INFO_ITEM)).size
+        val dialog = nodes(hasText(DELETE_DIALOG_TITLE)).size
+        val confirm = nodes(hasText(DELETE_ACTION) and hasAnySibling(hasText(DELETE_DIALOG_CANCEL))).map { it.boundsInRoot }
+        val exists = uniqueName?.let { name ->
+            runBlocking { withTimeout(5_000) { hostRepository().observeConversations(ConversationFilter.All).first().any { it.name == name } } }
+        }
+        Log.i("DeleteDiagnostic", "stage=$stage windows=$windows list=$list send=$send more=$more menu=$menu dialog=$dialog confirm=$confirm exists=$exists")
     }
 
     /**
