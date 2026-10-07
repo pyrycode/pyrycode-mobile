@@ -671,7 +671,9 @@ cleanup() {
   fi
   return "${code}"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # ---- preflight --------------------------------------------------------------------------------
 [ -n "${LIVE}" ] && [ -n "${DETERMINISTIC}" ] && die "LIVE=1 and DETERMINISTIC=1 are mutually exclusive (real vs scripted claude)"
@@ -1473,7 +1475,9 @@ fi
 # excluded. The #965 stop method is added on top, spending two turns: the stopped turn and its follow-up ping.
 if [ -n "${DETERMINISTIC}" ]; then
   TEST_TARGET="${TEST_CLASS}#${TEST_METHOD}"
-  if [ "${SCENARIO}" = "ping" ]; then
+  if [ "${EXTERNAL_FORCE_STOP_PROOF:-}" = "1" ]; then
+    TEST_TARGET="${TEST_CLASS}#interactiveTurn_externalForceStop_preparesSettledChannel"
+  elif [ "${SCENARIO}" = "ping" ]; then
     TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_seededChannel_durableGapCatchUp"
   fi
 elif [ -n "${LIVE}" ]; then
@@ -1695,6 +1699,11 @@ if [ "${TEST_STATUS}" -ne 0 ]; then
     [ "${TEST_STATUS}" -eq 0 ] || report_stale_pairing_codes
   fi
   [ "${TEST_STATUS}" -eq 0 ] || exit "${TEST_STATUS}"
+fi
+
+if [ "${EXTERNAL_FORCE_STOP_PROOF:-}" = "1" ]; then
+  [ "${E2E_INSTALLED:-}" = "1" ] && [ "${DEVICE}" = "connected" ] || die "force-stop proof requires its owned connected device"
+  python3 "${REPO_ROOT}/scripts/e2e-force-stop-proof.py" --owned-worker "${FAULT_PORT}" "${MOBILE_REVISION}" "${DAEMON_REVISION}" "${FORCE_STOP_EVIDENCE}" || exit $?
 fi
 
 if [ -n "${DETERMINISTIC}" ]; then
