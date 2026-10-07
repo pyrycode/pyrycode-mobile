@@ -146,6 +146,12 @@ class StableConversationRepository(
     override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> =
         heldReadings?.observeContextUsage(conversationId) ?: switchToLive<ContextUsage?>(null) { it.observeContextUsage(conversationId) }
 
+    /** Suggestion state is live-only, including when other readings are host-held (#1865). */
+    override fun observeReplySuggestion(
+        conversationId: String,
+        sessionId: String,
+    ): Flow<ReplySuggestion?> = switchToLive<ReplySuggestion?>(null) { it.observeReplySuggestion(conversationId, sessionId) }
+
     /** Switched, never held (#1343): the MCP reading is per connection, so a reconnect starts from nothing. */
     override fun observeMcpStatus(conversationId: String): Flow<McpStatus> =
         switchToLive(McpStatus()) { it.observeMcpStatus(conversationId) }
