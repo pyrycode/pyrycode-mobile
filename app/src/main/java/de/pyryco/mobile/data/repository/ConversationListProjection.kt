@@ -6,6 +6,7 @@ import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.ConversationsPayload
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.toConversation
 import de.pyryco.mobile.data.network.toConversations
 import kotlinx.coroutines.flow.Flow
@@ -32,8 +33,8 @@ import kotlinx.serialization.json.decodeFromJsonElement
  */
 internal class ConversationListProjection {
     /**
-     * The demuxed list projection: `null` until the first `conversations` snapshot loads, then the
-     * latest full-list snapshot. The primary read source; [observe] derives every cold
+     * The demuxed rows: `null` until a snapshot or confirmed upsert, then the latest list.
+     * Rows and read facts share one atomic state, while observers select their own projection. The primary read source; [observe] derives every cold
      * read from it. Written by the repository's single inbound collector (the authoritative full-replace on
      * each `conversations` snapshot, [applySnapshot]), by [RemoteConversationRepository.createDiscussion]'s
      * confirmed insert (#347), **and** by [RemoteConversationRepository.promote]'s confirmed upsert (#348) —
@@ -49,7 +50,12 @@ internal class ConversationListProjection {
      * to a second collector's request, or the authoritative snapshot that later re-includes a
      * just-folded conversation).
      */
-    private val projection = MutableStateFlow<List<Conversation>?>(null)
+    private data class State(
+        val rows: List<Conversation>? = null,
+        val readMarks: Map<String, ConversationReadMarks> = emptyMap(),
+    )
+
+    private val projection = MutableStateFlow(State())
     private val snapshotLoaded = MutableStateFlow(false)
 
     /**
@@ -79,9 +85,16 @@ internal class ConversationListProjection {
             try {
                 MobileJson.decodeFromJsonElement<ConversationsPayload>(envelope.payload)
             } catch (e: IllegalArgumentException) {
+                RelayLog.w { "event=conversation_read_snapshot outcome=malformed" }
                 return
             }
-        projection.value = decoded.toConversations()
+        projection.update { current ->
+            val marks = current.readMarks.toMutableMap()
+            decoded.conversations.forEach { row ->
+                mergeReadMarks(marks, row.id, ConversationReadMarks(row.readUpTo, row.latestEntryId))
+            }
+            current.copy(rows = decoded.toConversations(), readMarks = marks)
+        }
         snapshotLoaded.value = true
     }
 
@@ -90,7 +103,7 @@ internal class ConversationListProjection {
      * `conversations` snapshot), read synchronously by [RemoteConversationRepository.promote] and
      * [RemoteConversationRepository.archiveWorkspace].
      */
-    fun current(): List<Conversation> = projection.value.orEmpty()
+    fun current(): List<Conversation> = projection.value.rows.orEmpty()
 
     /**
      * Most-recent-by-timestamp fold for [conversationId]'s last-message preview ([lastMessages]).
@@ -134,7 +147,7 @@ internal class ConversationListProjection {
         newSessionId: String,
     ) {
         projection.update { current ->
-            current?.map { if (it.id == conversationId) it.copy(currentSessionId = newSessionId) else it }
+            current.copy(rows = current.rows?.map { if (it.id == conversationId) it.copy(currentSessionId = newSessionId) else it })
         }
     }
 
@@ -158,20 +171,24 @@ internal class ConversationListProjection {
         val incoming = record.toConversation()
         var stored = incoming
         projection.update { current ->
-            val existing = current.orEmpty()
+            val existing = current.rows.orEmpty()
             val index = existing.indexOfFirst { it.id == incoming.id }
-            if (index >= 0) {
-                val held = existing[index]
-                stored =
-                    incoming.copy(
-                        agent = if (record.agent == null) held.agent else incoming.agent,
-                        archivedAt = if (incoming.archived) held.archivedAt else null,
-                    )
-                existing.toMutableList().apply { this[index] = stored }
-            } else {
-                stored = incoming
-                existing + incoming
-            }
+            val rows =
+                if (index >= 0) {
+                    val held = existing[index]
+                    stored =
+                        incoming.copy(
+                            agent = if (record.agent == null) held.agent else incoming.agent,
+                            archivedAt = if (incoming.archived) held.archivedAt else null,
+                        )
+                    existing.toMutableList().apply { this[index] = stored }
+                } else {
+                    stored = incoming
+                    existing + incoming
+                }
+            val marks = current.readMarks.toMutableMap()
+            mergeReadMarks(marks, incoming.id, ConversationReadMarks(record.readUpTo, null))
+            current.copy(rows = rows, readMarks = marks)
         }
         return stored
     }
@@ -209,7 +226,7 @@ internal class ConversationListProjection {
         label: String?,
     ) {
         projection.update { current ->
-            current?.map { if (it.cwd == path) it.copy(workspaceLabel = label) else it }
+            current.copy(rows = current.rows?.map { if (it.cwd == path) it.copy(workspaceLabel = label) else it })
         }
     }
 
@@ -222,7 +239,7 @@ internal class ConversationListProjection {
      * already-absent id re-emit nothing on either.
      */
     fun remove(conversationId: String) {
-        projection.update { current -> current?.filterNot { it.id == conversationId } }
+        projection.update { current -> current.copy(rows = current.rows?.filterNot { it.id == conversationId }) }
         lastMessages.update { it - conversationId }
     }
 
@@ -230,14 +247,19 @@ internal class ConversationListProjection {
      * The filtered, sorted list behind [RemoteConversationRepository.observeConversations]: emits nothing
      * until the first snapshot loads, then each change of [projection] through [project].
      */
-    fun observe(filter: ConversationFilter): Flow<List<Conversation>> = projection.filterNotNull().map { project(it, filter) }
+    fun observe(filter: ConversationFilter): Flow<List<Conversation>> =
+        projection
+            .map { it.rows }
+            .distinctUntilChanged()
+            .filterNotNull()
+            .map { project(it, filter) }
 
     /** Partial upserts are visible, but only a decoded full snapshot establishes absence. */
     fun observeSnapshots(filter: ConversationFilter): Flow<Pair<List<Conversation>, Boolean>> =
-        combine(projection, snapshotLoaded) { _, loaded ->
+        combine(projection.map { it.rows }.distinctUntilChanged(), snapshotLoaded) { _, loaded ->
             // Read current rows after the loaded edge, so combine cannot pair an older partial list
             // with the newer true flag when its two collectors are scheduled in another order.
-            projection.value?.let { project(it, filter) to loaded }
+            projection.value.rows?.let { project(it, filter) to loaded }
         }.filterNotNull()
 
     /**
@@ -248,6 +270,21 @@ internal class ConversationListProjection {
      * and re-emits only on change; the one inbound consumer fans out to unlimited collectors.
      */
     fun observeLastMessage(conversationId: String): Flow<Message?> = lastMessages.map { it[conversationId] }.distinctUntilChanged()
+
+    /** Facts survive excluding/empty snapshots on this connection, but never a new repository. */
+    fun observeReadMarks(conversationId: String): Flow<ConversationReadMarks?> =
+        projection.map { it.readMarks[conversationId] }.distinctUntilChanged()
+
+    fun currentReadMark(conversationId: String): ULong? = projection.value.readMarks[conversationId]?.readUpTo
+
+    private fun mergeReadMarks(
+        marks: MutableMap<String, ConversationReadMarks>,
+        id: String,
+        incoming: ConversationReadMarks,
+    ) {
+        if (incoming.readUpTo == null && incoming.latestEntryId == null) return
+        marks[id] = marks[id]?.merge(incoming) ?: incoming
+    }
 
     /** Apply the [ConversationFilter] then order most-recently-used first — mirrors the fake exactly. */
     private fun project(

@@ -210,6 +210,29 @@ class FakeConversationRepository(
         }
     }
 
+    override fun observeReadMarks(conversationId: String): Flow<ConversationReadMarks?> =
+        state
+            .map { records ->
+                records[conversationId]?.let { ConversationReadMarks(it.readUpTo, it.messages.size.toULong()) }
+            }.distinctUntilChanged()
+
+    override suspend fun markConversationRead(
+        conversationId: String,
+        upTo: ULong,
+    ): Result<ULong> {
+        var stored = 0uL
+        return try {
+            state.update { records ->
+                val record = records[conversationId] ?: throw IllegalArgumentException("Unknown conversation")
+                stored = maxOf(record.readUpTo, minOf(upTo, record.messages.size.toULong()))
+                records + (conversationId to record.copy(readUpTo = stored))
+            }
+            Result.success(stored)
+        } catch (error: IllegalArgumentException) {
+            Result.failure(error)
+        }
+    }
+
     override suspend fun setMuted(
         conversationId: String,
         muted: Boolean,
@@ -490,6 +513,7 @@ class FakeConversationRepository(
                     ConversationRecord(
                         conversation = updatedConversation,
                         sessions = closedSessions + (newSessionId to newSession),
+                        readUpTo = record.readUpTo,
                     )
             )
         }
@@ -576,6 +600,7 @@ class FakeConversationRepository(
         val sessions: Map<String, Session>,
         val messages: List<Message> = emptyList(),
         val boundariesBySessionId: Map<String, AuthoredBoundary> = emptyMap(),
+        val readUpTo: ULong = 0uL,
     )
 
     private data class AuthoredBoundary(
