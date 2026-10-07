@@ -413,12 +413,24 @@ class EmulatorBuildBeforeMintTest(unittest.TestCase):
         self.assertEqual(0, built.returncode, built.stderr)
         self.assertEqual("", built.stdout)
 
+    def test_ping_retains_original_method_and_adds_durable_twin_without_new_flags(self):
+        start = self.script.index('if [ -n "${DETERMINISTIC}" ]; then', self.script.index('# ---- 4. run'))
+        end = self.script.index('elif [ -n "${LIVE}" ]; then', start)
+        block = self.script[start:end] + 'fi\nprintf "%s" "$TEST_TARGET"\n'
+        result = self.run_block(block, DETERMINISTIC="1", SCENARIO="ping", TEST_CLASS="fixture.Class",
+                                TEST_METHOD="interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(["fixture.Class#interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread",
+                          "fixture.Class#interactiveTurn_seededChannel_durableGapCatchUp"], result.stdout.split(','))
+        result = self.run_block(block, DETERMINISTIC="1", SCENARIO="stream", TEST_CLASS="fixture.Class", TEST_METHOD="original")
+        self.assertEqual("fixture.Class#original", result.stdout)
+
     def test_every_pairing_is_minted_after_the_build(self):
         build = self.script.index('"${GRADLEW}" -p "${REPO_ROOT}" assembleDebug')
         mints = [i for i in range(len(self.script)) if self.script.startswith(" pair -pyry-name=", i)]
-        # Host A (isolated and real HOME), host B, the host A peer and two on the answer daemon.
+        # Host A (isolated and real HOME), host B, both host A peer paths and two on the answer daemon.
         # Bypass pairing now waits for the scenario-entry request in e2e-bypass-pairing.py.
-        self.assertEqual(6, len(mints))
+        self.assertEqual(7, len(mints))
         self.assertLess(build, min(mints))
         for name in ("start_bypass_pairing_fixture", "mint_answer_pairing"):
             with self.subTest(name=name):

@@ -9,9 +9,30 @@ import argparse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 from pathlib import Path
+import re
+import socket
 import signal
 import subprocess
 import time
+
+
+def post_batch(socket_path, body):
+    if not isinstance(body, dict):
+        raise ValueError("invalid synthetic post control")
+    name, prefix, count = body.get("name"), body.get("prefix"), body.get("count")
+    if (not isinstance(name, str) or not re.fullmatch(r"e2e-[A-Za-z0-9_.-]{1,80}", name)
+            or not isinstance(prefix, str) or not re.fullmatch(r"e2e1833-[A-Za-z0-9-]{1,80}", prefix)
+            or type(count) is not int or not 1 <= count <= 200):
+        raise ValueError("invalid synthetic post control")
+    for index in range(count):
+        with socket.socket(socket.AF_UNIX) as client:
+            client.settimeout(10)
+            client.connect(socket_path)
+            request = {"verb": "channel.post", "channelPost": {"name": name, "text": f"{prefix}-{index:03d}"}}
+            client.sendall(json.dumps(request).encode() + b"\n")
+            reply = json.loads(client.makefile("rb").readline(4096))
+            if reply.get("ok") is not True or reply.get("error"):
+                raise RuntimeError("owned daemon post refused")
 
 
 def main():
@@ -19,6 +40,7 @@ def main():
     parser.add_argument("--port-file", required=True)
     parser.add_argument("--log", required=True)
     parser.add_argument("--ready-token", default="")
+    parser.add_argument("--control-socket", required=True)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
@@ -61,7 +83,12 @@ def main():
 
         def do_POST(self):
             try:
-                if self.path == "/stop":
+                if self.path == "/posts":
+                    size = int(self.headers.get("Content-Length", "0"))
+                    if not 0 < size <= 1024:
+                        raise ValueError("invalid synthetic post control")
+                    post_batch(args.control_socket, json.loads(self.rfile.read(size)))
+                elif self.path == "/stop":
                     stop()
                 elif self.path == "/start":
                     offset = Path(args.log).stat().st_size
@@ -77,7 +104,7 @@ def main():
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)
-            except (OSError, RuntimeError, subprocess.TimeoutExpired):
+            except (ValueError, OSError, RuntimeError, subprocess.TimeoutExpired):
                 self.send_error(503, "owned daemon transition failed")
 
     server = HTTPServer(("127.0.0.1", 0), Handler)
