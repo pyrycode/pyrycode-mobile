@@ -246,6 +246,41 @@ Two invariants the override preserves:
 
 Split into [Mobile Protocol v2 — wire models + codec — application payloads](mobile-protocol-v2-wire-layer-application-payloads.md) on 2026-09-22 to keep this document under the 50000-byte cap the docs guard enforces. That section, Application payloads (decoded on top of `Envelope`), moved there verbatim, headings and anchors intact.
 
+### Daemon read fields and confirmation
+
+The authoritative wire specification remains daemon
+[`docs/protocol-mobile.md`](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md),
+“Marking a conversation read”, “Application envelope” and the `conversations` /
+`conversation_updated` type-table rows. Mobile's DTOs and validation implement that
+contract (#1881); this topic records the client boundary and merge rules.
+
+`ConversationSummaryDto` accepts optional/default-null `read_up_to` and
+`latest_entry_id`; `ConversationResponseDto` accepts optional/default-null `read_up_to`.
+Absence or explicit null means unavailable, while integer zero is a known valid fact.
+An older daemon can omit the fields without changing the other conversation mappings.
+`conversation_updated` has no latest-id field, so both correlated replies and pushes
+must preserve the latest id already held from a list. The
+[remote read ledger](remote-conversation-repository.md#daemon-conversation-read-marks)
+merges supplied facts monotonically within one host connection generation.
+
+`ReadMarkIdSerializer` validates canonical unquoted decimal integers from zero through
+`ULong.MAX_VALUE`, retaining the full unsigned value without conversion through `Long`.
+Quoted numbers, negative/fractional/exponent tokens, booleans, composites, overflow and
+leading zeros are rejected. `MobileJson` accepts tokens such as `00`: checking only
+digits and range would admit malformed checkpoint zero. Keep explicit `00` and `01`
+probes alongside the other malformed kinds. Existing inbound guards drop malformed
+snapshots/pushes without ending the collector; diagnostics contain static outcomes,
+never ids, marks, payloads or parser exception text.
+
+`MarkConversationReadPayloadDto` encodes `mark_conversation_read` with `conversation_id`
+and an integer `up_to` in the durable history id space. Confirmation requires a
+`conversation_updated` whose `in_reply_to` names the request, whose conversation matches
+the target and whose `read_up_to` is present and valid. The daemon can clamp the requested
+id and still confirms no-op writes; callers receive the stored mark after the validated
+reply is folded. A bare ack, malformed reply or error cannot confirm an advance.
+See [confirmed repository writes](remote-conversation-repository.md#daemon-conversation-read-marks)
+for ownership, sanitized failures and retry behavior.
+
 ## What's deliberately absent
 
 - **No per-model encode/decode wrappers.** The configured `MobileJson` + the base64 helpers *are* the codec. Ten trivial typed wrappers would only inflate the surface.
