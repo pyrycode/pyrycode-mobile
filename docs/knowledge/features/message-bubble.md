@@ -160,9 +160,9 @@ only #644's static-dark fill divergence; the current message presentation uses:
 | User body `Schemes/on-primary-container` | `#CFE4FF` | `colorScheme.onPrimaryContainer` | As named. |
 | Timestamp text `Schemes/inverse-primary` | `#32628D` | `LocalContentColor.current.copy(alpha = META_CONTENT_ALPHA)` (0.8) | **Accessibility deviation:** Figma's tone measures about 2–3:1 on these fills. The enclosing surface provides `onPrimaryContainer` for user and `onSecondaryContainer` for assistant; 80% of that role clears 4.5:1 on both. |
 
-Side copy (#1817) maps `Schemes/Inverse Primary` to `inversePrimary` on a
-13×14dp `inverseSurface` backing; timestamp contrast treatment above remains
-inside the bubble. See [the action contrast resolution](#meta-row-and-copy-control-messagemetarowkt-since-644).
+Side copy (#1817) draws the Figma `ic_copy` glyph alone, no backing, tinted
+`colorScheme.primary`; timestamp contrast treatment above remains inside the
+bubble. See [the action contrast resolution](#meta-row-and-copy-control-messagemetarowkt-since-644).
 
 The bubble-specific roles leave global Material containers unchanged (static dark:
 `primaryContainer = #134A74`, `secondaryContainer = #3A4857`). Static dark now maps
@@ -214,14 +214,18 @@ placed after the bubble so taps in the overlap copy rather than toggle time.
 When reply arrives, #1818 owns splitting overlapping targets at the midpoint of
 glyph centers 25dp apart, with other sides extending 24dp from each center.
 
-The glyph uses `colorScheme.inversePrimary`. That tint alone on the thread
-background failed light-theme contrast (1.61:1), despite passing tint-pixel checks.
-The explicit accessibility resolution adds a centered 13×14dp `inverseSurface`
-backing with `MaterialTheme.shapes.extraSmall` corners, preserving glyph, column,
-gap and target geometry. Static light pairs `#9DCBFC` with `#2D3135`; static dark
-pairs `#32628D` with `#E0E2E8`. Check both glyph/backing and backing/thread contrast,
-using the actual thread background, rather than substituting a tint or changing
-global theme roles. See [palette and geometry coverage](message-bubble-testing.md#testing).
+The glyph uses `colorScheme.primary`. Figma names `Schemes/Inverse Primary` for
+this icon, but that role is paired with `inverseSurface` — the opposite theme's
+surface, not this screen's own background — so it measured 1.61:1 in static
+light. A centered 13×14dp `inverseSurface` backing briefly patched that to 3:1,
+but in dark theme `inverseSurface` is near-white, so the patch showed as a stray
+light chip behind the glyph; that backing is removed. `primary` is the same
+accent hue read through the matching theme instead of the inverted one: static
+light pairs `#32628D` on the `#F8F9FF` thread background (6.1:1); static dark
+pairs `#9DCBFC` on the static-dark thread canvas `#0B0E11` (11.4:1). Check
+glyph-on-thread-background contrast directly, using the actual thread
+background, across static and wallpaper light/dark. See
+[palette and geometry coverage](message-bubble-testing.md#testing).
 
 ### Streaming variant — progressive reveal + blinking caret (since #184)
 
@@ -298,7 +302,7 @@ Each role container's `Layout` carries `Modifier.padding(bottom = MessageAreaRow
 
 - **Transitive dependencies:** the assistant variant routes through [`MarkdownText`](./markdown-text.md), wired against `org.jetbrains:markdown` (see [ADR 0002](../decisions/0002-markdown-renderer-library.md)). Since #644, `MessageMetaRow.kt` reads `LocalClipboardManager` / `AnnotatedString` (`androidx.compose.ui`) and `java.time.format.DateTimeFormatter` (already on the min-SDK-33 classpath, no desugaring needed — same posture as [`SessionBoundaryDelimiter`](session-boundary-delimiter.md)'s time formatter).
 - **Accessibility strings:** `cd_thread_copy_message` ("Copy this message"), the copy control's accessible name, in the `cd_thread_*` family. User bodies still render plainly and assistant bodies through `MarkdownText` with no role prefix. Since #1621, `cd_thread_message_sent` describes the hidden timestamp, and `thread_message_show_details` / `thread_message_hide_details` label the bubble action; the labels now say “Show time” / “Hide time” (#1817), and copy is an independent side Button without a bubble custom action.
-- **One drawable** (since #644): `res/drawable/ic_copy.xml` — single-path, 11×12 viewport, tinted at the call site from `inversePrimary` for side copy and `LocalContentColor` for code copy, the same idiom `ic_open_in_new.xml` already uses.
+- **One drawable** (since #644): `res/drawable/ic_copy.xml` — single-path, 11×12 viewport, tinted at the call site from `primary` for side copy and `LocalContentColor` for code copy, the same idiom `ic_open_in_new.xml` already uses.
 - **Bubble theme roles:** wrap consumers in `PyrycodeMobileTheme`, which provides
   `LocalUserBubbleContainer` / `LocalAssistantBubbleContainer` through the
   `ColorScheme.userBubbleContainer` / `assistantBubbleContainer` extensions in
