@@ -134,6 +134,24 @@ or connection teardown; see [conversation session errors](remote-conversation-re
 for validation, observation and clearing rules.
 `dropQueuedMessage` reads `QueueProjection.current` to resolve the echo id before it sends.
 
+`ReplySuggestionProjection` (#1865) holds live/reconciled next-reply state, with one
+immutable-map entry per `(conversationId, sessionId)`. Validation completes before the
+atomic revision comparison and replacement: only a strictly higher revision replaces an
+entry, and a clear stays in the map so stale sets cannot revive it. Unrelated pairs do not
+re-emit the observed pair. Separate per-host remote instances isolate even identical pairs.
+The inbound `reply_suggestion` arm requires negotiated `interactive`; its
+[decoder checks presence and exact JSON kinds](mobile-protocol-v2-wire-layer.md#reply-suggestion-validation-1865).
+Malformed input changes neither text nor watermark and leaves the consumer alive.
+
+This projection stays outside `HostReadings` and persistent cache. Each fresh handshake
+constructs an empty projection, allowing lower revisions after a daemon restart; inbound
+consumer termination also resets text and watermarks. The cache wrapper forwards the
+observation by interface delegation without storing it. Suggestions bypass replay-cursor
+recording even when malformed, reject envelopes carrying `event_id`, and are never
+restored from history. Applying one calls no thread, live-session-event or turn-state
+operation. Diagnostics contain only static outcomes (accepted, stale, malformed, reset),
+with no text, identities, payloads or parser exceptions.
+
 A new status event takes the same shape: a new `…Projection.kt` holding its state, decoder and read,
 plus one field, one arm and one override in the repository. The split exists so that sibling tickets
 adding events in parallel stop editing the same lines of one very large file.
@@ -265,6 +283,17 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
 > projection-dependent assertions empty; `runCurrent()` drains the whole current-time cascade
 > deterministically. See [[remote-repo-test-runcurrent-not-advanceuntilidle]] and
 > [`codebase/312.md`](../codebase/312.md) § Lessons learned.
+
+`RemoteConversationRepositoryReplySuggestionTest` uses the real decoder/repository and
+channel-backed fake pumps for 13 invariant probes. Coverage includes late subscription
+after set and clear, every arrival order with duplicate/decreasing revisions, retained
+clear watermarks and reconciled null, independent conversations/sessions/hosts, malformed
+high revisions followed by lower valid updates, exact ASCII/multibyte byte limits and the
+full unsigned revision range. It also probes non-interactive/default absence, connection
+termination, [facade replacement](stable-conversation-repository.md#testing), cache
+passthrough without storage access, and diagnostic redaction. The no-thread/turn probe
+feeds both an event-id-bearing suggestion and a history entry: checking text alone would
+miss accidental replay-cursor advancement, thread rows or live turn events.
 
 ## Related
 
