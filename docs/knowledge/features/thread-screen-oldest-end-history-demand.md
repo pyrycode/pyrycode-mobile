@@ -93,7 +93,12 @@ throughout a test would miss this fallthrough.
 
 The shared `inFlight` flag still drives the oldest-end Loading row during newest/gap asks, even
 when the independent backwards walk is at `AtStart`; this is the existing #1572 visual quirk.
-Independent live and force-stop proof remains with [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833).
+On a device, [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) proves this demand
+against a durable gap of more than two 200-entry pages, in both the real-Claude offline-read method
+and its scripted twin. Only availability asks the newest page. Semantically revealing a gap marker,
+the newest row or a page arrival issues no request. Each physical pull asks exactly one older page,
+and at least two pulls are needed to close the gap. See the [#1833
+evidence](../../e2e-interactive-stream.md#verification-status).
 
 **Two current viewports of older loaded content trigger prefetch during reader movement**
 ([#1769](https://github.com/pyrycode/pyrycode-mobile/issues/1769)). `OlderHistoryGesture` and

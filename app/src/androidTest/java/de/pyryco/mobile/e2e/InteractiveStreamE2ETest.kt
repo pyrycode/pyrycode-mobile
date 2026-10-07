@@ -3455,25 +3455,9 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * A loaded conversation stays readable offline and catches up on reconnect (#850, rung 3; the live
-     * proof #795–#798 deferred). The phone loads a chat's history with one ping turn, then cuts its own
-     * link to the host as [setHostLink] does. With the connection-scoped repository gone, readability can
-     * only come from retained content:
-     *  * **offline** — the open thread still draws the ping and its reply, the chat's row is still in the
-     *    list, and reopening the row draws both again (the on-disk thread restore, not the in-memory rows);
-     *  * **meanwhile** — the [SecondClientPeer] sends [OFFLINE_PROMPT] and its turn ends, and the phone
-     *    draws none of it, which is what shows it really was offline;
-     *  * **reconnected** — the still-open thread draws the peer's prompt and reply from the reconnect's ring
-     *    replay with no pull, that turn after the ping, and each of the four messages once. The daemon pushes
-     *    each delivered user message live and into the replay ring (pyrycode#2699), and the phone draws it
-     *    (#1351); a reconnect no longer asks for history (#1352).
-     *
-     * The cut waits until the phone itself has settled the ping reply — its thread cache holds it, which
-     * the open thread's collector writes only after drawing the settled row. A disconnect keeps only settled
-     * rows, and the peer's copy of `turn_end` can arrive before the phone's, so waiting on the peer alone
-     * could cut while the phone's reply still streamed and drop it by design.
-     *
-     * **Two real-claude turns**: the phone's ping and the peer's offline turn.
+     * Two real-Claude turns plus >2 pages of durable host posts (#1833). The phone's settled
+     * ping remains readable through offline list/reopen. Restarting the owned daemon clears its
+     * replay ring while retaining its durable home; only reader pulls fill the remaining gap.
      */
     @Test
     fun interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect() {
@@ -3499,8 +3483,9 @@ class InteractiveStreamE2ETest {
                 composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
             }
             val conversationId = newHostConversationId(serverId, before)
-            val chatName = OFFLINE_CHAT_NAME_PREFIX + System.currentTimeMillis()
-            renameOpenThread(chatName)
+            val chatName = "e2e-gap-" + System.currentTimeMillis()
+            runBlocking { hostRepository(serverId).promote(conversationId, chatName) }
+            val gap = DurableGapProof(composeTestRule, serverId, conversationId)
 
             // 2. Load history: the phone's ping turn renders and ends. The peer's turn_end keeps the later
             //    occurrence count right; the phone's own cache is what shows its rows settled before the cut.
@@ -3508,6 +3493,9 @@ class InteractiveStreamE2ETest {
             composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
             runBlocking { peer.awaitFrame(conversationId, "turn_end", REPLY_TIMEOUT_MS) }
             awaitCachedAssistantReply(serverId, conversationId)
+            setHostLink(serverId, up = false)
+            setHostLink(serverId, up = true)
+            gap.cacheBaseline()
 
             // 3. AC-1: cut the phone's link. The open thread keeps what it drew.
             setHostLink(serverId, up = false)
@@ -3517,7 +3505,7 @@ class InteractiveStreamE2ETest {
             // 4. AC-1: the chat's row is still listed, and reopening it offline draws the history again.
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
-            val chatRow = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(chatName, substring = true)
+            val chatRow = hasTestTag(TREE_CHANNEL_ROW_TEST_TAG) and hasText(chatName, substring = true)
             composeTestRule.waitUntil(LIST_TIMEOUT_MS) { runCatching { scrollListTo(chatRow) }.isSuccess }
             composeTestRule.onAllNodes(chatRow).onFirst().performClick()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
@@ -3527,34 +3515,49 @@ class InteractiveStreamE2ETest {
             assertDrawnOnce(inThreadList(PING_PROMPT), pingReplyMatcher())
 
             // 5. AC-2: while the phone is offline the peer's turn runs to its end; the phone draws none of it.
-            runBlocking {
-                peer.sendMessage(conversationId, OFFLINE_PROMPT, THREAD_TIMEOUT_MS)
-                peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS, occurrence = 2)
+            gap.missPages(chatName) {
+                runBlocking {
+                    // Host post acceptance precedes delivery; fence the first batch before the reply.
+                    withTimeout(WAIT_TURN_TIMEOUT_MS) {
+                        while (peer.recorded(conversationId).none {
+                                it.type == "assistant_delta" && peer.field(it, "text") == gap.lastOlderPost
+                            }
+                        ) {
+                            delay(50)
+                        }
+                    }
+                    peer.sendMessage(conversationId, OFFLINE_PROMPT, THREAD_TIMEOUT_MS)
+                    // Posts also end turns. Only the second interactive completion settles this reply.
+                    withTimeout(WAIT_TURN_TIMEOUT_MS) {
+                        while (peer.recorded(conversationId).count {
+                                it.type == "turn_end" && peer.field(it, "producer") != "channel_post"
+                            } < 2
+                        ) {
+                            delay(50)
+                        }
+                    }
+                }
             }
             composeTestRule.waitForIdle()
             composeTestRule.onAllNodes(inThreadList(OFFLINE_PROMPT), useUnmergedTree = true).assertCountEquals(0)
             composeTestRule.onAllNodes(offlineReplyMatcher(), useUnmergedTree = true).assertCountEquals(0)
 
-            // 6. AC-2: reconnect with the thread open; the ring replay brings the peer's prompt and reply into it,
-            //    with no pull. The reconnect itself asks for no history (#1352).
-            setHostLink(serverId, up = true)
-            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-                composeTestRule.onNode(offlineReplyMatcher(), useUnmergedTree = true).isDisplayed() &&
-                    composeTestRule.onAllNodes(inThreadList(OFFLINE_PROMPT), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.waitForIdle()
-            assertDrawnOnce(inThreadList(PING_PROMPT), pingReplyMatcher(), inThreadList(OFFLINE_PROMPT), offlineReplyMatcher())
-            val tops =
-                listOf(pingReplyMatcher(), inThreadList(OFFLINE_PROMPT), offlineReplyMatcher()).map {
-                    composeTestRule
-                        .onNode(it, useUnmergedTree = true)
-                        .fetchSemanticsNode()
-                        .boundsInRoot.top
-                }
-            assertTrue("expected ping reply, offline prompt, offline reply top to bottom; tops $tops", tops == tops.sorted())
-            assertTrue("two of the messages share a row; tops $tops", tops.distinct().size == tops.size)
+            gap.catchUp(
+                { setHostLink(serverId, up = true) },
+                OFFLINE_PROMPT,
+                OFFLINE_REPLY,
+                listOf(inThreadList(PING_PROMPT), pingReplyMatcher()),
+            )
+            // Recovered cached baseline and missed user row remain unique in the merged chronology.
+            val texts = gap.messages()
+            assertEquals(1, texts.count { it == PING_PROMPT })
+            assertEquals(1, texts.count { it == OFFLINE_PROMPT })
+            assertTrue(texts.indexOf(PING_PROMPT) < texts.indexOf(OFFLINE_PROMPT))
+            composeTestRule.onNode(hasScrollToNodeAction()).performScrollToNode(inThreadList(PING_PROMPT))
+            assertDrawnOnce(inThreadList(PING_PROMPT), pingReplyMatcher())
         } finally {
             peer.close()
+            DurableHistoryProbe.end()
         }
     }
 

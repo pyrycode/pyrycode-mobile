@@ -329,6 +329,17 @@ def free_emulator_port(start=5600, end=5680):
     return None
 
 
+@contextlib.contextmanager
+def uninterrupted_cleanup():
+    """Let owned processes finish cleanup before another cancellation can release custody."""
+    previous = {sig: signal.signal(sig, signal.SIG_IGN) for sig in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        yield
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
 def boot_emulator(env, avd_home, avd, timeout=180):
     """Boot the AVD headless on a free port; returns (serial, process) or (None, None)."""
     adb = str(Path(env["ANDROID_HOME"]) / "platform-tools" / "adb")
@@ -338,32 +349,51 @@ def boot_emulator(env, avd_home, avd, timeout=180):
         if port is None:
             return None, None
         serial = f"emulator-{port}"
-        # The flags Gradle's managed device uses (emu-launch-params.txt), plus a fixed port.
-        process = subprocess.Popen(
-            [emulator, f"@{avd}", "-no-window", "-no-boot-anim", "-no-audio", "-gpu", "auto-no-window",
-             "-force-snapshot-load", "-read-only", "-no-snapshot-save", "-port", str(port)],
-            env={**env, "ANDROID_AVD_HOME": str(avd_home)}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline and process.poll() is None:
-            booted = subprocess.run([adb, "-s", serial, "shell", "getprop", "sys.boot_completed"],
-                                    capture_output=True, text=True, timeout=30)
-            if booted.stdout.strip() == "1":
-                return serial, process
-            time.sleep(0.5)
-        stop_emulator(env, serial, process)
+        process, ready = None, False
+        try:
+            # The flags Gradle's managed device uses (emu-launch-params.txt), plus a fixed port.
+            process = subprocess.Popen(
+                [emulator, f"@{avd}", "-no-window", "-no-boot-anim", "-no-audio", "-gpu", "auto-no-window",
+                 "-force-snapshot-load", "-read-only", "-no-snapshot-save", "-port", str(port)],
+                env={**env, "ANDROID_AVD_HOME": str(avd_home)}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline and process.poll() is None:
+                booted = subprocess.run([adb, "-s", serial, "shell", "getprop", "sys.boot_completed"],
+                                        capture_output=True, text=True, timeout=30)
+                if booted.stdout.strip() == "1":
+                    ready = True
+                    return serial, process
+                time.sleep(0.5)
+        finally:
+            if not ready:
+                with uninterrupted_cleanup():
+                    stop_emulator(env, serial, process)
     return None, None
 
 
 def stop_emulator(env, serial, process):
+    """Stop an owned emulator and reap it, even when ADB times out, fails or is interrupted.
+
+    ADB only asks the emulator to quit. The wait and kill run in a finally, so no ADB failure can skip them, and
+    when the request was never delivered the emulator is killed at once instead of being waited for. A second
+    cancellation is held off until the emulator is reaped, so every caller's custody release comes after it.
+    """
     if process is None or process.poll() is not None:
         return
     adb = str(Path(env["ANDROID_HOME"]) / "platform-tools" / "adb")
-    subprocess.run([adb, "-s", serial, "emu", "kill"], capture_output=True, timeout=30)
-    try:
-        process.wait(timeout=20)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=20)
+    asked = False
+    with uninterrupted_cleanup():
+        try:
+            subprocess.run([adb, "-s", serial, "emu", "kill"], capture_output=True, timeout=30)
+            asked = True
+        except (OSError, subprocess.TimeoutExpired) as error:
+            print(f"Android gate: adb emu kill failed: {error}; killing the emulator", file=sys.stderr)
+        finally:
+            try:
+                process.wait(timeout=20 if asked else 0)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
 
 
 # ---- the host-wide device hold (#1071) -------------------------------------------------------------------
