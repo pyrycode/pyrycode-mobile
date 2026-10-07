@@ -665,6 +665,11 @@ fun ThreadScreen(
                         val trailingEdges = remember(listState) { mutableStateMapOf<ThreadItem, Float>() }
                         var messageViewport by remember(listState) { mutableStateOf<Rect?>(null) }
                         val revealedVersions = remember(listState) { mutableStateMapOf<ThreadItem, Boolean>() }
+                        SideEffect {
+                            laidOutVersions.keys.retainAll(rows.toSet())
+                            revealedVersions.keys.retainAll(state.items.toSet())
+                            trailingEdges.keys.retainAll(state.items.toSet())
+                        }
                         val promptRowCount =
                             (shownQuestion?.let { it.batch.questions.size + 2 } ?: 0) +
                                 (if (state.historyMarkers.any { it.beforeRow.isEmpty() }) 1 else 0) +
