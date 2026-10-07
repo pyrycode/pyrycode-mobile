@@ -1478,6 +1478,7 @@ class InteractiveStreamE2ETest {
     fun interactiveTurn_deleteConversation_removesFromListAndClosesThread() {
         var stage = "initial_list"
         var diagnosticName: String? = null
+        val reconnectScope = CoroutineScope(Dispatchers.Default)
         try {
         // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
         awaitChannelList()
@@ -1510,6 +1511,12 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasSetTextAction() and isFocused()).fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onNode(hasSetTextAction() and isFocused()).performTextReplacement(uniqueName)
+        // Replay the recorded gap before the unguarded RenameSubmit, without retrying the action.
+        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(twoHostArg(ARG_SERVER_ID)))
+        bundle.supervisor.close()
+        runBlocking { withTimeout(THREAD_TIMEOUT_MS) { bundle.coordinator.currentRepository.first { it == null } } }
+        reconnectScope.launch { delay(1_000); bundle.supervisor.connect() }
+        Log.i("DeleteDiagnostic", "event=gap_replay repository=false legacy_connected=${runBlocking { bundle.supervisor.observe().first() } is ConnectionState.Connected}")
         composeTestRule.onNodeWithText(RENAME_SAVE).performClick()
 
         stage = "presence"
@@ -1533,7 +1540,6 @@ class InteractiveStreamE2ETest {
         }
 
         stage = "channel_info"
-        deletionDiagnostic(stage, diagnosticName)
         // 7. Open Channel info → tap the sheet's Delete. "Channel info" is ungated; the sheet's Delete
         //    ActionCell is unique while only the sheet is open. Tapping it opens the confirm dialog OVER the
         //    still-composed sheet (ThreadEvent.Delete leaves pendingChannelInfo true) → two "Delete" nodes.
@@ -1558,13 +1564,11 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodesWithText(DELETE_DIALOG_TITLE).fetchSemanticsNodes().isNotEmpty()
         }
         stage = "confirm_click"
-        deletionDiagnostic(stage, diagnosticName)
         composeTestRule
             .onNode(hasText(DELETE_ACTION) and hasAnySibling(hasText(DELETE_DIALOG_CANCEL)))
             .performClick()
 
         stage = "post_delete_list"
-        deletionDiagnostic(stage, diagnosticName)
         // 9. Both durable post-conditions (AC-2). After DeleteConfirm → repository.delete → PopBack: wait for the
         //    list marker (the thread has popped back), then assert the unique name is gone from the list. delete
         //    completes (conversation_deleted → removeConversation clears all projections) BEFORE PopBack fires
@@ -1576,6 +1580,8 @@ class InteractiveStreamE2ETest {
             runCatching { deletionDiagnostic("failed_$stage", diagnosticName) }
                 .onFailure { Log.w("DeleteDiagnostic", "event=diagnostic_failed code=${it.javaClass.simpleName}") }
             throw failure
+        } finally {
+            reconnectScope.cancel()
         }
     }
 

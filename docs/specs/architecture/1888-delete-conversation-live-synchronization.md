@@ -47,3 +47,15 @@ Every scenario exception remains a failing test. Diagnostics use static stage co
 
 - What observable state connects each failed stage to a missed action, repository failure or navigation failure? Resolve with retained or fresh evidence, not the same-tree rerun alone.
 - Can both failure conditions be forced under Robolectric, or does the regression require real Android input/window ownership?
+
+## Revisions
+
+### 2026-10-07 — tested merge and connection-gap replay
+
+The retained stderr identifies the actual #1854 test revision as `f77f772c8d56251c3e5da12c1c125d887d2ed872`, a merge of `3e059504f9` and `970d7c422f`. Its stack maps to the first uniquely renamed list-presence wait. The branch-head-only Channel info attribution in the issue and initial Context is incorrect: main added `interactiveTurn_replySuggestion_longPressSends` before this method. #1878 actually tested `9b55c94b107cc263443126396f842a9e72da5b1f` and still maps to post-confirmation `awaitChannelList`.
+
+Retained daemon logs connect both targets to a tunnel teardown before the missing mutation: #1854's created conversation has no successful rename; #1878's renamed and re-opened conversation has no delete. In each case the create/read/mutation and teardown use the same hashed connection identity, followed by a new handshake. `StableConversationRepository` rejects one-shot mutations without a live delegate; `launchGuardedRepoCall` swallows that rejection. The scenario waits for connection only at entry, and its legacy `Connected` signal can also mean intentional idle.
+
+Fresh unmodified-drive diagnostics at `5de4f4459` ran 64 live methods, 62 passed, two unrelated failures (#1870 archive presence and a daemon parser-gap sentinel); deletion passed with focused windows and a successful repository deletion. This does not establish a window/input defect. Replace the planned timing loop with a bounded replay of the observed connection gap before Save, then before Delete confirmation. Capture and rethrow the original failure. If that reproduces the missing mutation, use a test-only coroutine guard over the owning host's pump-gated `currentRepository`, immediately before each one-shot UI submit, and wait for the confirmed rename before Back.
+
+Regression coverage will call the same readiness guard with a real `StableConversationRepository` over a controllable repository flow. It must hold Rename/Delete during a gap, deliver each once after a new delegate arrives, distinguish the target host from another ready host, and preserve timeout/cancellation. This is pure coroutine logic under JVM tests, with its reusable helper under sharedTest so the live test uses the same implementation. No production or visual change is planned.
