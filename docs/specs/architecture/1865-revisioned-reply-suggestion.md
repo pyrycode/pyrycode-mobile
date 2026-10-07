@@ -7,6 +7,7 @@
 - `docs/knowledge/features/stable-conversation-repository.md`: `switchToLive` cancels old observations and supplies the disconnected value.
 - `docs/knowledge/features/mobile-protocol-v2-wire-layer.md` and `data/network/MobileWireCodec.kt`: `MobileJson` omits nullable fields; explicit presence and primitive-type checks are required here.
 - Sibling `pyrycode/docs/protocol-mobile.md`, `reply_suggestion` and Security model: authoritative inbound contract and threats.
+- Sibling `pyrycode/internal/sessions/id.go`, `ValidID`: confirms session identities use the same canonical UUIDv4 shape as conversation identities.
 - `data/repository/ConversationRepository.kt`, `observeMcpStatus`: default observation and public reading types.
 - `data/repository/RemoteConversationRepository.kt`, `onInbound`, `recordReplayCursor`, initializer: one inbound consumer and connection lifetime.
 - `data/repository/McpStatusProjection.kt`, `apply`, `observe`: immutable StateFlow projection pattern.
