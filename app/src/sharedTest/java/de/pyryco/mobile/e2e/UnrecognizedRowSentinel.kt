@@ -3,8 +3,12 @@ package de.pyryco.mobile.e2e
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.ThreadSnapshot
+import de.pyryco.mobile.data.repository.ThreadSnapshotSource
 import de.pyryco.mobile.data.repository.UnrecognizedSite
+import de.pyryco.mobile.data.repository.threadSnapshots
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import org.junit.rules.TestRule
 import org.junit.runner.Description
@@ -227,11 +231,14 @@ private fun UnrecognizedSite.wireToken(): String =
  */
 internal class TappingConversationRepository(
     private val delegate: ConversationRepository,
-) : ConversationRepository by delegate {
-    override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
-        delegate.observeMessages(conversationId).onEach { rows ->
-            UnrecognizedRowRecorder.record(rows)
-            DurableHistoryProbe.record(conversationId, rows)
+) : ConversationRepository by delegate,
+    ThreadSnapshotSource {
+    override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = observeThreadSnapshot(conversationId).map { it.rows }
+
+    override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> =
+        delegate.threadSnapshots(conversationId).onEach { snapshot ->
+            UnrecognizedRowRecorder.record(snapshot.rows)
+            DurableHistoryProbe.record(conversationId, snapshot.rows)
         }
 
     override suspend fun requestHistory(
