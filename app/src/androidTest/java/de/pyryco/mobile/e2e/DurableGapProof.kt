@@ -3,7 +3,6 @@ package de.pyryco.mobile.e2e
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -79,13 +78,14 @@ internal class DurableGapProof(
                 )
             }
             rule.waitUntil(30_000) { messages().any { it == newestPost } && coverageGap() }
-            rule.waitUntil(30_000) {
-                rule.onNodeWithText(newestPost, useUnmergedTree = true).isDisplayed()
-            }
-            rule.onNodeWithText(newestPost, useUnmergedTree = true).assertIsDisplayed()
             assertEquals("only availability asks without a gesture", listOf(true), DurableHistoryProbe.asks())
             assertTrue("older post must be outside newest page and empty replay", olderPost !in messages())
             assertTrue("reply must be outside newest page and empty replay", messages().none { it.contains(replyText, ignoreCase = true) })
+            // A history page can retain the cached reader anchor. Reveal the already delivered row
+            // through semantics, which must not become history demand or certify replay coverage.
+            rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(newestPost))
+            rule.onNodeWithText(newestPost, useUnmergedTree = true).assertIsDisplayed()
+            assertEquals("newest row visibility is inert", listOf(true), DurableHistoryProbe.asks())
             var pulls = 0
             while (coverageGap()) {
                 assertTrue("bounded durable gap walk", pulls < 6)
