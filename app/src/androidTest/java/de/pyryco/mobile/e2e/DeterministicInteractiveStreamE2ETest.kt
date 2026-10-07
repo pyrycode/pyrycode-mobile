@@ -615,7 +615,11 @@ class DeterministicInteractiveStreamE2ETest {
                             }
                         }
                     repository.observeTurnPhase(conversationId).first { it == LiveSessionEvent.TurnState.Phase.Idle }
-                    rows.filterIsInstance<ThreadItem.MessageItem>().single { it.message.role == Role.Assistant }.message
+                    // The release prompt can produce its own reply; select the captured fixture.
+                    rows
+                        .filterIsInstance<ThreadItem.MessageItem>()
+                        .single { it.message.role == Role.Assistant && it.message.id == held.id }
+                        .message
                 }
             }
         assertEquals(held.id, finished.id)
