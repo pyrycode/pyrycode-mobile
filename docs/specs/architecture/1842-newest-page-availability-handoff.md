@@ -41,6 +41,12 @@ Run the three named history classes, the new handoff class, probe helper and exi
 
 ## Open Questions
 
-Confirm the proposed stranded schedule with the red regression before changing production. Record the observed result in Revisions.
+Resolved by the red regression below.
 
 Sizing: approximately 900 written lines including reused test support, scheduling probes and this plan; zero new exported production types, zero public consumer migrations, four acceptance criteria, no new rejection branches. Within all hard boundaries.
+
+## Revisions
+
+2026-10-07: The unchanged-production regression executed one test, failed once and skipped none. After raw true was observed, derived availability was false and the repository saw zero asks. Releasing the derived collector made `state.hostAvailable` true, but requests remained empty instead of one newest request. This confirms the free-slot/pending-arrival stranded state and the missing readiness-to-drain handoff. The repair adds only that handoff. Red XML is retained at `/tmp/builder-1842/handoff-red.xml`.
+
+2026-10-07: First scripted ping executed two methods: original ping passed; durable catch-up received the newest page and gap, then failed its immediate display assertion. Repository/cache predicates can complete ahead of Compose projection/layout. Preserve the display assertion and wait up to the existing 30-second readiness deadline for it; this adds no scroll or history demand and changes none of the cache/replay waits or exclusion assertions. If the display does not settle, the proof still fails. Added #1833's two pure durable invariants for replay/page permutations and serialized gap-cursor restoration. Final forecast is approximately 970 written lines.

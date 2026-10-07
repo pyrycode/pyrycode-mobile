@@ -1581,6 +1581,12 @@ class ThreadViewModel(
                 }
         }
 
+        // Raw arrivals can precede the eager availability projection. Readiness releases pending
+        // newest work without creating another arrival or reader demand.
+        viewModelScope.launch {
+            hostAvailable.filter { it }.collect { drainNewestPages() }
+        }
+
         // #1311: a drop and the return both end the round trip the local-send window was waiting on.
         // `drop(1)` skips the availability the thread opened on, which the flow hands every collector.
         viewModelScope.launch {
