@@ -191,6 +191,9 @@ class RemoteConversationRepository(
 
     /** The turn phase of every conversation on this connection (#1313); see [TurnPhaseProjection]. */
     private val turnPhaseProjection = TurnPhaseProjection()
+
+    /** Live/reconciled suggestion state; a fresh projection per connection, never host-held. */
+    private val replySuggestionProjection = ReplySuggestionProjection()
     private val announcedModelProjection = hostReadings.announcedModel
     private val sessionFactsProjection = hostReadings.sessionFacts
 
@@ -438,6 +441,7 @@ class RemoteConversationRepository(
             } finally {
                 endBackgroundTaskStops()
                 sessionErrorProjection.reset()
+                replySuggestionProjection.reset()
                 endDebugBundle()
                 messageCommands.endAttachmentUploads()
                 attachmentRetrievals.end()
@@ -450,7 +454,7 @@ class RemoteConversationRepository(
         if (messageCommands.routeDebugBundle(envelope)) return
         if (messageCommands.routeAttachmentUpload(envelope)) return
         if (attachmentRetrievals.route(envelope)) return
-        recordReplayCursor(envelope)
+        if (envelope.type != TYPE_REPLY_SUGGESTION) recordReplayCursor(envelope)
         when (envelope.type) {
             TYPE_CONVERSATIONS ->
                 // A full-list snapshot, reply or unsolicited push: see [ConversationListProjection.applySnapshot].
@@ -761,6 +765,11 @@ class RemoteConversationRepository(
                 // ask (#945): see [ContextUsageProjection.apply].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     contextUsageProjection.apply(envelope)
+                }
+            }
+            TYPE_REPLY_SUGGESTION -> {
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    replySuggestionProjection.apply(envelope)
                 }
             }
             TYPE_MCP_STATUS -> {
@@ -1254,6 +1263,11 @@ class RemoteConversationRepository(
     override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = sessionFactsProjection.observe(conversationId)
 
     override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> = contextUsageProjection.observe(conversationId)
+
+    override fun observeReplySuggestion(
+        conversationId: String,
+        sessionId: String,
+    ): Flow<ReplySuggestion?> = replySuggestionProjection.observe(conversationId, sessionId)
 
     override fun observeMcpStatus(conversationId: String): Flow<McpStatus> = mcpStatusProjection.observe(conversationId)
 
@@ -1804,6 +1818,9 @@ class RemoteConversationRepository(
          * [TYPE_MCP_RECONNECT] or [TYPE_MCP_TOGGLE]. Opens, closes and alters no turn.
          */
         const val TYPE_MCP_STATUS = "mcp_status"
+
+        /** Daemon → phone: live/reconciled next-reply state, never a turn event or replay/history row (#1865). */
+        const val TYPE_REPLY_SUGGESTION = "reply_suggestion"
 
         /**
          * Phone → daemon: ask for one conversation's current [TYPE_MCP_STATUS] (#1343, pyrycode#2381). Refused with
