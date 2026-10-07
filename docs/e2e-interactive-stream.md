@@ -67,6 +67,8 @@ Background-agent placement (#1783) is covered at rung 3 by
 `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`
 and at rung 4 by
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`.
+Both scenarios also prove settled scroll-only navigation followed by one owned-control tap to open
+and one to close, checking expansion semantics and child list membership (#1867).
 Controlled projection/Compose fixtures separately cover multiple agents and history permutations.
 Attributed background-agent prose (#1827) is covered at rung 3 by
 `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_replyStaysUnderAgent`; the same rung-4
@@ -425,8 +427,16 @@ the daemon's threshold for progress evidence, before a foreground Bash `curl` en
 A newer phone message must render above the live block; “Go to agent ↓” must reveal its Agent header.
 A phone Bash command releases the hold, and the scenario waits for the phone's Finished marker
 before sending the later message, avoiding a race between peer and app socket delivery.
-The later message must appear below the settled block; marker navigation is checked again.
-That last check compares the two rows' positions in the list, not their on-screen bounds, because
+The later message must appear below the settled block. With collapsing enabled, the settled child
+run starts closed; “Go to agent ↓” reveals the separate Agent root and leaves that run closed.
+The first loaded direct child tool's message id identifies the owned run, not the Agent root id.
+One physical pointer tap on its chrome-clear control opens it, and the next closes it (#1867).
+Each transition checks the Show/Hide tool uses expansion action and all loaded owned child keys
+through `IndexForKey`. The owned final paragraph is brought into composition and shown once before
+closing; collapsed keys must be absent from the list, so off-screen disposal cannot pass as collapse.
+Opening a tall block can dispose its header: wait for child-key membership, then reveal the existing
+header once to inspect its expansion action. Lifecycle, running/finished marker navigation and
+list-position checks remain. The latter compare list indexes rather than on-screen bounds because
 attributed prose can make the opened block taller than the screen (#1827).
 The existing progress-panel scenario uses a foreground subagent and cannot prove this placement.
 
@@ -472,17 +482,13 @@ an unmatched parent that stays top-level and a main paragraph, and checks closed
 visibility without real Claude turns. See
 [attributed prose](knowledge/features/thread-screen-subagent-tool-rows.md#attributed-assistant-prose-in-agent-blocks-1827).
 
-Do not build a live check on closing the Agent run right after "Go to agent ↓". In three focused live runs on
-2026-10-07 a tap on the open run, centred clear of the chrome, left it open at the same position two
-seconds later, while the JVM screen tests close it after the same navigation. The cause is not
-established. The #1783 scenario therefore compares list positions instead of closing the run first.
-As of a same-day follow-up, "Go to agent ↓" no longer opens the run at all — it only scrolls to the
-block's root row (the root always draws as itself regardless, #1827 follow-up); a reader opens the run
-with its own separate tap, same as any other collapsed run. That removes the compounding auto-expand
-this investigation's close attempt raced against, so it may also explain or resolve the stuck-open
-symptom above, but that is not established — #1867's restored live assertion should now tap the run's
-own control directly (not rely on navigation to open it first) and still wants a fresh dispatcher-owned
-live run to confirm before it is trusted.
+The earlier close-after-navigation symptom remains historical evidence: three focused live runs on
+2026-10-07 left the run open while JVM screen tests closed it. Its cause remains unestablished.
+Current navigation is scroll-only (#1907); #1867 restored the explicit owned-control open/close
+sequence above, which passed in development and the fresh dispatcher full live gate. The current
+symptom did not reproduce and no app fix was needed. This does not establish that #1907 caused or
+fixed the historical symptom. The missing current close proof is resolved; see
+[counted evidence](#verification-status).
 
 **Finished-reply partial Copy (#1674).**
 `InteractiveStreamE2ETest#interactiveTurn_finishedReply_systemCopyCopiesSelectedWord`
@@ -2869,8 +2875,11 @@ and belongs to `python3 scripts/android-test-gate.py scripted-all`. The first ra
 running background Agent family after its launching turn; a second phone send releases terminal
 lifecycle evidence followed by `after1783`. The test navigates from Running and Finished markers,
 asserts the owned `tool-run:child1783` remains closed after both taps and that the settled header
-is above the later reply. It explicitly opens that run before checking the final attributed
-paragraph exactly once; navigation alone does not establish prose visibility (#1904).
+is above the later reply. The run id comes from the first owned child tool in the loaded repository
+snapshot; child message ids also come from that snapshot rather than fixture text. It now uses the
+same single-pointer open/close proof as the live scenario (#1867): check expansion actions and
+child-key membership, reveal the final attributed paragraph exactly once, then close and require
+all owned child keys absent. Navigation alone does not establish prose visibility (#1904).
 Run it with `python3 scripts/android-test-gate.py scripted background-agent`.
 
 `refusal` selects
@@ -3462,8 +3471,42 @@ Both inherited #1854 reports failed at the first root-id run-control scroll: bra
 had **1 executed, 1 failed, 0 skipped**. The [PR diagnosis](https://github.com/pyrycode/pyrycode-mobile/pull/1908)
 names both reports. Child-run identity repairs that selector while preserving attribution,
 closed/open/closed visibility, main continuation, fixture release and preference restoration.
-The scripted twin now explicitly expands after navigation; #1867 owns the separate navigation-close
-investigation. Documentation executed only the docs guard.
+The scripted twin explicitly expands after navigation; the later #1867 evidence below resolves
+the separate current navigation/open/close proof. Documentation executed only the docs guard.
+
+**Background Agent navigation/open/close (#1867, 2026-10-07).** The dispatcher-provided fresh
+JUnit-XML gate report for `2026-10-07T19-06-26-155Z` identifies
+`InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished` as executed
+and passed with the restored checks in the full live suite: **65 executed, 65 passed, 0 failed,
+0 skipped**, none flaky. It tested `feature/1867` at `12c8d35752d4` merged with `origin/main`
+`dfa3231dcbc1`, using `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`.
+There is no daemon-revision annotation in this full run. The
+[issue gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1867#issuecomment-6045177183)
+records the same revision and counts. This is a named pass in the full suite.
+
+The configured `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all`
+passed **21 executed, 21 passed, 0 failed, 0 skipped**. The
+[verifier's XML review](https://github.com/pyrycode/pyrycode-mobile/pull/1921#issuecomment-6044870396)
+identifies `scripted-all-d4o12b3v/dispatcher.xml` and original
+`background-agent-0-TEST-installed.xml`, whose
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`
+executed and passed (**1 executed/passed, 0 failed, 0 skipped**); the supplied gate report confirms
+that named result. Documentation records these reports and runs only the docs guard.
+
+The [sanitized development evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1921)
+records revision `911d845c6a6d8bac698cd3c994d0c94f4804bb81`, daemon `6019328b378c`, Claude Code
+2.1.280, live run `live-nmrmeuw6`, proof `1791384625822`: **1 executed/passed, 0 failed,
+0 skipped**. Agent hash `1909f0b1782280b9` and child-run hash `35b71a5f6452d146` select the
+clickable Using tools control under the owned child-run tag. Navigation retained Show tool uses
+(closed); single pointer taps changed it to Hide tool uses (open) then Show tool uses (closed).
+Owned-reply composed/visible counts were **0/0 → 1/1 → 0/0** and all four child list indexes
+were **absent → present → absent**. Open bounds `(53,1442)–(1027,1537)`, center `(540,1489.5)`,
+and close bounds `(53,997)–(1027,1092)`, center `(540,1044.5)`, cleared header bottom `182` and
+composer top `1541` (root-relative pixels). No close failure required callback/interception
+investigation. The focused scripted run `scripted-n60ama6u` at the same mobile revision also
+passed **1 executed/passed, 0 failed, 0 skipped**. These diagnostic runs supplement the full
+gates; they do not replace them. The current symptom did not reproduce, no app behavior changed,
+and the historical cause remains unknown, without a causal claim about #1907.
 
 **Background Agent at the newest end (#1783, 2026-10-06).** The dispatcher ran
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on `feature/1783`
@@ -4822,16 +4865,20 @@ The remaining checks here are specific to a real relay or real Claude execution:
   passed in the full scripted gate and the focused development `background-agent` run.
   [Verification status](#verification-status) records counts and the unrelated archive-restore rerun.
   Select by loaded child ownership and actual run identity; explicitly expand after navigation,
-  which preserves collapse state. No selector-coverage follow-up remains. #1867 retains the
-  separate navigation-close investigation. The pre-ship command remains
+  which preserves collapse state. No selector-coverage follow-up remains. #1867 also passed the
+  settled navigation/open/close proof in the fresh full live and scripted-all gates. The pre-ship command remains
   `python3 scripts/android-test-gate.py live`.
 
 - **Background Agent prose in its block (#1827):**
   `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_replyStaysUnderAgent` passed in the full
   live suite, run by hand; its `background-agent` rung-4 twin passed in `scripted-all`. Counted
   reports and the archive-restore rerun are in [Verification status](#verification-status). One
-  open item: closing the Agent run right after marker navigation did not hold in three focused live runs and
-  could not be reproduced in JVM screen tests. No live proof depends on it. The pre-ship command
+  historical limitation remains: the earlier stuck-open cause is unknown. #1867 resolved the missing
+  current proof with scroll-only navigation then explicit owned-control open/close in
+  `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished` and
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`.
+  Both passed their fresh full gates (65 live and 21 scripted executed/passed, 0 failed, 0 skipped).
+  The current symptom did not reproduce; no app fix or historical causal conclusion is claimed. The pre-ship command
   remains `python3 scripts/android-test-gate.py live`.
 
 - **Combined recovery pill (#1603):** rung-4

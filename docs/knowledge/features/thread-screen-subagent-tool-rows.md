@@ -109,6 +109,15 @@ an extra terminal frame can hide loss of roster-only finished knowledge.
 including late joins through both replacement variants without an intervening terminal frame,
 multiple agents, pagination/reload, cycles, unknown joins and unchanged repository order.
 `BackgroundAgentBlocksScreenTest` covers marker navigation, placement and expansion transitions.
+Its `settledNavigationThenOwnedPointerTapsOpenAndCloseALongChildRun` regression and the live/scripted
+`verifyAgentRunNavigation` proof also cover the next close tap after scroll-only navigation (#1867).
+Opening a long run can dispose its header after all child keys have entered the list. Waiting only
+for an on-screen expansion label can therefore report a failed toggle that actually succeeded.
+Wait for child-key membership first, then reveal the existing header once and check its expansion
+action. Bring the owned paragraph into composition before positive visibility checks; after closing,
+require every loaded owned child key absent through `IndexForKey`, since absence from semantics alone
+can mean lazy disposal. The scripted proof reads child message ids from the repository snapshot,
+not fixture paragraph text. See [counted navigation/open/close evidence](../../e2e-interactive-stream.md#verification-status).
 See [cache-only limitations](thread-screen-previews-and-edge-cases.md#edge-cases--limitations)
 and [the live ladder](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
 
