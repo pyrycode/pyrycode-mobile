@@ -45,6 +45,7 @@ import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.threadSnapshots
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.grantNotificationPermission
 import de.pyryco.mobile.notifications.NotificationTap
@@ -53,6 +54,7 @@ import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
@@ -442,10 +444,21 @@ class DeterministicInteractiveStreamE2ETest {
                         .single { it.name == SEED_CHANNEL_NAME }
                         .id
                 }
+            val checkpoint =
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    repository
+                        .threadSnapshots(conversationId)
+                        .mapNotNull { snapshot ->
+                            val reply =
+                                snapshot.rows
+                                    .filterIsInstance<ThreadItem.MessageItem>()
+                                    .lastOrNull { it.message.role == Role.Assistant && it.message.content == PING }
+                            reply?.let { snapshot.readEvidence.checkpoint(it, 0uL) }
+                        }.first()
+                }
             withTimeout(REPLY_TIMEOUT_MS) {
                 repository.observeReadMarks(conversationId).first { facts ->
-                    val latest = facts?.latestEntryId
-                    latest != null && latest > 0uL && (facts.readUpTo ?: 0uL) >= latest
+                    (facts?.readUpTo ?: 0uL) >= checkpoint
                 }
             }
         }

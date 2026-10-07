@@ -91,6 +91,7 @@ import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
+import de.pyryco.mobile.data.repository.mergeIdentity
 import de.pyryco.mobile.ui.components.EditChannelModal
 import de.pyryco.mobile.ui.components.chromeBackdrop
 import de.pyryco.mobile.ui.components.defaultChromeShadow
@@ -667,8 +668,6 @@ fun ThreadScreen(
                         val revealedVersions = remember(listState) { mutableStateMapOf<ThreadItem, Boolean>() }
                         SideEffect {
                             laidOutVersions.keys.retainAll(rows.toSet())
-                            revealedVersions.keys.retainAll(state.items.toSet())
-                            trailingEdges.keys.retainAll(state.items.toSet())
                         }
                         val promptRowCount =
                             (shownQuestion?.let { it.batch.questions.size + 2 } ?: 0) +
@@ -925,7 +924,7 @@ fun ThreadScreen(
                                         if (item != null &&
                                             item !is ThreadItem.MessageItem
                                         ) {
-                                            trailingEdges[item] = it.positionInWindow().y + it.size.height
+                                            trailingEdges.recordReadVersion(item, it.positionInWindow().y + it.size.height)
                                         }
                                     },
                                 ) {
@@ -944,8 +943,13 @@ fun ThreadScreen(
                                                 is ThreadItem.MessageItem ->
                                                     MessageBubble(
                                                         message = item.message,
-                                                        onContentPresented = { revealedVersions[item] = true },
-                                                        onContentTrailingEdge = { _, bottom -> trailingEdges[item] = bottom },
+                                                        onContentPresented = { revealedVersions.recordReadVersion(item, true) },
+                                                        onContentTrailingEdge = {
+                                                            _,
+                                                            bottom,
+                                                            ->
+                                                            trailingEdges.recordReadVersion(item, bottom)
+                                                        },
                                                         onReply = { pendingReplyDraft = onReplyToMessage(it) },
                                                         modifier =
                                                             if (row.agentBlockId ==
@@ -1710,3 +1714,11 @@ internal fun openToolCall(items: List<ThreadItem>): ToolCall? =
                 item.message.toolCall.parentToolUseId
                     .isEmpty()
         }.let { (it as? ThreadItem.MessageItem)?.message?.toolCall }
+
+private fun <T> MutableMap<ThreadItem, T>.recordReadVersion(
+    row: ThreadItem,
+    value: T,
+) {
+    keys.removeAll { it != row && it.mergeIdentity() == row.mergeIdentity() }
+    this[row] = value
+}

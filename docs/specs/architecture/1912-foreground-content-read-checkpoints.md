@@ -95,3 +95,7 @@ Pending documentation stage: update `docs/knowledge/features/thread-screen.md`, 
 2026-10-07: Keep viewport measurement/reveal bindings bounded to the current immutable rows as well. Superseded streaming text versions are removed after composition so a long foreground turn does not retain every previous string in UI-local maps.
 
 2026-10-07: A new repository probe failed because the existing read projection settles a streaming message when an info banner follows it. Bind the snapshot's presentation-only settled copy to the same producing claims only when every other message field is identical. This preserves nonvisual-tail advancement without granting a later text/tool update an older version's claims.
+
+2026-10-07: The whole-suite agent-label probes exposed a composition loop in raw-item membership cleanup: projected agent labels are synthetic rows. Replace prior measurement/reveal versions by their rendered merge identity inside presentation callbacks, preserving unchanged bindings and synthetic rows. Keep only lazy wrapper membership cleanup against the actual rendered wrappers.
+
+2026-10-07: The deterministic twin is the curated `ping` scenario, not `stream` (which selects the multi-delta method). Its assertion waits for the exact rendered assistant reply's durable checkpoint before checking the confirmed daemon fact, so a previously read user message cannot satisfy it during publication of later live facts.
