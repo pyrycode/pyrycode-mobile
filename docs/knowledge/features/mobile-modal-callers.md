@@ -347,6 +347,24 @@ Each task is a card: a readable type label in monospace beside a
 "local_bash"`, a shell command line), the finish summary, and, only when the task was updated mid-life, a
 "Latest update" label over a `surface` code block holding the latest patch — italic "No change reported"
 when the patch is empty, no label or block at all when `latestUpdate` is `null`.
+
+Finish summaries use a display-only visibility rule (#1771): trim the summary and
+description for comparison, hide an empty summary, and hide a summary containing
+the non-empty description as a case-sensitive substring. A blank description
+still permits a non-empty summary; a difference in case alone can keep it visible.
+Visible summaries pass their original text to `TaskField`, preserving printable
+filtering, bounds and cut markers. A hidden summary hides its own cut marker too.
+The held description, finish data and stored task state are unchanged.
+
+`BackgroundTaskPanelTest` provides deterministic shared Compose coverage for
+template and equal summaries, distinct summaries with their original whitespace,
+empty/whitespace descriptions and summaries, case sensitivity, held-data preservation
+and hidden markers. Keep the visible-summary truncation fixture distinct from its
+description: a redundant fixture would hide the field before the marker assertion.
+The [#1771 verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/1864#issuecomment-6028621277)
+records blank API 33 panel captures (`nonblank=false`); those captures supply no
+visual comparison of this change. Use nonblank emulator captures for pixel evidence.
+
 Type labels map exact `local_agent` to "Agent" and `local_bash` to "Command" (#1751).
 Other values lose one leading `local_`, replace underscores with spaces, and uppercase
 only the first character, preserving the remaining case: `remote_agent` becomes

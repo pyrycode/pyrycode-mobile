@@ -127,6 +127,7 @@ Attributed background-agent prose (#1827) is covered at rung 3 by
    instead fails the harness-owned daemon, observes the actual Offline pill in the open thread,
    restores the same host and taps Retry before passive reconnect can run, then renders a new
    real-Claude reply. One Claude turn; see [Offline Retry proof](#offline-retry-proof).
+   Both Offline Retry harnesses use the actual capped-backoff snapshot and producer deadline (#1785).
    Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847 / #848 / #849 / #850 / #891 / #946 / #545 / #950 / #965 / #981 / #966 / #967 / #955 / #1016 / #1020 / #1050 / #1021 / #1017)**
    historically ran a **curated set of thirty-seven scenarios** (ping + create-workspace-folder + new-session + delete +
    archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host +
@@ -244,6 +245,7 @@ Attributed background-agent prose (#1827) is covered at rung 3 by
    The `offline-retry` twin (#1286),
    `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply`,
    drives the same actual Offline state and pill tap, then renders a scripted reply in the seeded thread.
+   Its shared #1785 observer excludes passive recovery using the producer-anchored deadline.
 5. **Broaden** — multi-delta stream render + thinking indicator **shipped (#454)**, tool-use steps
    (running → done, and failed) **shipped (#455, Layer 2c)**, reconnect continuity (reply survives a
    mid-turn drop) **shipped (#476, Layer 2b)**, and reconnect **ordering** (events buffered while
@@ -1884,10 +1886,23 @@ path; the older offline-read scenario remains a separate cache/reconciliation pr
 
 Recovery must precede passive reconnect. Both this method and its rung-4 twin keep
 the repository null and the pill visible immediately before the tap, and require
-repository recovery within 20 seconds of the sixth failed dial. Daemon restart,
-relay registration and the tap consume that same window; the capped backoff's
-24-second minimum lies beyond it. A timeout starting after restart or the tap can
-otherwise pass on an automatic dial even with a broken Retry callback.
+repository recovery before a producer-anchored monotonic deadline. The shared
+`OfflineRetryWindow` helper observes the supervisor's internal `backoffState`:
+a content-free `RelayBackoff` snapshot with the actual attempt and start mark.
+It awaits attempt ≥ 6 and sets the deadline to `startedAt + 20 seconds`.
+Observer lag, daemon restart, relay registration and the tap all consume that
+same window; the capped backoff's 24-second minimum lies beyond it. An expired
+deadline fails rather than granting another recovery window. A timeout starting
+at observation, after restart or after the tap can otherwise pass on an automatic
+dial even with a broken Retry callback.
+
+Do not count failed dials from `relayStatus` transitions: it is a conflated UI
+StateFlow, so transient Connecting values can be overwritten and equal
+DaemonAbsent values suppressed. The actual attempt also includes failure history
+retained across connections shorter than 60 seconds; six new observed failures
+need not mark the first capped wait. The observer subscribes before stopping the
+owned daemon and reports a missing cap as a backoff-observation timeout with
+static status and attempt diagnostics. See [supervisor testing](knowledge/features/relay-reconnect-supervisor.md#testing).
 
 The fault can initially produce ordinary reconnect failures before `4404` daemon
 absence. `DaemonAbsent` still derives to UI Offline at the cap; requiring only
@@ -2843,6 +2858,46 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+**Offline Retry observer repair (#1785, 2026-10-07).** The retained historical
+failure at mobile `0d5b82be7a05153d497d84da2f1a11fe109864a3` (daemon
+`65df98859f32e49ba59a42c4446d650b7625cf62`, Claude 2.1.280) was the controller's
+90-second backoff-observation timeout, before restart, Retry or reply:
+**5 executed, 4 passed, 1 failed, 0 skipped**. The extracted original observer
+reproduced the conflation failure after eight production-supervisor dials with
+DaemonAbsent: **1 executed, 0 passed, 1 failed, 0 skipped**. Its base was plan
+commit `4ecf0e8f` plus uncommitted mechanical extraction/regression, with production
+unchanged from `3435397e7f7b3038fb3ab1d57aa07afaeab1d2c7`. Original per-test logcat
+is unavailable; the reproduction establishes the observer defect, not the exact
+missed emissions in the historical occurrence. See [diagnosis and retained evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1785#issuecomment-6025840248).
+
+At repaired mobile revision `85b06b0fb0e509a15af8a9bafd2ec4dd655a319e`, retained
+GREEN XML has **40 executed/passed, 0 failed, 0 skipped** (3 observer and 37
+supervisor tests), including passive-recovery exclusion and deadline lag/expiry.
+The focused `ANDROID_GATE_WAIT_SECONDS=1800 python3 scripts/android-test-gate.py scripted offline-retry`
+executed and passed
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply`:
+**1 executed/passed, 0 failed, 0 skipped**, zero real Claude turns. At verifier
+revision `ac99d26a8c381c5be467de56fdb42f5a113e2344`, `scripted-all` likewise
+passed that method: **19 executed/passed, 0 failed, 0 skipped** overall.
+Builder XML is retained under
+`/Users/juhanailmoniemi/.codex/publish/pyrycode-mobile/builder-1785/evidence/`
+(`before-observer.xml`, `final-OfflineRetryWindowTest.xml`,
+`final-RelayConnectionSupervisorTest.xml`, `scripted-offline-retry.xml`);
+verifier copies include `scripted-all-dispatcher.xml` and `offline-retry.xml`
+under the corresponding `verifier-1785/evidence/` folder. See [verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1860#issuecomment-6027815050).
+
+The dispatcher full `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`
+run at `ac99d26a8c`, merged with `origin/main` at `cf85e9e882`, explicitly
+executed and passed
+`InteractiveStreamE2ETest.interactiveTurn_offlineRetry_reconnectsSameHostAndReplies`
+in its JUnit report: **62 executed, 61 passed, 1 failed, 0 skipped**, exit 1.
+The unrelated `interactiveTurn_finishedReply_systemCopyCopiesSelectedWord` failed
+and passed on the same-tree rerun; the dispatcher accepted the gate after that
+rerun. This records Offline Retry's pass in the full suite, not a zero-failure
+full-suite run or a focused Offline Retry rerun. The dispatcher report is
+`2026-10-07T00-04-51-814Z_real-claude-gate_#1785.log`; named-method status comes
+from the dispatcher's JUnit gate report supplied to documentation. See [live gate evidence and rerun caveat](https://github.com/pyrycode/pyrycode-mobile/issues/1785#issuecomment-6028402092).
 
 **Stop instruction isolation (#1721, 2026-10-06).** After verification, the dispatcher ran a fresh
 full `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against
@@ -4642,6 +4697,19 @@ The remaining checks here are specific to a real relay or real Claude execution:
   `python3 scripts/android-test-gate.py scripted offline-retry`; it proves the real
   outage and Retry path with `ping.jsonl`, using zero real-Claude turns. See
   [Offline Retry proof](#offline-retry-proof) for the boundary that excludes passive recovery.
+
+- **Coverage — hardened:** [#1785](https://github.com/pyrycode/pyrycode-mobile/issues/1785)
+  repairs the shared observer for
+  `InteractiveStreamE2ETest.interactiveTurn_offlineRetry_reconnectsSameHostAndReplies`
+  and `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply`.
+  Actual capped-backoff snapshots replace counting conflated UI transitions; the
+  producer-anchored 20-second deadline preserves the 24-second passive-redial
+  boundary. Owned-daemon failure, visible pill/null repository before the tap,
+  same-host/conversation recovery and a new rendered reply remain required.
+  The focused scripted twin and full-live named method passed; see
+  [verification status](#verification-status) for revisions, counts, retained
+  evidence and the unrelated full-suite flake. No new scenario or selector is
+  added; the pre-ship command remains `python3 scripts/android-test-gate.py live`.
 
 - **Coverage — updated:** [#1296](https://github.com/pyrycode/pyrycode-mobile/issues/1296)
   extended `InteractiveStreamE2ETest.interactiveTurn_backgroundTask_countsInActionsMenuAndPanel`

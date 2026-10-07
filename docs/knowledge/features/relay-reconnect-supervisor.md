@@ -91,7 +91,7 @@ a lambda closing over the shared `WebSocket.Factory` ([`defaultClient()`](relay-
 ## The state machine
 
 A single `MutableStateFlow<RelayLinkStatus>` (initial value **`Idle`** since [#499](../codebase/499.md);
-was `Connected`, and `ConnectionState` before [#391](../codebase/391.md)) is the only state source.
+was `Connected`, and `ConnectionState` before [#391](../codebase/391.md)) is the UI state source.
 `relayStatus` exposes it via
 `asStateFlow()`; the legacy `observe()` derives the 4-case `ConnectionState` from it per-collector. The
 supervision loop runs as one child `loopJob` of an app-singleton
@@ -187,6 +187,11 @@ The wire-spec cadence (`protocol-mobile.md` § Reconnect, mirrored from the Go s
   keeps retrying every ~30 s while showing `Offline`.
 - **Stability reset:** `attempt` resets to 0 only after a connection has been **stable ≥ 60 s** (a child
   `stabilityTimer` flips an `AtomicBoolean`). A connection that flaps in < 60 s keeps escalating.
+
+Internal `backoffState` (#1785) exposes the current wait as a content-free `RelayBackoff`
+(actual attempt and monotonic start mark), separate from UI `relayStatus`. Each wait publishes
+a fresh snapshot; exit clears only that snapshot by identity, so cancelled-loop cleanup cannot
+erase a newer wait. `close()` clears it too. This preserves the existing cadence and interfaces.
 
 ## Halt on a rejected pairing (#841), an app-too-old rejection (#1008), or a protocol mismatch (#1324)
 
@@ -329,7 +334,7 @@ so the supervisor's internal construction doesn't preclude it.
 - **One app-singleton scope** (`SupervisorJob() + dispatcher`, `Dispatchers.Default` in production — the
   loop is orchestration + `delay` + `StateFlow` writes; OkHttp owns the socket threads). The scope is
   never torn down; `connect()` launches `loopJob`, `close()` cancels it.
-- **Single state source** — one `MutableStateFlow`, written **only** on the loop coroutine.
+- **UI state source** — `relayStatus`; internal `backoffState` separately describes the current wait.
 - **`connect()` idempotency** — `if (loopJob?.isActive == true) return`, so a repeated/over-eager
   `connect()` (a buggy #302) can't spawn a second loop = two concurrent dials on one transport surface.
   `connect()`/`close()` are `@Synchronized`.
@@ -451,6 +456,15 @@ deterministic via a **seeded `Random(SEED)`**; `intervalsFor(vararg attempts)` r
 > time elapses, so the 60 s stability timer can't fire by accident) and reserve
 > `advanceTimeBy`/`advanceUntilIdle()` for the backoff waits. Mixing them silently fires the stability
 > timer mid-test and resets escalation. See [`codebase/307.md`](../codebase/307.md) § Lessons learned.
+
+Offline Retry tests must not count dials from conflated UI states: Connecting may be overwritten
+before collection, and repeated DaemonAbsent values suppressed. The shared `OfflineRetryWindow`
+observes actual attempt ≥ 6 and anchors recovery at the producer start + 20 seconds; late
+observation consumes the budget. The #1785 regression drives immediate 4404 failures through
+the production supervisor while Connecting is missed. Supervisor tests also cover retained
+history across <60-second connections and both ordinary/daemon-absent failures: passive redial
+cannot beat 20 seconds, but Retry collapses the wait. Clock-controlled lag/expiry tests prevent
+a false pass from restarting the deadline. See [Offline Retry proof](../../e2e-interactive-stream.md#offline-retry-proof).
 
 Coverage: single-drop per-second countdown + recover on a fresh transport; backoff bases 1/2/4/8/16
 (jitter band); `Offline` at the cap + continued retry; `retry()` collapse + no-throw; ≥60 s stability
