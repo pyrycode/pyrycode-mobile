@@ -244,6 +244,31 @@ class DeterministicInteractiveStreamE2ETest {
         composeTestRule.onAllNodesWithText(PING, substring = true).onFirst().assertIsDisplayed()
     }
 
+    /** #1866: the native fixture holds the suggestion until the explicit submission clears it. */
+    @Test
+    fun interactiveTurn_seededChannel_replySuggestionLongPressSends() {
+        arriveInSeededThread()
+        typeAndSend(SEND_PROMPT)
+        val repository =
+            requireNotNull(
+                GlobalContext
+                    .get()
+                    .get<RelayRepositoryCoordinator>()
+                    .currentRepository.value,
+            )
+        val conversation =
+            runBlocking {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    repository
+                        .observeConversations(ConversationFilter.All)
+                        .first { rows -> rows.any { it.name == SEED_CHANNEL_NAME } }
+                        .first { it.name == SEED_CHANNEL_NAME }
+                        .id
+                }
+            }
+        composeTestRule.assertReplySuggestionLongPress(repository, conversation, REPLY_TIMEOUT_MS)
+    }
+
     @Test
     fun interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread() {
         arriveInSeededThread()

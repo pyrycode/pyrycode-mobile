@@ -529,4 +529,5 @@
     <string name="background_tasks_stop">Stop task</string>
     <string name="background_tasks_expanded">Expanded</string>
     <string name="background_tasks_collapsed">Collapsed</string>
+    <string name="send_suggested_reply">Send suggested reply</string>
 </resources>

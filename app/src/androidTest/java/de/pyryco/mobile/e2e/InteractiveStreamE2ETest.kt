@@ -416,6 +416,23 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /** #1866: a daemon-authored next reply requires an explicit confirmed hold/release. */
+    @Test
+    fun interactiveTurn_replySuggestion_longPressSends() {
+        awaitChannelList()
+        awaitConnected()
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val before = hostConversationIds(serverId)
+        createChat()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+        val conversation = newHostConversationId(serverId, before)
+        sendFromPhone(PING_PROMPT)
+        composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+        composeTestRule.assertReplySuggestionLongPress(hostRepository(serverId), conversation, REPLY_TIMEOUT_MS)
+    }
+
     @Test
     fun interactiveTurn_pingPrompt_streamsPingReplyIntoThread() {
         // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).

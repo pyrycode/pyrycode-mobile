@@ -83,3 +83,8 @@ Add a rung-4 deterministic native-suggestion fixture/scenario if the existing fa
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-07
+
+## Revisions
+
+- 2026-10-07: `ConversationsPayload.toConversations` deliberately leaves `currentSessionId` empty on initial snapshots. Resolve the initial active session from the existing fresh `settingsReadings` instead of assuming the snapshot supplies it; `lastKnownSessionId` from transitions takes precedence afterward. Reuse those readings rather than creating another session-settings request subscription. The real repository harness establishes its session through `session_transition`.
+- 2026-10-07: The existing fakeclaude JSONL seam accepts `prompt_suggestion` after a successful result. Add the rung-4 `reply-suggestion` fixture and scenario; this resolves the open question without a sibling-repository edit. Keep the placeholder visible during attachment sending while revoking the action token and disabling gesture/accessibility submission.
