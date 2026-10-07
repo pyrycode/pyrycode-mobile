@@ -386,6 +386,19 @@ interface ConversationRepository {
         muted: Boolean,
     ): Unit = error("setMuted is not implemented for this ConversationRepository")
 
+    /** Live read facts only; absent before this connection reports them, never sourced from cache. */
+    fun observeReadMarks(conversationId: String): Flow<ConversationReadMarks?> = flowOf(null)
+
+    /**
+     * Confirm a shared read mark in the durable history id space. Success is the stored mark after
+     * the correlated update, which may be clamped below [upTo]. Failure never optimistically advances
+     * a mark. Cancellation propagates; callers own retries. Implementations without support fail.
+     */
+    suspend fun markConversationRead(
+        conversationId: String,
+        upTo: ULong,
+    ): Result<ULong> = Result.failure(UnsupportedOperationException("Daemon read marks are unavailable"))
+
     /**
      * Permanently removes the conversation from the store. Tolerant of unknown
      * ids: calling `delete` on an id that is not present is a silent no-op.

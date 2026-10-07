@@ -14,13 +14,14 @@ import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
-import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasProgressBarRangeInfo
 import androidx.compose.ui.test.hasScrollToIndexAction
@@ -921,15 +922,14 @@ class ThreadDesignCaptureTest {
         design.capture(FOLDER, "empty-thread", "696:4989")
     }
 
-    /** #1619: the dismissal notice `696:5065` (Juhana's call: a Default pill in the top overlay, not yet built). */
+    /** #1851: production dismissal as the frame's Default top-overlay pill. */
     @Test fun dismissalNoticeFrameAt412By892() {
         openThread()
         inputs.contextUsage.value = CONTEXT
         inputs.hostModal.value =
             HostModalState(resolved = listOf(ModalUiState.Dismissed("design-modal", "allow", "remote", CONVERSATION)))
         await("Resolved on another device")
-        design.capture(FOLDER, "prompt-resolved-elsewhere", "696:5065")
-        dismissSnackbar("Resolved on another device")
+        captureConfirmation("prompt-resolved-elsewhere", "Resolved on another device", "thread-top-bar", "696:5065")
     }
 
     /** #1747: reachable production reader failure, with real bars and unchanged body reservations. */
@@ -955,16 +955,91 @@ class ThreadDesignCaptureTest {
         rule.onNodeWithText("Builder Pipeline Plan").assertIsDisplayed()
     }
 
-    /**
-     * #1664: dismisses the snackbar showing [text] through the dismiss action Material3 gives each snackbar, then
-     * waits for it to leave. Waiting out its timer flaked: the 4 s delay runs on the rule's virtual clock, which
-     * `waitUntil` advances one frame per poll, so on a busy emulator the ~255 polls outlast the budget.
-     */
-    private fun dismissSnackbar(text: String) {
-        rule
-            .onNode(SemanticsMatcher.keyIsDefined(SemanticsActions.Dismiss) and hasAnyDescendant(hasText(text, substring = true)))
-            .performSemanticsAction(SemanticsActions.Dismiss)
-        rule.waitUntil(5_000) { rule.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isEmpty() }
+    @Test fun threadSavedFrameAt412By892() {
+        val file = MessageAttachment("design-save-file", "report.txt", "text/plain")
+        openThread()
+        extraItems.value = listOf(message("design-save-message", Role.Assistant, "Here is the report.", 12, file))
+        await("Here is the report.")
+        withSavedDocument { destination ->
+            checkNotNull(inputs.thread.value).onAttachmentRequested(file, AttachmentAction.SAVE)
+            await("File saved")
+            assertTrue("production save wrote its destination", destination.length() > 0)
+            captureConfirmation("thread-saved", "File saved", "thread-top-bar", "696:5065")
+        }
+    }
+
+    @Test fun readerSavedFrameAt412By892() {
+        openThread()
+        checkNotNull(inputs.thread.value).onOpenMarkdownLink("docs/Builder Pipeline - Plan.md")
+        await("Builder Pipeline Plan")
+        val before = rule.onNodeWithText("Builder Pipeline Plan").getUnclippedBoundsInRoot()
+        withSavedDocument { destination ->
+            rule.onNodeWithContentDescription("More actions").performClick()
+            rule.onNodeWithText("Save to device").performClick()
+            await("File saved")
+            assertEquals(readerNote, destination.readText())
+            assertEquals(before, rule.onNodeWithText("Builder Pipeline Plan").getUnclippedBoundsInRoot())
+            captureConfirmation("reader-saved", "File saved", "markdown-reader-top-bar", "696:5101")
+        }
+    }
+
+    /** The actual system-document result enters the production saver; only the destination is a fixture. */
+    private fun withSavedDocument(block: (File) -> Unit) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val destination = File.createTempFile("confirmation-1851-", ".txt", instrumentation.targetContext.cacheDir)
+        val stub =
+            ActivityIntentStub().apply {
+                answer(
+                    Intent.ACTION_CREATE_DOCUMENT,
+                ) { Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().setData(Uri.fromFile(destination))) }
+            }
+        instrumentation.addMonitor(stub)
+        try {
+            block(destination)
+            assertEquals(1, stub.answered.count { it.action == Intent.ACTION_CREATE_DOCUMENT })
+        } finally {
+            instrumentation.removeMonitor(stub)
+            destination.delete()
+        }
+    }
+
+    private fun captureConfirmation(
+        name: String,
+        text: String,
+        barTag: String,
+        figma: String,
+    ) {
+        val pillNode = rule.onNodeWithTag("transient_confirmation_notice")
+        pillNode
+            .assertIsDisplayed()
+            .assertHasNoClickAction()
+            .assert(SemanticsMatcher.keyNotDefined(SemanticsActions.Dismiss))
+        rule.onAllNodesWithTag("thread_confirmation_snackbar").assertCountEquals(0)
+        rule.onAllNodesWithTag("reader_confirmation_snackbar").assertCountEquals(0)
+        val bar = rule.onNodeWithTag(barTag).getUnclippedBoundsInRoot()
+        val pill = pillNode.getUnclippedBoundsInRoot()
+        val label = rule.onNodeWithText(text, useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertEquals(24f, (pill.bottom - pill.top).value, 0.5f)
+        assertEquals(28f, (pill.top - bar.bottom).value, 0.5f)
+        assertEquals(20f, (bar.right - pill.right).value, 0.5f)
+        assertEquals(8f, (label.left - pill.left).value, 0.5f)
+        assertEquals(8f, (pill.right - label.right).value, 0.5f)
+        assertEquals(4f, (label.top - pill.top).value, 0.5f)
+        assertEquals(4f, (pill.bottom - label.bottom).value, 0.5f)
+        val output =
+            File(
+                checkNotNull(InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")),
+                "design-1220/confirmation-1851",
+            ).apply {
+                mkdirs()
+            }
+        File(
+            output,
+            "$name-geometry.txt",
+        ).writeText("barDp=$bar pillDp=$pill textDp=$label cornersDp=6 typography=bodySmall colors=primaryContainer/onPrimaryContainer\n")
+        design.capture("confirmation-1851", name, figma)
+        rule.mainClock.advanceTimeBy(4_100)
+        rule.onNodeWithTag("transient_confirmation_notice").assertDoesNotExist()
     }
 
     private fun fake() = GlobalContext.get().get<FakeConversationRepository>()

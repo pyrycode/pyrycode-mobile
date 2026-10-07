@@ -34,8 +34,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -81,6 +79,7 @@ import androidx.compose.ui.window.DialogProperties
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
+import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
@@ -260,6 +259,9 @@ fun ThreadScreen(
     // bar owned its own text.
     draft: String = "",
     onDraftChange: (String) -> Unit = {},
+    onReplyToMessage: (Message) -> String? = { null },
+    suggestedReply: SuggestedReply? = null,
+    onSendSuggestedReply: (SuggestedReply) -> Boolean = { false },
     // #1342: the open Channel info sheet's System prompt state (ThreadViewModel.systemPrompt); its edits,
     // Save and Clear go through onOverflowEvent.
     systemPrompt: SystemPromptEditorState? = null,
@@ -322,6 +324,7 @@ fun ThreadScreen(
                 { onComposerCommand(ComposerAction.CompactSession) }
             }
         }
+    var pendingReplyDraft by remember(state.conversationId) { mutableStateOf<String?>(null) }
     val threadOpenedAt = remember(state.conversationId) { Clock.System.now() }
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
@@ -331,7 +334,8 @@ fun ThreadScreen(
     val shownQuestion = questionState.takeIf { openRequest == null }
     // #1306: one call site for both prompt kinds, so a question → permission hand-over keeps one owner.
     if (questionState != null || openRequest != null) QuestionPromptProtection()
-    val snackbarHostState = remember { SnackbarHostState() }
+    val confirmationNotices = rememberTransientConfirmationNoticeState(state.conversationId)
+    val confirmationScope = key(state.conversationId) { rememberCoroutineScope() }
     val errorNotices = rememberTransientErrorNoticeState(state.conversationId)
     // Payload-free signals and local resources keep exception and daemon text out of notices. Each collector
     // queues its notice and returns, so signals keep their arrival order across routes.
@@ -375,9 +379,11 @@ fun ThreadScreen(
     val noticeScope = rememberCoroutineScope()
     val attachmentActions =
         rememberAttachmentActions(attachmentStates, onOpenMarkdownAttachment) { notice ->
-            noticeScope.launch {
-                val text = resources.getString(notice.message)
-                if (notice == AttachmentNotice.SAVED) snackbarHostState.showSnackbar(text) else errorNotices.show(text)
+            val text = resources.getString(notice.message)
+            if (notice == AttachmentNotice.SAVED) {
+                confirmationNotices.enqueue(confirmationScope, text)
+            } else {
+                noticeScope.launch { errorNotices.show(text) }
             }
         }
     // #1329: a tapped file that loaded ready opens or saves once, through the same actions as a ready row.
@@ -457,7 +463,6 @@ fun ThreadScreen(
             modifier = Modifier.fillMaxSize(),
             containerColor = if (frameColors.glow == null) frameColors.background else Color.Transparent,
             contentColor = MaterialTheme.colorScheme.onBackground,
-            snackbarHost = { SnackbarHost(snackbarHostState, Modifier.testTag("thread_confirmation_snackbar")) },
             topBar = {
                 ThreadTopAppBar(
                     title = state.displayName,
@@ -522,6 +527,10 @@ fun ThreadScreen(
                     }
                     ThreadInputBar(
                         text = draft,
+                        replyDraft = pendingReplyDraft,
+                        onReplyConsumed = { pendingReplyDraft = null },
+                        suggestedReply = suggestedReply,
+                        onSendSuggestedReply = onSendSuggestedReply,
                         onTextChange = onDraftChange,
                         // The composer no longer clears itself here (#789): sendMessage clears the draft
                         // once the daemon has accepted it, so a refused send leaves the text to resend.
@@ -654,20 +663,18 @@ fun ThreadScreen(
                                 (if (state.historyMarkers.any { it.beforeRow.isEmpty() }) 1 else 0) +
                                 (if (openRequest != null) PERMISSION_ROW_COUNT else 0) +
                                 (if (answerRejected) 1 else 0)
+                        // "Go to agent" only scrolls the block's own root row into view; it never expands
+                        // the block's collapsed run (that root draws as itself regardless, #1827
+                        // follow-up — only its own tap, via ToolRunRow's onToggle, opens or closes a run).
                         LaunchedEffect(goToAgent, rows, promptRowCount) {
                             val agentId = goToAgent ?: return@LaunchedEffect
-                            val run = rows.filterIsInstance<ThreadRow.ToolRun>().firstOrNull { row -> row.tools.any { it.id == agentId } }
-                            if (run != null && !run.expanded) {
-                                expandedRuns = expandedRuns + run.runId
-                            } else {
-                                val index =
-                                    reversedRows.indexOfFirst { row ->
-                                        ((row as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)?.message?.id == agentId
-                                    }
-                                if (index >= 0) {
-                                    listState.scrollToItem(index + promptRowCount)
-                                    goToAgent = null
+                            val index =
+                                reversedRows.indexOfFirst { row ->
+                                    ((row as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)?.message?.id == agentId
                                 }
+                            if (index >= 0) {
+                                listState.scrollToItem(index + promptRowCount)
+                                goToAgent = null
                             }
                         }
                         // Info banners retain their keys but render nothing; spacing follows the visible row.
@@ -882,6 +889,7 @@ fun ThreadScreen(
                                                 is ThreadItem.MessageItem ->
                                                     MessageBubble(
                                                         message = item.message,
+                                                        onReply = { pendingReplyDraft = onReplyToMessage(it) },
                                                         modifier =
                                                             if (row.agentBlockId ==
                                                                 item.message.id
@@ -1011,6 +1019,8 @@ fun ThreadScreen(
                         onCompact = onCompact,
                         transientError = errorNotices.currentMessage,
                         transientErrorOccurrence = errorNotices.currentOccurrence,
+                        confirmation = confirmationNotices.currentMessage,
+                        confirmationOccurrence = confirmationNotices.currentOccurrence,
                     )
                 }
             }
@@ -1214,7 +1224,7 @@ fun ThreadScreen(
             // Keyed on modalId, so it never re-fires on unrelated recomposition. The host fold keeps this
             // conversation's latest dismissal until the next reconnect (#1337), so reopening the chat shows it again.
             LaunchedEffect(modalState.modalId) {
-                snackbarHostState.showSnackbar(reason)
+                confirmationNotices.enqueue(confirmationScope, reason)
             }
         }
         ModalUiState.Hidden -> Unit

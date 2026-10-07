@@ -54,6 +54,13 @@ data class ConversationSummaryDto(
     // Defaulted so a row from a daemon without mute support reads as not muted and keeps notifying.
     @SerialName("is_muted") val isMuted: Boolean = false,
     @SerialName("workspace_label") val workspaceLabel: String? = null,
+    // Absent/null means unavailable; zero is valid. Strict unsigned decoding avoids signed overflow.
+    @SerialName("read_up_to")
+    @Serializable(with = ReadMarkIdSerializer::class)
+    val readUpTo: ULong? = null,
+    @SerialName("latest_entry_id")
+    @Serializable(with = ReadMarkIdSerializer::class)
+    val latestEntryId: ULong? = null,
     // Raw and defaulted: only a `multi_agent` client is sent the key; [conversationAgentOf] reads it.
     val agent: String? = null,
     // Raw, not an [Instant]: an unparsable stamp must cost only the stamp, not the whole list, so

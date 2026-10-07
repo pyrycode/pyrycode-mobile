@@ -26,11 +26,14 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasAnySibling
@@ -67,6 +70,8 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso
@@ -235,6 +240,10 @@ class InteractiveStreamE2ETest {
 
     @get:Rule
     val composeTestRule = createAndroidComposeRule<MainActivity>()
+
+    /** #1818: reply's keyboard check needs a real IME, which ATD images omit; selected per method. */
+    @get:Rule
+    val testIme = TestImeRule()
 
     /**
      * #586: fails **any** scenario in this class during which the daemon reported a claude message kind
@@ -416,8 +425,26 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /** #1866: a daemon-authored next reply requires an explicit confirmed hold/release. */
+    @Test
+    fun interactiveTurn_replySuggestion_longPressSends() {
+        awaitChannelList()
+        awaitConnected()
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val before = hostConversationIds(serverId)
+        createChat()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+        val conversation = newHostConversationId(serverId, before)
+        sendFromPhone(PING_PROMPT)
+        composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+        composeTestRule.assertReplySuggestionLongPress(hostRepository(serverId), conversation, REPLY_TIMEOUT_MS)
+    }
+
     @Test
     fun interactiveTurn_pingPrompt_streamsPingReplyIntoThread() {
+        testIme.select()
         // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
         awaitChannelList()
 
@@ -456,8 +483,31 @@ class InteractiveStreamE2ETest {
                         .map { it.message }
                 }
             }
-        composeTestRule.assertSideMessageCopy(messages.single { it.role == Role.User && it.content == PING_PROMPT })
-        composeTestRule.assertSideMessageCopy(messages.single { it.role == Role.Assistant })
+        val user = messages.single { it.role == Role.User && it.content == PING_PROMPT }
+        val assistant = messages.single { it.role == Role.Assistant }
+        composeTestRule.assertSideMessageCopy(user)
+        composeTestRule.assertSideMessageCopy(assistant)
+        val userQuote = "User:\n\"${user.content}\"\n"
+        composeTestRule.assertSideMessageReply(user, userQuote)
+        composeTestRule.waitUntil(5_000) {
+            composeTestRule.runOnIdle {
+                ViewCompat.getRootWindowInsets(composeTestRule.activity.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+            }
+        }
+        composeTestRule.onNode(hasSetTextAction()).performTextInput("answer")
+        val appended = userQuote + "answer\nAssistant:\n\"${assistant.content}\"\n"
+        composeTestRule.assertSideMessageReply(assistant, appended)
+        composeTestRule.waitUntil(5_000) {
+            composeTestRule.runOnIdle {
+                ViewCompat.getRootWindowInsets(composeTestRule.activity.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+            }
+        }
+        assertEquals(
+            messages,
+            runBlocking { repository.observeMessages(conversationId).first() }
+                .filterIsInstance<ThreadItem.MessageItem>()
+                .map { it.message },
+        )
     }
 
     /**
@@ -4998,22 +5048,25 @@ class InteractiveStreamE2ETest {
                         !peer.field(it, "status").isNullOrEmpty()
                 },
             )
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                runBlocking { hostRepository().observeMessages(chat).first() }.any {
-                    it is ThreadItem.MessageItem && it.message.role == Role.Assistant && token in it.message.content
-                }
-            }
-            val held =
-                runBlocking { hostRepository().observeMessages(chat).first() }
-                    .filterIsInstance<ThreadItem.MessageItem>()
-                    .map { it.message }
-                    .filter { it.role == Role.Assistant && token in it.content }
+            val loaded =
+                runBlocking {
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        hostRepository().observeMessages(chat).first { items ->
+                            val messages = items.filterIsInstance<ThreadItem.MessageItem>().map { it.message }
+                            messages.any { it.role == Role.Assistant && token in it.content } &&
+                                messages.any { it.role == Role.Tool && it.toolCall?.parentToolUseId == agentId }
+                        }
+                    }
+                }.filterIsInstance<ThreadItem.MessageItem>().map { it.message }
+            val held = loaded.filter { it.role == Role.Assistant && token in it.content }
             assertEquals("one attributed reply segment", 1, held.size)
             assertEquals(agentId, held.single().parentToolUseId)
+            // The root Agent stays separate; its run is keyed by the first loaded child tool.
+            val runId = loaded.first { it.role == Role.Tool && it.toolCall?.parentToolUseId == agentId }.id
             // Exact paragraph matching excludes the user prompt that names the requested token.
             val reply = hasText(token)
             val child = hasTestTag("background-agent-child:$agentId")
-            val run = hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:$agentId"))
+            val run = hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:$runId"))
             val expandLabel = string(R.string.tool_run_expand)
             val closedRun =
                 run and
@@ -6050,6 +6103,18 @@ class InteractiveStreamE2ETest {
             awaitReadyAttachmentRow(documentName, REPLY_TIMEOUT_MS, poll = ::pullForOlderHistory)
             composeTestRule.onAllNodes(readyAttachmentRow(documentName)).assertCountEquals(1)
             assertOpensAndSaves(stub, documentName, sha256(document), inserted)
+            // #1851: successful saving confirms at the top, using the inert Default surface.
+            val savedPill =
+                composeTestRule
+                    .onNodeWithText(savedNotice)
+                    .assert(hasTestTag("transient_confirmation_notice"))
+                    .assertIsDisplayed()
+                    .assertHasNoClickAction()
+                    .getUnclippedBoundsInRoot()
+            val bar = composeTestRule.onNodeWithTag("thread-top-bar").getUnclippedBoundsInRoot()
+            assertTrue("saved confirmation is below the top bar", savedPill.top >= bar.bottom)
+            assertEquals("saved confirmation uses the right overlay gutter", 20f, (bar.right - savedPill.right).value, 2f)
+            composeTestRule.onAllNodesWithTag("thread_confirmation_snackbar").assertCountEquals(0)
         } finally {
             instrumentation.removeMonitor(stub)
             deleteFixtures(inserted)

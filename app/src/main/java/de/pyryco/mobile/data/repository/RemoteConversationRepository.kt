@@ -24,6 +24,7 @@ import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.ModalDismissedPayloadDto
 import de.pyryco.mobile.data.network.ModalShownPayloadDto
 import de.pyryco.mobile.data.network.RelayErrorException
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.ReplayCursor
 import de.pyryco.mobile.data.network.RequestContextUsagePayloadDto
 import de.pyryco.mobile.data.network.RequestHistoryPayloadDto
@@ -451,6 +452,7 @@ class RemoteConversationRepository(
     }
 
     private fun onInbound(envelope: Envelope) {
+        if (conversationCommands.routeReadMarkReply(envelope)) return
         if (messageCommands.routeDebugBundle(envelope)) return
         if (messageCommands.routeAttachmentUpload(envelope)) return
         if (attachmentRetrievals.route(envelope)) return
@@ -526,6 +528,7 @@ class RemoteConversationRepository(
                     try {
                         MobileJson.decodeFromJsonElement<ConversationResponseDto>(envelope.payload)
                     } catch (e: IllegalArgumentException) {
+                        RelayLog.w { "event=conversation_read_update outcome=malformed" }
                         null
                     }
                 record?.let(conversationListProjection::upsertConversation)
@@ -1447,6 +1450,14 @@ class RemoteConversationRepository(
         conversationId: String,
         muted: Boolean,
     ): Unit = conversationCommands.setMuted(conversationId, muted)
+
+    override fun observeReadMarks(conversationId: String): Flow<ConversationReadMarks?> =
+        conversationListProjection.observeReadMarks(conversationId)
+
+    override suspend fun markConversationRead(
+        conversationId: String,
+        upTo: ULong,
+    ): Result<ULong> = conversationCommands.markConversationRead(conversationId, upTo)
 
     /** Permanently delete a conversation (#532); see [ConversationCommands.delete]. */
     override suspend fun delete(conversationId: String): Unit = conversationCommands.delete(conversationId)

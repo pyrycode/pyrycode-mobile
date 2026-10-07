@@ -75,6 +75,14 @@ class BackgroundAgentRestGapTest {
     private val lifecycle = ThreadItem.BackgroundTaskLifecycle("task", ts, "a", "Agent", "local_agent")
     private val child = ThreadItem.MessageItem(Message("child", "s", Role.Assistant, "child", ts, false, parentToolUseId = "a"))
 
+    // The block's root never folds into the generic run header itself (#1827 follow-up): "Agent" stays
+    // visible regardless of how many children its block picks up. A lone prose child does not meet the
+    // two-row fold threshold either, so a second, tool-bearing child is what actually forms a run here.
+    private val childTool =
+        ThreadItem.MessageItem(
+            Message("read", "s", Role.Tool, "", ts, false, toolCall = ToolCall("Read", "", "", parentToolUseId = "a")),
+        )
+
     private fun mount(
         items: List<ThreadItem>,
         collapseToolUses: Boolean = true,
@@ -138,22 +146,23 @@ class BackgroundAgentRestGapTest {
     }
 
     @Test fun closed_agent_run_header_rests_the_documented_gap_above_the_band() {
-        // Once a child row joins the block, the pair folds into one closed ThreadRow.ToolRun header.
-        mount(filler(30) + agentCall + lifecycle + child)
+        // The root never joins the run (#1827 follow-up); a lone prose child does not meet the two-row
+        // fold threshold either, so a second, tool-bearing child is what actually closes into one header.
+        mount(filler(30) + agentCall + lifecycle + childTool + child)
         rule.onNodeWithText("Using tools: 1", substring = true).assertExists()
         assertRestGap(rule.onNodeWithTag("tool-run-row"))
     }
 
     @Test fun closed_agent_run_header_gap_is_unaffected_by_the_running_tasks_pill() {
         taskCount = 1
-        mount(filler(30) + agentCall + lifecycle + child)
+        mount(filler(30) + agentCall + lifecycle + childTool + child)
         rule.onNodeWithText("1 task running").assertExists()
         assertRestGap(rule.onNodeWithTag("tool-run-row"))
     }
 
     @Test fun open_agent_run_block_rests_the_documented_gap_above_the_band() {
-        mount(filler(30) + agentCall + lifecycle + child)
-        rule.onNodeWithTag("tool-run:a").performClick()
+        mount(filler(30) + agentCall + lifecycle + childTool + child)
+        rule.onNodeWithTag("tool-run:read").performClick()
         assertRestGap(rule.onNode(hasTestTag("message-bubble") and hasAnyDescendant(hasText("child"))))
     }
 }

@@ -4,6 +4,39 @@ Split out of [Thread screen](thread-screen.md) on 2026-09-05 to keep that docume
 
 ## Testing
 
+Shared geometry tests must prove device portability as well as Robolectric
+correctness. `ThreadDeleteGeometryTest` fetches its text semantics node on the
+test thread before invoking `GetTextLayoutResult` in `runOnIdle`; querying
+semantics inside that main-thread callback nests synchronization and can pass
+on Robolectric while failing on the device. Keep type-role and long-name
+clipping assertions alongside the geometry checks.
+
+`ThreadScreenModalTest` retains the 97dp stream-top and 24dp rejected-pill
+targets. At density 2.625, the header's rounded 14/48/6/1dp segments total
+182px, and its 28dp clearance adds 74px: 256px is 97.52381dp, 1.375px above
+the stream-top target. `ThreadScreenHistoryTest` retains the 60dp retry-row
+target: its 20dp line (53px), two 12dp insets (32px each) and 16dp gutter
+(42px) total 159px, 1.5px above that target. These totals justify two pixels
+in `assertDpEquals`, with separate one-pixel checks for the 69dp header,
+28dp clearance, retry line, both insets and gutter. Integral-density checks
+remain exact. See [pixel-snapping guidance](development-verification-gates.md#where-a-screen-test-goes).
+
+The [#1887 verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1903#issuecomment-6035607800)
+and retained focused XML confirm 74 JVM and 9 managed-device tests executed
+and passed, with zero failures, errors or skips, including all six delete
+geometry methods. Each affected method passed once on each runner
+(executed/failed/skipped: 1/0/0):
+
+- `ThreadDeleteGeometryTest.default_matches_frame_geometry_and_type_roles`
+- `ThreadDeleteGeometryTest.long_name_grows_surface_without_clipping_body`
+- `ThreadScreenModalTest.open_request_card_sits_flush_on_the_stream_top`
+- `ThreadScreenModalTest.answer_rejected_pill_sits_flush_on_the_stream_top_at_its_frame_height`
+- `ThreadScreenHistoryTest.retryRow_keepsItsLabelsFullLineBox_andLeavesTheStandard16dpGapBelowIt`
+
+The baseline device run failed all five while Robolectric passed them. The
+routine dispatcher UI gate did not run these shared methods; its suite totals
+are not their device evidence. Coverage remains in `sharedTest`.
+
 `ThreadStreamingRevealTest` pauses the Compose clock through the real
 `ThreadScreen`: pre-open text is immediate, appended text retains its prefix and
 reveals progressively, and reopening before catch-up shows all arrived text.
@@ -70,6 +103,20 @@ can leave a question choice beneath the header or Continue beneath the composer.
 Before physical clicks, wait for host focus after resizing, move the target into
 the clear area, assert selection, and restore actions to the newest resting end.
 Follow-test swipes must start between the bars to reach the list.
+
+`ThreadScreenHistoryTest` measures the [two-current-viewport prefetch band](thread-screen-oldest-end-history-demand.md)
+before and after reader movement. Uniform fixtures need enough rows for the measured
+outside position; a fixed count of short rows or raw-pixel drag can exercise a different
+range at device density. Estimate row pitch only from fully visible rows that pass
+`isDisplayed()`: lazy prefetch can retain an unplaced row's old semantic bounds, making
+an offscreen older row appear below a newer row and corrupting the distance estimate.
+Use settled, immediate index jumps for setup, assert the intended range with a margin,
+and scale touch movement to the measured viewport while keeping it between the bars.
+For drag-distance assertions, pause before releasing so a continuing fling does not
+change the measured range. Keep no-demand outside, one-demand inside with the oldest
+row hidden, and exact held-page index/offset anchoring with another demand only after
+further movement. See [#1886's review](https://github.com/pyrycode/pyrycode-mobile/pull/1901#issuecomment-6034934763)
+for the four methods' Robolectric and managed-device execution evidence.
 
 `ThreadChromeTest` covers measured draft/attachment resizing, resting gaps, blank
 chrome isolation, gradual attachment swipes and long-press selection/dragging.

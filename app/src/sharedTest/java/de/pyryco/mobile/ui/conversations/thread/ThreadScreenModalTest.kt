@@ -57,6 +57,7 @@ import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.assertDpEquals
 import de.pyryco.mobile.ui.assertRectEqualsWithinPixel
 import de.pyryco.mobile.ui.conversations.components.STATUS_GLYPH_TEST_TAG
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -820,7 +821,19 @@ class ThreadScreenModalTest {
 
         val card = composeTestRule.onNodeWithTag("permission-request-card").getUnclippedBoundsInRoot()
 
-        assertEquals("card top matches the frame's y 97", 97f, card.top.value, 0.5f)
+        assertStreamTop(card, "card")
+    }
+
+    private fun assertStreamTop(
+        bounds: DpRect,
+        item: String,
+    ) {
+        val header = composeTestRule.onNodeWithTag("thread-top-bar").getUnclippedBoundsInRoot()
+        assertDpEquals(69.dp, header.bottom, "header retains the frame's 69dp height")
+        assertDpEquals(28.dp, bounds.top - header.bottom, "$item keeps the 28dp clearance below the header")
+        // At density 2.625 the header's rounded 14/48/6/1dp segments total 182px, plus 74px
+        // for the 28dp clearance: 256px = 97.52381dp, 1.375px above the 97dp target.
+        assertDpEquals(97.dp, bounds.top, "$item top matches the frame's y 97", pixels = 2)
     }
 
     @Test
@@ -941,7 +954,7 @@ class ThreadScreenModalTest {
 
         val pill = composeTestRule.onNodeWithTag(PERMISSION_REJECTION_TEST_TAG).getUnclippedBoundsInRoot()
 
-        assertEquals("pill top matches the frame's y 97", 97f, pill.top.value, 0.5f)
-        assertEquals("pill height matches the frame's 24dp", 24f, pill.height.value, 0.5f)
+        assertStreamTop(pill, "pill")
+        assertDpEquals(24.dp, pill.height, "pill height matches the frame's 24dp")
     }
 }

@@ -16,7 +16,6 @@ import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
-import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -274,7 +273,7 @@ class ThreadTransientErrorTest {
         rule.onNodeWithContentDescription("Dismiss notice").assertIsDisplayed()
     }
 
-    @Test fun dismissedElsewhere_keepsItsSnackbar_whileAnErrorPillShows() {
+    @Test fun dismissedElsewhere_usesADefaultPill_whileAnErrorPillShows() {
         show(dismissedElsewhere = true)
         rule.runOnIdle { errors[1].trySend(Unit) }
         assertPill(context.getString(R.string.archive_failed))
@@ -282,7 +281,8 @@ class ThreadTransientErrorTest {
         rule
             .onNodeWithText("Resolved on another device")
             .assertIsDisplayed()
-            .assert(hasAnyAncestor(hasTestTag("thread_confirmation_snackbar")))
+            .assert(hasTestTag("transient_confirmation_notice"))
+            .assertHasNoClickAction()
     }
 
     @GraphicsMode(GraphicsMode.Mode.NATIVE)

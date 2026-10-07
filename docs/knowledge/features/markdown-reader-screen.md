@@ -71,8 +71,18 @@ and the [palette plan](../../specs/architecture/1162-thread-reader-canvas.md).
 Reader failures show as an inert Error pill from frame `696:5101` (#1747): right-aligned with 20dp
 gutters, 28dp below the measured bar through its rule, over the body without moving it. A failed
 Refresh, a failed open in another app and a failed save share one queue with the thread's rules: first in,
-first out, the full accessibility-adjusted Short time each, cancelled when the reader closes. Saved still
-shows in the bottom snackbar. Copy has no failure notice. The capture is `reader-error.png` in the
+first out, the full accessibility-adjusted Short time each, cancelled when the reader closes.
+“File saved” uses an inert Default pill below errors in the same right-aligned overlay
+column, separated by 12dp (#1851). Its separate composition-owned FIFO gives repeated
+equal text distinct occurrences, each with a full 4,000ms timeout adjusted for
+accessibility text/icons without controls. Errors can coexist above it immediately;
+closing the reader cancels active and queued confirmations. The body bounds never
+change and there is no bottom snackbar. Default uses the shared bodySmall,
+primary-container/on-primary-container, 6dp corners and 8/4dp padding.
+The [reader Saved capture](../../../app/src/androidTest/assets/confirmation-1851/README.md)
+matches notice placement from `696:5101` and Default treatment from `696:5065`;
+`696:5101` itself depicts an Error arm. Copy has no failure notice. The error
+capture is `reader-error.png` in the
 [design-1220 thread index](../../../app/src/androidTest/assets/design-1220/thread/index.md).
 
 ## Routing a tap to the reader
@@ -171,14 +181,16 @@ path specifically (verifier NIT on PR #1034 — a shared test with a failing fak
 cheaply). The document is held in composition only, never `rememberSaveable`, so no file content ever enters
 the saved-state bundle.
 
-`MarkdownReaderScreen(document, onBack, modifier, onRefresh, snackbarHostState)` is the stateless render: a
+`MarkdownReaderScreen(document, onBack, modifier, onRefresh, errorNotices)` is the stateless render: a
 `Surface` with explicit `contentColor = MaterialTheme.colorScheme.onSurface`, holding `MarkdownReaderTopBar`
 then the scrolling body. The custom canvas is not a global Material role, so automatic content-colour lookup
 cannot select its foreground; retaining `onSurface` explicitly keeps `MarkdownText`'s text colour intact. It has
-a `SnackbarHost` docked to the bottom for Saved only; failures, including a failed refresh, go to the
-`errorNotices: TransientErrorNoticeState` pill the caller shares (#1747). `onRefresh`, `snackbarHostState` and
-`errorNotices` all default to inert values, so every existing caller and preview still compiles; `RefreshableMarkdownReader` is the one real
-caller. `MarkdownReaderTopBar` reuses `ThreadTopAppBar`'s bar-metric constants (`BarGlyphSize`, `BarTouchSize`,
+a measured-header top overlay for errors and its locally remembered confirmation queue;
+failures, including a failed refresh, use `errorNotices: TransientErrorNoticeState`
+shared by the caller (#1747). `onRefresh` defaults to an inert callback and
+`errorNotices` to a remembered local queue; `RefreshableMarkdownReader` is the real
+caller. The unused snackbar parameter and host were removed in #1851.
+`MarkdownReaderTopBar` reuses `ThreadTopAppBar`'s bar-metric constants (`BarGlyphSize`, `BarTouchSize`,
 `BarTouchSlack`, `BarGutter`, `BarTopGap`, `BarRuleGap`, `BarBottomGap`, `BAR_RULE_ALPHA`) — promoted from
 `private` to `internal` in `ThreadTopAppBar.kt` by #1027, visibility-only, so both bars share one set of numbers
 rather than a second copy. Since #1067 the row's end padding is `BarGutter - BarTouchSlack`, matching
