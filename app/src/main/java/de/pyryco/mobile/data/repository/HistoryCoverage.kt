@@ -438,45 +438,7 @@ data class HistoryCoverage(
     }
 
     /** Separate display fragments at verified holes; repository rows and cache identities stay held. */
-    internal fun displayRows(rows: List<ThreadItem>): List<ThreadItem> {
-        if (unsignedGaps.isEmpty()) return rows
-        // A partial fill extends the older span without changing the gap's demand anchor.
-        val receivedHoles = unsignedSpans.zipWithNext()
-        val reserved = rows.filterIsInstance<ThreadItem.MessageItem>().mapTo(HashSet()) { it.message.id }
-        return rows.flatMap { row ->
-            val message = (row as? ThreadItem.MessageItem)?.message ?: return@flatMap listOf(row)
-            val segment = message.segment ?: return@flatMap listOf(row)
-            val boundaries =
-                segment.deltas.indices.drop(1).filter { index ->
-                    val before = unsignedRowOrder[historyIdentity(listOf("delta", segment.turnId, segment.deltas[index - 1].seq))]
-                    val after = unsignedRowOrder[historyIdentity(listOf("delta", segment.turnId, segment.deltas[index].seq))]
-                    before != null && after != null && receivedHoles.any { (older, newer) -> before <= older.last && after >= newer.first }
-                }
-            if (boundaries.isEmpty()) return@flatMap listOf(row)
-            var offset = 0
-            (listOf(0) + boundaries + segment.deltas.size).zipWithNext { first, last ->
-                val deltas = segment.deltas.subList(first, last)
-                val end =
-                    (offset.toLong() + deltas.sumOf { it.length.toLong() })
-                        .coerceIn(
-                            offset.toLong(),
-                            message.content.length.toLong(),
-                        ).toInt()
-                val text = message.content.substring(offset, end)
-                offset = end
-                var key = if (first == 0) message.id else segmentKey(segment.turnId, deltas.first().seq)
-                if (first != 0) {
-                    val natural = key
-                    var suffix = 0
-                    while (!reserved.add(key)) {
-                        suffix++
-                        key = "$natural~$suffix"
-                    }
-                }
-                ThreadItem.MessageItem(message.copy(id = key, content = text, segment = segment.copy(deltas = deltas)))
-            }
-        }
-    }
+    internal fun displayRows(rows: List<ThreadItem>): List<ThreadItem> = fragmentDisplayRows(rows)
 
     override fun toString(): String = "HistoryCoverage(spans=${unsignedSpans.size}, gaps=${unsignedGaps.size}, unknown=$unknown)"
 }

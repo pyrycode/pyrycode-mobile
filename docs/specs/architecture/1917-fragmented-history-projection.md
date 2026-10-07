@@ -47,3 +47,9 @@ Add a managed-device regression for the sparse restored fixture using the real w
 ## Open Questions
 
 None.
+
+## Revisions
+
+- 2026-10-07: The focused projection and device tests passed, but reading `foldHistoryToolRuns` exposed another gap-by-row scan in the render consumer. Carry the prepared display-row reference beside each marker's existing history key and unsigned anchor, use identity sets and collision-safe message ids for folding (agent attribution copies message rows), and retarget that reference onto a closed agent header. Existing manually constructed markers retain the history-key fallback. This removes hashing from the main-thread render path for projected markers and preserves marker identity/targeting. The scope now includes `ThreadHistoryRows.kt` and `ThreadHistoryDemand.kt`; forecast remains below 1000 written lines with two internal result types and no required consumer signature migrations.
+
+- 2026-10-07: The scripted ping durable-gap twin recovered all fixture content after two pulls, then tried to demand a nonexistent marker while cached coverage still reported unresolved metadata. Adapt `DurableGapProof.catchUp` to walk the missing fixture posts/reply, then wait independently for displayed marker closure. Preserve its minimum two pulls, exact request counts, no page-arrival demand, uniqueness, settled reply and rendered chronology assertions. Hidden cache gaps remain unresolved; persistence policy is untouched. The rung-3 scenario stays owned by #1833; only its shared eligibility/timing assumptions are adapted here.

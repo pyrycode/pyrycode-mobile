@@ -140,6 +140,7 @@ class HistoryCacheReworkTest {
                 CachingConversationRepository(live, disk(), "h"),
                 FakeConnectionStateSource(),
                 ComposerDraftStore(),
+                projectionDispatcher = UnconfinedTestDispatcher(testScheduler),
                 repositoryAvailable = flowOf(true),
             )
         val store = ViewModelStore().apply { put("vm", vm) }
@@ -178,6 +179,7 @@ class HistoryCacheReworkTest {
                 repository,
                 FakeConnectionStateSource(),
                 ComposerDraftStore(),
+                projectionDispatcher = UnconfinedTestDispatcher(testScheduler),
                 repositoryAvailable = flowOf(true),
             )
         val reopenedStore = ViewModelStore().apply { put("vm", reopened) }
@@ -228,6 +230,7 @@ class HistoryCacheReworkTest {
                 repository,
                 FakeConnectionStateSource(),
                 ComposerDraftStore(),
+                projectionDispatcher = UnconfinedTestDispatcher(testScheduler),
                 repositoryAvailable = flowOf(true),
             )
         val store = ViewModelStore().apply { put("vm", vm) }
@@ -257,6 +260,7 @@ class HistoryCacheReworkTest {
                 CachingConversationRepository(reopenedLive, disk(), "h"),
                 FakeConnectionStateSource(),
                 ComposerDraftStore(),
+                projectionDispatcher = UnconfinedTestDispatcher(testScheduler),
                 repositoryAvailable = flowOf(true),
             )
         val reopenedStore = ViewModelStore().apply { put("vm", reopened) }
@@ -301,6 +305,7 @@ class HistoryCacheReworkTest {
                     repository,
                     FakeConnectionStateSource(),
                     ComposerDraftStore(),
+                    projectionDispatcher = UnconfinedTestDispatcher(testScheduler),
                     repositoryAvailable = flowOf(true),
                 )
             val store = ViewModelStore().apply { put("vm", vm) }
@@ -344,6 +349,7 @@ class HistoryCacheReworkTest {
                             repository,
                             FakeConnectionStateSource(),
                             ComposerDraftStore(),
+                            projectionDispatcher = UnconfinedTestDispatcher(testScheduler),
                             repositoryAvailable = available,
                         )
                     val store = ViewModelStore().apply { put("vm", vm) }
@@ -396,6 +402,7 @@ class HistoryCacheReworkTest {
                         restored,
                         FakeConnectionStateSource(),
                         ComposerDraftStore(),
+                        projectionDispatcher = UnconfinedTestDispatcher(testScheduler),
                         repositoryAvailable = flowOf(false),
                     )
                 val store = ViewModelStore().apply { put("reopened", reopened) }
