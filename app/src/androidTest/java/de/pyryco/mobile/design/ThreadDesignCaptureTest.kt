@@ -10,6 +10,16 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.net.Uri
 import android.provider.MediaStore
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -44,6 +54,7 @@ import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.SavedStateHandle
 import androidx.test.espresso.Espresso
@@ -92,10 +103,13 @@ import de.pyryco.mobile.di.ConversationViewing
 import de.pyryco.mobile.e2e.ActivityIntentStub
 import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
+import de.pyryco.mobile.ui.conversations.components.QueuedMessageRow
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.PickedAttachment
 import de.pyryco.mobile.ui.conversations.thread.ThreadHistoryTail
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
+import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.threadColors
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -889,17 +903,31 @@ class ThreadDesignCaptureTest {
     /** Real-device pixels for #1918: both actions and Cancel-only in both static palettes. */
     @Test fun queuedActions_lightDarkAndCancelOnlyAt412By892() {
         openThread()
-        seedShown.value = false
-        queue.value =
-            listOf(
-                QueuedMessage(1, "Then push a draft PR.", at(20)),
-                QueuedMessage(2, "Can you also update the migration tests once you're done?", at(21)),
-            )
-        val preferences = GlobalContext.get().get<AppPreferences>()
+        val palette = mutableStateOf(ThemeMode.LIGHT)
+        val sendNow = mutableStateOf(true)
+        // MainActivity pins dark; mount the same component under explicit palettes for this capture.
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            (design.view.context as ComponentActivity).setContent {
+                PyrycodeMobileTheme(darkTheme = palette.value == ThemeMode.DARK, dynamicColor = false) {
+                    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.threadColors.background) {
+                        Column(Modifier.systemBarsPadding().padding(vertical = 24.dp)) {
+                            listOf(
+                                "Then push a draft PR.",
+                                "Can you also update the migration tests once you're done?",
+                            ).forEach { text ->
+                                QueuedMessageRow(text, {}, onSendNow = if (sendNow.value) ({}) else null)
+                            }
+                        }
+                    }
+                }
+            }
+        }
         for (theme in listOf(ThemeMode.LIGHT, ThemeMode.DARK)) {
-            runBlocking { preferences.setThemeMode(theme) }
             for (enabled in listOf(true, false)) {
-                fake().setSessionSettingsReading(CONVERSATION, queuedSettings(enabled))
+                rule.runOnIdle {
+                    palette.value = theme
+                    sendNow.value = enabled
+                }
                 rule.waitUntil(5_000) {
                     rule.onAllNodesWithContentDescription("Send now").fetchSemanticsNodes().size == if (enabled) 2 else 0
                 }
