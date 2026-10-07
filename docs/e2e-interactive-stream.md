@@ -34,6 +34,17 @@ localized value, and dismissible notices are cleared before the copy tap so a
 usage warning cannot cover it. The helper and its eight deterministic regressions
 live in shared tests; see [copy testing](knowledge/features/message-bubble-testing.md#testing).
 
+Message reply (#1818) extends the same two methods. The rung-3 ping method taps
+reply on its sent user message, types, then taps reply on the received assistant
+message. It checks each exact staged quote, the appended draft, the end cursor,
+composer focus and the keyboard, and that neither quote sends. The rung-4 held
+`stream` method quotes the streaming reply, then the user message, and after
+completion checks that later chunks left the staged quote unchanged. Both methods
+select the test APK's keyboard, because ATD images have none. The scripted method
+first acknowledges the fixture's failed-MCP pill, which otherwise covers the first
+row's side actions. This adds no scenario or real-Claude turn; the pre-ship
+command remains `python3 scripts/android-test-gate.py live`.
+
 Recent-conversation Direct Share (#1729) is covered at rung 3 by
 `InteractiveStreamE2ETest.interactiveTurn_directShareShortcut_arrivesAtPeerWithItsBytes` and at rung 4
 by `DeterministicInteractiveStreamE2ETest.interactiveTurn_directShareShortcut_stagesBeforeExplicitSend`
@@ -2612,7 +2623,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `direct-share` (#1729) | published shortcut stages text in its thread without a picker or send; explicit Send receives ping | `ping.jsonl` | one |
 | `ping` (default) | a single-line reply renders | `ping.jsonl` | one |
 | `reopen-stream` (#1762) | arrived prefix is immediate on reopen and retained when a suffix composes while the turn stays open; one final combined reply | `reopen-stream-open.jsonl` + `reopen-stream-done.jsonl` | **two** (suffix on second send, terminal result on third) |
-| `stream` (#1765, #1817) | arrived words display while the same reply stays streaming; all three deltas settle into one complete reply without a caret; side copy reads user, held-stream and finished assistant source while timestamps stay hidden | `stream.jsonl` + `stream-end.jsonl` | **two** (completion on second send) |
+| `stream` (#1765, #1817, #1818) | arrived words display while the same reply stays streaming; all three deltas settle into one complete reply without a caret; side copy reads user, held-stream and finished assistant source while timestamps stay hidden; reply stages exact quotes of the held stream and the user message, unchanged by later chunks, with focus and keyboard and no send | `stream.jsonl` + `stream-end.jsonl` | **two** (completion on second send) |
 | `spinner` | the thinking spinner shows mid-turn, then clears at turn end | `spinner-open.jsonl` + `spinner-end.jsonl` | **two** |
 | `tool` (#455) | a tool step shows **running** in flight, then **done** after the result | `tool-open.jsonl` + `tool-done.jsonl` | **two** |
 | `tool-failed` (#455) | a failing tool step renders **failed** | `tool-failed.jsonl` | one |
@@ -2912,6 +2923,23 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+**Message reply (#1818, 2026-10-07).** A hand-run fresh full live suite,
+`scripts/with-claude-login.sh python3 scripts/android-test-gate.py live`, ran on
+`feature/1818` at `4432930e`, merged with `origin/main` at `4a523704`. Its JUnit
+report names
+`InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`
+as executed and passed: **64 executed, 62 passed, 2 failed, 0 skipped**, exit 1 in
+16m 46s. Same-tree reruns passed archive/restore and failed
+`interactiveTurn_backgroundAgent_replyStaysUnderAgent` again, on its missing
+clickable `Using tools:` header. That method fails the same way on `main` at
+`4a523704` (1 executed, 1 failed), after today's agent-row changes, so the failure
+predates this ticket. This was a manual run, not the dispatcher's live gate. The
+scripted `stream` scenario passed (1 executed, 1 passed) and the UI gate passed
+195 of 195, including `MessageReplyImeDeviceTest`. An earlier full run on the
+same feature failed the ping method at its first copy tap, under the live host's
+attention pill. The tap-point repair in
+[copy testing](knowledge/features/message-bubble-testing.md#testing) fixed it.
 
 **Default confirmation pills (#1851, 2026-10-07).** The dispatcher’s fresh
 full live run `2026-10-07T08-13-23-504Z` used
@@ -4396,7 +4424,7 @@ The remaining checks here are specific to a real relay or real Claude execution:
   method named in [the ladder](#the-ladder-reliable--flaky) cover source copy with
   timestamps hidden; the held fixture also proves copy during streaming.
   [Counted evidence](#verification-status) closes this coverage handoff.
-  #1818 owns reply and the midpoint split of overlapping action targets.
+  #1818 added reply and the midpoint split of the action targets.
   The pre-ship command stays `python3 scripts/android-test-gate.py live`.
 
 - **Stream completion identity (#1793):**

@@ -11,6 +11,7 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeTestRule
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
@@ -31,17 +32,20 @@ internal fun ComposeTestRule.assertSideMessageCopy(message: Message) {
     val timestamp =
         hasText(formatShortDateTime(message.timestamp, TimeZone.currentSystemDefault(), Locale.getDefault())) and
             hasAnyAncestor(sourceRow)
-    val copy =
-        onNode(
-            hasContentDescription(context.getString(R.string.cd_thread_copy_message)) and
-                hasAnyAncestor(sourceRow),
-        ).performScrollTo().assertIsDisplayed()
     onAllNodes(timestamp, useUnmergedTree = true).assertCountEquals(0)
     // A dismissible Top overlay notice can cover the target despite assertIsDisplayed succeeding.
+    // Dismiss before measuring the clear band, so a removable notice does not count as chrome.
     val notices = onAllNodes(hasContentDescription(context.getString(R.string.thread_notice_dismiss)))
     repeat(notices.fetchSemanticsNodes().size) { notices[0].performClick() }
+    // The divided targets may overflow a short first row; scroll its visual row, not the overflow.
+    onNode(sourceRow).performScrollTo()
+    onNode(
+        hasContentDescription(context.getString(R.string.cd_thread_copy_message)) and
+            hasAnyAncestor(sourceRow),
+    ).assertIsDisplayed()
     runOnIdle { clipboard.setPrimaryClip(ClipData.newPlainText("copy baseline", "unrelated baseline")) }
-    copy.performTouchInput { click(center) }
+    val point = sideMessageActionTapPoint(sourceRow, "message-copy-glyph")
+    onRoot().performTouchInput { click(point) }
     runOnIdle {
         assertEquals(
             message.content.take(100_000),
