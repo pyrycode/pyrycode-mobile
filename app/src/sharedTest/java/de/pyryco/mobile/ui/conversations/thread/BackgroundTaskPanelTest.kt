@@ -345,10 +345,74 @@ class BackgroundTaskPanelTest {
 
     @Test
     fun truncatedSummary_isMarkedFromTheFinishsOwnList() {
-        setPanel(roster = roster(task(finish = terminal("sleep 300 && echo", truncatedFields = listOf("summary")), isFinished = true)))
+        setPanel(
+            roster = roster(task(finish = terminal("Finished without warnings", truncatedFields = listOf("summary")), isFinished = true)),
+        )
 
-        composeTestRule.onNodeWithText("sleep 300 && echo").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Finished without warnings").assertIsDisplayed()
         markers().assertCountEquals(1)
+    }
+
+    @Test
+    fun finishSummary_containingTrimmedDescription_isHiddenWithItsMarker() {
+        val description = "  Review the diff  "
+        val summary = "  Task completed: Review the diff.  "
+        val finished = task(description = description, finish = terminal(summary, listOf("summary")), isFinished = true)
+        setPanel(roster(finished))
+
+        composeTestRule.onNodeWithText(description, useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText(summary, useUnmergedTree = true).assertDoesNotExist()
+        markers().assertCountEquals(0)
+        assertEquals(description, finished.description)
+        assertEquals(summary, finished.finish?.summary)
+    }
+
+    @Test
+    fun finishSummary_equalToTrimmedDescription_isHidden() {
+        setPanel(roster(task(description = "  Review the diff  ", finish = terminal("Review the diff"), isFinished = true)))
+
+        composeTestRule.onNodeWithText("Review the diff", useUnmergedTree = true).assertDoesNotExist()
+        composeTestRule.onNodeWithText("  Review the diff  ", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun finishSummary_differentFromDescription_isShownWithoutChangingItsText() {
+        setPanel(roster(task(description = "npm run build", finish = terminal("  Build finished with no warnings.  "), isFinished = true)))
+
+        composeTestRule.onNodeWithText("npm run build", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("  Build finished with no warnings.  ", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun finishSummary_withEmptyOrWhitespaceDescription_isShown() {
+        val current = mutableStateOf(task(description = "", finish = terminal("Finished successfully"), isFinished = true))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme { BackgroundTaskPanel(roster(current.value), onDismiss = {}) }
+        }
+
+        composeTestRule.onNodeWithText("Finished successfully", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.runOnIdle { current.value = current.value.copy(description = " \t\n ") }
+        composeTestRule.onNodeWithText("Finished successfully", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun finishSummary_emptyOrWhitespace_isHidden() {
+        val current = mutableStateOf(task(finish = terminal("", listOf("summary")), isFinished = true))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme { BackgroundTaskPanel(roster(current.value), onDismiss = {}) }
+        }
+
+        markers().assertCountEquals(0)
+        composeTestRule.runOnIdle { current.value = current.value.copy(finish = terminal(" \t\n ", listOf("summary"))) }
+        composeTestRule.onNodeWithText(" \t\n ", useUnmergedTree = true).assertDoesNotExist()
+        markers().assertCountEquals(0)
+    }
+
+    @Test
+    fun finishSummary_comparisonIsCaseSensitive() {
+        setPanel(roster(task(description = "Review the diff", finish = terminal("Completed: review the diff"), isFinished = true)))
+
+        composeTestRule.onNodeWithText("Completed: review the diff", useUnmergedTree = true).assertIsDisplayed()
     }
 
     // The latest reported update: an empty patch is a value, not an absence.
