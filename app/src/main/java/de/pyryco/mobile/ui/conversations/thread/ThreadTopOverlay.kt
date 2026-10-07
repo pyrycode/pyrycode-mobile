@@ -139,7 +139,7 @@ internal fun ThreadTopOverlay(
             )
         }
         Column(
-            modifier = modifier.fillMaxWidth(),
+            modifier = modifier.fillMaxWidth().testTag("thread-top-overlay"),
             horizontalAlignment = Alignment.End,
             verticalArrangement = Arrangement.spacedBy(OverlayPillGap),
         ) {

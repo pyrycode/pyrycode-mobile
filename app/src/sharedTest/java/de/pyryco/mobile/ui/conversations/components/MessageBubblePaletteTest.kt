@@ -53,7 +53,6 @@ class MessageBubblePaletteTest {
     private var userFill = Color.Unspecified
     private var assistantFill = Color.Unspecified
     private var background = Color.Unspecified
-    private var actionBacking = Color.Unspecified
     private var actionTint = Color.Unspecified
     private var userBody = Color.Unspecified
     private var assistantBody = Color.Unspecified
@@ -79,8 +78,7 @@ class MessageBubblePaletteTest {
                     userFill = if (dark && !wallpaper) Color(0xFF003355) else scheme.primaryContainer
                     assistantFill = if (dark && !wallpaper) Color(0xFF001D34) else scheme.secondaryContainer
                     background = scheme.threadColors.background
-                    actionTint = scheme.inversePrimary
-                    actionBacking = scheme.inverseSurface
+                    actionTint = scheme.primary
                     userBody = scheme.onPrimaryContainer
                     assistantBody = scheme.onSecondaryContainer
                     if (!wallpaper) {
@@ -151,9 +149,9 @@ class MessageBubblePaletteTest {
             val secondLuminance = second.luminance()
             return (maxOf(firstLuminance, secondLuminance) + 0.05f) / (minOf(firstLuminance, secondLuminance) + 0.05f)
         }
-        // #1818 pairs the inverted accent with its contrast surface for both controls.
-        val glyphContrast = contrast(actionTint, actionBacking)
-        assertTrue("action contrast must be at least 3:1; got $glyphContrast", glyphContrast >= 3f)
+        // No backing (#1889): each action glyph's tint must clear 3:1 against the thread background on its own.
+        val glyphContrast = contrast(actionTint, background)
+        assertTrue("side action glyph contrast against the thread background must be at least 3:1; got $glyphContrast", glyphContrast >= 3f)
         rule.runOnIdle {
             val root = checkNotNull(view)
             val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
@@ -186,7 +184,6 @@ class MessageBubblePaletteTest {
             }
             glyphs.forEach { glyph ->
                 val bounds = glyph.boundsInRoot
-                assertPixel(bounds.left + 1, bounds.top - 1, actionBacking)
                 val expected = actionTint.toArgb()
                 var matchingPixels = 0
                 for (x in bounds.left.toInt() until bounds.right.toInt()) {
@@ -194,7 +191,7 @@ class MessageBubblePaletteTest {
                         if (bitmap.getPixel(x, y) == expected) matchingPixels++
                     }
                 }
-                assertTrue("both actions must use the scheme inversePrimary tint", matchingPixels > 0)
+                assertTrue("both side actions must use the scheme primary tint", matchingPixels > 0)
             }
             bitmap.recycle()
         }

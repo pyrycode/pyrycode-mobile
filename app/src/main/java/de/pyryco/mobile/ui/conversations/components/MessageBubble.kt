@@ -1,7 +1,6 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -430,22 +429,18 @@ private fun MessageActions(
                                         }
                                     },
                             content = {
-                                // The inverted accent is paired with its matching surface for contrast.
-                                Box(
-                                    Modifier
-                                        .background(MaterialTheme.colorScheme.inverseSurface)
-                                        .padding(horizontal = if (index == 0) 1.dp else 0.dp, vertical = 1.dp),
-                                ) {
-                                    Icon(
-                                        painter = painterResource(if (index == 0) R.drawable.ic_copy else R.drawable.ic_reply),
-                                        contentDescription = null,
-                                        modifier =
-                                            Modifier
-                                                .size(width = if (index == 0) 11.dp else 13.dp, height = 12.dp)
-                                                .testTag(if (index == 0) "message-copy-glyph" else "message-reply-glyph"),
-                                        tint = MaterialTheme.colorScheme.inversePrimary,
-                                    )
-                                }
+                                // Figma 620:1577 draws each glyph alone, no backing. `primary` clears 3:1
+                                // against the thread background in every palette (#1889); see
+                                // message-bubble.md's action contrast section for the figures.
+                                Icon(
+                                    painter = painterResource(if (index == 0) R.drawable.ic_copy else R.drawable.ic_reply),
+                                    contentDescription = null,
+                                    modifier =
+                                        Modifier
+                                            .size(width = if (index == 0) 11.dp else 13.dp, height = 12.dp)
+                                            .testTag(if (index == 0) "message-copy-glyph" else "message-reply-glyph"),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
                             },
                         ) { children, targetConstraints ->
                             val glyph = children.single().measure(targetConstraints.copy(minWidth = 0, minHeight = 0))

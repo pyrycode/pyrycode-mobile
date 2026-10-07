@@ -57,14 +57,20 @@ internal fun ComposeTestRule.assertSideMessageReply(
     ).assertCountEquals(0)
 }
 
-/** Semantic scrolling sees the full list; pointer actions must clear its overlaid chrome too. */
+/**
+ * Semantic scrolling sees the full list; pointer actions must clear its overlaid chrome too. That chrome
+ * includes the Top overlay's pills under the header, such as the scripted host's failed-MCP pill, whose
+ * tap opens Channel info instead of reaching a short row's copy glyph beneath it.
+ */
 internal fun ComposeTestRule.scrollSideMessageGlyphIntoView(
     sourceRow: androidx.compose.ui.test.SemanticsMatcher,
     glyphTag: String,
 ) {
     if (onAllNodes(hasTestTag("thread-top-bar")).fetchSemanticsNodes().isEmpty()) return
     repeat(5) {
-        val top = onNodeWithTag("thread-top-bar").fetchSemanticsNode().boundsInRoot.bottom
+        val header = onNodeWithTag("thread-top-bar").fetchSemanticsNode().boundsInRoot.bottom
+        val overlay = onAllNodes(hasTestTag("thread-top-overlay")).fetchSemanticsNodes().maxOfOrNull { it.boundsInRoot.bottom }
+        val top = maxOf(header, overlay ?: header)
         val bottom = onNodeWithTag("thread-composer").fetchSemanticsNode().boundsInRoot.top
         val glyph = onNode(hasTestTag(glyphTag) and hasAnyAncestor(sourceRow), useUnmergedTree = true).fetchSemanticsNode()
         val y = glyph.boundsInRoot.center.y

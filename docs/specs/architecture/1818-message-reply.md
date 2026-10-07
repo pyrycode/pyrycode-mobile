@@ -20,7 +20,7 @@
 
 **Figma:** https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8 and shared Message Actions https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=808-12242, inspected with design context and screenshot on 2026-10-07.
 
-Copy (11×12dp) sits above the exported reply asset (13×12dp), with glyph centres 25dp apart. Centre the pair beside each bubble in the existing 13dp column and 12dp gap. Use the ticket's inversePrimary glyph tint and small inverseSurface contrast backing in both themes. Current main instead uses primary without backing after a contrast correction; the requested paired treatment intentionally replaces that treatment. No pressed variant is drawn.
+Copy (11×12dp) sits above the exported reply asset (13×12dp), with glyph centres 25dp apart. Centre the pair beside each bubble in the existing 13dp column and 12dp gap. Both glyphs follow main's copy treatment from #1889: `primary` tint with no backing, in both themes. That supersedes the ticket's inversePrimary tint and inverseSurface backing, which drew a white chip in dark theme. No pressed variant is drawn.
 
 ## Context
 
@@ -57,7 +57,7 @@ None.
 ## Documentation handoff
 
 Pending for the documentation stage:
-- `docs/knowledge/features/message-bubble.md`: reply action, pair geometry and divided targets; record the requested tint/backing change from current main.
+- `docs/knowledge/features/message-bubble.md`: reply action, pair geometry and divided targets; both glyphs keep #1889's primary tint without backing.
 - `docs/knowledge/features/thread-screen-composer-drafts-and-attachments.md`, Composer draft ownership: quote append and one-shot focus.
 - `docs/e2e-interactive-stream.md`: extended ping and held-stream coverage, plus fresh dispatcher full-live evidence for the named ping method and executed/failed/skipped counts.
 
@@ -80,8 +80,9 @@ Pending for the documentation stage:
 
 ## Revisions
 
-- 2026-10-07: fractional-density geometry probes exposed accumulated padding rounding. Place glyphs from each target's outer 24dp radius in pixels, preserving fractional translation, and divide the full 73dp target pair at one shared midpoint. Backing remains 13dp wide (copy has horizontal padding; reply already fills it), so neither backing nor targets widen the drawn column.
+- 2026-10-07: fractional-density geometry probes exposed accumulated padding rounding. Place glyphs from each target's outer 24dp radius in pixels, preserving fractional translation, and divide the full 73dp target pair at one shared midpoint. The targets do not widen the drawn column.
 - 2026-10-07: a remounted sole text field can inherit platform focus without a reply request. The remount test provides another focused target and also counts keyboard-show requests, distinguishing platform focus from replay of this feature's consumed request.
 - 2026-10-07: the clipboard-limit fixture passed on unchanged main but exhausted heap on the reply branch. Its target-scrolling helper tried to bring the overflow above a short first row fully into view. Both side-action helpers now scroll the visual source row before pointer tapping the action; exact source and timestamp assertions stay intact. No inherited bug was filed or assertion ignored.
 - 2026-10-07: full-list semantic visibility also includes space beneath the thread chrome. Shared pointer helpers move the glyph between the measured header and composer with a list swipe before tapping its actual centre, preserving exact clipboard/draft and timestamp assertions.
 - 2026-10-07: pointer helpers now inject at the glyph centre in root coordinates, avoiding dependence on clipped target rectangles. The device held-stream scenario still fails on the short user copy before reaching reply, while the equivalent two-row shared probe passes. Further device evidence is required; this correction alone did not resolve the gate.
+- 2026-10-07: merged main after #1889, #1902 and #1907. Both glyphs now use #1889's `primary` tint without backing. The scripted `stream` copy failure was the Top overlay's failed-MCP pill, which every scripted run shows under the header: with the keyboard open, the short user row's copy glyph sat beneath it, so the tap opened Channel info. The overlay now carries the `thread-top-overlay` tag, and the pointer helper clears it as well as the header.
