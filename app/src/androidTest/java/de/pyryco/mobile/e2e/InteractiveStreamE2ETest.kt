@@ -1622,6 +1622,7 @@ class InteractiveStreamE2ETest {
 
         val serverId = twoHostArg(ARG_SERVER_ID)
         val before = hostConversationIds(serverId)
+        val uniqueName = ARCHIVE_NAME_PREFIX + System.currentTimeMillis()
 
         var createdId: String? = null
         try {
@@ -1637,7 +1638,6 @@ class InteractiveStreamE2ETest {
             //    RenameDialog opens OVER the thread, whose composer is also an editable field, so hasSetTextAction()
             //    alone is ambiguous — target the dialog's field by its focus (RenameDialog auto-focuses on open),
             //    REPLACE the pre-filled+selected auto-name (performTextReplacement, not performTextInput), then Save.
-            val uniqueName = ARCHIVE_NAME_PREFIX + System.currentTimeMillis()
             composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(RENAME_ITEM).fetchSemanticsNodes().isNotEmpty()
@@ -1715,6 +1715,21 @@ class InteractiveStreamE2ETest {
                 composeTestRule.onAllNodesWithText(uniqueName, substring = true).fetchSemanticsNodes().isNotEmpty()
             }
             composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().assertIsDisplayed()
+        } catch (failure: Throwable) {
+            // Diagnose after failure without resuming the scenario or replacing its original exception.
+            runCatching {
+                val row = createdId?.let { heldConversation(serverId, it) }
+                val renamed = row?.name == uniqueName
+                val active = row?.archived == false
+                val visibleBeforeScroll = composeTestRule.onAllNodesWithText(uniqueName).fetchSemanticsNodes().isNotEmpty()
+                val foundAfterScroll = runCatching { scrollListTo(hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(uniqueName)) }.isSuccess
+                Log.w(
+                    "E2E",
+                    "event=archive_round_trip_failed renamed=$renamed active=$active " +
+                        "visible_before_scroll=$visibleBeforeScroll found_after_scroll=$foundAfterScroll",
+                )
+            }.onFailure { Log.w("E2E", "event=archive_round_trip_diagnostic_failed kind=${it::class.simpleName}") }
+            throw failure
         } finally {
             cleanupCreatedConversation(serverId, before, createdId, "archive discussion cleanup failed")
         }

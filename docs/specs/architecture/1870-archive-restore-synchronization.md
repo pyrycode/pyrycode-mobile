@@ -42,6 +42,10 @@ Run relevant existing coverage, lint, APK assembly, androidTest compilation, and
 - Which stage fails, and what raw evidence connects it to a cause? Resolve with fresh diagnostic artifacts before repair.
 - What deterministic condition reproduces that cause? Record the chosen proof and contract under Revisions.
 
+## Revisions
+
+2026-10-07: the unchanged scenario failed on mobile revision `b2df00ba07768e800f4bc3cc5adb6f9c464858b9`, daemon revision `6019328b378cad587f69b7bc94de37febbdf8556`, in `build/dispatcher-tests/live-rdr24u97`. Its per-test logcat records a 30-second `ComposeTimeoutException` at the first active-list presence wait after Rename and Back, before archive. A standalone run on the same code passed. Add failure-only, content-free diagnostics for rename confirmation, active membership, composed presence, and discovery by a full lazy-list scroll; rethrow the original failure and preserve cleanup. The evidence does not yet distinguish an unfinished rename from an off-viewport row, so no repair is selected yet.
+
 ## Documentation handoff
 
 Pending documentation stage: update `docs/e2e-interactive-stream.md`, archive/restore scenario and verification status, with the diagnosed synchronization contract and fresh full live-gate revision, artifact path, counts, and explicit method pass once the dispatcher supplies them.
