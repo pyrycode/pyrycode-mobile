@@ -28,13 +28,15 @@ Thus the top clearance is exactly 28dp in all three states, with right edge 392 
 | --- | --- | --- | --- |
 | prompt-resolved-elsewhere | (218,121)–(392,145) | 174 × 24dp | MATCH: Figma (219,97)–(392,121) is 173 × 24dp; after inset alignment, left/width delta 1dp and every other edge delta 0dp. |
 | thread-saved | (317,121)–(392,145) | 75 × 24dp | MATCH: placement/height exact, hug width is 59dp text + 8dp padding per side, Default surface tokens exact. |
-| reader-saved | (317,121)–(392,145) | 75 × 24dp | MATCH: reader overlay placement exact with the required Default treatment and existing File saved text; notice pixels match thread Saved. |
+| reader-saved | (317,121)–(392,145) | 75 × 24dp | MATCH: reader overlay placement exact with the required Default treatment and existing File saved text; opaque surface/text pixels match thread Saved. |
 
 Each text box is 16dp high, centered with 4dp above/below; horizontal padding is exactly 8dp.
 `notice-surfaces.png` compares the cropped Default Figma surface and the three app surfaces at 2×.
 All crops contain exact container RGB #134A74 and text RGB #CFE4FF. BodySmall is the existing
 12sp/16sp/0.4sp token. The unchanged shared NoticePill supplies 6dp corners; the top-edge fill begins
 at 6px in the app versus 5px in Figma due to rasterization, a 1px difference within tolerance.
+The two Saved crops differ only at 48 corner pixels where antialiasing blends with their different
+underlying screen content; the center surface/text rectangle is pixel-identical.
 Shared native-graphics tests independently prove 12dp spacing below errors, including Offline,
 stopped-turn and navigation-error seams. These three alone are the requested pixel-capture scope.
 
