@@ -2638,6 +2638,9 @@ assistant `message.id`s and assemble one reply, `Hello, streamed world`.
 
 The test awaits that same reply ID with exact complete text, `isStreaming == false`
 and an idle turn before checking the displayed final body without its caret.
+The release send remains real user input and can produce another assistant turn.
+Completion selects exactly one assistant with the captured `held.id`, preserving
+duplicate-ID rejection without assuming the conversation has only one reply (#1793).
 Caret absence alone cannot establish completion because the caret blinks. This
 scenario stays selected by `scripted stream` and `scripted-all`; it asserts display
 and settlement, not cadence or a live catch-up deadline.
@@ -3004,6 +3007,18 @@ timeout before five virtual seconds elapse. The repaired scenario advances `main
 before asserting no pill, no Finished label and no replay on reopening A. Product timing is unchanged.
 The prior scoped-label attempt still failed in the full suite; its diagnostic XML and logcat remain
 under `logs/claude-operator-1735-evidence/run1-scoped-fail/`.
+
+**Attention-pill validation — #1793, 2026-10-06.** The unchanged method reuses the
+counted #1735 full-suite pass above. The later selected dispatcher live gate on
+`116f093607f0fbe4fb18c87bd996e4054e0a98ec`, merged with main at `cf85e9e882`,
+records **3 executed, 2 passed, 1 failed, 0 errors, 0 skipped**; the attention method
+failed. Its same-tree focused rerun records **1 executed/passed, 0 failed/errors/skipped**,
+with the named method present and passed. These inspected XML reports are the agents
+`logs/2026-10-06T23-20-32-633Z_real-claude-gate_#1793.log` and
+`logs/2026-10-06T23-20-32-633Z_real-claude-gate-rerun_#1793.log`.
+This is a selected-run failure followed by a focused pass, not a fresh full-suite
+pass or proof that all flakes are resolved; [the occurrence remains tracked on
+\#1793](https://github.com/pyrycode/pyrycode-mobile/issues/1793#issuecomment-6027743571).
 
 **Current live verification — 2026-10-05 (#1775).** The dispatcher ran the fresh full
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on branch `feature/1775`
@@ -4110,6 +4125,12 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Stream completion identity (#1793):**
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`
+  retains the captured reply ID after its release send, which may create another
+  assistant turn. Keep this selector scoped to that reply while rejecting duplicate
+  IDs; preserve every prefix, streaming, completion, idle, display and caret assertion.
 
 - **Word reveal (#1765):** the held `stream` twin,
   `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`,
