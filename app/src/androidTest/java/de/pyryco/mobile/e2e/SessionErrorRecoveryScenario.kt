@@ -20,18 +20,26 @@ import androidx.test.espresso.Espresso
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.crypto.PairedServer
+import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
+import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.network.MessagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.WireRole
+import de.pyryco.mobile.data.repository.ConnectionStateSource
+import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.koin.core.context.GlobalContext
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -45,21 +53,53 @@ internal class SessionErrorRecoveryScenario(
     private val authorization = requireNotNull(arguments.getString("sessionErrorAuthorization")) { "session-error authorization missing" }
 
     fun run() {
+        val store = GlobalContext.get().get<PairedServerCollectionStore>()
+        val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+        val precedingPairings = runBlocking { store.list() }
+        val precedingHost = requireNotNull(precedingPairings.lastOrNull()) { "preceding harness host missing" }.record.serverId
+        val precedingConnection =
+            runBlocking {
+                withTimeout(30_000) {
+                    registry.selected.first { it != null && it === registry.connectionFor(precedingHost) }
+                }
+            }
         InstrumentationRegistry.getInstrumentation().uiAutomation.grantRuntimePermission(
             context.packageName,
             android.Manifest.permission.CAMERA,
         )
         for (arm in listOf("retained", "dropped")) {
             try {
-                runCase(arm)
+                val fixture = request(arm, "start")
+                val serverId = fixture.value("serverId")
+                try {
+                    runCase(arm, fixture)
+                } finally {
+                    // Pairing can save before its UI wait fails; ownership starts before pair().
+                    runBlocking { store.remove(serverId) }
+                }
             } finally {
                 request(arm, "close")
             }
         }
+        // Regression: this Application/Koin graph is reused by subsequent instrumentation methods.
+        assertEquals("fixture pairings survived teardown", precedingPairings, runBlocking { store.list() })
+        runBlocking {
+            withTimeout(30_000) {
+                registry.selected.first { it === precedingConnection }
+                GlobalContext
+                    .get()
+                    .get<ConnectionStateSource>()
+                    .observe()
+                    .first { it is ConnectionState.Connected }
+            }
+        }
+        assertSame("preceding host connection was replaced", precedingConnection, registry.connectionFor(precedingHost))
     }
 
-    private fun runCase(arm: String) {
-        val fixture = request(arm, "start")
+    private fun runCase(
+        arm: String,
+        fixture: JsonObject,
+    ) {
         val conversation = fixture.value("conversationId")
         val held = fixture.value("heldMarker")
         val fresh = fixture.value("freshMarker")

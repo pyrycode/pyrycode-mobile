@@ -4,6 +4,9 @@
 
 - `app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt`: `pairHostByCode`, phone send and semantic wait patterns.
 - `app/src/androidTest/java/de/pyryco/mobile/e2e/DeterministicInteractiveStreamE2ETest.kt`: real app rule and scripted scenario selection.
+- `app/src/main/java/de/pyryco/mobile/data/crypto/PairedServerStore.kt`: `PairedServerCollectionStore.remove` and save-order selection; cleanup preserves every preceding entry.
+- `app/src/main/java/de/pyryco/mobile/di/RelayConnectionRegistry.kt`: `selected`, `connectionFor` and `observe` prove restored same-process host selection and connectivity.
+- `docs/knowledge/features/paired-server-store.md`: removing a latest pairing falls back to the most recently saved surviving host without re-saving credentials.
 - `app/src/androidTest/java/de/pyryco/mobile/e2e/SecondClientPeer.kt`: `open`, `awaitQueue`, `awaitFrame`, `recorded` provide an independent wire observer; sends stay on the phone.
 - `scripts/e2e-emulator.sh`: private profiles, pairing, cleanup and curated live methods.
 - `scripts/android-test-gate.py`: `SCENARIOS` and fresh counted XML retention.
@@ -65,6 +68,8 @@ Pending documentation stage: update `docs/e2e-interactive-stream.md` under The l
 
 **Verdict:** PASS
 
+- Pairing-lifecycle rework review (2026-10-07): each authenticated fixture response supplies the exact server id registered for removal before phone pairing begins. Nested cleanup removes only that fixture-owned entry through the existing encrypted collection store and closes its daemon even if removal fails. Existing host credentials, names, save order and connection bundles are preserved; no credential values enter diagnostics.
+
 - Rework review (2026-10-07): the deterministic reply fixture contains static non-secret output, is created at a fixed path inside the case's private HOME with mode 0600 before child spawn, and overrides inherited replay settings only for the scripted case. Live recovery inherits no replay fixture. The exact-text matcher rejects both sent prompts; the existing bounded wire, UI and transcript waits remain mandatory. No new production trust boundary, credentials, Android surface or concurrency path is introduced.
 
 - [Trust boundaries] SHOULD FIX: host control can change daemon-wide executable selection. Bind only loopback, require a randomly generated bearer authorization, use a fixed action/arm allowlist, and return only fixture-owned pairings. Never accept filesystem paths or executable names from HTTP.
@@ -97,3 +102,5 @@ Pending documentation stage: update `docs/e2e-interactive-stream.md` under The l
 - 2026-10-07: the focused live repair gate exposed Bash 3.2 treating the empty optional `SESSION_ERROR_ARGS` array as unset under `set -u`, before instrumentation (zero executed). Keep the required `--daemon` pair in that array so both modes always expand a non-empty argv; append `--scripted` only for the twin. The Python launch regression executes the actual harness block under `/bin/bash`, stubs only the controller executable, and checks both modes plus paths containing spaces. No control, selection, credential or ordinary-scenario contract changes.
 
 - 2026-10-07: dispatcher merge handoff resolved the additive `SCENARIOS` conflict by retaining this ticket's `session-error` and main's `reply-suggestion`. Both remain registered for focused and scripted-all execution. Recovery behavior and its control contract are unchanged; rerun the focused scripted scenario and final builder checks on the merged tree. The configured daemon checkout now contains the prerequisite, so verification can use it directly without the earlier private source snapshot.
+
+- 2026-10-07: verifier finding 1 on `84407d95a` identified saved fixture hosts outliving their stopped daemons in the shared instrumentation Application/Koin graph. Each arm now owns its phone pairing from before `pair` starts through a guaranteed `PairedServerCollectionStore.remove`, including assertion and partial-pairing failures; fixture close remains in an outer `finally`. Remove each arm before proceeding so neither stopped host can become a fallback. The named live and deterministic recovery methods snapshot preceding saved entries and the selected connection, then require unchanged entries/order, the same selected bundle and `ConnectionStateSource` reporting Connected after both arms finish in the same process. Run the red isolation regression before the repair, then focused scripted recovery and live recovery plus the existing tool-prompt method; full dispatcher gates remain separate.
