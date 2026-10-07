@@ -252,11 +252,13 @@ class ThreadScreenHistoryTest {
         composeRule.onNodeWithTag("history-gap:20").assertIsDisplayed()
         val region = composeRule.onNodeWithTag(MESSAGE_REGION_TAG)
         composeRule.mainClock.autoAdvance = false
+        // Keep the fling's dp/s speed equal on Robolectric and the managed device.
+        val flingVelocity = 5000f * composeRule.density.density
         region.performTouchInput {
             swipeWithVelocity(
                 start = Offset(center.x, height * 0.2f),
                 end = Offset(center.x, height * 0.4f),
-                endVelocity = 5000f,
+                endVelocity = flingVelocity,
             )
         }
         composeRule.runOnIdle {
