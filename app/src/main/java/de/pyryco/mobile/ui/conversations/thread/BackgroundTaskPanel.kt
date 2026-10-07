@@ -290,14 +290,19 @@ private fun TaskRow(
                 color = if (task.isFinished) colors.onSurfaceVariant else colors.onSurface,
             )
             task.progress?.takeUnless { task.isFinished }?.let { TaskProgress(it) }
-            task.finish?.takeIf { it.summary.isNotEmpty() }?.let { finish ->
-                TaskField(
-                    raw = finish.summary,
-                    cutByDaemon = wasCut(finish.truncatedFields, CUT_SUMMARY),
-                    style = typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 19.sp),
-                    color = colors.onSurfaceVariant,
-                )
-            }
+            task.finish
+                ?.takeIf {
+                    val description = task.description.trim()
+                    val summary = it.summary.trim()
+                    summary.isNotEmpty() && (description.isEmpty() || !summary.contains(description))
+                }?.let { finish ->
+                    TaskField(
+                        raw = finish.summary,
+                        cutByDaemon = wasCut(finish.truncatedFields, CUT_SUMMARY),
+                        style = typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 19.sp),
+                        color = colors.onSurfaceVariant,
+                    )
+                }
             task.latestUpdate?.let { LatestUpdate(it) }
         }
         if (eligible && expanded) {
