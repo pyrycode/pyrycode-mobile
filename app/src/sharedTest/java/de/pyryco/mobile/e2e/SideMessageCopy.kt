@@ -11,26 +11,35 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeTestRule
-import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.ui.conversations.components.formatShortDateTime
+import kotlinx.datetime.TimeZone
 import org.junit.Assert.assertEquals
+import java.util.Locale
 
 /** #1817: one pointer tap on the side action copies source without revealing a timestamp. */
 internal fun ComposeTestRule.assertSideMessageCopy(message: Message) {
     val context = InstrumentationRegistry.getInstrumentation().targetContext
     val clipboard = context.getSystemService(ClipboardManager::class.java)
+    val sourceRow =
+        hasTestTag("message-row") and hasAnyDescendant(hasText(message.content.trimEnd(), substring = message.isStreaming))
+    val timestamp =
+        hasText(formatShortDateTime(message.timestamp, TimeZone.currentSystemDefault(), Locale.getDefault())) and
+            hasAnyAncestor(sourceRow)
     val copy =
         onNode(
             hasContentDescription(context.getString(R.string.cd_thread_copy_message)) and
-                hasAnyAncestor(
-                    hasTestTag("message-row") and hasAnyDescendant(hasText(message.content.trimEnd(), substring = message.isStreaming)),
-                ),
+                hasAnyAncestor(sourceRow),
         ).performScrollTo().assertIsDisplayed()
-    onAllNodesWithText(" - ", substring = true, useUnmergedTree = true).assertCountEquals(0)
+    onAllNodes(timestamp, useUnmergedTree = true).assertCountEquals(0)
+    // A dismissible Top overlay notice can cover the target despite assertIsDisplayed succeeding.
+    val notices = onAllNodes(hasContentDescription(context.getString(R.string.thread_notice_dismiss)))
+    repeat(notices.fetchSemanticsNodes().size) { notices[0].performClick() }
     runOnIdle { clipboard.setPrimaryClip(ClipData.newPlainText("copy baseline", "unrelated baseline")) }
     copy.performTouchInput { click(center) }
     runOnIdle {
@@ -42,5 +51,5 @@ internal fun ComposeTestRule.assertSideMessageCopy(message: Message) {
                 ?.toString(),
         )
     }
-    onAllNodesWithText(" - ", substring = true, useUnmergedTree = true).assertCountEquals(0)
+    onAllNodes(timestamp, useUnmergedTree = true).assertCountEquals(0)
 }

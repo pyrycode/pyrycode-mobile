@@ -93,6 +93,31 @@ Scope source-copy selectors to the non-merging `message-row`, so another message
 or a fenced-code control cannot satisfy the assertion. Markdown and streaming
 append tests compare current source, including the 100,000-character bound.
 
+The live and scripted copy checks share
+`app/src/sharedTest/java/de/pyryco/mobile/e2e/SideMessageCopy.kt` (#1878).
+`assertSideMessageCopy` matches the complete `formatShortDateTime` value using
+the current locale and timezone, under the copied source row in the unmerged
+tree, both before and after copying. A screen-wide ` - ` substring also matches
+usage banners and message bodies; another row's visible timestamp must not count.
+After the before-copy check, dismiss available benign notice controls before
+setting the unrelated clipboard baseline and making the single pointer tap.
+Non-dismissible error notices remain visible. `assertIsDisplayed` alone cannot
+detect a [Top overlay](thread-top-overlay.md) physically covering that target.
+Retain the exact `message.content.take(100_000)` clipboard comparison.
+
+`SideMessageCopyTest` exercises this same helper in eight deterministic regressions:
+banner/body separators, another row's timestamp, timestamp rejection before copy
+and after clipboard write, incorrect source rejection, streaming trailing whitespace,
+the 100,000-character cap, and real-thread warning dismissal. The last uses native
+graphics and a forced 412dp viewport through `ThreadScreen`; inert banner fixtures
+keep their separator text present through both timestamp assertions. The retained
+old-helper report executed one regression and failed on two false timestamp matches;
+the repaired report executed/passed eight with zero failures or skips. See the
+[verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1880#issuecomment-6032131614).
+Focused live repair evidence does not replace dispatcher full-suite acceptance:
+record the full run's executed, failed and skipped counts and the named ping
+method's result separately, as in the [e2e ladder](../../e2e-interactive-stream.md#verification-status).
+
 Palette guards check actual glyph pixels and glyph-on-thread-background contrast
 at ≥3:1 across static and wallpaper light/dark, theme changes and completion.
 A tint-only assertion passed while the light icon was 1.61:1 against the thread.
