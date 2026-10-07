@@ -8,12 +8,14 @@ import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.CreateConversationPayloadDto
 import de.pyryco.mobile.data.network.DeleteConversationPayloadDto
 import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.MarkConversationReadPayloadDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.ModalAnswerPayloadDto
 import de.pyryco.mobile.data.network.ModalCancelPayloadDto
 import de.pyryco.mobile.data.network.PromoteConversationPayloadDto
 import de.pyryco.mobile.data.network.RegisterPushTokenPayloadDto
 import de.pyryco.mobile.data.network.RelayErrorException
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.RenameConversationPayloadDto
 import de.pyryco.mobile.data.network.SetConversationMutedPayloadDto
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.PLATFORM_FCM
@@ -29,11 +31,13 @@ import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.T
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_RENAME_CONVERSATION
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_SET_CONVERSATION_MUTED
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_UNARCHIVE_CONVERSATION
+import kotlinx.coroutines.CancellationException
 import kotlinx.datetime.Clock
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * The conversation commands of one connection (#914): create, promote, rename, archive, unarchive, delete,
@@ -47,7 +51,7 @@ import kotlinx.serialization.json.encodeToJsonElement
  * [threadProjection]. [deviceName] is the repository's connection-level device name.
  *
  * One instance per repository, and a fresh repository per connection (#351), so the state is
- * connection-scoped exactly as it was when it lived in the repository. Nothing here logs.
+ * connection-scoped exactly as it was when it lived in the repository. Read-mark commands log static outcomes only.
  */
 internal class ConversationCommands(
     private val requests: RelayRequests,
@@ -56,6 +60,80 @@ internal class ConversationCommands(
     private val threadProjection: ThreadProjection,
     private val deviceName: String,
 ) {
+    private val pendingReadMarks = ConcurrentHashMap<Long, String>()
+
+    /** Validate this command's type and target before the ordinary update arm can fold a reply. */
+    fun routeReadMarkReply(envelope: Envelope): Boolean {
+        val replyTo = envelope.inReplyTo ?: return false
+        val target = pendingReadMarks[replyTo] ?: return false
+        val waiter = requests.waiter(replyTo) ?: return true
+        if (waiter.isCompleted) return true
+        if (envelope.type == "error") {
+            waiter.completeExceptionally(requests.mapError(envelope.payload))
+            return true
+        }
+        val record =
+            try {
+                if (envelope.type != "conversation_updated") throw malformedReadReply()
+                MobileJson.decodeFromJsonElement<ConversationResponseDto>(envelope.payload).also {
+                    if (it.id != target || it.readUpTo == null) throw malformedReadReply()
+                }
+            } catch (error: IllegalArgumentException) {
+                waiter.completeExceptionally(malformedReadReply())
+                return true
+            } catch (error: RelayErrorException) {
+                waiter.completeExceptionally(error)
+                return true
+            }
+        conversationList.upsertConversation(record)
+        waiter.complete(envelope.payload)
+        return true
+    }
+
+    /** Await the stored mark, never the requested/optimistic one. No retry on this connection. */
+    suspend fun markConversationRead(
+        conversationId: String,
+        upTo: ULong,
+    ): Result<ULong> {
+        val request =
+            Envelope(
+                id = requests.nextRequestId(),
+                type = "mark_conversation_read",
+                ts = Clock.System.now().toString(),
+                payload = MobileJson.encodeToJsonElement(MarkConversationReadPayloadDto(conversationId, upTo)),
+            )
+        pendingReadMarks[request.id] = conversationId
+        return try {
+            requests.sendAndAwaitReply(request, onSent = {
+                RelayLog.d { "event=mark_conversation_read outcome=sent" }
+            })
+            val stored = conversationList.currentReadMark(conversationId) ?: throw malformedReadReply()
+            RelayLog.d { "event=mark_conversation_read outcome=confirmed" }
+            Result.success(stored)
+        } catch (cancelled: CancellationException) {
+            RelayLog.d { "event=mark_conversation_read outcome=cancelled" }
+            throw cancelled
+        } catch (error: RelayErrorException) {
+            val code =
+                when (error.code) {
+                    "read_mark.unavailable", "history.unavailable", "protocol.malformed", "protocol.malformed_reply" -> error.code
+                    else -> "read_mark.failed"
+                }
+            RelayLog.w { "event=mark_conversation_read outcome=$code" }
+            Result.failure(RelayErrorException(code, error.retryable, "Conversation read mark request failed"))
+        } catch (error: IllegalArgumentException) {
+            RelayLog.w { "event=mark_conversation_read outcome=not_found" }
+            Result.failure(IllegalArgumentException("Conversation read mark target is unavailable"))
+        } catch (error: IllegalStateException) {
+            RelayLog.w { "event=mark_conversation_read outcome=disconnected" }
+            Result.failure(IllegalStateException("Conversation read mark connection ended or is unavailable"))
+        } finally {
+            pendingReadMarks.remove(request.id)
+        }
+    }
+
+    private fun malformedReadReply() = RelayErrorException("protocol.malformed_reply", false, "Malformed conversation read mark reply")
+
     /**
      * Create an unpromoted discussion over v2 `create_conversation` (#347). Encodes the request
      * ([CreateConversationPayloadDto]: `is_promoted=false`, optional `cwd`), sends it, and awaits its
