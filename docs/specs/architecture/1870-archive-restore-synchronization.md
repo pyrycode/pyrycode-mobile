@@ -39,14 +39,18 @@ Run relevant existing coverage, lint, APK assembly, androidTest compilation, and
 
 ## Open Questions
 
-- Which stage fails, and what raw evidence connects it to a cause? Resolve with fresh diagnostic artifacts before repair.
-- What deterministic condition reproduces that cause? Record the chosen proof and contract under Revisions.
+- Resolved: the first active-list presence check fails because the renamed, active chat is outside LazyColumn's composed viewport; the diagnostic record below establishes it directly.
+- Resolved: `ArchiveRoundTripChatTest.presenceFindsChatBeyondViewportBeforeAndAfterRestore` forces that condition against the production screen and the live scenario's shared helper. Its missing-chat negative control preserves failure when membership is actually absent.
 
 ## Revisions
 
 2026-10-07: the unchanged scenario failed on mobile revision `b2df00ba07768e800f4bc3cc5adb6f9c464858b9`, daemon revision `6019328b378cad587f69b7bc94de37febbdf8556`, in `build/dispatcher-tests/live-rdr24u97`. Its per-test logcat records a 30-second `ComposeTimeoutException` at the first active-list presence wait after Rename and Back, before archive. A standalone run on the same code passed. Add failure-only, content-free diagnostics for rename confirmation, active membership, composed presence, and discovery by a full lazy-list scroll; rethrow the original failure and preserve cleanup. The evidence does not yet distinguish an unfinished rename from an off-viewport row, so no repair is selected yet.
 
 2026-10-07: extract the two unchanged active-presence waits into test-only `awaitArchiveRoundTripChat`, shared by the live drive and `ArchiveRoundTripChatTest`. The candidate viewport probe mounts the production `ChannelListScreen` with 24 preceding alphabetic chats and the target in its projection but outside the composed viewport. It fails at the extracted presence wait; its missing-chat negative control passes (2 executed, 1 failed, 0 skipped). Retain that XML and the original live target's raw stack under `app/src/androidTest/assets/archive-restore-1870/`. This isolates a candidate condition; live failure-only diagnostics must still establish whether it caused the reproduced occurrence.
+
+2026-10-07: the diagnostic full run on mobile revision `a7d76be0b7ea68c0aa30ef3a34bbbb0b25192849` reproduced the first active-presence timeout in `build/dispatcher-tests/live-uhj5_ye4`. The failure-only record reports `renamed=true active=true visible_before_scroll=false found_after_scroll=true`: the row was already renamed and active, absent from composed semantics, and found by scrolling the existing active list. The original run's daemon also recorded creation, successful rename, and failure cleanup for the same hashed conversation identity. This establishes a test viewport defect rather than a restore-completion defect.
+
+The repaired contract: `awaitArchiveRoundTripChat` scopes its lookup to the active list's scroll container, searches the whole lazy list for the exact chat-tagged name, and asserts that row is displayed. A pending projection's specific missing-node assertion keeps the bounded observation open; other failures propagate, and a genuinely absent chat times out. The live scenario uses that same row for re-entry and repeats the complete-list presence observation after restore. It keeps its unique name, archive absence assertion, Archive presence, success-snackbar guard, and `finally` cleanup. No production behavior, mutation retry, sleep, selector, or timeout changes are needed. Remove the temporary failure-only diagnostic catch after retaining its raw evidence; leave the original failure propagation and cleanup intact.
 
 ## Documentation handoff
 

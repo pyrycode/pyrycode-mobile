@@ -2,17 +2,35 @@ package de.pyryco.mobile.e2e
 
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasScrollToNodeAction
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeTestRule
-import androidx.compose.ui.test.onAllNodesWithText
-import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.performScrollToNode
+import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
+import de.pyryco.mobile.ui.conversations.list.TREE_CHAT_ROW_TEST_TAG
 
-/** The active-list presence observation shared by the live archive drive and its regression proof. */
+/** Locate the chat in the whole active tree, including rows LazyColumn has not composed yet. */
 internal fun ComposeTestRule.awaitArchiveRoundTripChat(
     name: String,
     timeoutMillis: Long,
 ): SemanticsNodeInteraction {
+    val row = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(name)
+    val list = hasScrollToNodeAction() and hasAnyAncestor(hasTestTag(CHANNEL_LIST_TEST_TAG))
     waitUntil(timeoutMillis) {
-        onAllNodesWithText(name, substring = true).fetchSemanticsNodes().isNotEmpty()
+        if (onAllNodes(list).fetchSemanticsNodes().isEmpty()) {
+            false
+        } else {
+            try {
+                onNode(list).performScrollToNode(row)
+                true
+            } catch (missing: AssertionError) {
+                // A pending projection may not hold the row yet. Other assertion failures stay failures.
+                if (!missing.message.orEmpty().startsWith("No node found that matches ")) throw missing
+                false
+            }
+        }
     }
-    return onAllNodesWithText(name, substring = true).onFirst().assertIsDisplayed()
+    return onNode(row).assertIsDisplayed()
 }

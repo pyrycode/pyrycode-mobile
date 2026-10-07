@@ -1622,7 +1622,6 @@ class InteractiveStreamE2ETest {
 
         val serverId = twoHostArg(ARG_SERVER_ID)
         val before = hostConversationIds(serverId)
-        val uniqueName = ARCHIVE_NAME_PREFIX + System.currentTimeMillis()
 
         var createdId: String? = null
         try {
@@ -1638,6 +1637,7 @@ class InteractiveStreamE2ETest {
             //    RenameDialog opens OVER the thread, whose composer is also an editable field, so hasSetTextAction()
             //    alone is ambiguous — target the dialog's field by its focus (RenameDialog auto-focuses on open),
             //    REPLACE the pre-filled+selected auto-name (performTextReplacement, not performTextInput), then Save.
+            val uniqueName = ARCHIVE_NAME_PREFIX + System.currentTimeMillis()
             composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodesWithText(RENAME_ITEM).fetchSemanticsNodes().isNotEmpty()
@@ -1650,14 +1650,14 @@ class InteractiveStreamE2ETest {
             composeTestRule.onNodeWithText(RENAME_SAVE).performClick()
 
             // 5. Presence check #1 (AC-1): back to the list, wait for it, then confirm the unique name is displayed on
-            //    its chat row — the genuine presence observation on the surface where absence is later asserted (step 8).
+            //    its chat row, scrolling the full tree because prior scenarios can put it beyond the viewport.
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
-            composeTestRule.awaitArchiveRoundTripChat(uniqueName, LIST_TIMEOUT_MS)
+            val activeChat = composeTestRule.awaitArchiveRoundTripChat(uniqueName, LIST_TIMEOUT_MS)
 
             // 6. Re-enter the thread by tapping the chat row (a 2nd presence observation — it can only succeed if
             //    the name is on the list). Archive is driven "from the thread".
-            composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().performClick()
+            activeChat.performClick()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
             }
@@ -1705,25 +1705,10 @@ class InteractiveStreamE2ETest {
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
 
-            // 13. Presence check #2 (AC-2 — round-trip closes). Wait for the unique name on the active list, then
-            //     confirm it is displayed. The re-appearance is attributable to the restore (asserted absent in
+            // 13. Presence check #2 (AC-2 — round-trip closes). Locate the unique chat in the whole active tree
+            //     and confirm it is displayed. The re-appearance is attributable to restore (asserted absent in
             //     step 8), on the same surface, same unique token.
             composeTestRule.awaitArchiveRoundTripChat(uniqueName, LIST_TIMEOUT_MS)
-        } catch (failure: Throwable) {
-            // Diagnose after failure without resuming the scenario or replacing its original exception.
-            runCatching {
-                val row = createdId?.let { heldConversation(serverId, it) }
-                val renamed = row?.name == uniqueName
-                val active = row?.archived == false
-                val visibleBeforeScroll = composeTestRule.onAllNodesWithText(uniqueName).fetchSemanticsNodes().isNotEmpty()
-                val foundAfterScroll = runCatching { scrollListTo(hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(uniqueName)) }.isSuccess
-                Log.w(
-                    "E2E",
-                    "event=archive_round_trip_failed renamed=$renamed active=$active " +
-                        "visible_before_scroll=$visibleBeforeScroll found_after_scroll=$foundAfterScroll",
-                )
-            }.onFailure { Log.w("E2E", "event=archive_round_trip_diagnostic_failed kind=${it::class.simpleName}") }
-            throw failure
         } finally {
             cleanupCreatedConversation(serverId, before, createdId, "archive discussion cleanup failed")
         }
