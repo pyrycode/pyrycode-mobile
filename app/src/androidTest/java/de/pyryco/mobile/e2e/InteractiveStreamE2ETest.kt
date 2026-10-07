@@ -1511,12 +1511,6 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasSetTextAction() and isFocused()).fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onNode(hasSetTextAction() and isFocused()).performTextReplacement(uniqueName)
-        // Replay the recorded gap before the unguarded RenameSubmit, without retrying the action.
-        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(twoHostArg(ARG_SERVER_ID)))
-        bundle.supervisor.close()
-        runBlocking { withTimeout(THREAD_TIMEOUT_MS) { bundle.coordinator.currentRepository.first { it == null } } }
-        reconnectScope.launch { delay(1_000); bundle.supervisor.connect() }
-        Log.i("DeleteDiagnostic", "event=gap_replay repository=false legacy_connected=${runBlocking { bundle.supervisor.observe().first() } is ConnectionState.Connected}")
         composeTestRule.onNodeWithText(RENAME_SAVE).performClick()
 
         stage = "presence"
@@ -1564,6 +1558,12 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodesWithText(DELETE_DIALOG_TITLE).fetchSemanticsNodes().isNotEmpty()
         }
         stage = "confirm_click"
+        // Replay the recorded gap before the unguarded DeleteConfirm, without retrying the action.
+        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(twoHostArg(ARG_SERVER_ID)))
+        bundle.supervisor.close()
+        runBlocking { withTimeout(THREAD_TIMEOUT_MS) { bundle.coordinator.currentRepository.first { it == null } } }
+        reconnectScope.launch { delay(1_000); bundle.supervisor.connect() }
+        Log.i("DeleteDiagnostic", "event=gap_replay phase=delete repository=false legacy_connected=${runBlocking { bundle.supervisor.observe().first() } is ConnectionState.Connected}")
         composeTestRule
             .onNode(hasText(DELETE_ACTION) and hasAnySibling(hasText(DELETE_DIALOG_CANCEL)))
             .performClick()
