@@ -609,6 +609,14 @@ class DeterministicInteractiveStreamE2ETest {
         assertTrue("displayed arrived text must belong to an ongoing reply", held.isStreaming)
         assertNotEquals(LiveSessionEvent.TurnState.Phase.Idle, runBlocking { repository.observeTurnPhase(conversationId).first() })
 
+        composeTestRule.assertSideMessageCopy(held)
+        val sent =
+            runBlocking { repository.observeMessages(conversationId).first() }
+                .filterIsInstance<ThreadItem.MessageItem>()
+                .single { it.message.role == Role.User && it.message.content == SEND_PROMPT }
+                .message
+        composeTestRule.assertSideMessageCopy(sent)
+
         // The host watcher cannot release the terminal fragment before this explicit action.
         typeAndSend(SECOND_PROMPT)
         val finished =
@@ -637,6 +645,7 @@ class DeterministicInteractiveStreamE2ETest {
         }
         composeTestRule.onNode(finalBody, useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onAllNodes(caret, useUnmergedTree = true).assertCountEquals(0)
+        composeTestRule.assertSideMessageCopy(finished)
     }
 
     /**

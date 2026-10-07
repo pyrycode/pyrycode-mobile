@@ -19,6 +19,7 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performSemanticsAction
@@ -106,7 +107,8 @@ class ThreadChromeTest {
             click(touch)
             click(Offset(40f * px, header.bottom - 2f * px))
         }
-        rule.onAllNodesWithContentDescription("Copy this message", useUnmergedTree = true).assertCountEquals(0)
+        rule.onAllNodesWithText(" - ", substring = true, useUnmergedTree = true).assertCountEquals(0)
+        rule.onAllNodesWithContentDescription("Copy this message").assertCountEquals(bubbleBounds.size)
     }
 
     @Test fun short_thread_starts_28dp_below_the_measured_rule() {

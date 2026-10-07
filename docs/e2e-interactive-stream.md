@@ -6,6 +6,15 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
 
 ## The ladder (reliable → flaky)
 
+Side-message copy (#1817) extends the existing rung-3
+`InteractiveStreamE2ETest.interactiveTurn_pingPrompt_streamsPingReplyIntoThread`:
+sent user and received assistant side buttons copy repository source while timestamps
+remain hidden. The rung-4 held `stream` method,
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`,
+also copies arrived source during streaming and after completion. This adds no
+scenario or real-Claude turn; the pre-ship command remains
+`python3 scripts/android-test-gate.py live`.
+
 Recent-conversation Direct Share (#1729) is covered at rung 3 by
 `InteractiveStreamE2ETest.interactiveTurn_directShareShortcut_arrivesAtPeerWithItsBytes` and at rung 4
 by `DeterministicInteractiveStreamE2ETest.interactiveTurn_directShareShortcut_stagesBeforeExplicitSend`
@@ -2558,7 +2567,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `direct-share` (#1729) | published shortcut stages text in its thread without a picker or send; explicit Send receives ping | `ping.jsonl` | one |
 | `ping` (default) | a single-line reply renders | `ping.jsonl` | one |
 | `reopen-stream` (#1762) | arrived prefix is immediate on reopen and retained when a suffix composes while the turn stays open; one final combined reply | `reopen-stream-open.jsonl` + `reopen-stream-done.jsonl` | **two** (suffix on second send, terminal result on third) |
-| `stream` (#1765) | arrived words display while the same reply stays streaming; all three deltas settle into one complete reply without a caret | `stream.jsonl` + `stream-end.jsonl` | **two** (completion on second send) |
+| `stream` (#1765, #1817) | arrived words display while the same reply stays streaming; all three deltas settle into one complete reply without a caret; side copy reads user, held-stream and finished assistant source while timestamps stay hidden | `stream.jsonl` + `stream-end.jsonl` | **two** (completion on second send) |
 | `spinner` | the thinking spinner shows mid-turn, then clears at turn end | `spinner-open.jsonl` + `spinner-end.jsonl` | **two** |
 | `tool` (#455) | a tool step shows **running** in flight, then **done** after the result | `tool-open.jsonl` + `tool-done.jsonl` | **two** |
 | `tool-failed` (#455) | a failing tool step renders **failed** | `tool-failed.jsonl` | one |
@@ -2858,6 +2867,23 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+**Side-message copy (#1817, 2026-10-07).** The fresh dispatcher full live command
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` ran
+branch `7f8898f6f0` merged with `origin/main` at `574a015f2d`: **63 executed,
+62 passed, 1 failed, 0 skipped**. The fresh XML report explicitly contains
+`InteractiveStreamE2ETest.interactiveTurn_pingPrompt_streamsPingReplyIntoThread`
+with no failure or skip: **PASS** in that full suite, not a focused run.
+`interactiveTurn_archiveRestore_roundTripsListMembership` failed once; its same-tree
+rerun executed/passed **1, failed 0, skipped 0**, and the dispatcher accepted the
+gate. This does not turn the initial full-suite result into a zero-failure run.
+See [dispatcher gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1817#issuecomment-6030934869).
+The reports are `2026-10-07T04-03-41-138Z_real-claude-gate_#1817.log` and its
+`real-claude-gate-rerun` counterpart under the dispatcher repository's `logs/`.
+The fresh verifier `scripted-all` gate executed/passed **19, failed 0, skipped 0**,
+including the changed held-stream method
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`;
+see [verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1871#issuecomment-6030659332).
 
 **Offline Retry observer repair (#1785, 2026-10-07).** The retained historical
 failure at mobile `0d5b82be7a05153d497d84da2f1a11fe109864a3` (daemon
@@ -4228,6 +4254,13 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Side-message copy (#1817):** the rung-3 ping method and rung-4 held `stream`
+  method named in [the ladder](#the-ladder-reliable--flaky) cover source copy with
+  timestamps hidden; the held fixture also proves copy during streaming.
+  [Counted evidence](#verification-status) closes this coverage handoff.
+  #1818 owns reply and the midpoint split of overlapping action targets.
+  The pre-ship command stays `python3 scripts/android-test-gate.py live`.
 
 - **Stream completion identity (#1793):**
   `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`
