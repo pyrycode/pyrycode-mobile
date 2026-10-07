@@ -180,7 +180,7 @@ class EmulatorTwoHostTest(unittest.TestCase):
             self.assertEqual("", result.stdout)
 
     def test_cleanup_tolerates_an_unset_second_daemon(self):
-        cleanup = self.script[self.script.index("cleanup() {"):self.script.index("trap cleanup EXIT INT TERM")]
+        cleanup = self.script[self.script.index("cleanup() {"):self.script.index("trap cleanup EXIT")]
         with tempfile.TemporaryDirectory() as tmp:
             env = {k: v for k, v in os.environ.items() if k != "DAEMON_B_PID"}
             env.update(WORK_DIR=tmp, ISO_HOME="", WATCHER_PID="", DAEMON_PID="", RELAY_PID="")
