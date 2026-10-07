@@ -149,11 +149,17 @@ class BackgroundAgentProseScreenTest {
                 ThreadItem.MessageItem(tool.copy(id = "outside", toolCall = tool.toolCall?.copy(parentToolUseId = ""))),
                 ThreadItem.MessageItem(tool.copy(id = "outside2", toolCall = tool.toolCall?.copy(parentToolUseId = ""))),
                 prose("Ordinary reply"),
-            ) + items
+            ) + items + ThreadItem.MessageItem(tool.copy(id = "read2"))
         }
-        // The agent's own run counts only its tool-bearing child, "read" -- never the root, "a", itself
-        // (#1827 follow-up) -- so its run id and label differ from the two-tool ordinary run.
-        val agentRun = hasText("Using tools: 1", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:read"))
+        // Both runs have the same label; the first owned child tool identifies the Agent's run.
+        val runId =
+            items
+                .filterIsInstance<ThreadItem.MessageItem>()
+                .map { it.message }
+                .first { it.role == Role.Tool && it.toolCall?.parentToolUseId == "a" }
+                .id
+        assertEquals("read", runId)
+        val agentRun = hasText("Using tools: 2", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:$runId"))
         val ordinaryRun =
             hasText("Using tools: 2", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:outside"))
         compose.onNode(agentRun).performClick()
