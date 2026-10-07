@@ -1,0 +1,4 @@
+10-07 19:09:46.918  2790  2814 W E2E     : event=archive_round_trip_failed renamed=true active=true visible_before_scroll=false found_after_scroll=true
+10-07 19:09:47.671  2790  2814 E TestRunner: androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 30000 ms
+10-07 19:09:47.671  2790  2814 E TestRunner: 	at de.pyryco.mobile.e2e.ArchiveRoundTripChatKt.awaitArchiveRoundTripChat(ArchiveRoundTripChat.kt:14)
+10-07 19:09:47.671  2790  2814 E TestRunner: 	at de.pyryco.mobile.e2e.InteractiveStreamE2ETest.interactiveTurn_archiveRestore_roundTripsListMembership(InteractiveStreamE2ETest.kt:1656)

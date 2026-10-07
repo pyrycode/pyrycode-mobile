@@ -1,0 +1,20 @@
+#1870 diagnostic and regression evidence
+
+Baseline full diagnostic: mobile b2df00ba07768e800f4bc3cc5adb6f9c464858b9;
+daemon 6019328b378cad587f69b7bc94de37febbdf8556.
+Original reports: build/dispatcher-tests/live-rdr24u97 (64 executed, 2 failed, 0 skipped).
+baseline-target.xml is the target's unmodified raw testcase extracted from that report (1 executed, 1 failed, 0 skipped).
+baseline-daemon-events.txt retains the matching create, successful rename and cleanup events; conversation IDs are SHA-256 hashed.
+
+Instrumented full diagnostic: mobile a7d76be0b7ea68c0aa30ef3a34bbbb0b25192849; same daemon revision.
+Original reports: build/dispatcher-tests/live-uhj5_ye4 (64 executed, 1 failed, 0 skipped; target was the sole failure).
+diagnostic-target.xml is the target's unmodified raw testcase extracted from that report.
+diagnostic-target-logcat.txt contains unmodified relevant lines from its per-test logcat.
+The failed first active-list presence check reports renamed=true active=true visible_before_scroll=false found_after_scroll=true.
+
+Regression command: ./gradlew testDebugUnitTest --tests de.pyryco.mobile.e2e.ArchiveRoundTripChatTest --console=plain
+regression-red.xml: unchanged composed-node wait, 2 executed, 1 failed, 0 skipped.
+regression-green.xml: scoped full-list scroll, 2 executed, 0 failed, 0 skipped.
+The same helper is called by the live scenario; the missing-chat negative control passes in both versions.
+Temporary live diagnosis instrumentation was removed after retaining these excerpts.
+These are diagnostic runs before repair, not the dispatcher's post-verifier passing full live acceptance.
