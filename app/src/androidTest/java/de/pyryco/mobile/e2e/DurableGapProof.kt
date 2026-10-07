@@ -31,7 +31,8 @@ internal class DurableGapProof(
     private var finalRows: List<ThreadItem>? = null
     val prefix = "e2e1833-" + System.currentTimeMillis()
     val olderPost = "$prefix-a-000"
-    val newestPost = "$prefix-b-059"
+    private val batchSize = 120
+    val newestPost = "$prefix-b-${(batchSize - 1).toString().padStart(3, '0')}"
 
     fun cacheBaseline() {
         DurableHistoryProbe.begin(conversationId)
@@ -54,9 +55,9 @@ internal class DurableGapProof(
         name: String,
         completedReply: () -> Unit,
     ) {
-        fault.posts(name, "$prefix-a", 60)
+        fault.posts(name, "$prefix-a", batchSize)
         completedReply()
-        fault.posts(name, "$prefix-b", 60)
+        fault.posts(name, "$prefix-b", batchSize)
         // The same durable home survives, but a fresh process cannot replay the missing ring.
         fault.stop()
         fault.start()
@@ -106,8 +107,8 @@ internal class DurableGapProof(
             assertTrue("gap spans multiple older pages", pulls >= 2)
             val posts = messages().filter { it.startsWith(prefix) }
             val expected =
-                (0 until 60).map { "$prefix-a-${it.toString().padStart(3, '0')}" } +
-                    (0 until 60).map { "$prefix-b-${it.toString().padStart(3, '0')}" }
+                (0 until batchSize).map { "$prefix-a-${it.toString().padStart(3, '0')}" } +
+                    (0 until batchSize).map { "$prefix-b-${it.toString().padStart(3, '0')}" }
             assertEquals("chronological posts, each once", expected, posts)
             val rows = messages()
             assertTrue(
@@ -122,7 +123,8 @@ internal class DurableGapProof(
             assertEquals("completed reply once", 1, reply.size)
             assertTrue(
                 "reply between the two durable post batches",
-                reply.single() > rows.indexOf("$prefix-a-059") && reply.single() < rows.indexOf("$prefix-b-000"),
+                reply.single() > rows.indexOf("$prefix-a-${(batchSize - 1).toString().padStart(3, '0')}") &&
+                    reply.single() < rows.indexOf("$prefix-b-000"),
             )
             rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(olderPost))
             rule.onNodeWithText(olderPost, useUnmergedTree = true).assertIsDisplayed()
