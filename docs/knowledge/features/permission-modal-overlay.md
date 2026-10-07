@@ -128,7 +128,7 @@ ThreadScreen(state, …, modalState = Hidden, armedOptionId = null,
         │  LazyColumn(reverseLayout = true) { openRequest?.let { permissionRequestItems(it, ...) } ; … }
         │  when (modalState):   ── the request itself no longer reaches this block (#1306)
         ├─ Open      → Unit                                                  -- rendered inline above instead
-        ├─ Dismissed → LaunchedEffect(modalId) { snackbarHostState.showSnackbar(dismissReasonText(source)) }  -- skipped for the phone's own answer since #1340, see current-modal-state.md
+        ├─ Dismissed → LaunchedEffect(modalId) { confirmationNotices.enqueue(confirmationScope, dismissReasonText(source)) }  -- skipped for the phone's own answer since #1340, see current-modal-state.md
         └─ Hidden    → Unit
 ```
 
@@ -345,24 +345,26 @@ rules.forEach { rule -> Text(text = rule, style = MaterialTheme.typography.bodyM
 
 ## The dismissal (`Dismissed`)
 
-When `currentModal` transitions to `Dismissed`, **no overlay renders** (it is removed — AC #3) and a
-snackbar surfaces the resolution reason via a `LaunchedEffect(modalState.modalId)`. Keying on `modalId`
-fires it **exactly once per composition of that `LaunchedEffect`** — not once per resolution overall.
-Through #1337, `Dismissed` was a sticky terminal state that a thread, once scoped onto it, never left until
-superseded by a new `Open`; since #1337, `HostModalState.scopedTo` keeps returning that conversation's most
-recent `Dismissed` from `resolved` (see [Current-modal state § the `HostModalState`
-fold](current-modal-state.md#2-the-hostmodalstate-fold-1337--the-viewmodel-re-exposure)) for as long as the **current connection** lasts,
-so **leaving the thread and reopening it re-runs `LaunchedEffect(modalId)` with the same id and the snackbar
-fires again.** This is a deliberate consequence of #1337's reconnect-only clear, not a regression: the
-snackbar is a one-shot *per view*, not a one-shot *per device*, and it stops the moment a reconnect empties
-`resolved`. The Scaffold gains a `snackbarHostState = remember { SnackbarHostState() }` + `snackbarHost`,
-mirroring the [`ArchivedDiscussionsScreen`](archived-discussions-screen.md) dismiss-reason precedent.
+When `currentModal` transitions to `Dismissed`, the request card is removed and
+`LaunchedEffect(modalState.modalId)` admits its mapped local reason to the thread's
+[Default confirmation FIFO](thread-top-overlay.md#the-default-confirmation-pill-1851)
+(#1851). It appears below every other top notice for an accessibility-adjusted
+4,000ms. Keying on `modalId` fires once per composition of that effect; the queued
+job belongs to the screen scope so a later modal ID cannot cancel an earlier notice.
+Screen exit cancels active and queued occurrences. No snackbar host remains.
+
+Since #1337, `HostModalState.scopedTo` returns the conversation's most recent
+eligible `Dismissed` from `resolved` for as long as the current connection lasts
+(see [host fold](current-modal-state.md#2-the-hostmodalstate-fold-1337--the-viewmodel-re-exposure)).
+Leaving and reopening the thread re-runs the effect and can show that latest reason
+again. This existing per-view behavior is preserved; reconnect still clears
+`resolved`. Presentation adds no history replay or reconnect behavior.
 
 **Since [#1340](modal-answer-flow.md#local-close-on-tap-and-the-in-chat-rejection-notice-1340), the most
 recent `Dismissed` this fallback would return is skipped entirely when it is the phone's own
 (`answeredHere = true`), so none of the above fires for the user's own tap** — no "Resolved on another
 device" for an answer the phone just sent, and (the trap the implementation had to avoid) no older *remote*
-dismissal resurfacing either, since the fallback does not search past the newest entry. The snackbar in this
+dismissal resurfacing either, since the fallback does not search past the newest entry. The confirmation in this
 section now fires only for a `remote` or `timeout` dismissal of a prompt this phone did not answer itself.
 
 `dismissReasonText(source)` maps the verbatim wire token to a **local** string resource:
@@ -374,9 +376,9 @@ section now fires only for a `remote` or `timeout` dismissal of a prompt this ph
 | `"timeout"` | `modal_dismissed_timeout` | "Request timed out" |
 | any other (forward-compat) | `modal_dismissed_resolved` | "Request resolved" — the graceful fallback |
 
-The mapping is **load-bearing for confidentiality, not just UX**: the snackbar draws in the **un-secured
-Activity window** (`FLAG_SECURE` covers only the *dialog's* window), so the reason must be a mapped local
-string — **never** the raw `source` token. An unknown forward-compat value yields the generic fallback, not
+The mapping is **load-bearing for confidentiality, not just UX**: the confirmation draws on the
+Activity surface, so the reason must be a mapped local string — **never** the raw
+`source` token. An unknown forward-compat value yields the generic fallback, not
 the echoed value. (Copy is design-owed placeholder, reconciled when the visual spec lands.)
 
 ## The rejection notice (`answerRejected`, #1340, replacing the send-error snackbar)
@@ -458,7 +460,7 @@ all land here.
   option.id) }`; the second-confirm gate is the VM's. Cancel sends `modal_cancel` — a withdrawal, never an
   allow.
 - **No persistence** — no request-derived text reaches `rememberSaveable` / `SavedStateHandle` / DataStore;
-  `modalState` / `armedOptionId` are hoisted params, the list items hold no saved state, the snackbar shows a
+  `modalState` / `armedOptionId` are hoisted params, the list items hold no saved state, the Default confirmation pill shows a
   mapped local string, and the session-grant draft in `PermissionDraftStore` is heap-only (see [Modal answer
   flow § The session-grant draft](modal-answer-flow.md#the-session-grant-draft-818-moved-to-process-lifetime-in-1306)).
   No server text survives process death.

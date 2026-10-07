@@ -1659,6 +1659,15 @@ asserting the row, so "the row can only come from history replay" still means ex
 reaches the screen through a page this test explicitly asked for, not an ask the app used to make on its
 own.
 
+Since #1851, this same rung-3
+`InteractiveStreamE2ETest#interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload`
+also asserts “File saved” is an inert Default top-overlay pill at the right gutter
+and that no bottom confirmation snackbar appears. No additional Claude turn or
+`DeterministicInteractiveStreamE2ETest` scenario is needed: shared
+`ThreadConfirmationNoticeTest`, `ThreadScreenAttachmentLoadTest` and
+`MarkdownReaderScreenTest` cover dismissal/reader routing, FIFO occurrences,
+accessibility-adjusted expiry, independent errors and screen-exit cancellation.
+
 `interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart` keeps the phone attached to a fresh chat X
 while a prompt has claude write a short file with `printf` and hand it over with the daemon's `send_file`
 tool (`pyry_files`), which accepts only a path inside the conversation's workspace. `attachment_offered` is
@@ -2896,6 +2905,25 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+**Default confirmation pills (#1851, 2026-10-07).** The dispatcher’s fresh
+full live run `2026-10-07T08-13-23-504Z` used
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on
+`feature/1851` at `4cc214941f08`, merged with `origin/main` at `bcb3fa9af9c1`.
+The supplied fresh JUnit gate report explicitly names
+`InteractiveStreamE2ETest#interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload`
+as executed and passed: **63 executed, 62 passed, 1 failed, 0 skipped**,
+exit 1 in 20m 59s. The unrelated archive/restore method failed once and passed on
+the dispatcher’s same-tree rerun (1 executed/passed). The dispatcher accepted the
+gate after that rerun; the original full suite still had one failure. This proves
+the extended save presentation in the full suite, with no separate focused live
+run claimed and no daemon-revision annotation supplied. See the
+[issue gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1851#issuecomment-6034164819).
+The verifier UI gate passed all three confirmation capture methods (194 executed,
+194 passed, 0 failed, 1 unrelated skipped); retained
+[full-device capture XML](../app/src/androidTest/assets/confirmation-1851/capture-results.xml)
+records 3 executed/passed, 0 failed/errors/skipped. Reader and dismissal behavior
+are deterministic local screen checks, not extra live scenarios.
 
 **Suggested next reply (#1866, 2026-10-07).** The latest dispatcher full live
 run `2026-10-07T07-38-01-314Z` used
@@ -4329,6 +4357,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Default confirmation pills (#1851):** the existing rung-3
+  `InteractiveStreamE2ETest#interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload`
+  now checks the Default top pill and absence of a bottom snackbar after saving.
+  [Fresh counted evidence](#verification-status) closes the live handoff. Shared
+  screen tests prove the reader and dismissal paths; no new rung-4
+  `DeterministicInteractiveStreamE2ETest` scenario or prompt turn is added.
+  No coverage follow-up remains; the pre-ship command stays
+  `python3 scripts/android-test-gate.py live`.
 
 - **Suggested next reply (#1866):** rung-3
   `InteractiveStreamE2ETest.interactiveTurn_replySuggestion_longPressSends` and

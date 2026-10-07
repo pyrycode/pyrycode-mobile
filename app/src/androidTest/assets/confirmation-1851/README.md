@@ -40,9 +40,15 @@ underlying screen content; the center surface/text rectangle is pixel-identical.
 Shared native-graphics tests independently prove 12dp spacing below errors, including Offline,
 stopped-turn and navigation-error seams. These three alone are the requested pixel-capture scope.
 
-## Remaining gates
+## Live and documentation handoff
 
-Dispatcher owns fresh full live-gate evidence for
-`InteractiveStreamE2ETest#interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload`, including
-executed, failed and skipped counts. The extended assertion is compiled; no live pass is claimed here.
-The documentation stage owns folding these verdicts into `design-1220/thread/index.md` and feature docs.
+The dispatcher’s full live run `2026-10-07T08-13-23-504Z` on `4cc214941f08`
+merged with main `bcb3fa9af9c1` explicitly records
+`InteractiveStreamE2ETest#interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload`
+as passed: 63 executed, 62 passed, 1 failed, 0 skipped. The unrelated archive/restore
+failure passed on the same-tree rerun; the dispatcher accepted the gate afterward.
+This is full-suite evidence, not a focused live run. See
+[gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1851#issuecomment-6034164819)
+and the [ladder](../../../../../docs/e2e-interactive-stream.md#verification-status).
+The three notice-only MATCH verdicts are folded into
+[the thread audit index](../design-1220/thread/index.md#prompt-resolved-elsewhere-dismissal-notice--6965065).

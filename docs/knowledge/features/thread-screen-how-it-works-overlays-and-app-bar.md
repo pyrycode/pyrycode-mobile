@@ -169,12 +169,14 @@ doc: [Permission-modal overlay](permission-modal-overlay.md).
   `ModalUiState.scopedTo(conversationId)` before the screen ever sees it: a modal raised for another
   conversation on the same host arrives here as `Hidden`, so it neither renders nor can be answered from
   this thread. A missing/blank `conversation_id` on the wire scopes to no thread rather than every thread.
-- **Dismiss stays a snackbar, not a row.** `Dismissed` renders no list item and fires a
-  `LaunchedEffect(modalId)` snackbar surfacing a **mapped local** reason (`dismissReasonText`:
-  remote/local/timeout + a generic forward-compat fallback). The Scaffold still carries its
-  `remember { SnackbarHostState() }` + `snackbarHost`, mirroring the
-  [`ArchivedDiscussionsScreen`](archived-discussions-screen.md) dismiss-reason precedent. Keying on `modalId`
-  (a sticky terminal state in #445's fold) fires it exactly once per resolution.
+- **Dismiss uses a Default top-overlay pill (#1851).** `Dismissed` renders no list
+  item; `LaunchedEffect(modalId)` enqueues the mapped local `dismissReasonText`
+  reason (remote/local/timeout plus generic fallback) into the screen-owned
+  confirmation scope. Saved shares that FIFO below every error, with independent
+  accessibility-adjusted 4,000ms lifetimes and screen-exit cancellation. The effect
+  key prevents recomposition replay while its scope keeps earlier admissions alive
+  across modal-ID changes. Reopening may show the latest eligible dismissal again;
+  see [dismissal lifetime](permission-modal-overlay.md#the-dismissal-dismissed).
 - **Security moved from the dialog window to the activity surface (#1306).** Plain `Text` only, bounded by a
   length constant (never [`MarkdownText`](markdown-text.md)/`SelectionContainer`) — unchanged. But the
   dialog's own-window `FLAG_SECURE` and `filterTouchesWhenObscured` are gone along with the dialog; the
@@ -297,7 +299,7 @@ See [menu wiring and device coverage](thread-overflow-menu-wiring-tests-and-edge
 - **Rule** — a 1dp `HorizontalDivider`, inset 20dp on both sides (372dp wide at 412dp). `threadColors.headerRule` uses 60% alpha: static-dark `inversePrimary` (`#32628D`), or `outlineVariant` in static light and wallpaper modes.
 - **Geometry (#1646).** The visible 28dp content row begins 24dp below the screen-area top; a 16dp gap places the rule at 68–69dp. The bar is 69dp high. The 48dp Back/overflow touch boxes extend around their glyphs without changing this geometry or the 20dp visible gutters. The title truncates inside its middle slot. The list draws from the screen-area top underneath this bar; measured header height + 28dp reserves oldest-row and top-overlay clearance. Reader bar spacing remains reader-owned.
 
-`ThreadScreen` retains Scaffold's bar slots and snackbar layering, but does not
+`ThreadScreen` retains Scaffold's bar slots, but does not
 apply its bar padding to the message drawing viewport. `HazeState` is UI-local:
 Haze 1.5.4 `hazeSource` records the message region, and the bars' reusable
 `chromeBackdrop` modifier uses `hazeEffect` to sample that source. Ordinary Compose
