@@ -113,6 +113,25 @@ def owned_worker(port, app_revision, daemon_revision, evidence):
     print("Force-stop proof: PASS; actual process stopped/relaunched; synthetic post once; no scrolling")
 
 
+def run_harness(env):
+    # A separate session lets the harness own cancellation of all of its descendants.
+    process = subprocess.Popen(["bash", str(ROOT / "scripts/e2e-emulator.sh")], env=env,
+                               cwd=ROOT, start_new_session=True)
+    try:
+        return process.wait()
+    except BaseException:
+        with gate.uninterrupted_cleanup():
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+            # Do not kill Bash: its EXIT trap must reap the controller/daemon/relay before
+            # this unwinds to emulator cleanup and then releases the device hold.
+            process.wait()
+        raise
+
+
 def main():
     if sys.argv[1:2] == ["--owned-worker"]:
         owned_worker(*sys.argv[2:])
@@ -141,26 +160,28 @@ def main():
         avd = gate.managed_avd("pixel2Api33Atd")
         if avd is None:
             raise RuntimeError("required managed AVD missing")
-        serial, process = gate.boot_emulator(env, *avd)
-        if serial is None:
-            raise RuntimeError("owned emulator did not boot")
+        serial = process = None
         try:
+            serial, process = gate.boot_emulator(env, *avd)
+            if serial is None:
+                raise RuntimeError("owned emulator did not boot")
             granted = gate.install_once(env, serial)
             if granted is None or not gate.reset_app(env, serial, granted):
                 raise RuntimeError("owned emulator installation failed")
             env.update(ANDROID_SERIAL=serial, DEVICE="connected", E2E_INSTALLED="1", E2E_APKS_BUILT="1")
             started = time.time_ns()
-            result = subprocess.run(["bash", str(ROOT / "scripts/e2e-emulator.sh")], env=env, cwd=ROOT)
+            result = run_harness(env)
             reports = gate.fresh_reports(ROOT / "app/build/outputs/androidTest-results/connected/debug", started)
             xml, passed, executed = gate.combine_reports(reports, gate.E2E_PACKAGE + ".DeterministicInteractiveStreamE2ETest")
             (folder / "preparation.xml").write_text(xml + "\n")
-            print(f"Force-stop preparation: {executed} executed; passed={passed}; process exit {result.returncode}")
+            print(f"Force-stop preparation: {executed} executed; passed={passed}; process exit {result}")
             if executed != 1 or not passed:
                 return 1
             print("Force-stop evidence: " + str(folder / "evidence.json"))
-            return result.returncode
+            return result
         finally:
-            gate.stop_emulator(env, serial, process)
+            with gate.uninterrupted_cleanup():
+                gate.stop_emulator(env, serial, process)
 
 
 if __name__ == "__main__":

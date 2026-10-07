@@ -1,7 +1,12 @@
 package de.pyryco.mobile.e2e
 
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasScrollToNodeAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -12,8 +17,10 @@ import androidx.compose.ui.test.swipeDown
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.data.cache.ConversationCache
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.historyKeys
+import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -71,7 +78,9 @@ internal class DurableGapProof(
 
     fun catchUp(
         reconnect: () -> Unit,
+        promptText: String,
         replyText: String,
+        cachedRows: List<SemanticsMatcher>,
     ) {
         try {
             reconnect()
@@ -116,16 +125,14 @@ internal class DurableGapProof(
                     (0 until batchSize).map { "$prefix-b-${it.toString().padStart(3, '0')}" }
             assertEquals("chronological posts, each once", expected, posts)
             val rows = messages()
-            assertTrue(
-                "recovered reply is settled",
-                DurableHistoryProbe
-                    .rows()
-                    .filterIsInstance<ThreadItem.MessageItem>()
-                    .filter { it.message.content.contains(replyText, ignoreCase = true) }
-                    .all { !it.message.isStreaming },
-            )
-            val reply = rows.indices.filter { rows[it].contains(replyText, ignoreCase = true) }
+            val messageRows = DurableHistoryProbe.rows().filterIsInstance<ThreadItem.MessageItem>()
+            // The live user prompt also contains the requested reply text; it is not a reply.
+            val reply =
+                messageRows.indices.filter {
+                    messageRows[it].message.role == Role.Assistant && rows[it].contains(replyText, ignoreCase = true)
+                }
             assertEquals("completed reply once", 1, reply.size)
+            assertTrue("recovered reply is settled", !messageRows[reply.single()].message.isStreaming)
             assertTrue(
                 "reply between the two durable post batches",
                 reply.single() > rows.indexOf(lastOlderPost) &&
@@ -133,6 +140,18 @@ internal class DurableGapProof(
             )
             rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(olderPost))
             rule.onNodeWithText(olderPost, useUnmergedTree = true).assertIsDisplayed()
+            val asks = DurableHistoryProbe.asks()
+            val bubble = hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+            assertRenderedOrder(
+                cachedRows +
+                    listOf(
+                        hasText(lastOlderPost) and bubble,
+                        hasText(promptText) and bubble,
+                        hasText(replyText, ignoreCase = true) and bubble,
+                        hasText("$prefix-b-000") and bubble,
+                    ),
+            )
+            assertEquals("rendered row reveals are inert", asks, DurableHistoryProbe.asks())
         } finally {
             finalRows = DurableHistoryProbe.rows()
             DurableHistoryProbe.end()
@@ -143,6 +162,27 @@ internal class DurableGapProof(
         (finalRows ?: DurableHistoryProbe.rows()).filterIsInstance<ThreadItem.MessageItem>().map {
             it.message.content
         }
+
+    /** Compare rendered positions across lazy viewports, rather than repository row indices. */
+    private fun assertRenderedOrder(matchers: List<SemanticsMatcher>) {
+        val positions =
+            matchers.map { matcher ->
+                val list = rule.onNode(hasScrollToNodeAction())
+                list.performScrollToNode(matcher)
+                rule.onAllNodes(matcher, useUnmergedTree = true).assertCountEquals(1)
+                val row = rule.onNode(matcher, useUnmergedTree = true)
+                row.assertIsDisplayed()
+                // ThreadScreen reverses its lazy list: increasing scroll position means older content.
+                list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value() to
+                    row.fetchSemanticsNode().boundsInRoot.top
+            }
+        positions.zipWithNext().forEachIndexed { index, (older, newer) ->
+            assertTrue(
+                "rendered rows $index and ${index + 1} are distinct and chronological",
+                older.first > newer.first || (older.first == newer.first && older.second < newer.second),
+            )
+        }
+    }
 
     private fun coverageGap(): Boolean =
         runBlocking {

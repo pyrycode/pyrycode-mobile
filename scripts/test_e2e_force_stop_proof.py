@@ -1,10 +1,13 @@
 """External proof rejects missing process boundaries and duplicate synthetic rows."""
 import importlib.util
+import contextlib
 import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
+import subprocess
+import time
 import unittest
 from unittest.mock import patch
 
@@ -14,6 +17,92 @@ spec.loader.exec_module(proof)
 
 
 class ForceStopProofTest(unittest.TestCase):
+    def test_cancel_during_boot_reaps_emulator_before_custody_release(self):
+        child = subprocess.Popen(["sleep", "60"])
+        events = []
+
+        def stop(_env, serial, process):
+            self.assertEqual("emulator-5600", serial)
+            self.assertIs(child, process)
+            process.terminate()
+            process.wait(timeout=5)
+            events.append("emulator stopped")
+
+        @contextlib.contextmanager
+        def custody():
+            try:
+                yield
+            finally:
+                events.append("custody released")
+
+        try:
+            with self.assertRaises(KeyboardInterrupt), custody(), \
+                 patch.object(proof.gate, "free_emulator_port", return_value=5600), \
+                 patch.object(proof.gate.subprocess, "Popen", return_value=child), \
+                 patch.object(proof.gate.subprocess, "run", side_effect=KeyboardInterrupt), \
+                 patch.object(proof.gate, "stop_emulator", side_effect=stop):
+                proof.gate.boot_emulator({"ANDROID_HOME": "/fixture-sdk"}, "/fixture-avd", "fixture")
+            self.assertEqual(["emulator stopped", "custody released"], events)
+            self.assertIsNotNone(child.poll())
+        finally:
+            if child.poll() is None:
+                child.terminate()
+                child.wait(timeout=5)
+
+    def test_cancel_harness_runs_exit_cleanup_and_reaps_descendant_before_returning(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            script = folder / "harness.sh"
+            traps = "\n".join(line for line in (proof.ROOT / "scripts/e2e-emulator.sh").read_text().splitlines()
+                              if line.startswith("trap "))
+            script.write_text('''#!/bin/bash
+sleep 60 &
+child=$!
+cleanup() { kill "$child" 2>/dev/null; wait "$child" 2>/dev/null; echo cleaned >> "$PROOF_TEMP/cleaned"; }
+''' + traps + '''
+echo "$child" > "$PROOF_TEMP/child"
+wait "$child"
+''')
+            real_popen = subprocess.Popen
+            processes = []
+
+            def launch(*args, **kwargs):
+                process = real_popen(*args, **kwargs)
+                processes.append(process)
+                wait = process.wait
+                first = True
+
+                def cancel_once(*args, **kwargs):
+                    nonlocal first
+                    if first:
+                        first = False
+                        deadline = time.monotonic() + 5
+                        while not (folder / "child").exists() and time.monotonic() < deadline:
+                            time.sleep(0.01)
+                        self.assertTrue((folder / "child").exists(), "harness never started")
+                        raise KeyboardInterrupt
+                    return wait(*args, **kwargs)
+
+                process.wait = cancel_once
+                return process
+
+            try:
+                with patch.object(proof, "ROOT", folder), \
+                     patch.object(proof.subprocess, "Popen", side_effect=launch), \
+                     self.assertRaises(KeyboardInterrupt):
+                    (folder / "scripts").mkdir()
+                    script.rename(folder / "scripts/e2e-emulator.sh")
+                    proof.run_harness({**os.environ, "PROOF_TEMP": temp})
+                self.assertEqual("cleaned\n", (folder / "cleaned").read_text(), "EXIT cleanup must finish once")
+                self.assertIsNotNone(processes[0].poll())
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(int((folder / "child").read_text()), 0)
+            finally:
+                for process in processes:
+                    if process.poll() is None:
+                        process.terminate()
+                        process.wait(timeout=5)
+
     def execute(self, duplicate=False, survives=False):
         fixture = {"channel": "e2e-stop-123", "prefix": "e2e1833-stop-123", "conversation_id": "fixture-id"}
         calls = []

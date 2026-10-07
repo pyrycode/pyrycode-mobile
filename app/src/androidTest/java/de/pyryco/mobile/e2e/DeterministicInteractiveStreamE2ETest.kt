@@ -385,7 +385,7 @@ class DeterministicInteractiveStreamE2ETest {
                     }
                 }
             }
-            proof.catchUp(::restoreLink, "ping")
+            proof.catchUp(::restoreLink, "e2e1833-completed-turn", "ping", listOf(hasText("e2e1833-baseline-000")))
             assertEquals("cached older row retained", 1, proof.messages().count { it == "e2e1833-baseline-000" })
         } finally {
             peer.close()

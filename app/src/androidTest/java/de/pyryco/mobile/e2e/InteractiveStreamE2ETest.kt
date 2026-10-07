@@ -3542,7 +3542,12 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(inThreadList(OFFLINE_PROMPT), useUnmergedTree = true).assertCountEquals(0)
             composeTestRule.onAllNodes(offlineReplyMatcher(), useUnmergedTree = true).assertCountEquals(0)
 
-            gap.catchUp({ setHostLink(serverId, up = true) }, OFFLINE_REPLY)
+            gap.catchUp(
+                { setHostLink(serverId, up = true) },
+                OFFLINE_PROMPT,
+                OFFLINE_REPLY,
+                listOf(inThreadList(PING_PROMPT), pingReplyMatcher()),
+            )
             // Recovered cached baseline and missed user row remain unique in the merged chronology.
             val texts = gap.messages()
             assertEquals(1, texts.count { it == PING_PROMPT })
