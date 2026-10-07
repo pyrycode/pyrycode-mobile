@@ -20,7 +20,8 @@ internal object ReadMarkIdSerializer : KSerializer<ULong> {
             token.isString ||
             token.content.isEmpty() ||
             token.content.length > 20 ||
-            token.content.any { it !in '0'..'9' }
+            token.content.any { it !in '0'..'9' } ||
+            (token.content.length > 1 && token.content.first() == '0')
         ) {
             throw SerializationException("Invalid durable read id")
         }

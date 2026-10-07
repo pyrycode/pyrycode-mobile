@@ -66,7 +66,7 @@ class ConversationReadMarksTest {
         runTest {
             val pump = Pump()
             val repo = repo(pump)
-            val invalid = listOf("-1", "1.5", "1e2", "true", "\"2\"", "18446744073709551616", "[]", "{}")
+            val invalid = listOf("00", "01", "-1", "1.5", "1e2", "true", "\"2\"", "18446744073709551616", "[]", "{}")
             for (value in invalid) {
                 pump.push(snapshot(row("a", value, "9")))
                 pump.push(update("a", value))

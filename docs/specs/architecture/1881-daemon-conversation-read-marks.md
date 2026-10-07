@@ -65,7 +65,7 @@ Pending for documentation stage: update `docs/knowledge/features/remote-conversa
 
 **Verdict:** PASS
 
-- [Trust boundaries] Strict unsigned token validation rejects quoted, negative, fractional, exponent, boolean, composite and overflowing values. Nullable absence cannot become checkpoint zero. Reply type and target validation precede folding; a valid payload for another conversation cannot satisfy this write.
+- [Trust boundaries] Strict unsigned token validation rejects leading-zero, quoted, negative, fractional, exponent, boolean, composite and overflowing values. Nullable absence cannot become checkpoint zero. Reply type and target validation precede folding; a valid payload for another conversation cannot satisfy this write.
 - [Tokens] No new credential handling; the command carries only a conversation identity and durable ordinal inside the existing authenticated pump. Neither is logged.
 - [Files and storage] Live facts are not persisted, restored or used as paths. Existing cache and Keystore storage are unchanged.
 - [Android attack surface] No component, intent, WebView, notification or UI entry point changes.
@@ -77,3 +77,9 @@ Pending for documentation stage: update `docs/knowledge/features/remote-conversa
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-07
+
+## Revisions
+
+### 2026-10-07 — Canonical integer tokens
+
+The adversarial malformed-value probe found that `MobileJson` accepts `00` as a numeric token, and the initial digit/range guard admitted it as checkpoint zero. The trust-boundary security finding now explicitly requires canonical JSON decimal integers: `0` or a nonzero digit followed by digits, bounded by `ULong.MAX_VALUE`. `ReadMarkIdSerializer` rejects leading zeros. The probe keeps both `00` and `01` alongside the existing malformed kinds and must pass without admitting a checkpoint or ending the collector.
