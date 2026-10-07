@@ -1653,10 +1653,7 @@ class InteractiveStreamE2ETest {
             //    its chat row — the genuine presence observation on the surface where absence is later asserted (step 8).
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText(uniqueName, substring = true).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().assertIsDisplayed()
+            composeTestRule.awaitArchiveRoundTripChat(uniqueName, LIST_TIMEOUT_MS)
 
             // 6. Re-enter the thread by tapping the chat row (a 2nd presence observation — it can only succeed if
             //    the name is on the list). Archive is driven "from the thread".
@@ -1711,10 +1708,7 @@ class InteractiveStreamE2ETest {
             // 13. Presence check #2 (AC-2 — round-trip closes). Wait for the unique name on the active list, then
             //     confirm it is displayed. The re-appearance is attributable to the restore (asserted absent in
             //     step 8), on the same surface, same unique token.
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText(uniqueName, substring = true).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().assertIsDisplayed()
+            composeTestRule.awaitArchiveRoundTripChat(uniqueName, LIST_TIMEOUT_MS)
         } catch (failure: Throwable) {
             // Diagnose after failure without resuming the scenario or replacing its original exception.
             runCatching {
