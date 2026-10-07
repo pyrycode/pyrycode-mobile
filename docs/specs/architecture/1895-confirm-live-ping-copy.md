@@ -99,6 +99,21 @@ the scripted held-stream scenario and the named live ping method after the repai
 inspecting fresh counted XML. The dispatcher still owns full scripted and live gates.
 No new coroutine, state, I/O boundary, dependency or product logging is introduced.
 
+2026-10-07 — The full unit/shared run executed 4,739 tests and exposed five
+regressions from reserving blank space below short bubbles. In particular,
+`BackgroundAgentRestGapTest` requires the newest visible bubble to stay 12dp above
+the status band; centring a short surface in a taller row added an unintended gap.
+Revise the short-bubble geometry to a 96dp minimum visible surface, with its body/meta
+column vertically centred. The side targets fit the surface height, and the existing
+row trailing space and 12dp rest gap remain intact. Long-bubble widths, glyph spacing
+and content spacing retain their contracts. This deliberately enlarges short surfaces
+to accommodate accessibility rather than inserting invisible trailing space.
+Run `BackgroundAgentRestGapTest`, `BackgroundAgentBlocksScreenTest`,
+`BackgroundAgentProseScreenTest` and `ThreadScreenHistoryTest` beside the action tests.
+If a fixture loses a lazy-list node because fewer taller rows fit, explicitly scroll
+the owned target into view before the same ownership/collapse assertion; do not
+change grouping, navigation, follow or history production logic to rescue the fixture.
+
 ## Documentation handoff
 
 Pending for the documentation stage: record fresh #1895 full-suite counts, tested
