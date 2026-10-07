@@ -310,6 +310,14 @@ class DeterministicInteractiveStreamE2ETest {
             composeTestRule.onNodeWithText("e2e1833-baseline-000").assertIsDisplayed()
             proof.missPages(name) {
                 runBlocking {
+                    withTimeout(REPLY_TIMEOUT_MS) {
+                        while (peer.recorded(conversation.id).none {
+                                it.type == "assistant_delta" && peer.field(it, "text") == proof.lastOlderPost
+                            }
+                        ) {
+                            kotlinx.coroutines.delay(50)
+                        }
+                    }
                     peer.sendMessage(conversation.id, "e2e1833-completed-turn", THREAD_TIMEOUT_MS)
                     peer.awaitFrame(conversation.id, "turn_end", REPLY_TIMEOUT_MS)
                 }

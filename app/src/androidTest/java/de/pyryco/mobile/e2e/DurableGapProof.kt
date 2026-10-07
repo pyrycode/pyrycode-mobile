@@ -32,6 +32,7 @@ internal class DurableGapProof(
     val prefix = "e2e1833-" + System.currentTimeMillis()
     val olderPost = "$prefix-a-000"
     private val batchSize = 120
+    val lastOlderPost = "$prefix-a-${(batchSize - 1).toString().padStart(3, '0')}"
     val newestPost = "$prefix-b-${(batchSize - 1).toString().padStart(3, '0')}"
 
     fun cacheBaseline() {
@@ -123,7 +124,7 @@ internal class DurableGapProof(
             assertEquals("completed reply once", 1, reply.size)
             assertTrue(
                 "reply between the two durable post batches",
-                reply.single() > rows.indexOf("$prefix-a-${(batchSize - 1).toString().padStart(3, '0')}") &&
+                reply.single() > rows.indexOf(lastOlderPost) &&
                     reply.single() < rows.indexOf("$prefix-b-000"),
             )
             rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(olderPost))
