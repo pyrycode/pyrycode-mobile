@@ -2794,10 +2794,40 @@ while the oldest post and completed reply remain absent. A received page can pre
 reader's viewport anchor; semantics-reveal the already delivered newest row only after those
 request/replay-exclusion checks, assert it is displayed and assert the reveal issued no request.
 Merely revealing each gap marker is also inert. Physical reader pulls then request one page each,
-with no page-arrival loop; at least two pulls must close the gap. Keep chronological post identity,
+with no page-arrival loop. Since #1917, `DurableGapProof.catchUp` pulls while fixture posts or the
+assistant reply are missing, requiring at least two pulls and at most six.
+It then independently waits for displayed-marker closure without further demand. Hidden cached
+coverage may still report unresolved gaps after fixture recovery, so using that metadata as the
+pull-loop condition would try to reveal a nonexistent marker. Keep chronological post identity,
 exactly-once reply, settled reply, reply placement between batches and held cached-row assertions.
 These checks prove delivery and reader demand rather than automatic viewport following. See
 [the history-demand contract](knowledge/features/thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777).
+
+**Fragmented projection regression evidence (#1917, 2026-10-07).** The
+[verifier's inspected fresh XML](https://github.com/pyrycode/pyrycode-mobile/pull/1929#issuecomment-6047583572)
+and dispatcher's counted gate report cover `51f4d67f737e`. The configured UI gate executed 200,
+passed 200, failed 0 and skipped 1; it includes
+`ThreadFragmentedHistoryDeviceTest.sparseFragmentedRestore_opensEditsAndScrolls_onePagePerPull`
+(1 executed/passed, 0 failed, 0 skipped). Its sparse restored fixture includes leading lifecycle
+evidence and queued oldest/internal shadows, renders anchors `35998`/`36002`, accepts composer
+editing and scrolling, and asserts one page per pull with no second request during the same touch.
+The scripted-all gate executed/passed 22, failed 0 and skipped 0, including
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_durableGapCatchUp`.
+These are full configured gates, not separate focused runs. The focused projection classes had
+7 (`HistoryDisplayProjectionTest`) and 6 (`ThreadHistoryProjectionWorkerTest`) executed/passed,
+0 failed and 0 skipped; all 26 `ThreadScreenHistoryTest` cases passed with no failures or skips.
+They cover restored 36000-entry metadata with 18000 spans, sparse/large displayed sets, bounded
+key/lookup counts, eligibility, worker/main progress, supersession and exit cancellation.
+
+The [dispatcher live gate](https://github.com/pyrycode/pyrycode-mobile/issues/1917#issuecomment-6047904914)
+then ran the full real-Claude suite (`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`)
+against that branch commit merged with `origin/main` `5c3052d6cb02`: 65 executed/passed,
+0 failed, 0 skipped, no flaky passes, in 20m 24s. The supplied per-method report confirms
+`InteractiveStreamE2ETest.interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect` executed and
+passed in that full suite; no separate focused live run is claimed. The run supplied no daemon
+revision annotation. #1917 adapts the shared proof's display-eligibility/timing assumptions;
+[#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) retains ownership of the rung-3
+durable-gap operator-flow proof. The pre-ship command and scenario coverage remain unchanged.
 
 ### External app force-stop proof (#1833)
 

@@ -1,5 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import de.pyryco.mobile.data.repository.ThreadItem
+
 /**
  * How many pages one screen-open may walk before the client stops asking (#777).
  *
@@ -17,10 +19,12 @@ package de.pyryco.mobile.ui.conversations.thread
  */
 internal const val MAX_HISTORY_PAGES = 100
 
-/** Local marker identity plus the hashed logical row immediately above the uncovered interval. */
+/** Exact unsigned demand anchor with its logical history key and prepared display target. */
 data class ThreadHistoryMarker(
     val beforeRow: String,
     val unsignedAnchor: ULong,
+    /** Prepared display-only target; compatibility markers resolve through [beforeRow]. */
+    val displayRow: ThreadItem? = null,
 ) {
     constructor(anchor: Long, beforeRow: String) : this(
         beforeRow,

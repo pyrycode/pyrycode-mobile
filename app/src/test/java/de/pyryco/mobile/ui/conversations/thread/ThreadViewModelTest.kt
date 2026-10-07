@@ -5131,21 +5131,16 @@ class ThreadViewModelTest {
         }
 
     @Test
-    fun history_unknownAndKnownMarkersSharingAnEdge_remainInChronologicalOrder() =
+    fun history_emptyDisplayedHistory_suppressesKnownAndUnknownMarkers() =
         runTest {
             val coverage = HistoryCoverage(unknown = true).received(durablePage(1, cursor = "older"))
             val repo = HistoryRepo(saved = HistoryPosition("older", true, coverage)) { durablePage(9, cursor = "eight") }
             val vm = makeVm(historyHandle(), repo)
             val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
             advanceUntilIdle()
-            assertEquals(
-                listOf(0L, 1L),
-                vm.state.value.historyMarkers
-                    .map { it.anchor },
-            )
             assertTrue(
                 vm.state.value.historyMarkers
-                    .all { it.beforeRow.isEmpty() },
+                    .isEmpty(),
             )
             collector.cancel()
         }
@@ -5327,16 +5322,17 @@ class ThreadViewModelTest {
                 val vm = makeVm(historyHandle(), repo)
                 val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
                 advanceUntilIdle()
-                assertEquals(
-                    listOf(anchor),
+                assertTrue(
                     vm.state.value.historyMarkers
-                        .map { it.unsignedAnchor },
+                        .isEmpty(),
                 )
                 assertEquals(
-                    "",
-                    vm.state.value.historyMarkers
-                        .single()
-                        .beforeRow,
+                    anchor,
+                    repo.saved
+                        ?.coverage
+                        ?.unsignedGaps
+                        ?.single()
+                        ?.anchor,
                 )
                 vm.onDemandHistoryGap(Long.MAX_VALUE)
                 advanceUntilIdle()
@@ -5570,7 +5566,11 @@ class ThreadViewModelTest {
         )
         assertEquals(2, fragments.map { it.message.id }.distinct().size)
         assertEquals(
-            ThreadHistoryMarker(beforeRow = fragments.last().historyKeys().first(), unsignedAnchor = anchor),
+            ThreadHistoryMarker(
+                beforeRow = fragments.last().historyKeys().first(),
+                unsignedAnchor = anchor,
+                displayRow = fragments.last(),
+            ),
             state.historyMarkers.single(),
         )
     }
@@ -5596,20 +5596,34 @@ class ThreadViewModelTest {
             val vm = makeVm(historyHandle(), repo, repositoryAvailable = available)
             val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
             advanceUntilIdle()
-            assertEquals(
-                listOf(anchor),
+            assertTrue(
                 vm.state.value.historyMarkers
-                    .map { it.unsignedAnchor },
+                    .isEmpty(),
+            )
+            assertEquals(
+                anchor,
+                repo.saved
+                    ?.coverage
+                    ?.unsignedGaps
+                    ?.single()
+                    ?.anchor,
             )
             vm.onDemandUnsignedHistoryGap(anchor)
             advanceUntilIdle()
             assertEquals(listOf("", "refused-opaque"), repo.asks)
             assertEquals("", repo.saved?.coverage?.cursorForUnsigned(anchor))
-            assertEquals("independent", repo.saved?.cursor)
             assertEquals(
-                listOf(anchor),
+                anchor,
+                repo.saved
+                    ?.coverage
+                    ?.unsignedGaps
+                    ?.single()
+                    ?.anchor,
+            )
+            assertEquals("independent", repo.saved?.cursor)
+            assertTrue(
                 vm.state.value.historyMarkers
-                    .map { it.unsignedAnchor },
+                    .isEmpty(),
             )
             // A fresh destination must echo the persisted fallback without inventing a signed anchor.
             val seeded =
@@ -5621,10 +5635,9 @@ class ThreadViewModelTest {
             val reopened = makeVm(historyHandle(), reopenedRepo, repositoryAvailable = flowOf(false))
             val reopenedCollector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { reopened.state.collect {} }
             advanceUntilIdle()
-            assertEquals(
-                listOf(anchor),
+            assertTrue(
                 reopened.state.value.historyMarkers
-                    .map { it.unsignedAnchor },
+                    .isEmpty(),
             )
             assertTrue(reopenedRepo.asks.isEmpty())
             available.value = false
@@ -5635,10 +5648,9 @@ class ThreadViewModelTest {
             available.value = true
             advanceUntilIdle()
             assertEquals(listOf("", "refused-opaque", ""), repo.asks)
-            assertEquals(
-                listOf(anchor),
+            assertTrue(
                 vm.state.value.historyMarkers
-                    .map { it.unsignedAnchor },
+                    .isEmpty(),
             )
             vm.onDemandUnsignedHistoryGap(anchor)
             advanceUntilIdle()
@@ -5665,19 +5677,19 @@ class ThreadViewModelTest {
             val vm = makeVm(historyHandle(), repo)
             val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
             advanceUntilIdle()
-            assertEquals(
-                listOf(0uL),
+            assertTrue(
                 vm.state.value.historyMarkers
-                    .map { it.unsignedAnchor },
+                    .isEmpty(),
             )
+            assertEquals(true, repo.saved?.coverage?.unsignedUnknown)
             reply = unsignedPage(edge - 1u, edge, cursor = "terminal-opaque")
             vm.onDemandUnsignedHistoryGap(0u)
             advanceUntilIdle()
             assertEquals(edge - 1u, repo.saved?.coverage?.unsignedUnknownEdge)
-            assertEquals(
-                listOf(0uL),
+            assertEquals(true, repo.saved?.coverage?.unsignedUnknown)
+            assertTrue(
                 vm.state.value.historyMarkers
-                    .map { it.unsignedAnchor },
+                    .isEmpty(),
             )
             reply = HistoryPage(emptyList(), "", true)
             vm.onDemandUnsignedHistoryGap(0u)
@@ -5686,6 +5698,7 @@ class ThreadViewModelTest {
                 vm.state.value.historyMarkers
                     .isEmpty(),
             )
+            assertEquals(false, repo.saved?.coverage?.unsignedUnknown)
             assertEquals(listOf("", "unknown-opaque", "terminal-opaque"), repo.asks)
             assertEquals("independent", repo.saved?.cursor)
             collector.cancel()
@@ -5907,6 +5920,7 @@ class ThreadViewModelTest {
             recordModalAction = recordModalAction,
             rememberModel = rememberModel,
             permissionDraftStore = permissionDraftStore,
+            projectionDispatcher = UnconfinedTestDispatcher(testScheduler),
         )
 
     /** A VM whose active conversation is [ACTIVE_CONV], wired to a controllable live-event source. */

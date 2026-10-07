@@ -92,7 +92,7 @@ is atomic against the live path.
 A failed or empty cache read is never treated as authoritative:
 `readConversations` returns `emptyList()` both for a document that was never
 written and for one that failed to parse — the two are indistinguishable by
-design (see [conversation cache § Failure model](conversation-cache.md#failure-model--graceful-reads-reporting-mutations))
+design (see [conversation cache § Failure model](conversation-cache-failure-model.md#failure-model--graceful-reads-reporting-mutations))
 — so only a non-empty read publishes anything, and only a live list may ever
 empty a host.
 

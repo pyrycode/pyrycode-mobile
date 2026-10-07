@@ -46,7 +46,7 @@ import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
-import de.pyryco.mobile.data.repository.historyKeys
+import de.pyryco.mobile.data.repository.projectDisplay
 import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentSource
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
@@ -68,7 +68,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -86,6 +88,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
@@ -96,8 +99,10 @@ import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Instant
+import java.util.IdentityHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.floor
 
@@ -187,6 +192,7 @@ class ThreadViewModel(
     // #1340: folds this phone's own prompt actions into [hostModal] at once (the coordinator's
     // recordModalAction). Defaulted inert, so the fake-backed graph and existing tests keep their prompts.
     private val recordModalAction: (ModalAction) -> Unit = {},
+    private val projectionDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
@@ -726,8 +732,9 @@ class ThreadViewModel(
      * so it is surfaced on [ThreadUiState] — not as a sibling [StateFlow] like [isStalled]. Combined here
      * so the five-arm typed `state` combine keeps one content arm; both inputs seed immediately (the `scan`
      * seeds `emptyList()`, `observeQueue` seeds `emptyList()`) and each already carries
-     * `distinctUntilChanged`, so this never stalls and adds no operator.
+     * `distinctUntilChanged`. Display preparation follows the latest snapshot on the worker dispatcher.
      */
+    @OptIn(ExperimentalCoroutinesApi::class)
     private val threadContent: Flow<ThreadContent> =
         combine(
             threadItems,
@@ -736,20 +743,35 @@ class ThreadViewModel(
             hostAvailable,
             historyCoverage,
         ) { items, queued, demand, connected, coverage ->
-            val display = coverage.displayRows(items)
-            val positions = coverage.unsignedPositions()
-            val markers =
-                (coverage.unsignedGaps.map { it.anchor to it.edge } + listOfNotNull(coverage.unsignedUnknownEdge?.let { 0uL to it }))
-                    .sortedBy { it.second }
-                    .map { (anchor, edge) ->
-                        val row =
-                            display
-                                .firstOrNull { row -> row.historyKeys().any { (positions[it] ?: 0uL) >= edge } }
-                                ?.historyKeys()
-                                ?.firstOrNull()
-                        ThreadHistoryMarker(beforeRow = row.orEmpty(), unsignedAnchor = anchor)
+            Triple(items, coverage, ThreadContent(items, queued, demand.tail(connected), emptyList()))
+        }.mapLatest { (items, coverage, content) ->
+            if (coverage.unsignedGaps.isEmpty() && !coverage.unsignedUnknown) {
+                content
+            } else {
+                withContext(projectionDispatcher) {
+                    val context = currentCoroutineContext()
+                    // Use the render fold's one-to-one queue correlation and lifecycle filtering.
+                    val delivered = IdentityHashMap<ThreadItem, Unit>()
+                    foldQueuedRows(items, content.queued).forEach { row ->
+                        context.ensureActive()
+                        if (row is ThreadRow.Delivered) delivered[row.item] = Unit
                     }
-            ThreadContent(display, queued, demand.tail(connected), markers)
+                    val display =
+                        coverage.projectDisplay(
+                            items,
+                            checkActive = { context.ensureActive() },
+                            isDisplayed = { it in delivered },
+                        )
+                    RelayLog.d { "event=history_display_projected rows=${display.rows.size} markers=${display.markers.size}" }
+                    content.copy(
+                        items = display.rows,
+                        historyMarkers =
+                            display.markers.map {
+                                ThreadHistoryMarker(beforeRow = it.beforeRow, unsignedAnchor = it.anchor, displayRow = it.displayRow)
+                            },
+                    )
+                }
+            }
         }
 
     val state: StateFlow<ThreadUiState> =
