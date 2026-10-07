@@ -29,6 +29,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.e2e.assertSideMessageCopy
 import de.pyryco.mobile.e2e.assertSideMessageReply
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
@@ -126,6 +127,9 @@ class ThreadInputBarMessageReplyTest {
                                 items =
                                     listOf(
                                         ThreadItem.MessageItem(
+                                            Message("u", "s", Role.User, "hello", Instant.parse("2026-10-07T00:00:00Z"), false),
+                                        ),
+                                        ThreadItem.MessageItem(
                                             Message(
                                                 "m",
                                                 "s",
@@ -151,6 +155,7 @@ class ThreadInputBarMessageReplyTest {
                 }
             }
         }
+        rule.assertSideMessageCopy(Message("u", "s", Role.User, "hello", Instant.parse("2026-10-07T00:00:00Z"), false))
         rule.assertSideMessageReply(
             Message(
                 "m",
