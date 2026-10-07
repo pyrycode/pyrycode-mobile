@@ -59,22 +59,27 @@ internal fun ComposeTestRule.assertSideMessageReply(
 
 /**
  * Semantic scrolling sees the full list; pointer actions must clear its overlaid chrome too. That chrome
- * includes the Top overlay's pills under the header, such as the scripted host's failed-MCP pill, whose
- * tap opens Channel info instead of reaching a short row's copy glyph beneath it.
+ * includes the Top overlay's pills under the header. A short thread starts at the overlay's own inset
+ * (#1509), so its first row cannot scroll clear of a pill that stays up; fail here, naming the cover,
+ * rather than let the pointer tap land on the pill instead of the glyph.
  */
 internal fun ComposeTestRule.scrollSideMessageGlyphIntoView(
     sourceRow: androidx.compose.ui.test.SemanticsMatcher,
     glyphTag: String,
 ) {
     if (onAllNodes(hasTestTag("thread-top-bar")).fetchSemanticsNodes().isEmpty()) return
-    repeat(5) {
+    val margin = 24f * density.density
+
+    // The clear band between the header, or the Top overlay below it, and the composer; and the glyph's centre.
+    fun placement(): Triple<Float, Float, Float> {
         val header = onNodeWithTag("thread-top-bar").fetchSemanticsNode().boundsInRoot.bottom
         val overlay = onAllNodes(hasTestTag("thread-top-overlay")).fetchSemanticsNodes().maxOfOrNull { it.boundsInRoot.bottom }
-        val top = maxOf(header, overlay ?: header)
         val bottom = onNodeWithTag("thread-composer").fetchSemanticsNode().boundsInRoot.top
         val glyph = onNode(hasTestTag(glyphTag) and hasAnyAncestor(sourceRow), useUnmergedTree = true).fetchSemanticsNode()
-        val y = glyph.boundsInRoot.center.y
-        val margin = 24f * density.density
+        return Triple(maxOf(header, overlay ?: header), bottom, glyph.boundsInRoot.center.y)
+    }
+    repeat(5) {
+        val (top, bottom, y) = placement()
         if (y in (top + margin)..(bottom - margin)) return
         val region = onNodeWithTag("thread-message-region")
         val origin = region.fetchSemanticsNode().boundsInRoot.topLeft
@@ -89,5 +94,9 @@ internal fun ComposeTestRule.scrollSideMessageGlyphIntoView(
             ) - origin
         region.performTouchInput { swipe(start, start + Offset(0f, distance), 500) }
         waitForIdle()
+    }
+    val (top, bottom, y) = placement()
+    if (y !in (top + margin)..(bottom - margin)) {
+        throw AssertionError("$glyphTag at y=$y stays under thread chrome; clear band is $top..$bottom px")
     }
 }

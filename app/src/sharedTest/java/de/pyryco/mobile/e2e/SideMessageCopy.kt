@@ -32,18 +32,18 @@ internal fun ComposeTestRule.assertSideMessageCopy(message: Message) {
     val timestamp =
         hasText(formatShortDateTime(message.timestamp, TimeZone.currentSystemDefault(), Locale.getDefault())) and
             hasAnyAncestor(sourceRow)
+    onAllNodes(timestamp, useUnmergedTree = true).assertCountEquals(0)
+    // A dismissible Top overlay notice can cover the target despite assertIsDisplayed succeeding.
+    // Dismiss before measuring the clear band, so a removable notice does not count as chrome.
+    val notices = onAllNodes(hasContentDescription(context.getString(R.string.thread_notice_dismiss)))
+    repeat(notices.fetchSemanticsNodes().size) { notices[0].performClick() }
     // The divided targets may overflow a short first row; scroll its visual row, not the overflow.
     onNode(sourceRow).performScrollTo()
     scrollSideMessageGlyphIntoView(sourceRow, "message-copy-glyph")
-    val copy =
-        onNode(
-            hasContentDescription(context.getString(R.string.cd_thread_copy_message)) and
-                hasAnyAncestor(sourceRow),
-        ).assertIsDisplayed()
-    onAllNodes(timestamp, useUnmergedTree = true).assertCountEquals(0)
-    // A dismissible Top overlay notice can cover the target despite assertIsDisplayed succeeding.
-    val notices = onAllNodes(hasContentDescription(context.getString(R.string.thread_notice_dismiss)))
-    repeat(notices.fetchSemanticsNodes().size) { notices[0].performClick() }
+    onNode(
+        hasContentDescription(context.getString(R.string.cd_thread_copy_message)) and
+            hasAnyAncestor(sourceRow),
+    ).assertIsDisplayed()
     runOnIdle { clipboard.setPrimaryClip(ClipData.newPlainText("copy baseline", "unrelated baseline")) }
     val glyph = onNode(hasTestTag("message-copy-glyph") and hasAnyAncestor(sourceRow), useUnmergedTree = true).fetchSemanticsNode()
     onRoot().performTouchInput { click(glyph.boundsInRoot.center) }

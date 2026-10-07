@@ -241,6 +241,10 @@ class InteractiveStreamE2ETest {
     @get:Rule
     val composeTestRule = createAndroidComposeRule<MainActivity>()
 
+    /** #1818: reply's keyboard check needs a real IME, which ATD images omit; selected per method. */
+    @get:Rule
+    val testIme = TestImeRule()
+
     /**
      * #586: fails **any** scenario in this class during which the daemon reported a claude message kind
      * its parser could not map. Declaring it is the entire per-class cost — a ninth scenario added
@@ -440,6 +444,7 @@ class InteractiveStreamE2ETest {
 
     @Test
     fun interactiveTurn_pingPrompt_streamsPingReplyIntoThread() {
+        testIme.select()
         // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
         awaitChannelList()
 

@@ -28,6 +28,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.MainActivity
@@ -126,6 +127,10 @@ class DeterministicInteractiveStreamE2ETest {
 
     @get:Rule
     val composeTestRule = createAndroidComposeRule<MainActivity>()
+
+    /** #1818: reply's keyboard check needs a real IME, which ATD images omit; selected per method. */
+    @get:Rule
+    val testIme = TestImeRule()
 
     // The spinner's content-description (production UI string, no test tags). Copied from
     // ScriptedThreadRenderTest (the Layer-1 twin). Keep in sync with res/values/strings.xml:
@@ -594,6 +599,7 @@ class DeterministicInteractiveStreamE2ETest {
      */
     @Test
     fun interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread() {
+        testIme.select()
         arriveInSeededThread()
         val repository =
             requireNotNull(
@@ -630,6 +636,7 @@ class DeterministicInteractiveStreamE2ETest {
         assertTrue("displayed arrived text must belong to an ongoing reply", held.isStreaming)
         assertNotEquals(LiveSessionEvent.TurnState.Phase.Idle, runBlocking { repository.observeTurnPhase(conversationId).first() })
 
+        acknowledgeFailedMcpPill()
         composeTestRule.assertSideMessageCopy(held)
         val sent =
             runBlocking { repository.observeMessages(conversationId).first() }
@@ -1170,6 +1177,31 @@ class DeterministicInteractiveStreamE2ETest {
         composeTestRule.onAllNodesWithText(SEED_CHANNEL_NAME).onFirst().performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /**
+     * Every scripted run reports a failed MCP server (#1457), and its Error pill has no dismiss. A short thread
+     * starts at the Top overlay's inset (#1509), so the pill covers the first row's side actions and the
+     * pointer helpers cannot scroll them clear. Acknowledge it as a user would: open it, close Channel info.
+     */
+    private fun acknowledgeFailedMcpPill() {
+        val pill = hasClickAction() and SemanticsMatcher("text starts with $mcpFailedPrefix") { nodeText(it).startsWith(mcpFailedPrefix) }
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodes(pill).fetchSemanticsNodes().isNotEmpty() }
+        composeTestRule.onAllNodes(pill).onFirst().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(MCP_SECTION_HEADER).fetchSemanticsNodes().isNotEmpty()
+        }
+        // The first back can only close the keyboard, so press until the sheet is gone, never past it.
+        repeat(3) {
+            if (composeTestRule.onAllNodesWithText(MCP_SECTION_HEADER).fetchSemanticsNodes().isNotEmpty()) {
+                Espresso.pressBack()
+                composeTestRule.waitForIdle()
+            }
+        }
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(MCP_SECTION_HEADER).fetchSemanticsNodes().isEmpty() &&
+                composeTestRule.onAllNodes(pill).fetchSemanticsNodes().isEmpty()
         }
     }
 
