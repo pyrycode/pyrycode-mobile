@@ -11,6 +11,11 @@ import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -42,9 +47,8 @@ import org.junit.runner.RunWith
 import java.util.Locale
 
 /**
- * #1621: in the thread a message's meta row (timestamp + copy) is hidden until its bubble is tapped, at
- * most one shows at a time, a streaming reply keeps it hidden, nested tap targets keep their own taps, and
- * a screen reader still reaches the timestamp and a copy action while the row is hidden.
+ * #1817: only the timestamp hides until a finished bubble is tapped, with at most one shown.
+ * Side copy remains a labelled button during streaming; nested targets keep their own taps.
  */
 @RunWith(AndroidJUnit4::class)
 class MessageMetaRowToggleTest {
@@ -78,6 +82,8 @@ class MessageMetaRowToggleTest {
             .targetContext
             .getString(id)
 
+    private var expectedCopies = 0
+
     private val copyDescription = string(R.string.cd_thread_copy_message)
 
     private fun message(
@@ -92,6 +98,7 @@ class MessageMetaRowToggleTest {
         attachmentStates: Map<String, AttachmentViewState> = emptyMap(),
         items: () -> List<Message>,
     ) {
+        expectedCopies = items().count { it.role != Role.Tool }
         composeRule.setContent {
             PyrycodeMobileTheme {
                 CompositionLocalProvider(
@@ -132,21 +139,32 @@ class MessageMetaRowToggleTest {
 
     private fun assertRowsShown(expected: Int) {
         composeRule.waitForIdle()
-        assertEquals("copy controls shown", expected, visibleCopyControls())
+        assertEquals("copy controls always shown", expectedCopies, visibleCopyControls())
         assertEquals("timestamps shown", expected, visibleTimestamps())
         // Single bubble taps must be spaced beyond text selection's double-tap timeout (#1638).
         composeRule.mainClock.advanceTimeBy(500)
     }
 
+    private fun copyFor(body: String) =
+        composeRule.onNode(
+            hasContentDescription(copyDescription) and
+                hasAnyAncestor(
+                    hasTestTag("message-row") and hasAnyDescendant(hasText(body)),
+                ),
+        )
+
     @Test
     fun aTapShowsThatMessagesRow_aSecondTapHidesIt_andAnotherMessageTakesItOver() {
         setThread { listOf(message("u", Role.User, USER_BODY), message("a", Role.Assistant, ASSISTANT_BODY)) }
         assertRowsShown(0)
+        copyFor(USER_BODY).performClick()
+        assertEquals(listOf(USER_BODY), clipboard.writes)
+        assertRowsShown(0)
 
         composeRule.onNodeWithText(USER_BODY).performClick()
         assertRowsShown(1)
-        composeRule.onNodeWithContentDescription(copyDescription).performClick()
-        assertEquals(listOf(USER_BODY), clipboard.writes)
+        copyFor(USER_BODY).performClick()
+        assertEquals(listOf(USER_BODY, USER_BODY), clipboard.writes)
 
         composeRule.onNodeWithText(USER_BODY).performClick()
         assertRowsShown(0)
@@ -154,8 +172,8 @@ class MessageMetaRowToggleTest {
         composeRule.onNodeWithText(USER_BODY).performClick()
         composeRule.onNodeWithText(ASSISTANT_BODY).performClick()
         assertRowsShown(1)
-        composeRule.onNodeWithContentDescription(copyDescription).performClick()
-        assertEquals(listOf(USER_BODY, ASSISTANT_BODY), clipboard.writes)
+        copyFor(ASSISTANT_BODY).performClick()
+        assertEquals(listOf(USER_BODY, USER_BODY, ASSISTANT_BODY), clipboard.writes)
     }
 
     @Test
@@ -169,7 +187,16 @@ class MessageMetaRowToggleTest {
                 .isNotEmpty()
         }
 
-        composeRule.onAllNodesWithTag(MESSAGE_BUBBLE_TEST_TAG)[0].performClick()
+        val bubble = composeRule.onAllNodesWithTag(MESSAGE_BUBBLE_TEST_TAG)[0]
+        assertEquals(null, bubble.fetchSemanticsNode().config.getOrNull(SemanticsActions.OnClick))
+        assertEquals(
+            androidx.compose.ui.semantics.Role.Button,
+            composeRule.onNodeWithContentDescription(copyDescription).fetchSemanticsNode().config[SemanticsProperties.Role],
+        )
+        bubble.performClick()
+        assertRowsShown(0)
+        composeRule.onNodeWithContentDescription(copyDescription).performClick()
+        assertEquals(listOf(ASSISTANT_BODY), clipboard.writes)
         assertRowsShown(0)
 
         composeRule.runOnIdle { streaming = false }
@@ -248,7 +275,7 @@ class MessageMetaRowToggleTest {
     }
 
     @Test
-    fun aHiddenRow_leavesTheTimestampAndACopyActionOnTheBubbleForAScreenReader() {
+    fun aHiddenRow_leavesTheTimestampDescription_andAnIndependentCopyButton() {
         setThread { listOf(message("a", Role.Assistant, ASSISTANT_BODY)) }
         assertRowsShown(0)
 
@@ -261,12 +288,14 @@ class MessageMetaRowToggleTest {
         val formatted = formatShortDateTime(TIMESTAMP, TimeZone.currentSystemDefault(), Locale.getDefault())
         assertTrue("bubble must announce $formatted, was '$description'", description.contains(formatted))
 
-        val copy =
+        assertTrue(
             bubble.config
                 .getOrNull(SemanticsActions.CustomActions)
                 .orEmpty()
-                .single { it.label == copyDescription }
-        composeRule.runOnIdle { copy.action() }
+                .isEmpty(),
+        )
+        copyFor(ASSISTANT_BODY).performClick()
+        assertRowsShown(0)
         assertEquals(listOf(ASSISTANT_BODY), clipboard.writes)
     }
 

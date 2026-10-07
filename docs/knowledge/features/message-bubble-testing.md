@@ -75,7 +75,30 @@ activity root cannot find the action after the long-press. Keep the known select
 unrelated clipboard baseline independent of the result assertion. A substituted toolbar test
 cannot establish this platform-menu behavior.
 
-`MessageMetaRowToggleTest` mounts the real `ThreadScreen` to cover show/hide and single selection, streaming-to-finished taps, links and independently visible code copy, inert attachment states, and the screen-reader toggle and hidden-row timestamp/copy semantics. Standalone `MessageBubbleTest` and palette fixtures retain the visible-row default, so their streaming copy test does not describe thread behavior. `ThreadFrameCaptureTest.compactWidthAndEnlargedText_keepFrameControlsReachable` reveals the row before testing its copy pointer target. Compose semantics assertions do not establish TalkBack's spoken order on a device.
+`MessageMetaRowToggleTest` mounts the real thread for timestamp-only show/hide,
+single selection, streaming completion, nested links/code copy/attachments and
+independent side-copy semantics (#1817). Standalone fixtures retain their visible
+timestamp default for finished messages, but streaming always suppresses it.
+`ThreadFrameCaptureTest.compactWidthAndEnlargedText_keepFrameControlsReachable`
+checks side copy before revealing the timestamp, then checks pointer reachability
+and 320dp wrapping with enlarged text. A passing ATD capture and metadata sidecar
+do not prove frame pixels: synthetic bars can suppress PNG output. The #1817
+verifier did not inspect fresh full-frame pixels or perform manual TalkBack traversal.
+
+Side geometry tests measure the configured viewport rather than Robolectric's
+outer window, whose density can differ. Measure the bubble, 13dp column, 11×12dp
+glyph and 48dp target separately at 412dp and 320dp. Pointer tests include all
+target edges and overlap into the bubble; copy must win without toggling time.
+Scope source-copy selectors to the non-merging `message-row`, so another message
+or a fenced-code control cannot satisfy the assertion. Markdown and streaming
+append tests compare current source, including the 100,000-character bound.
+
+Palette guards check actual glyph/backing pixels and both contrast boundaries
+at ≥3:1 across static and wallpaper light/dark, theme changes and completion.
+A tint-only assertion passed while the light icon was 1.61:1 against the thread.
+Use `threadColors.background`, including the static-dark canvas overlay, rather
+than the unmodified global background. The 13×14dp `inverseSurface` backing keeps
+the specified `inversePrimary` glyph accessible without changing layout.
 
 `app/src/sharedTest/.../components/MessageBubblePaletteTest.kt` uses native Canvas
 pixels at the 412dp reference width to check user, finalized assistant, streaming
@@ -91,7 +114,7 @@ assert the actual fill rather than only the theme token.
 `app/src/sharedTest/.../components/MessageBubbleTest.kt` (new, #644), the rung-2 component-render layer, with a file-local fake `ClipboardManager` provided through `LocalClipboardManager`:
 
 - `bothRoles_renderBodyAndOwnMetaRow` — both roles render their body text and their own meta row.
-- `roleAlignment_userSitsRightOfAssistant_andEachClearsTheOppositeInset` — reads both bodies' rects; the user body sits right of the assistant body and each clears the opposite root edge by at least `MessageRoleInset`.
+- `roleAlignment_userSitsRightOfAssistant_andEachClearsTheOppositeInset` — reads both bodies' rects; the user body sits right of the assistant body and each clears the opposite configured viewport edge by the delivered inset plus action reservation.
 - `shortAssistantBody_hugsItsContent_whileALongOneStillGrowsToTheLane` — the regression guard for [Fill vs. hug](message-bubble.md#fill-vs-hug-the-streaming-arm-keeps-fillmaxwidth-since-644), added in the rework cycle.
 - `copy_putsOnlyThatMessagesTextOnTheClipboard` / `copy_fromTheUserBubble_putsOnlyTheUserText_onTheClipboard` — tapping one bubble's copy control captures exactly that message's `content`, never the other's.
 - `copyControl_carriesItsAccessibleNameAndButtonRole` — addressable by `cd_thread_copy_message`, `Role.Button`.

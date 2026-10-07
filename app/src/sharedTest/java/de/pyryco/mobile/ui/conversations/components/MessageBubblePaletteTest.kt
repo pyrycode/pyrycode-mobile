@@ -14,6 +14,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.SemanticsActions
@@ -28,6 +29,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.threadColors
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -51,6 +53,8 @@ class MessageBubblePaletteTest {
     private var userFill = Color.Unspecified
     private var assistantFill = Color.Unspecified
     private var background = Color.Unspecified
+    private var actionTint = Color.Unspecified
+    private var actionBacking = Color.Unspecified
     private var userBody = Color.Unspecified
     private var assistantBody = Color.Unspecified
     private var renderedMode: Pair<Boolean, Boolean>? = null
@@ -74,7 +78,9 @@ class MessageBubblePaletteTest {
                     renderedMode = dark to wallpaper
                     userFill = if (dark && !wallpaper) Color(0xFF003355) else scheme.primaryContainer
                     assistantFill = if (dark && !wallpaper) Color(0xFF001D34) else scheme.secondaryContainer
-                    background = scheme.background
+                    background = scheme.threadColors.background
+                    actionTint = scheme.inversePrimary
+                    actionBacking = scheme.inverseSurface
                     userBody = scheme.onPrimaryContainer
                     assistantBody = scheme.onSecondaryContainer
                     if (!wallpaper) {
@@ -132,6 +138,23 @@ class MessageBubblePaletteTest {
         assertEquals(dark to wallpaper, renderedMode)
         assertEquals(3, bubbles.size)
         val queued = rule.onNodeWithText("Queued", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val glyphs = rule.onAllNodesWithTag("message-copy-glyph", useUnmergedTree = true).fetchSemanticsNodes()
+        assertEquals(3, glyphs.size)
+        val backings = rule.onAllNodesWithTag("message-copy-backing", useUnmergedTree = true).fetchSemanticsNodes()
+        assertEquals("finished user, finished assistant and streaming copy need a contrasting backing", 3, backings.size)
+
+        fun contrast(
+            first: Color,
+            second: Color,
+        ): Float {
+            val firstLuminance = first.luminance()
+            val secondLuminance = second.luminance()
+            return (maxOf(firstLuminance, secondLuminance) + 0.05f) / (minOf(firstLuminance, secondLuminance) + 0.05f)
+        }
+        val glyphContrast = contrast(actionTint, actionBacking)
+        val boundaryContrast = contrast(actionBacking, background)
+        assertTrue("side copy glyph contrast must be at least 3:1; got $glyphContrast", glyphContrast >= 3f)
+        assertTrue("side copy backing contrast must be at least 3:1; got $boundaryContrast", boundaryContrast >= 3f)
         rule.runOnIdle {
             val root = checkNotNull(view)
             val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
@@ -162,6 +185,23 @@ class MessageBubblePaletteTest {
                     bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
                 }
             }
+            glyphs.forEach { glyph ->
+                val bounds = glyph.boundsInRoot
+                val expected = actionTint.toArgb()
+                var matchingPixels = 0
+                for (x in bounds.left.toInt() until bounds.right.toInt()) {
+                    for (y in bounds.top.toInt() until bounds.bottom.toInt()) {
+                        if (bitmap.getPixel(x, y) == expected) matchingPixels++
+                    }
+                }
+                assertTrue("side copy must use the scheme inversePrimary tint", matchingPixels > 0)
+            }
+            backings.forEach { backing ->
+                val bounds = backing.boundsInRoot
+                // The middle of the left margin is clear of the glyph and rounded corners.
+                val glyph = glyphs.single { bounds.contains(it.boundsInRoot.center) }.boundsInRoot
+                assertPixel((bounds.left + glyph.left) / 2, bounds.center.y, actionBacking)
+            }
             bitmap.recycle()
         }
         assertTextColor(rule.onNodeWithText("User", useUnmergedTree = true), userBody)
@@ -169,8 +209,8 @@ class MessageBubblePaletteTest {
         assertTextColor(rule.onNodeWithText("Live", substring = true, useUnmergedTree = true), assistantBody)
         assertTextColor(rule.onNodeWithText("Queued", useUnmergedTree = true), userBody)
         val timestamps = rule.onAllNodesWithText(" - ", substring = true, useUnmergedTree = true)
-        assertEquals(3, timestamps.fetchSemanticsNodes().size)
-        for (index in 0..2) {
+        assertEquals(if (streaming) 2 else 3, timestamps.fetchSemanticsNodes().size)
+        for (index in 0 until timestamps.fetchSemanticsNodes().size) {
             val body = if (index == 0) userBody else assistantBody
             assertTextColor(
                 timestamps[index],
