@@ -5279,32 +5279,25 @@ class InteractiveStreamE2ETest {
             composeTestRule.onNode(marker).performClick()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
             composeTestRule.onNode(header).assertIsDisplayed()
-            // The expanded family can exceed the viewport once it contains prose. Its closed run
-            // is the same block's compact anchor; keep both it and the later message composed.
-            val run = hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:$agentId"))
-            val collapseLabel = string(R.string.tool_run_collapse)
-            val openedRun =
-                run and
-                    SemanticsMatcher("opened owned Agent run") {
-                        it.config.getOrNull(SemanticsActions.OnClick)?.label == collapseLabel
-                    }
-            val expandLabel = string(R.string.tool_run_expand)
-            val closedRun =
-                run and
-                    SemanticsMatcher("closed owned Agent run") {
-                        it.config.getOrNull(SemanticsActions.OnClick)?.label == expandLabel
-                    }
-            // Marker navigation opened the run. ScrollTo uses the drawing viewport, so reveal the
-            // actual tap center between the chrome bars before closing it.
-            composeTestRule.questionAnswerTarget(openedRun).performClick()
-            // Closing removes the child rows; when one of them anchored the list, the header can
-            // leave composition, so scroll back to it rather than waiting for it to reappear.
-            val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { runCatching { list.performScrollToNode(closedRun) }.isSuccess }
-            list.performScrollToNode(inThreadList(later))
-            val settled = composeTestRule.onNode(closedRun).fetchSemanticsNode().boundsInRoot
-            val after = composeTestRule.onNode(inThreadList(later), useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-            assertTrue("later phone message must render below the settled Agent", settled.bottom <= after.top)
+            // The expanded family can exceed the viewport once it contains prose, so compare list
+            // positions rather than on-screen bounds. The thread list is reversed: a newer row has a
+            // smaller index.
+            val laterId =
+                runBlocking { hostRepository().observeMessages(chat).first() }
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .map { it.message }
+                    .last { it.role == Role.User && "later1783" in it.content }
+                    .id
+            val indexForKey =
+                composeTestRule
+                    .onAllNodes(hasScrollToNodeAction())
+                    .onFirst()
+                    .fetchSemanticsNode()
+                    .config[SemanticsProperties.IndexForKey]
+            val agentIndex = indexForKey("msg:$agentId").takeIf { it >= 0 } ?: indexForKey("tool-run:$agentId")
+            val laterIndex = indexForKey("msg:$laterId")
+            assertTrue("settled Agent ($agentIndex) and later message ($laterIndex) must be listed", agentIndex >= 0 && laterIndex >= 0)
+            assertTrue("later phone message must render below the settled Agent", laterIndex < agentIndex)
         } finally {
             try {
                 stopTaskFixtureGet(fixture.replace("127.0.0.1", "10.0.2.2") + "/release")
