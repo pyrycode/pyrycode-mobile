@@ -6,7 +6,7 @@ Package: `de.pyryco.mobile.ui.conversations.thread` (`app/src/main/java/de/pyryc
 
 ## What it does
 
-Mounted by [`ThreadScreen`](thread-screen.md) as the middle child of its `bottomBar` composer column (see "`ThreadScreen` mount point" below), between the status area above and the model/effort footer below. The user types into a `BasicTextField` inside a 6dp-cornered field with a 52dp minimum height; at its trailing edge a 48dp message-input button carries one of two actions — send when the field holds text, stop the running turn when it's blank and a turn is in flight, disabled-send when it's blank and idle (see [Shape](#shape) below). [#1565](https://github.com/pyrycode/pyrycode-mobile/issues/1565) removed the field's IME `Send` action: the field declares no `imeAction` and no keyboard-action handler, so the soft keyboard shows Enter, and Enter (soft or hardware) inserts a line break instead of sending. The send button's `onClick` is the only send path. There is no mic control any more; voice input remains a Phase 6 feature with no interim stub.
+Mounted by [`ThreadScreen`](thread-screen.md) as the middle child of its `bottomBar` composer column (see "`ThreadScreen` mount point" below), between the status area above and the model/effort footer below. The user types into a `BasicTextField` inside a 6dp-cornered field with a 52dp minimum height; at its trailing edge a 48dp message-input button carries one of two actions — send when the field holds text, stop the running turn when it's blank and a turn is in flight, confirmed suggestion Send when exactly empty and eligible, otherwise disabled-send when blank and idle (see [Shape](#shape) below). [#1565](https://github.com/pyrycode/pyrycode-mobile/issues/1565) removed the field's IME `Send` action: the field declares no `imeAction` and no keyboard-action handler, so the soft keyboard shows Enter, and Enter (soft or hardware) inserts a line break instead of sending. Typed messages send through the button's `onClick`; eligible suggestions use confirmed hold/release or the named accessibility action. There is no mic control any more; voice input remains a Phase 6 feature with no interim stub.
 
 The composer-specific fill is `#003355` at 41% opacity when the app resolves to dark
 mode with wallpaper colours off, in empty, focused and typed states. Light mode
@@ -16,49 +16,29 @@ input grows to five visible lines before scrolling internally.
 
 ## Shape
 
-```kotlin
-// Stateful — used by ThreadScreen
-@Composable
-fun ThreadInputBar(
-    onSend: (String) -> Unit,
-    modifier: Modifier = Modifier,
-    isBusy: Boolean = false,
-    onInterrupt: () -> Unit = {},
-    onAnchorChanged: (Rect) -> Unit = {},
-    sending: Boolean = false,
-)
+`ThreadInputBar` has one hoisted-state overload: `text`, `onTextChange` and
+`onSend`, plus defaulted `isBusy`, `onInterrupt`, `onAnchorChanged`, `sending`,
+`onImagesReceived`, `enabled`, `suggestedReply` and `onSendSuggestedReply`.
+`ThreadScreen` owns the production call; previews supply state directly. The old
+self-owning `rememberSaveable` overload was removed with host-keyed draft ownership.
 
-// Stateless — used by previews and UI tests
-@Composable
-fun ThreadInputBar(
-    text: String,
-    onTextChange: (String) -> Unit,
-    onSend: () -> Unit,
-    modifier: Modifier = Modifier,
-    isBusy: Boolean = false,
-    onInterrupt: () -> Unit = {},
-    onAnchorChanged: (Rect) -> Unit = {},
-    sending: Boolean = false,
-    onImagesReceived: ((List<Uri>) -> Unit)? = null,
-    enabled: Boolean = true,
-)
-```
+`enabled` is the owning host's connected check; it gates the button while the
+field remains editable offline. `sending` is the pending-attachment send flag.
+Pending files alone never enable Send or pre-empt Stop. `onAnchorChanged` reports
+field bounds with the 16dp leading text inset for slash-command alignment.
+`onImagesReceived` accepts image URIs and the optional keyboard grant owner; its
+null default omits the content receiver. See [image paste](#image-paste-into-the-field-934).
 
-[#934](https://github.com/pyrycode/pyrycode-mobile/issues/934) added `onImagesReceived`, defaulted `null` so every pre-#934 call site still compiles and renders a field with no `contentReceiver` at all. Non-null on `ThreadScreen`'s own call — see [§ Image paste into the field](#image-paste-into-the-field-934).
-
-[#1319](https://github.com/pyrycode/pyrycode-mobile/issues/1319) added `enabled` to the stateless overload only, defaulted `true` so every pre-#1319 call site and preview still compiles. `ThreadScreen` is the one real caller and passes its own `connected` (the host's `ConnectionState.Connected` check) through. The field itself stays editable regardless — `enabled` only folds into `buttonEnabled`, below — so a disconnected user can still type and the draft and any pending attachments are kept; only the tap that would reach the ViewModel is suppressed here, matching the ViewModel's own tap-time re-check (see [Connection state](connection-state.md)).
-
-[#885](https://github.com/pyrycode/pyrycode-mobile/issues/885) added `onAnchorChanged`, defaulted on both overloads so no existing call site changes. It reports the field's `boundsInWindow()` with `left` moved in by `FieldLeadingInset` (16dp) on every frame the field's own position changes, so a row of the [slash-command type-ahead](slash-command-type-ahead.md)'s `OptionsOverlay` lines its text up with the composer's own typed text. See [§ Draft binding](#draft-binding--cursor-at-end-undo-and-redo-885-934) for the other #885 change to this file.
-
-[#933](https://github.com/pyrycode/pyrycode-mobile/issues/933) added `hasAttachments` and `sending`, both defaulted so every pre-#933 call site still compiles. `sending` comes from the chat's own pending-attachment strip — see [Thread screen § Composer pending attachments](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments) — not from anything local to this composable. [#1328](https://github.com/pyrycode/pyrycode-mobile/issues/1328) removed `hasAttachments` again: pending files no longer change whether the button shows Send or Stop, or whether Send is enabled — matching desktop, which has always required text alongside attachments.
-
-[#643](../codebase/643.md) added `isBusy` and `onInterrupt` to both overloads, defaulted so the pre-existing previews and call sites stay one-liners. The stateful overload holds `var text by rememberSaveable { mutableStateOf("") }` and delegates to the stateless overload; on send it invokes `onSend(text)` and resets `text = ""` **only when `text.isNotBlank()`**. Blank input is a UI no-op (button is also disabled when idle, but the IME `Send` action can still fire on some keyboards). The stateless overload is what the previews call directly.
-
-The two-overload pattern matches the project convention for composables that need both an internal-state default and a fully-hoisted variant for previews/tests (compare with workspace-picker / list state).
+`suggestedReply` is a destination-owned identity token, and
+`onSendSuggestedReply` returns whether current-state validation accepted it.
+Suggestion text never enters the field or draft. See
+[composer ownership](thread-screen-composer-drafts-and-attachments.md#composer-draft-ownership).
 
 ### The message-input button — one control, two actions
 
 [#643](../codebase/643.md) retired the standalone foot-of-list `InterruptAffordance` (see [Interrupt affordance](interrupt-affordance.md#placement--wiring)) and folded its stop action into this button, following desktop's #678 precedent instead of inventing a third placement:
+
+Ordinary typed Send/Stop behavior (the eligible suggestion variant is described below):
 
 | `text` | `isBusy` | `sending` | description | action | enabled |
 |---|---|---|---|---|---|
@@ -71,7 +51,35 @@ Text present wins over an in-flight turn **deliberately**: sending while the age
 
 `buttonEnabled = enabled && (stopping || (!sending && text.isNotBlank()))`: pending attachments alone no longer enable Send — [#1328](https://github.com/pyrycode/pyrycode-mobile/issues/1328) — so a blank draft with files attached leaves Send disabled and the IME send action sends nothing, keeping the files for the next send. `sending` — true for as long as [`ThreadViewModel.sendWithAttachments`](thread-screen-composer-drafts-and-attachments.md#composer-pending-attachments) is uploading and sending — disables Send even when text is present, so a second tap during an in-flight attachment send does nothing. The leading `enabled &&` ([#1319](https://github.com/pyrycode/pyrycode-mobile/issues/1319)) disables both Send and the Stop variant together while the host is not connected, and they re-enable the moment `ThreadScreen`'s `connected` flips back — no navigation, no reset of `text`.
 
-Both states draw a filled-circle silhouette inside the same container-less 48dp `IconButton`. Send uses the 28dp `ic_composer_send` vector traced from Figma node `113:3543`; Stop uses the 28dp `ic_composer_stop` vector from [Message input button, `Action=Stop`, `114:3549`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=114-3549) on the Desktop page. Its circle fills the viewport and has a rounded-square cutout; Material `StopCircle` has an inset silhouette and does not match this reference. `IconButtonDefaults.iconButtonColors` supplies `colorScheme.primary` when enabled and primary at 0.38 alpha when disabled. The icon inherits that content colour, so its appearance follows the actual button enabled condition, including attachment sending. The disabled Send appearance remains an app choice. A semantics-only enabled assertion would miss a wrong icon path or full-strength disabled tint, so `ThreadInputBarStyleTest` also samples rendered pixels.
+Ordinary Send and Stop draw a filled-circle silhouette inside the same container-less 48dp `IconButton`; the eligible suggestion variant uses the pointer-owned surface below. Send uses the 28dp `ic_composer_send` vector traced from Figma node `113:3543`; Stop uses the 28dp `ic_composer_stop` vector from [Message input button, `Action=Stop`, `114:3549`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=114-3549) on the Desktop page. Its circle fills the viewport and has a rounded-square cutout; Material `StopCircle` has an inset silhouette and does not match this reference. `IconButtonDefaults.iconButtonColors` supplies `colorScheme.primary` when enabled and primary at 0.38 alpha when disabled. The icon inherits that content colour, so its appearance follows the actual button enabled condition, including attachment sending. The disabled Send appearance remains an app choice. A semantics-only enabled assertion would miss a wrong icon path or full-strength disabled tint, so `ThreadInputBarStyleTest` also samples rendered pixels.
+
+**Suggested reply ([#1866](https://github.com/pyrycode/pyrycode-mobile/issues/1866)).**
+With both the hoisted draft and actual field exactly empty, an idle agent and a
+nonblank current offer, the normal placeholder becomes the suggestion in the
+same `bodyMedium`, `onSurfaceVariant` at 0.6 alpha treatment. Whitespace-only
+text hides it. The placeholder may remain during attachment sending, but the
+send action is disabled until connected and no attachment send is in progress.
+Typed Send and blank-draft Stop keep the precedence above; a short suggestion
+tap is inert.
+
+The eligible suggestion variant owns one pointer handler on the existing 48dp
+surface, keeping the 28dp Send glyph. Do not nest an `IconButton` clickable inside
+it: that surface can consume the long press (#221). At the platform long-press
+threshold it emits one `LongPress` haptic and arms the exact offer. Only release
+inside submits. Early release, leaving the bounds (even with re-entry), pointer
+cancellation, disposal/destination exit, draft edits, offer revision/change/clear,
+session replacement, busy state, attachment sending or connection loss cancel.
+The ViewModel rechecks identity and eligibility at release; pointer cancellation
+alone cannot authorize a send safely across asynchronous state changes.
+
+The localized custom accessibility action **“Send suggested reply”** exists only
+while eligible. Explicit activation uses the same ViewModel checks and gives a
+haptic on accepted submission. The ordinary “Send message” description remains
+the thread-arrival marker. Submission consumes the local revision synchronously
+before launching any upload/send, so duplicate callbacks cannot send twice while
+waiting for the daemon clear. Text, including leading/trailing spaces, goes
+verbatim through ordinary attachment/submission safeguards; typed drafts still
+trim. A failed submission does not restore the consumed suggestion.
 
 ## How it works
 
@@ -102,10 +110,17 @@ Inside, a `Row` (padding `start = FieldLeadingInset /* 16.dp */, end = FieldTrai
 - `textStyle = MaterialTheme.typography.bodyMedium.copy(color = onSurface)` — 14sp size and 20sp line height across themes.
 - `cursorBrush = SolidColor(MaterialTheme.colorScheme.primary)` — `BasicTextField`'s default cursor is solid black, which fails against dark theme. Explicit `cursorBrush` mapped to `primary` matches the M3 `TextField` baseline.
 - `lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 5)` — multi-line, capped at 5 visible lines so the field never overruns the screen on long pastes. Renamed from `singleLine = false, maxLines = 5` by the #934 field migration; same cap.
-- No `keyboardOptions` / `onKeyboardAction` any more — [#1565](https://github.com/pyrycode/pyrycode-mobile/issues/1565) removed both, along with the `KeyboardOptions`/`ImeAction` imports they alone used. The field keeps `TextFieldLineLimits.MultiLine` with the default IME action, so the soft keyboard shows Enter and Enter, soft or hardware, inserts a line break; before #1565 this field declared `KeyboardOptions(imeAction = ImeAction.Send)` with `onKeyboardAction = { onSend() }`, but that key was dead in practice — the daemon journal showed no duplicate sends, because a multi-line `BasicTextField` already turns a hardware Enter into a newline regardless of `imeAction`. The message-input button's `onClick` is now the only send path.
-- `decorator = { innerTextField -> Box { if (fieldState.text.isEmpty()) Text("Message", style = MaterialTheme.typography.bodyMedium, color = onSurfaceVariant.copy(alpha = 0.6f)); innerTextField() } }` — the placeholder renders behind `innerTextField` when the field is empty. `fieldState.text.isEmpty()` (not `isBlank()`) is intentional — a leading space shouldn't clobber the placeholder visually mid-typing, and reading the field's own text (rather than the hoisted `text`) keeps the placeholder correct immediately after an undo, before the draft has caught up. Renamed from `decorationBox` by the #934 migration.
+- No `keyboardOptions` / `onKeyboardAction` any more — [#1565](https://github.com/pyrycode/pyrycode-mobile/issues/1565) removed both, along with the `KeyboardOptions`/`ImeAction` imports they alone used. The field keeps `TextFieldLineLimits.MultiLine` with the default IME action, so the soft keyboard shows Enter and Enter, soft or hardware, inserts a line break; before #1565 this field declared `KeyboardOptions(imeAction = ImeAction.Send)` with `onKeyboardAction = { onSend() }`, but that key was dead in practice — the daemon journal showed no duplicate sends, because a multi-line `BasicTextField` already turns a hardware Enter into a newline regardless of `imeAction`. Typed text sends through the message-input button; suggestions have the explicit hold/release and accessibility paths in [Shape](#shape).
+- The decorator renders inert placeholder `Text` behind `innerTextField` while the actual field is empty, using `bodyMedium` and `onSurfaceVariant` at 0.6 alpha. It chooses the current eligible offer's text or the normal “Message” placeholder. `fieldState.text.isEmpty()` (not `isBlank()`) keeps whitespace as typing and follows undo immediately, before the hoisted draft catches up. Offer eligibility additionally requires exactly empty hoisted text; see [Shape](#shape).
 
 ### Draft binding — cursor-at-end, undo and redo (#885, #934)
+
+Suggested text is inert decorator content, never `TextFieldState`, undo history,
+IME content, saved state or `ComposerDraftStore` text. Checking both field and
+hoisted text prevents an offer from appearing during the draft round-trip lag.
+Any edit revokes an armed token immediately; erasing may reveal the same
+still-current revision with a fresh token. Revision invalidation and local
+consumption belong to the [ViewModel's destination ownership](thread-screen-composer-drafts-and-attachments.md#composer-draft-ownership).
 
 Found by the [slash-command type-ahead](slash-command-type-ahead.md)'s pick test.
 Before #885, the stateless overload passed the hoisted `text: String` straight to
@@ -217,7 +232,7 @@ actually types a "z" and would pass green without exercising undo at all — see
 [development-verification.md](development-verification.md) for the general version of
 this limitation.
 
-Both overloads' signatures are otherwise unchanged; see the ticket's plan Revisions
+For the original binding fixes, see the ticket plans' Revisions
 (`docs/specs/architecture/885-slash-command-type-ahead.md` for the original fix,
 `docs/specs/architecture/934-paste-images-into-composer.md` for the migration and the
 undo fix) for the mutation-checked tests that pin each rule.
@@ -345,51 +360,28 @@ The screen signature **stays a flat callback list** rather than collapsing into 
 
 ### `ThreadViewModel.sendMessage`
 
-```kotlin
-class ThreadViewModel(
-    savedStateHandle: SavedStateHandle,
-    private val repository: ConversationRepository,
-) : ViewModel() {
-    // ... existing state pipeline unchanged ...
-
-    fun sendMessage(text: String) {
-        if (text.isBlank()) return
-        launchGuardedRepoCall {                 // guarded #490 (was viewModelScope.launch)
-            repository.sendMessage(state.value.conversationId, text)
-        }
-    }
-}
-```
-
-`repository` is promoted from an unmarked constructor parameter to `private val repository` so the new method can call it (the pre-#188 VM only referenced `repository` inline inside the `state` initializer). The `if (text.isBlank()) return` early-return is the VM half of belt-and-suspenders blank rejection — UI disables the button, VM double-checks. The repository contract explicitly disclaims trim/blank validation (see [Conversation repository](conversation-repository.md)).
-
-Fire-and-forget by design. `repository.sendMessage` returns the persisted `Message`, but the UI re-renders from the [conversation repository](conversation-repository.md) flows (the eventual `observeMessages` subscription #128 will wire), so the return value is discarded here. **Guarded since #490** — the launch routes through [`launchGuardedRepoCall`](guarded-repo-launch.md), which inertly swallows the three relay failure types (`RelayErrorException` / `IllegalStateException` / `UnsupportedOperationException`) so a failed send under the relay repository can't crash the process. The `IllegalArgumentException`-on-unknown-id failure mode cannot happen at this call site (the VM only ever passes its own observed `conversationId`) and the guard deliberately leaves IAE uncaught anyway (fail-fast). Phase 4 still owes the **user-visible error surface**; the guard is crash-safety only — a swallowed send fails quietly.
-
-`viewModelScope.launch` defaults to `Dispatchers.Main.immediate`. `FakeConversationRepository.sendMessage` does no I/O (the `state.update` CAS is non-suspending), so no `withContext(Dispatchers.IO)` is needed. The Phase 4 Ktor-backed impl will dispatch its own I/O internally; the VM does not switch contexts.
+`sendMessage` checks connectivity and attachment-send exclusion, trims ordinary
+text and refuses a blank result. `submitMessage` shares the ordinary text and
+attachment path with `sendSuggestedReply`, which passes its offer verbatim and
+never clears or populates a draft. The typed path retains guarded draft clearing;
+see [drafts and attachments](thread-screen-composer-drafts-and-attachments.md).
+Repository sends run in the local-send window through
+[`launchGuardedRepoCall`](guarded-repo-launch.md); rendering follows repository
+observables, not the returned message.
 
 ## Wiring
 
-### `MainActivity.kt` — the #188-era call site (shape only; `ThreadScreen` has grown many more collected flags since)
+### Destination binding
 
-```kotlin
-composable(
-    route = Routes.CONVERSATION_THREAD,
-    arguments = listOf(navArgument("conversationId") { type = NavType.StringType }),
-) {
-    val vm = koinViewModel<ThreadViewModel>()
-    val state by vm.state.collectAsStateWithLifecycle()
-    ThreadScreen(
-        state = state,
-        onBack = { navController.popBackStack() },
-        onSendMessage = vm::sendMessage,   // <-- new in #188
-    )
-}
-```
-
-`onSendMessage` is still forwarded exactly like this; `isBusy` / `onInterrupt` (since #459) are two of the many further defaulted parameters `MainActivity` now collects and passes alongside it — see [Interrupt affordance § Placement & wiring](interrupt-affordance.md#placement--wiring) for that pair specifically. The Koin binding `viewModel { ThreadViewModel(get(), get()) }` at `di/AppModule.kt` is unchanged by any of this — no constructor, DI or repository change has ever come from a thread-screen composer ticket.
+`PyryNavHost` collects the destination ViewModel's `draft` and `suggestedReply`
+with lifecycle-aware state collection. `ThreadScreen` forwards them to the
+composer with `onDraftChange`, `sendMessage` and `sendSuggestedReply` callbacks.
+The host/conversation binding comes from `ThreadDestinationFactory`; suggestions
+have no separate repository or DI binding.
 
 ### Strings (`res/values/strings.xml`)
 
+- `send_suggested_reply` = `"Send suggested reply"` — eligible custom accessibility action (#1866).
 - `thread_input_placeholder` = `"Message"` — the empty-state placeholder inside the field. Added in #188.
 - `cd_send_message` = `"Send message"` — content description for the message-input button in its send state. Added in #188; also the e2e suites' thread-arrival marker (see [Shape](#shape)).
 - `cd_thread_interrupt` = `"Stop the running turn"` — content description for the same button in its stop state. Added in #459 for the standalone `InterruptAffordance`; reused as-is by #643's button, no new string.
@@ -398,15 +390,27 @@ composable(
 
 ## State + concurrency
 
-- The input bar's text state is `rememberSaveable { mutableStateOf("") }` inside the stateful overload — survives configuration changes (rotation) but never reaches `ThreadUiState`. The text is purely UI-local until send fires.
-- `ThreadViewModel.sendMessage` launches inside `viewModelScope` (cancelled on `onCleared`). No new `StateFlow`s; the existing `state: StateFlow<ThreadUiState>` is untouched.
-- Blank-rejection happens twice (UI `enabled = text.isNotBlank()`, VM `if (text.isBlank()) return`). Don't remove either check.
+- The field uses heap-only `remember` state; the destination binds host/conversation draft storage.
+- Suggestion collectors run eagerly in `viewModelScope`, including while the screen is not collecting.
+  Tokens are checked and consumed synchronously on Main before submission can suspend.
+- Pointer input is keyed by offer, field/hoisted text and eligibility; replacement or disposal cancels it.
+- UI and ViewModel both reject ineligible submissions. Neither logs suggestion or draft text.
 
 ## Error handling
 
 **Crash-guarded since #490; no user-facing surface yet.** The launch routes through [`launchGuardedRepoCall`](guarded-repo-launch.md), which inertly swallows the three relay failure types (`RelayErrorException` / `IllegalStateException` / `UnsupportedOperationException`) so a failed send under the relay repository fails **quietly** instead of killing the process. The `IllegalArgumentException`-on-unknown-id mode cannot happen here (the VM observed the id at construction; the navigation entry passes the same id) and the guard leaves IAE uncaught by design (fail-fast). Phase 4 still adds the **user-visible** error surfacing when the real client lands.
 
 ## Testing
+
+`ThreadInputBarSuggestionTest` exercises actual threshold/release gestures,
+haptic counts, early release, outside/re-entry, edits/state changes, disposal,
+accessibility and existing short-tap Send/Stop. `ThreadViewModelReplySuggestionTest`
+covers verbatim text, duplicate/stale tokens, attachment blocking, revision and
+connection/session invalidation. `ScriptedReplySuggestionTest` drives set/clear
+and conversation/session isolation through the real decoder → repository →
+ViewModel → screen harness, rather than directly supplying a placeholder.
+[Counted gate evidence](../../e2e-interactive-stream.md#verification-status)
+records deterministic and real-Claude coverage separately.
 
 `ThreadInputBarStyleTest` (`app/src/sharedTest`, native graphics) samples the rendered
 fill in empty, focused and typed states for static and wallpaper palettes, with
