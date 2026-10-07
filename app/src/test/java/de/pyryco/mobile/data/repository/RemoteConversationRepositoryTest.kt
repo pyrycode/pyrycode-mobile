@@ -2697,6 +2697,44 @@ class RemoteConversationRepositoryTest {
             assertTrue(good().getOrThrow().atStart)
         }
 
+    @Test
+    fun requestHistory_invalidNumericIdentityDoesNotStopUpperRangeDelivery() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            for (token in listOf("0", "-1", "18446744073709551616", "1.5", "\"1\"")) {
+                val bad = startRequestHistory(repo, "c1")
+                runCurrent()
+                pump.push(
+                    historyPageEnvelope(
+                        inReplyTo = pump.sent.last { it.type == "request_history" }.id,
+                        raw = """{"entries":[{"id":$token,"type":"future","payload":{},"ts":"$TS"}],"cursor":"","at_start":true}""",
+                    ),
+                )
+                runCurrent()
+                assertTrue(bad().exceptionOrNull() is IllegalArgumentException)
+            }
+            val good = startRequestHistory(repo, "c1")
+            runCurrent()
+            pump.push(
+                historyPageEnvelope(
+                    inReplyTo = pump.sent.last { it.type == "request_history" }.id,
+                    raw =
+                        """
+                        {"entries":[{"id":18446744073709551615,"type":"message",
+                        "payload":{"conversation_id":"c1","message_id":"upper","role":"user","text":"received"},
+                        "ts":"$TS"}],"cursor":"","at_start":true}
+                        """.trimIndent(),
+                ),
+            )
+            runCurrent()
+            val entry = good().getOrThrow().entries.single()
+            assertEquals(ULong.MAX_VALUE, entry.unsignedId)
+            assertEquals(null, entry.id)
+            val rows = repo.observeMessages("c1").first().filterIsInstance<ThreadItem.MessageItem>()
+            assertEquals(listOf("upper"), rows.map { it.message.id })
+        }
+
     // ---- #645: requestHistory folds its page into the thread. The reduction and the merge are proven
     // ---- exhaustively and without a relay in HistoryPageReducerTest; this block owns the WIRING —
     // ---- that the fold happens at all, where it lands, and what it leaves alone -------------------

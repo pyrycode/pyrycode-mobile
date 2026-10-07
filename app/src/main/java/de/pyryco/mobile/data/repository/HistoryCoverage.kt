@@ -62,9 +62,11 @@ data class HistoryCoverage(
         newest: Boolean = false,
         target: Long? = null,
     ): HistoryCoverage {
+        // Until coverage is unsigned, neither positions nor terminal completeness of this page are claims.
+        if (page.entries.any { it.id == null }) return this
         val received =
             page.entries
-                .map { it.id }
+                .mapNotNull { it.id }
                 .filter { it > 0 }
                 .distinct()
                 .sorted()

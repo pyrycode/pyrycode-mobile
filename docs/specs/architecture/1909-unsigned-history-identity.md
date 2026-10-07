@@ -18,7 +18,7 @@
 
 Signed history ids cannot represent the daemon's full uint64 identity space. This foundation exposes exact unsigned identity and repository order while leaving persisted coverage/cache/paging migration to dependent work. No read command, viewport checkpoint, UI change or wire producer change belongs here. No decision record is needed.
 
-Sizing: about 750–950 written lines including the plan and probes, six production files, no new public type, at most three internal helper declarations and fewer than ten simultaneous consumer updates. Three acceptance criteria and four numeric rejection classes fit the ticket limits. Existing signed construction sites remain; one signed fixture accumulator may need a nullable projection assertion. Remote feature branches have no overlap with the planned production files.
+Sizing: about 750–950 written lines including the plan and probes, six production files, no new public type, at most three internal helper declarations and fewer than ten simultaneous consumer updates. Three acceptance criteria and four numeric rejection classes fit the ticket limits. Existing signed construction sites remain; three signed-only fixture reads may need explicit nullable projection assertions. Remote feature branches have no overlap with the planned production files.
 
 ## Design
 
@@ -84,3 +84,9 @@ Pending for the documentation stage:
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-07
+
+## Revisions
+
+- 2026-10-07: Kotlin erases `ULong` and `Long` constructor parameters to the same JVM signature. Put `unsignedId` last in the primary constructor, retaining the original signed secondary constructor's parameter order. Named unsigned construction and all existing signed fixtures remain supported; identity/projection contracts are unchanged.
+- 2026-10-07: Compilation identified two signed-only read-mark fixture reads as well as the fake-history accumulator; use `requireNotNull` on their unchanged lower-range inputs. No constructor fixtures or production read-mark paths migrate.
+- 2026-10-07: The reverse singleton/live-overlap probe exposed pre-existing late placement behavior also reproduced with ids 1–4. File #1913 and retain `lateDurableEvidence_doesNotStrandLiveDeltaBeyondItsHistorySeparator` ignored against it; repairing provisional live placements would change reconciliation outside this representation ticket. The unsigned overlap probe establishes the held live delta's durable position before surrounding pages and still tests both page orders, replay and exact claims.
