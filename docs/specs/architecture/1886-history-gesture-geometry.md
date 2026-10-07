@@ -27,3 +27,7 @@ The first repaired managed-device run passed three methods, but the two-viewport
 ### 2026-10-07 — Pause before releasing full-thread drags
 
 The next device run reached the measured outside setup, but after the small released swipe it was only 1.77 viewports from the oldest end. Replace `pullInReadingArea`'s swipe with an explicit down/move and stationary pause before up. These two full-thread tests now inspect controlled drag distance without a continuing fling; the existing dedicated fling coverage stays unchanged. Keep both outside assertions and the no-demand assertion.
+
+### 2026-10-07 — Exclude unplaced lazy-prefetch semantics
+
+The device diagnostic showed the no-demand assertion passing while the distance estimate failed. `Row 33` retained an old top of 452px although `Row 34` was at 20px and subsequent rows were 169px apart. The apparent position and drag failures were geometry artifacts from an unplaced prefetched row. Filter samples through Compose's `isDisplayed` placement check before estimating pitch; retain the same range and demand assertions. Keep immediate setup jumps and explicit drags as deterministic fixture choices. The two-viewport method also runs at 420dpi with native Robolectric text measurement, alongside the other methods' default-density coverage.

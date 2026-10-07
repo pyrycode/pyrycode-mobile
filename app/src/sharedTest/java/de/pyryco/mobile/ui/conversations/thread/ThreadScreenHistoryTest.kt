@@ -20,6 +20,7 @@ import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -273,6 +274,8 @@ class ThreadScreenHistoryTest {
     }
 
     @Test
+    @org.robolectric.annotation.Config(qualifiers = "h731dp-420dpi")
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
     fun the_prefetch_band_is_two_current_viewports_from_the_oldest_end() {
         val count = 120
         var demands = 0
@@ -300,8 +303,8 @@ class ThreadScreenHistoryTest {
         assertScreenHistoryDistance(minViewports = 2.5f)
         composeRule.runOnIdle { assertEquals(1, demands) }
         pullInReadingArea(fraction = 0.05f)
-        assertScreenHistoryDistance(minViewports = 2f)
         composeRule.runOnIdle { assertEquals(1, demands) }
+        assertScreenHistoryDistance(minViewports = 2f)
     }
 
     @Test
@@ -662,7 +665,10 @@ class ThreadScreenHistoryTest {
                 .boundsInRoot.bottom
         val distance = headerBottom - (olderTop - (olderNumber - 1) * pitch)
         val viewports = distance / viewport.height
-        assertTrue("Hidden history is $viewports viewports; expected $minViewports..$maxViewports", viewports in minViewports..maxViewports)
+        assertTrue(
+            "Hidden history is $viewports viewports; expected $minViewports..$maxViewports; viewport=${viewport.height}, pitch=$pitch, header=$headerBottom, rows=$visible",
+            viewports in minViewports..maxViewports,
+        )
     }
 
     private fun visibleScreenRows(): List<Pair<Int, Float>> {
@@ -671,6 +677,8 @@ class ThreadScreenHistoryTest {
             composeRule
                 .onAllNodes(hasText("Row ", substring = true))
                 .fetchSemanticsNodes()
+                // Lazy prefetch can retain an unplaced row's old semantic bounds on a device.
+                .filter { composeRule.onNodeWithText(it.config[SemanticsProperties.Text].single().text).isDisplayed() }
                 .filter { it.boundsInRoot.top > viewport.top && it.boundsInRoot.bottom < viewport.bottom }
                 .map { node ->
                     node.config[SemanticsProperties.Text]
