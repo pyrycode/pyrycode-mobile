@@ -232,8 +232,8 @@ private fun AssistantMessage(
     metaRow: MetaRowControl,
     threadOpenedAt: Instant?,
     onReply: (Message) -> Unit,
-    modifier: Modifier = Modifier,
     onContentPresented: (Message) -> Unit,
+    modifier: Modifier = Modifier,
     onContentTrailingEdge: (Message, Float) -> Unit,
 ) {
     MessageContainer(
