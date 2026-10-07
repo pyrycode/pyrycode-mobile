@@ -74,9 +74,10 @@ never changes.
 The launch slot becomes a separately keyed `agent-start:<Agent message id>` marker: a Busy dot and
 “Agent started, still working”, or a Success dot and “Agent finished” for any terminal status,
 beside “Go to agent ↓”. The second line is an ellipsized launch description. The description is inert `Text`,
-bounded to 4096 characters and never logged. Tapping the marker opens a containing collapsed tool run,
-then a screen-owned effect scrolls to the Agent header in the reversed list. It leaves the tool body
-collapsed unless the reader had already opened it, and works before and after finish.
+bounded to 4096 characters and never logged. Tapping the marker only scrolls: a screen-owned effect finds
+the Agent header's row in the reversed list and scrolls to it. It never opens a collapsed run on the
+reader's behalf — the root header always draws as itself regardless (#1827 follow-up), and its own
+children's run opens only from its own tap, via `ToolRunRow`'s toggle — and works before and after finish.
 
 Running families sit below every ordinary and queued row. Multiple families keep unknown launches
 in their roster slots and sort known launches within the remaining slots; once all start history is
