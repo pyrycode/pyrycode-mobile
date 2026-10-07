@@ -634,7 +634,8 @@ durable post-conditions: the unique name is gone from the list and the thread ha
 #532 delete wire against a real daemon; **zero** claude turns — create/rename/delete are daemon
 round-trips); and an **archive/restore** scenario (#551 —
 `interactiveTurn_archiveRestore_roundTripsListMembership`: rename a scratch discussion to a runtime-unique
-name, confirm it is present on the channel list, archive it from the thread (overflow → "Archive",
+name, locate its exact chat row across the whole active lazy list (#1870), archive it from the thread
+(overflow → "Archive",
 **immediate — no confirm**) and assert it is **gone** from the list, then restore it (list toolbar → "Open
 archive" → the Archived screen's restore affordance) and assert it is **back** in the list — the round
 trip closes; proving the #549 archive/unarchive wire, the #556 archive-from-thread and #557 restore
@@ -828,13 +829,27 @@ inversion — then its **re-appearance** after restore is a second, opposite inv
 attributable to the restore. Two structural differences from the delete twin: **archive is immediate** —
 the "Archive" item sits directly in the thread overflow (no confirm dialog, no Channel-Info sheet, so
 **none** of #554's "Delete"-collision disambiguation), and **restore navigates to a second screen** (channel
-list → "Open archive" → the Archived screen, which opens on the **Discussions** tab by
-default → the renamed discussion is on it, no tab tap). The one gotcha is the **restore-coroutine
-cancellation race**: `RestoreRequested` runs `viewModelScope.launch { repository.unarchive(id); … }` scoped
+list → header menu → Archive → the Archived screen, which opens on **Channels** → explicitly select
+**Discussions** before locating the renamed discussion). The **restore-coroutine
+cancellation race** remains a separate prerequisite: `RestoreRequested` launches `repository.unarchive(id)`
+scoped
 to the **Archived screen's** ViewModel, so the test waits for the **"Restored" success snackbar** before
 navigating back — otherwise `popBackStack` would cancel a launched-but-unstarted `unarchive` and the closing
 presence check would flake to a timeout. Total real-claude cost: **zero** turns — create/rename/archive/restore
 are all daemon round-trips, and the durable identity is the typed name, so no ping is sent.
+
+Both active-list presence observations use `awaitArchiveRoundTripChat` (#1870): search the scroll
+container beneath the active-list marker for the exact chat-tagged name, scroll it into view and
+assert it is displayed. A renamed, active chat can be outside `LazyColumn`'s composed semantics;
+waiting for a global text node cannot establish complete list membership. Only the specific
+missing-node assertion keeps the bounded observation open for a pending projection; other failures
+propagate, and a genuinely absent chat still times out. Re-entry taps the discovered row. The
+active absence, Archive presence, restore-success guard and `finally` cleanup remain intact.
+`ArchiveRoundTripChatTest.presenceFindsChatBeyondViewportBeforeAndAfterRestore` mounts the production
+list with 24 preceding chats and exercises this same helper before archive and after simulated
+restore; its absent-chat negative control prevents a discovery repair from accepting missing membership.
+This shared screen regression is separate from a rung-4 daemon scenario. See
+[Verification status](#verification-status) for diagnosis and counted red/green and full-live evidence.
 
 The **change-workspace** scenario (#562) is likewise **always-on** (not `@Ignore`d): the recorded workspace
 is a **durable** fact — the `WorkspaceChip` re-label survives the turn — so, like #554's / #551's list
@@ -3090,6 +3105,34 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
+**Archive/restore viewport synchronization (#1870, 2026-10-07).** At diagnostic mobile revision
+`a7d76be0b7ea68c0aa30ef3a34bbbb0b25192849`, daemon
+`6019328b378cad587f69b7bc94de37febbdf8556`, the full diagnostic run in
+`build/dispatcher-tests/live-uhj5_ye4/` executed **64, passed 63, failed 1, skipped 0**.
+The named archive/restore method failed at its first active-list presence wait after Rename → Back,
+before archive. Its raw stack and logcat report
+`renamed=true active=true visible_before_scroll=false found_after_scroll=true`, establishing an
+off-viewport discovery defect. [Retained raw excerpts and provenance](../app/src/androidTest/assets/archive-restore-1870/provenance.txt)
+survive cleanup of the original builder worktree. The committed `ArchiveRoundTripChatTest` XML
+records **2 executed, 1 passed, 1 failed, 0 skipped** before repair and **2 executed, 2 passed,
+0 failed, 0 skipped** afterward; `presenceFindsChatBeyondViewportBeforeAndAfterRestore` passes
+in the green report, and `absentChatStillFailsThePresenceObservation` passes in both.
+
+The fresh post-verifier full live run tested `feature/1870` at
+`a8737819faf724a97d9ad13b43a2bacdd3f94a02` merged with `origin/main` at `9b69a10d96d6`.
+The dispatcher's method-level JUnit gate report explicitly records
+`InteractiveStreamE2ETest#interactiveTurn_archiveRestore_roundTripsListMembership` as executed
+and passed in that full suite: **64 executed, 63 passed, 1 failed, 0 skipped**, exit 1 in 25m 11s.
+Only `interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain` failed; its same-tree
+rerun executed **1, passed 1, failed 0, skipped 0**. The dispatcher
+[accepted the gate after that unrelated rerun](https://github.com/pyrycode/pyrycode-mobile/issues/1870#issuecomment-6043483454);
+this is not a zero-failure full-suite run or a focused archive/restore acceptance run.
+The full report artifact is
+`/Users/juhanailmoniemi/WorkSpace/Projects/pyrycode-mobile-agents/logs/2026-10-07T17-18-12-892Z_real-claude-gate_#1870.log`;
+the same-tree rerun uses the matching `real-claude-gate-rerun_#1870.log`. No daemon-revision annotation
+was recorded for this acceptance run. Evidence here comes from the supplied dispatcher gate report
+and issue gate comment; the committed pre-repair diagnostic excerpts are not live acceptance evidence.
+
 **Durable gap across reconnect and process death (#1833, 2026-10-07).** All runs are at
 `feature/1833` `5b2e885c`, with the isolated daemon at pyrycode `6019328b` on `pixel2Api33Atd`.
 Hand-run scripted `ping` executed **2, passed 2, failed 0, skipped 0**, passing both
@@ -4637,6 +4680,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Archive/restore viewport discovery (#1870):** the existing rung-3
+  `InteractiveStreamE2ETest#interactiveTurn_archiveRestore_roundTripsListMembership` now discovers
+  the exact active chat across the lazy list before archive and after completed restore.
+  `ArchiveRoundTripChatTest` forces an off-viewport row and preserves an absent-chat negative control;
+  no rung-4 `DeterministicInteractiveStreamE2ETest` scenario is added. The named live method passed
+  in the fresh full run [recorded above](#verification-status); the dispatcher accepted the gate
+  after rerunning the unrelated stop-running-turn failure. No coverage follow-up remains for this
+  repair. The pre-ship command stays `python3 scripts/android-test-gate.py live`.
 
 - **Durable reconnect catch-up (#1842):** rung-4
   `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_durableGapCatchUp`

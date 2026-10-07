@@ -1656,17 +1656,14 @@ class InteractiveStreamE2ETest {
             composeTestRule.onNodeWithText(RENAME_SAVE).performClick()
 
             // 5. Presence check #1 (AC-1): back to the list, wait for it, then confirm the unique name is displayed on
-            //    its chat row — the genuine presence observation on the surface where absence is later asserted (step 8).
+            //    its chat row, scrolling the full tree because prior scenarios can put it beyond the viewport.
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText(uniqueName, substring = true).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().assertIsDisplayed()
+            val activeChat = composeTestRule.awaitArchiveRoundTripChat(uniqueName, LIST_TIMEOUT_MS)
 
             // 6. Re-enter the thread by tapping the chat row (a 2nd presence observation — it can only succeed if
             //    the name is on the list). Archive is driven "from the thread".
-            composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().performClick()
+            activeChat.performClick()
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
             }
@@ -1714,13 +1711,10 @@ class InteractiveStreamE2ETest {
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
 
-            // 13. Presence check #2 (AC-2 — round-trip closes). Wait for the unique name on the active list, then
-            //     confirm it is displayed. The re-appearance is attributable to the restore (asserted absent in
+            // 13. Presence check #2 (AC-2 — round-trip closes). Locate the unique chat in the whole active tree
+            //     and confirm it is displayed. The re-appearance is attributable to restore (asserted absent in
             //     step 8), on the same surface, same unique token.
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-                composeTestRule.onAllNodesWithText(uniqueName, substring = true).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().assertIsDisplayed()
+            composeTestRule.awaitArchiveRoundTripChat(uniqueName, LIST_TIMEOUT_MS)
         } finally {
             cleanupCreatedConversation(serverId, before, createdId, "archive discussion cleanup failed")
         }

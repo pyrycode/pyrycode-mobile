@@ -63,6 +63,17 @@ Tab selection survives recomposition / rotation (`MutableStateFlow` in the VM, V
 
 ## Testing
 
+The zero-Claude-turn rung-3
+`InteractiveStreamE2ETest#interactiveTurn_archiveRestore_roundTripsListMembership` explicitly
+selects Discussions from the default Channels tab and waits for the restore-success snackbar
+before Back. Its active-list observations must also discover off-viewport rows: #1870 established
+that an already renamed, active chat could be absent from composed semantics before archive.
+`ArchiveRoundTripChatTest` forces that condition on the production channel list through the same
+helper, including simulated restoration and an absent-chat negative control. These viewport checks
+and the restore-completion guard protect different stages; keep both. See
+[ChannelListScreen coverage](channel-list-screen.md#edge-cases--limitations) and the
+[ladder's counted diagnosis, regression and full-live evidence](../../e2e-interactive-stream.md#verification-status).
+
 `ArchiveRestoreNoticeTest` uses buffered deterministic effects and a controlled Compose
 clock to cover failure/success presentation, unchanged host/tab/row geometry, physical
 header-control taps, host-label removal, expiry without recomposition replay,
