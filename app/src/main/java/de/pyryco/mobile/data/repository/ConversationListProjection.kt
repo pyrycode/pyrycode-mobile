@@ -29,7 +29,7 @@ import kotlinx.serialization.json.decodeFromJsonElement
  * [current].
  *
  * One instance per repository, and a fresh repository per connection (#351), so the state is
- * connection-scoped exactly as it was when it lived in the repository. Nothing here logs.
+ * connection-scoped exactly as it was when it lived in the repository. Decode failures log static outcomes only.
  */
 internal class ConversationListProjection {
     /**
