@@ -165,6 +165,9 @@ SEED_CHANNEL_NAME="${SEED_CHANNEL_NAME:-e2e-seed}"  # MUST equal DeterministicIn
 RELAY_PID=""
 DAEMON_PID=""
 DAEMON_B_PID=""
+SESSION_ERROR_PID=""
+SESSION_ERROR_PORT=""
+SESSION_ERROR_AUTH=""
 WATCHER_PID=""
 ISO_HOME=""
 
@@ -629,6 +632,7 @@ keep_bypass_transcripts() {
 cleanup() {
   local code=$?
   log "tearing down…"
+  [ -n "${SESSION_ERROR_PID:-}" ] && kill "${SESSION_ERROR_PID}" 2>/dev/null || true
   [ -n "${BACKGROUND_AGENT_FIXTURE_PID:-}" ] && kill "${BACKGROUND_AGENT_FIXTURE_PID}" 2>/dev/null || true
   [ -n "${STOP_TASK_FIXTURE_PID:-}" ] && kill "${STOP_TASK_FIXTURE_PID}" 2>/dev/null || true
   [ -n "${WATCHER_PID}" ] && kill "${WATCHER_PID}" 2>/dev/null || true
@@ -730,6 +734,10 @@ if [ -n "${DETERMINISTIC}" ]; then
   # is offline when drop B must fire). Only the replay-order arm overrides it.
   DROP_B_FENCE="enqueue"
   case "${SCENARIO}" in
+    session-error)
+      TEST_METHOD="interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/ping.jsonl}"
+      ;;
     selection-copy)
       TEST_METHOD="interactiveTurn_seededChannel_systemCopyCopiesSelectedWord"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/selection-copy.jsonl}"
@@ -1070,6 +1078,44 @@ wait_daemon_ready() {
 wait_daemon_ready "${PYRY_NAME}" "${DAEMON_PID}" "${DAEMON_LOG}" "daemon"
 [ -z "${DAEMON_B_PID}" ] || wait_daemon_ready "${PYRY_NAME_B}" "${DAEMON_B_PID}" "${DAEMON_B_LOG}" "second daemon"
 log "daemon up (the test waits for the relay session to open before sending)."
+
+# #1731 owns separate tagged daemons, created at scenario entry. Ordinary harness
+# daemons retain their existing binary, environment and operator configuration.
+if { [ -n "${DETERMINISTIC}" ] && [ "${SCENARIO}" = "session-error" ]; } ||
+   { [ -z "${DETERMINISTIC}" ] && { [ -z "${LIVE_TESTS:-}" ] || [[ "${LIVE_TESTS}" == *interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog* ]]; }; }; then
+  [ -n "${PYRYCODE_SRC}" ] &&
+    [ -f "${PYRYCODE_SRC}/internal/streamsup/spawn_binary_realclaude.go" ] &&
+    [ -f "${PYRYCODE_SRC}/internal/e2e/realclaude/session_error_recovery_test.go" ] &&
+    grep -q 'PYRY_E2E_QUEUE_GIVE_UP_AFTER' "${PYRYCODE_SRC}/cmd/pyry/queue_give_up.go" \
+    || die "session-error prerequisite pyrycode#2859/#2863 missing: configure PYRYCODE_SRC with the tagged selection and give-up controls"
+  SESSION_ERROR_BIN="${WORK_DIR}/session-error-pyry"
+  (cd "${PYRYCODE_SRC}" && go build -tags e2e_realclaude -o "${SESSION_ERROR_BIN}" ./cmd/pyry) \
+    || die "session-error tagged daemon build failed"
+  SESSION_ERROR_ARGS=()
+  if [ -n "${DETERMINISTIC}" ]; then
+    SESSION_ERROR_RECOVERY="${FAKE_BIN}"
+    SESSION_ERROR_ARGS+=(--scripted)
+  else
+    SESSION_ERROR_RECOVERY="$(command -v claude)" || die "session-error recovery requires Claude on PATH"
+  fi
+  SESSION_ERROR_EVIDENCE="${REPO_ROOT}/build/session-error-evidence/$(basename "${WORK_DIR}")"
+  SESSION_ERROR_PORT_FILE="${WORK_DIR}/session-error-control.json"
+  python3 "${REPO_ROOT}/scripts/e2e-session-error.py" \
+    --daemon "${SESSION_ERROR_BIN}" --recovery "${SESSION_ERROR_RECOVERY}" \
+    --daemon-relay "${DAEMON_RELAY_URL}" --phone-relay "${PHONE_RELAY_URL}" \
+    --port-file "${SESSION_ERROR_PORT_FILE}" --evidence "${SESSION_ERROR_EVIDENCE}" \
+    "${SESSION_ERROR_ARGS[@]}" >"${WORK_DIR}/session-error-fixture.log" 2>&1 &
+  SESSION_ERROR_PID=$!
+  session_error_deadline=$((SECONDS + 10))
+  until [ -s "${SESSION_ERROR_PORT_FILE}" ]; do
+    kill -0 "${SESSION_ERROR_PID}" 2>/dev/null || die "session-error controller exited"
+    [ "${SECONDS}" -lt "${session_error_deadline}" ] || die "session-error controller did not become ready"
+    sleep 0.1
+  done
+  SESSION_ERROR_PORT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["port"])' "${SESSION_ERROR_PORT_FILE}")"
+  SESSION_ERROR_AUTH="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["authorization"])' "${SESSION_ERROR_PORT_FILE}")"
+  log "session-error daemon/control evidence retained at ${SESSION_ERROR_EVIDENCE}"
+fi
 
 # ---- 4a. the dedicated operator-bypass daemon (rung 3 / LIVE only, #687) ------------------------
 # See PYRY_NAME_BYPASS above. Each prerequisite that fails records ONE static code in BYPASS_UNMET and
@@ -1536,6 +1582,7 @@ elif [ -n "${LIVE}" ]; then
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_markdownReply_rendersFormattedBody"
   # The dispatcher's flake re-run and main comparison run only the failed methods, passed by
   # android-test-gate.py --tests as LIVE_TESTS, a comma-separated class#method list.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog"
   if [ -n "${LIVE_TESTS:-}" ]; then TEST_TARGET="${LIVE_TESTS}"; fi
 else
   TEST_TARGET="${TEST_CLASS}"
@@ -1604,6 +1651,12 @@ fi
 # Animations off on the emulator for the run; scripts/android-test-gate.py sets this for scripted scenarios only.
 if [ "${E2E_DISABLE_ANIMATIONS:-}" = "1" ]; then
   GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.disableAnimations=true)
+fi
+if [ -n "${SESSION_ERROR_PORT:-}" ]; then
+  GRADLE_TEST_ARGS+=(
+    -Pandroid.testInstrumentationRunnerArguments.sessionErrorPort="${SESSION_ERROR_PORT}"
+    -Pandroid.testInstrumentationRunnerArguments.sessionErrorAuthorization="${SESSION_ERROR_AUTH}"
+  )
 fi
 GRADLE_TEST_ARGS+=(
   -Pandroid.testInstrumentationRunnerArguments.class="${TEST_TARGET}"

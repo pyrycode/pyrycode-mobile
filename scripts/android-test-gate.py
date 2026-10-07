@@ -24,7 +24,7 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 E2E_PACKAGE = "de.pyryco.mobile.e2e"
-SCENARIOS = ("stop-background-task", "selection-copy", "background-agent", "send-now", "direct-share", "ping", "stream", "reopen-stream", "spinner", "tool", "tool-failed", "tool-progress", "reconnect", "offline-retry", "replay-order", "tool-then-text", "refusal", "mcp-failed", "context-overflow")
+SCENARIOS = ("session-error", "stop-background-task", "selection-copy", "background-agent", "send-now", "direct-share", "ping", "stream", "reopen-stream", "spinner", "tool", "tool-failed", "tool-progress", "reconnect", "offline-retry", "replay-order", "tool-then-text", "refusal", "mcp-failed", "context-overflow")
 
 def curated_live_methods():
     """The method names on scripts/e2e-emulator.sh's LIVE curated list, in list order."""
@@ -215,7 +215,7 @@ def combine_reports(paths, expected_class=None):
 # device test. Only the explicitly listed e2e-only sources are safe to change without re-running it;
 # a guard test keeps that true, including the peer's graph-lifecycle regression.
 E2E_ONLY_SOURCES = tuple(f"app/src/androidTest/java/de/pyryco/mobile/e2e/{name}.kt" for name in
-                         ("InteractiveStreamE2ETest", "DeterministicInteractiveStreamE2ETest", "SecondClientPeer",
+                         ("InteractiveStreamE2ETest", "DeterministicInteractiveStreamE2ETest", "SecondClientPeer", "SessionErrorRecoveryScenario",
                           "PeerIdentityLifecycleTest"))
 
 

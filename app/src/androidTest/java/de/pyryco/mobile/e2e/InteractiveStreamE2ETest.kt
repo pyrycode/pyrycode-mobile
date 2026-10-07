@@ -317,6 +317,12 @@ class InteractiveStreamE2ETest {
     private val attachmentRetryLabel: String =
         InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_attachment_retry)
 
+    /** #1731: private tagged daemons retain their Runner and session through failure release. */
+    @Test
+    fun interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog() {
+        SessionErrorRecoveryScenario(composeTestRule).run()
+    }
+
     /** #1674: finished assistant prose copies only the long-pressed word via Android's real menu. */
     @Test
     fun interactiveTurn_finishedReply_systemCopyCopiesSelectedWord() {

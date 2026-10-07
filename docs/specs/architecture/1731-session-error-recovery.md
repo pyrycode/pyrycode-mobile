@@ -9,7 +9,7 @@
 - `scripts/android-test-gate.py`: `SCENARIOS` and fresh counted XML retention.
 - `scripts/e2e-daemon-fault.py`: stop/start changes daemon identity and cannot prove this recovery.
 - `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/ScriptedSessionErrorTest.kt`: exact copy and local send settlement already proved at rung 2.
-- `docs/knowledge/features/remote-conversation-repository-state-errors-and-handoff.md`: error holds clear on delivered messages and turn activity, not daemon release itself.
+- `docs/knowledge/features/remote-conversation-repository-state-errors-and-handoff.md`: error holds clear on local send and recognized non-idle turn activity, not daemon release itself.
 - `docs/e2e-interactive-stream.md`: ladder and evidence boundaries.
 - Daemon `docs/knowledge/features/e2e-realclaude.md`, Test infrastructure, and `internal/e2e/realclaude/session_error_recovery_test.go`: tagged selection contract, close-stdin readiness, first-exit fence, default retained timeout and dropped-only 3s timeout.
 - Daemon `docs/protocol-mobile.md`: single source of truth for session_error, queue_state and delivered message envelopes.
@@ -32,7 +32,7 @@ Retained: require conversation-scoped child_crashing, exact Error copy and absen
 
 Dropped: require child_crashing plus blocked, exact blocked copy, absent local status, empty backlog and no user delivery. Release, observe a running recovered child before sending a fresh prompt. Require only the fresh ID delivered once, reply/completion, empty backlog and cleared pill. The completed child transcript independently proves expected prompt occurrence and dropped prompt absence.
 
-The fixture records the unchanged daemon PID, bootstrap status/session identity and persisted conversation binding before and after release. No stop/start, signal or restart request is exposed. A single persistent bootstrap Runner follows its existing supervisor loop; session transitions, extra sessions or daemon exits fail identity checks. The fixture observes its control-plane child PID after release, with executable identity checked against the recovery executable.
+The fixture records the unchanged daemon PID, bootstrap status/session identity and persisted conversation binding before and after release. No stop/start, signal or restart request is exposed. A single persistent bootstrap Runner follows its existing supervisor loop; session rotation or daemon exits fail identity checks. The fixture observes its control-plane child PID after release, with executable identity checked against the recovery executable.
 
 The shell harness builds a separate e2e_realclaude-tagged binary only when this scenario is selected, starts the fixture and passes its port/authorization to instrumentation. Other daemons keep ordinary binaries and environments. Register session-error in SCENARIOS/scripted-all and the live method in the curated selector. Retain daemon logs, control observations and completed transcript evidence in build output independently of temporary HOME cleanup.
 
@@ -55,7 +55,7 @@ Test first: Python tests exercise atomic selection and the closed-stdin/readines
 ## Open Questions
 
 - Resolved before implementation: local daemon checkout predates the prerequisite. Read fetched origin/main in a private /tmp source snapshot for focused execution, leaving the live checkout untouched. Harness must fail clearly on an outdated configured source.
-- Resolve concrete control status and transcript paths against current daemon code; record any changed contract under Revisions.
+- Resolved during implementation below: use bootstrap control status and private real-Claude JSONL or fakeclaude per-child stdin transcripts.
 
 ## Documentation handoff
 
@@ -77,3 +77,13 @@ Pending documentation stage: update `docs/e2e-interactive-stream.md` under The l
 
 **Reviewer:** builder (self-review per builder/security-review.md)
 **Date:** 2026-10-07
+
+## Revisions
+
+- 2026-10-07: concrete daemon status exposes `started_at` for the lifetime of `Runner.Run` and a monotonic child restart count. Pair these with the unchanged daemon PID and persisted bound session to prove continuity without adding daemon instrumentation. The deterministic child uses fakeclaude's existing stream-json echo and per-child stdin transcript; the observed assistant delta followed by idle supplies completion, while the input transcript independently counts prompt markers. No new fixture stream format or real-Claude call is needed.
+
+- 2026-10-07: the first device run exposed a test selector error before sending: pairing text and click actions exist together in merged semantics. Use merged waits for controls and unmerged waits only for assistant prose inside its bubble; this preserves the existing helper pattern and avoids a false timeout.
+
+- 2026-10-07: the dropped device arm confirmed the daemon contract's documented ordering: the 3s give-up can publish `session.blocked` before `session.child_crashing`. Observe blocked copy and empty backlog immediately after blocked, then require the crash notice before release. Waiting for crash first misses the already-rendered blocked pill; both wire signals remain mandatory and neither assertion is weakened.
+
+- 2026-10-07: measured scope remains below 1000 written lines including the plan and all tests, with one new Kotlin test helper and two wrapper consumers. The fixture isolation test also proves inherited selector/give-up/replay input is removed, only the dropped private daemon receives 3s, and scripted children receive no Claude credential.
