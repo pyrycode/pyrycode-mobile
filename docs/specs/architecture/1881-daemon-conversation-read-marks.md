@@ -83,3 +83,7 @@ Pending for documentation stage: update `docs/knowledge/features/remote-conversa
 ### 2026-10-07 — Canonical integer tokens
 
 The adversarial malformed-value probe found that `MobileJson` accepts `00` as a numeric token, and the initial digit/range guard admitted it as checkpoint zero. The trust-boundary security finding now explicitly requires canonical JSON decimal integers: `0` or a nonzero digit followed by digits, bounded by `ULong.MAX_VALUE`. `ReadMarkIdSerializer` rejects leading zeros. The probe keeps both `00` and `01` alongside the existing malformed kinds and must pass without admitting a checkpoint or ending the collector.
+
+### 2026-10-07 — Conversation-wide fake history across sessions
+
+Verifier finding 1 exposed that `mintNewSession` replaced the fake record with an empty message list while retaining `readUpTo`. Both `startNewSession` and `changeWorkspace` must preserve the conversation's history and its durable numbering. The helper now copies the held record while updating the conversation and session map, retaining messages, authored boundaries and the read checkpoint in the same atomic update. Latest ids therefore remain unchanged at rotation, and new messages receive ids above the checkpoint. Two regression tests drive both entry points across repeated rotations, asserting unchanged prior history entries, monotonic latest ids and successful marking of the new entries. Security re-review remains PASS: this is in-memory state retention under the existing CAS merge, with no new trust boundary, storage, logging or I/O.

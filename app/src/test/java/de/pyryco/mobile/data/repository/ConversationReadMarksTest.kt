@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.ConversationsPayload
 import de.pyryco.mobile.data.network.Envelope
@@ -18,6 +19,8 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -397,6 +400,61 @@ class ConversationReadMarksTest {
             assertEquals(0uL, fake.markConversationRead(empty.id, ULong.MAX_VALUE).getOrThrow())
             assertEquals(ConversationReadMarks(0uL, 0uL), fake.observeReadMarks(empty.id).first())
         }
+
+    @Test fun invariantFakeDurableIdsAndReadMarksSurviveStartNewSession() =
+        runTest {
+            assertFakeDurableHistorySurvivesSessionChange { fake, id -> fake.startNewSession(id) }
+        }
+
+    @Test fun invariantFakeDurableIdsAndReadMarksSurviveChangeWorkspace() =
+        runTest {
+            assertFakeDurableHistorySurvivesSessionChange { fake, id -> fake.changeWorkspace(id, "/new") }
+        }
+
+    private suspend fun assertFakeDurableHistorySurvivesSessionChange(
+        changeSession: suspend (FakeConversationRepository, String) -> Session,
+    ) {
+        val fake = FakeConversationRepository()
+        val conversation = fake.createDiscussion("/old")
+        val id = conversation.id
+        val first = fake.sendMessage(id, "first")
+        val second = fake.sendMessage(id, "second")
+        val originalHistory = fake.requestHistory(id, "", 100).entries
+        assertEquals(listOf(2L, 1L), originalHistory.map { it.id })
+        assertEquals(
+            listOf(second.id, first.id),
+            originalHistory.map {
+                it.payload.jsonObject["message_id"]
+                    ?.jsonPrimitive
+                    ?.content
+            },
+        )
+        assertEquals(2uL, fake.markConversationRead(id, 2uL).getOrThrow())
+
+        for (latest in 2uL..3uL) {
+            val historyBefore = fake.requestHistory(id, "", 100).entries
+            val session = changeSession(fake, id)
+            assertEquals(historyBefore, fake.requestHistory(id, "", 100).entries)
+            assertEquals(ConversationReadMarks(latest, latest), fake.observeReadMarks(id).first())
+
+            val next = fake.sendMessage(id, "next")
+            assertEquals(session.id, next.sessionId)
+            val historyAfter = fake.requestHistory(id, "", 100).entries
+            val newEntry = historyAfter.first()
+            assertEquals((latest + 1uL).toLong(), newEntry.id)
+            assertEquals(
+                next.id,
+                newEntry.payload.jsonObject["message_id"]
+                    ?.jsonPrimitive
+                    ?.content,
+            )
+            assertEquals(historyBefore, historyAfter.drop(1))
+            assertEquals(ConversationReadMarks(latest, latest + 1uL), fake.observeReadMarks(id).first())
+            assertEquals(latest, fake.markConversationRead(id, 0uL).getOrThrow())
+            assertEquals(latest + 1uL, fake.markConversationRead(id, newEntry.id.toULong()).getOrThrow())
+            assertEquals(ConversationReadMarks(latest + 1uL, latest + 1uL), fake.observeReadMarks(id).first())
+        }
+    }
 
     private fun TestScope.repo(pump: Pump) = RemoteConversationRepository(pump, backgroundScope)
 

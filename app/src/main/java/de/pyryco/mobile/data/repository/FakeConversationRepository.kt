@@ -510,10 +510,9 @@ class FakeConversationRepository(
             resultCwd = updatedConversation.cwd
             records + (
                 conversationId to
-                    ConversationRecord(
+                    record.copy(
                         conversation = updatedConversation,
                         sessions = closedSessions + (newSessionId to newSession),
-                        readUpTo = record.readUpTo,
                     )
             )
         }
