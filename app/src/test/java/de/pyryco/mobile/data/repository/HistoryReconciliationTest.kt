@@ -43,6 +43,47 @@ class HistoryReconciliationTest {
     }
 
     @Test
+    fun durableGapInvariant_postsAndCompletedReplyRemainOnceInOrder_underPagePermutationsReplayAndEmptyPages() =
+        runTest {
+            val batches =
+                listOf(
+                    page(user(10, "post10"), user(11, "post11")),
+                    page(user(6, "post6"), delta(7, 0, "completed"), end(8), user(9, "post9")),
+                    page(user(3, "post3"), user(4, "post4"), user(5, "post5"), user(6, "post6")),
+                )
+            for (order in permutations(batches.indices.toList())) {
+                val projection = ThreadProjection()
+                projection.mergeHistoryPage("c", page(user(1, "cached1"), user(2, "cached2")), true)
+                for (index in order) {
+                    projection.mergeHistoryPage("c", batches[index], true)
+                    projection.mergeHistoryPage("c", page(), true)
+                    projection.mergeHistoryPage("c", batches[index], true)
+                    projection.mergeHistoryPage("c", page(user(6, "post6")), true)
+                }
+                val rows = projection.observe("c").first()
+                assertEquals(
+                    listOf(
+                        "cached1",
+                        "cached2",
+                        "post3",
+                        "post4",
+                        "post5",
+                        "post6",
+                        "completed",
+                        "post9",
+                        "post10",
+                        "post11",
+                    ),
+                    rows.messages().map {
+                        it.content
+                    },
+                )
+                assertEquals(rows.ids().distinct(), rows.ids())
+                assertTrue(rows.messages().none { it.isStreaming })
+            }
+        }
+
+    @Test
     fun disjointPages_olderNewerAndMiddle_keepDaemonOrderInEveryArrivalOrder() =
         runTest {
             val entries = (1..5).map { user(it, "m$it", at = 6 - it) }

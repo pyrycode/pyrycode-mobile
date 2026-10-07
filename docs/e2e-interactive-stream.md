@@ -6,6 +6,15 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
 
 ## The ladder (reliable → flaky)
 
+Durable reconnect catch-up (#1842) adds rung-4
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_durableGapCatchUp`
+to scripted `ping` alongside the original
+`interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread` in the same harness.
+It proves newest-page delivery after daemon replay is emptied and multi-page older catch-up
+through reader pulls. See [scripted ping guidance](#scripted-ping-durable-gap-proof-1842).
+The rung-3 `InteractiveStreamE2ETest` operator-flow extension and external app force-stop
+proof remain owned by [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833).
+
 **Suggested next reply (#1866).** Rung 3 adds
 `InteractiveStreamE2ETest.interactiveTurn_replySuggestion_longPressSends`; rung 4
 adds `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_replySuggestionLongPressSends`
@@ -2672,10 +2681,11 @@ mirrors the combined `stream.jsonl` / `stream-end.jsonl` three-delta shape (dist
 
 ### Scenarios (#454)
 
-`DETERMINISTIC=1` runs **one scenario per invocation**, selected by `SCENARIO` (default `ping`, which
-preserves #431 unchanged). Each scenario maps to a single `@Test` method in
-`DeterministicInteractiveStreamE2ETest` and its own fixture(s); the script runs exactly that one method
-(`-Pandroid.testInstrumentationRunnerArguments.class=<class>#<method>`):
+`DETERMINISTIC=1` runs **one scenario per invocation**, selected by `SCENARIO` (default `ping`).
+Scenarios select methods in `DeterministicInteractiveStreamE2ETest` and their fixture(s) through
+`-Pandroid.testInstrumentationRunnerArguments.class`. Most select one method; `ping` selects both
+the original ping method and the durable-gap twin (#1842) with a comma-separated method list.
+The configured `scripted-all` gate includes `ping` and retains both methods:
 
 | `SCENARIO` | asserts | raw fragment(s) | fragments |
 | --- | --- | --- | --- |
@@ -2684,7 +2694,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `background-agent` (#1783, #1827) | background lifecycle moves a loaded tool family, marker navigation preserves collapse state, explicit expansion reveals its child run, and finish settles it before later text; attributed child prose stays in the run through closed, open and closed states while unmatched and main prose stay top-level | `background-agent-open.jsonl` + `background-agent-finish.jsonl` | **two** (release on second send) |
 | `selection-copy` (#1674) | finished assistant prose copies only the long-pressed word through Android’s system menu | `selection-copy.jsonl` | one |
 | `direct-share` (#1729) | published shortcut stages text in its thread without a picker or send; explicit Send receives ping | `ping.jsonl` | one |
-| `ping` (default) | a single-line reply renders | `ping.jsonl` | one |
+| `ping` (default, #1842) | original single-line reply plus durable reconnect newest-page delivery and reader-driven gap catch-up | `ping.jsonl` | one, reused by both methods |
 | `reopen-stream` (#1762) | arrived prefix is immediate on reopen and retained when a suffix composes while the turn stays open; one final combined reply | `reopen-stream-open.jsonl` + `reopen-stream-done.jsonl` | **two** (suffix on second send, terminal result on third) |
 | `stream` (#1765, #1817, #1818) | arrived words display while the same reply stays streaming; all three deltas settle into one complete reply without a caret; side copy reads user, held-stream and finished assistant source while timestamps stay hidden; reply stages exact quotes of the held stream and the user message, unchanged by later chunks, with focus and keyboard and no send | `stream.jsonl` + `stream-end.jsonl` | **two** (completion on second send) |
 | `spinner` | the thinking spinner shows mid-turn, then clears at turn end | `spinner-open.jsonl` + `spinner-end.jsonl` | **two** |
@@ -2698,6 +2708,37 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `refusal` (#1360) | a session-scoped `model_refusal_fallback` row offers "Switch back to Haiku" (the menu label, #1494); the tap writes `haiku` and the button disappears | `refusal.jsonl` | one |
 | `mcp-failed` (#1457) | the failed-MCP-server pill (#1345) renders and tapping it opens Channel info on its MCP servers section | `mcp-failed.jsonl` | one |
 | `context-overflow` (#1473) | the combined top-overlay context/Compact pill (#1603) renders after a `prompt_too_long` turn end, and tapping Compact reaches the daemon's child | `context-overflow.jsonl` | one |
+
+### Scripted ping durable-gap proof (#1842)
+
+Run `python3 scripts/android-test-gate.py scripted ping` to execute both
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread`
+and `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_durableGapCatchUp`.
+The latter reuses #1833's `DurableGapProof` and passive `DurableHistoryProbe`: the repository tap
+observes the app's existing rows and requests and issues no history requests itself.
+
+The promoted channel's phone cache must hold a settled baseline before the phone disconnects.
+While disconnected, the owned daemon accepts two batches of **120 posts each**, with one completed
+scripted reply between them. The 240 posts put the reply and oldest post outside the 200-entry
+newest page; the earlier 60-post batches could let that page satisfy the reply assertion without
+older catch-up. Post-control acknowledgement proves acceptance, not asynchronous delivery.
+Before sending the reply, wait for the existing peer stream to observe the first batch's last
+`assistant_delta`. Before accepting the second batch, wait for this conversation's interactive
+`turn_end` with `producer != channel_post`: posts also emit completion, so a generic completion
+wait can return a preceding post and place the reply after the newer batch.
+
+Restart the owned daemon with its durable home retained and replay emptied. After reconnect,
+require exactly one availability-driven newest request, a durable gap and the newest post,
+while the oldest post and completed reply remain absent. A received page can preserve the cached
+reader's viewport anchor; semantics-reveal the already delivered newest row only after those
+request/replay-exclusion checks, assert it is displayed and assert the reveal issued no request.
+Merely revealing each gap marker is also inert. Physical reader pulls then request one page each,
+with no page-arrival loop; at least two pulls must close the gap. Keep chronological post identity,
+exactly-once reply, settled reply, reply placement between batches and held cached-row assertions.
+These checks prove delivery and reader demand rather than automatic viewport following. See
+[the history-demand contract](knowledge/features/thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777).
+
+### Reopen-stream proof (#1762)
 
 `reopen-stream` selects
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately`
@@ -2988,6 +3029,23 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+**Reconnect newest-page handoff (#1842, 2026-10-07).** The
+[verifier verdict](https://github.com/pyrycode/pyrycode-mobile/pull/1915#issuecomment-6038977116)
+and retained fresh builder XML confirm focused scripted `ping` at `4d6411cf` executed
+**2, passed 2, failed 0, skipped 0**: both
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_durableGapCatchUp` and
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread`
+passed. Evidence is `/tmp/builder-1842/rework-scripted-ping-device.xml`.
+The configured dispatcher `scripted-all` run at `0752b3ed` executed **21, passed 21,
+failed 0, skipped 0** and explicitly passed those same two methods in its ping selection;
+this is full-suite evidence, separate from the focused builder run. The UI gate executed
+**199, passed 199, failed 0, skipped 1**. Required unit/shared classes passed:
+`ThreadViewModelTest` 220/220, `ThreadHistoryDemandTest` 21/21,
+`ThreadScreenHistoryTest` 24/24 and `ThreadNewestPageHandoffTest` 9/9, with no failures
+or skips; the full unit/shared run executed 4,750 and passed all 4,750, with no failures
+or skips. No real-Claude or external app force-stop evidence is claimed here;
+[#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) owns both.
 
 **Message reply (#1818, 2026-10-07).** A hand-run fresh full live suite,
 `scripts/with-claude-login.sh python3 scripts/android-test-gate.py live`, ran on
@@ -4478,6 +4536,14 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Durable reconnect catch-up (#1842):** rung-4
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_durableGapCatchUp`
+  is selected by ordinary `ping` and configured `scripted-all`, alongside the original ping.
+  [Counted evidence](#verification-status) closes this deterministic delivery repair.
+  [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833) retains the rung-3
+  `InteractiveStreamE2ETest` operator-flow extension and external app force-stop proof.
+  The pre-ship command remains `python3 scripts/android-test-gate.py live`.
 
 - **Default confirmation pills (#1851):** the existing rung-3
   `InteractiveStreamE2ETest#interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload`

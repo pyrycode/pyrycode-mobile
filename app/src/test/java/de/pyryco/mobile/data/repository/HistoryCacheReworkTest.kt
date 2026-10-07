@@ -33,6 +33,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import kotlin.time.Duration.Companion.minutes
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class HistoryCacheReworkTest {
@@ -420,7 +421,9 @@ class HistoryCacheReworkTest {
     @Test fun stateWriteAfterTrimmingCannotRestoreSavedCursor() = trimmingResetsWalk(HistoryPosition("past-discarded", false))
 
     private fun trimmingResetsWalk(saved: HistoryPosition) =
-        runTest {
+        // Crossing the real 100,000-row cap rewrites and reloads disk records; the full-suite
+        // verifier exceeded runTest's one-minute default before these assertions could finish.
+        runTest(timeout = 3.minutes) {
             val old = page(1)
             val coverage = HistoryCoverage().received(old).boundTo(rows(old))
             disk().writeThread("h", "c", rows(old))
