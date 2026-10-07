@@ -106,6 +106,100 @@ class HistoryCacheReworkTest {
     @Test fun mixedNonterminalHistory_preservesCursorAndUnknownCoverageAfterSignedTerminalPage() =
         unsignedHistoryRemainsIncomplete(mixed = true, previouslyComplete = false, terminal = false)
 
+    @Test fun unsignedStateOnlyHistory_keepsUncertaintyAndCursorThroughEmptyCacheReopen() =
+        emptyUnsignedCacheRemainsIncomplete("turn_state", """{"conversation_id":"c","state":"idle"}""")
+
+    @Test fun unsignedUncacheableHistory_keepsUncertaintyAndCursorThroughEmptyCacheReopen() =
+        emptyUnsignedCacheRemainsIncomplete(
+            "unrecognized_message",
+            """{"conversation_id":"c","site":"undecodable","message_type":"","raw":"inert","truncated":false}""",
+        )
+
+    private fun emptyUnsignedCacheRemainsIncomplete(
+        type: String,
+        payload: String,
+    ) = runTest {
+        val unsupported =
+            HistoryPage(
+                listOf(
+                    HistoryEntry(
+                        type = type,
+                        payload = MobileJson.parseToJsonElement(payload),
+                        timestamp = Instant.fromEpochSeconds(1),
+                        unsignedId = ULong.MAX_VALUE,
+                    ),
+                ),
+                "older-upper",
+                false,
+            )
+        val live = Live().apply { answer = { unsupported } }
+        val vm =
+            ThreadViewModel(
+                SavedStateHandle(mapOf("conversationId" to "c")),
+                CachingConversationRepository(live, disk(), "h"),
+                FakeConnectionStateSource(),
+                ComposerDraftStore(),
+                repositoryAvailable = flowOf(true),
+            )
+        val store = ViewModelStore().apply { put("vm", vm) }
+        val reader = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+        advanceUntilIdle()
+        assertEquals(listOf(""), live.asks)
+        assertEquals(
+            if (type == "turn_state") 0 else 1,
+            live.projection
+                .observe("c")
+                .first()
+                .size,
+        )
+        assertTrue("cache policy must retain no renderer rows", disk().readThread("h", "c").isEmpty())
+        val saved = disk().readHistoryPosition("h", "c") ?: error("missing saved metadata")
+        assertEquals("older-upper", saved.cursor)
+        assertTrue(
+            saved.coverage
+                ?.spans
+                .orEmpty()
+                .isEmpty(),
+        )
+        assertTrue(saved.coverage?.unsignedIncomplete == true)
+        assertTrue(saved.coverage?.unknown == true)
+        assertFalse(saved.atStart)
+        store.clear()
+        reader.cancel()
+
+        val lower = page(1).copy(cursor = "", atStart = true)
+        val reopenedLive = Live().apply { answer = { lower } }
+        val repository = CachingConversationRepository(reopenedLive, disk(), "h")
+        assertEquals("empty cache must preserve its coverage and cursor", saved, repository.readHistoryPosition("c"))
+        val reopened =
+            ThreadViewModel(
+                SavedStateHandle(mapOf("conversationId" to "c")),
+                repository,
+                FakeConnectionStateSource(),
+                ComposerDraftStore(),
+                repositoryAvailable = flowOf(true),
+            )
+        val reopenedStore = ViewModelStore().apply { put("vm", reopened) }
+        val reopenedReader = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { reopened.state.collect {} }
+        advanceUntilIdle()
+        repeat(2) {
+            val afterLower = disk().readHistoryPosition("h", "c") ?: error("missing reopened metadata")
+            assertTrue("signed terminal page must retain omitted-content uncertainty", afterLower.coverage?.unsignedIncomplete == true)
+            assertTrue(afterLower.coverage?.unknown == true)
+            assertFalse("signed terminal page cannot certify completeness", afterLower.atStart)
+            assertEquals(saved.cursor, afterLower.cursor)
+            reopened.onDemandOlderHistory()
+            advanceUntilIdle()
+        }
+        assertEquals(
+            "older demand must remain available with the saved cursor",
+            listOf("", "older-upper", "older-upper"),
+            reopenedLive.asks,
+        )
+        reopenedStore.clear()
+        reopenedReader.cancel()
+    }
+
     private fun unsignedHistoryRemainsIncomplete(
         mixed: Boolean,
         previouslyComplete: Boolean,

@@ -136,7 +136,9 @@ class CachingConversationRepository(
     override suspend fun readHistoryPosition(conversationId: String): HistoryPosition? {
         val saved = cache.readHistoryPosition(serverId, conversationId)
         val empty = cache.readThread(serverId, conversationId).isEmpty()
+        // Omitted unsigned content remains evidence even when cache policy retains no rows.
         if (empty &&
+            saved?.coverage?.unsignedIncomplete != true &&
             saved
                 ?.coverage
                 ?.spans
