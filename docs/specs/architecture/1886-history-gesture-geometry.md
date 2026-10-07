@@ -23,3 +23,7 @@ Reproduce the four existing tests before repair, including the managed-device de
 ### 2026-10-07 — Use measured row jumps for full-thread positioning
 
 The first repaired managed-device run passed three methods, but the two-viewport method's second setup measured only 0.55 viewports after requesting a three-viewport animated semantics scroll. Keep the range assertion and replace that setup animation with an immediate `ScrollToIndex` target calculated from measured row pitch, viewport and header geometry. Assert the fixture contains the target row and wait for each jump to settle. Both requested ranges remain independently measured before the actual gesture; production paging stays unchanged.
+
+### 2026-10-07 — Pause before releasing full-thread drags
+
+The next device run reached the measured outside setup, but after the small released swipe it was only 1.77 viewports from the oldest end. Replace `pullInReadingArea`'s swipe with an explicit down/move and stationary pause before up. These two full-thread tests now inspect controlled drag distance without a continuing fling; the existing dedicated fling coverage stays unchanged. Keep both outside assertions and the no-demand assertion.

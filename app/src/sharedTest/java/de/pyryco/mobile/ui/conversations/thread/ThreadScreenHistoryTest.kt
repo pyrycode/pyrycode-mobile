@@ -726,7 +726,11 @@ class ThreadScreenHistoryTest {
         val distance = viewport.height * fraction
         assertTrue("Gesture must stay between header and composer", start + distance < composer.top - viewport.top)
         list.performTouchInput {
-            swipeDown(startY = start, endY = start + distance, durationMillis = 800)
+            down(Offset(center.x, start))
+            moveBy(Offset(0f, distance), delayMillis = 100)
+            // Inspect the drag distance without a released swipe's continuing fling.
+            advanceEventTime(250)
+            up()
         }
         composeRule.waitForIdle()
     }
