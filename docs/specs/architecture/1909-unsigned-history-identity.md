@@ -1,0 +1,86 @@
+# #1909 — Unsigned history identity and repository ordering
+
+## Files read
+
+- `app/src/main/java/de/pyryco/mobile/data/repository/ConversationRepository.kt`: `HistoryEntry` and `HistoryPage` retain raw replay content and newest-first page order.
+- `app/src/main/java/de/pyryco/mobile/data/network/HistoryPayloads.kt`: `HistoryEntryDto` and `toHistoryPage` are the numeric/timestamp boundary.
+- `app/src/main/java/de/pyryco/mobile/data/network/ReadMarkIdSerializer.kt`: strict uint64 JSON parsing already rejects quoted, fractional, negative and overflowing tokens.
+- `app/src/main/java/de/pyryco/mobile/data/repository/HistoryPageReducer.kt`: `reduceOrderedHistoryPage`, `mergeRows`, delta identities and contextual compaction positions.
+- `app/src/main/java/de/pyryco/mobile/data/repository/ThreadProjection.kt`: `mergeHistoryPage`, `withFilledDividerOrder` and `observeSnapshot` publish one atomic generation.
+- `app/src/main/java/de/pyryco/mobile/data/repository/ThreadSnapshotSource.kt`: `ThreadSnapshot` supplies cache consumers with signed positions today.
+- `app/src/main/java/de/pyryco/mobile/data/repository/HistoryCoverage.kt`: `received` certifies signed coverage and must remain conservative for unsupported pages.
+- `app/src/main/java/de/pyryco/mobile/data/repository/CachingConversationRepository.kt`: signed snapshot order feeds existing cache joins; this consumer is not migrated.
+- `app/src/test/java/de/pyryco/mobile/data/network/HistoryPayloadsTest.kt`, `data/repository/HistoryReconciliationTest.kt`, `ThreadProjectionTest.kt` and `RemoteConversationRepositoryTest.kt`: current decoding, reconciliation, contextual folds and request failure routing.
+- `docs/knowledge/features/data-model.md` and `remote-conversation-repository-reads-and-thread-store-history-paging.md`: preserve the contextual fold and held-row placement; a row key is not coverage proof.
+- Sibling `pyrycode/docs/protocol-mobile.md`, “A history entry”, “Joining a page to the live stream” and “Security model”: authoritative wire contract. The dispatch worktree resolves this sibling via `PYRYCODE_SRC`.
+
+## Context
+
+Signed history ids cannot represent the daemon's full uint64 identity space. This foundation exposes exact unsigned identity and repository order while leaving persisted coverage/cache/paging migration to dependent work. No read command, viewport checkpoint, UI change or wire producer change belongs here. No decision record is needed.
+
+Sizing: about 750–950 written lines including the plan and probes, six production files, no new public type, at most three internal helper declarations and fewer than ten simultaneous consumer updates. Three acceptance criteria and four numeric rejection classes fit the ticket limits. Existing signed construction sites remain; one signed fixture accumulator may need a nullable projection assertion. Remote feature branches have no overlap with the planned production files.
+
+## Design
+
+`HistoryEntry.unsignedId: ULong` is authoritative and positive. A secondary signed `id: Long` constructor preserves existing positional/named fixtures in their positive range. The signed `id: Long?` reading returns the exact lower-range value or null above `Long.MAX_VALUE`, never a substituted identity. Raw payload/type/timestamp are unchanged.
+
+`HistoryEntryDto.id` uses the existing strict `ReadMarkIdSerializer` to preserve uint64 numeric tokens. Mapping rejects zero via the positive domain contract. Invalid pages fail the awaiting request, leaving the inbound collector alive.
+
+`ReducedHistoryPage` carries unsigned row/delta order and claim sets from the contextual fold. Signed `order`/`claims` views expose representable values only. The reducer still reverses daemon-authoritative page order and deduplicates through existing folds. Unrecognized history row keys use the exact unsigned decimal id, retaining lower-range keys.
+
+`mergeRows` compares unsigned positions in its durable-position tree without reordering held rows. Keep the existing signed merge entry point for compatibility and translate positive signed positions to unsigned internally. A separate unsigned merge entry point serves `ThreadProjection`; cache joins remain signed consumers.
+
+`ProjectionState` holds unsigned order per conversation. Divider identity transfer carries unsigned order unchanged. `observeSnapshot` publishes unsigned and representable signed positions alongside rows/suppression from the same generation. The source repository supplies host scope and the observation argument supplies conversation scope; these maps are not globally scoped identity stores. Live connection/ring ids and row keys never create claims.
+
+`HistoryCoverage.received` declines a whole page containing an unrepresentable id. This deliberately conservative compatibility guard preserves prior coverage, cursors and unknown completeness rather than allowing an upper-range terminal page to certify signed coverage. Fully representable pages retain current behavior. No persisted schema migration.
+
+## State and concurrency model
+
+No new jobs, flows, scopes, dispatchers or persistence. `ThreadProjection` continues its atomic `MutableStateFlow.update` merge with the current generation's held rows and unsigned order. Snapshot derivation reads both maps and rows together. Connection shutdown/remove discards the projection exactly as before; durable numeric identities remain daemon-authored and reusable across reconnect, never synthesized from connection-local state.
+
+## Error handling
+
+Strict structural decoding rejects noninteger/non-numeric, negative and overflowing identities; positive domain validation rejects zero. Exceptions have static content-free messages and stay within the existing awaiting request Result boundary. Malformed per-entry payloads still cost only their existing reducer entry. Timestamp parsing semantics remain unchanged. No new logs contain ids, timestamps or raw payload text; existing history request lifecycle logs remain the diagnostics surface.
+
+## Testing strategy
+
+First run a decoder regression against current code and observe the upper-range failure, then implement. Add unit probes using actual production decoding/reduction/projection:
+
+- Exact identity at 1, signed maximum, signed maximum + 1 and unsigned maximum, retaining raw payload and timestamps; invalid token shapes and signed construction compatibility.
+- All arrival permutations of disjoint equal/reversed-clock pages across the boundary, empty/singleton pages, start/middle/end overlap and repeated delivery, preserving held rows on both sides.
+- Folded assistant deltas across the boundary with duplicate/replayed deltas and tool separators, plus contextual compaction divider identity transfer.
+- Same row/numeric keys in different conversations and projection instances; live-only rows have no durable claims. Reconnect by constructing a fresh projection between deliveries.
+- Signed snapshot/reducer views omit upper ids; mixed upper-range pages cannot advance signed coverage or unknown completeness.
+- Correlated malformed-id request followed by a valid upper-id request proves collector survival.
+
+Run focused decoder, reducer, history/projection, coverage/cache and remote-repository unit classes with nonzero counts; lint, assembleDebug and forced Spotless. No Compose/device/scripted/live scenario is required: this is a data foundation preserving operator-facing behavior. After the final merge/push run the whole unit/shared suite, assembleDebug and `scripts/pre-verify.py --gradle` against the prepared PR body.
+
+## Open Questions
+
+None. Persisted unsigned coverage/cache/paging consumers are explicitly dependent deliverables.
+
+## Documentation handoff
+
+Pending for the documentation stage:
+
+- `docs/knowledge/features/remote-conversation-repository-reads-and-thread-store-history-paging.md`, history-page fold/join explanation: document authoritative unsigned row/delta order and conservative signed consumers.
+- `docs/knowledge/features/data-model.md`: document positive `HistoryEntry.unsignedId`, compatible signed construction and nullable signed identity projection.
+
+## Security review
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] MUST FIX addressed in design: default numeric coercion or signed wrap could certify a different history entry. `ReadMarkIdSerializer` strictly parses uint64 JSON tokens; `HistoryEntry` rejects zero and signed construction rejects nonpositive ids. Probe malformed and boundary values.
+- [Tokens, secrets and credentials] No secret fields, credential storage or authentication changes. Numeric history ids are not capabilities; never use them outside host/conversation scope.
+- [Files and storage] No new files or cache schema. `HistoryCoverage.received` ignores unsupported whole pages so persisted claims cannot certify truncated upper-range identity or false terminal completeness. Migration is deferred to dependent coverage/cache/paging work.
+- [Android attack surface] No Android component, intent, deep link, keyboard, provider or WebView changes; existing inert thread render paths remain.
+- [Cryptography] No cryptographic primitive, key or nonce changes. Existing Noise authentication keeps the relay outside the plaintext identity boundary.
+- [Network and I/O] Existing envelope caps, request timeouts, TLS and reconnect policy remain. Strict parsing rejects hostile numeric tokens without logging their content; request failure does not terminate inbound collection.
+- [Errors, logs and telemetry] Reuse static rejection messages and existing content-free request diagnostics. No raw payload, message text, credential or decoder exception text is logged.
+- [Concurrency] Unsigned positions and rows commit in the same existing CAS update; snapshots derive both compatibility and authoritative maps from one generation. No coroutine or mutex added.
+- [Threat model] Malicious relay reorder/delay remains handled by Noise and existing replay/reconciliation; hostile daemon identities are rejected at the strict decoder/domain boundary. Token theft and UI screenshot/accessibility leakage are unchanged by this data-only work and remain with existing Keystore/render policy.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-10-07
