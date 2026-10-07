@@ -207,6 +207,17 @@ interface ConversationRepository {
     fun observeMcpStatus(conversationId: String): Flow<McpStatus> = flowOf(McpStatus())
 
     /**
+     * Latest next-reply state for this conversation/session pair on the live connection (#1865).
+     * Null means no state received; a reading with null text is an explicit clear retaining its revision.
+     * Fresh connections start absent. Late subscribers receive the current reading. Never persisted.
+     * The default keeps repositories without suggestion support absent.
+     */
+    fun observeReplySuggestion(
+        conversationId: String,
+        sessionId: String,
+    ): Flow<ReplySuggestion?> = flowOf(null)
+
+    /**
      * Ask once for [conversationId]'s current MCP status (#1343). Fire-and-forget: the answer is a report on
      * [observeMcpStatus], and a refusal as `mcp_status.unavailable` sets [McpStatus.unavailable]. When nothing
      * can be sent, nothing happens. Never retries, never throws.
@@ -1162,9 +1173,9 @@ data class HistoryPage(
 )
 
 /**
- * How far back one thread's history has been received (#1354), saved beside its cached rows: the last
- * received [HistoryPage]'s [cursor] and [atStart], desktop's received `coverage`. Only a received page sets
- * it, even an empty one; the row count never implies it, and a thread only ever fed live has none.
+ * The independent backwards walk's position, saved beside cached rows, plus received durable entry
+ * coverage and unresolved gaps. Default-null coverage means legacy rows cannot certify completeness.
+ * Only received pages establish coverage; live rows never do.
  *
  * [cursor] is the daemon's opaque value, echoed verbatim and never logged, parsed, or used as a path or
  * key — so [toString] leaves it out.
@@ -1172,6 +1183,7 @@ data class HistoryPage(
 data class HistoryPosition(
     val cursor: String,
     val atStart: Boolean,
+    val coverage: HistoryCoverage? = null,
 ) {
     override fun toString(): String = "HistoryPosition(atStart=$atStart)"
 }
@@ -1844,3 +1856,16 @@ data class ThinkingProgress(
     val estimatedTokens: Long,
     val estimatedTokensDelta: Long,
 )
+
+/**
+ * Daemon-authored next-reply state (#1865). Text is untrusted inert data, never a URL, path or log value.
+ * An explicit clear keeps identity and revision with null [suggestedReply]; absence is a null reading.
+ */
+data class ReplySuggestion(
+    val conversationId: String,
+    val sessionId: String,
+    val revision: ULong,
+    val suggestedReply: String?,
+) {
+    override fun toString(): String = "ReplySuggestion(redacted)"
+}

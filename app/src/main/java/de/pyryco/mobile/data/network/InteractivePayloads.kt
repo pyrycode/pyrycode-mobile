@@ -54,6 +54,8 @@ internal data class AssistantDeltaPayloadDto(
     @SerialName("turn_id") val turnId: String,
     val seq: Int,
     val text: String,
+    // Older daemons omit the hint; explicit null still fails the non-null string decode.
+    @SerialName("parent_tool_use_id") val parentToolUseId: String = "",
 )
 
 /**
@@ -646,7 +648,8 @@ private fun String.toPhase(): LiveSessionEvent.TurnState.Phase? =
     }
 
 /** Total field copy: every [AssistantDeltaPayloadDto] decodes to a [LiveSessionEvent.AssistantDelta]. */
-internal fun AssistantDeltaPayloadDto.toEvent(): LiveSessionEvent = LiveSessionEvent.AssistantDelta(conversationId, turnId, seq, text)
+internal fun AssistantDeltaPayloadDto.toEvent(): LiveSessionEvent =
+    LiveSessionEvent.AssistantDelta(conversationId, turnId, seq, text, parentToolUseId)
 
 /** Total field copy: every [ToolUsePayloadDto] decodes to a [LiveSessionEvent.ToolUse]. */
 internal fun ToolUsePayloadDto.toEvent(): LiveSessionEvent =

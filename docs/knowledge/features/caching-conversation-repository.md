@@ -19,14 +19,16 @@ phone lost reception or was relaunched offline. Everything else about a live con
 permission modals, the thinking indicator, stall, queue, API retry, compaction — is genuinely
 live state with no offline meaning, so only `observeMessages` needed a restore.
 
-**The restore only ever sees rows that reached this wrapper's own `observeMessages` collection.** A row
+**The observer caches rows that reach its collection; coverage saves also reconcile and write rows (#1832).** A row
 the daemon delivers to a thread nobody is observing — the operator is looking at another channel, or
-another host's thread — is never written to the cache, because the write only happens inside this
-block's own `collect`. A reconnect then rebuilds the connection-scoped projection that briefly held that
+another host's thread — is not written to the cache unless a history-position save explicitly
+reconciles it into this destination's cache. A reconnect rebuilds the projection that briefly held that
 row, and it is gone: the replay cursor has already advanced past it, so Mode A replay does not resend it
 either. [#1572](https://github.com/pyrycode/pyrycode-mobile/issues/1572) does not change this wrapper —
 it recovers the row a different way, by having `ThreadViewModel` ask for the newest history page every
-time an *open* thread's host becomes available, so the daemon re-delivers what this cache missed. See
+time an *open* thread's host becomes available, so the daemon re-delivers what this cache missed.
+Since #1832 the client retains that page's durable coverage and
+uses reader-targeted gap walks to fill intervening omissions lazily. See
 [Thread screen § the oldest-end history
 demand](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777) for that ask.
 
@@ -96,7 +98,7 @@ wrapper's own direction: paging normally prepends an *older* page onto what is o
 restored rows are the older set and the live projection is the receiver:
 
 ```
-drawn = snapshot.rows.mergeCachedRows(restoredWithoutSuppressedUserEchoes)
+drawn = snapshot.rows.mergeCachedRows(restoredWithoutSuppressedUserEchoes, baseOrder + snapshot.historyOrder)
 ```
 
 `mergeCachedRows` shares `mergeHistoryRows`'s join (`message_id` for a message, covering a
@@ -107,7 +109,7 @@ when the live side's replayed copy has none. Merging into an empty live projecti
 restored rows after suppression filtering. The disconnected case falls out of the same merge
 that handles a reconnect. Where it differs from `mergeHistoryRows`: a row *only* the cache
 holds does not always go to the front. It goes right after the live copy of the nearest cached row
-above it that the live side also holds, and only goes in front when it has no such anchor — the
+above it that the live side also holds, and, without durable order, goes in front when it has no such anchor — the
 older rows a reconnect's newest page does not reach, or a page that does not overlap the cache at
 all. Several cache-only rows sharing one anchor keep their cached relative order.
 
@@ -115,8 +117,13 @@ Since #1786 both merges share one reconciliation. A cache-only row can also go b
 and cache-only assistant text merges per `(turnId, seq)` delta, so a restored reply missing a middle or
 suffix sequence gains only the missing text, on the correct side of tool and user rows. A legacy whole-turn
 row written before segments existed dedupes only text it demonstrably contains and keeps distinct text.
-Restored rows carry no daemon log ids, so placement uses shared neighbours and then timestamps, and live
-rows are never sorted. The lookup stays key-indexed on large threads. The fixed connection merge base and
+Since #1832 restored coverage supplies durable row/delta ordering, combined with the live
+snapshot's received order. Both the observer merge and the position writer's fallback merge need
+it: a disjoint older-gap page with no shared row anchor otherwise lands on the wrong side of cached
+content, and equal timestamps cannot repair that. `ThreadSnapshot` forwards rows, suppression and
+order from the same projection generation. Shared neighbours and timestamps remain fallback evidence
+for rows without durable order; live rows are never sorted. The lookup stays key-indexed on large
+threads. The fixed connection merge base and
 the deliberate-removal suppression below are unchanged, so a removed live row is not resurrected.
 
 `BackgroundTaskLifecycle` (#1782) is also retained in the last-drawn **in-memory** base at a
@@ -211,35 +218,13 @@ deliberately removes (`RemoteConversationRepository.removeOwnEcho` on a dropped 
 still honoured and not resurrected by an accumulating union — the same reasoning that ruled out an
 accumulating union for the original restored-snapshot design.
 
-```kotlin
-var base = cache.readThread(serverId, conversationId)
-var lastWritten = base
-var lastDrawn = base
-delegate.threadSnapshots(conversationId).collect { snapshot ->
-    val live = snapshot.rows
-    if (live.isEmpty() && snapshot.suppressedUserMessageIds.isEmpty()) {
-        base = settledThreadRows(lastDrawn)
-    }
-    val restored = base.filterNot {
-        it is ThreadItem.MessageItem && it.message.role == Role.User &&
-            it.message.id in snapshot.suppressedUserMessageIds
-    }
-    val drawn = live.mergeCachedRows(restored)
-    lastDrawn = drawn
-    emit(drawn)
-    val cacheable = cacheableThreadRows(drawn)
-    if (cacheable != lastWritten) {
-        // #1354: hand writeThread the untrimmed drawn rows, not cacheable — only then can the cache
-        // see a trim at MAX_CACHED_THREAD_ROWS and drop a saved history position that no longer
-        // matches the oldest kept row.
-        if (cache.writeThread(serverId, conversationId, drawn).isSuccess) {
-            lastWritten = cacheable
-        } else {
-            RelayLog.d { "event=thread_cache_write_failed" }
-        }
-    }
-}
-```
+The base also retains durable ordering: restore seeds `baseOrder` from persisted coverage, and
+a connection boundary combines it with the last live order. Each merge receives
+`baseOrder + snapshot.historyOrder`. Rows and ordering therefore survive reconnect together.
+Drawn rows are emitted and retained in `drawnThreads` before a cache write. The observer hands
+untrimmed `drawn` to `writeThread`, under the shared `historyWrites` mutex with a tombstone check
+inside the lock. Only a successful write advances `lastWritten`; static failure logging exposes
+no rows, ids or cursors.
 
 An empty visible snapshot with nonempty suppression is a pending-delivery reading within the
 same connection, not a disconnect. Rebasing there would lose the fixed restore base and its
@@ -291,7 +276,7 @@ matched the oldest saved row, a silent, permanent gap in a very long saved chann
 cache rule that depends on the shape of its input has to be tested through its real caller, not
 only called directly with the shape the rule expects.
 
-A write happens only when `cacheableThreadRows(drawn)` differs from `lastWritten` (initially the
+An observer write happens only when `cacheableThreadRows(drawn)` differs from `lastWritten` (initially the
 restored snapshot). That means:
 
 - Opening a conversation offline writes nothing — `drawn == restored`.
@@ -305,86 +290,61 @@ conversation id or a server id is ever logged.
 
 ## State and concurrency
 
-No scope is owned and nothing is launched — `observeMessages` returns a cold `flow {}`, and its
-`base` / `lastWritten` / `lastDrawn` state is local to that block. Two screens observing the same
-conversation each get their own collection and their own local state; the cache's per-instance
-`Mutex` serializes their writes if both happen to fire (last writer wins with a complete drawn
-set). Cancelling the collector (the ViewModel's `viewModelScope`, in practice) cancels any
-in-flight write; the atomic move in `FileConversationCache` means a cancelled write leaves the
-previous document intact, never a torn one.
+No scope is owned and nothing is launched. `observeMessages` returns a cold flow with local
+merge-base/last-written state. The wrapper retains latest drawn rows per conversation for history
+saves. A wrapper-level `historyWrites` mutex serializes observer writes, coverage-null position
+writes, the complete coverage row/state operation and confirmed deletion. The file cache's own
+mutex protects each disk operation; lock order is wrapper then file cache, with no callback into
+the wrapper. Cancellation belongs to the caller except confirmed-removal cleanup.
 
 ## `delete` — removing the cache alongside the daemon (#798)
 
-```kotlin
-override suspend fun delete(conversationId: String) {
-    delegate.delete(conversationId)
-    deleted += conversationId
-    withContext(NonCancellable) { cache.removeConversation(serverId, conversationId) }
-        .onFailure { RelayLog.d { "event=conversation_cache_remove_failed" } }
-}
-```
+The delegate deletes first; refusal propagates before touching cache state. After success the
+wrapper marks its thread-safe destination-local tombstone, then waits non-cancellably for
+`historyWrites`, clears held drawn metadata and removes the cached conversation under this
+wrapper's host id. A failed removal logs a static event and does not turn daemon success into a
+reported deletion failure. Archive/unarchive remain delegation.
 
-`delegate.delete(conversationId)` runs first and unguarded: a refused delete (the daemon's
-`conversation.not_found` aside — see [remote repository §
-delete](remote-conversation-repository-conversation-writes.md#deleteconversationid--the-eighth-mutation-first-remove-shaped-one-532))
-propagates before the cache is touched, so the cached content for a conversation that still exists on
-the daemon is never removed. Only once that call returns does the wrapper mark the id deleted and
-remove the cached copy — `cache.removeConversation(serverId, conversationId)` — inside
-`withContext(NonCancellable)`, for the same reason `forgetRemovedHost` uses it: the daemon-side
-deletion already happened, so a screen cleared mid-cleanup must not strand the content. A failed cache
-removal logs one static `event=conversation_cache_remove_failed` line and is not surfaced — `delete`
-still reports success, since the conversation genuinely is gone.
-
-The host is this wrapper's own `serverId`, captured by `ThreadDestinationFactory.repository` from the
-destination that issued the call — never a global selection (see § Wiring below). A blank `serverId`
-gets no `CachingConversationRepository` at all, so nothing can be removed under the empty id.
-
-**No write after delete.** The thread that issued the delete keeps collecting `observeMessages` on
-this same wrapper instance until its screen's `PopBack`, and a late live emission in that window (or a
-retry of an earlier failed write) would otherwise call `writeThread` and put the deleted conversation's
-rows straight back. A thread-safe `deleted: MutableSet<String>` (`ConcurrentHashMap.newKeySet()`) holds
-every id this instance deleted; `observeMessages`'s write guard becomes `cacheable != lastWritten &&
-conversationId !in deleted`. The set lives and dies with this wrapper instance — a fresh destination
-for the same conversation (a re-open after `PopBack`) gets a fresh, empty set, so the guard cannot hide
-a conversation that was later re-created under the same id. `writeHistoryPosition` (#1354, below)
-checks the same `deleted` set before it touches the cache, so a page settling after a delete cannot
-bring the thread document back with a position either.
+**A pre-I/O tombstone check is insufficient (#1832).** A writer can pass it, suspend, and recreate
+rows after removal. Every writer checks the tombstone under the shared mutex; deletion waits for
+an in-flight writer, then removes its results. This includes fallback row reads, observer writes,
+coverage-null writes and the interval between row and state writes. Once removal returns,
+suspended writers cannot recreate the document. A fresh destination has a fresh tombstone set.
 
 ## The saved history position (#1354)
 
-```kotlin
-override suspend fun readHistoryPosition(conversationId: String): HistoryPosition? =
-    cache.readHistoryPosition(serverId, conversationId)
+`readHistoryPosition` uses the wrapper's host namespace. Since #1832 it also reads whether cached
+rows exist: an empty cache without spans returns no position, ignoring an old cursor/stop. A
+nonempty legacy cache with null coverage returns `HistoryCoverage(unknown = true)`, with or
+without saved `atStart`, while keeping its rows readable. Neither row identity nor that stop
+certifies received entry ids. After the newest page the marker moves with the verified older
+edge; matching legacy text and verified overlap leave unknown coverage unresolved. Only
+`at_start`, including an empty terminal page, closes unknown coverage without an older durable
+anchor. Existing spans, gaps, high-water (derived from spans), unknown state and opaque cursors
+round-trip with the position. See [history resumption](remote-conversation-repository-reads-and-thread-store-history-paging.md#resuming-from-the-saved-position-1354).
 
-override suspend fun writeHistoryPosition(conversationId: String, position: HistoryPosition?) {
-    if (conversationId in deleted) return
-    cache.writeHistoryPosition(serverId, conversationId, position)
-        .onFailure { RelayLog.d { "event=history_position_write_failed" } }
-}
-```
+**Coverage saves write reconciled rows before state.** `writeHistoryPosition` obtains the current
+delegate snapshot, then holds `historyWrites` across selecting held drawn rows (or a fallback
+file read), suppression filtering, the durable-order-aware merge, `writeThread`, and the state
+write. If the row write fails it logs `history_rows_write_failed` and returns without advancing
+state. Coverage binds to exact retained row/delta proofs; the file writer validates these against
+stored rows again. Interruption between writes leaves older conservative state, never new claims
+for rows absent from storage. Excluded transient/raw-envelope rows stay excluded; only metadata
+persists. Delta matches inside legacy whole turns prove retention, not completeness.
 
-Plain forwarding to the cache under this wrapper's own `serverId` — the same host scoping every
-other override here uses — with the same two guards the row writer already has: skipped for a
-conversation this instance deleted, and a failed write logged and swallowed rather than surfaced,
-since losing a position costs only one re-fetched page on the next open. `ThreadViewModel` is the
-only caller: it reads once at open, through `historySeed`, and writes only when a `requestHistory`
-ask **settles** (a failed ask calls neither method, so the cache is never asked to touch a position
-for one) — see [Remote conversation repository § Resuming from the saved
-position](remote-conversation-repository-reads-and-thread-store-history-paging.md#resuming-from-the-saved-position-1354)
-for that side. `decorateRepository` and the e2e `TappingConversationRepository` are both `by
-delegate`, so both new members forward with no edit, the same reasoning `delete` and
-`retrieveAttachment`'s own sections give for why those wrappers needed no change either.
+The complete operation passes untrimmed rows and uses shared cache-policy trim accounting. If
+rows exceed the cap, the later position write also resets backwards cursor to empty and `atStart`
+to false while retaining validated, conservative coverage. Otherwise a state write could undo the
+row writer's reset: a direct row-writer test misses this production interleaving. Removed or changed
+rows invalidate all their producing entry claims. Coverage-null writes use the same mutex and
+tombstone guard, preserving default-tolerant repository behavior.
 
-**The gap-filling note above no longer holds once a position is saved.** This doc's intro to §
-The merge base used to say a reconnect's history walk fills a gap left when more than one page
-arrived while the app was offline. That was true only while every walk started from the newest
-page. Once a position is saved, the first pull continues from older than the cached rows and never
-returns to the newest page, so a gap above the cached base — left when the daemon's reconnect
-replay buffer was exceeded or the daemon restarted — stays until the saved position is cleared
-(`history.invalid_cursor`) or the conversation is removed. The ticket requires resuming from the
-saved position and desktop behaves the same way, so this was accepted rather than fixed; whether to
-fetch the newest page on open when the cached tail looks stale is an open product question raised
-on PR #1470, with no follow-up ticket filed yet.
+This replaces #1354's accepted position-before-row window and unresolved saved-position gaps.
+Newest asks preserve coverage and queue behind outstanding asks; reader pulls fill one targeted
+gap page at a time without changing the ordinary backwards walk. Cursor refusal preserves gap
+metadata while resetting only the refused walk. Failures log static events without cursors, entry
+content or row proofs. Independent live, deterministic multi-page-gap and external force-stop
+proof remains with [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833).
 
 ## Wiring — under `decorateRepository`, not in it
 
@@ -492,7 +452,21 @@ pins the same join at the `joinIdentity()`/`heldAt` level (see § How the restor
 rows above) for all six kinds, including that a refusal of the other frame type stays a separate
 row.
 
-No Compose UI test: restored rows draw through the same composables a live row does, below the
+`HistoryDurabilityTest` covers coverage/row-write failures and interruption; the real-file
+`HistoryCacheReworkTest` guards the three complete-operation traps from #1832:
+
+- Disjoint older-gap insertion stays chronological through observer/fallback merges, reconnect and
+  fresh restore, including persisted marker placement.
+- Saved `atStart` and saved cursor remain reset after trimming through both writes; fresh restore
+  drives ordinary backwards demand rather than merely inspecting a row writer's output.
+- Gated deletion during fallback reads, between row/state writes, coverage-null writes and observer
+  writes cannot recreate disk content; late writes are also rejected.
+
+These probes use production merges and fresh file-cache instances. Independent live/force-stop
+proof belongs to #1833 and is not established by these tests.
+
+No Compose UI test for the original restore: restored rows draw through the same composables a
+live row does, below the
 existing [`ConnectionBanner`](connection-banner.md) in its offline state. Live continuity across
 a real reconnect — a loaded conversation staying readable while its host link is cut and
 reconciling a peer's turn once the link is restored — is proven live by
@@ -525,7 +499,8 @@ per the dispatcher gate on PR #837's re-review.
 - [Ticket #1354](https://github.com/pyrycode/pyrycode-mobile/issues/1354) and its plan,
   `docs/specs/architecture/1354-saved-history-position.md` — the saved history position
   (`readHistoryPosition`/`writeHistoryPosition`, § above), the `observeMessages` → `writeThread`
-  untrimmed-rows contract, and the accepted gap-filling change; see [Conversation cache § The
+  untrimmed-rows contract, extended by #1832's durable coverage and row-before-state ordering; see
+  [Conversation cache § The
   thread document's two writers](conversation-cache.md#the-thread-documents-two-writers-1354) for
   the cache-side half
 - Split from [#647](https://github.com/pyrycode/pyrycode-mobile/issues/647); ticket

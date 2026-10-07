@@ -10,6 +10,7 @@ import de.pyryco.mobile.data.network.toConversation
 import de.pyryco.mobile.data.network.toConversations
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
@@ -49,6 +50,7 @@ internal class ConversationListProjection {
      * just-folded conversation).
      */
     private val projection = MutableStateFlow<List<Conversation>?>(null)
+    private val snapshotLoaded = MutableStateFlow(false)
 
     /**
      * `conversationId -> most-recent` [Message] seen on this connection's live `message` stream
@@ -80,6 +82,7 @@ internal class ConversationListProjection {
                 return
             }
         projection.value = decoded.toConversations()
+        snapshotLoaded.value = true
     }
 
     /**
@@ -228,6 +231,14 @@ internal class ConversationListProjection {
      * until the first snapshot loads, then each change of [projection] through [project].
      */
     fun observe(filter: ConversationFilter): Flow<List<Conversation>> = projection.filterNotNull().map { project(it, filter) }
+
+    /** Partial upserts are visible, but only a decoded full snapshot establishes absence. */
+    fun observeSnapshots(filter: ConversationFilter): Flow<Pair<List<Conversation>, Boolean>> =
+        combine(projection, snapshotLoaded) { _, loaded ->
+            // Read current rows after the loaded edge, so combine cannot pair an older partial list
+            // with the newer true flag when its two collectors are scheduled in another order.
+            projection.value?.let { project(it, filter) to loaded }
+        }.filterNotNull()
 
     /**
      * Most-recent live [Message] for [conversationId] (#329), a pure cold projection of the shared

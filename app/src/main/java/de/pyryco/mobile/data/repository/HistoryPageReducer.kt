@@ -272,14 +272,20 @@ internal fun List<ThreadItem>.withAssistantDelta(
     timestamp: Instant,
     passOver: Set<String> = emptySet(),
 ): List<ThreadItem> {
-    if (event.seq <= highestSeqOf(event.turnId)) return this
+    // Replay may supply a previously missing hint, but never changes delta identity or placement.
+    val parents =
+        assistantParents().apply {
+            if (event.parentToolUseId.isNotEmpty()) putIfAbsent(event.turnId, event.parentToolUseId)
+        }
+    val rows = withAssistantParents(parents)
+    if (event.seq <= rows.highestSeqOf(event.turnId)) return rows
     val delta = SegmentDelta(event.seq, event.text.length)
     val anchor =
-        indexOfLast { row ->
+        rows.indexOfLast { row ->
             row !is ThreadItem.BackgroundTaskLifecycle &&
                 !(row is ThreadItem.MessageItem && row.message.role == Role.User && row.message.id in passOver)
         }
-    val last = (getOrNull(anchor) as? ThreadItem.MessageItem)?.message
+    val last = (rows.getOrNull(anchor) as? ThreadItem.MessageItem)?.message
     val segment = last?.segment
     if (last != null && last.role == Role.Assistant && segment?.turnId == event.turnId) {
         val extended =
@@ -288,11 +294,11 @@ internal fun List<ThreadItem>.withAssistantDelta(
                 isStreaming = true,
                 segment = segment.copy(deltas = segment.deltas + delta),
             )
-        return toMutableList().apply { this[anchor] = ThreadItem.MessageItem(extended) }
+        return rows.toMutableList().apply { this[anchor] = ThreadItem.MessageItem(extended) }
     }
     val key = segmentKey(event.turnId, event.seq)
-    if (any { it is ThreadItem.MessageItem && it.message.id == key }) return this
-    return this +
+    if (rows.any { it is ThreadItem.MessageItem && it.message.id == key }) return rows
+    return rows +
         ThreadItem.MessageItem(
             Message(
                 id = key,
@@ -302,6 +308,7 @@ internal fun List<ThreadItem>.withAssistantDelta(
                 timestamp = timestamp,
                 isStreaming = true,
                 segment = AssistantSegment(event.turnId, listOf(delta)),
+                parentToolUseId = parents[event.turnId].orEmpty(),
             ),
         )
 }
@@ -482,6 +489,7 @@ internal fun reduceHistoryPage(
 internal class ReducedHistoryPage(
     val rows: List<ThreadItem>,
     val order: Map<Any, Long>,
+    val claims: Map<Any, Set<Long>>,
 )
 
 /** Order belongs to the contextual fold: a falling compaction edge needs its earlier rising edge. */
@@ -491,6 +499,7 @@ internal fun reduceOrderedHistoryPage(
 ): ReducedHistoryPage {
     var compaction = CompactionFold()
     val order = HashMap<Any, Long>()
+    val claims = HashMap<Any, MutableSet<Long>>()
     val rows =
         entries.asReversed().fold(emptyList<ThreadItem>()) { rows, entry ->
             val next =
@@ -516,14 +525,31 @@ internal fun reduceOrderedHistoryPage(
                     val segment = (row as? ThreadItem.MessageItem)?.message?.segment
                     if (segment == null) {
                         order.putIfAbsent(row.mergeIdentity(), logId)
+                        val ids = claims.getOrPut(row.mergeIdentity()) { HashSet() }
+                        if (previous is ThreadItem.CompactionBoundary && previous.mergeIdentity() != row.mergeIdentity()) {
+                            ids.addAll(claims.remove(previous.mergeIdentity()).orEmpty())
+                        }
+                        ids.add(entry.id)
                     } else {
-                        segment.deltas.forEach { delta -> order.putIfAbsent(listOf("delta", segment.turnId, delta.seq), logId) }
+                        val before =
+                            (previous as? ThreadItem.MessageItem)
+                                ?.message
+                                ?.segment
+                                ?.takeIf { it.turnId == segment.turnId }
+                                ?.deltas
+                                .orEmpty()
+                                .map { it.seq }
+                        segment.deltas.forEach { delta ->
+                            val key = listOf("delta", segment.turnId, delta.seq)
+                            order.putIfAbsent(key, logId)
+                            if (delta.seq !in before) claims.getOrPut(key) { HashSet() }.add(entry.id)
+                        }
                     }
                 }
             }
             next
         }
-    return ReducedHistoryPage(rows, order)
+    return ReducedHistoryPage(rows, order, claims)
 }
 
 /**
@@ -814,8 +840,23 @@ private fun List<ThreadItem>.withHistoryLifecyclePositions(
 }
 
 /** Cache-only rows stay beside their retained neighbours, using the same delta reconciliation as pages. */
-internal fun List<ThreadItem>.mergeCachedRows(cached: List<ThreadItem>): List<ThreadItem> =
-    mergeRows(cached, emptyMap(), cacheRestore = true)
+internal fun List<ThreadItem>.mergeCachedRows(
+    cached: List<ThreadItem>,
+    order: Map<Any, Long> = emptyMap(),
+): List<ThreadItem> = mergeRows(cached, order, cacheRestore = true)
+
+/** Resolve persisted hashes once when restoring a base, rather than on every live delta emission. */
+internal fun List<ThreadItem>.receivedHistoryOrder(positions: Map<String, Long>): Map<Any, Long> =
+    if (positions.isEmpty()) {
+        emptyMap()
+    } else {
+        buildMap {
+            this@receivedHistoryOrder.deltaRows().forEach { row ->
+                val identity = row.mergeIdentity()
+                positions[historyIdentity(identity)]?.let { put(identity, it) }
+            }
+        }
+    }
 
 /** Single-delta identities survive different segment boundaries on the history, live and cache lanes. */
 internal fun ThreadItem.mergeIdentity(): Any {
@@ -829,9 +870,14 @@ private fun List<ThreadItem>.mergeRows(
     cacheRestore: Boolean = false,
 ): List<ThreadItem> {
     if (incoming.isEmpty()) return this
-    val hinted = withAttachmentHintsFrom(incoming).withBackgroundTaskHintsFrom(incoming)
+    val parents =
+        assistantParents().apply {
+            incoming.assistantParents().forEach { (turn, parent) -> putIfAbsent(turn, parent) }
+        }
+    val attributedIncoming = incoming.withAssistantParents(parents)
+    val hinted = withAssistantParents(parents).withAttachmentHintsFrom(incoming).withBackgroundTaskHintsFrom(incoming)
     val heldDeltas = hinted.deltaRows()
-    val incomingDeltas = incoming.deltaRows()
+    val incomingDeltas = attributedIncoming.deltaRows()
     val legacy = legacyDeltaMatches(heldDeltas, incomingDeltas)
     val heldAtoms = if (legacy.records.isEmpty()) heldDeltas else heldDeltas.withLegacyRecords(legacy.records).deltaRows()
     val incomingAtoms = if (legacy.records.isEmpty()) incomingDeltas else incomingDeltas.withLegacyRecords(legacy.records).deltaRows()
@@ -984,6 +1030,32 @@ private fun List<Instant>.insertionSlot(timestamp: Instant): Int {
         if (this[middle] < timestamp) low = middle + 1 else high = middle
     }
     return low
+}
+
+/** Attribution is scoped to the caller's conversation and never participates in row/sequence identity. */
+private fun Message.assistantTurnId(): String? = if (role == Role.Assistant) segment?.turnId ?: id else null
+
+private fun List<ThreadItem>.assistantParents(): MutableMap<String, String> =
+    HashMap<String, String>().apply {
+        for (row in this@assistantParents) {
+            val message = (row as? ThreadItem.MessageItem)?.message ?: continue
+            val turn = message.assistantTurnId() ?: continue
+            if (message.parentToolUseId.isNotEmpty()) putIfAbsent(turn, message.parentToolUseId)
+        }
+    }
+
+/** Apply the retained turn hint to every reconstruction candidate, including legacy whole-turn rows. */
+private fun List<ThreadItem>.withAssistantParents(parents: Map<String, String>): List<ThreadItem> {
+    if (parents.isEmpty()) return this
+    return map { row ->
+        val message = (row as? ThreadItem.MessageItem)?.message
+        val parent = message?.assistantTurnId()?.let(parents::get)
+        if (message != null && parent != null && message.parentToolUseId != parent) {
+            ThreadItem.MessageItem(message.copy(parentToolUseId = parent))
+        } else {
+            row
+        }
+    }
 }
 
 private fun ThreadItem.mergeTimestamp(): Instant =
@@ -1192,6 +1264,7 @@ private fun List<ThreadItem>.withJoinedSegments(): List<ThreadItem> {
     var text = StringBuilder()
     var deltas = mutableListOf<SegmentDelta>()
     var streaming = false
+    var parent = ""
 
     fun finish() {
         val first = opener ?: return
@@ -1200,6 +1273,7 @@ private fun List<ThreadItem>.withJoinedSegments(): List<ThreadItem> {
                 first.copy(
                     content = text.toString(),
                     isStreaming = streaming,
+                    parentToolUseId = parent,
                     segment = first.segment?.copy(deltas = deltas.toList()),
                 ),
             )
@@ -1223,6 +1297,7 @@ private fun List<ThreadItem>.withJoinedSegments(): List<ThreadItem> {
             text.append(message.content)
             deltas.addAll(segment.deltas)
             streaming = message.isStreaming
+            if (parent.isEmpty()) parent = message.parentToolUseId
             continue
         }
         finish()
@@ -1233,6 +1308,7 @@ private fun List<ThreadItem>.withJoinedSegments(): List<ThreadItem> {
             text.append(message.content)
             deltas.addAll(segment.deltas)
             streaming = message.isStreaming
+            parent = message.parentToolUseId
         }
     }
     finish()

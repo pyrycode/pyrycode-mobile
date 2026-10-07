@@ -49,14 +49,17 @@ class KeystorePairedServerStore(
 
     override suspend fun loadById(serverId: String): PairedServerEntry? = list().find { it.record.serverId == serverId }
 
-    override suspend fun list(): List<PairedServerEntry> =
+    override suspend fun list(): List<PairedServerEntry> = readSnapshot().getOrDefault(emptyList())
+
+    override suspend fun readSnapshot(): Result<List<PairedServerEntry>> =
         withContext(ioDispatcher) {
             try {
-                decodeEntries(dataStore.data.first()[PREF_KEY])
+                Result.success(decodeEntries(dataStore.data.first()[PREF_KEY]))
             } catch (e: Exception) {
                 val code = failureCode(e) ?: throw e
                 RelayLog.d { "paired_store operation=read status=failed code=$code" }
-                emptyList()
+                // Provider/parser causes may contain credentials; return only the classified code.
+                Result.failure(PairedServerStoreException("paired server read failed: $code"))
             }
         }
 

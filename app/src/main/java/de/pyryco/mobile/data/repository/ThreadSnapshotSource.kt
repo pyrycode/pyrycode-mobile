@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.map
 data class ThreadSnapshot(
     val rows: List<ThreadItem>,
     val suppressedUserMessageIds: Set<String> = emptySet(),
+    /** Received durable positions from the same projection generation; live ids never enter this map. */
+    val historyOrder: Map<Any, Long> = emptyMap(),
 )
 
 /**

@@ -15,17 +15,20 @@ Split on 2026-09-05 to keep this document under the 50000-byte cap the docs guar
 - [Thread screen — previews and edge cases](thread-screen-previews-and-edge-cases.md) — `Previews`, `Edge cases / limitations`
 - [Thread screen — composer drafts and attachments](thread-screen-composer-drafts-and-attachments.md) — split out 2026-09-24: `Composer draft ownership`, `Composer pending attachments`
 
-The sections that stay here: `## What it does`, `Queued rows expose an independent **Send now** action before drop only when the current
+The sections that stay here: `## What it does`, `## Wiring` (minus the two subsections
+above), `## Configuration`, `## Related`.
+
+## What it does
+
+Queued rows expose an independent **Send now** action before drop only when the current
 session's fresh capability report explicitly enables mid-turn input (#1642). Settings replacement,
 session change and owning-host disconnect invalidate stale support. A tap uses the destination's
 repository without confirmation or optimistic row movement; failure uses drop's existing inert
-treatment. Backlog removal does not establish delivered position: the later user-message push does,
-and a late tap can open the next turn. See [queue control and ordering](queued-backlog.md#sending-a-queued-entry-now-1642)
+treatment. Backlog removal does not establish delivered position: the first modern delivered
+push or stored history delivery does, and a late tap can open the next turn. Parked own echoes
+read below the running turn in snapshot FIFO order, independent of temporary store reservations.
+Delayed drain snapshots cannot move an established delivery into its answering reply (#1655). See [queue control and ordering](queued-backlog.md#sending-a-queued-entry-now-1642)
 and [row geometry/accessibility](queued-backlog-section.md#styling).
-
-## Wiring` (minus the two subsections above), `## Configuration`, `## Related`.
-
-## What it does
 
 Opening or reopening a thread shows the current text of a streaming row created
 before opening immediately, even if it has never received `turn_end`. Appended
@@ -81,7 +84,7 @@ and [dispatcher evidence](https://github.com/pyrycode/pyrycode-mobile/issues/128
 
 The five transient readings in the composer's [status band](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643) follow the [input status component `533:1957`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=533-1957), inspected with the [pill variants `347:6618`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=347-6618) and thread `16:8` on 2026-09-29. Thinking has the supplied snowflake glyph; retry, compaction and Reset use a fixed-length rotating arc; outcomes use the shared error pill. Figma specifies no dedicated frame for the latter four readings or their combination with a task pill, so their component treatment is the reference, not a full-screen pixel match.
 
-The running-task pill shares the reading's 24 dp band at normal text scale, or sits at its right end alone. Only this thread caller gives the shared primary-container `NoticePill` a 24 dp minimum height (no minimum width since [#1628](https://github.com/pyrycode/pyrycode-mobile/issues/1628)); its 6 dp corners, `bodySmall` label and 8/4 dp padding follow the inspected Figma task-pill node `568:3162`, whose 104 × 24 dp frame is the hug width of "2 tasks running", not a width floor. The band and pill can grow for larger text. A zero count removes the pill; a live count uses the client-owned singular or plural label. Tapping it opens the same background-task panel as the count-free top menu. The [status-band layout](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643) covers its interaction with readings and nearby controls.
+The running-task pill shares the reading's 24 dp band at normal text scale, or sits at its right end alone. Only this thread caller gives the shared primary-container `NoticePill` a 24 dp minimum height (no minimum width since [#1628](https://github.com/pyrycode/pyrycode-mobile/issues/1628)); its 6 dp corners, `bodySmall` label and 8/4 dp padding follow the inspected Figma task-pill node `568:3162`, whose 104 × 24 dp frame is the hug width of "2 tasks running", not a width floor. The band and pill can grow for larger text. A zero count removes the pill; a live count uses the client-owned singular or plural label. Tapping it opens the same [background-task panel](mobile-modal-callers.md) as the count-free top menu; that topic owns finish-summary visibility and cut-marker behavior. The [status-band layout](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643) covers its interaction with readings and nearby controls.
 
 The [model-refusal row's switch-back offer](model-refusal-row.md#switch-back-1360) owns its failure
 feedback inline. A refused or failed write leaves an enabled retry button and its retry line immediately;

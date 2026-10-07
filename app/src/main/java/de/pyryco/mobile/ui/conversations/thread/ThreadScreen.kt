@@ -22,18 +22,21 @@ import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -69,13 +72,18 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.offset
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalUiState
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.repository.ApiRetryStatus
@@ -87,6 +95,7 @@ import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.components.EditChannelModal
 import de.pyryco.mobile.ui.components.chromeBackdrop
 import de.pyryco.mobile.ui.components.defaultChromeShadow
+import de.pyryco.mobile.ui.conversations.components.AgentStartMarker
 import de.pyryco.mobile.ui.conversations.components.ApiRetryIndicator
 import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
@@ -98,6 +107,7 @@ import de.pyryco.mobile.ui.conversations.components.CompactionBoundaryDivider
 import de.pyryco.mobile.ui.conversations.components.ConnectionStatusIndicator
 import de.pyryco.mobile.ui.conversations.components.EmptyThreadState
 import de.pyryco.mobile.ui.conversations.components.MEMORY_PLUGIN_DOCS_URL
+import de.pyryco.mobile.ui.conversations.components.MessageAreaRowSpacing
 import de.pyryco.mobile.ui.conversations.components.MessageBubble
 import de.pyryco.mobile.ui.conversations.components.MessageContentGutter
 import de.pyryco.mobile.ui.conversations.components.ModelRefusalRow
@@ -240,6 +250,7 @@ fun ThreadScreen(
     // #1352: the reader pulled toward older messages at the thread's oldest end — ask for the next page
     // back. Wired by MainActivity → vm::onDemandOlderHistory, which decides whether the ask is sent.
     onDemandOlderHistory: () -> Unit = {},
+    onDemandHistoryGap: (Long) -> Unit = {},
     // #778: the reader pressed the oldest-end retry affordance. Wired by MainActivity →
     // vm::onRetryOlderHistory, and inert unless the walk stopped on a retryable failure.
     onRetryOlderHistory: () -> Unit = {},
@@ -567,16 +578,38 @@ fun ThreadScreen(
                     remember(state.items, state.queuedMessages) {
                         foldQueuedRows(state.items, state.queuedMessages)
                     }
+                val agentRows =
+                    remember(queuedRows, state.items, state.backgroundTasks) {
+                        foldBackgroundAgentBlocks(queuedRows, state.items, state.backgroundTasks)
+                    }
+                var goToAgent by remember(state.conversationId) { mutableStateOf<String?>(null) }
                 // #1621: the one message whose meta row (timestamp + copy) shows; every other bubble hides it
                 // until tapped. UI-local, keyed by message id so it follows the message as rows arrive.
                 var metaRowMessageId by rememberSaveable { mutableStateOf<String?>(null) }
                 // #1635: with the setting on, each run of adjacent tool rows draws as one header the reader
                 // can open. Which runs are open is UI-local, keyed by each run's first row, and saveable so a
                 // rotation or back-stack return keeps them open, as the tool rows inside keep theirs.
-                var expandedRuns by rememberSaveable { mutableStateOf(emptySet<String>()) }
+                var expandedRuns by rememberSaveable(state.conversationId) { mutableStateOf(emptySet<String>()) }
+                var previousAgentRows by remember(state.conversationId) { mutableStateOf(agentRows) }
+                var pendingOpenTools by rememberSaveable(state.conversationId) { mutableStateOf(emptySet<String>()) }
+                // A late join or parent backfill moves tools between runs. Carry an open run's expansion with them.
+                val carried =
+                    remember(agentRows, previousAgentRows, expandedRuns, pendingOpenTools) {
+                        carryRunExpansion(previousAgentRows, agentRows, expandedRuns, pendingOpenTools)
+                    }
+                val retainedExpandedRuns = carried.expandedRuns
+                SideEffect {
+                    expandedRuns = retainedExpandedRuns
+                    pendingOpenTools = carried.pending
+                    previousAgentRows = agentRows
+                }
                 val rows =
-                    remember(queuedRows, collapseToolUses, expandedRuns) {
-                        if (collapseToolUses) foldToolRuns(queuedRows, expandedRuns) else queuedRows
+                    remember(agentRows, collapseToolUses, retainedExpandedRuns, state.historyMarkers) {
+                        if (collapseToolUses) foldHistoryToolRuns(agentRows, retainedExpandedRuns, state.historyMarkers) else agentRows
+                    }
+                val displayedHistoryMarkers =
+                    remember(agentRows, rows, state.historyMarkers) {
+                        foldedAgentHistoryMarkers(agentRows, rows, state.historyMarkers)
                     }
                 // A backlog item this device minted no echo for is a row of its own, so the empty state
                 // must yield to it (#782 AC #3). When an item *is* matched its echo is a MessageItem, so
@@ -584,12 +617,16 @@ fun ThreadScreen(
                 // #1002: the message area, with the Top overlay pinned over its top edge while the messages
                 // scroll beneath it.
                 Box(modifier = Modifier.fillMaxWidth().weight(1f).testTag("thread-message-region")) {
-                    // #1352: a pull toward older messages is the only history ask. Inert while a page is
-                    // loading, so a second pull sends nothing; the ViewModel still decides the rest.
+                    // Movement can prefetch after a page settles; arrival alone never asks.
+                    // The ViewModel remains the authoritative single-flight and termination gate.
                     val demandOlderHistory by rememberUpdatedState(onDemandOlderHistory)
+                    val demandHistoryGap by rememberUpdatedState(onDemandHistoryGap)
+                    val gapMarkers by rememberUpdatedState(displayedHistoryMarkers)
+                    val gapHeights = remember(state.conversationId) { mutableStateMapOf<Long, Int>() }
                     val historyLoading by rememberUpdatedState(state.historyTail == ThreadHistoryTail.Loading)
                     val pullForOlderHistory = { if (!historyLoading) demandOlderHistory() }
                     if (!state.hasMessages &&
+                        state.historyMarkers.isEmpty() &&
                         state.queuedMessages.isEmpty() &&
                         shownQuestion == null &&
                         openRequest == null &&
@@ -614,8 +651,25 @@ fun ThreadScreen(
                         val listState = rememberLazyListState()
                         val promptRowCount =
                             (shownQuestion?.let { it.batch.questions.size + 2 } ?: 0) +
+                                (if (state.historyMarkers.any { it.beforeRow.isEmpty() }) 1 else 0) +
                                 (if (openRequest != null) PERMISSION_ROW_COUNT else 0) +
                                 (if (answerRejected) 1 else 0)
+                        LaunchedEffect(goToAgent, rows, promptRowCount) {
+                            val agentId = goToAgent ?: return@LaunchedEffect
+                            val run = rows.filterIsInstance<ThreadRow.ToolRun>().firstOrNull { row -> row.tools.any { it.id == agentId } }
+                            if (run != null && !run.expanded) {
+                                expandedRuns = expandedRuns + run.runId
+                            } else {
+                                val index =
+                                    reversedRows.indexOfFirst { row ->
+                                        ((row as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)?.message?.id == agentId
+                                    }
+                                if (index >= 0) {
+                                    listState.scrollToItem(index + promptRowCount)
+                                    goToAgent = null
+                                }
+                            }
+                        }
                         // Info banners retain their keys but render nothing; spacing follows the visible row.
                         val newestRenderedRow =
                             rows.lastOrNull { row ->
@@ -646,12 +700,47 @@ fun ThreadScreen(
                         // #1352: prompt rows take the lowest indices of the reversed list and are never
                         // history, so the oldest thread row sits after them.
                         val oldestRowIndex by rememberUpdatedState(if (rows.isEmpty()) -1 else rows.size + promptRowCount - 1)
-                        val askBandPx by rememberUpdatedState(with(LocalDensity.current) { HistoryAskBand.toPx() })
+                        val currentHistoryRows by rememberUpdatedState(rows)
+                        val historyPromptRows by rememberUpdatedState(promptRowCount)
                         val listPull =
                             remember(listState) {
+                                var gapDemanded = false
                                 OlderHistoryGesture(
-                                    nearOldestEnd = { listState.layoutInfo.isNearOldestEnd(oldestRowIndex, askBandPx) },
-                                    onDemand = pullForOlderHistory,
+                                    nearOldestEnd = {
+                                        visibleHistoryMarker(
+                                            listState.layoutInfo,
+                                            currentHistoryRows,
+                                            historyPromptRows,
+                                            gapMarkers,
+                                            gapHeights,
+                                        ) !=
+                                            null ||
+                                            listState.layoutInfo.isNearOldestEnd(
+                                                oldestRowIndex,
+                                                listState.layoutInfo.viewportSize.height * 2f,
+                                                historyPromptRows,
+                                            )
+                                    },
+                                    onDemand = {
+                                        // A selected gap owns this touch and its fling even after its marker disappears.
+                                        if (!historyLoading && !gapDemanded) {
+                                            val marker =
+                                                visibleHistoryMarker(
+                                                    listState.layoutInfo,
+                                                    currentHistoryRows,
+                                                    historyPromptRows,
+                                                    gapMarkers,
+                                                    gapHeights,
+                                                )
+                                            if (marker != null) {
+                                                gapDemanded = true
+                                                demandHistoryGap(marker.anchor)
+                                            } else {
+                                                demandOlderHistory()
+                                            }
+                                        }
+                                    },
+                                    onStart = { gapDemanded = false },
                                 )
                             }
                         // #1314: one following state, derived from position on every scroll as desktop's
@@ -662,7 +751,16 @@ fun ThreadScreen(
                         FollowNewestEnd(
                             listState = listState,
                             newestRowKey = rows.lastOrNull()?.listKey(rows.lastIndex),
-                            newestRow = rows.lastOrNull(),
+                            newestRow =
+                                remember(rows, agentRows) {
+                                    listOf(
+                                        rows.lastOrNull(),
+                                        agentRows.filterIsInstance<ThreadRow.Delivered>().filter {
+                                            it.agentBlockId !=
+                                                null
+                                        },
+                                    )
+                                },
                             promptIdentity = promptIdentity,
                             promptPresent = questionState != null || openRequest != null,
                             promptRows = promptRowCount,
@@ -708,17 +806,19 @@ fun ThreadScreen(
                                     onCancel = onModalCancel,
                                     alwaysAllowAccepted = alwaysAllowAccepted,
                                     onAlwaysAllowChanged = onAlwaysAllowChanged,
-                                    gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerGutter, vertical = 4.dp),
+                                    gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerGutter),
                                 )
                             }
                             // #1340: a refused answer stays in the slot its card held, above any newer card, until
                             // its X. No frame draws it: Figma 347:6617's Default pill, laid in the page unshadowed.
+                            // Figma 668:3054: the pill sits flush on the stream's own top inset, with no extra
+                            // gutter above it (#1599) — only a bottom gutter separates it from what follows.
                             if (answerRejected) {
                                 item(key = "permission-rejection") {
                                     Box(
                                         Modifier
                                             .fillMaxWidth()
-                                            .padding(horizontal = ComposerGutter, vertical = 4.dp)
+                                            .padding(start = ComposerGutter, end = ComposerGutter, bottom = 4.dp)
                                             .testTag(PERMISSION_REJECTION_TEST_TAG),
                                     ) {
                                         NoticePill(
@@ -755,6 +855,15 @@ fun ThreadScreen(
                                     Box(gutter) { QuestionBatchTitle(pending) }
                                 }
                             }
+                            if (state.historyMarkers.any { it.beforeRow.isEmpty() }) {
+                                item(key = HISTORY_NEWEST_GAPS_KEY) {
+                                    Column {
+                                        gapMarkers.filter { it.beforeRow.isEmpty() }.forEach { marker ->
+                                            HistoryGapRow(marker.anchor, Modifier.onSizeChanged { gapHeights[marker.anchor] = it.height })
+                                        }
+                                    }
+                                }
+                            }
                             itemsIndexed(
                                 items = reversedRows,
                                 // The key derivation and its uniqueness argument live beside the fold, in
@@ -764,15 +873,33 @@ fun ThreadScreen(
                             ) { reversedIndex, row ->
                                 val chronologicalIndex = rows.size - 1 - reversedIndex
                                 ThreadRowContent(rowRelocationSpec) {
+                                    historyMarkersFor(row, gapMarkers).forEach { marker ->
+                                        HistoryGapRow(marker.anchor, Modifier.onSizeChanged { gapHeights[marker.anchor] = it.height })
+                                    }
                                     when (row) {
                                         is ThreadRow.Delivered ->
                                             when (val item = row.item) {
                                                 is ThreadItem.MessageItem ->
                                                     MessageBubble(
                                                         message = item.message,
+                                                        modifier =
+                                                            if (row.agentBlockId ==
+                                                                item.message.id
+                                                            ) {
+                                                                Modifier.testTag("background-agent:${item.message.id}")
+                                                            } else if (row.agentBlockId != null && item.message.role == Role.Assistant) {
+                                                                Modifier
+                                                                    .padding(
+                                                                        start =
+                                                                            MessageAreaRowSpacing *
+                                                                                ((toolDepths[item.message.parentToolUseId] ?: 0) + 1),
+                                                                    ).testTag("background-agent-child:${row.agentBlockId}")
+                                                            } else {
+                                                                Modifier
+                                                            },
                                                         threadOpenedAt = threadOpenedAt,
                                                         toolNestingDepth = toolDepths[item.message.id] ?: 0,
-                                                        joinsNextToolRow = rows.getOrNull(chronologicalIndex + 1).isToolRow(),
+                                                        joinsNextToolRow = row.joinsToolRow(rows.getOrNull(chronologicalIndex + 1)),
                                                         attachmentStates = attachmentStates,
                                                         onAttachmentShown = onAttachmentShown,
                                                         onRetryAttachment = onRetryAttachment,
@@ -832,16 +959,20 @@ fun ThreadScreen(
                                                         null
                                                     },
                                             )
+                                        is ThreadRow.AgentStartMarker ->
+                                            AgentStartMarker(row.description, row.finished, onGoToAgent = { goToAgent = row.agentId })
                                         is ThreadRow.ToolRun ->
-                                            ToolRunRow(
-                                                toolCalls = remember(row.tools) { row.tools.mapNotNull { it.toolCall } },
-                                                expanded = row.expanded,
-                                                onToggle = {
-                                                    expandedRuns =
-                                                        if (row.expanded) expandedRuns - row.runId else expandedRuns + row.runId
-                                                },
-                                                modifier = Modifier.padding(horizontal = MessageContentGutter),
-                                            )
+                                            Box(Modifier.testTag("tool-run:${row.runId}")) {
+                                                ToolRunRow(
+                                                    toolCalls = remember(row.tools) { row.tools.mapNotNull { it.toolCall } },
+                                                    expanded = row.expanded,
+                                                    onToggle = {
+                                                        expandedRuns =
+                                                            if (row.expanded) expandedRuns - row.runId else expandedRuns + row.runId
+                                                    },
+                                                    modifier = Modifier.padding(horizontal = MessageContentGutter),
+                                                )
+                                            }
                                     }
                                 }
                             }
@@ -940,7 +1071,14 @@ fun ThreadScreen(
         )
     }
     if (backgroundTasksOpen) {
-        BackgroundTaskPanel(roster = state.backgroundTasks, onDismiss = { backgroundTasksOpen = false })
+        BackgroundTaskPanel(
+            roster = state.backgroundTasks,
+            onDismiss = { backgroundTasksOpen = false },
+            stopSupported = state.backgroundTaskStopSupported,
+            expandedTaskIds = state.expandedBackgroundTaskIds,
+            pendingTaskIds = state.pendingBackgroundTaskIds,
+            onEvent = onOverflowEvent,
+        )
     }
     WorkspacePicker(
         visible = state.workspacePickerVisible,
@@ -1089,7 +1227,7 @@ private fun ThreadRowContent(
     relocationSpec: BringIntoViewSpec,
     content: @Composable () -> Unit,
 ) {
-    CompositionLocalProvider(LocalBringIntoViewSpec provides relocationSpec) { Box { content() } }
+    CompositionLocalProvider(LocalBringIntoViewSpec provides relocationSpec) { Column { content() } }
 }
 
 /** Keep the drawing viewport full size while relocating focus between the measured chrome surfaces. */
@@ -1270,13 +1408,27 @@ private fun ThreadStatusArea(
     }
 }
 
-/** Account only for ordinary BubbleFrame trailing space; other row kinds own their resting gap (#1630). */
-private fun ordinaryMessageRestAdjustment(
+/**
+ * The extra trailing space under the newest row to drop from the composer's bottom content padding, so the
+ * gap to the status band reads as the frames' 16dp regardless of which row kind sits last (#1630). A plain
+ * `BubbleFrame` rests at 4dp over that baseline; a nested tool row, a bubble carrying attachments, and a
+ * queued row each rest further over it (12dp, 16dp, 8dp) by their own extra bottom space, which this backs
+ * back out. Only the newest rendered row matters — anything behind it does not touch the band.
+ */
+internal fun ordinaryMessageRestAdjustment(
     row: ThreadRow?,
     promptRows: Int,
 ): Dp {
-    val message = ((row as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)?.message
-    return if (promptRows == 0 && message != null && message.toolCall == null && message.attachments.isEmpty()) 4.dp else 0.dp
+    if (promptRows != 0) return 0.dp
+    if (row is ThreadRow.Queued) return 8.dp
+    val delivered = (row as? ThreadRow.Delivered) ?: return 0.dp
+    val message = (delivered.item as? ThreadItem.MessageItem)?.message ?: return 0.dp
+    return when {
+        message.attachments.isNotEmpty() -> 16.dp
+        message.toolCall != null && delivered.agentBlockId != null -> 12.dp
+        message.toolCall == null -> 4.dp
+        else -> 0.dp
+    }
 }
 
 /** Which one reading the status band shows (#1311); see [statusArm]. */
@@ -1381,21 +1533,66 @@ private fun DeleteConfirmationDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
+    val lineHeight = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
+    Dialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.delete_dialog_title)) },
-        text = { Text(stringResource(R.string.delete_dialog_body, displayName)) },
-        confirmButton = {
-            TextButton(onClick = onConfirm) {
-                Text(stringResource(R.string.delete_dialog_confirm))
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier =
+                Modifier
+                    // Reserve screen clearance without counting transparent margins as dialog content.
+                    .layout { measurable, constraints ->
+                        val placeable = measurable.measure(constraints.offset(horizontal = -48.dp.roundToPx()))
+                        layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
+                    }.widthIn(max = 316.dp)
+                    .fillMaxWidth()
+                    .testTag("delete-dialog-surface"),
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ) {
+            Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp)) {
+                Text(
+                    stringResource(R.string.delete_dialog_title),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                    style = MaterialTheme.typography.headlineSmall.copy(lineHeightStyle = lineHeight),
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    stringResource(R.string.delete_dialog_body, displayName),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
+                    style = MaterialTheme.typography.bodyMedium.copy(lineHeightStyle = lineHeight),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                ) {
+                    // Figma 673:3672 reserves 40 dp; the 48 dp targets extend into the blank gaps.
+                    TextButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.frameHeightWithTouchOverflow(top = 4.dp, bottom = 4.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                    ) {
+                        Text(
+                            stringResource(R.string.delete_dialog_cancel),
+                            style = MaterialTheme.typography.labelLarge.copy(lineHeightStyle = lineHeight),
+                        )
+                    }
+                    TextButton(
+                        onClick = onConfirm,
+                        modifier = Modifier.frameHeightWithTouchOverflow(top = 4.dp, bottom = 4.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                    ) {
+                        Text(
+                            stringResource(R.string.delete_dialog_confirm),
+                            style = MaterialTheme.typography.labelLarge.copy(lineHeightStyle = lineHeight),
+                        )
+                    }
+                }
             }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.delete_dialog_cancel))
-            }
-        },
-    )
+        }
+    }
 }
 
 private fun ThreadItem.timestamp(): Instant =

@@ -11,6 +11,7 @@ import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ShortcutManager
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.ParcelFileDescriptor
@@ -64,6 +65,8 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso
@@ -79,6 +82,7 @@ import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
+import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.ATTACHMENT_CHUNK_BYTES
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
@@ -113,6 +117,7 @@ import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_ID
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_STATIC_PUBLIC_KEY
 import de.pyryco.mobile.grantNotificationPermission
 import de.pyryco.mobile.notifications.ATTENTION_CHANNEL_ID
+import de.pyryco.mobile.notifications.NotificationTap
 import de.pyryco.mobile.push.PushTokenSource
 import de.pyryco.mobile.ui.components.CHANNEL_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
@@ -128,6 +133,7 @@ import de.pyryco.mobile.ui.conversations.components.treeHostChannelAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostChatAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostEditTestTag
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
+import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHAT_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.ATTACHMENT_STRIP_TEST_TAG
@@ -327,6 +333,89 @@ class InteractiveStreamE2ETest {
         composeTestRule.assertFinishedReplySystemCopy(hostRepository(serverId), conversationId, REPLY_TIMEOUT_MS)
     }
 
+    /**
+     * #1762 manual: a long plain reply offers a prefix, but Claude may finish while navigation runs.
+     * Pausing Compose cannot fence the backend. A settled reply fails the open-turn checks; it never
+     * qualifies as live reopen evidence. Un-ignore and run this named method to attempt promotion,
+     * recording executed/failed/skipped counts and only accepting a still-open checkpoint.
+     */
+    @Ignore("manual, unproven — Claude can finish between prefix capture and thread reopen; no backend hold")
+    @Test
+    fun interactiveTurn_reopenOngoingReply_showsArrivedPrefixImmediately() {
+        awaitChannelList()
+        awaitConnected()
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val (conversationId, name) = answerChat(serverId, "reopen-stream-")
+        openChatRow(name)
+        val repository = hostRepository(serverId)
+        sendFromPhone(
+            "Write one plain paragraph of at least 800 words about a walk in a forest. " +
+                "Use ordinary words and spaces only, no markdown, lists, headings or tools. Begin writing immediately.",
+        )
+        val captured =
+            runBlocking {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    repository
+                        .observeMessages(conversationId)
+                        .map { rows ->
+                            rows
+                                .filterIsInstance<ThreadItem.MessageItem>()
+                                .map { it.message }
+                                .firstOrNull {
+                                    it.role == Role.Assistant &&
+                                        it.isStreaming &&
+                                        it.content
+                                            .trim()
+                                            .split(Regex("\\s+"))
+                                            .size >= 20
+                                }
+                        }.filterNotNull()
+                        .first()
+                }
+            }
+        val prefix = captured.content
+        assertTrue("capture requires a non-empty substantial prefix", prefix.isNotBlank())
+        val inBubble = hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+        val displayedPrefix = hasText(prefix, substring = true) and inBubble
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(displayedPrefix, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        fun assertStillOpen() {
+            val rows = runBlocking { repository.observeMessages(conversationId).first() }.filterIsInstance<ThreadItem.MessageItem>()
+            assertTrue("a completed reply cannot prove ongoing reopen", rows.any { it.message.id == captured.id && it.message.isStreaming })
+            assertNotEquals(LiveSessionEvent.TurnState.Phase.Idle, runBlocking { repository.observeTurnPhase(conversationId).first() })
+        }
+        assertStillOpen()
+        leaveThread()
+        composeTestRule.onAllNodes(hasTestTag(MESSAGE_BUBBLE_TEST_TAG), useUnmergedTree = true).assertCountEquals(0)
+        val listRow = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(name, substring = true)
+        scrollListTo(listRow)
+        composeTestRule.mainClock.autoAdvance = false
+        try {
+            composeTestRule.onAllNodes(listRow).onFirst().performClick()
+            val body =
+                SemanticsMatcher("streaming caret inside a reply bubble") { node ->
+                    node.config.getOrElse(SemanticsProperties.Text) { emptyList() }.any { it.text.endsWith("▎") }
+                } and inBubble
+            val start = composeTestRule.mainClock.currentTime
+            while (composeTestRule.onAllNodes(body, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()) {
+                check(
+                    composeTestRule.mainClock.currentTime - start < 128,
+                ) { "reopened streaming body did not compose within the frame budget" }
+                runBlocking { delay(250) }
+                composeTestRule.mainClock.advanceTimeByFrame()
+                composeTestRule.waitForIdle()
+            }
+            assertStillOpen()
+            composeTestRule.onNode(displayedPrefix, useUnmergedTree = true).assertIsDisplayed()
+            composeTestRule.onAllNodes(displayedPrefix, useUnmergedTree = true).assertCountEquals(1)
+            assertStillOpen()
+        } finally {
+            composeTestRule.mainClock.autoAdvance = true
+        }
+    }
+
     @Test
     fun interactiveTurn_pingPrompt_streamsPingReplyIntoThread() {
         // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
@@ -349,6 +438,159 @@ class InteractiveStreamE2ETest {
 
         // 5. Match the displayed reply itself; queued prompt removal cannot offset this signal.
         composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+    }
+
+    /**
+     * #1765 manual: observe arrived words in a still-streaming reply, then its complete final body.
+     * Un-ignore only for a named isolated-harness run and restore the ignore afterward. Claude may
+     * finish before the display checkpoint; that fails this observation. Routine curated live runs
+     * do not select it and supply no manual reveal evidence. No delta cadence or deadline is asserted.
+     */
+    @Ignore("manual — transient word reveal; un-ignore for a named observation, see KDoc")
+    @Test
+    fun interactiveTurn_wordReveal_displaysArrivedTextBeforeFinalReply() {
+        awaitChannelList()
+        awaitConnected()
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val (conversationId, name) = answerChat(serverId, "word-reveal-")
+        openChatRow(name)
+        val repository = hostRepository(serverId)
+        // Topic instructions never quote the reply matcher, which comes from the assistant row.
+        val prompt =
+            "Write one plain paragraph of at least 150 words describing a quiet seaside village. " +
+                "Use ordinary prose only, no markdown, headings, lists or tools. Begin writing immediately."
+        sendFromPhone(prompt)
+        val captured =
+            runBlocking {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    repository
+                        .observeMessages(conversationId)
+                        .map { rows ->
+                            rows
+                                .filterIsInstance<ThreadItem.MessageItem>()
+                                .map { it.message }
+                                .firstOrNull {
+                                    it.role == Role.Assistant &&
+                                        it.isStreaming &&
+                                        it.content.trim().contains(' ') &&
+                                        !prompt.contains(it.content.trim(), ignoreCase = true)
+                                }
+                        }.filterNotNull()
+                        .first()
+                }
+            }
+        val prefix = captured.content.trimEnd()
+        assertTrue("the observation needs nonempty assistant text", prefix.isNotBlank())
+        val inBubble = hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+        val displayedPrefix =
+            hasText(prefix, substring = true) and
+                hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG) and !hasClickAction())
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(displayedPrefix, useUnmergedTree = true).fetchSemanticsNodes().size == 1
+        }
+        composeTestRule.onNode(displayedPrefix, useUnmergedTree = true).assertIsDisplayed()
+        val atDisplay =
+            runBlocking { repository.observeMessages(conversationId).first() }
+                .filterIsInstance<ThreadItem.MessageItem>()
+                .single { it.message.id == captured.id }
+                .message
+        assertTrue("the displayed prefix must still belong to the streaming reply", atDisplay.isStreaming)
+        assertNotEquals(LiveSessionEvent.TurnState.Phase.Idle, runBlocking { repository.observeTurnPhase(conversationId).first() })
+
+        val finished =
+            runBlocking {
+                withTimeout(REPLY_TIMEOUT_MS) {
+                    val rows =
+                        repository.observeMessages(conversationId).first { rows ->
+                            rows.filterIsInstance<ThreadItem.MessageItem>().any { it.message.id == captured.id && !it.message.isStreaming }
+                        }
+                    repository.observeTurnPhase(conversationId).first { it == LiveSessionEvent.TurnState.Phase.Idle }
+                    assertTrue(
+                        "the observation must use a tool-free turn",
+                        rows.none {
+                            it is ThreadItem.MessageItem &&
+                                it.message.role == Role.Tool
+                        },
+                    )
+                    rows.filterIsInstance<ThreadItem.MessageItem>().single { it.message.id == captured.id }.message
+                }
+            }
+        assertTrue("the completed reply retains the observed prefix", finished.content.startsWith(prefix))
+        val finalBody = hasText(finished.content.trim()) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG) and hasClickAction())
+        val caret = hasText("▎", substring = true) and inBubble
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(finalBody, useUnmergedTree = true).fetchSemanticsNodes().size == 1 &&
+                composeTestRule.onAllNodes(caret, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+        }
+        composeTestRule.onNode(finalBody, useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onAllNodes(caret, useUnmergedTree = true).assertCountEquals(0)
+    }
+
+    /** #1766: one real reply streams through the parser-led streaming body and settles into the same GFM renderer. */
+    @Test
+    fun interactiveTurn_markdownReply_rendersFormattedBody() {
+        val peer = runningToolPeer()
+        try {
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val (chat, name) = answerChat(twoHostArg(ARG_SERVER_ID), "markdown-reveal-")
+            assertPeerAnswers(peer, chat)
+            openChatRow(name)
+            val stamp = System.currentTimeMillis()
+            val bold = "bold$stamp"
+            val inline = "inline$stamp"
+            val code = "code$stamp"
+            val cell = "cell$stamp"
+            val end = "end$stamp"
+            val body = "**$bold** `$inline`\n\n```text\n$code\n```\n\n| Key | Value |\n| --- | --- |\n| $cell | present |\n\n$end"
+            sendFromPhone(
+                "Reply with exactly the following markdown body, preserving every word and its formatting. " +
+                    "Do not use tools or surround the whole response with another code fence:\n\n" + body,
+            )
+            awaitTurnEnd(peer, chat, 1, "the formatted markdown reply")
+            val reply = assistantText(peer, chat)
+            // A generated fixture that does not contain the requested constructs proves nothing.
+            assertTrue(reply.contains("**$bold**"))
+            assertTrue(reply.contains("`$inline`"))
+            assertTrue(reply.contains("```text"))
+            assertTrue(reply.contains("| $cell | present |"))
+            // The prompt repeats the final paragraph. Select the formatted reply, and require the
+            // finished bubble's details action rather than mistaking a blink-off caret for settlement.
+            val settledReply =
+                hasTestTag(MESSAGE_BUBBLE_TEST_TAG) and hasClickAction() and
+                    hasAnyDescendant(hasText("$bold $inline"))
+            val inReply = hasAnyAncestor(settledReply)
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasText(end) and inReply, useUnmergedTree = true).fetchSemanticsNodes().size == 1 &&
+                    composeTestRule.onAllNodesWithText("▎").fetchSemanticsNodes().isEmpty()
+            }
+            val formatted =
+                composeTestRule
+                    .onNode(hasText("$bold $inline") and inReply, useUnmergedTree = true)
+                    .fetchSemanticsNode()
+                    .config[SemanticsProperties.Text]
+                    .single()
+            assertTrue(
+                formatted.spanStyles.any {
+                    it.item.fontWeight == FontWeight.Bold &&
+                        formatted.text.substring(it.start, it.end) == bold
+                },
+            )
+            assertTrue(
+                formatted.spanStyles.any {
+                    it.item.fontFamily == FontFamily.Monospace &&
+                        formatted.text.substring(it.start, it.end) == inline
+                },
+            )
+            listOf(code, "Key", "Value", cell, "present", end).forEach {
+                composeTestRule.onNode(hasText(it) and inReply, useUnmergedTree = true).assertIsDisplayed()
+            }
+            // The whole reply survives the streaming-to-history boundary with no lost source text.
+            assertEquals(body, reply.trim())
+        } finally {
+            peer.close()
+        }
     }
 
     /**
@@ -3039,6 +3281,8 @@ class InteractiveStreamE2ETest {
 
     /**
      * The composer's Stop control stops a real running turn, and the conversation carries on (#965, rung 3).
+     * The isolated host's instructions are cleared before the fresh session and restored exactly afterwards
+     * (#1721), so its foreground-free default does not contradict this intentional interrupt exercise.
      * The phone's own turn runs [STOP_HOLD_PROMPT]: a command that waits on an event nothing sets, so it
      * never returns on its own and the turn stays open until it is stopped, with no timing involved. The
      * command first raises a permission prompt, which the phone draws as a dialog over the composer; the
@@ -3069,54 +3313,72 @@ class InteractiveStreamE2ETest {
             // 1. A fresh chat on the selected host, its id read off the host's repository as #849 does.
             awaitChannelList()
             awaitConnected()
-            val before = hostConversationIds(serverId)
-            createChat()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
-            }
-            val conversationId = newHostConversationId(serverId, before)
+            // #1721: the harness-supplied server id belongs to its isolated e2e daemon.
+            // Clear before the fresh session starts; the helper restores even after a failed assertion.
+            withClearedHostInstructions(
+                read = {
+                    runBlocking {
+                        withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).requestHostSystemPrompt().getOrThrow().systemPrompt }
+                    }
+                },
+                write = { instructions ->
+                    runBlocking {
+                        withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).setHostSystemPrompt(instructions).getOrThrow() }
+                    }
+                },
+            ) {
+                val before = hostConversationIds(serverId)
+                createChat()
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+                }
+                val conversationId = newHostConversationId(serverId, before)
 
-            // 2. The phone starts the held turn; the peer allows its command once, so the command runs and
-            //    the permission dialog leaves the composer.
-            // Bind the token through a prior peer, as earlier full-suite scenarios do (#1696).
-            // A new static key on the observing peer must fail even when this method runs alone.
-            SecondClientPeer(pairing).use { prior ->
-                peerStep(prior, "open prior peer") { prior.open(CONNECT_TIMEOUT_MS) }
-            }
-            peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
-            sendFromPhone(STOP_HOLD_PROMPT)
-            val modalId =
-                peerStep(peer, "await the held command's permission prompt") { peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS) }
-            peerStep(peer, "allow the prompt once and await its dismissal") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
+                // 2. The phone starts the held turn; the peer allows its command once, so the command runs and
+                //    the permission dialog leaves the composer.
+                // Bind the token through a prior peer, as earlier full-suite scenarios do (#1696).
+                // A new static key on the observing peer must fail even when this method runs alone.
+                SecondClientPeer(pairing).use { prior ->
+                    peerStep(prior, "open prior peer") { prior.open(CONNECT_TIMEOUT_MS) }
+                }
+                peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
+                sendFromPhone(STOP_HOLD_PROMPT)
+                val modalId =
+                    peerStep(
+                        peer,
+                        "await the held command's permission prompt",
+                    ) { peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS) }
+                peerStep(peer, "allow the prompt once and await its dismissal") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
 
-            // 3. Tap the composer's Stop control once no dialog covers it.
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasText(modalCancel)).fetchSemanticsNodes().isEmpty() &&
-                    composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onNode(stopControl).performClick()
+                // 3. Tap the composer's Stop control once no dialog covers it.
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(hasText(modalCancel)).fetchSemanticsNodes().isEmpty() &&
+                        composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isNotEmpty()
+                }
+                composeTestRule.onNode(stopControl).performClick()
 
-            // 4. AC-1: the turn ends as cancelled and the Stop control goes.
-            val turnEnd =
-                peerStep(peer, "await the stopped turn's turn_end") { peer.awaitFrame(conversationId, "turn_end", THREAD_TIMEOUT_MS) }
-            assertEquals(
-                "stopped turn's stop_reason",
-                "cancelled",
-                (turnEnd.payload as? JsonObject)?.get("stop_reason")?.jsonPrimitive?.contentOrNull,
-            )
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isEmpty()
-            }
+                // 4. AC-1: the turn ends as cancelled and the Stop control goes.
+                val turnEnd =
+                    peerStep(peer, "await the stopped turn's turn_end") { peer.awaitFrame(conversationId, "turn_end", THREAD_TIMEOUT_MS) }
+                assertEquals(
+                    "stopped turn's stop_reason",
+                    "cancelled",
+                    (turnEnd.payload as? JsonObject)?.get("stop_reason")?.jsonPrimitive?.contentOrNull,
+                )
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(stopControl).fetchSemanticsNodes().isEmpty()
+                }
 
-            // 5. AC-1: a following message in the same thread gets a real reply, and that turn is the
-            //    conversation's second; the stopped turn's own reply was never drawn.
-            sendFromPhone(PING_PROMPT)
-            awaitPingReplyNamingLayer(peer, serverId, conversationId, priorTurnEnds = 1)
-            peerStep(
-                peer,
-                "await the ping turn's turn_end",
-            ) { peer.awaitFrame(conversationId, "turn_end", THREAD_TIMEOUT_MS, occurrence = 2) }
-            composeTestRule.onAllNodes(hasText(STOP_HOLD_REPLY, ignoreCase = true), useUnmergedTree = true).assertCountEquals(0)
+                // 5. AC-1: a following message in the same thread gets a real reply, and that turn is the
+                //    conversation's second; the stopped turn's own reply was never drawn.
+                sendFromPhone(PING_PROMPT)
+                awaitPingReplyNamingLayer(peer, serverId, conversationId, priorTurnEnds = 1)
+                peerStep(
+                    peer,
+                    "await the ping turn's turn_end",
+                ) { peer.awaitFrame(conversationId, "turn_end", THREAD_TIMEOUT_MS, occurrence = 2) }
+                composeTestRule.onAllNodes(hasText(STOP_HOLD_REPLY, ignoreCase = true), useUnmergedTree = true).assertCountEquals(0)
+            }
         } finally {
             peer.close()
         }
@@ -3309,7 +3571,7 @@ class InteractiveStreamE2ETest {
         }
     }
 
-    /** The foreground thread's real Offline pill retries its owning daemon after six failed dials (#1286). */
+    /** The foreground thread's real Offline pill retries its owning daemon during the actual capped backoff (#1286, #1785). */
     @Test
     fun interactiveTurn_offlineRetry_reconnectsSameHostAndReplies() {
         val serverId = twoHostArg(ARG_SERVER_ID)
@@ -3333,7 +3595,7 @@ class InteractiveStreamE2ETest {
                 }
             assertNull("the old host repository survived the daemon failure", bundle.coordinator.currentRepository.value)
 
-            // The deadline began at the sixth failed dial, before daemon startup and the tap.
+            // The deadline began at the actual capped backoff, before daemon startup and the tap.
             // Recovery must beat the earliest passive dial, even if startup consumes most of the wait.
             fault.start()
             composeTestRule.onNodeWithTag("offline_retry_target").assertIsDisplayed()
@@ -4634,6 +4896,418 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /** #1827: attributed prose belongs only to the real background Agent's collapsible block. */
+    @Test
+    fun interactiveTurn_backgroundAgent_replyStaysUnderAgent() {
+        val fixture = twoHostArg("backgroundAgentFixtureUrl")
+        require(fixture.matches(Regex("http://127\\.0\\.0\\.1:[0-9]+"))) { "invalid background Agent fixture" }
+        val peer = runningToolPeer()
+        val preferences = GlobalContext.get().get<AppPreferences>()
+        val previousCollapse = runBlocking { preferences.collapseToolUses.first() }
+        val allowed = mutableSetOf<String>()
+        val token = "child1827_attributed"
+        try {
+            runBlocking { preferences.setCollapseToolUses(true) }
+            awaitChannelList()
+            awaitConnected()
+            val (chat, name) = answerChat(twoHostArg(ARG_SERVER_ID), "e2e1827-agent-")
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            openChatRow(name)
+            sendFromPhone(
+                "Use Agent once with run_in_background=true, subagent_type=general-purpose and description=Held reply agent. " +
+                    "Give it exactly these instructions: first emit exactly $token as its own ordinary assistant paragraph " +
+                    "before using tools. " +
+                    "Then make two separate foreground Bash calls, each running printf ready1827. " +
+                    "Then run Bash with timeout 180000 in the foreground: " +
+                    "curl --max-time 180 --silent --show-error $fixture/hold-reply . " +
+                    "After that command finishes reply done1827. Do not use any other tool yourself or wait for the agent. " +
+                    "End your own turn immediately with exactly launched1827.",
+            )
+            val launched =
+                allowPromptsUntil(
+                    peer,
+                    chat,
+                    REPLY_TIMEOUT_MS,
+                    "no reply Agent started",
+                    allowed,
+                    frame = "background_task_started",
+                ) {
+                    it.type == "background_task_started" && peer.field(it, "task_type") == "local_agent"
+                }
+            val task = MobileJson.decodeFromJsonElement(BackgroundTaskStartedPayloadDto.serializer(), launched.payload)
+            val agentId = task.toolCallId
+            require(agentId.isNotEmpty()) { "background task omitted its Agent join" }
+            allowPromptsUntil(
+                peer,
+                chat,
+                REPLY_TIMEOUT_MS,
+                "no attributed background prose",
+                allowed,
+                frame = "assistant_delta",
+            ) {
+                it.type == "assistant_delta" &&
+                    peer.field(it, "parent_tool_use_id") == agentId &&
+                    peer
+                        .recorded(chat)
+                        .filter { frame ->
+                            frame.type == "assistant_delta" && peer.field(frame, "parent_tool_use_id") == agentId
+                        }.joinToString("") { frame -> peer.field(frame, "text").orEmpty() }
+                        .contains(token)
+            }
+            allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "launching turn did not end", allowed) { it.type == "turn_end" }
+            allowPromptsUntil(
+                peer,
+                chat,
+                REPLY_TIMEOUT_MS,
+                "reply Agent did not reach its hold",
+                allowed,
+                frame = "background_task_progress",
+            ) {
+                it.type == "background_task_progress" && peer.field(it, "task_id") == task.taskId
+            }
+            val priorEnds = peer.recorded(chat).count { it.type == "turn_end" }
+            sendFromPhone("Reply exactly main1827_continues. Leave the background agent running.")
+            allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "main conversation did not continue", allowed) {
+                it.type == "turn_end" && peer.recorded(chat).count { frame -> frame.type == "turn_end" } > priorEnds
+            }
+            assertTrue(
+                "background Agent must remain running during the main reply",
+                peer.recorded(chat).none {
+                    it.type == "background_task_updated" &&
+                        peer.field(it, "task_id") == task.taskId &&
+                        !peer.field(it, "status").isNullOrEmpty()
+                },
+            )
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                runBlocking { hostRepository().observeMessages(chat).first() }.any {
+                    it is ThreadItem.MessageItem && it.message.role == Role.Assistant && token in it.message.content
+                }
+            }
+            val held =
+                runBlocking { hostRepository().observeMessages(chat).first() }
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .map { it.message }
+                    .filter { it.role == Role.Assistant && token in it.content }
+            assertEquals("one attributed reply segment", 1, held.size)
+            assertEquals(agentId, held.single().parentToolUseId)
+            // Exact paragraph matching excludes the user prompt that names the requested token.
+            val reply = hasText(token)
+            val child = hasTestTag("background-agent-child:$agentId")
+            val run = hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:$agentId"))
+            val expandLabel = string(R.string.tool_run_expand)
+            val closedRun =
+                run and
+                    SemanticsMatcher("closed owned Agent run") {
+                        it.config.getOrNull(SemanticsActions.OnClick)?.label == expandLabel
+                    }
+            val collapseLabel = string(R.string.tool_run_collapse)
+            val openedRun =
+                run and
+                    SemanticsMatcher("opened owned Agent run") {
+                        it.config.getOrNull(SemanticsActions.OnClick)?.label == collapseLabel
+                    }
+            val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
+            list.performScrollToNode(run)
+            composeTestRule.onNode(closedRun).assertExists()
+            composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(0)
+            // ScrollTo uses the drawing viewport; reveal the actual tap center between the chrome bars.
+            composeTestRule.questionAnswerTarget(closedRun).performClick()
+            // Expansion can put this early paragraph outside composition as later tool rows arrive.
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                runCatching { list.performScrollToNode(reply) }.isSuccess &&
+                    composeTestRule.onAllNodes(reply and hasAnyAncestor(child), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.questionAnswerTarget(reply and hasAnyAncestor(child)).assertIsDisplayed()
+            composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(1)
+            composeTestRule.questionAnswerTarget(openedRun).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                runCatching { list.performScrollToNode(closedRun) }.isSuccess &&
+                    composeTestRule.onAllNodes(reply, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+            }
+            composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(0)
+            list.performScrollToNode(inThreadList("main1827_continues"))
+            composeTestRule.onNode(inThreadList("main1827_continues"), useUnmergedTree = true).assertIsDisplayed()
+            sendFromPhone(
+                "Run exactly this Bash command in the foreground: curl --silent --show-error $fixture/release-reply . Then reply released1827.",
+            )
+            allowPromptsUntil(
+                peer,
+                chat,
+                BACKGROUND_FINISH_TIMEOUT_MS,
+                "reply Agent did not finish",
+                allowed,
+                frame = "background_task_updated",
+            ) {
+                it.type == "background_task_updated" &&
+                    peer.field(it, "task_id") == task.taskId &&
+                    !peer.field(it, "status").isNullOrEmpty()
+            }
+        } finally {
+            try {
+                stopTaskFixtureGet(fixture.replace("127.0.0.1", "10.0.2.2") + "/release-reply")
+            } finally {
+                runBlocking { preferences.setCollapseToolUses(previousCollapse) }
+                peer.close()
+            }
+        }
+    }
+
+    /** #1830: Stop acts on a joined, still-held background Bash task; omission is valid completion. */
+    @Test
+    fun interactiveTurn_stopBackgroundTask_completesThenRepliesAgain() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val fixture = twoHostArg("stopTaskFixtureUrl")
+        require(fixture.matches(Regex("http://127\\.0\\.0\\.1:[0-9]+"))) { "invalid Stop task fixture" }
+        val key = System.currentTimeMillis().toString()
+        val deviceFixture = fixture.replace("127.0.0.1", "10.0.2.2") + "/" + key
+        val command = "curl --silent --show-error $fixture/$key/hold"
+        val peer = runningToolPeer()
+        val allowed = mutableSetOf<String>()
+        try {
+            awaitChannelList()
+            awaitConnected()
+            val (chat, name) = answerChat(serverId, "e2e1830-stop-")
+            runningToolPeer().use { prior -> peerStep(prior, "bind prior Stop task peer") { prior.open(CONNECT_TIMEOUT_MS) } }
+            peerStep(peer, "open Stop task peer") { peer.open(CONNECT_TIMEOUT_MS) }
+            openChatRow(name)
+            val coordinator = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)).coordinator
+            runBlocking { withTimeout(THREAD_TIMEOUT_MS) { coordinator.supportsBackgroundTaskStop.first { it } } }
+            val probe = HeldBackgroundTaskProbe(chat, command)
+            sendFromPhone(
+                "Use Bash exactly once with run_in_background=true and timeout=600000. Set command to this exact string: \"$command\". " +
+                    "Do not change the command, add a timeout or wait for the background task. " +
+                    "End your own turn immediately with exactly launched1830. Do not use any other tools.",
+            )
+            allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "held Bash did not join a retained roster", allowed, "background_task_roster") {
+                probe.taskId(peer.recorded(chat)) != null
+            }
+            val taskId = checkNotNull(probe.taskId(peer.recorded(chat))) { "held task lost its roster membership" }
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    while (stopTaskFixtureGet(deviceFixture + "/status") != "held") delay(CACHE_POLL_MS)
+                }
+            }
+            allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "launching background turn did not finish", allowed) { it.type == "turn_end" }
+            assertTrue(
+                "held task finished before Stop",
+                peer.recorded(chat).none {
+                    it.type == "background_task_updated" && peer.field(it, "task_id") == taskId && !peer.field(it, "status").isNullOrEmpty()
+                },
+            )
+            assertTrue("task identity must still be retained", taskId == probe.taskId(peer.recorded(chat)))
+            openBackgroundTasks()
+            val row = hasText("Command") and hasClickAction() and inBackgroundPanel()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(row).fetchSemanticsNodes().size == 1 }
+            composeTestRule.onNode(row).performTouchInput { click() }
+            val stop = hasText(string(R.string.background_tasks_stop)) and hasClickAction() and inBackgroundPanel()
+            composeTestRule.onNode(stop).assertIsDisplayed()
+            assertEquals("hold must remain unreleased before Stop", "held", stopTaskFixtureGet(deviceFixture + "/status"))
+            assertTrue("joined task must remain in the roster before Stop", taskId == probe.taskId(peer.recorded(chat)))
+            val boundary = peer.recorded(chat).size
+            composeTestRule.onNode(stop).performTouchInput { click() }
+            allowPromptsUntil(
+                peer,
+                chat,
+                45_000,
+                "Stop produced no terminal update or roster omission",
+                allowed,
+                "background_task_completion",
+            ) {
+                peer.recorded(chat).drop(boundary).any { frame -> probe.completed(frame, taskId) }
+            }
+            assertEquals("natural release cannot be the completion signal", "held", stopTaskFixtureGet(deviceFixture + "/status"))
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                coordinator.backgroundTasks.value[chat]?.liveCount == 0 &&
+                    composeTestRule
+                        .onAllNodes(hasText(string(R.string.background_tasks_status_running)) and inBackgroundPanel())
+                        .fetchSemanticsNodes()
+                        .isEmpty()
+            }
+            composeTestRule.onAllNodes(stop).assertCountEquals(0)
+            closeBackgroundTasks()
+            val taskPill =
+                SemanticsMatcher("nonzero running task count") { node ->
+                    node.config.getOrNull(SemanticsProperties.ContentDescription)?.any {
+                        Regex("[1-9]\\d* tasks? running").matches(it)
+                    } == true
+                }
+            composeTestRule.onAllNodes(taskPill).assertCountEquals(0)
+            val reply = "stop1830reply$key"
+            sendFromPhone("Reply exactly $reply. Do not use tools.")
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                assistantText(peer, chat).contains(reply) &&
+                    composeTestRule
+                        .onAllNodes(hasText(reply) and inThreadList(reply), useUnmergedTree = true)
+                        .fetchSemanticsNodes()
+                        .isNotEmpty()
+            }
+            composeTestRule.onNode(hasText(reply) and inThreadList(reply), useUnmergedTree = true).assertIsDisplayed()
+        } finally {
+            try {
+                assertEquals("scenario teardown must release the hold", "released", stopTaskFixtureGet(deviceFixture + "/release"))
+            } finally {
+                peer.close()
+            }
+        }
+    }
+
+    /** Test-owned numeric path, never daemon text; the emulator reaches the host through its loopback bridge. */
+    private fun stopTaskFixtureGet(url: String): String {
+        val connection =
+            java.net
+                .URI(url)
+                .toURL()
+                .openConnection() as java.net.HttpURLConnection
+        connection.connectTimeout = 5_000
+        connection.readTimeout = 5_000
+        return try {
+            connection.inputStream.bufferedReader().use { it.readText().take(32) }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    /** #1783: a real background local_agent outlives its launching turn and follows newer phone messages. */
+    @Test
+    fun interactiveTurn_backgroundAgent_followsBottomUntilFinished() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val fixture = twoHostArg("backgroundAgentFixtureUrl")
+        require(fixture.matches(Regex("http://127\\.0\\.0\\.1:[0-9]+"))) { "invalid background Agent fixture" }
+        val peer = runningToolPeer()
+        val preferences = GlobalContext.get().get<AppPreferences>()
+        val previousCollapse = runBlocking { preferences.collapseToolUses.first() }
+        val allowed = mutableSetOf<String>()
+        try {
+            runBlocking { preferences.setCollapseToolUses(true) }
+            awaitChannelList()
+            awaitConnected()
+            val (chat, name) = answerChat(serverId, "e2e1783-agent-")
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            openChatRow(name)
+            val hold = "curl --max-time 180 --silent --show-error $fixture/hold"
+            sendFromPhone(
+                "Use Agent once with run_in_background=true, subagent_type=general-purpose and description=Held background agent. " +
+                    "Give it exactly these instructions: first make two separate foreground Bash calls, " +
+                    "each running printf agent1783_ready. Then run Bash with timeout 180000 in the foreground: $hold . " +
+                    "Wait for that command to finish, then reply done. Do not use any other tool yourself or wait for the agent. " +
+                    "End your own turn immediately with exactly: launched1783.",
+            )
+            val launched =
+                allowPromptsUntil(
+                    peer,
+                    chat,
+                    REPLY_TIMEOUT_MS,
+                    "no background local_agent started",
+                    allowed,
+                    frame = "background_task_started",
+                ) { frame ->
+                    frame.type == "background_task_started" && peer.field(frame, "task_type") == "local_agent"
+                }
+            val task = MobileJson.decodeFromJsonElement(BackgroundTaskStartedPayloadDto.serializer(), launched.payload)
+            val agentId = task.toolCallId
+            require(agentId.isNotEmpty()) { "background task omitted its Agent join" }
+            allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "launching turn did not end", allowed) { it.type == "turn_end" }
+            allowPromptsUntil(
+                peer,
+                chat,
+                REPLY_TIMEOUT_MS,
+                "background Agent did not keep working after its launch",
+                allowed,
+                frame = "background_task_progress",
+            ) {
+                it.type == "background_task_progress" && peer.field(it, "task_id") == task.taskId
+            }
+            assertTrue(
+                "Agent finished before the newer phone message",
+                peer.recorded(chat).none {
+                    it.type == "background_task_updated" &&
+                        peer.field(it, "task_id") == task.taskId &&
+                        !peer.field(it, "status").isNullOrEmpty()
+                },
+            )
+            val newer = "Reply exactly newer1783. Leave the background agent running."
+            val priorEnds = peer.recorded(chat).count { it.type == "turn_end" }
+            sendFromPhone(newer)
+            allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "newer phone turn did not finish", allowed) {
+                it.type == "turn_end" && peer.recorded(chat).count { frame -> frame.type == "turn_end" } > priorEnds
+            }
+            val go = string(R.string.agent_go_to)
+            val marker = hasText(go) and hasClickAction()
+            val header = hasTestTag("background-agent:$agentId")
+            composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(marker)
+            composeTestRule.onNode(marker).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
+            composeTestRule.onNode(header).assertIsDisplayed()
+            val user = composeTestRule.onNode(inThreadList(newer), useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            val agent = composeTestRule.onNode(header).fetchSemanticsNode().boundsInRoot
+            assertTrue("newer phone message must render above the live Agent", user.bottom <= agent.top)
+            assertTrue(
+                "Agent finished before marker navigation",
+                peer.recorded(chat).none {
+                    it.type == "background_task_updated" &&
+                        peer.field(it, "task_id") == task.taskId &&
+                        !peer.field(it, "status").isNullOrEmpty()
+                },
+            )
+            sendFromPhone(
+                "Run exactly this Bash command in the foreground: curl --silent --show-error $fixture/release . Then reply released1783.",
+            )
+            allowPromptsUntil(
+                peer,
+                chat,
+                BACKGROUND_FINISH_TIMEOUT_MS,
+                "background Agent did not finish after release",
+                allowed,
+                frame = "background_task_updated",
+            ) {
+                it.type == "background_task_updated" &&
+                    peer.field(it, "task_id") == task.taskId &&
+                    !peer.field(it, "status").isNullOrEmpty()
+            }
+            awaitNoPromptDialog("permission still covers finished Agent")
+            composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(marker)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(string(R.string.agent_finished)).fetchSemanticsNodes().isNotEmpty()
+            }
+            val later = "Reply exactly later1783."
+            sendFromPhone(later)
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(inThreadList("later1783"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(marker)
+            composeTestRule.onNodeWithText(string(R.string.agent_finished)).assertIsDisplayed()
+            composeTestRule.onNode(marker).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
+            composeTestRule.onNode(header).assertIsDisplayed()
+            // The expanded family can exceed the viewport once it contains prose, so compare list
+            // positions rather than on-screen bounds. The thread list is reversed: a newer row has a
+            // smaller index.
+            val laterId =
+                runBlocking { hostRepository().observeMessages(chat).first() }
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .map { it.message }
+                    .last { it.role == Role.User && "later1783" in it.content }
+                    .id
+            val indexForKey =
+                composeTestRule
+                    .onAllNodes(hasScrollToNodeAction())
+                    .onFirst()
+                    .fetchSemanticsNode()
+                    .config[SemanticsProperties.IndexForKey]
+            val agentIndex = indexForKey("msg:$agentId").takeIf { it >= 0 } ?: indexForKey("tool-run:$agentId")
+            val laterIndex = indexForKey("msg:$laterId")
+            assertTrue("settled Agent ($agentIndex) and later message ($laterIndex) must be listed", agentIndex >= 0 && laterIndex >= 0)
+            assertTrue("later phone message must render below the settled Agent", laterIndex < agentIndex)
+        } finally {
+            try {
+                stopTaskFixtureGet(fixture.replace("127.0.0.1", "10.0.2.2") + "/release")
+            } finally {
+                runBlocking { preferences.setCollapseToolUses(previousCollapse) }
+                peer.close()
+            }
+        }
+    }
+
     /**
      * A running background task's progress shows on its panel card (#1076, #1044). Real claude starts a
      * `general-purpose` subagent, a `local_agent` task the daemon reports with the background-task frames. The
@@ -5154,6 +5828,93 @@ class InteractiveStreamE2ETest {
                     documentName,
                 ).all { composeTestRule.onAllNodes(hasContentDescription(it)).fetchSemanticsNodes().isNotEmpty() }
             }
+            composeTestRule.onNode(hasSetTextAction()).assertTextContains(PING_PROMPT)
+            assertEquals("no automatic send in X", 0, userMessages(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) }))
+            composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the shared-content turn in X did not end") { it.type == "turn_end" }
+            val history = runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) }
+            val named = userMessageAttachmentIds(history)
+            assertEquals("user messages in X", 1, named.size)
+            val ids = named.single()
+            assertEquals("attachment ids in X", 2, ids.distinct().size)
+            val digests = ids.map { sha256(runBlocking { peer.retrieveAttachment(chatX, it, REPLY_TIMEOUT_MS) }.bytes) }
+            assertEquals(setOf(sha256(png), sha256(document)), digests.toSet())
+            val payload = history.single { it.isUserMessage() }.payload as JsonObject
+            assertEquals("peer received the shared text", PING_PROMPT, payload["text"]?.jsonPrimitive?.content)
+            assertEquals("messages in Y", 0, userMessages(runBlocking { peer.history(chatY, THREAD_TIMEOUT_MS) }))
+        } finally {
+            deleteFixtures(inserted)
+            peer.close()
+        }
+    }
+
+    /** Android Direct Share uses the published pair identity; one real Claude turn. */
+    @Test
+    fun interactiveTurn_directShareShortcut_arrivesAtPeerWithItsBytes() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer = runningToolPeer()
+        val inserted = mutableListOf<Uri>()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        try {
+            val stamp = System.currentTimeMillis()
+            val png = pngFixture()
+            val document = documentFixture("shared-$stamp")
+            val pngName = ATTACH_FILE_PREFIX + "shared-$stamp.png"
+            val documentName = ATTACH_FILE_PREFIX + "shared-$stamp.txt"
+            val sources =
+                arrayListOf(
+                    insertDownload(pngName, "image/png", png, inserted),
+                    insertDownload(documentName, TEXT_MIME, document, inserted),
+                )
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val (chatX, nameX) = answerChat(serverId, ATTACH_CHAT_NAME_PREFIX)
+            val (chatY, _) = answerChat(serverId, ATTACH_OTHER_NAME_PREFIX)
+            assertPeerAnswers(peer, chatX)
+            val context = instrumentation.targetContext
+            openChatRow(nameX)
+            val manager = context.getSystemService(ShortcutManager::class.java)
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                manager.dynamicShortcuts.any {
+                    NotificationTap
+                        .target(it.intent) ==
+                        HostConversationTarget(serverId, chatX)
+                }
+            }
+            val shortcut =
+                manager.dynamicShortcuts.single {
+                    NotificationTap
+                        .target(it.intent) ==
+                        HostConversationTarget(serverId, chatX)
+                }
+            composeTestRule.runOnUiThread {
+                context.startActivity(
+                    Intent(context, MainActivity::class.java).apply {
+                        action = Intent.ACTION_SEND_MULTIPLE
+                        type = "*/*"
+                        putExtra(Intent.EXTRA_SHORTCUT_ID, shortcut.id)
+                        putExtra(Intent.EXTRA_TEXT, PING_PROMPT)
+                        putParcelableArrayListExtra(Intent.EXTRA_STREAM, sources)
+                        clipData = ClipData.newRawUri("share", sources.first()).apply { addItem(ClipData.Item(sources.last())) }
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    },
+                )
+            }
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                listOf(
+                    pngName,
+                    documentName,
+                ).all { composeTestRule.onAllNodes(hasContentDescription(it)).fetchSemanticsNodes().isNotEmpty() }
+            }
+            deleteFixtures(inserted)
+            sources.forEach { uri ->
+                assertTrue(
+                    "the original share source must be unreadable",
+                    runCatching { context.contentResolver.openInputStream(uri)?.use { it.read() } }.getOrNull() == null,
+                )
+            }
+            composeTestRule.onAllNodes(hasText("Share to…")).assertCountEquals(0)
             composeTestRule.onNode(hasSetTextAction()).assertTextContains(PING_PROMPT)
             assertEquals("no automatic send in X", 0, userMessages(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) }))
             composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
@@ -8090,8 +8851,13 @@ class InteractiveStreamE2ETest {
         // `python3` command, so it needs permission, which the peer grants — see WAIT_PROMPT for why it is not
         // a `sleep`. STOP_HOLD_REPLY is a token no other prompt asks for; neither text contains "ping".
         const val STOP_HOLD_PROMPT =
-            "Run this exact shell command with your tools in the foreground, not in the background, and without " +
-                "a timeout, then reply with exactly: pyryheld. Command: python3 -c \"import threading; threading.Event().wait()\""
+            "This is a controlled interrupt test on an isolated test host. We are testing the phone's Stop control: " +
+                "a second test client will approve your tool permission prompt once, then the phone will tap Stop " +
+                "to interrupt the running command. The command intentionally waits forever and does no other work. " +
+                "Please run this exact shell command with your tools in the foreground, not in the background, " +
+                "and without a timeout so the turn stays running until Stop is tapped. " +
+                "Only if the command returns normally, reply with exactly: pyryheld. " +
+                "Command: python3 -c \"import threading; threading.Event().wait()\""
         const val STOP_HOLD_REPLY = "pyryheld"
 
         // Pairing-flow production strings (hardcoded in the composables, no resources). PASTE_CODE_LINK is

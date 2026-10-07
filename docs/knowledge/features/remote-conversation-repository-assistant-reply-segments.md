@@ -56,10 +56,26 @@ segment stuck streaming.
 The "last row" a delta extends is picked by `indexOfLast`, skipping any user row whose id is in `passOver` —
 so a delta lands on the running reply even when a user row this device minted sits after it in store order
 but reads below it (a [queued own echo](queued-backlog.md#own-echo-position-a-queued-message-draws-below-the-turn-it-waits-behind-1558)).
-`ThreadProjection.applyAssistantDelta` passes its conversation's queued-echo ids; this history reducer's own
+`ThreadProjection.applyAssistantDelta` passes its conversation's `parked + awaitingPush` user ids; this history reducer's own
 caller passes nothing, since a page is reduced after the fact and carries no notion of "still queued." Without
 this, the echo — appended to the store at tap time, ahead of the reply's first delta — would look like the
 delta's "last row" and the reply would open a second segment below it instead of extending the one above.
+
+**Delivery placement and segment continuity (#1655).** Parked rows read below the running
+turn in queue-entry FIFO order even when legacy reservations have moved their store slots.
+A first modern user delivery fixes a pending own echo at its stream opening; subsequent drain
+snapshots cannot insert it into the answering segment. Row-id deduplication and `(turnId, seq)`
+deduplication alone do not prevent a split: moving the separator after delta 0 leaves delta 1
+on the other side, even if replayed delta 0 is correctly discarded.
+
+History may establish that user row and delta 0 before the first live push. Its ordered merge
+must settle placement eligibility and exact queue-entry consumption atomically, retaining held
+echo metadata, so replay preserves both the separator's position and one uninterrupted reply.
+See [history delivery](remote-conversation-repository-reads-and-thread-store-history-paging.md#history-pages-fold-into-the-same-thread-645).
+A regression needs answering text in the overlap page on either side of the push, and collection
+advanced after each event; final-only StateFlow assertions can hide a transient split. A real
+intervening tool or delivered message still creates a legitimate segment boundary. The bounded
+legacy fallback and no-echo/Codex timing limits are in [Own echo position](queued-backlog.md#legacy-and-no-echo-limits).
 
 ### The seam join
 
@@ -119,6 +135,33 @@ assumption that every lane orders a turn's interleaved rows the same way. A clie
 that assumption structurally (the client decides when its own echo appears; the daemon decides independently
 when it logs the same turn), so any future per-turn join here needs a receiver-owns-the-prefix rule like
 `olderThan`/`segmentHeads`, not a positional one.
+
+### Parent attribution through seams and merges (#1826)
+
+`Message.parentToolUseId` is retained metadata, independent of segment keys and `(turnId, seq)`
+identity. `withAssistantDelta` selects the first non-empty held parent for the same wire turn,
+otherwise the incoming non-empty hint. It applies that value before sequence/key guards, so even a
+duplicate replay can enrich unknown attribution without duplicating text or moving rows. Append and
+new segments inherit it when later deltas omit the hint. Main and two child lanes starting at seq zero
+remain separate; sharing a parent never merges two wire turns.
+
+Before `mergeRows` atomizes either list, it selects the first non-empty held hint per turn; only a
+turn without held attribution takes the first non-empty incoming hint. It applies the winner to
+**every held and incoming reconstruction or replacement candidate**, including conflicting non-empty
+hints. Selecting a winner in a lookup but filling only empty candidates loses the held parent when an
+older incoming opener becomes the reconstructed row, or a legacy whole-turn row replaces it.
+The lookup uses `segment.turnId`, falling back to the bare assistant message id for a legacy row,
+and is local to this conversation's merge. Atom copies and `withJoinedSegments` retain the hint;
+an unattributed opener cannot erase a known parent on rejoin. These copies change attribution only,
+leaving text, duplicate identity, row keys and held-row relative order to the existing merge rules.
+
+`AssistantParentAttributionTest` probes both history and cache paths: conflicting older openers,
+prefix/middle/suffix overlap in both arrival directions, non-recoverable legacy replacement and
+repeated merges. Assertions cover parent, text, keys and held separators/order, alongside older-page
+prepend, duplicate live replay and conversation isolation. Comparing the attributed script with its
+parentless counterpart catches accidental changes to identity or placement. See
+[the cache thread document](conversation-cache.md#layout) for disk-only unknown attribution and
+in-memory reconnect retention.
 
 ### The cache's segment record
 

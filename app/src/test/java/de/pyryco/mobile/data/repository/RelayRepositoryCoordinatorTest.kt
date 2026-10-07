@@ -1804,6 +1804,115 @@ class RelayRepositoryCoordinatorTest {
 
     // ---- helpers ---------------------------------------------------------------------------------
 
+    @Test
+    fun stopSupportTracksOnlyCurrentOpenConnectionAndItsHost() =
+        runTest {
+            val previousLogging = RelayLog.enabled
+            RelayLog.enabled = false
+            val a = newEnv()
+            val b = newEnv()
+            try {
+                assertFalse(a.coordinator.supportsBackgroundTaskStop.value)
+                assertTrue(a.coordinator.stopBackgroundTask("c1", "t1").isFailure)
+                a.connections.value = StubRelayTransport()
+                b.connections.value = StubRelayTransport()
+                runCurrent()
+                assertFalse(a.coordinator.supportsBackgroundTaskStop.value)
+                assertTrue(a.coordinator.stopBackgroundTask("c1", "t1").isFailure)
+                assertTrue(
+                    a.pumps
+                        .single()
+                        .sent
+                        .isEmpty(),
+                )
+                a.pumps.single().open(capabilities = setOf(CAPABILITY_INTERACTIVE, "stop_background_task"))
+                b.pumps.single().open(capabilities = setOf(CAPABILITY_INTERACTIVE))
+                runCurrent()
+                assertTrue(a.coordinator.supportsBackgroundTaskStop.value)
+                assertFalse(b.coordinator.supportsBackgroundTaskStop.value)
+                assertTrue(b.coordinator.stopBackgroundTask("c1", "t1").isFailure)
+                assertTrue(
+                    b.pumps
+                        .single()
+                        .sent
+                        .isEmpty(),
+                )
+                a.pumps.single().closeState()
+                runCurrent()
+                assertFalse(a.coordinator.supportsBackgroundTaskStop.value)
+                assertTrue(a.coordinator.stopBackgroundTask("c1", "t1").isFailure)
+                a.connections.value = StubRelayTransport()
+                runCurrent()
+                assertFalse(a.coordinator.supportsBackgroundTaskStop.value)
+                a.pumps.last().open()
+                runCurrent()
+                assertFalse(a.coordinator.supportsBackgroundTaskStop.value)
+                a.connections.value = null
+                runCurrent()
+                assertFalse(a.coordinator.supportsBackgroundTaskStop.value)
+            } finally {
+                a.coordinator.close()
+                b.coordinator.close()
+                RelayLog.enabled = previousLogging
+            }
+        }
+
+    @Test
+    fun stopSendAndRefusalsStayOnOriginHostAndSwitchAcrossReconnect() =
+        runTest {
+            val previousLogging = RelayLog.enabled
+            RelayLog.enabled = false
+            val a = newEnv()
+            val b = newEnv()
+            val aEvents = collect(a.coordinator.observeBackgroundTaskStopRefusals("c1"))
+            val bEvents = collect(b.coordinator.observeBackgroundTaskStopRefusals("c1"))
+            val otherConversation = collect(a.coordinator.observeBackgroundTaskStopRefusals("other"))
+            try {
+                a.connections.value = StubRelayTransport()
+                b.connections.value = StubRelayTransport()
+                runCurrent()
+                val old = a.pumps.single()
+                val other = b.pumps.single()
+                listOf(old, other).forEach { it.open(capabilities = setOf(CAPABILITY_INTERACTIVE, "stop_background_task")) }
+                runCurrent()
+                assertTrue(a.coordinator.stopBackgroundTask("c1", "shared").isSuccess)
+                assertTrue(b.coordinator.stopBackgroundTask("c1", "shared").isSuccess)
+                assertEquals(1, old.sent.size)
+                assertEquals(1, other.sent.size)
+                assertEquals("stop_background_task", old.sent.single().type)
+                assertEquals(MobileJson.parseToJsonElement("""{"conversation_id":"c1","task_id":"shared"}"""), old.sent.single().payload)
+                Instant.parse(old.sent.single().ts)
+                assertEquals(old.sent.single().id, other.sent.single().id)
+                old.push(RemoteConversationRepositoryStopTaskTest.error(old.sent.single().id))
+                runCurrent()
+                assertEquals(listOf("shared"), aEvents)
+                assertTrue(bEvents.isEmpty())
+                assertTrue(otherConversation.isEmpty())
+                a.coordinator.stopBackgroundTask("c1", "shared")
+                a.connections.value = null
+                runCurrent()
+                old.push(RemoteConversationRepositoryStopTaskTest.error(old.sent.last().id))
+                runCurrent()
+                assertEquals(listOf("shared"), aEvents)
+                assertFalse(a.coordinator.supportsBackgroundTaskStop.value)
+                a.connections.value = StubRelayTransport()
+                runCurrent()
+                val fresh = a.pumps.last()
+                fresh.open(capabilities = setOf(CAPABILITY_INTERACTIVE, "stop_background_task"))
+                runCurrent()
+                a.coordinator.stopBackgroundTask("c1", "new")
+                fresh.push(RemoteConversationRepositoryStopTaskTest.error(fresh.sent.single().id))
+                other.push(RemoteConversationRepositoryStopTaskTest.error(other.sent.single().id))
+                runCurrent()
+                assertEquals(listOf("shared", "new"), aEvents)
+                assertEquals(listOf("shared"), bEvents)
+            } finally {
+                a.coordinator.close()
+                b.coordinator.close()
+                RelayLog.enabled = previousLogging
+            }
+        }
+
     private fun TestScope.newEnv(
         deviceName: String = "",
         pushTokens: Flow<String?> = flowOf(null),

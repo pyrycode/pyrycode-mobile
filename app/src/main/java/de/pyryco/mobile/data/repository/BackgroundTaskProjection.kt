@@ -77,6 +77,8 @@ class FinishedBackgroundTasks {
  */
 internal class BackgroundTaskProjection(
     private val finished: FinishedBackgroundTasks,
+    private val onTaskFinished: (String, String) -> Unit = { _, _ -> },
+    private val onRosterReported: (String, Set<String>) -> Unit = { _, _ -> },
 ) {
     /**
      * `conversationId -> roster`. A conversation with no key has reported nothing, which is distinct from
@@ -149,7 +151,10 @@ internal class BackgroundTaskProjection(
         val conversationId = dto.conversationId
         val update = BackgroundTaskUpdate(dto.patch, dto.status, dto.summary, dto.truncatedFields)
         val terminal = dto.status.isNotEmpty()
-        if (terminal) finished.mark(conversationId, dto.taskId)
+        if (terminal) {
+            finished.mark(conversationId, dto.taskId)
+            onTaskFinished(conversationId, dto.taskId)
+        }
         val roster = mutableRosters.value[conversationId]
         val held = roster?.tasks?.firstOrNull { it.taskId == dto.taskId }
         if (roster == null || held == null) {
@@ -209,6 +214,7 @@ internal class BackgroundTaskProjection(
         val waiting = pending.remove(conversationId).orEmpty()
         val rows = dto.tasks.distinctBy { it.taskId }
         val taskIds = rows.mapTo(mutableSetOf()) { it.taskId }
+        onRosterReported(conversationId, taskIds)
         startedTasks.removeAll { (conversation, taskId) -> conversation == conversationId && taskId !in taskIds }
         finished.retainOnly(conversationId, taskIds)
         val tasks = rows.map { row -> rowTask(conversationId, row, previous[row.taskId], waiting[row.taskId]) }
@@ -277,7 +283,18 @@ internal class BackgroundTaskProjection(
         conversationId: String,
         roster: BackgroundTaskRoster,
     ) {
-        mutableRosters.update { it + (conversationId to roster) }
+        mutableRosters.update { current ->
+            val settled = current[conversationId]?.settledTasks.orEmpty().associateByTo(linkedMapOf()) { it.taskId }
+            roster.tasks.forEach { task ->
+                val held = settled[task.taskId]
+                // Replacement can forget the panel's finish flag before a later roster supplies the join.
+                when {
+                    held != null -> settled[task.taskId] = held.copy(toolCallId = held.toolCallId ?: task.toolCallId)
+                    task.isFinished -> settled[task.taskId] = task
+                }
+            }
+            current + (conversationId to roster.copy(settledTasks = settled.values.toList()))
+        }
     }
 
     private fun BackgroundTask.slots(): Slots = Slots(latestUpdate, finish, progress)

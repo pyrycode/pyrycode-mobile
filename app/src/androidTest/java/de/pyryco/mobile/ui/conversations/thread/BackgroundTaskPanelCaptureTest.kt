@@ -2,7 +2,6 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import android.graphics.Bitmap
 import android.os.Build
-import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.CompositionLocalProvider
@@ -24,13 +23,13 @@ import de.pyryco.mobile.data.model.BackgroundTask
 import de.pyryco.mobile.data.model.BackgroundTaskProgress
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.BackgroundTaskUpdate
+import de.pyryco.mobile.design.Viewport
+import de.pyryco.mobile.design.ViewportRule
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
-import org.junit.rules.TestRule
-import org.junit.runners.model.Statement
 import java.io.File
 
 /** Device captures of the four Figma panel readings using synthetic, fixed task data. */
@@ -38,24 +37,7 @@ class BackgroundTaskPanelCaptureTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
     @get:Rule(order = 0)
-    val viewport =
-        TestRule { base, _ ->
-            object : Statement() {
-                override fun evaluate() {
-                    val size = overrideOf(shell("wm size"))
-                    val density = overrideOf(shell("wm density"))
-                    shell("wm density 160")
-                    shell("wm size 412x892")
-                    try {
-                        instrumentation.waitForIdleSync()
-                        base.evaluate()
-                    } finally {
-                        shell("wm size $size")
-                        shell("wm density $density")
-                    }
-                }
-            }
-        }
+    val viewport = ViewportRule()
 
     @get:Rule(order = 1)
     val rule = createAndroidComposeRule<ComponentActivity>()
@@ -83,10 +65,17 @@ class BackgroundTaskPanelCaptureTest {
         capture("emulator-unreported-412x892.png")
     }
 
+    /** Real pixels for the Figma open row; synthetic text only. */
+    @Test
+    fun stopActionOpenRowAt412By892() {
+        showPanel(stopSupported = true, expanded = setOf("t1"))
+        rule.onNodeWithText("Stop task").assertIsDisplayed()
+        capture("emulator-stop-open-412x892.png", design = "568:890,568:877", date = "2026-10-06")
+    }
+
+    @Viewport("320x640")
     @Test
     fun compactLargeTextKeepsScrolledContentAndCloseGlyphReachable() {
-        shell("wm size 320x640")
-        instrumentation.waitForIdleSync()
         roster = CAPPED
         showPanel(fontScale = 1.5f)
         assertWithinCompactWidth("Partial list (3 not shown)")
@@ -122,18 +111,33 @@ class BackgroundTaskPanelCaptureTest {
         assertTrue("$text ends inside the compact viewport", bounds.right <= 320f)
     }
 
-    private fun showPanel(fontScale: Float = 1f) {
+    private fun showPanel(
+        fontScale: Float = 1f,
+        stopSupported: Boolean = false,
+        expanded: Set<String> = emptySet(),
+    ) {
         rule.setContent {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale)) {
                 PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
-                    if (open) BackgroundTaskPanel(roster = roster, onDismiss = { open = false })
+                    if (open) {
+                        BackgroundTaskPanel(
+                            roster = roster,
+                            onDismiss = { open = false },
+                            stopSupported = stopSupported,
+                            expandedTaskIds = expanded,
+                        )
+                    }
                 }
             }
         }
     }
 
-    private fun capture(name: String) {
+    private fun capture(
+        name: String,
+        design: String = "568:877,568:932,568:981,568:997,563:1054",
+        date: String = "2026-09-30",
+    ) {
         rule.waitForIdle()
         // The dialog's window animation can still be running after Compose becomes idle.
         SystemClock.sleep(600)
@@ -153,19 +157,10 @@ class BackgroundTaskPanelCaptureTest {
         File(output, name).outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
         File(output, "$name.txt").writeText(
             "api=${Build.VERSION.SDK_INT} sizeDp=412x892 density=1.0 fontScale=1.0 staticDark=true " +
-                "nonblank=$realPixels design=568:877,568:932,568:981,568:997,563:1054 date=2026-09-30\n",
+                "nonblank=$realPixels design=$design date=$date\n",
         )
         image.recycle()
     }
-
-    private fun shell(command: String): String =
-        ParcelFileDescriptor
-            .AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command))
-            .bufferedReader()
-            .use { it.readText() }
-
-    private fun overrideOf(output: String): String =
-        output.lineSequence().firstOrNull { it.startsWith("Override") }?.substringAfter(": ") ?: "reset"
 
     private companion object {
         fun task(

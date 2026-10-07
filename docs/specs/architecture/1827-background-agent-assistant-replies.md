@@ -1,0 +1,99 @@
+# Attributed assistant replies in background Agent blocks
+
+## Files read
+
+- `ui/conversations/thread/BackgroundAgentBlocks.kt`: `foldBackgroundAgentBlocks` owns lifecycle joins, running placement, finish anchors and expansion carry.
+- `ui/conversations/thread/ThreadRow.kt`: `foldToolRuns`, `toolNestingDepths` and `listKey` own collapse, depth and identity.
+- `ui/conversations/thread/ThreadFold.kt`: `StreamingTurn`, `reduceDelta` and `render` create the transient assistant row.
+- `ui/conversations/thread/ThreadViewModel.kt`: `threadItems` merges repository snapshots and live events through that fold.
+- `ui/conversations/thread/ThreadScreen.kt`: queued/Agent/run projections, `MessageBubble` and `FollowNewestEnd` consume moved rows.
+- `ui/conversations/thread/ThreadHistoryRows.kt`: `foldHistoryToolRuns` and `historyMarkersFor` keep gap anchors visible through collapse; the oldest-end history overview requires gaps to remain pullable without an automatic ask.
+- `ui/conversations/components/MessageBubble.kt`: `AssistantMessage` already provides the assistant renderer and accepts a modifier.
+- `data/repository/HistoryPageReducer.kt` and `ThreadProjection.kt`: #1826 retains parent hints by existing lane identity, including history overlap.
+- `docs/knowledge/features/thread-screen.md` and `thread-screen-subagent-tool-rows.md`: #1783 separates join evidence, finished knowledge and finish position; do not invent a position from a roster.
+- `docs/knowledge/features/remote-conversation-repository-assistant-reply-segments.md`: repository segments own replay dedup and lane separation.
+- `docs/e2e-interactive-stream.md`, sections `What rung 3 is made of` and `Live mode`: existing bounded hold/release fixture and dispatcher ownership.
+- `InteractiveStreamE2ETest`, `DeterministicInteractiveStreamE2ETest`, `scripts/e2e-emulator.sh` and background-agent fixtures: existing live and deterministic placement proofs.
+- `/Users/juhanailmoniemi/Workspace/Projects/pyrycode/docs/protocol-mobile.md`: assistant lane attribution and Security model are the wire source of truth.
+
+## Design source
+
+**Figma:** https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=795-7158
+
+Inspected design context and screenshot for Agent block `795:7303` inside Running `795:7178`. Its Agent header sits at depth zero, with children inset 16 dp per level. Reuse the existing assistant renderer with this indentation, existing Material theme tokens, Agent marker/header and tool-run control; no new visual component or asset.
+
+## Context
+
+#1826 preserves assistant parents, but background placement currently claims only tool rows and the ViewModel synthetic loses the hint. Child prose can therefore appear as a main reply. Extend the existing display projection without altering repository order, cache or wire contracts. No decision record is needed.
+
+Overlap: #1682, #1689, #1690, #1691, #1693, #1695, #1729, #1766 and #1830 touch the shared e2e file, selector or screen; their changes concern other methods/rendering arms. Keep edits local and additive.
+
+## Design
+
+- Retain a lane's first nonempty parent hint on `StreamingTurn` and copy it onto the synthetic `Message` in `ThreadFold.render`. Existing distinct wire lane ids continue to prevent concatenation across agents.
+- Extend the memoised tool ownership lookup in `foldBackgroundAgentBlocks` to assistant rows via their nonempty parent. Only a chain reaching an existing joined background Agent block claims prose. Empty, missing, cyclic and untracked parents keep ordinary rendering. All claimed rows move once in original loaded order, preserving message ids and segment content. Root header status and placement remain #1783's contracts.
+- `foldToolRuns` treats a contiguous joined block as one collapsible run, including assistant children between tools and a lone Agent with prose. Its `tools` remain tool messages only for count/status/expansion carry; its identity remains the first tool id. Ordinary runs retain their current two-tool threshold and non-tool boundaries. Expansion emits original delivered rows, collapse hides them without modifying content.
+- `ThreadScreen` gives only claimed assistant rows 16 dp times their parent's tool depth plus one. Reuse `MessageBubble` unchanged. A block-child semantic tag identifies ownership for the real and deterministic proofs. Main assistant modifiers and renderer remain unchanged. Existing growth signature already includes all claimed delivered rows.
+
+## State and concurrency model
+
+Pure render-time folds add no jobs, flows, dispatchers or mutable repository state. `threadItems` remains conversation-scoped in `viewModelScope`; existing screen expansion remains conversation-scoped/saveable. Socket closure and reconnect remain owned by `LifecycleConnectionDriver` and the supervisor. History/reconnect snapshots rederive the projection from retained attribution and lifecycle evidence.
+
+## Error handling
+
+Unresolved attribution is ordinary assistant text, not an error. Parent hints are equality/grouping data only and never trigger an action. Existing repository key/delta guards handle duplicate/replayed wire rows; the display fold never mints a new prose identity. No new error branch, IO outcome or logging is introduced.
+
+## Testing strategy
+
+Test first: run new JVM fold/synthetic tests red before production edits. Probe each issue invariant through real projection functions: two agents and a main lane, tool/prose interleaving, empty/missing parents and tasks without Agent rows, running-to-finished, roster replacement, late parent joins, replay and history overlaps at start/middle/end, empty/one-row pages and reconnect-like replacement between steps. Assert content, block ownership and unique keys, avoiding total marker/header counts.
+
+Compose coverage uses the real `ThreadScreen`: collapse on/off and toggling, prose without a child tool, 16 dp indentation, preserved main text and existing background/run/follow regressions. Run affected JVM/shared suites, lint, assemble and Android-test compilation.
+
+Land `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_replyStaysUnderAgent` in the curated live selector. Reuse the bounded loopback hold: a real Agent emits identifiable prose before waiting, a main phone turn continues, and the test verifies parent attribution, nested UI ownership and closed/open/closed visibility. Real daemon/Claude and device IO justify androidTest. Extend the deterministic background-agent fixtures/scenario with attributed prose and an unmatched lane; run the focused scripted scenario. The dispatcher owns full live execution and fresh XML/counts proving the named method passed. No separate focused live run is required by this ticket.
+
+Final checks after last main merge: whole `testDebugUnitTest`, `assembleDebug`, and `scripts/pre-verify.py --gradle` after pushing; forced Spotless included.
+
+Sizing: forecast approximately 1050 written lines including this plan, tests, fixtures and scenario; no new exported declarations, no changed signatures requiring consumer migration, four acceptance criteria and fewer than ten fallback branches. One deliverable: attributed prose belongs to its existing block across all representations.
+
+## Open Questions
+
+None.
+
+## Revisions
+
+2026-10-06: The existing live fixture retains its release event for the full suite. The new scenario uses separate fixed `/hold-reply` and `/release-reply` endpoints with an independent bounded event, so #1783's earlier release cannot end this scenario's background hold. Existing endpoints and ownership remain unchanged.
+
+2026-10-06 (verifier finding 1): `ThreadFold.reduceDelta` learns the first nonempty parent for the current wire lane before its text sequence guard. Replayed and older deltas enrich only unknown attribution, preserving text, sequence, row identity, first-arrival timestamp and settled status; later conflicting hints cannot replace the winner. Fold and ViewModel probes cover replay before any repository update, nested ownership, unique keys, closed/open/closed visibility and repository handoff. Shared screen coverage verifies the visible synthetic moves into the closed block and reveals once at the existing 16 dp indent. This local correction adds no declarations or consumer migrations; the complete ticket remains below 1600 written lines.
+
+2026-10-06 (live gate rework): Give each tool run a semantic ownership tag using its existing run id. Live collapse assertions target the joined Agent run instead of any identically labelled ordinary run. The placement scenario verifies marker navigation to the real Agent header, then closes its containing run before comparing the block anchor with a later phone message; expanded child prose can exceed the lazy viewport. Both scenario holds release in `finally`, and the placement scenario restores its collapse preference. A shared-screen regression with two identically labelled runs proves independent control and lossless child visibility. These changes add no identity scheme, exported declaration, visual treatment or production state.
+
+2026-10-06 (second live gate rework): The fresh two-method live rerun reproduced a timeout waiting for child semantics after opening the Agent run, while the unchanged attention-pill method passed. Scroll the attributed paragraph into the lazy viewport before waiting for nested ownership. On close, wait for the owned header's existing Expand action and absent prose together, so offscreen disposal alone cannot pass the collapse assertion and transient composition cannot fail it. A long-block shared-screen probe checks an early paragraph disposed at the newest end, scrolling it back into view, closing and lossless setting changes. Production grouping, identity and visual treatment are unchanged. Security re-review: these test-only changes consume existing semantic labels and tags; no new trust boundary, input authority, network endpoint, secret sink or production state is introduced.
+
+2026-10-06 (history-gap invariant): `historyGapBeforeChildDoesNotLetItsProseEscapeAClosedAgentRun` failed on the real display fold: the gap boundary forced child prose outside its Agent run. Preserve joined blocks across gap boundaries in `foldHistoryToolRuns`. A display-only marker projection moves markers attached to hidden block rows onto the closed run header, retaining their original anchor/cursor identity; expanded blocks and ordinary rows keep original marker placement. Gap lookup accepts the run header's first tool identity. Screen and pure probes verify closed/open/closed prose, marker visibility and lossless restoration. This adds one internal helper, no types or signature migrations, and stays below 1600 written lines. Security re-review PASS: only existing public row/history identities participate in local equality joins; no content, IO, authority, log sink, coroutine or persistence changes.
+
+2026-10-06 (physical tap evidence): Content-free live diagnostics showed the run still offered Expand after an opening tap, with no composed child. The existing Compose evidence topic documents that semantics scrolling uses the full drawing viewport and can leave a tap under chrome. Reuse `questionAnswerTarget` to move the Agent control's physical tap center between the header and composer before opening/closing, and to check prose readability there. The helper's existing geometry contract is unchanged; the long-block shared probe uses the same path. Temporary diagnostic counters were removed. No production expansion state or pointer geometry changes are required.
+
+2026-10-07 (expanded-header marker ownership, verifier finding 1 at `2f1dae33`): Both extended history-gap probes failed because the first tool's durable marker appeared on its expanded run header and delivered row. `historyMarkersFor` now returns no markers for expanded run headers; closed headers retain projected gaps, and expansion restores markers only to their original delivered rows. Pure and shared-screen probes attach gaps to both the first Agent tool and child prose and assert each anchor occurs exactly once through closed/open/closed and collapse-disabled states. The pure probe checks the entire display projection, original marker placement and unique row keys. Overlap with `feature/1283-notice-placement` changes unrelated history-row comments; this guard remains local. Security re-review PASS: marker lookup consumes only existing row identities and expansion state, introduces no input authority, content rendering, IO, credential/log sink or coroutine, and preserves existing protocol/security boundaries. No declarations or consumer migrations are added; total written work remains below 1600 lines.
+
+## Documentation handoff
+
+- Pending documentation stage: `docs/knowledge/features/thread-screen.md` or owning linked topic, attribution/fallback and collapse behavior.
+- Pending documentation stage: owning oldest-end history topic, gap markers remain on closed Agent run headers and return to their child rows when expanded.
+- Pending documentation stage: `docs/e2e-interactive-stream.md`, new scenario and dispatcher-produced live evidence. Documentation records evidence and does not execute the live proof.
+
+## Security review
+
+**Verdict:** PASS
+
+- [Trust boundaries] `foldBackgroundAgentBlocks` joins only loaded tool ids with existing local-agent/background evidence. Parent strings grant no authority. Missing/cyclic joins preserve text. `ThreadFold.reduceLive` guards conversation identity before `reduceDelta` accepts a first nonempty hint on the same wire lane, independently of text deduplication; a conflicting replay cannot replace known attribution. This changes neither wire validation nor existing bounded assistant rendering.
+- [Tokens] No credential generation, access, storage or lifecycle changes; fixture uses the existing isolated test stack.
+- [Files/storage] No paths, cache keys, persistence, backup or file writes derive from parent ids. Cache migration is outside this ticket.
+- [Android surface] No exported component, deep link, intent, provider or WebView changes. Child prose uses the existing assistant text renderer.
+- [Cryptography] No change to Noise, key storage, nonce management or secret comparison. Equality compares public grouping hints only.
+- [Network/IO] No production network change; frame caps, TLS, timeouts and reconnect backoff remain at their existing boundaries. Live fixture uses fixed bounded loopback hold/release endpoints.
+- [Errors/logs] Pure folds introduce no logs. Parent ids, assistant bodies, tokens and decrypted frames must never be logged. Semantic tags expose only existing public Agent/run ids to tests/accessibility, not extra message content. Live teardown uses fixed validated loopback release paths, never daemon-authored paths.
+- [Concurrency] No new coroutine or shared state. Conversation-scoped fold/expansion cannot group another host/conversation's rows; reconnect reruns pure projection.
+- [Threat model] Malicious relay delay/reorder is covered by replay/history probes and existing Noise protection. Hostile daemon parent cycles/missing joins terminate/fall back. Token theft and UI screenshot/accessibility/keyboard exposure retain existing protections and are unchanged by grouping; no additional credential sink is introduced.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-10-06

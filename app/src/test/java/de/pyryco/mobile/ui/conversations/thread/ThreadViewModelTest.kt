@@ -15,8 +15,10 @@ import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
+import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.reconnected
 import de.pyryco.mobile.data.model.reduce
+import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ConnectionStateSource
@@ -25,6 +27,7 @@ import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.data.repository.HistoryCoverage
 import de.pyryco.mobile.data.repository.HistoryEntry
 import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.HistoryPosition
@@ -38,6 +41,8 @@ import de.pyryco.mobile.data.repository.SystemPromptLimit
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
+import de.pyryco.mobile.data.repository.mergeCachedRows
+import de.pyryco.mobile.data.repository.reduceHistoryPage
 import de.pyryco.mobile.ui.conversations.ThrowingConversationRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -2069,6 +2074,98 @@ class ThreadViewModelTest {
     // ---- #337: accumulate assistant_delta into a growing streaming MessageItem -------------------
 
     @Test
+    fun assistantDeltas_lateParentReplayMovesSyntheticIntoJoinedBlockBeforeRepositoryHandoff() =
+        runTest {
+            val repo = MessagesControllableRepo()
+            val ts = Instant.parse("2026-10-06T10:00:00Z")
+            val agent =
+                ThreadItem.MessageItem(
+                    Message(
+                        "a",
+                        "s",
+                        Role.Tool,
+                        "",
+                        ts,
+                        false,
+                        toolCall = ToolCall("Agent", "", "", inputFields = mapOf("run_in_background" to "true")),
+                    ),
+                )
+            val base = listOf(agent, ThreadItem.BackgroundTaskLifecycle("task-a", ts, "a", "Agent", "local_agent"))
+            repo.messages.value = base
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            val delta = LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "child", 0, "reply")
+            events.emit(delta)
+            advanceUntilIdle()
+            val before =
+                vm.state.value.items
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .single { it.message.id == "child" }
+                    .message
+            events.emit(delta.copy(parentToolUseId = "a"))
+            advanceUntilIdle()
+            val after =
+                vm.state.value.items
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .single { it.message.id == "child" }
+                    .message
+            assertEquals(before.copy(parentToolUseId = "a"), after)
+            assertEquals(base, repo.messages.value) // No repository emission repairs the synthetic.
+            val items = vm.state.value.items
+            val rows = foldBackgroundAgentBlocks(foldQueuedRows(items, emptyList()), items, null)
+            assertEquals("a", rows.filterIsInstance<ThreadRow.Delivered>().single { it.item == ThreadItem.MessageItem(after) }.agentBlockId)
+            val keys = rows.mapIndexed { i, row -> row.listKey(i) }
+            assertEquals(keys.distinct(), keys)
+            for (expanded in listOf(emptySet(), setOf("a"), emptySet())) {
+                val visible = foldToolRuns(rows, expanded)
+                val replies =
+                    visible
+                        .filterIsInstance<ThreadRow.Delivered>()
+                        .mapNotNull { (it.item as? ThreadItem.MessageItem)?.message }
+                        .filter { it.id == "child" }
+                assertEquals(if (expanded.isEmpty()) emptyList() else listOf(after), replies)
+                val visibleKeys = visible.mapIndexed { i, row -> row.listKey(i) }
+                assertEquals(visibleKeys.distinct(), visibleKeys)
+            }
+            repo.messages.value = base + ThreadItem.MessageItem(after.copy(isStreaming = false))
+            advanceUntilIdle()
+            assertEquals(
+                listOf(after.copy(isStreaming = false)),
+                vm.state.value.items
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .filter { it.message.id == "child" }
+                    .map { it.message },
+            )
+            collector.cancel()
+        }
+
+    @Test
+    fun assistantDeltas_syntheticRowRetainsEachWireLanesParent() =
+        runTest {
+            val repo = MessagesControllableRepo()
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            for ((lane, parent) in listOf("main" to "", "child-a" to "agent-a", "child-b" to "agent-b")) {
+                events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, lane, 0, lane, parent))
+                advanceUntilIdle()
+                val message =
+                    vm.state.value.items
+                        .filterIsInstance<ThreadItem.MessageItem>()
+                        .single()
+                        .message
+                assertEquals(lane, message.id)
+                assertEquals(lane, message.content)
+                assertEquals(parent, message.parentToolUseId)
+            }
+            collector.cancel()
+        }
+
+    @Test
     fun assistantDeltas_produceSingleGrowingStreamingMessage() =
         runTest {
             val repo = MessagesControllableRepo()
@@ -3694,8 +3791,10 @@ class ThreadViewModelTest {
             navCollector.cancel()
         }
 
+    // #1651: Delete follows Archive's precedent — tapped from the Channel Info sheet, it closes that
+    // sheet too, so Figma's confirmation dialog draws over the canvas rather than over the sheet's scrim.
     @Test
-    fun onOverflowEvent_delete_opensConfirmDialogWithoutDeletingOrNavigating() =
+    fun onOverflowEvent_delete_opensConfirmDialogAndClosesTheSheetWithoutDeletingOrNavigating() =
         runTest {
             val repo = RecordingRepo()
             val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
@@ -3710,7 +3809,7 @@ class ThreadViewModelTest {
             advanceUntilIdle()
 
             assertTrue(vm.state.value.deleteConfirmVisible)
-            assertTrue(vm.state.value.channelInfoOpen)
+            assertFalse(vm.state.value.channelInfoOpen)
             assertTrue(repo.deleteCalls.isEmpty())
             assertTrue(navEvents.isEmpty())
             collector.cancel()
@@ -3718,7 +3817,7 @@ class ThreadViewModelTest {
         }
 
     @Test
-    fun onOverflowEvent_deleteDismiss_closesConfirmKeepsSheetWithoutDeleting() =
+    fun onOverflowEvent_deleteDismiss_closesConfirmWithoutReopeningTheSheetOrDeleting() =
         runTest {
             val repo = RecordingRepo()
             val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
@@ -3735,7 +3834,7 @@ class ThreadViewModelTest {
             advanceUntilIdle()
 
             assertFalse(vm.state.value.deleteConfirmVisible)
-            assertTrue(vm.state.value.channelInfoOpen)
+            assertFalse(vm.state.value.channelInfoOpen)
             assertTrue(repo.deleteCalls.isEmpty())
             collector.cancel()
         }
@@ -4244,7 +4343,10 @@ class ThreadViewModelTest {
             advanceUntilIdle()
 
             assertEquals(listOf(""), repo.asks)
-            assertEquals(listOf<HistoryPosition?>(HistoryPosition("c1", atStart = false)), repo.positionWrites)
+            assertEquals(
+                listOf<HistoryPosition?>(HistoryPosition("c1", atStart = false)),
+                repo.positionWrites.map { it?.copy(coverage = null) },
+            )
             assertEquals(
                 listOf("m1"),
                 vm.state.value.items
@@ -4253,6 +4355,7 @@ class ThreadViewModelTest {
             )
             assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
             collector.cancel()
+            assertEquals(List(repo.asks.size) { 200 }, repo.limits)
         }
 
     @Test
@@ -4277,11 +4380,15 @@ class ThreadViewModelTest {
             }
             assertEquals(listOf("", "", ""), repo.asks)
             // Only the first page was the walk's own; the returns' asks leave its position alone.
-            assertEquals(listOf<HistoryPosition?>(HistoryPosition("c1", atStart = false)), repo.positionWrites)
+            assertEquals(
+                List<HistoryPosition?>(3) { HistoryPosition("c1", atStart = false) },
+                repo.positionWrites.map { it?.copy(coverage = null) },
+            )
+            assertEquals(List(repo.asks.size) { 200 }, repo.limits)
         }
 
     @Test
-    fun history_aPullBeforeTheOpeningAskClaimsTheSlot_isTheOnlyAsk() =
+    fun history_aPullBeforePositionSeedingIsDropped_andOnlyTheOpeningAskRuns() =
         runTest {
             val gate = CompletableDeferred<Unit>()
             val available = MutableStateFlow(true)
@@ -4291,7 +4398,7 @@ class ThreadViewModelTest {
             vm.onDemandOlderHistory()
             gate.complete(Unit)
             advanceUntilIdle()
-            // One ask from the newest; the opening ask found the walk already started and asked nothing.
+            // The pull is dropped while seeding; opening asks once from the newest after the seed arrives.
             assertEquals(listOf(""), repo.asks)
         }
 
@@ -4308,6 +4415,7 @@ class ThreadViewModelTest {
             advanceUntilIdle()
             // Echoed unexamined — the VM never parses or rebuilds what the daemon handed back.
             assertEquals(listOf("", "c1"), repo.asks)
+            assertEquals(List(repo.asks.size) { 200 }, repo.limits)
         }
 
     @Test
@@ -4438,6 +4546,7 @@ class ThreadViewModelTest {
             assertEquals(listOf("m1"), messageIds(vm))
             assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
             collector.cancel()
+            assertEquals(List(repo.asks.size) { 200 }, repo.limits)
         }
 
     @Test
@@ -4558,16 +4667,16 @@ class ThreadViewModelTest {
             assertEquals(listOf("", "", "c1"), repo.asks)
 
             // A page in flight across a reconnect still settles into the walk: its cursor stays valid. The
-            // return's newest-page ask finds the slot taken and is dropped.
+            // return's newest-page ask waits for the outstanding page.
             available.value = false
             available.value = true
             advanceUntilIdle()
             gate.complete(page(cursor = "c2"))
             advanceUntilIdle()
-            assertEquals(listOf("", "", "c1"), repo.asks)
+            assertEquals(listOf("", "", "c1", ""), repo.asks)
             vm.onDemandOlderHistory()
             advanceUntilIdle()
-            assertEquals(listOf("", "", "c1", "c2"), repo.asks)
+            assertEquals(listOf("", "", "c1", "", "c2"), repo.asks)
         }
 
     @Test
@@ -4674,13 +4783,16 @@ class ThreadViewModelTest {
             assertEquals(listOf("m1", "m2", "m3"), messageIds(vm))
             assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
             // ...and the walk's saved position is untouched.
-            assertEquals(emptyList<HistoryPosition?>(), repo.positionWrites)
+            assertEquals(listOf<HistoryPosition?>(repo.saved?.copy(coverage = null)), repo.positionWrites.map { it?.copy(coverage = null) })
 
             vm.onDemandOlderHistory()
             advanceUntilIdle()
 
             assertEquals(listOf("", "saved-cursor"), repo.asks)
-            assertEquals(listOf<HistoryPosition?>(HistoryPosition("older", atStart = false)), repo.positionWrites)
+            assertEquals(
+                listOf<HistoryPosition?>(HistoryPosition("saved-cursor", false), HistoryPosition("older", false)),
+                repo.positionWrites.map { it?.copy(coverage = null) },
+            )
             collector.cancel()
         }
 
@@ -4710,7 +4822,10 @@ class ThreadViewModelTest {
             vm.onDemandOlderHistory()
             advanceUntilIdle()
             assertEquals(listOf("", "", "", "saved-cursor"), repo.asks)
-            assertEquals(listOf<HistoryPosition?>(HistoryPosition("c9", atStart = false)), repo.positionWrites)
+            assertEquals(
+                List<HistoryPosition?>(3) { HistoryPosition("saved-cursor", false) } + HistoryPosition("c9", false),
+                repo.positionWrites.map { it?.copy(coverage = null) },
+            )
         }
 
     @Test
@@ -4796,7 +4911,10 @@ class ThreadViewModelTest {
 
             assertEquals(listOf(""), repo.asks)
             // Even an empty page sets the position.
-            assertEquals(listOf<HistoryPosition?>(HistoryPosition("", atStart = true)), repo.positionWrites)
+            assertEquals(
+                listOf<HistoryPosition?>(HistoryPosition("", atStart = true)),
+                repo.positionWrites.map { it?.copy(coverage = null) },
+            )
         }
 
     @Test
@@ -4813,11 +4931,10 @@ class ThreadViewModelTest {
             gate.complete(Unit)
             advanceUntilIdle()
 
-            // #1572: the opening newest-page ask, waiting on the same read, claims the slot first and the
-            // waiting pulls are dropped under the single-request rule. No ask carried the empty cursor as
-            // the walk's: the next pull asks with the saved one.
+            // Prefetch during seeding was dropped. Only the opening newest-page ask waited for
+            // the seed; the next actual pull asks with the saved backwards cursor.
             assertEquals(listOf(""), repo.asks)
-            assertEquals(emptyList<HistoryPosition?>(), repo.positionWrites)
+            assertEquals(listOf<HistoryPosition?>(repo.saved?.copy(coverage = null)), repo.positionWrites.map { it?.copy(coverage = null) })
             vm.onDemandOlderHistory()
             advanceUntilIdle()
             assertEquals(listOf("", "saved-cursor"), repo.asks)
@@ -4837,7 +4954,7 @@ class ThreadViewModelTest {
             repeat(3) { vm.onDemandOlderHistory() }
             advanceUntilIdle()
             assertEquals(listOf(""), repo.asks)
-            assertEquals(emptyList<HistoryPosition?>(), repo.positionWrites)
+            assertEquals(listOf<HistoryPosition?>(repo.saved?.copy(coverage = null)), repo.positionWrites.map { it?.copy(coverage = null) })
 
             available.value = false
             advanceUntilIdle()
@@ -4868,8 +4985,8 @@ class ThreadViewModelTest {
             }
 
             assertEquals(listOf("", "saved-cursor", "saved-cursor"), repo.asks)
-            assertEquals(emptyList<HistoryPosition?>(), repo.positionWrites)
-            assertEquals(saved, repo.saved)
+            assertEquals(listOf<HistoryPosition?>(saved), repo.positionWrites.map { it?.copy(coverage = null) })
+            assertEquals(saved, repo.saved?.copy(coverage = null))
         }
 
     @Test
@@ -4884,8 +5001,11 @@ class ThreadViewModelTest {
             advanceUntilIdle()
             vm.onDemandOlderHistory()
             advanceUntilIdle()
-            // #1572: the opening newest-page ask wrote nothing; the refusal clears the position.
-            assertEquals(listOf<HistoryPosition?>(null), repo.positionWrites)
+            // The opening newest page saved coverage; the backwards cursor refusal clears the position.
+            assertEquals(
+                listOf<HistoryPosition?>(HistoryPosition("stale-cursor", false), null),
+                repo.positionWrites.map { it?.copy(coverage = null) },
+            )
             assertEquals(null, repo.saved)
 
             // The next open starts from the newest page...
@@ -4899,6 +5019,270 @@ class ThreadViewModelTest {
             advanceUntilIdle()
             assertEquals(listOf("", "stale-cursor", ""), repo.asks)
         }
+
+    @Test
+    fun history_availabilityDuringAnOlderAsk_isDeferredExactlyOnce() =
+        runTest {
+            val older = CompletableDeferred<HistoryPage>()
+            val available = MutableStateFlow(true)
+            val repo =
+                HistoryRepo(saved = HistoryPosition("older", false)) { cursor ->
+                    if (cursor.isEmpty()) page("newest") else older.await()
+                }
+            val vm = makeVm(historyHandle(), repo, repositoryAvailable = available)
+            advanceUntilIdle()
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+            available.value = false
+            advanceUntilIdle()
+            available.value = true
+            advanceUntilIdle()
+            assertEquals(listOf("", "older"), repo.asks)
+            older.complete(page("next-older"))
+            advanceUntilIdle()
+            assertEquals(listOf("", "older", ""), repo.asks)
+        }
+
+    @Test
+    fun history_multipleAvailabilityArrivalsDuringAnOlderAsk_areEachPreserved() =
+        runTest {
+            val gate = CompletableDeferred<HistoryPage>()
+            val available = MutableStateFlow(true)
+            val repo =
+                HistoryRepo(saved = HistoryPosition("older", false)) { cursor ->
+                    if (cursor.isEmpty()) {
+                        page("newest")
+                    } else {
+                        gate.await()
+                    }
+                }
+            val vm = makeVm(historyHandle(), repo, repositoryAvailable = available)
+            advanceUntilIdle()
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+            repeat(2) {
+                available.value = false
+                advanceUntilIdle()
+                available.value = true
+                advanceUntilIdle()
+            }
+            assertEquals(listOf("", "older"), repo.asks)
+            gate.complete(page("next-older"))
+            advanceUntilIdle()
+            assertEquals(listOf("", "older", "", ""), repo.asks)
+        }
+
+    @Test
+    fun history_closedConversationCancelsDeferredAvailability_andCannotAskForAnotherThread() =
+        runTest {
+            val gate = CompletableDeferred<HistoryPage>()
+            val available = MutableStateFlow(true)
+            val repo =
+                HistoryRepo(saved = HistoryPosition("older", false)) { cursor ->
+                    if (cursor.isEmpty()) {
+                        page("newest")
+                    } else {
+                        gate.await()
+                    }
+                }
+            val vm = makeVm(historyHandle(), repo, repositoryAvailable = available)
+            val store = ViewModelStore().apply { put("vm", vm) }
+            advanceUntilIdle()
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+            available.value = false
+            advanceUntilIdle()
+            available.value = true
+            advanceUntilIdle()
+            store.clear()
+            gate.complete(page("next-older"))
+            advanceUntilIdle()
+            available.value = false
+            advanceUntilIdle()
+            available.value = true
+            advanceUntilIdle()
+            assertEquals(listOf("", "older"), repo.asks)
+        }
+
+    @Test
+    fun history_anEarlierEmptyTerminalPageCannotBlockDemandAfterReconnect() =
+        runTest {
+            val available = MutableStateFlow(true)
+            var pages = 0
+            val repo =
+                HistoryRepo {
+                    if (pages++ == 0) HistoryPage(emptyList(), "", true) else durablePage(9, cursor = "eight")
+                }
+            val vm = makeVm(historyHandle(), repo, repositoryAvailable = available)
+            advanceUntilIdle()
+            available.value = false
+            advanceUntilIdle()
+            available.value = true
+            advanceUntilIdle()
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+            assertEquals(listOf("", "", "eight"), repo.asks)
+        }
+
+    @Test
+    fun history_unknownAndKnownMarkersSharingAnEdge_remainInChronologicalOrder() =
+        runTest {
+            val coverage = HistoryCoverage(unknown = true).received(durablePage(1, cursor = "older"))
+            val repo = HistoryRepo(saved = HistoryPosition("older", true, coverage)) { durablePage(9, cursor = "eight") }
+            val vm = makeVm(historyHandle(), repo)
+            val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals(
+                listOf(0L, 1L),
+                vm.state.value.historyMarkers
+                    .map { it.anchor },
+            )
+            assertTrue(
+                vm.state.value.historyMarkers
+                    .all { it.beforeRow.isEmpty() },
+            )
+            collector.cancel()
+        }
+
+    @Test
+    fun history_aRefusedBackwardsCursor_resetsOnlyThatWalk_andKeepsDurableGaps() =
+        runTest {
+            val coverage = HistoryCoverage().received(durablePage(1, 2, cursor = "oldest"))
+            val repo =
+                HistoryRepo(saved = HistoryPosition("oldest", false, coverage)) { cursor ->
+                    if (cursor.isEmpty()) {
+                        durablePage(8, 9, cursor = "seven")
+                    } else {
+                        throw RelayErrorException("history.invalid_cursor", false, "untrusted")
+                    }
+                }
+            val vm = makeVm(historyHandle(), repo)
+            advanceUntilIdle()
+            val gaps = repo.saved?.coverage?.gaps
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+            assertEquals(listOf("", "oldest"), repo.asks)
+            assertEquals("", repo.saved?.cursor)
+            assertEquals(false, repo.saved?.atStart)
+            assertEquals(gaps, repo.saved?.coverage?.gaps)
+            assertEquals("seven", repo.saved?.coverage?.cursorFor(2))
+        }
+
+    @Test
+    fun history_gapPullCostsOnePage_keepsSavedAtStart_andRefusalWaitsForAnotherPull() =
+        runTest {
+            val old = durablePage(1, 2, cursor = "oldest")
+            var refuse = true
+            val repo =
+                HistoryRepo(saved = HistoryPosition("oldest", true, HistoryCoverage().received(old))) { cursor ->
+                    when (cursor) {
+                        "" -> durablePage(8, 9, cursor = "seven")
+                        "seven" ->
+                            if (refuse) {
+                                refuse = false
+                                throw RelayErrorException("history.invalid_cursor", false, "opaque-cursor-secret")
+                            } else {
+                                durablePage(6, 7, cursor = "five")
+                            }
+                        else -> durablePage(3, 4, 5, cursor = "two")
+                    }
+                }
+            val vm = makeVm(historyHandle(), repo)
+            advanceUntilIdle()
+            assertEquals(9L, repo.saved?.coverage?.highWater)
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+            assertEquals(listOf(""), repo.asks)
+            vm.onDemandHistoryGap(2)
+            advanceUntilIdle()
+            assertEquals(listOf("", "seven"), repo.asks)
+            assertEquals(
+                1,
+                repo.saved
+                    ?.coverage
+                    ?.gaps
+                    ?.size,
+            )
+            vm.onDemandHistoryGap(2)
+            advanceUntilIdle()
+            // The refused newest cursor cannot be reused; empty is the only usable fallback.
+            assertEquals(listOf("", "seven", ""), repo.asks)
+            vm.onDemandHistoryGap(2)
+            advanceUntilIdle()
+            assertEquals(listOf("", "seven", "", "seven"), repo.asks)
+            assertEquals("five", repo.saved?.coverage?.cursorFor(2))
+            vm.onDemandHistoryGap(2)
+            advanceUntilIdle()
+            assertEquals(listOf("", "seven", "", "seven", "five"), repo.asks)
+            assertTrue(
+                repo.saved
+                    ?.coverage
+                    ?.gaps
+                    ?.isEmpty() == true,
+            )
+            assertEquals("oldest", repo.saved?.cursor)
+            assertTrue(repo.saved?.atStart == true)
+            assertTrue(logs.none { it.contains("seven") || it.contains("opaque-cursor-secret") })
+            assertEquals(List(repo.asks.size) { 200 }, repo.limits)
+        }
+
+    @Test
+    fun history_legacyOverlapMovesItsMarker_butOnlyAnEmptyTerminalPageClosesIt() =
+        runTest {
+            lateinit var repo: HistoryRepo
+            repo =
+                HistoryRepo(saved = HistoryPosition("", true, HistoryCoverage(unknown = true))) { cursor ->
+                    val page =
+                        when (cursor) {
+                            "" -> durablePage(9, 10, cursor = "eight")
+                            "eight" -> durablePage(8, 9, cursor = "terminal")
+                            else -> HistoryPage(emptyList(), "", true)
+                        }
+                    repo.messages.value = repo.messages.value.mergeCachedRows(reduceHistoryPage(page.entries, true))
+                    page
+                }
+            repo.messages.value = reduceHistoryPage(durablePage(9, cursor = "").entries, true)
+            val vm = makeVm(historyHandle(), repo)
+            val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals(
+                0L,
+                vm.state.value.historyMarkers
+                    .single()
+                    .anchor,
+            )
+            assertTrue(repo.saved?.coverage?.unknown == true)
+            vm.onDemandHistoryGap(0)
+            advanceUntilIdle()
+            assertTrue(repo.saved?.coverage?.unknown == true)
+            assertEquals(8L, repo.saved?.coverage?.unknownEdge)
+            assertEquals(3, vm.state.value.items.size)
+            vm.onDemandHistoryGap(0)
+            advanceUntilIdle()
+            assertEquals(listOf("", "eight", "terminal"), repo.asks)
+            assertTrue(
+                vm.state.value.historyMarkers
+                    .isEmpty(),
+            )
+            assertFalse(repo.saved?.coverage?.unknown == true)
+            collector.cancel()
+        }
+
+    private fun durablePage(
+        vararg ids: Long,
+        cursor: String,
+    ) = HistoryPage(
+        ids.reversed().map { id ->
+            HistoryEntry(
+                id,
+                "send_message",
+                MobileJson.parseToJsonElement("""{"conversation_id":"$ACTIVE_CONV","message_id":"m$id","text":"message $id"}"""),
+                Instant.fromEpochSeconds(id),
+            )
+        },
+        cursor,
+        false,
+    )
 
     private fun historyHandle() = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
 
@@ -4932,6 +5316,7 @@ class ThreadViewModelTest {
         private val answer: suspend (String) -> HistoryPage,
     ) : ConversationRepository by delegate {
         val asks = mutableListOf<String>()
+        val limits = mutableListOf<Int>()
         val messages = MutableStateFlow<List<ThreadItem>>(emptyList())
 
         /** Every position write, in order; `null` is a clear. */
@@ -4958,6 +5343,7 @@ class ThreadViewModelTest {
             limit: Int,
         ): HistoryPage {
             asks += cursor
+            limits += limit
             return answer(cursor)
         }
     }

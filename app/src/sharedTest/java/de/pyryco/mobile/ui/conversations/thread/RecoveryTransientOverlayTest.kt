@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
+import de.pyryco.mobile.ui.pixelPx
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -80,7 +81,9 @@ class RecoveryTransientOverlayTest {
         val error = composeRule.onNodeWithTag("transient_error_notice").assertHasNoClickAction()
         val errorBounds = error.fetchSemanticsNode().boundsInRoot
         if (notice == TurnRecoveryNotice.ContextTooLong && overlayWidth == 300) {
-            assertEquals(24f * density, visible.height, 0.5f)
+            // The pill's height is the sum of its own top padding, its text line, and its bottom padding, each
+            // rounded to a device pixel on its own (#1823), so the check allows one device pixel of drift.
+            assertEquals(24f * density, visible.height, pixelPx())
         } else {
             assertTrue("This case must exercise wrapped copy", visible.height > 24f * density)
         }

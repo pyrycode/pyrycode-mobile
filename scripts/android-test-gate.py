@@ -24,7 +24,7 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 E2E_PACKAGE = "de.pyryco.mobile.e2e"
-SCENARIOS = ("selection-copy", "send-now", "ping", "stream", "spinner", "tool", "tool-failed", "tool-progress", "reconnect", "offline-retry", "replay-order", "tool-then-text", "refusal", "mcp-failed", "context-overflow")
+SCENARIOS = ("stop-background-task", "selection-copy", "background-agent", "send-now", "direct-share", "ping", "stream", "reopen-stream", "spinner", "tool", "tool-failed", "tool-progress", "reconnect", "offline-retry", "replay-order", "tool-then-text", "refusal", "mcp-failed", "context-overflow")
 
 def curated_live_methods():
     """The method names on scripts/e2e-emulator.sh's LIVE curated list, in list order."""

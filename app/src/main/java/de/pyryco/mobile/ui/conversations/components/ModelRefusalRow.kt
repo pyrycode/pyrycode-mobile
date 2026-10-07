@@ -151,37 +151,23 @@ private fun ModelRefusalRowContent(
         ) {
             Text(
                 text = refusalTitle(item, knownModelLabel),
-                style =
-                    MaterialTheme.typography.bodyMedium.let {
-                        if (switchBack !=
-                            null
-                        ) {
-                            it.copy(lineHeightStyle = SwitchBackLineBox)
-                        } else {
-                            it
-                        }
-                    },
+                // Figma 620:1570 draws every line of this row — title, explanation, toggle — in its full
+                // line box; the theme's defaults would otherwise trim each to its glyphs, which compresses
+                // the gaps between them below the frame's even 8dp rhythm regardless of the switch-back
+                // offer (#1614). Previously only applied when an offer was present.
+                style = MaterialTheme.typography.bodyMedium.copy(lineHeightStyle = SwitchBackLineBox),
             )
             if (expandable && expanded) {
                 Text(
                     text = attributedBanner(name, banner, item.bannerTruncated),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium.copy(lineHeightStyle = SwitchBackLineBox),
                     color = MaterialTheme.colorScheme.onSurface,
                 )
             }
             if (expandable) {
                 Text(
                     text = stringResource(if (expanded) R.string.thread_refusal_hide_details else R.string.thread_refusal_show_details),
-                    style =
-                        MaterialTheme.typography.labelMedium.let {
-                            if (switchBack !=
-                                null
-                            ) {
-                                it.copy(lineHeightStyle = SwitchBackLineBox)
-                            } else {
-                                it
-                            }
-                        },
+                    style = MaterialTheme.typography.labelMedium.copy(lineHeightStyle = SwitchBackLineBox),
                     color = MaterialTheme.colorScheme.primary,
                 )
             }

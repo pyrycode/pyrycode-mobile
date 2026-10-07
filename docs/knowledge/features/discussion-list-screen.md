@@ -1,8 +1,21 @@
 # DiscussionListScreen
 
-Drilldown destination for unpromoted conversations (discussions), mounted at the `discussions` route. Sibling of [`ChannelListScreen`](channel-list-screen.md) — same `Scaffold + when (state)` skeleton, same `ConversationRow` items in `Loaded`, but with a back arrow instead of a settings gear, no FAB, and rows visibly de-emphasized via `Modifier.alpha(0.65f)` to signal the secondary tier.
+Retired by #1672: the screen, ViewModel, `discussions` route, exclusive promotion
+helpers/resources and their tests were deleted after #731 removed the only entry
+point. Chats now open from the [host tree](channel-list-screen.md); reachable
+promotion belongs to the [thread Save as channel modal](save-as-channel-dialog.md),
+which seeds from the chat name, falls back to `New channel` for null/blank names,
+submits the trimmed name and cancels without a write. The removed list's
+`Untitled channel` default is not that modal's contract.
 
-Package: `de.pyryco.mobile.ui.conversations.list`. File: `DiscussionListScreen.kt`.
+The remaining sections preserve the retired implementation's history, not current
+source or bindings.
+
+
+Before retirement, this was the drilldown destination for unpromoted conversations
+(discussions), mounted at the `discussions` route. Sibling of [`ChannelListScreen`](channel-list-screen.md) — same `Scaffold + when (state)` skeleton, same `ConversationRow` items in `Loaded`, but with a back arrow instead of a settings gear, no FAB, and rows visibly de-emphasized via `Modifier.alpha(0.65f)` to signal the secondary tier.
+
+Former package: `de.pyryco.mobile.ui.conversations.list`. Deleted file: `DiscussionListScreen.kt`.
 
 ## What it does
 

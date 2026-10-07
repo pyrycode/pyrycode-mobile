@@ -17,6 +17,12 @@ package de.pyryco.mobile.ui.conversations.thread
  */
 internal const val MAX_HISTORY_PAGES = 100
 
+/** Local marker identity plus the hashed logical row immediately above the uncovered interval. */
+data class ThreadHistoryMarker(
+    val anchor: Long,
+    val beforeRow: String,
+)
+
 /**
  * Why a history walk stopped, or `null` while it is still walking (#777, split by #778).
  *

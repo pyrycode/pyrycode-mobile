@@ -19,8 +19,9 @@ than the thread. `reduceOrderedHistoryPage` decodes the page once, outside the u
 with each row's daemon log id, taken from the contextual fold, so a failed compaction divider gets its
 falling edge's id. Inside the one `ProjectionState` update, `mergeOrderedHistoryRows` inserts only rows the
 thread lacks, so an older, newer or middle page lands in daemon order and a repeat page changes nothing.
-Held rows never move and are never sorted by timestamp. A missing row goes after its nearest shared
-predecessor or before its nearest shared successor. Held rows with known log ids bound that slot, so a
+Established held rows retain their positions; pending own echoes with first modern delivery
+evidence use the exception below. The merge never sorts the whole thread by timestamp. A missing
+row goes after its nearest shared predecessor or before its nearest shared successor. Held rows with known log ids bound that slot, so a
 reused message id or a malformed entry cannot pull a row past a known position. With no shared row, log ids
 and then timestamps choose the slot. The log ids live in `ProjectionState.historyOrder`, are connection-local,
 are never compared with live event ids, and are dropped by `remove`. A boundary that fills a pending divider
@@ -33,6 +34,34 @@ settled through the existing post-merge pass. Held text wins any overlap. A lega
 sequence records suppresses only text it demonstrably contains. Renderer keys stay unique without dropping
 text: ordinary ids claim keys first, then each turn's opener, then other segments, and a segment whose key a
 different identity holds takes a `~n` suffix.
+
+**History establishes modern queued delivery (#1655).** A stored user `message` with a valid
+`queued_msg_id` can arrive with its answering delta 0 before the first live push, even before
+the waiting turn's live end. `mergeHistoryPage` decodes this evidence through `MessagePayloadDto`
+and consumes that exact entry in the **requested conversation**, independently of the payload's
+routing id. Omitted/malformed identity and non-user rows do not establish modern delivery.
+Queue-entry consumption does not broaden the renderer's message-id deduplication.
+
+Only first-delivery, pending, minted held user echoes have provisional positions. Remove those
+rows from the receiving list before `mergeOrderedHistoryRows`, insert by incoming daemon
+order/delivery timestamp, then restore their exact held objects. Using their tap timestamps or
+retaining a legacy reserved slot can put an echo above the waiting turn's tool row. Content,
+attachment hints and original timestamp survive; idle, foreign/non-user and already delivered
+held rows keep their positions. This exception also handles two own echoes on the same page.
+
+Commit placement, exact entry consumption, first-delivery row identity and cleared queued/
+suppressed/reserved eligibility in the same CAS update. Otherwise the first replayed live push
+can move a history-established echo after its answering text, and the next delta starts another
+segment despite sequence deduplication. Test overlapping pages containing both the delivered row
+and answering delta 0 before and after the first push, and before the live end, asserting after
+each event. A user-only page does not expose this failure. See
+[queue placement and recorded evidence](queued-backlog.md#verification-evidence) and
+[assistant segments](remote-conversation-repository-assistant-reply-segments.md).
+
+History's `endedTurns` evidence settles late assistant rows; it does not consume the legacy
+fallback's live reservation boundary. `ProjectionState.liveEndedTurns` records live ends
+atomically with rows and echo metadata, so a history end cannot suppress the first live end's
+reservation and a repeated live end cannot reserve a newer pending echo. Both are connection-local.
 
 **One fold surface, not two.** The reduction reuses the live lane's own folds rather than mapping the
 page separately. `RemoteConversationRepositoryKt`'s `appendMessages` / `applyToolUse` / `applyToolResult`
@@ -147,8 +176,9 @@ and it is also `appendMessages`' existing live-lane dedup rule. An `Unrecognized
 which the reducer derives as `"history-${entry.id}"` from the durable per-conversation log id — stable
 across re-reduction, and disjoint from the live lane's per-process-counter `"unrecognized-<n>"` namespace
 (see [Unrecognized message row](unrecognized-message-row.md)) so the two cannot collide by coincidence.
-For ordinary rows, the merge is a **prepend, never a re-sort** (never a timestamp sort — the thread
-is arrival-order by deliberate choice, see `applyToolUse`'s KDoc above). Duplicate ordinary rows keep
+Ordinary missing rows enter through the ordered merge described above; the receiving thread is
+never globally re-sorted. First modern deliveries of pending own echoes use that section's
+explicit provisional-position exception. Duplicate ordinary rows keep
 the held state, apart from missing attachment hints: in the narrow ask-versus-answer overlap window
 the protocol names, the live lane still owns the newer state.
 
@@ -329,9 +359,10 @@ depends on here.
   now gated on the ordinary `canAsk`/`canRetry` path like any other ask) to carry the empty cursor forward,
   per the ticket's "older history loads only on request" rule. A refusal of the newest-page ask (an already
   empty cursor) still has nothing to fall back to and settles as an ordinary failure instead. Since
-  [#1354](#resuming-from-the-saved-position-1354), the same refusal also clears the **saved** position —
-  `writeHistoryPosition(conversationId, null)` — so a stale cursor cannot keep steering both the next pull
-  and the next open back to a cursor the daemon has already rejected once.
+  [#1354](#resuming-from-the-saved-position-1354), the same refusal also resets the **saved backwards** position, so a stale cursor
+  cannot steer
+  the next pull or open. Since #1832 it retains durable coverage and gap cursors; only a position
+  without coverage uses `writeHistoryPosition(conversationId, null)`.
 - **The `repositoryAvailable` collector in `ThreadViewModel.init` stays, but only for its #1311 side
   effect.** It still collects `repositoryAvailable.distinctUntilChanged().drop(1)`, but since #1352 that
   collector exists solely to call `closeLocalSendWindow("reconnect")` — it no longer restarts the walk.
@@ -344,109 +375,70 @@ and
 
 ## Resuming from the saved position (#1354)
 
-[#1352](https://github.com/pyrycode/pyrycode-mobile/issues/1352) made every open start
-`ThreadHistoryDemand()` from an empty cursor, so the first pull in a saved thread re-fetched the
-newest page the reader already held. [#1354](https://github.com/pyrycode/pyrycode-mobile/issues/1354)
-gives the walk a disk-backed resume point, mirroring desktop's received `coverage`
-(`src/shared/chatHistory.ts`, `chatHistoryWriter.ts`, `historyPageBridge.ts`'s `requestOlderHistory`
-in the sibling desktop checkout). The storage side — `HistoryPosition`, where it lives inside the
-thread document, and the two-writer read-modify-write rule — is
-[Conversation cache § The saved history position](conversation-cache.md#the-saved-history-position-1354);
-this section covers only `ThreadHistoryDemand`/`ThreadViewModel`, which is where the design lives.
+`HistoryPosition(cursor, atStart, coverage = null)` keeps the independent backwards walk's
+opaque cursor and stop state. Since [#1832](../../specs/architecture/1832-durable-history-gaps.md),
+it also carries received durable entry coverage, which the ViewModel restores once through
+`historySeed`. A reader pull during that seed waits for it; reading the seed originates no ask.
+The page count remains per screen-open rather than being restored as a fresh budget.
 
-- **`ThreadHistoryDemand.restored(cursor, atStart)`** folds a saved position the same way `settled`
-  folds a received page, but takes the two scalars rather than a `HistoryPosition` for the same
-  reason `settled` takes `HistoryPage`'s two scalars: the file stays structurally unable to import a
-  daemon-authored entry type. It sets `cursor` and, when `atStart` is true, `stoppedBy = AtStart` —
-  the same terminal stop a live walk reaches by paging all the way back, so a restored "start of
-  history" asks nothing and the oldest-end slot's offline notice stays hidden exactly as it already
-  does for a walk that reached `AtStart` this visit (see [Thread screen § the oldest-end history
-  demand](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777)).
-  `pagesLoaded` is carried forward unchanged, so restoring a position never buys a fresh
-  `MAX_HISTORY_PAGES` budget — the cap stays per screen-open (see § The walk that finally calls
-  `requestHistory` above).
-- **`ThreadViewModel.historySeed`**, a `Job` launched in `viewModelScope` right after `historyDemand` is
-  constructed, reads `repository.readHistoryPosition(conversationId)` once and, if it finds one, folds it
-  with `restored`. Reading asks nothing — `onDemandOlderHistory` is still the only path that calls
-  `requestHistory` for an *older* page. For every in-memory repository (every unit test, and the demo
-  `FakeConversationRepository`) the default `readHistoryPosition` returns without suspending, so the seed
-  completes during construction and a test never has to await it explicitly. Before #1572 this was a
-  `Deferred<Boolean>` reporting whether a position was found; it carries no result now because every
-  thread, saved position or not, reaches the collector below once the seed completes.
-- **[#1572](https://github.com/pyrycode/pyrycode-mobile/issues/1572): an open thread asks for the newest
-  history page every time its host becomes available, at open and after every reconnect while it stays
-  open — not only once, and not only for a never-loaded thread.** This replaces
-  [#1569](https://github.com/pyrycode/pyrycode-mobile/issues/1569)'s narrower rule below. A reply the
-  daemon had stored while a thread was off-screen was never cached — `CachingConversationRepository.observeMessages`
-  only writes to the cache while that thread is being collected, see [Caching conversation repository §
-  Why it exists](caching-conversation-repository.md#why-it-exists) — and a reconnect discarded the
-  connection-scoped projection that held it; replay does not resend it, so the thread drew the stale
-  cache forever. A `ThreadViewModel.init` coroutine awaits `historySeed`, then collects
-  `repositoryAvailable.distinctUntilChanged().filter { it }`, calling `askForNewestPage(reconnect = opened)`
-  on every arrival (the same shape as the #1410 context-usage collector), instead of #1569's `first { it }`
-  that took only the opening edge.
+**Newest asks retain evidence and wait for the request slot.** #1572 introduced one newest ask
+at open and on each host-availability arrival while the thread remains open. The collector waits
+for `historySeed` and repository availability. #1832 counts pending arrivals rather than dropping
+an arrival behind an older request: completion releases the slot and drains deferred newest work.
+Newest, ordinary older and gap requests share that slot. A newest failure consumes its arrival
+without retry; clearing the ViewModel cancels requests and pending work. Page arrival or marker
+visibility never originates another request.
 
-  `askForNewestPage` claims the walk's single outstanding-request slot through `claimHistorySlot`, so it
-  is dropped (with a static log) while a pull or a retry is out, exactly as a second pull would be. What
-  happens next depends on `ThreadHistoryDemand.newestPageAdvancesWalk` (`canAsk && cursor.isEmpty()`):
+For an empty-cursor walk the newest page also seeds the ordinary backwards cursor/stop. Otherwise
+it is a side ask: its durable ids and page-edge cursor update coverage, but its cursor and `atStart`
+do not replace the independent backwards position. A previously verified empty terminal page can
+seed a fresh backwards walk when a later availability page brings entries. Saved `AtStart` blocks
+ordinary oldest-end demand, never demand for an unresolved gap. The shared `inFlight` flag still
+shows the oldest-end Loading row during a side ask, including on a stopped backwards walk.
 
-  - **The newest page is the walk's own next page** for a never-loaded thread (#1569's original trigger,
-    still the common case for a channel opened for the first time), a walk whose cursor the daemon
-    refused, or a walk whose previous newest-page ask failed. The ask then runs through the unchanged
-    `asking()`/`launchHistoryAsk` path: the page settles into the walk and `writeHistoryPosition` saves
-    its position, exactly as a pull from the newest would.
-  - **Otherwise it is a side ask.** `ThreadHistoryDemand.askingNewest()` claims the slot by setting only
-    `inFlight`; `newestSettled()` releases it the same way. The reply's `cursor` and `atStart` are never
-    read and no position is written, so a saved cursor keeps driving the next *older* pull and a saved
-    `AtStart` keeps reading as fully loaded. The rows still land, because `requestHistory` has already
-    merged the page into `observeMessages` through `mergeHistoryRows` and `mergeCachedRows` before the
-    ViewModel does anything with the reply — the side ask exists only to make the request, not to read
-    the answer. A failed side ask (`RelayErrorException`, `IllegalStateException`,
-    `IllegalArgumentException`; `CancellationException` rethrown first) logs a static
-    `event=history_newest_ask_failed` and releases the slot, leaving the walk's stop reason untouched; the
-    next host arrival asks again.
+**Coverage is received `HistoryEntry.id` spans, including entries that render no row.** IDs are
+host/conversation-scoped durable daemon ids; row identities, timestamps and live/ring ids establish
+no span. High-water is the maximum covered id before the newest ask. Overlap and adjacency coalesce;
+a hole exists only between received spans. Overlap elsewhere preserves unresolved holes. A known
+gap closes only when received coverage continuously joins its older anchor. If a page splits a
+hole, each resulting hole keeps an anchor in its immediately older merged span, so both remain
+targetable rather than inheriting the same old anchor.
 
-  A thread opened offline still asks nothing until the host arrives, then asks exactly once, same as
-  #1569; the difference is every later drop and return asks again, where #1569's collector took only the
-  first edge and never asked twice. See [Thread screen § the oldest-end history
-  demand](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777) for the
-  screen-side detail, including a known, unfixed quirk where a side ask shows the oldest-end `Loading`
-  row even on an already fully loaded thread.
-- **A pull during the seed waits for it, rather than racing it.** `onDemandOlderHistory` checks
-  `historySeed.isCompleted` first; if the read is still in flight, it launches a coroutine that joins
-  the seed and re-enters, instead of either dropping the pull or letting it carry the opening empty
-  cursor. Without this, a pull that landed before the disk read finished would re-fetch the newest
-  page — the exact bug the ticket exists to fix — only intermittently, on whichever gesture happened
-  to race the read. Extra pulls that land in the same window collapse through the ordinary `canAsk`
-  check once the first of them claims the outstanding-request slot. **Since #1572, that first claimant is
-  usually the opening newest-page ask, not the pull**: both the pull's re-entry and the opening collector
-  wait on the same `historySeed`, and the opening collector registered first, so it wins the slot and the
-  joined pull is simply dropped and has to pull again — confirmed by
-  `ThreadViewModelTest.history_aPullWhileTheSavedPositionIsBeingRead_asksWithTheSavedCursor`, which pins
-  that the next pull still carries the saved cursor.
-- **A received page's position is saved before the slot is released, inside `launchHistoryAsk`'s
-  single in-flight ask.** `repository.writeHistoryPosition(conversationId, HistoryPosition(page.cursor,
-  page.atStart))` runs right after `requestHistory` returns and before `historyDemand.update {
-  it.settled(...) }`, so at most one position write is ever outstanding per thread, ordered by the
-  same CAS claim that already serializes asks. A failed ask (any branch of `fetchHistoryPage`'s
-  `catch`) returns before that write, so **a failed ask changes the saved position not at all** — the
-  in-memory walk already preserves the cursor and page count on a failure (see § The walk above), and
-  the saved copy now matches that same no-op. A refused cursor is the one branch that does write:
-  `history.invalid_cursor` on a non-empty cursor calls `writeHistoryPosition(conversationId, null)`
-  alongside `cursorRefused()`, so the next pull *and* the next open both start from the newest page —
-  a stale saved cursor cannot otherwise outlive the daemon rejecting it once.
-- **The position write can run ahead of the row write it describes (accepted, PR #1470 Revisions).**
-  The page's rows reach the cache later, through `CachingConversationRepository.observeMessages`'s own
-  collector-driven `writeThread` call, not through `launchHistoryAsk`. If that row write then fails,
-  or the ViewModel is cleared before it runs, the saved position can point past rows the thread
-  document does not yet hold, and the next open skips that page. Ordering the two writes would couple
-  `ThreadViewModel` to the collector's independent write path for a window whose cost is one missing
-  page, recoverable once the position is next cleared or the thread removed — accepted rather than
-  fixed, unlike desktop, which saves coverage and rows together in one place.
+Each gap retains an opaque walk cursor, starting from the page immediately above it. A cursorless
+hole uses the nearest stored page-edge cursor above it; cursors are never constructed from entry
+ids. Each reader pull asks at most one page, even when it rereads covered content. The returned
+cursor advances that targeted walk while ordinary backwards cursor/stop remain unchanged. A
+refused gap cursor leaves the marker in place and invalidates that cursor; the next gesture uses
+the latest usable newest-page cursor, or the empty cursor if none is usable. There is no automatic
+retry, full catch-up loop, forward read or caught-up signal. Ordinary backwards cursor refusal
+resets only that walk when coverage exists, preserving gaps and their cursors for later demand.
 
-See [Caching conversation repository § The saved history
-position](caching-conversation-repository.md#the-saved-history-position-1354) for
-`readHistoryPosition`/`writeHistoryPosition`'s forwarding on the wrapper, and that doc's § The merge
-base for the gap-filling behavior this ticket narrowed: with no saved position a reconnect's history
-walk could still fill a gap left by more than one page arriving while offline; once a position is
-saved, the walk never returns to the newest page, so that gap now stays until the position clears.
+**Legacy rows prove identity, not completeness.** A nonempty cache without coverage is unknown,
+with or without saved `atStart`. Its rows remain readable. After the newest page, one conservative
+marker sits at the verified span's older edge unless that page reports `at_start`. Pulls move the
+edge backwards. Matching a legacy whole-turn row or overlapping a verified span never closes
+unknown coverage without an older durable anchor: only `at_start`, including an empty terminal
+page, does. Arbitrary legacy holes cannot be inferred before received pages establish spans.
+An empty uncovered cache ignores old cursor/stop metadata and gets no conservative marker.
+
+Markers sit between held older and newer content, before their newer row. A non-rendering newer
+span can leave a standalone marker at the newest content edge. Assistant deltas on opposite sides
+of a hole use display-only fragments so the marker fits between them without changing retained
+repository rows. Known and unknown markers sharing a row/edge sort by their durable newer edge,
+keeping unknown coverage chronologically older. See [reader targeting](thread-screen-oldest-end-history-demand.md#the-oldest-end-history-demand-777)
+for the first-crossed gesture rule.
+
+The repository still performs the one atomic row merge; coverage inspection never renders a page
+again. History fills dedupe held live and legacy content through #1786's reconciliation. Both cache
+merge paths need restored and live durable ordering: shared-neighbour placement alone misplaces a
+disjoint older-gap page, especially with equal timestamps. `ThreadSnapshot` supplies rows,
+suppression and durable order from the same projection generation. See [cache reconciliation](caching-conversation-repository.md#how-the-restore-merges-with-live-rows).
+
+**Rows must reach disk before state can certify them.** The caching wrapper now writes the
+reconciled cacheable rows before coverage/position, replacing #1354's accepted window where
+position could reach disk before rows. Failed row writes cannot advance claims; interruption between writes leaves older,
+conservative state. Trimming and changed/missing retained rows invalidate coverage, and the later
+state write must retain the trim's backwards cursor/stop reset. See [the two file writers](conversation-cache.md#the-thread-documents-two-writers-1354)
+and [the wrapper's saved position](caching-conversation-repository.md#the-saved-history-position-1354).
+Independent live, deterministic multi-page-gap and external force-stop proof belongs to
+[#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833); #1832 does not establish those results.

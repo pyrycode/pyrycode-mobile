@@ -17,12 +17,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -35,9 +34,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -53,7 +54,6 @@ import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.parsePairingPayload
 import de.pyryco.mobile.data.network.serverKeyFingerprint
 import de.pyryco.mobile.data.preferences.AppPreferences
-import de.pyryco.mobile.data.repository.AttachmentUploadLimit
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.di.ThreadDestinationFactory
@@ -62,24 +62,21 @@ import de.pyryco.mobile.ui.conversations.components.LocalWorkspacePickerReposito
 import de.pyryco.mobile.ui.conversations.list.ChannelListEvent
 import de.pyryco.mobile.ui.conversations.list.ChannelListScreen
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
-import de.pyryco.mobile.ui.conversations.list.DiscussionListEvent
-import de.pyryco.mobile.ui.conversations.list.DiscussionListScreen
-import de.pyryco.mobile.ui.conversations.list.DiscussionListUiState
-import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import de.pyryco.mobile.ui.conversations.list.PLAY_STORE_URL
-import de.pyryco.mobile.ui.conversations.list.PendingPromotion
+import de.pyryco.mobile.ui.conversations.share.ShareErrorNoticeHost
 import de.pyryco.mobile.ui.conversations.share.ShareIntakeViewModel
 import de.pyryco.mobile.ui.conversations.share.SharePayload
 import de.pyryco.mobile.ui.conversations.share.SharePickerHeader
+import de.pyryco.mobile.ui.conversations.share.SharingShortcuts
 import de.pyryco.mobile.ui.conversations.thread.LinkedMarkdownReaderDestination
 import de.pyryco.mobile.ui.conversations.thread.MarkdownReaderDestination
+import de.pyryco.mobile.ui.conversations.thread.NavigationErrorPill
 import de.pyryco.mobile.ui.conversations.thread.ThreadAttentionNotice
 import de.pyryco.mobile.ui.conversations.thread.ThreadNavigation
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.conversations.thread.UsageLimitDismissals
-import de.pyryco.mobile.ui.conversations.thread.formatMegabytes
 import de.pyryco.mobile.ui.conversations.thread.readLinkedMarkdown
 import de.pyryco.mobile.ui.conversations.thread.rememberThreadAttention
 import de.pyryco.mobile.ui.onboarding.CameraPreview
@@ -100,12 +97,15 @@ import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
 import de.pyryco.mobile.ui.settings.SettingsScreen
 import de.pyryco.mobile.ui.settings.SettingsViewModel
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.androidx.compose.koinViewModel
 import org.koin.androidx.viewmodel.ext.android.viewModel
 import org.koin.compose.koinInject
+import org.koin.core.parameter.parametersOf
 import kotlin.time.Duration.Companion.seconds
 
 class MainActivity : ComponentActivity() {
@@ -172,57 +172,50 @@ class MainActivity : ComponentActivity() {
         setContent {
             val appPreferences = koinInject<AppPreferences>()
             val pairedServerStore = koinInject<PairedServerCollectionStore>()
-            val snackbar = remember { SnackbarHostState() }
-            LaunchedEffect(shareIntake) {
-                shareIntake.notices.collect { (message, count) ->
-                    val text =
-                        when {
-                            count > 0 -> resources.getQuantityString(message, count, count)
-                            message == R.string.thread_attachment_send_too_large ->
-                                resources.getString(
-                                    message,
-                                    formatMegabytes(AttachmentUploadLimit.MAX_BYTES),
-                                )
-                            else -> resources.getString(message)
-                        }
-                    snackbar.showSnackbar(text)
-                }
-            }
             PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
-                Scaffold(modifier = Modifier.fillMaxSize(), snackbarHost = { SnackbarHost(snackbar) }) { innerPadding ->
-                    val paired: Boolean? by produceState<Boolean?>(
-                        initialValue = null,
-                        pairedServerStore,
-                        appPreferences,
-                    ) {
-                        RelayLog.d { "event=workspace_startup_started" }
-                        val hosts = pairedServerStore.list()
-                        val migration = appPreferences.migrateDefaultWorkspace(hosts.map { it.record.serverId }.toSet())
-                        if (migration.isSuccess) {
-                            value = hosts.isNotEmpty()
-                            RelayLog.d { "event=workspace_startup_ready" }
-                        } else {
-                            RelayLog.w { "event=workspace_startup_blocked code=migration_failed" }
+                ShareErrorNoticeHost(shareIntake) {
+                    Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+                        val paired: Boolean? by produceState<Boolean?>(
+                            initialValue = null,
+                            pairedServerStore,
+                            appPreferences,
+                        ) {
+                            RelayLog.d { "event=workspace_startup_started" }
+                            val hosts = pairedServerStore.list()
+                            val migration = appPreferences.migrateDefaultWorkspace(hosts.map { it.record.serverId }.toSet())
+                            if (migration.isSuccess) {
+                                value = hosts.isNotEmpty()
+                                RelayLog.d { "event=workspace_startup_ready" }
+                            } else {
+                                RelayLog.w { "event=workspace_startup_blocked code=migration_failed" }
+                            }
                         }
-                    }
-                    when (val v = paired) {
-                        null ->
-                            Surface(
-                                modifier =
-                                    Modifier
-                                        .fillMaxSize()
-                                        .padding(innerPadding),
-                            ) {}
-                        else ->
-                            PyryNavHost(
-                                startDestination = if (v) Routes.CHANNEL_LIST else Routes.WELCOME,
-                                modifier = Modifier.padding(innerPadding).consumeWindowInsets(innerPadding),
-                                openTarget = externalTarget.takeIf { v },
-                                openTargetVersion = externalTargetVersion,
-                                shareIntake = shareIntake,
-                                onCancelShare = ::cancelShare,
-                                pairingPrefill = pairingPrefill,
-                            )
+                        when (val v = paired) {
+                            null ->
+                                Surface(
+                                    modifier =
+                                        Modifier
+                                            .fillMaxSize()
+                                            .padding(innerPadding),
+                                ) {
+                                    Box(
+                                        Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 28.dp),
+                                        contentAlignment = Alignment.TopEnd,
+                                    ) {
+                                        NavigationErrorPill()
+                                    }
+                                }
+                            else ->
+                                PyryNavHost(
+                                    startDestination = if (v) Routes.CHANNEL_LIST else Routes.WELCOME,
+                                    modifier = Modifier.padding(innerPadding).consumeWindowInsets(innerPadding),
+                                    openTarget = externalTarget.takeIf { v },
+                                    openTargetVersion = externalTargetVersion,
+                                    shareIntake = shareIntake,
+                                    onCancelShare = ::cancelShare,
+                                    pairingPrefill = pairingPrefill,
+                                )
+                        }
                     }
                 }
             }
@@ -244,6 +237,8 @@ internal fun PyryNavHost(
     val destinations = koinInject<ThreadDestinationFactory>()
     val appPreferences = koinInject<AppPreferences>()
     val conversations = koinInject<HostConversationSource>()
+    val shortcutContext = LocalContext.current.applicationContext
+    val shortcuts = koinInject<SharingShortcuts>(parameters = { parametersOf(shortcutContext) })
     val shared = shareIntake?.state?.collectAsStateWithLifecycle()?.value
     BackHandler(enabled = shared != null, onBack = onCancelShare)
     LaunchedEffect(shared?.generation) {
@@ -251,6 +246,32 @@ internal fun PyryNavHost(
             navController.navigate(Routes.CHANNEL_LIST) {
                 popUpTo(navController.graph.id) { inclusive = true }
                 launchSingleTop = true
+            }
+        }
+    }
+    LaunchedEffect(shared?.generation, shared?.capturing, shared?.shortcutId) {
+        val batch = shared?.takeUnless { it.capturing } ?: return@LaunchedEffect
+        val id = batch.shortcutId ?: return@LaunchedEffect
+        val target =
+            withTimeoutOrNull(NOTIFICATION_TAP_ROW_WAIT) {
+                val candidate = shortcuts.resolve(id) ?: return@withTimeoutOrNull null
+                if (!destinations.isSavedHost(candidate.serverId)) return@withTimeoutOrNull null
+                conversations.snapshots.first { it.holdsActive(candidate) }
+                candidate
+            }
+        val savedHost = target != null && destinations.isSavedHost(target.serverId)
+        withContext(Dispatchers.Main.immediate) {
+            // Finish suspending host reads before entering the single Main turn for transfer/navigation.
+            if (target != null &&
+                savedHost &&
+                conversations.snapshots.value.holdsActive(target) &&
+                navController.currentDestination?.route == Routes.CHANNEL_LIST &&
+                shareIntake?.select(target, batch.generation) == true
+            ) {
+                RelayLog.d { "event=share_shortcut_accepted" }
+                navController.openThread(target)
+            } else {
+                shareIntake?.fallback(batch.generation)
             }
         }
     }
@@ -429,6 +450,14 @@ internal fun PyryNavHost(
             LaunchedEffect(vm) {
                 vm.lastHostUnpaired.collect { navController.returnToWelcome() }
             }
+            if (shared?.shortcutId != null) {
+                Surface(modifier = Modifier.fillMaxSize()) {
+                    Box(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 28.dp), contentAlignment = Alignment.TopEnd) {
+                        NavigationErrorPill()
+                    }
+                }
+                return@composable
+            }
             ChannelListScreen(
                 hostState = hostState,
                 shareHeader = shared?.let { batch -> { SharePickerHeader(batch, onCancelShare) } },
@@ -501,43 +530,16 @@ internal fun PyryNavHost(
                 },
             )
         }
-        composable(Routes.DISCUSSION_LIST) {
-            val vm = koinViewModel<DiscussionListViewModel>()
-            val flatState by vm.state.collectAsStateWithLifecycle()
-            val hostState by vm.hostState.collectAsStateWithLifecycle()
-            val state =
-                (flatState as? DiscussionListUiState.Loaded)?.copy(
-                    pendingPromotion = hostState.pendingPromotion?.let { PendingPromotion(it.target.conversationId, it.sourceName) },
-                ) ?: flatState
-            LaunchedEffect(vm) {
-                vm.hostNavigationEvents.collect { navController.openThread(it) }
-            }
-            DiscussionListScreen(
-                state = state,
-                onEvent = { event ->
-                    when (event) {
-                        is DiscussionListEvent.RowTapped ->
-                            destinations.selectedServerId()?.let { vm.onHostRowTapped(HostConversationTarget(it, event.conversationId)) }
-                        is DiscussionListEvent.SaveAsChannelRequested ->
-                            destinations.selectedServerId()?.let {
-                                vm.requestHostPromotion(
-                                    HostConversationTarget(it, event.conversationId),
-                                )
-                            }
-                        DiscussionListEvent.PromoteConfirmed -> vm.confirmHostPromotion()
-                        DiscussionListEvent.PromoteCancelled -> vm.cancelHostPromotion()
-                        DiscussionListEvent.BackTapped ->
-                            navController.popBackStack()
-                    }
-                },
-            )
-        }
         composable(
             route = Routes.CONVERSATION_THREAD,
             arguments = Routes.hostArguments(),
         ) { backStackEntry ->
             val target = Routes.target(backStackEntry.arguments)
             HostDestination(target.serverId, destinations, navController) {
+                LaunchedEffect(backStackEntry) {
+                    conversations.snapshots.first { it.holdsActive(target) }
+                    shortcuts.opened(target)
+                }
                 val vm = koinViewModel<ThreadViewModel>()
                 val state by vm.state.collectAsStateWithLifecycle()
                 val connectionState by vm.connectionState.collectAsStateWithLifecycle()
@@ -642,6 +644,7 @@ internal fun PyryNavHost(
                     onWorkspacePicked = vm::onWorkspacePicked,
                     onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,
                     onDemandOlderHistory = vm::onDemandOlderHistory,
+                    onDemandHistoryGap = vm::onDemandHistoryGap,
                     onRetryOlderHistory = vm::onRetryOlderHistory,
                     draft = draft,
                     onDraftChange = vm::onDraftChange,
@@ -781,14 +784,20 @@ internal fun PyryNavHost(
             return@LaunchedEffect
         }
         val active = withTimeoutOrNull(NOTIFICATION_TAP_ROW_WAIT) { conversations.snapshots.first { it.holdsActive(target) } }
-        when {
-            active == null -> RelayLog.d { "event=notification_tap_rejected code=inactive_conversation" }
-            // The user moved on during the wait; a late row must not push a thread over where they went.
-            navController.currentDestination?.route != Routes.CHANNEL_LIST ->
-                RelayLog.d { "event=notification_tap_rejected code=navigated_away" }
-            else -> {
-                RelayLog.d { "event=notification_tap_accepted" }
-                navController.openThread(target)
+        val savedHost = destinations.isSavedHost(target.serverId)
+        withContext(Dispatchers.Main.immediate) {
+            when {
+                shareIntake?.state?.value != null -> RelayLog.d { "event=notification_tap_rejected code=share_pending" }
+                !savedHost -> RelayLog.d { "event=notification_tap_rejected code=unknown_host" }
+                active == null || !conversations.snapshots.value.holdsActive(target) ->
+                    RelayLog.d { "event=notification_tap_rejected code=inactive_conversation" }
+                // The user moved on during the wait; a late row must not push a thread over where they went.
+                navController.currentDestination?.route != Routes.CHANNEL_LIST ->
+                    RelayLog.d { "event=notification_tap_rejected code=navigated_away" }
+                else -> {
+                    RelayLog.d { "event=notification_tap_accepted" }
+                    navController.openThread(target)
+                }
             }
         }
     }
@@ -872,7 +881,6 @@ internal object Routes {
      */
     const val PAIR_CODE_ROUTE = "pair_code?serverId={serverId}"
     const val CHANNEL_LIST = "channel_list"
-    const val DISCUSSION_LIST = "discussions"
     const val CONVERSATION_THREAD = "conversation_thread/{serverId}/{conversationId}"
 
     /** A thread's markdown attachment in the reader (#1027): the thread's two ids plus the attachment's. */

@@ -18,6 +18,14 @@ sealed interface ThreadRow {
     /** A row the daemon has run, or a row that is not a message at all (a boundary, an unrecognized frame). */
     data class Delivered(
         val item: ThreadItem,
+        val agentBlockId: String? = null,
+    ) : ThreadRow
+
+    /** Launch-location affordance for a loaded, joined background Agent. */
+    data class AgentStartMarker(
+        val agentId: String,
+        val description: String,
+        val finished: Boolean,
     ) : ThreadRow
 
     /**
@@ -40,7 +48,7 @@ sealed interface ThreadRow {
     ) : ThreadRow
 
     /**
-     * A run of two or more adjacent tool rows, drawn as one "Using tools: N" header (#1635), produced by
+     * A run of adjacent tools or a joined Agent block, drawn as one "Using tools: N" header (#1635), produced by
      * [foldToolRuns]. Render-time only, like the queued fold.
      *
      * @param runId The run's first tool row's [Message.id] — its `tool_use_id`. New tool rows join a run
@@ -138,8 +146,10 @@ internal fun foldQueuedRows(
 
 /**
  * Fold each maximal run of two or more adjacent tool rows in [rows] into one [ThreadRow.ToolRun] (#1635),
- * the "Collapse assistant tool uses" setting's whole effect on the thread. Any other row ends a run, a lone
- * tool row passes through as itself, and a subagent's tool rows are tool rows, so they join the run they sit
+ * the "Collapse assistant tool uses" setting's whole effect on the thread. Outside joined background
+ * blocks, any other row ends a run and a lone tool row passes through as itself. A block includes its assistant children, even
+ * when the Agent is its only tool; prose does not split the block or escape its visibility control.
+ * A subagent's tool rows are tool rows, so they join the run they sit
  * in. A run whose id is in [expandedRuns] is followed by its own rows, unchanged, so they keep their keys,
  * their nesting depth and their #1577 flush join.
  *
@@ -152,11 +162,18 @@ internal fun foldToolRuns(
     val folded = ArrayList<ThreadRow>(rows.size)
     var start = 0
     while (start < rows.size) {
+        val block = (rows[start] as? ThreadRow.Delivered)?.agentBlockId
         var end = start
-        while (end < rows.size && rows[end].isToolRow()) end++
+        while (end < rows.size &&
+            (rows[end].isToolRow() || block != null) &&
+            rows[end] is ThreadRow.Delivered &&
+            (rows[end] as ThreadRow.Delivered).agentBlockId == block
+        ) {
+            end++
+        }
         if (end - start >= 2) {
             val run = rows.subList(start, end)
-            val tools = run.map { ((it as ThreadRow.Delivered).item as ThreadItem.MessageItem).message }
+            val tools = run.filter { it.isToolRow() }.map { ((it as ThreadRow.Delivered).item as ThreadItem.MessageItem).message }
             val runId = tools.first().id
             val expanded = runId in expandedRuns
             folded += ThreadRow.ToolRun(runId = runId, tools = tools, expanded = expanded)
@@ -205,6 +222,7 @@ internal fun ThreadRow.listKey(chronologicalIndex: Int): String =
         is ThreadRow.Delivered -> item.listKey()
         is ThreadRow.Queued -> echoId?.let { "msg:$it" } ?: "queued-row:$chronologicalIndex"
         is ThreadRow.ToolRun -> "tool-run:$runId"
+        is ThreadRow.AgentStartMarker -> "agent-start:$agentId"
     }
 
 private fun ThreadItem.listKey(): String =
@@ -288,3 +306,7 @@ private fun ThreadItem.userEchoId(): String? =
         ?.message
         ?.takeIf { it.role == Role.User && it.id.isNotEmpty() }
         ?.id
+
+/** Tool outlines join only inside the same background block or ordinary run. */
+internal fun ThreadRow.joinsToolRow(next: ThreadRow?): Boolean =
+    isToolRow() && next.isToolRow() && (this as ThreadRow.Delivered).agentBlockId == (next as ThreadRow.Delivered).agentBlockId

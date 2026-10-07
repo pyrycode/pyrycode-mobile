@@ -191,6 +191,9 @@ class RemoteConversationRepository(
 
     /** The turn phase of every conversation on this connection (#1313); see [TurnPhaseProjection]. */
     private val turnPhaseProjection = TurnPhaseProjection()
+
+    /** Live/reconciled suggestion state; a fresh projection per connection, never host-held. */
+    private val replySuggestionProjection = ReplySuggestionProjection()
     private val announcedModelProjection = hostReadings.announcedModel
     private val sessionFactsProjection = hostReadings.sessionFacts
 
@@ -409,13 +412,21 @@ class RemoteConversationRepository(
         )
     val questionBatches: StateFlow<List<QuestionBatch>> = questionBatchProjection.batches
 
+    /** Independent stop-refusal ledger; IDs come from the same counter as ordinary reply waiters. */
+    private val backgroundTaskStops = BackgroundTaskStops(relayRequests, pump::send, negotiatedCapabilities)
+
     /**
      * The background tasks each conversation holds on **this connection** (#677), keyed by conversation id; a
      * missing key means nothing has been reported. Folded by [BackgroundTaskProjection] from the three
      * `background_task_*` frames; only the finished marks in [finishedBackgroundTasks] predate this
      * connection. On the concrete repository only, like [questionBatches].
      */
-    private val backgroundTaskProjection = BackgroundTaskProjection(finishedBackgroundTasks)
+    private val backgroundTaskProjection =
+        BackgroundTaskProjection(
+            finishedBackgroundTasks,
+            onTaskFinished = backgroundTaskStops::taskFinished,
+            onRosterReported = backgroundTaskStops::rosterReported,
+        )
     val backgroundTasks: StateFlow<Map<String, BackgroundTaskRoster>> = backgroundTaskProjection.rosters
 
     init {
@@ -428,7 +439,9 @@ class RemoteConversationRepository(
             try {
                 pump.inbound.collect { envelope -> onInbound(envelope) }
             } finally {
+                endBackgroundTaskStops()
                 sessionErrorProjection.reset()
+                replySuggestionProjection.reset()
                 endDebugBundle()
                 messageCommands.endAttachmentUploads()
                 attachmentRetrievals.end()
@@ -441,7 +454,7 @@ class RemoteConversationRepository(
         if (messageCommands.routeDebugBundle(envelope)) return
         if (messageCommands.routeAttachmentUpload(envelope)) return
         if (attachmentRetrievals.route(envelope)) return
-        recordReplayCursor(envelope)
+        if (envelope.type != TYPE_REPLY_SUGGESTION) recordReplayCursor(envelope)
         when (envelope.type) {
             TYPE_CONVERSATIONS ->
                 // A full-list snapshot, reply or unsolicited push: see [ConversationListProjection.applySnapshot].
@@ -454,28 +467,27 @@ class RemoteConversationRepository(
                 // survives. `sessionId = ""` — the payload carries none and the last-message preview
                 // never reads it (list-tier placeholder, as #312 uses for currentSessionId). Drop
                 // silently: message content may be sensitive, so nothing here logs the payload.
-                val (conversationId, message, sentNow) =
-                    try {
-                        val dto = MobileJson.decodeFromJsonElement<MessagePayloadDto>(envelope.payload)
-                        val message = dto.toMessage(envelope, sessionId = "")
-                        Triple(
-                            dto.conversationId,
-                            if (message.role == Role.User) {
-                                message.copy(attachments = storedAttachmentReferences(dto.attachmentIds))
-                            } else {
-                                message
-                            },
-                            dto.sentNow,
-                        )
-                    } catch (e: IllegalArgumentException) {
-                        return
-                    }
+                val dto: MessagePayloadDto
+                val message: Message
+                try {
+                    dto = MobileJson.decodeFromJsonElement<MessagePayloadDto>(envelope.payload)
+                    val decoded = dto.toMessage(envelope, sessionId = "")
+                    message =
+                        if (decoded.role == Role.User) {
+                            decoded.copy(attachments = storedAttachmentReferences(dto.attachmentIds))
+                        } else {
+                            decoded
+                        }
+                } catch (e: IllegalArgumentException) {
+                    return
+                }
+                val conversationId = dto.conversationId
                 // Keep the most-recent by timestamp (the strictly-greater fold below). Only a user
                 // message is a thread row (#1351), as on desktop: the v2 path mints `message` for the
                 // operator's delivered turn alone, and assistant output arrives as structured events.
                 // A held id — the phone's own confirmed send among them — is kept, not replaced.
                 conversationListProjection.recordLastMessage(conversationId, message)
-                if (message.role == Role.User) threadProjection.appendLiveMessage(conversationId, message, sentNow)
+                if (message.role == Role.User) threadProjection.appendLiveMessage(conversationId, message, dto.sentNow, dto.queuedMsgId)
             }
             TYPE_MESSAGE_CHUNK -> {
                 // The `backfill_since` response (#313): a batch of finished messages, each carrying
@@ -599,6 +611,7 @@ class RemoteConversationRepository(
                     modelMenuProjection.applyRefusal(id, envelope.payload)
                     // The MCP asks (#1343) register in their own ledger, disjoint by the same one counter.
                     mcpStatusProjection.applyRefusal(id, envelope.payload)
+                    backgroundTaskStops.applyRefusal(id, envelope.payload)
                 }
             TYPE_TURN_STATE, TYPE_ASSISTANT_DELTA, TYPE_TOOL_USE, TYPE_TOOL_RESULT, TYPE_TURN_END -> {
                 // A v2 structured live-session envelope (#385). AC #2: gate on the negotiated
@@ -752,6 +765,11 @@ class RemoteConversationRepository(
                 // ask (#945): see [ContextUsageProjection.apply].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     contextUsageProjection.apply(envelope)
+                }
+            }
+            TYPE_REPLY_SUGGESTION -> {
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    replySuggestionProjection.apply(envelope)
                 }
             }
             TYPE_MCP_STATUS -> {
@@ -1067,6 +1085,13 @@ class RemoteConversationRepository(
             emitAll(conversationListProjection.observe(filter))
         }
 
+    /** Host snapshots retain the distinction between early upserts and a fully loaded list. */
+    internal fun observeConversationSnapshots(filter: ConversationFilter): Flow<Pair<List<Conversation>, Boolean>> =
+        flow {
+            pump.send(listConversationsRequest())
+            emitAll(conversationListProjection.observeSnapshots(filter))
+        }
+
     private fun listConversationsRequest(): Envelope =
         Envelope(
             id = relayRequests.nextRequestId(),
@@ -1239,6 +1264,11 @@ class RemoteConversationRepository(
 
     override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> = contextUsageProjection.observe(conversationId)
 
+    override fun observeReplySuggestion(
+        conversationId: String,
+        sessionId: String,
+    ): Flow<ReplySuggestion?> = replySuggestionProjection.observe(conversationId, sessionId)
+
     override fun observeMcpStatus(conversationId: String): Flow<McpStatus> = mcpStatusProjection.observe(conversationId)
 
     override fun requestMcpStatus(conversationId: String) = mcpStatusProjection.requestStatus(conversationId)
@@ -1354,6 +1384,20 @@ class RemoteConversationRepository(
 
     /** Cancel the surfaced modal (#438); see [ConversationCommands.cancelModal]. */
     suspend fun cancelModal(modalId: String): Unit = conversationCommands.cancelModal(modalId)
+
+    /** Current connection's detection capability, disabled permanently on collector termination. */
+    val supportsBackgroundTaskStop: Boolean get() = backgroundTaskStops.supported
+
+    /** Returns after send, without claiming task completion. No task or turn projection is changed. */
+    suspend fun stopBackgroundTask(
+        conversationId: String,
+        taskId: String,
+    ): Result<Unit> = backgroundTaskStops.stop(conversationId, taskId)
+
+    /** Subscribe before invoking a stop; emits only originating opaque task keys for this conversation. */
+    fun observeBackgroundTaskStopRefusals(conversationId: String): Flow<String> = backgroundTaskStops.observeRefusals(conversationId)
+
+    internal fun endBackgroundTaskStops() = backgroundTaskStops.end()
 
     /** Stop the named conversation over fire-and-forget `interrupt`; see [ConversationCommands.interrupt]. */
     suspend fun interrupt(conversationId: String): Unit = conversationCommands.interrupt(conversationId)
@@ -1774,6 +1818,9 @@ class RemoteConversationRepository(
          * [TYPE_MCP_RECONNECT] or [TYPE_MCP_TOGGLE]. Opens, closes and alters no turn.
          */
         const val TYPE_MCP_STATUS = "mcp_status"
+
+        /** Daemon → phone: live/reconciled next-reply state, never a turn event or replay/history row (#1865). */
+        const val TYPE_REPLY_SUGGESTION = "reply_suggestion"
 
         /**
          * Phone → daemon: ask for one conversation's current [TYPE_MCP_STATUS] (#1343, pyrycode#2381). Refused with
