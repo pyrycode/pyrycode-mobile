@@ -20,6 +20,32 @@ SPEC.loader.exec_module(fixture)
 
 
 class SessionErrorControlTest(unittest.TestCase):
+    def test_controller_launch_supports_live_and_scripted_with_bash_nounset(self):
+        script = Path(__file__).with_name("e2e-emulator.sh").read_text()
+        launch = script[script.index("  SESSION_ERROR_ARGS=("):script.index("  SESSION_ERROR_PID=$!")]
+        prelude = '''set -euo pipefail
+claude() { :; }
+python3() { printf '%s\\n' "$@"; }
+die() { exit 3; }
+DETERMINISTIC="$1"
+WORK_DIR="$2"
+REPO_ROOT="$2"
+SESSION_ERROR_BIN="/private/daemon with spaces"
+FAKE_BIN="/private/fake with spaces"
+DAEMON_RELAY_URL="wss://daemon.invalid"
+PHONE_RELAY_URL="wss://phone.invalid"
+'''
+        for mode in ("", "1"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                result = subprocess.run(["/bin/bash", "-c", prelude + launch + '\nwait "$!"\n',
+                                         "launch-probe", mode, directory], capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                args = (Path(directory) / "session-error-fixture.log").read_text().splitlines()
+                self.assertEqual(args.count("--daemon"), 1)
+                self.assertEqual(args[args.index("--daemon") + 1], "/private/daemon with spaces")
+                self.assertEqual(args.count("--scripted"), int(bool(mode)))
+                self.assertEqual(args[args.index("--recovery") + 1], "/private/fake with spaces" if mode else "claude")
+
     def test_case_settings_are_private_and_give_up_is_dropped_only(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
             "PYRY_E2E_QUEUE_GIVE_UP_AFTER": "1ns",

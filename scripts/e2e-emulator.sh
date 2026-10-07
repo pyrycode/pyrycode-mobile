@@ -1091,7 +1091,7 @@ if { [ -n "${DETERMINISTIC}" ] && [ "${SCENARIO}" = "session-error" ]; } ||
   SESSION_ERROR_BIN="${WORK_DIR}/session-error-pyry"
   (cd "${PYRYCODE_SRC}" && go build -tags e2e_realclaude -o "${SESSION_ERROR_BIN}" ./cmd/pyry) \
     || die "session-error tagged daemon build failed"
-  SESSION_ERROR_ARGS=()
+  SESSION_ERROR_ARGS=(--daemon "${SESSION_ERROR_BIN}")
   if [ -n "${DETERMINISTIC}" ]; then
     SESSION_ERROR_RECOVERY="${FAKE_BIN}"
     SESSION_ERROR_ARGS+=(--scripted)
@@ -1101,7 +1101,7 @@ if { [ -n "${DETERMINISTIC}" ] && [ "${SCENARIO}" = "session-error" ]; } ||
   SESSION_ERROR_EVIDENCE="${REPO_ROOT}/build/session-error-evidence/$(basename "${WORK_DIR}")"
   SESSION_ERROR_PORT_FILE="${WORK_DIR}/session-error-control.json"
   python3 "${REPO_ROOT}/scripts/e2e-session-error.py" \
-    --daemon "${SESSION_ERROR_BIN}" --recovery "${SESSION_ERROR_RECOVERY}" \
+    --recovery "${SESSION_ERROR_RECOVERY}" \
     --daemon-relay "${DAEMON_RELAY_URL}" --phone-relay "${PHONE_RELAY_URL}" \
     --port-file "${SESSION_ERROR_PORT_FILE}" --evidence "${SESSION_ERROR_EVIDENCE}" \
     "${SESSION_ERROR_ARGS[@]}" >"${WORK_DIR}/session-error-fixture.log" 2>&1 &
