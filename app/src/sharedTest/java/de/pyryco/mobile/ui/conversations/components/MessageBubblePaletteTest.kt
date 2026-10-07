@@ -136,8 +136,10 @@ class MessageBubblePaletteTest {
         assertEquals(dark to wallpaper, renderedMode)
         assertEquals(3, bubbles.size)
         val queued = rule.onNodeWithText("Queued", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-        val glyphs = rule.onAllNodesWithTag("message-copy-glyph", useUnmergedTree = true).fetchSemanticsNodes()
-        assertEquals(3, glyphs.size)
+        val glyphs =
+            rule.onAllNodesWithTag("message-copy-glyph", useUnmergedTree = true).fetchSemanticsNodes() +
+                rule.onAllNodesWithTag("message-reply-glyph", useUnmergedTree = true).fetchSemanticsNodes()
+        assertEquals(6, glyphs.size)
 
         fun contrast(
             first: Color,
@@ -147,10 +149,9 @@ class MessageBubblePaletteTest {
             val secondLuminance = second.luminance()
             return (maxOf(firstLuminance, secondLuminance) + 0.05f) / (minOf(firstLuminance, secondLuminance) + 0.05f)
         }
-        // No backing (#1817 added one, then removed it as the fix for the white-chip-in-dark-theme
-        // bug): the glyph tint must clear 3:1 against the actual thread background on its own.
+        // No backing (#1889): each action glyph's tint must clear 3:1 against the thread background on its own.
         val glyphContrast = contrast(actionTint, background)
-        assertTrue("side copy glyph contrast against the thread background must be at least 3:1; got $glyphContrast", glyphContrast >= 3f)
+        assertTrue("side action glyph contrast against the thread background must be at least 3:1; got $glyphContrast", glyphContrast >= 3f)
         rule.runOnIdle {
             val root = checkNotNull(view)
             val bitmap = Bitmap.createBitmap(root.width, root.height, Bitmap.Config.ARGB_8888)
@@ -190,7 +191,7 @@ class MessageBubblePaletteTest {
                         if (bitmap.getPixel(x, y) == expected) matchingPixels++
                     }
                 }
-                assertTrue("side copy must use the scheme primary tint", matchingPixels > 0)
+                assertTrue("both side actions must use the scheme primary tint", matchingPixels > 0)
             }
             bitmap.recycle()
         }
