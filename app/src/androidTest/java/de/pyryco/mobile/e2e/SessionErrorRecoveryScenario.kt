@@ -87,17 +87,17 @@ internal class SessionErrorRecoveryScenario(
             assertTrue("phone send has no correlation identity", queued.messageId.isNotBlank())
             assertEquals("the closed-stdin child must not receive a turn", 0, deliveries(peer, conversation).size)
             assertTrue("crash signal preceded queued observation", errors(peer, conversation).isEmpty())
+            val queuedRow =
+                hasText(heldPrompt) and
+                    SemanticsMatcher.expectValue(
+                        SemanticsProperties.StateDescription,
+                        context.getString(R.string.thread_queued_state_desc),
+                    )
             request(arm, "exit")
             val expectedId: String
             if (arm == "retained") {
                 awaitError(peer, conversation, "session.child_crashing")
                 assertPill(CRASHING)
-                val queuedRow =
-                    hasText(heldPrompt) and
-                        SemanticsMatcher.expectValue(
-                            SemanticsProperties.StateDescription,
-                            context.getString(R.string.thread_queued_state_desc),
-                        )
                 compose.onNode(queuedRow).assertIsDisplayed()
                 val stillQueued = runBlocking { peer.awaitQueue(conversation, 5_000) { it.size == 1 } }.single()
                 assertEquals(queued.messageId, stillQueued.messageId)
@@ -110,7 +110,8 @@ internal class SessionErrorRecoveryScenario(
                 awaitError(peer, conversation, "session.blocked")
                 runBlocking { peer.awaitQueue(conversation, 10_000) { it.isEmpty() } }
                 assertPill(BLOCKED)
-                compose.onAllNodesWithText(heldPrompt).assertCountEquals(0)
+                compose.waitUntil(10_000) { nodes(queuedRow).isEmpty() }
+                compose.onAllNodes(queuedRow).assertCountEquals(0)
                 assertEquals("dropped turn was delivered", 0, deliveries(peer, conversation).size)
                 // The 3s give-up can precede the crash notice; observe its pill as it arrives.
                 awaitError(peer, conversation, "session.child_crashing")
