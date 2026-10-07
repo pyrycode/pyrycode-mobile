@@ -152,6 +152,7 @@ internal fun ComposeTestRule.assertSelectedWordOnClipboard(
     reply: String,
     word: String,
     timeoutMillis: Long,
+    onBaselineObserved: () -> Unit = {},
     copyDiagnostics: () -> String = { "copyStep=not_recorded" },
 ) {
     // UI idleness is not the clipboard-result contract. Observe the actual selected-word write.
@@ -167,6 +168,8 @@ internal fun ComposeTestRule.assertSelectedWordOnClipboard(
                 observations++
                 if (outcome != last && transitions.size < 6) transitions += outcome
                 last = outcome
+                // Let device controls replace the real clip only after this snapshot is recorded.
+                if (copied == CLIPBOARD_BASELINE) onBaselineObserved()
                 copied == word
             }
         }

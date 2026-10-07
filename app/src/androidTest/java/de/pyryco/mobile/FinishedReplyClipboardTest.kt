@@ -15,12 +15,14 @@ import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.e2e.SELECTION_REPLY
 import de.pyryco.mobile.e2e.assertSelectedWordOnClipboard
 import de.pyryco.mobile.e2e.selectionClipboard
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -112,15 +114,26 @@ class FinishedReplyClipboardTest {
         val clipboard = composeTestRule.activity.selectionClipboard()
         seedBaseline(clipboard)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+        val baselineObserved = CompletableDeferred<Unit>()
         var diagnosticCalled = false
         try {
             scope.launch {
-                delay(500)
+                baselineObserved.await()
                 clipboard.setPrimaryClip(ClipData.newPlainText("wrong selection control", "jade"))
             }
+            // Delay the helper beyond the old 500 ms write schedule without losing its baseline.
+            runBlocking { delay(1_000) }
+            assertTrue(!baselineObserved.isCompleted)
+            composeTestRule.runOnIdle { assertEquals(BASELINE, clipboardText(clipboard)) }
             val failure =
                 assertThrows(ComposeTimeoutException::class.java) {
-                    composeTestRule.assertSelectedWordOnClipboard(clipboard, SELECTION_REPLY, "cobalt", 1_500) {
+                    composeTestRule.assertSelectedWordOnClipboard(
+                        clipboard,
+                        SELECTION_REPLY,
+                        "cobalt",
+                        1_500,
+                        onBaselineObserved = { baselineObserved.complete(Unit) },
+                    ) {
                         assertEquals(Looper.getMainLooper(), Looper.myLooper())
                         assertTrue(!composeTestRule.activity.isDestroyed)
                         diagnosticCalled = true
@@ -128,6 +141,7 @@ class FinishedReplyClipboardTest {
                     }
                 }
             val message = failure.message.orEmpty()
+            assertTrue(baselineObserved.isCompleted)
             assertTrue(diagnosticCalled)
             assertTrue(message.contains("last=[clipboard=reply_span span=13:17 items=1 textLength=4"))
             assertTrue(message.contains("clipboard=baseline"))
