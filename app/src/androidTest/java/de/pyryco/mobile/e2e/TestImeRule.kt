@@ -13,8 +13,11 @@ import org.junit.runners.model.Statement
  * ATD images omit LatinIME, so a method asserting real keyboard visibility calls [select] to use the test
  * APK's keyboard. Methods that never call it keep the device's own setting; the rule restores it after any
  * method that did.
+ * [selectBeforeTest] selects before inner rules set up, then restores after their cleanup.
  */
-class TestImeRule : TestRule {
+class TestImeRule(
+    private val selectBeforeTest: Boolean = false,
+) : TestRule {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private var restore: (() -> Unit)? = null
 
@@ -45,6 +48,7 @@ class TestImeRule : TestRule {
         object : Statement() {
             override fun evaluate() {
                 try {
+                    if (selectBeforeTest) select()
                     base.evaluate()
                 } finally {
                     restore?.invoke()

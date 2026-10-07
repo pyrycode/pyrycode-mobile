@@ -21,6 +21,7 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.width
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.Message
@@ -28,6 +29,7 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -94,14 +96,24 @@ class MessageReplyTargetsTest {
             val rg = rule.onAllNodesWithTag("message-reply-glyph", useUnmergedTree = true)[index].getUnclippedBoundsInRoot()
             val bubble = rule.onAllNodesWithTag(MESSAGE_BUBBLE_TEST_TAG)[index].getUnclippedBoundsInRoot()
             assertEquals(48f, c.width.value, 1f)
+            assertEquals(48f, c.height.value, 1f)
             assertEquals(48f, r.width.value, 1f)
+            assertEquals(48f, r.height.value, 1f)
             assertEquals(c.bottom.value, r.top.value, 1f)
+            val row = rule.onAllNodesWithTag("message-row")[index].getUnclippedBoundsInRoot()
+            assertTrue("copy target stays inside its message row", c.top >= row.top)
+            assertTrue("reply target stays inside its message row", r.bottom <= row.bottom)
+            assertTrue("action targets fit the visible surface height", c.top >= bubble.top && r.bottom <= bubble.bottom)
+            if (index > 0) {
+                val precedingReply = rule.onAllNodesWithContentDescription("Reply to this message")[index - 1].getUnclippedBoundsInRoot()
+                assertTrue("adjacent rows have separate action targets", c.top >= precedingReply.bottom)
+            }
             val cy = (cg.top.value + cg.bottom.value) / 2
             val ry = (rg.top.value + rg.bottom.value) / 2
             assertEquals(25f, ry - cy, 1f)
             assertEquals((bubble.top.value + bubble.bottom.value) / 2, (cy + ry) / 2, 1f)
-            assertEquals(24f, cy - c.top.value, 1f)
-            assertEquals(24f, r.bottom.value - ry, 1f)
+            assertEquals(12.5f, c.bottom.value - cy, 1f)
+            assertEquals(12.5f, ry - r.top.value, 1f)
             assertEquals(13f, rg.width.value, 1f)
             // Actual pointer events on both sides of the shared edge, then each outer boundary.
             copy.performTouchInput {
@@ -130,11 +142,16 @@ class MessageReplyTargetsTest {
             assertEquals((index + 1) * 4, replies.size)
         }
         assertEquals(List(8) { content }, copies)
+        assertEquals(List(8) { content }, replies.map { it.content })
         assertEquals(List(4) { Role.User } + List(4) { Role.Assistant }, replies.map { it.role })
         assertEquals(0, toggles)
     }
 
     @Test fun shortBubbleTargetsAt320dp() = verify(320, "Hi")
+
+    @Test fun shortBubbleTargetsAt412dp() = verify(412, "Hi")
+
+    @Test fun longBubbleTargetsAt320dp() = verify(320, "long content ".repeat(16))
 
     @Test fun longBubbleTargetsAt412dp() = verify(412, "long content ".repeat(16))
 
