@@ -235,9 +235,16 @@ records the 2026-10-04 dispatcher full JVM run on `fe666d46`: **4,043 executed,
 These are full-suite results, not a separate focused run. The full UI gate records
 **176 executed, 0 failed, 0 errors, 1 skipped** (177 entries; unrelated rename capture),
 and scripted-all **13 executed, 0 failed, 0 errors, 0 skipped**, using zero real Claude
-turns. This ticket establishes rung 2, not real daemon failure/recovery. Live proof
-belongs to [#1731](https://github.com/pyrycode/pyrycode-mobile/issues/1731) and its
-[daemon-control prerequisite](../../e2e-interactive-stream.md#follow-ups-to-ticket).
+turns. #1678 establishes rung 2. [Session-error recovery (#1731)](../../e2e-interactive-stream.md#session-error-recovery-1731)
+now supplies both real-Claude and deterministic real-daemon recovery proof, with counted
+full-suite results and artifact inspection boundaries recorded there.
+
+Finished message bubbles share tags and click semantics between user and assistant roles.
+A substring reply matcher can therefore pass on the sent prompt alone.
+`SessionErrorReplyMatcherTest.sentPromptsAloneCannotProveAssistantRendering_thenReplyDoes`
+mounts both actual user bubbles and requires zero matches before adding the assistant.
+Keep that negative control beside the exact standalone `recovered1731` matcher; the
+scripted recovery child returns that distinct reply instead of echoing the prompt.
 
 ### Short-stream top anchoring (#1509)
 
