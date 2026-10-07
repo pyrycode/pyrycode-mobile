@@ -310,6 +310,18 @@ distinction from the tree's own blank at all — see the next section.
   covers a selection absent from `addWorkspaceRecent` drawing in its own section, the new-folder entry
   reporting a trimmed name without disturbing the selection, and each failure flag showing its own static
   string.
+
+  `LazyColumn` composes only part of the tree: a renamed chat can already be in the host projection
+  while its text has no semantics node (#1870). Active-list presence observations must search the
+  scroll container for the exact chat-tagged name and assert the discovered row is displayed.
+  `awaitArchiveRoundTripChat` does that before archive and after restore, preserving a timeout for
+  truly absent chats and propagating failures other than the specific pending missing-node result.
+  `ArchiveRoundTripChatTest` mounts this production screen with 24 preceding chats, removes and
+  restores the target, and exercises the live drive's helper at both presence checks. A short-list
+  happy path would miss the defect; the absent-chat negative control guards against weakened
+  membership checks. See the [archive/restore scenario and evidence](../../e2e-interactive-stream.md#verification-status)
+  and [Archive testing](archived-discussions-screen.md#testing).
+
   Navigation itself is not re-proven here — the scripted device gate drives tap-to-thread end to end.
 
   `ConversationTreeRowsTest` gained (#744): `hostRow_editControl_isNamedForItsHostAndReportsOnlyItsOwnTap`
