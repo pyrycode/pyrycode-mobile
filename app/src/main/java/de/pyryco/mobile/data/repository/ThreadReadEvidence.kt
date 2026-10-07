@@ -31,6 +31,7 @@ data class ThreadReadEvidence internal constructor(
     // true deliberately nonvisual; false visible; null malformed/unsupported/unrepresented.
     internal val facts: Map<ULong, Boolean?> = emptyMap(),
     internal val unidentified: Set<Triple<String, String, kotlinx.serialization.json.JsonElement>> = emptySet(),
+    internal val gaps: List<UnsignedHistoryGap> = emptyList(),
 ) {
     override fun toString(): String = "ThreadReadEvidence(<redacted>)"
 
@@ -59,13 +60,13 @@ data class ThreadReadEvidence internal constructor(
     ): ULong? {
         if (unidentified.isNotEmpty()) return null
         var candidate = versions[presented]?.maxOrNull() ?: return null
-        if (candidate <= confirmed) return null
         val received = facts.keys.filter { it > confirmed }.sorted()
         if (received.any { it <= candidate && facts[it] == null }) return null
         // A known received hole cannot be crossed by a newer row or a list latest-id hint.
         if (received.zipWithNext().any { (a, b) -> b <= candidate && b - a > 1u }) return null
         while (candidate < ULong.MAX_VALUE && facts[candidate + 1u] == true) candidate++
-        return candidate
+        if (gaps.any { confirmed < it.edge && candidate >= it.edge }) return null
+        return candidate.takeIf { it > confirmed }
     }
 
     internal fun received(

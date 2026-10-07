@@ -9,6 +9,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ThreadReadClaimsTest {
+    @Test fun persistedReceiptGapBlocksAReconnectedNewestRowUntilTheGapIsFilled() {
+        val row = entry(45u, "message", """{"conversation_id":"c","message_id":"m","role":"assistant","text":"newest"}""")
+        val page = reduceOrderedHistoryPage(listOf(row), true)
+        val received = ThreadReadEvidence().received(listOf(row), page, page.rows)
+        val gap = received.copy(gaps = listOf(UnsignedHistoryGap(31u, 41u)))
+        assertNull(gap.checkpoint(page.rows.single(), 31u))
+        assertNull(gap.checkpoint(page.rows.single(), 35u))
+        assertEquals(45uL, gap.checkpoint(page.rows.single(), 41u))
+        assertEquals(45uL, received.checkpoint(page.rows.single(), 31u))
+    }
+
     @Test fun decodedStateMetadataDoesNotBlockVisibleReplyButMalformedMetadataDoes() {
         val metadata =
             listOf(
@@ -49,6 +60,7 @@ class ThreadReadClaimsTest {
         val reduced = reduceOrderedHistoryPage(listOf(banner, state, visible), true)
         val evidence = ThreadReadEvidence().received(listOf(banner, state, visible), reduced, reduced.rows)
         assertEquals(13uL, evidence.checkpoint(reduced.rows.first(), 0u))
+        assertEquals(13uL, evidence.checkpoint(reduced.rows.first(), 11u))
         assertNull(evidence.checkpoint(reduced.rows.first(), 13u))
         for (barrier in listOf(
             entry(12u, "future_type", "{}"),
@@ -58,6 +70,7 @@ class ThreadReadClaimsTest {
             val page = reduceOrderedHistoryPage(listOf(banner, barrier, visible), true)
             val blocked = ThreadReadEvidence().received(listOf(banner, barrier, visible), page, page.rows)
             assertEquals(11uL, blocked.checkpoint(page.rows.first(), 0u))
+            assertNull(blocked.checkpoint(page.rows.first(), 11u))
         }
     }
 

@@ -58,13 +58,24 @@ class ThreadReadViewportTest {
         compose.runOnIdle { state.value = state.value.copy(displayName = "Recomposition") }
         compose.runOnIdle {
             assertEquals(1, events.size)
+            val seen = state.value.items.last()
+            state.value =
+                state.value.copy(
+                    readUpTo = 40u,
+                    readEvidence = ThreadReadEvidence(versions = mapOf(seen to setOf(40u)), facts = mapOf(40uL to false, 41uL to true)),
+                )
+        }
+        compose.waitForIdle()
+        compose.waitUntil(5000) { events.size == 2 }
+        compose.runOnIdle {
+            assertEquals(41uL, events.last().checkpoint)
             owner.registry.currentState = Lifecycle.State.STARTED
         }
         compose.runOnIdle {
             val newest = row(31)
-            state.value = state.value.copy(items = state.value.items + newest, readEvidence = evidence(newest, 41u))
+            state.value = state.value.copy(items = state.value.items + newest, readEvidence = evidence(newest, 42u))
         }
-        compose.runOnIdle { assertEquals(1, events.size) }
+        compose.runOnIdle { assertEquals(2, events.size) }
     }
 
     @Test fun foregroundCheckpoint_excludesScrolledAwayRowUpdates() {

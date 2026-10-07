@@ -807,9 +807,17 @@ class ThreadViewModel(
         }.combine(combine(channelEditor.state, hostAvailable, ::Pair)) { uiState, (editor, available) ->
             uiState.copy(channelEditor = editor, hostAvailable = available)
         }.combine(
-            combine(repository.threadSnapshots(conversationId), repository.observeReadMarks(conversationId), ::Pair),
-        ) { uiState, (snapshot, marks) ->
-            uiState.copy(readEvidence = snapshot.readEvidence, readUpTo = marks?.readUpTo)
+            combine(
+                repository.threadSnapshots(conversationId),
+                repository.observeReadMarks(conversationId),
+                flow<HistoryCoverage?> {
+                    emit(null)
+                    historySeed.join()
+                    historyCoverage.collect { emit(it) }
+                },
+            ) { snapshot, marks, coverage -> Triple(snapshot, marks, coverage) },
+        ) { uiState, (snapshot, marks, coverage) ->
+            uiState.copy(readEvidence = coverage?.let { snapshot.readEvidence.copy(gaps = it.unsignedGaps) }, readUpTo = marks?.readUpTo)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
