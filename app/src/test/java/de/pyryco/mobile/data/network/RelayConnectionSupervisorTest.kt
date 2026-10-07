@@ -1051,6 +1051,59 @@ class RelayConnectionSupervisorTest {
             assertEquals(RelayLinkStatus.Idle, supervisor.relayStatus.value)
         }
 
+    @Test
+    fun cappedBackoff_passiveRecoveryCannotBeatRetryProof() =
+        runTest {
+            for (code in listOf(4404, null)) {
+                val (factory, supervisor) = newPairedSupervisor()
+                supervisor.connect()
+                runCurrent()
+                for (attempt in 1..5) {
+                    factory.created.last().emitDown(code = code)
+                    runCurrent()
+                    assertEquals(attempt, supervisor.backoffState.value?.attempt)
+                    advanceUntilIdle()
+                    assertNull(supervisor.backoffState.value)
+                }
+                factory.created.last().emitDown(code = code)
+                runCurrent()
+                assertEquals(6, supervisor.backoffState.value?.attempt)
+                advanceTimeBy(20_000)
+                runCurrent()
+                assertEquals("passive redial cannot satisfy the 20 s proof", 6, factory.created.size)
+                assertNull(supervisor.currentConnection.value)
+                supervisor.retry()
+                runCurrent()
+                assertEquals(7, factory.created.size)
+                assertNull(supervisor.backoffState.value)
+                supervisor.close()
+            }
+        }
+
+    @Test
+    fun cappedBackoff_retainedHistoryDoesNotRequireSixMoreFailures() =
+        runTest {
+            val (factory, supervisor) = newPairedSupervisor()
+            supervisor.connect()
+            runCurrent()
+            repeat(5) {
+                factory.created.last().emitDown(code = 4404)
+                runCurrent()
+                advanceUntilIdle()
+            }
+            factory.created.last().emitUp()
+            runCurrent()
+            advanceTimeBy(1_000)
+            runCurrent()
+            factory.created.last().emitDown(code = 4404)
+            runCurrent()
+            assertEquals("short successful connection retains five preceding failures", 6, supervisor.backoffState.value?.attempt)
+            supervisor.close()
+            assertNull(supervisor.backoffState.value)
+            runCurrent()
+            assertNull(supervisor.backoffState.value)
+        }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     private suspend fun RelayConnectionSupervisor.state(): ConnectionState = observe().first()

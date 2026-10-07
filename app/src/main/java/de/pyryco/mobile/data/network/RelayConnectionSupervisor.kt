@@ -25,6 +25,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.ceil
 import kotlin.random.Random
+import kotlin.time.TimeSource
 
 /**
  * The narrow lifecycle-control seam the process-lifecycle driver (#302) drives. Two methods, no data
@@ -94,6 +95,11 @@ class RelayConnectionSupervisor(
      *  into the combined model; it is fetched off the concrete supervisor like [currentConnection]. */
     val relayStatus: StateFlow<RelayLinkStatus> = state.asStateFlow()
 
+    private val activeBackoff = MutableStateFlow<RelayBackoff?>(null)
+
+    /** Current backoff diagnostic; UI state remains on [relayStatus], which may conflate dials. */
+    internal val backoffState: StateFlow<RelayBackoff?> = activeBackoff.asStateFlow()
+
     private var loopJob: Job? = null
 
     // The current dial's transport and the app minimum its sealed `client.update_required` error named
@@ -126,6 +132,7 @@ class RelayConnectionSupervisor(
         liveConnection.value?.close()
         liveConnection.value = null
         state.value = RelayLinkStatus.Idle
+        activeBackoff.value = null
     }
 
     /** Forces an immediate reconnect, collapsing any pending backoff wait. Starts the loop if idle
@@ -210,7 +217,15 @@ class RelayConnectionSupervisor(
                 pairingRejected -> haltUntilRetry { RelayLinkStatus.PairingRejected }
                 updateRequired -> haltUntilRetry { RelayLinkStatus.UpdateRequired(dialMinimum) }
                 protocolMismatch -> haltUntilRetry { RelayLinkStatus.Offline }
-                else -> backoff(attempt, daemonAbsent)
+                else -> {
+                    val backoff = RelayBackoff(attempt, TimeSource.Monotonic.markNow())
+                    activeBackoff.value = backoff
+                    try {
+                        backoff(attempt, daemonAbsent)
+                    } finally {
+                        activeBackoff.update { current -> if (current === backoff) null else current }
+                    }
+                }
             }
         }
     }
