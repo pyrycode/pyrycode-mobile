@@ -64,6 +64,67 @@ compile and both device gates, the next several verifier passes see no device
 evidence at all rather than a narrow one-file failure — run the guard and repair
 everything it reports before committing, not just the files touched this run.
 
+### Snackbar routing guard
+
+Failures use the top-overlay [Error pill](notice-pill.md), not a snackbar.
+[`SnackbarRoutingGuardTest`](../../../app/src/test/java/de/pyryco/mobile/verification/SnackbarRoutingGuardTest.kt)
+runs in normal JVM `test` / `check` verification (#1750). To run it alone:
+
+```bash
+./gradlew testDebugUnitTest --tests 'de.pyryco.mobile.verification.SnackbarRoutingGuardTest'
+```
+
+Gradle supplies `snackbarProductionSourceRoots` from all configured Android
+production source sets, including build-type and flavor roots. Only source-set
+names starting with `test` or `androidTest` are excluded: a production build type
+such as `latest` must still be scanned. Kotlin (`.kt` / `.kts`) and Java sources
+are explicit unit-task inputs, so source-only routing changes invalidate cached
+results. Project-relative roots, the app working directory and relative input
+path sensitivity preserve cache reuse across worktrees. Missing configuration
+or an empty scan fails.
+
+The test-only Kotlin compiler PSI parser rejects unclassified `showSnackbar` and
+`Snackbar` references, including callable references, aliased imports, classic
+Android `Snackbar.make` and direct Compose `Snackbar` content. Java references
+have no permitted classifications. Comments and plain string literals are not
+routes; expressions inside Kotlin string templates are inspected. This is a
+syntax contract, not whole-program dataflow analysis or a substitute for reviewing
+message producers.
+
+The four permitted non-error regions are:
+
+- `ThreadScreen`'s attachment callback: only `AttachmentNotice.SAVED` reaches the
+  snackbar; other attachment notices reach Error pills.
+- `MarkdownReaderScreen`'s note-save callback: the same Saved-only split.
+- `ThreadScreen`'s `ModalUiState.Dismissed` branch: the dismissed-elsewhere reason
+  from `dismissReasonText`, in the effect keyed by `modalId`.
+- `ArchivedDiscussionsScreen`'s `RestoreSucceeded` branch: the success resource
+  formatted with the restored display name.
+
+`ChannelListScreen` has no permitted snackbar route. These classifications do
+not migrate non-error notices to Default pills or alter presentation lifetimes.
+
+For a new notice, first review whether its producer represents a failure. Route
+failures to Error pills. A new non-error snackbar needs an explicit classification
+in [`SnackbarRoutingGuard`](../../../app/src/test/java/de/pyryco/mobile/verification/SnackbarRoutingGuard.kt)
+and positive and negative controls in its test class. The classification pins
+both the owning screen/function and the complete callback or branch, including
+message derivation, Saved-only condition, effect key and enclosing `when` subject
+where applicable. Syntax tokens must match; only whitespace and comments are
+ignored. Review classification changes when refactoring an approved region;
+neutral-looking copy or a fixed count of snackbar calls cannot establish safety.
+
+Retained [commands and results](../../../app/src/test/resources/verification/snackbar-routing/commands-and-results.txt)
+and fresh post-blocker XML record 11 executed/passed tests, zero failures/errors/
+skips, and 302 scanned production files. The matching source-set negative control
+executed one test with one expected assertion failure, zero errors/skips, and
+303 scanned files: the injected `latest/LatestScreen.kt` route was rejected.
+`post-blocker-green.xml` includes both the production assertion and the
+neutral-copy added-error control. The test-only init script and fixture remain
+under test resources. The earlier MainActivity share-error failure is retained
+as historical evidence; #1824 fixed that production route without weakening the
+guard. See [the verifier verdict](https://github.com/pyrycode/pyrycode-mobile/pull/1875#issuecomment-6030551584).
+
 ## Where a screen test goes
 
 Compose screen tests live in `app/src/sharedTest/java`. Gradle adds that folder to
