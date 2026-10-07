@@ -1,0 +1,10 @@
+// Test-only injection: a production build type whose name contains "test" must still be scanned.
+allprojects { target ->
+    target.pluginManager.withPlugin('com.android.application') {
+        def android = target.extensions.getByName('android')
+        android.buildTypes.create('latest')
+        android.sourceSets.getByName('latest').java.srcDir(
+            target.file('src/test/resources/verification/snackbar-routing/latest')
+        )
+    }
+}
