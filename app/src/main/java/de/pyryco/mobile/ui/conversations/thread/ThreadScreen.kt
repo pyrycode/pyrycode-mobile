@@ -83,6 +83,7 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.ModalUiState
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.repository.ApiRetryStatus
@@ -106,6 +107,7 @@ import de.pyryco.mobile.ui.conversations.components.CompactionBoundaryDivider
 import de.pyryco.mobile.ui.conversations.components.ConnectionStatusIndicator
 import de.pyryco.mobile.ui.conversations.components.EmptyThreadState
 import de.pyryco.mobile.ui.conversations.components.MEMORY_PLUGIN_DOCS_URL
+import de.pyryco.mobile.ui.conversations.components.MessageAreaRowSpacing
 import de.pyryco.mobile.ui.conversations.components.MessageBubble
 import de.pyryco.mobile.ui.conversations.components.MessageContentGutter
 import de.pyryco.mobile.ui.conversations.components.ModelRefusalRow
@@ -605,6 +607,10 @@ fun ThreadScreen(
                     remember(agentRows, collapseToolUses, retainedExpandedRuns, state.historyMarkers) {
                         if (collapseToolUses) foldHistoryToolRuns(agentRows, retainedExpandedRuns, state.historyMarkers) else agentRows
                     }
+                val displayedHistoryMarkers =
+                    remember(agentRows, rows, state.historyMarkers) {
+                        foldedAgentHistoryMarkers(agentRows, rows, state.historyMarkers)
+                    }
                 // A backlog item this device minted no echo for is a row of its own, so the empty state
                 // must yield to it (#782 AC #3). When an item *is* matched its echo is a MessageItem, so
                 // hasMessages already covers that case.
@@ -615,7 +621,7 @@ fun ThreadScreen(
                     // The ViewModel remains the authoritative single-flight and termination gate.
                     val demandOlderHistory by rememberUpdatedState(onDemandOlderHistory)
                     val demandHistoryGap by rememberUpdatedState(onDemandHistoryGap)
-                    val gapMarkers by rememberUpdatedState(state.historyMarkers)
+                    val gapMarkers by rememberUpdatedState(displayedHistoryMarkers)
                     val gapHeights = remember(state.conversationId) { mutableStateMapOf<Long, Int>() }
                     val historyLoading by rememberUpdatedState(state.historyTail == ThreadHistoryTail.Loading)
                     val pullForOlderHistory = { if (!historyLoading) demandOlderHistory() }
@@ -881,6 +887,13 @@ fun ThreadScreen(
                                                                 item.message.id
                                                             ) {
                                                                 Modifier.testTag("background-agent:${item.message.id}")
+                                                            } else if (row.agentBlockId != null && item.message.role == Role.Assistant) {
+                                                                Modifier
+                                                                    .padding(
+                                                                        start =
+                                                                            MessageAreaRowSpacing *
+                                                                                ((toolDepths[item.message.parentToolUseId] ?: 0) + 1),
+                                                                    ).testTag("background-agent-child:${row.agentBlockId}")
                                                             } else {
                                                                 Modifier
                                                             },
@@ -949,15 +962,17 @@ fun ThreadScreen(
                                         is ThreadRow.AgentStartMarker ->
                                             AgentStartMarker(row.description, row.finished, onGoToAgent = { goToAgent = row.agentId })
                                         is ThreadRow.ToolRun ->
-                                            ToolRunRow(
-                                                toolCalls = remember(row.tools) { row.tools.mapNotNull { it.toolCall } },
-                                                expanded = row.expanded,
-                                                onToggle = {
-                                                    expandedRuns =
-                                                        if (row.expanded) expandedRuns - row.runId else expandedRuns + row.runId
-                                                },
-                                                modifier = Modifier.padding(horizontal = MessageContentGutter),
-                                            )
+                                            Box(Modifier.testTag("tool-run:${row.runId}")) {
+                                                ToolRunRow(
+                                                    toolCalls = remember(row.tools) { row.tools.mapNotNull { it.toolCall } },
+                                                    expanded = row.expanded,
+                                                    onToggle = {
+                                                        expandedRuns =
+                                                            if (row.expanded) expandedRuns - row.runId else expandedRuns + row.runId
+                                                    },
+                                                    modifier = Modifier.padding(horizontal = MessageContentGutter),
+                                                )
+                                            }
                                     }
                                 }
                             }

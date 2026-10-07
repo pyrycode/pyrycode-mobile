@@ -1,17 +1,14 @@
 package de.pyryco.mobile.e2e
 
-import android.os.SystemClock
 import androidx.test.platform.app.InstrumentationRegistry
-import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
 import java.net.InetSocketAddress
 import java.net.Socket
+import kotlin.time.TimeMark
 
 /** Controls only the first daemon process owned by this e2e harness invocation. */
 internal class DaemonFaultControl {
@@ -24,35 +21,15 @@ internal class DaemonFaultControl {
 
     fun start() = request("start")
 
-    /** Returns a deadline safely before the earliest passive dial after the sixth failure. */
+    /** Returns a deadline safely before the earliest passive dial after the actual capped backoff begins. */
     fun stopUntilRetryWindow(
         supervisor: RelayConnectionSupervisor,
         assertOfflinePill: () -> Unit,
-    ): Long =
+    ): TimeMark =
         runBlocking {
             val failures =
                 async(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
-                    withTimeout(90_000) {
-                        var previous: RelayLinkStatus = supervisor.relayStatus.value
-                        var count = 0
-                        var cappedWaitObservedAt = 0L
-                        supervisor.relayStatus.first { current ->
-                            if (
-                                (previous is RelayLinkStatus.Connected || previous is RelayLinkStatus.Connecting) &&
-                                (
-                                    current is RelayLinkStatus.Reconnecting ||
-                                        current is RelayLinkStatus.DaemonAbsent ||
-                                        current is RelayLinkStatus.Offline
-                                )
-                            ) {
-                                count++
-                            }
-                            previous = current
-                            (count >= 6).also { if (it) cappedWaitObservedAt = SystemClock.elapsedRealtime() }
-                        }
-                        // The capped wait lasts at least 24 s. Leave 4 s for observer scheduling jitter.
-                        cappedWaitObservedAt + 20_000L
-                    }
+                    OfflineRetryWindow.awaitDeadline(supervisor)
                 }
             try {
                 stop()
@@ -63,10 +40,7 @@ internal class DaemonFaultControl {
             }
         }
 
-    fun recoveryTimeRemaining(deadline: Long): Long =
-        (deadline - SystemClock.elapsedRealtime()).also {
-            check(it > 0) { "the passive reconnect window elapsed before Retry recovery" }
-        }
+    fun recoveryTimeRemaining(deadline: TimeMark): Long = OfflineRetryWindow.remainingMs(deadline)
 
     private fun request(action: String) {
         Socket().use { socket ->

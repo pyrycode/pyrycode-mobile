@@ -18,6 +18,9 @@ Background-agent placement (#1783) is covered at rung 3 by
 and at rung 4 by
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`.
 Controlled projection/Compose fixtures separately cover multiple agents and history permutations.
+Attributed background-agent prose (#1827) is covered at rung 3 by
+`InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_replyStaysUnderAgent`; the same rung-4
+`background-agent` scenario adds attributed and unmatched prose to its fixtures.
 
 1. **Wire-level Go test** (`pyrycode#642`) — no emulator. Daemon → relay → simulated phone receives the
    structured stream. The steadiest rung; the future deterministic backend for rung 3/4. Lives in
@@ -124,6 +127,7 @@ Controlled projection/Compose fixtures separately cover multiple agents and hist
    instead fails the harness-owned daemon, observes the actual Offline pill in the open thread,
    restores the same host and taps Retry before passive reconnect can run, then renders a new
    real-Claude reply. One Claude turn; see [Offline Retry proof](#offline-retry-proof).
+   Both Offline Retry harnesses use the actual capped-backoff snapshot and producer deadline (#1785).
    Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847 / #848 / #849 / #850 / #891 / #946 / #545 / #950 / #965 / #981 / #966 / #967 / #955 / #1016 / #1020 / #1050 / #1021 / #1017)**
    historically ran a **curated set of thirty-seven scenarios** (ping + create-workspace-folder + new-session + delete +
    archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host +
@@ -241,6 +245,7 @@ Controlled projection/Compose fixtures separately cover multiple agents and hist
    The `offline-retry` twin (#1286),
    `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply`,
    drives the same actual Offline state and pill tap, then renders a scripted reply in the seeded thread.
+   Its shared #1785 observer excludes passive recovery using the producer-anchored deadline.
 5. **Broaden** — multi-delta stream render + thinking indicator **shipped (#454)**, tool-use steps
    (running → done, and failed) **shipped (#455, Layer 2c)**, reconnect continuity (reply survives a
    mid-turn drop) **shipped (#476, Layer 2b)**, and reconnect **ordering** (events buffered while
@@ -358,6 +363,8 @@ A newer phone message must render above the live block; “Go to agent ↓” mu
 A phone Bash command releases the hold, and the scenario waits for the phone's Finished marker
 before sending the later message, avoiding a race between peer and app socket delivery.
 The later message must appear below the settled block; marker navigation is checked again.
+That last check compares the two rows' positions in the list, not their on-screen bounds, because
+attributed prose can make the opened block taller than the screen (#1827).
 The existing progress-panel scenario uses a foreground subagent and cannot prove this placement.
 
 `scripts/background-agent-fixture.py` is scenario-specific host I/O: loopback only, an ephemeral
@@ -374,6 +381,33 @@ placement through the daemon. Multi-agent, retained roster joins/finished knowle
 permutations belong to controlled projection/Compose fixtures, rather than extra real-Claude turns.
 See [thread placement](knowledge/features/thread-screen-subagent-tool-rows.md#background-agent-lifecycle-placement-1783)
 and [counted evidence](#verification-status).
+
+**Background Agent prose stays in its block (#1827).**
+`InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_replyStaysUnderAgent` launches a real
+`local_agent` with `run_in_background=true` whose first act is an identifiable ordinary paragraph,
+then two harmless `printf` calls and a foreground `curl` hold on the fixture's `/hold-reply`. The
+peer must record that paragraph as `assistant_delta` frames whose `parent_tool_use_id` is the
+Agent's tool id. While the agent stays held, a second phone message gets a main reply. The
+repository must hold exactly one segment with the token and that parent. With collapse on, the
+Agent's run, picked by its `tool-run:<Agent id>` tag, starts closed with the paragraph absent;
+opening it shows the paragraph once under `background-agent-child:<Agent id>`, and closing hides it
+again. The main reply stays visible in the thread list. A phone Bash `curl` to `/release-reply` lets the agent
+finish, and teardown releases the hold and restores the collapse preference whatever happens.
+
+The fixture's `/hold-reply` and `/release-reply` use their own release event. The #1783 scenario's
+`/release` stays set for the rest of the suite, so sharing it would end this scenario's hold at
+once. The live proof taps through `questionAnswerTarget`, because semantics scrolling uses the
+full drawing viewport and can leave the run control under the composer, and it scrolls the
+paragraph into composition before checking ownership, because a long expanded block can dispose
+it. The rung-4 `background-agent` twin adds a child paragraph before and after the child tool,
+an unmatched parent that stays top-level and a main paragraph, and checks closed, open and closed
+visibility without real Claude turns. See
+[attributed prose](knowledge/features/thread-screen-subagent-tool-rows.md#attributed-assistant-prose-in-agent-blocks-1827).
+
+Do not build a live check on closing the Agent run right after "Go to agent ↓". In three focused live runs on
+2026-10-07 a tap on the open run, centred clear of the chrome, left it open at the same position two
+seconds later, while the JVM screen tests close it after the same navigation. The cause is not
+established. The #1783 scenario therefore compares list positions instead of closing the run first.
 
 **Finished-reply partial Copy (#1674).**
 `InteractiveStreamE2ETest#interactiveTurn_finishedReply_systemCopyCopiesSelectedWord`
@@ -1852,10 +1886,23 @@ path; the older offline-read scenario remains a separate cache/reconciliation pr
 
 Recovery must precede passive reconnect. Both this method and its rung-4 twin keep
 the repository null and the pill visible immediately before the tap, and require
-repository recovery within 20 seconds of the sixth failed dial. Daemon restart,
-relay registration and the tap consume that same window; the capped backoff's
-24-second minimum lies beyond it. A timeout starting after restart or the tap can
-otherwise pass on an automatic dial even with a broken Retry callback.
+repository recovery before a producer-anchored monotonic deadline. The shared
+`OfflineRetryWindow` helper observes the supervisor's internal `backoffState`:
+a content-free `RelayBackoff` snapshot with the actual attempt and start mark.
+It awaits attempt ≥ 6 and sets the deadline to `startedAt + 20 seconds`.
+Observer lag, daemon restart, relay registration and the tap all consume that
+same window; the capped backoff's 24-second minimum lies beyond it. An expired
+deadline fails rather than granting another recovery window. A timeout starting
+at observation, after restart or after the tap can otherwise pass on an automatic
+dial even with a broken Retry callback.
+
+Do not count failed dials from `relayStatus` transitions: it is a conflated UI
+StateFlow, so transient Connecting values can be overwritten and equal
+DaemonAbsent values suppressed. The actual attempt also includes failure history
+retained across connections shorter than 60 seconds; six new observed failures
+need not mark the first capped wait. The observer subscribes before stopping the
+owned daemon and reports a missing cap as a backoff-observation timeout with
+static status and attempt diagnostics. See [supervisor testing](knowledge/features/relay-reconnect-supervisor.md#testing).
 
 The fault can initially produce ordinary reconnect failures before `4404` daemon
 absence. `DaemonAbsent` still derives to UI Offline at the cap; requiring only
@@ -1998,7 +2045,7 @@ host-prompt handlers. Scripted runs and unrelated live subsets retain their exis
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the current selector has 62 runnable `@Test` methods. The historical
+incantation to remember — the current selector has 63 runnable `@Test` methods. The historical
 inventory below describes the pre-#1193 forty-four-method set; ignored methods are excluded from
 the current selector as described under the model and effort settings round trip. It covered ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
@@ -2124,8 +2171,10 @@ Its bounded loopback hold/release fixture is started by `scripts/e2e-emulator.sh
 fixture setup or focused live run is required. The dispatcher owns full-live execution and fresh
 XML proving this named method executed and passed, with executed/failed/skipped counts.
 Its deterministic `background-agent` twin supplements that proof without real Claude turns.
+The same applies to `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_replyStaysUnderAgent`
+(#1827), which uses the fixture's separate `/hold-reply` and `/release-reply` endpoints.
 
-`LIVE=1` runs a **curated set of 59 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of 63 runnable rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -2201,7 +2250,7 @@ main-only base run, identifies daemon bug pyrycode#2785, and clears the live gat
 The full suite retains its one failure; manual USB evidence and the Android 16 driver failure
 above are separate from this automated named pass.
 
-**What it runs.** The current curated selector passes 55 runnable methods as a comma-separated
+**What it runs.** The current curated selector passes 63 runnable methods as a comma-separated
 `class#method` list. Its source of truth is `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET`, checked
 against `LIVE_MINIMUM` in `scripts/android-test-gate.py`. The #481
 `InteractiveStreamE2ETest#interactiveTurn_toolPrompt_rendersToolStepInThread` now rides this full
@@ -2504,7 +2553,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `SCENARIO` | asserts | raw fragment(s) | fragments |
 | --- | --- | --- | --- |
 | `stop-background-task` (#1830) | opening the retained running row and tapping Stop removes its row/count | existing fakeclaude canned-roster rider and `stop_task` handler | no replay fragments or second-message release |
-| `background-agent` (#1783) | background lifecycle moves a loaded tool family, marker navigation opens its run, and finish settles it before later text | `background-agent-open.jsonl` + `background-agent-finish.jsonl` | **two** (release on second send) |
+| `background-agent` (#1783, #1827) | background lifecycle moves a loaded tool family, marker navigation opens its run, and finish settles it before later text; attributed child prose stays in the run through closed, open and closed states while unmatched and main prose stay top-level | `background-agent-open.jsonl` + `background-agent-finish.jsonl` | **two** (release on second send) |
 | `selection-copy` (#1674) | finished assistant prose copies only the long-pressed word through Android’s system menu | `selection-copy.jsonl` | one |
 | `direct-share` (#1729) | published shortcut stages text in its thread without a picker or send; explicit Send receives ping | `ping.jsonl` | one |
 | `ping` (default) | a single-line reply renders | `ping.jsonl` | one |
@@ -2810,6 +2859,46 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
+**Offline Retry observer repair (#1785, 2026-10-07).** The retained historical
+failure at mobile `0d5b82be7a05153d497d84da2f1a11fe109864a3` (daemon
+`65df98859f32e49ba59a42c4446d650b7625cf62`, Claude 2.1.280) was the controller's
+90-second backoff-observation timeout, before restart, Retry or reply:
+**5 executed, 4 passed, 1 failed, 0 skipped**. The extracted original observer
+reproduced the conflation failure after eight production-supervisor dials with
+DaemonAbsent: **1 executed, 0 passed, 1 failed, 0 skipped**. Its base was plan
+commit `4ecf0e8f` plus uncommitted mechanical extraction/regression, with production
+unchanged from `3435397e7f7b3038fb3ab1d57aa07afaeab1d2c7`. Original per-test logcat
+is unavailable; the reproduction establishes the observer defect, not the exact
+missed emissions in the historical occurrence. See [diagnosis and retained evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1785#issuecomment-6025840248).
+
+At repaired mobile revision `85b06b0fb0e509a15af8a9bafd2ec4dd655a319e`, retained
+GREEN XML has **40 executed/passed, 0 failed, 0 skipped** (3 observer and 37
+supervisor tests), including passive-recovery exclusion and deadline lag/expiry.
+The focused `ANDROID_GATE_WAIT_SECONDS=1800 python3 scripts/android-test-gate.py scripted offline-retry`
+executed and passed
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply`:
+**1 executed/passed, 0 failed, 0 skipped**, zero real Claude turns. At verifier
+revision `ac99d26a8c381c5be467de56fdb42f5a113e2344`, `scripted-all` likewise
+passed that method: **19 executed/passed, 0 failed, 0 skipped** overall.
+Builder XML is retained under
+`/Users/juhanailmoniemi/.codex/publish/pyrycode-mobile/builder-1785/evidence/`
+(`before-observer.xml`, `final-OfflineRetryWindowTest.xml`,
+`final-RelayConnectionSupervisorTest.xml`, `scripted-offline-retry.xml`);
+verifier copies include `scripted-all-dispatcher.xml` and `offline-retry.xml`
+under the corresponding `verifier-1785/evidence/` folder. See [verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1860#issuecomment-6027815050).
+
+The dispatcher full `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`
+run at `ac99d26a8c`, merged with `origin/main` at `cf85e9e882`, explicitly
+executed and passed
+`InteractiveStreamE2ETest.interactiveTurn_offlineRetry_reconnectsSameHostAndReplies`
+in its JUnit report: **62 executed, 61 passed, 1 failed, 0 skipped**, exit 1.
+The unrelated `interactiveTurn_finishedReply_systemCopyCopiesSelectedWord` failed
+and passed on the same-tree rerun; the dispatcher accepted the gate after that
+rerun. This records Offline Retry's pass in the full suite, not a zero-failure
+full-suite run or a focused Offline Retry rerun. The dispatcher report is
+`2026-10-07T00-04-51-814Z_real-claude-gate_#1785.log`; named-method status comes
+from the dispatcher's JUnit gate report supplied to documentation. See [live gate evidence and rerun caveat](https://github.com/pyrycode/pyrycode-mobile/issues/1785#issuecomment-6028402092).
+
 **Stop instruction isolation (#1721, 2026-10-06).** After verification, the dispatcher ran a fresh
 full `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against
 `feature/1721` at `774413a890bcab61d60aed12da131ba24557cfa8`, merged with `origin/main` at
@@ -2928,6 +3017,20 @@ and `interactiveTurn_seededChannel_missedEventsReplayInOrderAfterReconnect`.
 The same verdict records **185 executed/passed, 0 failed, 1 skipped** in the UI gate, including
 passing `BackgroundTaskPanelCaptureTest.compactLargeTextKeepsScrolledContentAndCloseGlyphReachable`.
 These deterministic results use zero real Claude turns and do not replace the named live proof.
+
+**Background Agent prose in its block (#1827, 2026-10-07).** Finished by hand. The full live gate,
+`ANDROID_GATE_WAIT_SECONDS=7200 python3 scripts/android-test-gate.py live`, with the long-term login
+fetched through `automation-access`, daemon `bf82c68e` and Claude Code 2.1.280, ran on `feature/1827`
+at `aa0b49ea`, which merges `origin/main` at `cf85e9e8`: **63 executed, 62 passed, 1 failed, 0 errors,
+0 skipped**, exit 1. `interactiveTurn_backgroundAgent_replyStaysUnderAgent` and
+`interactiveTurn_backgroundAgent_followsBottomUntilFinished` both ran and passed.
+`interactiveTurn_archiveRestore_roundTripsListMembership` failed once and passed its same-tree rerun,
+**1 executed, 1 passed, 0 failed, 0 skipped**, so it is set aside as a flake. An earlier full run at
+`0ad93623`, merged with `origin/main` at `ac754078`, reported **63 executed, 60 passed, 3 failed,
+0 skipped**: the reply scenario passed, archive-restore and the Stop scenario passed their rerun,
+and the #1783 scenario failed twice at the run-closing step this ticket had added, which the list
+position comparison above replaced. This is a named pass in the full suite, not a focused run. See
+[the gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1827#issuecomment-6028564865).
 
 **Android share intake (#1728, 2026-10-05).** Finished by hand. The full live gate,
 `automation-access op run --env-file=… -- env ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`,
@@ -4191,6 +4294,14 @@ The remaining checks here are specific to a real relay or real Claude execution:
   follow-up remains; cache-only fallback is an explicit limit. The pre-ship command remains
   `python3 scripts/android-test-gate.py live`.
 
+- **Background Agent prose in its block (#1827):**
+  `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_replyStaysUnderAgent` passed in the full
+  live suite, run by hand; its `background-agent` rung-4 twin passed in `scripted-all`. Counted
+  reports and the archive-restore rerun are in [Verification status](#verification-status). One
+  open item: closing the Agent run right after marker navigation did not hold in three focused live runs and
+  could not be reproduced in JVM screen tests. No live proof depends on it. The pre-ship command
+  remains `python3 scripts/android-test-gate.py live`.
+
 - **Combined recovery pill (#1603):** rung-4
   `DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_contextOverflowCompactReachesDaemon`
   proves the combined top-overlay tap delivers `/compact` and clears the notice. It passed
@@ -4586,6 +4697,19 @@ The remaining checks here are specific to a real relay or real Claude execution:
   `python3 scripts/android-test-gate.py scripted offline-retry`; it proves the real
   outage and Retry path with `ping.jsonl`, using zero real-Claude turns. See
   [Offline Retry proof](#offline-retry-proof) for the boundary that excludes passive recovery.
+
+- **Coverage — hardened:** [#1785](https://github.com/pyrycode/pyrycode-mobile/issues/1785)
+  repairs the shared observer for
+  `InteractiveStreamE2ETest.interactiveTurn_offlineRetry_reconnectsSameHostAndReplies`
+  and `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_offlineRetryRestoresScriptedReply`.
+  Actual capped-backoff snapshots replace counting conflated UI transitions; the
+  producer-anchored 20-second deadline preserves the 24-second passive-redial
+  boundary. Owned-daemon failure, visible pill/null repository before the tap,
+  same-host/conversation recovery and a new rendered reply remain required.
+  The focused scripted twin and full-live named method passed; see
+  [verification status](#verification-status) for revisions, counts, retained
+  evidence and the unrelated full-suite flake. No new scenario or selector is
+  added; the pre-ship command remains `python3 scripts/android-test-gate.py live`.
 
 - **Coverage — updated:** [#1296](https://github.com/pyrycode/pyrycode-mobile/issues/1296)
   extended `InteractiveStreamE2ETest.interactiveTurn_backgroundTask_countsInActionsMenuAndPanel`
