@@ -1,0 +1,21 @@
+{
+  "ticket": 1833,
+  "result": "PASS",
+  "app_revision": "fcc3f8c03c87615915fdd9bdba9b9522bf947f35",
+  "daemon_revision": "6019328b378cad587f69b7bc94de37febbdf8556",
+  "claude_version": "2.1.280",
+  "device": "pixel2Api33Atd",
+  "command": "ANDROID_GATE_WAIT_SECONDS=2700 PYRYCODE_SRC=<sibling checkout> PYRYCODE_RELAY_SRC=<sibling checkout> python3 scripts/android-test-gate.py live --tests de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect",
+  "artifact": "build/dispatcher-tests/live-wptfa_i2/dispatcher.xml",
+  "executed": 1,
+  "passed": 1,
+  "failed": 0,
+  "errors": 0,
+  "skipped": 0,
+  "passed_methods": [
+    "interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect"
+  ],
+  "xml_sha256": "a940807eacf0d34c9bcf6807f4b42cd5e6561386ad1c6a48346820c8328e6f09",
+  "sanitized_xml": "scripts/e2e-fixtures/1833-live-repair-pass.xml",
+  "scope": "Focused verifier repair run only; fresh full live suite remains dispatcher-owned after verification. No credentials, cursors, daemon payloads or raw logcat published."
+}
