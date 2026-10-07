@@ -1485,6 +1485,7 @@ class InteractiveStreamE2ETest {
 
         // 2. Wait for the relay connection to open before creating — rename/delete round-trip to the daemon.
         awaitConnected()
+        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(twoHostArg(ARG_SERVER_ID)))
 
         // 3. Create a fresh discussion → the app navigates into its thread; the send button marks arrival. A
         //    plain discussion suffices — "Rename" (mutationsSupported) and "Channel info" (ungated) both reach it.
@@ -1511,7 +1512,15 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasSetTextAction() and isFocused()).fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onNode(hasSetTextAction() and isFocused()).performTextReplacement(uniqueName)
+        // Temporary negative-condition replay; removed after the guarded drive is verified.
+        bundle.supervisor.close()
+        runBlocking { withTimeout(THREAD_TIMEOUT_MS) { bundle.coordinator.currentRepository.first { it == null } } }
+        reconnectScope.launch { delay(1_000); bundle.supervisor.connect() }
+        runBlocking { withTimeout(THREAD_TIMEOUT_MS) { awaitDeletionMutationReady(bundle.coordinator.currentRepository) } }
         composeTestRule.onNodeWithText(RENAME_SAVE).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasText(uniqueName) and hasAnyAncestor(hasTestTag("thread-top-bar"))).fetchSemanticsNodes().isNotEmpty()
+        }
 
         stage = "presence"
         // 5. Presence check (AC-3): back to the list, wait for it, then confirm the unique name is displayed on
@@ -1559,11 +1568,11 @@ class InteractiveStreamE2ETest {
         }
         stage = "confirm_click"
         // Replay the recorded gap before the unguarded DeleteConfirm, without retrying the action.
-        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(twoHostArg(ARG_SERVER_ID)))
         bundle.supervisor.close()
         runBlocking { withTimeout(THREAD_TIMEOUT_MS) { bundle.coordinator.currentRepository.first { it == null } } }
         reconnectScope.launch { delay(1_000); bundle.supervisor.connect() }
         Log.i("DeleteDiagnostic", "event=gap_replay phase=delete repository=false legacy_connected=${runBlocking { bundle.supervisor.observe().first() } is ConnectionState.Connected}")
+        runBlocking { withTimeout(THREAD_TIMEOUT_MS) { awaitDeletionMutationReady(bundle.coordinator.currentRepository) } }
         composeTestRule
             .onNode(hasText(DELETE_ACTION) and hasAnySibling(hasText(DELETE_DIALOG_CANCEL)))
             .performClick()
