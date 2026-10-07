@@ -35,6 +35,7 @@ import de.pyryco.mobile.data.repository.MemorySearchReport
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
+import de.pyryco.mobile.data.repository.ReplySuggestion
 import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.SessionFacts
 import de.pyryco.mobile.data.repository.SessionSettings
@@ -963,6 +964,123 @@ class ThreadViewModel(
                 initialValue = false,
             )
 
+    private val _suggestedReply = MutableStateFlow<SuggestedReply?>(null)
+    val suggestedReply: StateFlow<SuggestedReply?> = _suggestedReply.asStateFlow()
+    private var suggestionReading: ReplySuggestion? = null
+    private var suggestionSession: String? = null
+    private var suggestionBusy = false
+    private val invalidatedSuggestions = mutableMapOf<String, ULong>()
+    private val observedSuggestionRevisions = mutableMapOf<String, ULong>()
+
+    init {
+        viewModelScope.launch {
+            turnPhase.collect { phase ->
+                suggestionBusy = phase != LiveSessionEvent.TurnState.Phase.Idle
+                refreshSuggestedReply()
+            }
+        }
+        viewModelScope.launch { hostConnection.collect { refreshSuggestedReply() } }
+        viewModelScope.launch {
+            draftStore.drafts.map { it[serverId]?.get(conversationId).orEmpty() }.distinctUntilChanged().collect {
+                _suggestedReply.value = null
+                refreshSuggestedReply()
+            }
+        }
+        viewModelScope.launch {
+            _attachmentsSending.collect {
+                // Even a completed upload must not revive a token armed before it started.
+                _suggestedReply.value = null
+                refreshSuggestedReply()
+            }
+        }
+        viewModelScope.launch {
+            combine(conversations, settingsReadings) { _, reading ->
+                if (hostAvailable.value) {
+                    lastKnownSessionId.takeIf { it.isNotEmpty() }
+                        ?: reading.settings
+                            ?.takeUnless { it.held }
+                            ?.sessionId
+                            ?.takeIf { it.isNotEmpty() }
+                } else {
+                    null
+                }
+            }.distinctUntilChanged()
+                .onEach { session ->
+                    invalidateSuggestion("session")
+                    suggestionReading = null
+                    suggestionSession = session
+                }.flatMapLatest { session ->
+                    session?.let { repository.observeReplySuggestion(conversationId, it) } ?: flowOf(null)
+                }.collect { reading ->
+                    reading?.let {
+                        // #1865 never emits a decreasing revision within one connection. A lower one
+                        // therefore identifies a fresh daemon lifetime, whose watermarks start again.
+                        val previous = observedSuggestionRevisions[it.sessionId]
+                        if (previous != null && it.revision < previous) {
+                            invalidatedSuggestions.remove(it.sessionId)
+                        }
+                        observedSuggestionRevisions[it.sessionId] = it.revision
+                    }
+                    suggestionReading = reading
+                    refreshSuggestedReply()
+                }
+        }
+    }
+
+    private fun invalidateSuggestion(reason: String) {
+        // Teardown may emit absence before Offline or a session replacement reaches this collector.
+        suggestionSession?.let { session ->
+            observedSuggestionRevisions[session]?.let { revision ->
+                invalidatedSuggestions[session] =
+                    maxOf(invalidatedSuggestions[session] ?: 0uL, revision)
+            }
+        }
+        if (_suggestedReply.value != null) RelayLog.d { "event=reply_suggestion_hidden reason=$reason" }
+        _suggestedReply.value = null
+    }
+
+    private fun refreshSuggestedReply() {
+        if (suggestionBusy || hostConnection.value != ConnectionState.Connected) {
+            invalidateSuggestion(if (suggestionBusy) "turn" else "connection")
+            return
+        }
+        val reading = suggestionReading
+        val text = reading?.suggestedReply
+        if (reading == null ||
+            reading.conversationId != conversationId ||
+            reading.sessionId != suggestionSession ||
+            text.isNullOrBlank() ||
+            reading.revision <= (invalidatedSuggestions[reading.sessionId] ?: 0uL) ||
+            draftStore.draftFor(serverId, conversationId).isNotEmpty()
+        ) {
+            _suggestedReply.value = null
+            return
+        }
+        if (_suggestedReply.value?.reading != reading) {
+            _suggestedReply.value = SuggestedReply(text, reading)
+            RelayLog.d { "event=reply_suggestion_shown" }
+        }
+    }
+
+    /** Re-check and consume the exact offer before any asynchronous submission, never editing the draft. */
+    fun sendSuggestedReply(offer: SuggestedReply): Boolean {
+        if (_suggestedReply.value !== offer ||
+            offer.reading != suggestionReading ||
+            offer.reading.sessionId != suggestionSession ||
+            suggestionBusy ||
+            hostConnection.value != ConnectionState.Connected ||
+            _attachmentsSending.value ||
+            draftStore.draftFor(serverId, conversationId).isNotEmpty()
+        ) {
+            RelayLog.d { "event=reply_suggestion_send_skipped reason=ineligible" }
+            return false
+        }
+        invalidateSuggestion("consumed")
+        RelayLog.d { "event=reply_suggestion_submitted" }
+        submitMessage(offer.text) {}
+        return true
+    }
+
     private val _turnOutcome = MutableStateFlow<TurnRecoveryNotice?>(null)
 
     /**
@@ -1488,6 +1606,16 @@ class ThreadViewModel(
                         is LiveSessionEvent.ToolResult -> "tool_result"
                         is LiveSessionEvent.ReplayGap -> "replay_gap"
                     }
+                if (event.conversationId == conversationId &&
+                    (
+                        event is LiveSessionEvent.AssistantDelta ||
+                            event is LiveSessionEvent.ToolUse ||
+                            event is LiveSessionEvent.ToolResult ||
+                            (event is LiveSessionEvent.TurnState && event.phase != LiveSessionEvent.TurnState.Phase.Idle)
+                    )
+                ) {
+                    invalidateSuggestion("turn")
+                }
                 setTurnOutcome(nextTurnOutcome(_turnOutcome.value, event), reason)
             }
         }
@@ -1578,6 +1706,7 @@ class ThreadViewModel(
      * Waiting or close on failure; acceptance still tells the screen to follow the newest end (#1314).
      */
     private suspend fun <T> sendInLocalWindow(send: suspend () -> T): T {
+        invalidateSuggestion("send")
         clearTurnOutcome("send")
         val generation = openLocalSendWindow()
         val sent =
@@ -1868,7 +1997,9 @@ class ThreadViewModel(
 
     /** Record an edit to this chat's composer (#789). Exact text; the store clears only on `""`. */
     fun onDraftChange(text: String) {
+        _suggestedReply.value = null
         draftStore.setDraft(serverId, conversationId, text)
+        refreshSuggestedReply()
     }
 
     /**
@@ -1887,30 +2018,31 @@ class ThreadViewModel(
         val trimmed = text.trim()
         // #1328: text is required even with files pending, as on desktop; blank leaves them for the next send.
         if (trimmed.isEmpty()) return
+        submitMessage(trimmed) { withAttachments ->
+            if (!withAttachments || draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
+        }
+    }
+
+    private fun submitMessage(
+        text: String,
+        onReady: (Boolean) -> Unit,
+    ) {
+        invalidateSuggestion("send")
         val attachments = draftStore.attachmentsFor(serverId, conversationId)
         if (attachments.isNotEmpty()) {
-            // #1355: the guarded clear runs once the uploads succeed, before the send.
-            return sendWithAttachments(
-                trimmed,
-                attachments,
-                onUploaded = {
-                    if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
-                },
-                onSent = {},
-            )
+            return sendWithAttachments(text, attachments, onUploaded = { onReady(true) }, onSent = {})
         }
-        onDraftChange("")
+        onReady(false)
         launchGuardedRepoCall {
-            // #686: a message sent while this opening's recall write is outstanding follows it.
             effortRecall.awaitWrite()
-            sendInLocalWindow { repository.sendMessage(state.value.conversationId, trimmed) }
+            sendInLocalWindow { repository.sendMessage(conversationId, text) }
         }
     }
 
     /**
      * Send [text] naming [attachments], this chat's pending entries as they stood when send was tapped
-     * (#932). [text] is the trimmed text and never blank: [sendMessage] refuses that before reading the
-     * attachments (#1328); [onComposerCommand] passes its command.
+     * (#932). [text] is nonblank: ordinary drafts are trimmed, while [sendSuggestedReply] preserves the
+     * confirmed offer verbatim. [onComposerCommand] passes its command.
      *
      * Each entry without an acknowledged id is read and uploaded in order, and its id recorded in
      * [draftStore] as soon as the daemon acknowledges it, so a later failure never costs a retry that

@@ -121,6 +121,8 @@ class ScriptedThreadHarness(
                     onBack = {},
                     onSendMessage = open::sendMessage,
                     draft = open.draft.collectAsState().value,
+                    suggestedReply = open.suggestedReply.collectAsState().value,
+                    onSendSuggestedReply = open::sendSuggestedReply,
                     onDraftChange = open::onDraftChange,
                     connectionState = open.connectionState.collectAsState().value,
                     onRetry = {},

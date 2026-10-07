@@ -260,6 +260,8 @@ fun ThreadScreen(
     // bar owned its own text.
     draft: String = "",
     onDraftChange: (String) -> Unit = {},
+    suggestedReply: SuggestedReply? = null,
+    onSendSuggestedReply: (SuggestedReply) -> Boolean = { false },
     // #1342: the open Channel info sheet's System prompt state (ThreadViewModel.systemPrompt); its edits,
     // Save and Clear go through onOverflowEvent.
     systemPrompt: SystemPromptEditorState? = null,
@@ -522,6 +524,8 @@ fun ThreadScreen(
                     }
                     ThreadInputBar(
                         text = draft,
+                        suggestedReply = suggestedReply,
+                        onSendSuggestedReply = onSendSuggestedReply,
                         onTextChange = onDraftChange,
                         // The composer no longer clears itself here (#789): sendMessage clears the draft
                         // once the daemon has accepted it, so a refused send leaves the text to resend.
