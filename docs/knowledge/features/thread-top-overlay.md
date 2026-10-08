@@ -413,6 +413,17 @@ the neighboring Offline Retry regression remains runnable.
   while the five virtual seconds have not elapsed. The rung-3 scenario advances by 5,100ms and
   checks disappearance and no replay on reopening; its named full-suite pass is recorded in the
   [live ladder](../../e2e-interactive-stream.md#verification-status).
+  An isolated answer daemon does not isolate the phone's overlay (#1905): an inherited prompt on
+  another paired host correctly changes a single-target Waiting pill to an aggregate count. A peer
+  modal alone cannot prove the expected phone label. Diagnose the first Waiting stage using bounded
+  modal/attention/name-match booleans and semantics counts, without logging names, contents or trees.
+  The live scenario temporarily keeps only the answer host paired, waits for host-source isolation,
+  and restores exact records, names and order in non-cancellable cleanup before answer-host removal.
+  `AttentionHostIsolationTest` drives the real attention fold with both hosts waiting, proving the
+  count under the old setup and B alone under isolation; it also covers restoration and error
+  preservation after failure or cancellation. This is distinct from the expiry-clock repair above.
+  The [live ladder](../../e2e-interactive-stream.md#verification-status) retains the controlled
+  red/green XML and fresh full-suite pass; product aggregation remains unchanged.
 - **Robolectric** `ThreadTopOverlayTest` (`app/src/sharedTest/.../thread/`):
   - no reading and no re-pair → no pill nodes, no dismiss X;
   - an `allowed_warning` reading → a pill with the label and an X; tapping the X (against a test-held

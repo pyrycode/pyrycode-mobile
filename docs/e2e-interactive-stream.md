@@ -647,9 +647,18 @@ lets the peer answer and complete the turn, asserting B's Finished pill and expi
 advances the Compose rule clock by 5,100ms after turn completion before checking expiry: the
 composition-owned delay uses that virtual clock, and wall-clock polling can advance it too slowly
 under full-suite load. It is in the
-curated full live selector. Controlled unit/render tests separately cover aggregation, mute filtering,
-cross-host identity and timer races. No `DeterministicInteractiveStreamE2ETest` twin was added:
-its fixtures lack the answer-host peer and second conversation held on permission.
+curated full live selector. Since #1905, `withAttentionHostIsolation` temporarily keeps only the
+answer host in the phone's pairing collection and waits for `HostConversationSource` isolation before
+starting B. An isolated daemon alone is insufficient: an inherited permission on another paired host
+changes B's single Waiting label to an aggregate count. The same prompt must remain outstanding after
+the pill tap and Back. Cleanup restores original pairing records, names and ordering even after failure
+or cancellation, then closes the peer and removes the answer pairing. This first-Waiting isolation
+repair is separate from #1735's expiry-clock repair; neither retries nor longer timeouts are used.
+Controlled `AttentionHostIsolationTest` drives the production attention fold with the inherited prompt;
+unit/render tests separately cover aggregation, mute filtering, cross-host identity and timer races.
+No `DeterministicInteractiveStreamE2ETest` twin was added: its fixtures lack the answer-host peer and
+second conversation held on permission. See [Verification status](#verification-status) for the
+controlled red/green evidence and fresh full-live pass.
 
 **Host system prompt (#1775).**
 `InteractiveStreamE2ETest.interactiveTurn_hostSystemPrompt_editsResetsAndCancels` uses the real Edit
@@ -3784,6 +3793,52 @@ This is a selected-run failure followed by a focused pass, not a fresh full-suit
 pass or proof that all flakes are resolved; [the occurrence remains tracked on
 \#1793](https://github.com/pyrycode/pyrycode-mobile/issues/1793#issuecomment-6027743571).
 
+**Attention-pill first-Waiting isolation repair (#1905, 2026-10-08).** The failure was before
+navigation, after the peer received B's held permission, rather than at the expiry assertion repaired
+in #1735. Production Waiting aggregates every paired host. A primary-daemon prompt inherited from the
+suite made the expected single-target label impossible even though B's modal and attention reached
+the phone. Historical merge `f77f772c8d56251c3e5da12c1c125d887d2ed872` had **64 executed, 60 passed,
+4 failed, 0 errors, 0 skipped**; its same-tree rerun had **4 executed, 3 passed, 1 failed, 0 errors,
+0 skipped**, including this method passing. Retained daemon timestamps corroborate an overlapping
+primary prompt, but the historical phone aggregate was not retained. The controlled reproduction,
+rather than the passing rerun, establishes the isolation defect; see the [ticket diagnosis](https://github.com/pyrycode/pyrycode-mobile/issues/1905#issuecomment-6052742387).
+
+With that inherited prompt held, the old drive timed out at the unchanged first Waiting wait:
+`phone_modal=true`, `target_waiting=true`, `waiting_count=2`, `other_host_waiting=1`,
+`target_name_matches=true`, `a_nodes=1`, `pill_nodes=1`, `expected_nodes=0`. The controlled old live
+report has **1 executed, 0 passed, 1 failed, 0 errors, 0 skipped**; the isolated drive under the same
+condition has **1 executed/passed, 0 failed/errors/skipped**. Both used plan parent `50f0b9fad` plus
+the documented working-tree drive, daemon `6019328b378cad587f69b7bc94de37febbdf8556` and Claude Code
+2.1.280. Content-free XML copies are retained in
+[`old-drive-live.xml`](../app/src/test/resources/e2e/attention-host-isolation/old-drive-live.xml) and
+[`repaired-controlled-live.xml`](../app/src/test/resources/e2e/attention-host-isolation/repaired-controlled-live.xml).
+Original builder artifact folders were unavailable to the verifier; these copies and the recorded
+diagnostics do not substitute for dispatcher full-live acceptance.
+
+The permanent JVM regression uses `observeThreadAttention`: two hosts with held prompts yield two
+waiters under the old drive, while isolation yields B alone. The retained
+[`old-drive-unit.xml`](../app/src/test/resources/e2e/attention-host-isolation/old-drive-unit.xml) records
+**2 executed, 0 passed, 2 failed, 0 errors/skips**;
+[`repaired-unit.xml`](../app/src/test/resources/e2e/attention-host-isolation/repaired-unit.xml) records
+**6 executed/passed, 0 failed/errors/skipped**, including restoration after cancellation, partial
+setup failure and assertion failure, nullable names/order, and preservation of the original error
+when restoration fails. The verifier confirmed 6 isolation, 14 attention-state, 10 rendering and
+4 navigation tests passed, all with 0 failures/errors/skips. The scenario-local pairing scope leaves
+the other daemon's prompt untouched and retains Waiting navigation, the same outstanding prompt after
+tap and Back, peer-only answer, real completion, Finished, explicit virtual-clock expiry and no replay.
+
+Fresh full dispatcher acceptance ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on `feature/1905` at
+`72f75da775ffbcd27b0b8e9107dfb0bb71f77958`, including `origin/main` at `3a42213000e1`:
+**65 executed, 65 passed, 0 failed, 0 errors, 0 skipped**, exit 0. The inspected retained XML artifact
+`/Users/juhanailmoniemi/WorkSpace/Projects/pyrycode-mobile-agents/logs/2026-10-08T06-10-09-906Z_real-claude-gate_#1905.log`
+contains exactly one
+`InteractiveStreamE2ETest.interactiveTurn_otherConversationAttentionPills_waitingAndFinished`
+testcase with no failure, error or skip: **the named method executed and passed**. The stderr companion
+records the tested mobile revision above, daemon `6019328b378cad587f69b7bc94de37febbdf8556` and Claude
+Code 2.1.280. This is a passing full suite, with no rerun needed; see the
+[dispatcher gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1905#issuecomment-6053825980).
+
 **Current live verification — 2026-10-05 (#1775).** The dispatcher ran the fresh full
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on branch `feature/1775`
 at `b496a99e6f`, merged with `origin/main` at `9563beab61` (tested mobile revision
@@ -5081,12 +5136,18 @@ The remaining checks here are specific to a real relay or real Claude execution:
 
 - **Other-conversation attention pills (#1735):**
   `InteractiveStreamE2ETest.interactiveTurn_otherConversationAttentionPills_waitingAndFinished`
-  covers Waiting navigation, return while waiting, peer completion, Finished and expiry. Its
-  named full-suite pass and the suite's unrelated #1721 failure are recorded in
-  [Verification status](#verification-status). Expiry assertions advance the Compose rule's virtual
-  clock explicitly; wall-clock polling alone was load-dependent. No
-  `DeterministicInteractiveStreamE2ETest` twin exists for the live-only answer-host setup;
-  controlled unit/render tests own mute, aggregation, cross-host and timer races.
+  covers Waiting navigation with the same prompt outstanding after tap and Back, peer completion,
+  Finished, expiry and no replay. #1905 isolates the phone's paired hosts before starting B: a prompt
+  inherited on another host otherwise produces an aggregate Waiting pill, despite correct B delivery.
+  `withAttentionHostIsolation` restores original records, names and ordering in cleanup, including
+  failure and cancellation. The controlled production-fold regression `AttentionHostIsolationTest`
+  distinguishes two waiters under the old drive from B alone under isolation. Its red/green evidence
+  and the fresh **65 executed/passed, 0 failed/errors/skipped** full live suite, including the named
+  method passing, are recorded in [Verification status](#verification-status). No scenario follow-up
+  remains. This first-Waiting repair is separate from #1735's explicit virtual-clock expiry advancement;
+  wall-clock polling alone was load-dependent. No `DeterministicInteractiveStreamE2ETest` twin exists
+  for the live-only answer-host setup; controlled unit/render tests own mute, aggregation, cross-host
+  and timer races. The pre-ship command remains `python3 scripts/android-test-gate.py live`.
 
 - **Operator-bypass pairing lifetime (#1756):**
   `InteractiveStreamE2ETest.interactiveTurn_operatorBypass_permissionControlReflectsTheRunningChild`
