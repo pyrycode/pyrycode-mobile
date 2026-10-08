@@ -129,6 +129,8 @@ import de.pyryco.mobile.grantNotificationPermission
 import de.pyryco.mobile.notifications.ATTENTION_CHANNEL_ID
 import de.pyryco.mobile.notifications.NotificationTap
 import de.pyryco.mobile.notifications.completionReply
+import de.pyryco.mobile.notifications.isMuted
+import de.pyryco.mobile.notifications.nameOf
 import de.pyryco.mobile.notifications.notificationPreview
 import de.pyryco.mobile.notifications.notificationTitle
 import de.pyryco.mobile.push.PushTokenSource
@@ -177,6 +179,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.dropWhile
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -4577,53 +4580,110 @@ class InteractiveStreamE2ETest {
         val (serverId, peer) = answerHostPeer()
         try {
             pairAnswerHost()
-            val (_, nameA) = answerChat(serverId, ATTENTION_CHAT_NAME_PREFIX + "pill-a-")
-            val (chatB, nameB) = answerChat(serverId, ATTENTION_CHAT_NAME_PREFIX + "pill-b-")
-            peerStep(peer, "open attention peer") { peer.open(CONNECT_TIMEOUT_MS) }
-            openChatRow(nameA)
-            val context = InstrumentationRegistry.getInstrumentation().targetContext
-            val waitingLabel = context.getString(R.string.thread_attention_waiting, nameB)
-            val finishedLabel = context.getString(R.string.thread_attention_finished, nameB)
-            peerStep(peer, "start held turn in B") { peer.sendMessage(chatB, ANSWER_PERMISSION_PROMPT, THREAD_TIMEOUT_MS) }
-            val modalId = peerStep(peer, "await B's held permission") { peer.awaitPermissionModal(chatB, REPLY_TIMEOUT_MS) }
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasTestTag("thread_attention_pill") and hasText(waitingLabel)).fetchSemanticsNodes().isNotEmpty()
+            runBlocking {
+                withAttentionHostIsolation(GlobalContext.get().get(), serverId) {
+                    val source = GlobalContext.get().get<HostConversationSource>()
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        combine(source.snapshots, source.attention) { snapshots, attention ->
+                            snapshots.map { it.serverId } == listOf(serverId) && attention.keys.all { it == serverId }
+                        }.first { it }
+                    }
+                    val (chatA, nameA) = answerChat(serverId, ATTENTION_CHAT_NAME_PREFIX + "pill-a-")
+                    val (chatB, nameB) = answerChat(serverId, ATTENTION_CHAT_NAME_PREFIX + "pill-b-")
+                    peerStep(peer, "open attention peer") { peer.open(CONNECT_TIMEOUT_MS) }
+                    openChatRow(nameA)
+                    val context = InstrumentationRegistry.getInstrumentation().targetContext
+                    val waitingLabel = context.getString(R.string.thread_attention_waiting, nameB)
+                    val finishedLabel = context.getString(R.string.thread_attention_finished, nameB)
+                    peerStep(peer, "start held turn in B") { peer.sendMessage(chatB, ANSWER_PERMISSION_PROMPT, THREAD_TIMEOUT_MS) }
+                    val modalId = peerStep(peer, "await B's held permission") { peer.awaitPermissionModal(chatB, REPLY_TIMEOUT_MS) }
+                    val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+                    val coordinator = checkNotNull(registry.connectionFor(serverId)).coordinator
+
+                    fun samePromptOutstanding() =
+                        coordinator.hostModals.value.outstanding.any {
+                            it.modalId == modalId && it.conversationId == chatB
+                        }
+
+                    fun evidence(stage: String): String {
+                        val source = GlobalContext.get().get<HostConversationSource>()
+                        val snapshots = source.snapshots.value
+                        val current = HostConversationTarget(serverId, chatA)
+                        val waiting =
+                            source.attention.value
+                                .flatMap { (host, rows) ->
+                                    val held = rows.filterValues { it == ConversationAttention.WaitingForAnswer }
+                                    held.keys.map { HostConversationTarget(host, it) }
+                                }.filter { it != current && !snapshots.isMuted(it.serverId, it.conversationId) }
+                        val expectedNodes =
+                            composeTestRule
+                                .onAllNodes(hasTestTag("thread_attention_pill") and hasText(waitingLabel))
+                                .fetchSemanticsNodes()
+                                .size
+                        return "event=attention_pill_probe stage=$stage " +
+                            "peer_modals=${peer.recorded(chatB).count { it.type == "modal_shown" }} " +
+                            "phone_modal=${samePromptOutstanding()} " +
+                            "target_waiting=${source.attention.value[serverId]?.get(chatB) == ConversationAttention.WaitingForAnswer} " +
+                            "waiting_count=${waiting.size} other_host_waiting=${waiting.count { it.serverId != serverId }} " +
+                            "target_name_matches=${snapshots.nameOf(serverId, chatB) == nameB} " +
+                            "a_nodes=${composeTestRule.onAllNodes(hasText(nameA)).fetchSemanticsNodes().size} " +
+                            "pill_nodes=${composeTestRule.onAllNodes(hasTestTag("thread_attention_pill")).fetchSemanticsNodes().size} " +
+                            "expected_nodes=$expectedNodes"
+                    }
+                    android.util.Log.i("AttentionPillProbe", evidence("peer_received"))
+                    try {
+                        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                            composeTestRule
+                                .onAllNodes(hasTestTag("thread_attention_pill") and hasText(waitingLabel))
+                                .fetchSemanticsNodes()
+                                .isNotEmpty()
+                        }
+                    } catch (e: ComposeTimeoutException) {
+                        throw AssertionError(evidence("first_waiting_timeout"), e)
+                    }
+                    android.util.Log.i("AttentionPillProbe", evidence("first_waiting_seen"))
+                    composeTestRule.onNodeWithText(waitingLabel).assertIsDisplayed().performTouchInput { click(center) }
+                    composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                        composeTestRule.onAllNodes(hasText(nameB)).fetchSemanticsNodes().isNotEmpty()
+                    }
+                    // Navigation must leave the same prompt outstanding; it is answered only through the peer below.
+                    awaitPromptDialog()
+                    assertTrue("B must still hold the same prompt after the pill tap", samePromptOutstanding())
+                    composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+                    composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                        composeTestRule
+                            .onAllNodes(hasTestTag("thread_attention_pill") and hasText(waitingLabel))
+                            .fetchSemanticsNodes()
+                            .isNotEmpty()
+                    }
+                    composeTestRule.onNodeWithText(waitingLabel).assertIsDisplayed()
+                    composeTestRule.onNodeWithText(nameA).assertIsDisplayed()
+                    assertTrue("Back must leave B's same prompt outstanding", samePromptOutstanding())
+                    peerStep(peer, "allow B's held permission") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
+                    peerStep(peer, "await B's prompt dismissal") { peer.awaitModalDismissed(modalId, THREAD_TIMEOUT_MS) }
+                    // Start watching the short-lived pill before awaiting the peer's turn_end to avoid missing it.
+                    composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                        composeTestRule
+                            .onAllNodes(
+                                hasTestTag("thread_attention_pill") and hasText(finishedLabel),
+                            ).fetchSemanticsNodes()
+                            .isNotEmpty()
+                    }
+                    composeTestRule.onNodeWithText(finishedLabel).assertIsDisplayed()
+                    awaitTurnEnd(peer, chatB, 1, "B's attention-pill turn")
+                    // The pill's five-second expiry runs on the rule's virtual clock, which waitUntil advances one frame per
+                    // poll. In the full suite each poll is slow enough that five virtual seconds outlast a real ten-second
+                    // wait (#1735; same cause as #1664), so advance the clock past the expiry instead.
+                    composeTestRule.mainClock.advanceTimeBy(5_100)
+                    composeTestRule.waitUntil(10_000) {
+                        composeTestRule.onAllNodes(hasTestTag("thread_attention_pill")).fetchSemanticsNodes().isEmpty()
+                    }
+                    composeTestRule.onNodeWithText(finishedLabel).assertDoesNotExist()
+                    leaveThread()
+                    openChatRow(nameA)
+                    composeTestRule.onNodeWithTag("thread_attention_pill").assertDoesNotExist()
+                }
             }
-            composeTestRule.onNodeWithText(waitingLabel).assertIsDisplayed().performTouchInput { click(center) }
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasText(nameB)).fetchSemanticsNodes().isNotEmpty()
-            }
-            // Navigation must leave the same prompt outstanding; it is answered only through the peer below.
-            awaitPromptDialog()
-            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(hasTestTag("thread_attention_pill") and hasText(waitingLabel)).fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onNodeWithText(waitingLabel).assertIsDisplayed()
-            composeTestRule.onNodeWithText(nameA).assertIsDisplayed()
-            peerStep(peer, "allow B's held permission") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
-            peerStep(peer, "await B's prompt dismissal") { peer.awaitModalDismissed(modalId, THREAD_TIMEOUT_MS) }
-            // Start watching the short-lived pill before awaiting the peer's turn_end to avoid missing it.
-            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-                composeTestRule
-                    .onAllNodes(
-                        hasTestTag("thread_attention_pill") and hasText(finishedLabel),
-                    ).fetchSemanticsNodes()
-                    .isNotEmpty()
-            }
-            composeTestRule.onNodeWithText(finishedLabel).assertIsDisplayed()
-            awaitTurnEnd(peer, chatB, 1, "B's attention-pill turn")
-            // The pill's five-second expiry runs on the rule's virtual clock, which waitUntil advances one frame per
-            // poll. In the full suite each poll is slow enough that five virtual seconds outlast a real ten-second
-            // wait (#1735; same cause as #1664), so advance the clock past the expiry instead.
-            composeTestRule.mainClock.advanceTimeBy(5_100)
-            composeTestRule.waitUntil(10_000) {
-                composeTestRule.onAllNodes(hasTestTag("thread_attention_pill")).fetchSemanticsNodes().isEmpty()
-            }
-            composeTestRule.onNodeWithText(finishedLabel).assertDoesNotExist()
-            leaveThread()
-            openChatRow(nameA)
-            composeTestRule.onNodeWithTag("thread_attention_pill").assertDoesNotExist()
         } finally {
             peer.close()
             runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }
