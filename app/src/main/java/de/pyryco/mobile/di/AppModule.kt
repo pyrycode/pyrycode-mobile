@@ -181,6 +181,8 @@ val appModule =
             AttentionNotifier(
                 context = androidContext(),
                 alerts = source.alerts,
+                readMarks = source.readMarks,
+                readMarksOf = source::currentReadMarks,
                 notificationsEnabled = get<AppPreferences>().notificationsEnabled,
                 isMuted = { serverId, conversationId -> source.snapshots.value.isMuted(serverId, conversationId) },
                 agentOf = { serverId, conversationId -> source.snapshots.value.agentOf(serverId, conversationId) },

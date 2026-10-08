@@ -58,6 +58,8 @@ data class AttentionAlert(
     val conversationId: String,
     val kind: Kind,
     val key: String,
+    /** Present only for a history-backed completion; never inferred from the conversation's latest. */
+    val historyEntryId: ULong? = null,
 ) {
     enum class Kind { TurnCompleted, Prompt }
 }
@@ -112,6 +114,10 @@ class HostConversationSource internal constructor(
 
     /** Non-Idle states only, by `serverId` then conversation id; a conversation missing from it is Idle. */
     val attention = attentionState.asStateFlow()
+    private val readMarkState = MutableStateFlow<Map<String, Map<String, ConversationReadMarks>>>(emptyMap())
+
+    /** Confirmed live facts, independent of attention precedence; never inferred from local positions. */
+    internal val readMarks = readMarkState.asStateFlow()
     private val alertEvents = MutableSharedFlow<AttentionAlert>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     /**
@@ -129,6 +135,23 @@ class HostConversationSource internal constructor(
     /** Current availability only; an operation may still lose its connection after this lookup. */
     @Synchronized
     fun repositoryFor(serverId: String): ConversationRepository? = if (disposed) null else lookup(serverId)
+
+    /** Fresh notification proof from the current repository; a replacement never inherits old support. */
+    @Synchronized
+    internal fun currentReadMarks(
+        serverId: String,
+        conversationId: String,
+    ): ConversationReadMarks? {
+        if (disposed) return null
+        val entry = held[serverId] ?: return null
+        if (!isCurrent(entry)) return null
+        val repository = entry.connection.repositories.value
+        return when {
+            repository is RemoteConversationRepository -> repository.currentReadMarks(conversationId)
+            repository == null || entry.attentionRepository === repository -> entry.attention.readMarks[conversationId]
+            else -> null
+        }
+    }
 
     /**
      * Retries one host's connection, and only that host's. Snapshots are untouched, so the host's rows,
@@ -228,7 +251,13 @@ class HostConversationSource internal constructor(
                     attention = attention.onEvent(event, viewing.isViewing(connection.serverId, event.conversationId))
                     // The fold appends a turn id to `counted` only when it counts that turn for the first time.
                     if (event is LiveSessionEvent.TurnEnd && attention.counted[event.conversationId] != before) {
-                        alert(connection.serverId, event.conversationId, AttentionAlert.Kind.TurnCompleted, event.turnId)
+                        alert(
+                            connection.serverId,
+                            event.conversationId,
+                            AttentionAlert.Kind.TurnCompleted,
+                            event.turnId,
+                            event.historyEntryId,
+                        )
                     }
                 }
             }
@@ -346,8 +375,9 @@ class HostConversationSource internal constructor(
         conversationId: String,
         kind: AttentionAlert.Kind,
         key: String,
+        historyEntryId: ULong? = null,
     ) {
-        alertEvents.tryEmit(AttentionAlert(serverId, conversationId, kind, key))
+        alertEvents.tryEmit(AttentionAlert(serverId, conversationId, kind, key, historyEntryId))
     }
 
     /** Each outstanding prompt's key and its conversation; a blank-conversation prompt belongs to none. */
@@ -401,6 +431,8 @@ class HostConversationSource internal constructor(
     private fun publish() {
         state.value = connections.value.mapNotNull { held[it.serverId]?.snapshot }
         attentionState.value = connections.value.mapNotNull { host -> held[host.serverId]?.let { host.serverId to it.resolved } }.toMap()
+        readMarkState.value =
+            connections.value.mapNotNull { host -> held[host.serverId]?.let { host.serverId to it.attention.readMarks } }.toMap()
     }
 
     @Synchronized
@@ -411,6 +443,7 @@ class HostConversationSource internal constructor(
         held.clear()
         state.value = emptyList()
         attentionState.value = emptyMap()
+        readMarkState.value = emptyMap()
         RelayLog.d { "event=host_snapshots_disposed" }
     }
 
