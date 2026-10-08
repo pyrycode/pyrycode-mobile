@@ -1,0 +1,27 @@
+{
+  "mobile_base": "5dbb7c0d2a8b0d75cb78e3bbfe13f569a6983697",
+  "daemon": "6019328b378cad587f69b7bc94de37febbdf8556",
+  "claude": "2.1.280",
+  "runs": [
+    {
+      "phase": "before",
+      "run": "live-7h5phpsk",
+      "executed": 1,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0,
+      "raw_xml_sha256": "ada88e72ac2c0eef48e4e2c3e480caeb813850a43aa295494245b9fa0f0dbf62",
+      "working_tree_patch_sha256": "d37d00f862db0683baa7342290fa67178ceab2e4e2d87527138429fa85455f78"
+    },
+    {
+      "phase": "after",
+      "run": "live-nbuxonk5",
+      "executed": 1,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "raw_xml_sha256": "8499125574eb2cfe3585a8ca66c4280482b959db2098b5086181657865dc9dab",
+      "working_tree_patch_sha256": "192d67f077e04e9cd100a9261acad49e275fb00dea33f5aaf902c324552e0874"
+    }
+  ]
+}

@@ -6472,15 +6472,24 @@ class InteractiveStreamE2ETest {
      */
     @Test
     fun interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost() {
-        fun <T> step(
-            label: String,
-            block: suspend () -> T,
-        ): T = runBlocking { withTimeoutDiagnostic({ "host-isolation step '$label' timed out" }, block) }
-
         val serverIdA = twoHostArg(ARG_SERVER_ID)
         val serverIdB = twoHostArg(ARG_SERVER_ID_B)
         val collisionId = twoHostArg(ARG_COLLISION_CONVERSATION_ID)
         val peer = runningToolPeer()
+        val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+
+        fun <T> step(
+            label: String,
+            block: suspend () -> T,
+        ): T =
+            runBlocking {
+                withTimeoutDiagnostic({
+                    val hostA = registry.connectionFor(serverIdA)
+                    "host-isolation step '$label' timed out; a_ready=${hostA?.coordinator?.currentRepository?.value != null}; " +
+                        "selected_is_a=${hostA != null && registry.selected.value === hostA}; " +
+                        "selected_relay=${registry.selected.value?.supervisor?.relayStatus?.value?.let { it::class.simpleName }}"
+                }, block)
+            }
         val stub = ActivityIntentStub()
         val inserted = mutableListOf<Uri>()
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -6493,7 +6502,7 @@ class InteractiveStreamE2ETest {
             // 1. Pair host B as #847 does, and read each copy's current name by the shared id.
             peerStep(peer, "open host-isolation peer on A") { peer.open(CONNECT_TIMEOUT_MS) }
             awaitChannelList()
-            step("wait for phone connection on A") { awaitConnected() }
+            step("wait for A open repository") { hostRepository(serverIdA) }
             instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
             pairHostByCode(twoHostArg(ARG_PAIR_CODE_B))
             val nameA = step("read A collision name") { heldName(serverIdA, collisionId) }

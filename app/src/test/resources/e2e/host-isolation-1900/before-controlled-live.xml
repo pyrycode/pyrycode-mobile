@@ -1,0 +1,8 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="0" tests="1" failures="1" errors="0" skipped="0" time="33.317">
+    <testcase classname="de.pyryco.mobile.e2e.InteractiveStreamE2ETest" name="interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost" time="32.729">
+      <failure message="java.lang.AssertionError: host-isolation step 'wait for phone connection on A' timed out; a_ready=true; selected_is_a=false; selected_relay=PairingRejected" />
+    </testcase>
+  </testsuite>
+</testsuites>

@@ -1,0 +1,11 @@
+--- a/app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt
++++ b/app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt
+@@ -6512,7 +6512,7 @@
+                     }
+                 }
+             }
+-            step("wait for phone connection on A") { awaitConnected() }
++            step("wait for A open repository") { hostRepository(serverIdA) }
+             instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
+             pairHostByCode(twoHostArg(ARG_PAIR_CODE_B))
+             val nameA = step("read A collision name") { heldName(serverIdA, collisionId) }
