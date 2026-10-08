@@ -1,10 +1,17 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
@@ -17,7 +24,11 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.BackgroundTaskUpdate
@@ -32,9 +43,12 @@ import de.pyryco.mobile.e2e.questionAnswerTarget
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
 @RunWith(AndroidJUnit4::class)
 class BackgroundAgentProseScreenTest {
@@ -49,9 +63,11 @@ class BackgroundAgentProseScreenTest {
         parent: String = "",
     ) = ThreadItem.MessageItem(Message(id, "s", Role.Assistant, id, ts, false, parentToolUseId = parent))
 
+    @OptIn(ExperimentalTestApi::class)
     private fun mount(
         childTool: Boolean,
         collapsed: Boolean,
+        compact: Boolean = false,
     ) {
         collapse = collapsed
         val agent =
@@ -85,15 +101,22 @@ class BackgroundAgentProseScreenTest {
             prose("Child", "a"),
         ) + (if (childTool) listOf(read, prose("Child after tool", "a")) else emptyList())
         compose.setContent {
-            PyrycodeMobileTheme {
-                ThreadScreen(
-                    state = ThreadUiState("c", "Channel", items = items, hasMessages = true, historyMarkers = markers),
-                    onBack = {},
-                    onSendMessage = {},
-                    connectionState = ConnectionState.Connected,
-                    onRetry = {},
-                    collapseToolUses = collapse,
-                )
+            val screen: @Composable () -> Unit = {
+                PyrycodeMobileTheme {
+                    ThreadScreen(
+                        state = ThreadUiState("c", "Channel", items = items, hasMessages = true, historyMarkers = markers),
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                        collapseToolUses = collapse,
+                    )
+                }
+            }
+            if (compact) {
+                DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 480.dp))) { screen() }
+            } else {
+                screen()
             }
         }
     }
@@ -220,6 +243,104 @@ class BackgroundAgentProseScreenTest {
         compose.onAllNodesWithText("Child").assertCountEquals(1)
         reveal("Later child 29")
         compose.onNodeWithText("Later child 29").assertIsDisplayed()
+    }
+
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "420dpi")
+    @Test
+    fun lateOwnedProseGrowthIsRemeasuredBeforeClosingItsRun() {
+        mount(true, true, compact = true)
+        val token = "child1827_attributed"
+        compose.runOnIdle {
+            items =
+                items.map { item ->
+                    if (item is ThreadItem.MessageItem && item.message.id == "Child") {
+                        item.copy(message = item.message.copy(content = token))
+                    } else {
+                        item
+                    }
+                }
+        }
+        val ownedRun = hasText("Using tools: 1", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:read"))
+        compose.onAllNodesWithText(token).assertCountEquals(0)
+        compose.questionAnswerTarget(ownedRun).performTouchInput { click(center) }
+        compose.onNode(hasScrollToIndexAction()).performScrollToIndex(0)
+        val reply = hasText(token) and hasAnyAncestor(hasTestTag("background-agent-child:a"))
+        var grew = false
+        compose
+            .questionAnswerTarget(reply) { stage ->
+                println(stage)
+                if ("stage=before" in stage && !grew) {
+                    grew = true
+                    val lateProse = (0 until 5).joinToString("\n\n") { "Late child paragraph $it" }
+                    compose.runOnIdle {
+                        items =
+                            items.map { item ->
+                                if (item is ThreadItem.MessageItem && item.message.id == "Child after tool") {
+                                    item.copy(message = item.message.copy(content = lateProse))
+                                } else {
+                                    item
+                                }
+                            }
+                    }
+                    compose.waitForIdle()
+                    val moved = compose.onNode(reply).fetchSemanticsNode().boundsInRoot
+                    val header =
+                        compose
+                            .onNodeWithTag("thread-top-bar")
+                            .fetchSemanticsNode()
+                            .boundsInRoot.bottom
+                    println("event=late_rows bounds=$moved header=$header")
+                    assertTrue("late growth must cover the paragraph: $moved header=$header", moved.center.y < header)
+                }
+            }.assertIsDisplayed()
+        assertTrue("the late-growth interleaving must execute", grew)
+        compose.onAllNodesWithText(token).assertCountEquals(1)
+        compose.questionAnswerTarget(ownedRun).performTouchInput { click(center) }
+        compose.onNodeWithText(token).assertDoesNotExist()
+        assertEquals(-1, compose.onNode(hasScrollToIndexAction()).fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:Child"))
+    }
+
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "420dpi")
+    @Test
+    fun expandedOwnedRunBehindHeaderIsCorrectedBeforeItsCloseTap() {
+        mount(true, true)
+        compose.runOnIdle { items = items + (0 until 30).map { prose("Later child $it", "a") } }
+        val ownedRun = hasText("Using tools: 1", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:read"))
+        compose.onNodeWithText("Child").assertDoesNotExist()
+        compose.questionAnswerTarget(ownedRun).performTouchInput { click(center) }
+        reveal("Child")
+        val reply = hasText("Child") and hasAnyAncestor(hasTestTag("background-agent-child:a"))
+        compose.onNode(reply).assertIsDisplayed()
+        val proseBounds = compose.onNode(reply).fetchSemanticsNode().boundsInRoot
+        compose.onNode(hasScrollToIndexAction()).performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 3f - proseBounds.bottom) }
+        compose.questionAnswerTarget(reply) { println(it) }.assertIsDisplayed()
+        compose.onAllNodesWithText("Child").assertCountEquals(1)
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(ownedRun)
+        val bounds = compose.onNode(ownedRun).fetchSemanticsNode().boundsInRoot
+        val header =
+            compose
+                .onNodeWithTag("thread-top-bar")
+                .fetchSemanticsNode()
+                .boundsInRoot.bottom
+        val shift = header - bounds.bottom
+        compose.onNode(hasScrollToIndexAction()).performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, shift) }
+        val covered = compose.onNode(ownedRun).fetchSemanticsNode().boundsInRoot
+        assertTrue("fixture must cover the expanded run center: $covered header=$header shift=$shift", covered.center.y < header)
+        val target = compose.questionAnswerTarget(ownedRun) { println(it) }
+        val clear = target.fetchSemanticsNode().boundsInRoot
+        val composer =
+            compose
+                .onNodeWithTag("thread-composer")
+                .fetchSemanticsNode()
+                .boundsInRoot.top
+        assertTrue("close tap must clear chrome: $clear in $header..$composer", clear.center.y > header && clear.center.y < composer)
+        target.performTouchInput { click(center) }
+        compose.onNodeWithText("Child").assertDoesNotExist()
+        compose.onNodeWithText("Later child 29").assertDoesNotExist()
+        compose.questionAnswerTarget(ownedRun).assertIsDisplayed()
+        assertEquals(-1, compose.onNode(hasScrollToIndexAction()).fetchSemanticsNode().config[SemanticsProperties.IndexForKey]("msg:Child"))
     }
 
     @Test fun childGapStaysVisibleBesideItsAlwaysVisibleProse() {
