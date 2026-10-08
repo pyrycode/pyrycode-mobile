@@ -1,0 +1,40 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="1" failures="1" errors="0" skipped="0" time="47.746" timestamp="2026-10-08T08:45:44" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.design.ListDesignCaptureTest" tests="1" failures="1" errors="0" skipped="0" time="42.713" timestamp="2026-10-08T08:45:44" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel8Api35" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="promptFailedFramesAt412By892" classname="de.pyryco.mobile.design.ListDesignCaptureTest" time="42.713">
+      <failure>java.lang.AssertionError: Failed to inject touch input.
+Reason: Expected exactly '1' node but found '2' nodes that satisfy: (Text + InputText + EditableText contains 'Release notes' (ignoreCase: false))
+Nodes found:
+1) Node #248 at (l=32.0, t=261.0, r=392.0, b=285.0)px, Tag: 'tree-channel-row'
+ContentDescription = '[Idle]'
+Focused = 'false'
+Role = 'Button'
+Selected = 'false'
+Text = '[Release notes]'
+Actions = [ClearTextSubstitution, GetTextLayoutResult, OnClick, RequestFocus, SetTextSubstitution, ShowTextSubstitution]
+MergeDescendants = 'true'
+2) Node #266 at (l=32.0, t=313.0, r=392.0, b=337.0)px, Tag: 'tree-chat-row'
+ContentDescription = '[Idle]'
+Focused = 'false'
+Role = 'Button'
+Selected = 'false'
+Text = '[Release notes]'
+Actions = [ClearTextSubstitution, GetTextLayoutResult, OnClick, RequestFocus, SetTextSubstitution, ShowTextSubstitution]
+MergeDescendants = 'true'
+
+at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+at androidx.compose.ui.test.SemanticsNodeInteraction.fetchSemanticsNode(SemanticsNodeInteraction.kt:84)
+at androidx.compose.ui.test.ActionsKt.performTouchInput(Actions.kt:402)
+at androidx.compose.ui.test.AndroidActions.performClickImpl(Actions.android.kt:23)
+at androidx.compose.ui.test.ActionsKt.performClick(Actions.kt:60)
+at de.pyryco.mobile.design.ListDesignCaptureTest.promptFailedFramesAt412By892(ListDesignCaptureTest.kt:166)
+</failure>
+    </testcase>
+  </testsuite>
+</testsuites>
