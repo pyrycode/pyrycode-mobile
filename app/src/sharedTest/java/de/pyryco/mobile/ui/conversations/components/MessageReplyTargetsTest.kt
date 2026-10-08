@@ -71,10 +71,19 @@ class MessageReplyTargetsTest {
         compact: Boolean = true,
         atBoundary: Boolean = false,
         rewrap: Boolean = false,
+        metaRowVisible: Boolean = false,
     ) {
         val messages =
             listOf(Role.User, Role.User, Role.Assistant, Role.Assistant).mapIndexed { index, role ->
-                Message("message-$index", "s", role, "$content $index", Instant.parse("2026-10-07T00:00:00Z"), isStreaming = streaming)
+                // Preserve empty/whitespace source: appending an identity would create a body line.
+                Message(
+                    "message-$index",
+                    "s",
+                    role,
+                    if (content.isBlank()) content else "$content $index",
+                    Instant.parse("2026-10-07T00:00:00Z"),
+                    isStreaming = streaming,
+                )
             }
         var boundaryHeightPx = 0
         rule.setContent {
@@ -105,7 +114,7 @@ class MessageReplyTargetsTest {
                                     messages.forEach { message ->
                                         MessageBubble(
                                             message,
-                                            metaRowVisible = false,
+                                            metaRowVisible = metaRowVisible,
                                             onToggleMetaRow = { toggles++ },
                                             onReply = { replies += it },
                                         )
@@ -119,8 +128,48 @@ class MessageReplyTargetsTest {
         }
         val fixture = rule.onNodeWithTag("target-fixture").getUnclippedBoundsInRoot()
         assertEquals("configured fixture width", width.toFloat(), fixture.width.value, 1f)
+        val actionableMessages =
+            messages.filterNot {
+                it.role == Role.Assistant &&
+                    it.content.isBlank() &&
+                    !it.isStreaming &&
+                    !metaRowVisible
+            }
+        assertEquals(actionableMessages.size, rule.onAllNodesWithContentDescription("Copy this message").fetchSemanticsNodes().size)
+        assertEquals(actionableMessages.size, rule.onAllNodesWithContentDescription("Reply to this message").fetchSemanticsNodes().size)
+        assertEquals(
+            actionableMessages.size,
+            rule.onAllNodesWithTag("message-copy-glyph", useUnmergedTree = true).fetchSemanticsNodes().size,
+        )
+        assertEquals(
+            actionableMessages.size,
+            rule.onAllNodesWithTag("message-reply-glyph", useUnmergedTree = true).fetchSemanticsNodes().size,
+        )
         repeat(messages.size) { index ->
             rule.onAllNodesWithTag(MESSAGE_BUBBLE_TEST_TAG)[index].performScrollTo()
+            if (messages[index] !in actionableMessages) {
+                val bubble = rule.onAllNodesWithTag(MESSAGE_BUBBLE_TEST_TAG)[index]
+                val bounds = bubble.getUnclippedBoundsInRoot()
+                assertEquals("empty markdown keeps only its natural padding", 32f, bounds.height.value, 1.5f)
+                val row = rule.onAllNodesWithTag("message-row")[index].getUnclippedBoundsInRoot()
+                assertEquals(bounds.height.value, row.height.value, 1f)
+                val preceding = rule.onAllNodesWithTag(MESSAGE_BUBBLE_TEST_TAG)[index - 1].getUnclippedBoundsInRoot()
+                assertEquals(16f, (bounds.top - preceding.bottom).value, 1f)
+                val pixels = bubble.fetchSemanticsNode().boundsInRoot
+                val density = pixels.height / bounds.height.value
+                val root = rule.onNodeWithTag("target-fixture").fetchSemanticsNode().boundsInRoot
+                // Tap where the overflowing compact targets formerly reached into both row gaps.
+                rule.onNodeWithTag("target-fixture").performTouchInput {
+                    listOf(24f, 72f).forEach { x ->
+                        listOf(-23f, 23f).forEach { y ->
+                            click(Offset(pixels.right + (12f + x) * density - root.left, pixels.center.y + y * density - root.top))
+                        }
+                    }
+                }
+                assertEquals(actionableMessages.size * 4, copies.size)
+                assertEquals(actionableMessages.size * 4, replies.size)
+                return@repeat
+            }
             val copy = rule.onAllNodesWithContentDescription("Copy this message")[index]
             val reply = rule.onAllNodesWithContentDescription("Reply to this message")[index]
             assertEquals(androidx.compose.ui.semantics.Role.Button, reply.fetchSemanticsNode().config[SemanticsProperties.Role])
@@ -206,8 +255,8 @@ class MessageReplyTargetsTest {
             assertEquals((index + 1) * 4, copies.size)
             assertEquals((index + 1) * 4, replies.size)
         }
-        assertEquals(messages.flatMap { message -> List(4) { message.content } }, copies)
-        assertEquals(messages.flatMap { message -> List(4) { message } }, replies)
+        assertEquals(actionableMessages.flatMap { message -> List(4) { message.content } }, copies)
+        assertEquals(actionableMessages.flatMap { message -> List(4) { message } }, replies)
         assertEquals(0, toggles)
     }
 
@@ -234,4 +283,20 @@ class MessageReplyTargetsTest {
     @Test fun streamingTargetsAt412dp() = verify(412, "arrived", streaming = true)
 
     @Test fun streamingTargetsRemainAvailable() = verify(320, "arrived", streaming = true)
+
+    @Test fun emptyBodyTargetsAt320dp() = verify(320, "")
+
+    @Test fun emptyBodyTargetsAt412dp() = verify(412, "")
+
+    @Test fun whitespaceBodyTargetsAt320dp() = verify(320, " \t ")
+
+    @Test fun whitespaceBodyTargetsAt412dp() = verify(412, " \t ")
+
+    @Test fun emptyBodyWithTimestampTargetsAt320dp() = verify(320, "", metaRowVisible = true)
+
+    @Test fun emptyBodyWithTimestampTargetsAt412dp() = verify(412, "", metaRowVisible = true)
+
+    @Test fun emptyStreamingTargetsAt320dp() = verify(320, "", streaming = true)
+
+    @Test fun emptyStreamingTargetsAt412dp() = verify(412, "", streaming = true)
 }

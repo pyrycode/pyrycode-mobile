@@ -26,6 +26,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -443,39 +444,41 @@ private fun MessageActions(
 ) {
     val clipboard = LocalClipboardManager.current
     val labels = listOf(stringResource(R.string.cd_thread_copy_message), stringResource(R.string.cd_thread_reply_message))
-    Layout(
-        modifier = Modifier.testTag("message-actions"),
-        content = {
-            repeat(2) { index ->
-                Box(
-                    modifier =
-                        Modifier
-                            .semantics { contentDescription = labels[index] }
-                            .clickable(role = androidx.compose.ui.semantics.Role.Button) {
-                                if (index == 0) {
-                                    clipboard.setBoundedText(message.content)
-                                    RelayLog.d { "event=message_copy" }
-                                } else {
-                                    onReply(message)
-                                }
-                            },
-                )
-            }
-            repeat(2) { index ->
-                // Keep the existing Figma assets and primary tint, with no backing.
-                Icon(
-                    painter = painterResource(if (index == 0) R.drawable.ic_copy else R.drawable.ic_reply),
-                    contentDescription = null,
-                    modifier =
-                        Modifier
-                            .size(width = if (index == 0) 11.dp else 13.dp, height = 12.dp)
-                            .testTag(if (index == 0) "message-copy-glyph" else "message-reply-glyph"),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-            }
-        },
-    ) { measurables, constraints ->
+    SubcomposeLayout(modifier = Modifier.testTag("message-actions")) { constraints ->
         val targetSize = MessageActionTargetSize.roundToPx()
+        // Empty markdown can leave only the bubble's padding. Keep that natural height;
+        // compose no controls until the surface can contain their full targets.
+        if (constraints.maxHeight < targetSize) return@SubcomposeLayout layout(constraints.maxWidth, constraints.maxHeight) {}
+        val measurables =
+            subcompose(Unit) {
+                repeat(2) { index ->
+                    Box(
+                        modifier =
+                            Modifier
+                                .semantics { contentDescription = labels[index] }
+                                .clickable(role = androidx.compose.ui.semantics.Role.Button) {
+                                    if (index == 0) {
+                                        clipboard.setBoundedText(message.content)
+                                        RelayLog.d { "event=message_copy" }
+                                    } else {
+                                        onReply(message)
+                                    }
+                                },
+                    )
+                }
+                repeat(2) { index ->
+                    // Keep the existing Figma assets and primary tint, with no backing.
+                    Icon(
+                        painter = painterResource(if (index == 0) R.drawable.ic_copy else R.drawable.ic_reply),
+                        contentDescription = null,
+                        modifier =
+                            Modifier
+                                .size(width = if (index == 0) 11.dp else 13.dp, height = 12.dp)
+                                .testTag(if (index == 0) "message-copy-glyph" else "message-reply-glyph"),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
         val compact = constraints.maxWidth == targetSize * 2
         val targets = measurables.take(2).map { it.measure(Constraints.fixed(targetSize, targetSize)) }
         val glyphs = measurables.drop(2).map { it.measure(Constraints()) }
