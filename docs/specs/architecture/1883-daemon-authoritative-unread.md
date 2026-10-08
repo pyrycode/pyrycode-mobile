@@ -60,6 +60,10 @@ Run focused unit/shared checks, lint, assembleDebug, instrumentation compilation
 
 None. Facts already merged in the repository remain the single authority; absence of read-field support on a replacement connection selects fallback.
 
+## Revisions
+
+- 2026-10-08: The first scripted run rejected the new post prefix because `post_batch` restricts fixture names to `e2e1833-`. Reuse that existing allowed prefix; the peer-read contract and control boundary remain unchanged.
+
 ## Documentation handoff
 
 Pending for the documentation stage:

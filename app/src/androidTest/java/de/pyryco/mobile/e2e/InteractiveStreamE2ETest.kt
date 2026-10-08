@@ -4455,6 +4455,7 @@ class InteractiveStreamE2ETest {
      *    B reads Waiting for your answer, still after a settle with nothing answered, while A stays Idle. The
      *    peer allows it, B's turn ends, and B reads Unread.
      *
+     * Peer receipt of B's durable reply clears its dot while the phone stays on the list (#1883).
      * Each state is read from the dot's content description, never its colour. Running is never asserted: on a
      * ping it is transient, like the thinking spinner.
      *
@@ -4519,6 +4520,18 @@ class InteractiveStreamE2ETest {
             peerStep(peer, "await B's prompt dismissal") { peer.awaitModalDismissed(modalId, THREAD_TIMEOUT_MS) }
             awaitTurnEnd(peer, chatB, 1, "B's allowed turn")
             awaitRowAttention(nameB, unread, "B after its prompt was answered and its turn ended")
+
+            // 6. The peer reads B's actual durable reply while the phone remains on the list.
+            val history = peerStep(peer, "read B's real reply history") { peer.history(chatB, THREAD_TIMEOUT_MS) }
+            assertTrue("peer received B's assistant reply", history.any { it.type == "assistant_delta" })
+            val peerCheckpoint = requireNotNull(history.maxOfOrNull { it.id }) { "peer received no durable history" }
+            val beforePeerRead = peerStep(peer, "confirm B is still unread") { peer.readMarks(chatB, THREAD_TIMEOUT_MS) }
+            assertTrue("the list did not acknowledge B", (beforePeerRead.readUpTo ?: 0uL) < peerCheckpoint)
+            val confirmed = peerStep(peer, "acknowledge the peer's read of B") { peer.markRead(chatB, peerCheckpoint, THREAD_TIMEOUT_MS) }
+            assertTrue("peer read was durably confirmed", confirmed >= peerCheckpoint)
+            composeTestRule.onNodeWithTag(CHANNEL_LIST_TEST_TAG).assertIsDisplayed()
+            awaitRowAttention(nameB, idle, "B after a peer read, without reopening its thread")
+            awaitRowAttention(nameA, idle, "A after B's peer read")
         } finally {
             peer.close()
             runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }

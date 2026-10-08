@@ -6,6 +6,7 @@ import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.batchFor
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.repository.ConversationReadMarks
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -29,7 +30,7 @@ enum class ConversationAttention {
      */
     Running,
 
-    /** A row was added to the thread, or a turn completed, while the operator was not viewing it (#1361). */
+    /** A known durable entry exceeds the shared mark, or a legacy local change has not been opened. */
     Unread,
 
     Idle,
@@ -61,7 +62,8 @@ internal const val MAX_READ_POSITIONS = 1000
  * The attention fold for one host (#877), keyed by that host's conversation ids. Pure: no clock, no I/O
  * and no logging, because every id in it is daemon-authored and used only as an equality key.
  *
- * [positions] is the persisted part. [running] and [busy] are live-only, and [counted] holds each
+ * [positions] is the persisted legacy fallback. [readMarks] holds repository-authored durable facts.
+ * [running] and [busy] are live-only, and [counted] holds each
  * conversation's recently completed turn ids so a turn the daemon delivers again counts once.
  */
 internal data class HostAttentionState(
@@ -69,6 +71,7 @@ internal data class HostAttentionState(
     val busy: Set<String> = emptySet(),
     val positions: Map<String, ReadPosition> = emptyMap(),
     val counted: Map<String, List<String>> = emptyMap(),
+    val readMarks: Map<String, ConversationReadMarks> = emptyMap(),
 ) {
     /** Folds one live event; [viewing] is whether the operator has [event]'s conversation open now. */
     fun onEvent(
@@ -97,7 +100,7 @@ internal data class HostAttentionState(
         if (turnId.isBlank() || turnId.length > MAX_TURN_ID_CHARS || isCounted(id, turnId)) return ended
         val position = ReadPosition(turnId, if (viewing) turnId else positions[id]?.readTurnId)
         return ended.copy(
-            positions = boundedPositions((positions - id) + (id to position)),
+            positions = if (usesSharedMark(id)) positions else boundedPositions((positions - id) + (id to position)),
             counted = counted + (id to (counted[id].orEmpty() + turnId).takeLast(MAX_COUNTED_TURNS_PER_CONVERSATION)),
         )
     }
@@ -113,7 +116,7 @@ internal data class HostAttentionState(
         token: String,
     ): HostAttentionState {
         val position = positions[conversationId]
-        if (viewing || position?.unread == true) return this
+        if (usesSharedMark(conversationId) || viewing || position?.unread == true) return this
         val unread = ReadPosition(token, position?.readTurnId)
         return copy(positions = boundedPositions((positions - conversationId) + (conversationId to unread)))
     }
@@ -125,12 +128,25 @@ internal data class HostAttentionState(
 
     /** The operator opened [conversationId]: what it had completed is read. */
     fun opened(conversationId: String): HostAttentionState {
+        if (usesSharedMark(conversationId)) return this
         val position = positions[conversationId] ?: return this
         return copy(positions = positions + (conversationId to position.copy(readTurnId = position.completedTurnId)))
     }
 
     /** The host's busy conversations now (#1452), replacing the previous set: the repository holds the edges. */
     fun withBusy(ids: Set<String>): HostAttentionState = if (ids == busy) this else copy(busy = ids)
+
+    /** The repository already merged these facts; replace them, never infer durable identity locally. */
+    fun withReadMarks(marks: Map<String, ConversationReadMarks>): HostAttentionState =
+        if (marks == readMarks) this else copy(readMarks = marks)
+
+    private fun usesSharedMark(id: String): Boolean = readMarks[id]?.readUpTo != null
+
+    private fun unread(id: String): Boolean {
+        val marks = readMarks[id]
+        val confirmed = marks?.readUpTo ?: return positions[id]?.unread == true
+        return marks.latestEntryId?.let { it > confirmed } == true
+    }
 
     /** The host's connection is gone, so nothing on it can be seen running or busy. Everything else stays. */
     fun disconnected(): HostAttentionState =
@@ -149,13 +165,13 @@ internal data class HostAttentionState(
         batches: List<QuestionBatch>,
     ): Map<String, ConversationAttention> {
         val prompted = prompts.map { it.conversationId }.filter { it.isNotBlank() }.toSet()
-        val ids = running + busy + positions.keys + batches.map { it.conversationId } + prompted
+        val ids = running + busy + positions.keys + readMarks.keys + batches.map { it.conversationId } + prompted
         return ids
             .associateWith { id ->
                 resolveAttention(
                     waiting = id in prompted || batches.batchFor(id) != null,
                     running = id in running || id in busy,
-                    unread = positions[id]?.unread == true,
+                    unread = unread(id),
                 )
             }.filterValues { it != ConversationAttention.Idle }
     }
@@ -168,8 +184,8 @@ internal data class HostAttentionState(
  * Which conversations the operator has open right now (#877), per host: the thread's viewing signal.
  *
  * Its own small type so a thread destination can hold a view without resolving [HostConversationSource]
- * and the collectors that come with it. The source folds [viewed] into each host's attention: a viewed
- * conversation is opened, and a turn completing in it is read. Holds ids only as keys and logs none.
+ * and the collectors that come with it. The source folds [viewed] into legacy local read positions;
+ * modern conversations require confirmed daemon marks. Holds ids only as keys and logs none.
  */
 class ConversationViewing {
     private val views = MutableStateFlow<Map<Pair<String, String>, Int>>(emptyMap())

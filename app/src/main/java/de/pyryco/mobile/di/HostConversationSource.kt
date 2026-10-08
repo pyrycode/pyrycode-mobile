@@ -12,6 +12,7 @@ import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ConversationFilter
+import de.pyryco.mobile.data.repository.ConversationReadMarks
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import kotlinx.coroutines.CoroutineDispatcher
@@ -142,8 +143,8 @@ class HostConversationSource internal constructor(
     }
 
     /**
-     * The operator opened [conversationId] on [serverId]: its unread and failed states clear on that host
-     * only. A host that is not held yet has nothing to clear.
+     * The operator opened [conversationId] on [serverId]: clear its legacy local unread position.
+     * A modern conversation stays unread until its confirmed shared mark covers its newest known entry.
      */
     @Synchronized
     fun markOpened(
@@ -239,6 +240,16 @@ class HostConversationSource internal constructor(
         }
         scope.launch(entry.job) {
             connection.repositories.collectLatest { repository ->
+                // Retain last known attention while offline. Every new connection establishes support
+                // from its own facts, never from cached rows or the previous daemon's fields.
+                if (repository != null) {
+                    updateReadMarks(entry, repository, emptyMap())
+                    repository.observeHostReadMarks().collect { marks -> updateReadMarks(entry, repository, marks) }
+                }
+            }
+        }
+        scope.launch(entry.job) {
+            connection.repositories.collectLatest { repository ->
                 // Each connection's repository starts its thread store empty, so its baseline is zero rows:
                 // rows a replay delivered before this first read are new (#1361).
                 var seen = emptyMap<String, Int>()
@@ -300,6 +311,17 @@ class HostConversationSource internal constructor(
                 }
             }
         }
+    }
+
+    @Synchronized
+    private fun updateReadMarks(
+        entry: Held,
+        repository: ConversationRepository,
+        marks: Map<String, ConversationReadMarks>,
+    ) {
+        if (entry.connection.repositories.value !== repository) return
+        updateAttention(entry) { attention = attention.withReadMarks(marks) }
+        RelayLog.d { "event=conversation_attention_read_facts" }
     }
 
     @Synchronized

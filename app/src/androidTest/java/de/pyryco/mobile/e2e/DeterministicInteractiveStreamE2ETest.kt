@@ -473,6 +473,42 @@ class DeterministicInteractiveStreamE2ETest {
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
             runBlocking { (repository.observeReadMarks(conversationId).first()?.readUpTo ?: 0uL) >= checkpoint }
         }
+
+        // #1883 rung 4: a new durable post stays unread until a peer reads it, with no phone reopen.
+        composeTestRule.onNodeWithContentDescription("Back").performClick()
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isNotEmpty()
+        }
+        // The owned post control admits only the existing e2e1833 fixture prefix.
+        DaemonFaultControl().posts(SEED_CHANNEL_NAME, "e2e1833-attention-read", 1)
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val row = hasText(SEED_CHANNEL_NAME) and hasTestTag(de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG)
+        val unread = context.getString(R.string.cd_conversation_attention_unread)
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(row and hasContentDescription(unread)).fetchSemanticsNodes().isNotEmpty()
+        }
+        val args = InstrumentationRegistry.getArguments()
+        SecondClientPeer(
+            PairedServer(
+                requireNotNull(args.getString("serverId")),
+                requireNotNull(args.getString("peerToken")),
+                requireNotNull(args.getString("relayUrl")),
+                requireNotNull(args.getString("serverStaticPublicKey")),
+            ),
+        ).use { peer ->
+            runBlocking {
+                peer.open(CONNECT_TIMEOUT_MS)
+                val history = peer.history(conversationId, THREAD_TIMEOUT_MS)
+                assertTrue("peer received the durable post", history.any { it.type == "assistant_delta" })
+                val latest = requireNotNull(history.maxOfOrNull { it.id })
+                assertTrue("peer read confirmed", peer.markRead(conversationId, latest, THREAD_TIMEOUT_MS) >= latest)
+            }
+            val idle = context.getString(R.string.cd_conversation_attention_idle)
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(row and hasContentDescription(idle)).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNodeWithTag(CHANNEL_LIST_TEST_TAG).assertIsDisplayed()
+        }
     }
 
     /**

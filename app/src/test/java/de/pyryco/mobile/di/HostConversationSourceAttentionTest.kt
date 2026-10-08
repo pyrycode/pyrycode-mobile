@@ -14,11 +14,13 @@ import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.repository.ConversationReadMarks
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.SessionPump
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -431,6 +433,192 @@ class HostConversationSourceAttentionTest {
             assertEquals(mapOf("a" to emptyMap(), "b" to mapOf("c1" to ConversationAttention.Running)), source.attention.value)
         }
 
+    @Test
+    fun daemonListAndPeerPushRecomputeWithoutOpeningAndIgnoreLocalOpen() =
+        withRemoteSource { a, b, source, _ ->
+            a.push(readList("same", 2u, 5u))
+            b.push(readList("same", 0u, 0u))
+            runCurrent()
+            assertEquals(mapOf("same" to ConversationAttention.Unread), source.attention.value["a"])
+            assertEquals(emptyMap<String, ConversationAttention>(), source.attention.value["b"])
+            source.markOpened("a", "same")
+            val view = viewing.view("a", "same")
+            runCurrent()
+            assertEquals(mapOf("same" to ConversationAttention.Unread), source.attention.value["a"])
+            a.push(readUpdate("same", 4u))
+            runCurrent()
+            assertEquals(mapOf("same" to ConversationAttention.Unread), source.attention.value["a"])
+            a.push(readUpdate("same", 5u))
+            runCurrent()
+            assertEquals(emptyMap<String, ConversationAttention>(), source.attention.value["a"])
+            view.close()
+            a.push(readList("same", 5u, 6u))
+            runCurrent()
+            assertEquals(mapOf("same" to ConversationAttention.Unread), source.attention.value["a"])
+            // A late list cannot roll either fact back; the repository is the only merge owner.
+            a.push(readList("same", 2u, 3u))
+            a.push(readUpdate("same", 6u))
+            runCurrent()
+            assertEquals(emptyMap<String, ConversationAttention>(), source.attention.value["a"])
+        }
+
+    @Test
+    fun receivedDurableIdentityAfterAMarkMakesUnreadAndReplayCannotUndoPeerRead() =
+        withRemoteSource { a, _, source, host ->
+            a.push(readList("c", 10u, 10u))
+            runCurrent()
+            a.push(durableMessage("c", 11u), 11u)
+            runCurrent()
+            assertEquals(mapOf("c" to ConversationAttention.Unread), source.attention.value["a"])
+            a.push(readUpdate("c", 11u))
+            runCurrent()
+            assertEquals(emptyMap<String, ConversationAttention>(), source.attention.value["a"])
+            repeat(2) {
+                a.push(durableMessage("c", 11u), 11u)
+                host.events.emit(end("c", "replayed-turn"))
+                runCurrent()
+                assertEquals(emptyMap<String, ConversationAttention>(), source.attention.value["a"])
+            }
+            a.push(durableMessage("c", 12u), 12u)
+            runCurrent()
+            assertEquals(mapOf("c" to ConversationAttention.Unread), source.attention.value["a"])
+        }
+
+    @Test
+    fun correlatedReadReplyClearsAttentionOnlyToItsConfirmedClampedMark() =
+        withRemoteSource { a, _, source, host ->
+            a.push(readList("c", 0u, 10u))
+            runCurrent()
+            val request = async { requireNotNull(host.repositories.value).markConversationRead("c", 100u) }
+            runCurrent()
+            assertEquals(mapOf("c" to ConversationAttention.Unread), source.attention.value["a"])
+            val command = a.sent.single { it.type == "mark_conversation_read" }
+            a.push(readUpdate("c", 8u), inReplyTo = command.id)
+            runCurrent()
+            assertEquals(8uL, request.await().getOrThrow())
+            assertEquals(mapOf("c" to ConversationAttention.Unread), source.attention.value["a"])
+            a.push(readUpdate("c", 10u))
+            runCurrent()
+            assertEquals(emptyMap<String, ConversationAttention>(), source.attention.value["a"])
+        }
+
+    @Test
+    fun sharedUnreadStillYieldsToBusyAndEveryOutstandingPermission() =
+        withRemoteSource { a, _, source, host ->
+            a.push(readList("c", 0u, 1u))
+            a.push(stall("c"))
+            runCurrent()
+            assertEquals(mapOf("c" to ConversationAttention.Running), source.attention.value["a"])
+            host.prompts("c" to "m")
+            runCurrent()
+            assertEquals(mapOf("c" to ConversationAttention.WaitingForAnswer), source.attention.value["a"])
+            a.push(readUpdate("c", 1u))
+            runCurrent()
+            assertEquals(mapOf("c" to ConversationAttention.WaitingForAnswer), source.attention.value["a"])
+            host.prompts()
+            runCurrent()
+            assertEquals(mapOf("c" to ConversationAttention.Running), source.attention.value["a"])
+            a.push(liveEvent("c"))
+            runCurrent()
+            assertEquals(emptyMap<String, ConversationAttention>(), source.attention.value["a"])
+        }
+
+    @Test
+    fun modernAndLegacyHostsStaySeparateAndReplacementOmittingFieldsUsesLocalFallback() =
+        withRemoteSource { a, b, source, host ->
+            a.push(readList("same", 0u, 9u))
+            b.push(readList("same", null, null))
+            b.push(durableMessage("same", 9u), 9u)
+            runCurrent()
+            assertEquals(mapOf("same" to ConversationAttention.Unread), source.attention.value["a"])
+            assertEquals(mapOf("same" to ConversationAttention.Unread), source.attention.value["b"])
+            source.markOpened("a", "same")
+            source.markOpened("b", "same")
+            runCurrent()
+            assertEquals(mapOf("same" to ConversationAttention.Unread), source.attention.value["a"])
+            assertEquals(emptyMap<String, ConversationAttention>(), source.attention.value["b"])
+            host.repositories.value = null
+            runCurrent()
+            assertEquals(mapOf("same" to ConversationAttention.Unread), source.attention.value["a"])
+            val legacy = BusyPump()
+            host.repositories.value =
+                RemoteConversationRepository(legacy, backgroundScope, negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE) })
+            legacy.push(readList("same", null, null))
+            runCurrent()
+            assertEquals(emptyMap<String, ConversationAttention>(), source.attention.value["a"])
+            legacy.push(durableMessage("same", 9u), 9u)
+            runCurrent()
+            assertEquals(mapOf("same" to ConversationAttention.Unread), source.attention.value["a"])
+            // Late callbacks from the replaced modern repository cannot re-negotiate support.
+            a.push(readUpdate("same", 9u))
+            runCurrent()
+            source.markOpened("a", "same")
+            runCurrent()
+            assertEquals(emptyMap<String, ConversationAttention>(), source.attention.value["a"])
+        }
+
+    @Test
+    fun modernFactsOverrideRestoredTokensAndLocalActivityDoesNotWriteFallback() =
+        runTest {
+            val cache = MemoryCache()
+            val stored = mapOf("same" to ReadPosition("old-local", null))
+            cache.positions["a"] = stored
+            cache.positions["b"] = stored
+            val modern = Host("a")
+            val legacy = Host("b")
+            modern.rows.marks.value = mapOf("same" to ConversationReadMarks(7u, 7u))
+            val source =
+                HostConversationSource(MutableStateFlow(listOf(modern.entry, legacy.entry)), {
+                    null
+                }, StandardTestDispatcher(testScheduler), cache, viewing = viewing)
+            try {
+                runCurrent()
+                assertEquals(emptyMap<String, ConversationAttention>(), source.attention.value["a"])
+                assertEquals(mapOf("same" to ConversationAttention.Unread), source.attention.value["b"])
+                source.markOpened("a", "same")
+                modern.rows.counts.value = mapOf("same" to 1)
+                modern.events.emit(end("same", "modern-turn"))
+                runCurrent()
+                assertEquals(stored, cache.positions["a"])
+                assertEquals(emptyMap<String, ConversationAttention>(), source.attention.value["a"])
+                source.markOpened("b", "same")
+                runCurrent()
+                assertEquals(ReadPosition("old-local", "old-local"), cache.positions.getValue("b")["same"])
+                // A replacement omitting fields revives only that host's saved legacy fallback.
+                modern.repositories.value = RowCountingRepository()
+                runCurrent()
+                assertEquals(mapOf("same" to ConversationAttention.Unread), source.attention.value["a"])
+                source.markOpened("a", "same")
+                runCurrent()
+                assertEquals(ReadPosition("old-local", "old-local"), cache.positions.getValue("a")["same"])
+            } finally {
+                source.dispose()
+            }
+        }
+
+    private fun readList(
+        id: String,
+        read: ULong?,
+        latest: ULong?,
+    ): Pair<String, String> {
+        val fields = listOfNotNull(read?.let { "\"read_up_to\":$it" }, latest?.let { "\"latest_entry_id\":$it" })
+        val extra = if (fields.isEmpty()) "" else "," + fields.joinToString(",")
+        return "conversations" to
+            """{"conversations":[{"id":"$id","name":"test","is_promoted":true,"cwd":"/test","last_message_ts":"$TS","last_used_at":"$TS"$extra}]}"""
+    }
+
+    private fun readUpdate(
+        id: String,
+        read: ULong,
+    ) = "conversation_updated" to
+        """{"id":"$id","name":"test","is_promoted":true,"cwd":"/test","last_used_at":"$TS","read_up_to":$read}"""
+
+    private fun durableMessage(
+        id: String,
+        durableId: ULong,
+    ) = "message" to
+        """{"conversation_id":"$id","message_id":"m$durableId","role":"user","text":"received"}"""
+
     /** Two hosts, each over a real [RemoteConversationRepository] whose frames the pumps deliver; host `a` last. */
     private fun withRemoteSource(block: suspend TestScope.(BusyPump, BusyPump, HostConversationSource, Host) -> Unit) =
         runTest {
@@ -462,11 +650,27 @@ class HostConversationSourceAttentionTest {
 
         override val inbound: Flow<Envelope> = inboundChannel.receiveAsFlow()
 
-        override fun send(envelope: Envelope): Boolean = true
+        val sent = mutableListOf<Envelope>()
 
-        fun push(frame: Pair<String, String>) {
+        override fun send(envelope: Envelope): Boolean {
+            sent += envelope
+            return true
+        }
+
+        fun push(
+            frame: Pair<String, String>,
+            durableId: ULong? = null,
+            inReplyTo: Long? = null,
+        ) {
             inboundChannel.trySend(
-                Envelope(id = nextId++, type = frame.first, ts = TS, payload = MobileJson.parseToJsonElement(frame.second)),
+                Envelope(
+                    id = nextId++,
+                    type = frame.first,
+                    ts = TS,
+                    payload = MobileJson.parseToJsonElement(frame.second),
+                    historyEntryId = durableId,
+                    inReplyTo = inReplyTo,
+                ),
             )
         }
     }
@@ -544,6 +748,9 @@ class HostConversationSourceAttentionTest {
     /** A connection's repository whose thread row counts the test sets directly (#1361). */
     private class RowCountingRepository : ConversationRepository by FakeConversationRepository() {
         val counts = MutableStateFlow<Map<String, Int>>(emptyMap())
+        val marks = MutableStateFlow<Map<String, ConversationReadMarks>>(emptyMap())
+
+        override fun observeHostReadMarks() = marks
 
         override fun observeThreadRowCounts() = counts
     }
