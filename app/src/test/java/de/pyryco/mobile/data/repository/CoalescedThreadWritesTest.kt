@@ -13,11 +13,15 @@ import de.pyryco.mobile.data.network.RelayLog
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
@@ -34,6 +38,10 @@ import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration.Companion.minutes
 
@@ -266,6 +274,100 @@ class CoalescedThreadWritesTest {
             assertEquals(0, testScheduler.currentTime)
         }
 
+    @Test fun cancellationInvariant_postCommitCancellationFlushesLatestAcceptedRemoval() = postCommitFlush(complete = false)
+
+    @Test fun completionInvariant_postCommitCompletionFlushesLatestAcceptedRemoval() = postCommitFlush(complete = true)
+
+    @Test fun coverageInvariant_postCommitSaveCancellationFlushesLatestAcceptedRemoval() =
+        postCommitFlush(
+            complete = false,
+            coverageSave = true,
+        )
+
+    private fun postCommitFlush(
+        complete: Boolean,
+        coverageSave: Boolean = false,
+    ) = runTest {
+        val processing = StandardTestDispatcher(testScheduler)
+        val io = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+        val committed = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val hold = AtomicBoolean(false)
+        val updates = Channel<ThreadSnapshot>(Channel.UNLIMITED)
+        val accepted = Channel<Unit>(Channel.UNLIMITED)
+        val delivered = Channel<List<ThreadItem>>(Channel.UNLIMITED)
+        val source =
+            object : ConversationRepository by FakeConversationRepository(), ThreadSnapshotSource {
+                var historySnapshot: ThreadSnapshot? = null
+
+                override fun observeThreadSnapshot(conversationId: String) =
+                    historySnapshot?.let { flowOf(it) } ?: flow {
+                        for (snapshot in updates) {
+                            emit(snapshot)
+                            accepted.send(Unit) // emit returns only after the writer accepts the candidate
+                        }
+                    }
+            }
+        val disk = FileConversationCache(tmp.root, io)
+        val a = listOf(row("a"))
+        val ab = a + row("b")
+        var reader: Job? = null
+        var save: Job? = null
+        try {
+            RelayLog.sink = { _, _, message ->
+                // mutate logs success after atomic replacement, before returning across the I/O dispatcher.
+                if (message == "conversation_cache operation=write_thread status=ok" && hold.compareAndSet(true, false)) {
+                    committed.countDown()
+                    check(release.await(10, TimeUnit.SECONDS)) { "post-commit release timed out" }
+                }
+            }
+            disk.writeThread("host", "c", a).getOrThrow()
+            val repository = CachingConversationRepository(source, disk, "host", processingDispatcher = processing)
+            reader =
+                launch(processing) {
+                    repository.observeThreadSnapshot("c").collect { delivered.send(it.rows) }
+                }
+            hold.set(true)
+            updates.send(ThreadSnapshot(ab))
+            assertEquals(ab, delivered.receive())
+            accepted.receive()
+            if (coverageSave) {
+                source.historySnapshot = ThreadSnapshot(ab)
+                save =
+                    launch(
+                        processing,
+                    ) { repository.writeHistoryPosition("c", HistoryPosition("older", false, HistoryCoverage(unknown = true))) }
+                runCurrent()
+            } else {
+                quiet()
+            }
+            assertTrue("row write committed", committed.await(10, TimeUnit.SECONDS))
+            assertEquals(ab, FileConversationCache(tmp.root, processing).readThread("host", "c"))
+            updates.send(ThreadSnapshot(a))
+            assertEquals(a, delivered.receive())
+            accepted.receive()
+            save?.cancel()
+            if (complete) updates.close() else reader.cancel()
+            runCurrent()
+            assertFalse("cleanup waits for committed I/O", reader.isCompleted)
+            release.countDown()
+            save?.join()
+            reader.join()
+            assertEquals(
+                "cleanup persists the latest accepted rows",
+                a,
+                FileConversationCache(tmp.root, processing).readThread("host", "c"),
+            )
+        } finally {
+            release.countDown()
+            save?.cancel()
+            save?.join()
+            reader?.cancel()
+            reader?.join()
+            io.close()
+        }
+    }
+
     @Test fun retryInvariant_failureRetriesOnUnchangedSnapshotButNeverBusyLoops() =
         runTest {
             val f = Fixture(this)
@@ -310,7 +412,7 @@ class CoalescedThreadWritesTest {
             assertTrue(f.restored().isEmpty())
         }
 
-    @Test fun cancellationInvariant_interruptedInFlightWriteFlushesLatestAcceptedRows() =
+    @Test fun cancellationInvariant_inFlightWriteCompletesBeforeFlushingLatestAcceptedRows() =
         runTest {
             val f = Fixture(this)
             f.cache.hold = 1
@@ -318,6 +420,9 @@ class CoalescedThreadWritesTest {
             quiet()
             f.send(row("a"), row("b"))
             f.reader.cancel()
+            runCurrent()
+            assertFalse(f.reader.isCompleted)
+            f.cache.release.complete(Unit)
             f.reader.join()
             assertEquals(listOf(listOf(row("a")), listOf(row("a"), row("b"))), f.cache.writes)
             assertEquals(listOf(row("a"), row("b")), f.restored())

@@ -177,12 +177,15 @@ class CachingConversationRepository(
                     val baseline = persisted?.cacheable ?: initial
                     if (candidate.cacheable == baseline) return@withLock Result.success(Unit)
                     // Untrimmed drawn rows let the cache invalidate cursor/stop claims on retention loss.
-                    val result = cache.writeThread(serverId, conversationId, candidate.drawn.rows)
-                    if (result.isSuccess) {
-                        persistedThreads[conversationId] =
-                            PersistedThread(persisted?.coverageGeneration ?: 0, persisted?.coverageRevision ?: 0, candidate.cacheable)
+                    // Finish mutation and bookkeeping together: cancellation can otherwise hide a committed write.
+                    withContext(NonCancellable) {
+                        val result = cache.writeThread(serverId, conversationId, candidate.drawn.rows)
+                        if (result.isSuccess) {
+                            persistedThreads[conversationId] =
+                                PersistedThread(persisted?.coverageGeneration ?: 0, persisted?.coverageRevision ?: 0, candidate.cacheable)
+                        }
+                        result
                     }
-                    result
                 } ?: return
             if (result.isSuccess) {
                 completed = candidate
@@ -325,16 +328,23 @@ class CachingConversationRepository(
                     snapshot.unsignedHistoryOrder
             val rows = snapshot.rows.mergeUnsignedCachedRows(restored, order, rendererOwners = base)
             val cacheable = withContext(processingDispatcher) { cacheableThreadRows(rows) }
-            if (cache.writeThread(serverId, conversationId, rows).isFailure) {
+            val result =
+                withContext(NonCancellable) {
+                    val result = cache.writeThread(serverId, conversationId, rows)
+                    if (result.isSuccess) {
+                        persistedThreads[conversationId] =
+                            PersistedThread(
+                                maxOf(historyGeneration, drawn?.generation ?: 0),
+                                (persistedThreads[conversationId]?.coverageRevision ?: 0) + 1,
+                                cacheable,
+                            )
+                    }
+                    result
+                }
+            if (result.isFailure) {
                 RelayLog.d { "event=history_rows_write_failed" }
                 return@withLock
             }
-            persistedThreads[conversationId] =
-                PersistedThread(
-                    maxOf(historyGeneration, drawn?.generation ?: 0),
-                    (persistedThreads[conversationId]?.coverageRevision ?: 0) + 1,
-                    cacheable,
-                )
             if (conversationId in deleted) return@withLock
             val trimmed = threadRowsWereTrimmed(rows)
             val coverage = position.coverage.boundTo(rows)
