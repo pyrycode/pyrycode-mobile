@@ -1044,8 +1044,8 @@ private fun List<ThreadItem>.mergeRows(
         lower?.let { slot = maxOf(slot, it + 1) }
         upper?.let { slot = minOf(slot, it) }
         slot = maxOf(floor, slot).coerceAtMost(base.size)
-        // Provisional sequence/page neighbours cannot overrule this newly durable delta's log bounds.
-        if (identity in relocating && logBounds != null && !logBounds.isEmpty()) slot = slot.coerceIn(logBounds)
+        // Provisional sequence/page neighbours cannot overrule a fresh or repaired delta's durable bounds.
+        if (segment != null && logBounds != null && !logBounds.isEmpty()) slot = slot.coerceIn(logBounds)
         slots.getOrPut(slot) { mutableListOf() } += row
         floor = slot
     }

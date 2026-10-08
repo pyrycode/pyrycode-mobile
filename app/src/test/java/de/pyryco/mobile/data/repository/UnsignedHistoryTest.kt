@@ -134,6 +134,74 @@ class UnsignedHistoryTest {
         }
 
     @Test
+    fun firstEvidenceInvariant_sparseFoldedSegmentAdmitsMissingDeltaWithinDurableBounds() =
+        runTest {
+            for (positions in listOf(listOf(1uL, 2uL, 3uL, 4uL), listOf(boundary - 1u, boundary, boundary + 1u, ULong.MAX_VALUE))) {
+                val entries =
+                    listOf(delta(positions[0], 0, "a"), delta(positions[1], 1, "b"), delta(positions[2], 2, "c"), user(positions[3]))
+                val projection = ThreadProjection()
+                projection.mergeHistoryPage("c", page(entries[3]), true)
+                projection.applyAssistantDelta(LiveSessionEvent.AssistantDelta("c", "t", 0, "a"))
+                projection.applyAssistantDelta(LiveSessionEvent.AssistantDelta("c", "t", 2, "c"))
+                projection.finalizeAssistantTurn(LiveSessionEvent.TurnEnd("c", "t", "end_turn"))
+                assertEquals(listOf(name(positions[3]), "ac"), projection.observe("c").first().texts())
+                val pages = listOf(page(entries[1], entries[2]), page(entries[0]), page(*entries.toTypedArray()))
+                for ((index, incoming) in (pages + pages.last() + page()).withIndex()) {
+                    val before = projection.observeSnapshot("c").first()
+                    projection.mergeHistoryPage("c", incoming, true)
+                    val after = projection.observeSnapshot("c").first()
+                    val expected = if (index == 0) listOf("bc", name(positions[3]), "a") else listOf("abc", name(positions[3]))
+                    assertEquals("positions=$positions merge=$index", expected, after.rows.texts())
+                    assertPlacementInvariants("sparse overlap merge=$index", before, after, incoming)
+                    assertEquals(if (index == 0) listOf(1, 2, 0) else listOf(0, 1, 2), after.rows.seqs())
+                    assertTrue(after.rows.filterIsInstance<ThreadItem.MessageItem>().none { it.message.isStreaming })
+                    if (index >= 2) {
+                        assertEquals(before.rows, after.rows)
+                        assertEquals(before.unsignedHistoryOrder, after.unsignedHistoryOrder)
+                    }
+                }
+            }
+        }
+
+    @Test
+    fun firstEvidenceInvariant_sparsePageCutsAndPermutationsKeepUnevidencedAnchors() =
+        runTest {
+            for (positions in listOf(listOf(1uL, 2uL, 3uL, 4uL), listOf(boundary - 1u, boundary, boundary + 1u, ULong.MAX_VALUE))) {
+                val entries =
+                    listOf(delta(positions[0], 0, "changed a"), delta(positions[1], 1, "b"), delta(positions[2], 2, "changed c"))
+                val separator = user(positions[3])
+                for (cuts in 0 until 4) {
+                    val pages = mutableListOf<MutableList<HistoryEntry>>(mutableListOf())
+                    entries.forEachIndexed { index, entry ->
+                        if (index > 0 && cuts and (1 shl (index - 1)) != 0) pages.add(mutableListOf())
+                        pages.last().add(entry)
+                    }
+                    for (arrival in permutations(pages.indices.toList())) {
+                        val projection = ThreadProjection()
+                        projection.mergeHistoryPage("c", page(separator), true)
+                        projection.applyAssistantDelta(LiveSessionEvent.AssistantDelta("c", "t", 0, "a"))
+                        projection.applyAssistantDelta(LiveSessionEvent.AssistantDelta("c", "t", 2, "c"))
+                        val label = "sparse positions=$positions cuts=$cuts arrival=$arrival"
+                        for (index in arrival) {
+                            val before = projection.observeSnapshot("c").first()
+                            val incoming = page(*pages[index].toTypedArray())
+                            projection.mergeHistoryPage("c", incoming, true)
+                            assertPlacementInvariants(label, before, projection.observeSnapshot("c").first(), incoming)
+                        }
+                        val established = projection.observeSnapshot("c").first()
+                        assertEquals(label, listOf("abc", name(positions[3])), established.rows.texts())
+                        assertEquals(label, listOf(0, 1, 2), established.rows.seqs())
+                        repeat(2) { projection.mergeHistoryPage("c", page(*(entries + separator).toTypedArray()), true) }
+                        projection.mergeHistoryPage("c", page(), true)
+                        val replayed = projection.observeSnapshot("c").first()
+                        assertEquals(label, established.rows, replayed.rows)
+                        assertEquals(label, established.unsignedHistoryOrder, replayed.unsignedHistoryOrder)
+                    }
+                }
+            }
+        }
+
+    @Test
     fun firstEvidenceInvariant_pageCutsAndPermutationsConverge_withoutMovingRetainedAtoms() =
         runTest {
             for (positions in listOf(listOf(1uL, 2uL, 3uL, 4uL), listOf(boundary - 1u, boundary, boundary + 1u, ULong.MAX_VALUE))) {
