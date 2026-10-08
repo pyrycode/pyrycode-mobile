@@ -87,10 +87,29 @@ receipt. The ViewModel forwards only increasing checkpoints. Repository rules fo
 claims, barriers and retries are under
 [daemon conversation read marks](remote-conversation-repository.md#daemon-conversation-read-marks).
 
-Required device probes live in `ThreadReadViewportTest` in `sharedTest`, which the UI
-gate does not select, so `ThreadReadViewportDeviceTest` in `androidTest` re-declares the
-lifecycle, scrolled-away and dialog methods for the managed device. Under Robolectric,
-closing a dialog window needs a `waitForIdle()` before polling for the next checkpoint.
+Since #1953, UI-local read bookkeeping holds only one `ThreadReadCandidate`: the
+newest rendered delivered row's exact version and list key, with layout, readable
+edge and reveal readiness. Invisible info banners do not become candidates; a queued
+newest row blocks qualification. Version/key changes and removal followed by
+reintroduction create fresh bookkeeping. Retired callbacks close over the retired
+holder and cannot qualify its replacement. This bound excludes existing thread rows
+and repository evidence; nonvisual-tail advancement and background-agent evidence
+keep their existing rules.
+
+Only that candidate receives read-position measurement. Message edges remain on the
+inner readable column, inside bubble padding; tool edges remain on the tool surface,
+excluding trailing row spacing. Whole lazy-item bounds cannot substitute for either.
+The tall-row rule requires the readable trailing edge inside the viewport, without
+requiring the whole row to fit. `ThreadReadViewport` reads candidate fields, measured
+viewport bounds and visible list membership inside `snapshotFlow`; the list host
+passes holders without reading their frame-updated values during composition. Moving
+the edge alone would leave layout/reveal subscriptions and historical-map scans
+behind: all three belong to the single candidate.
+
+Required device probes live in `ThreadReadViewportTest` in `sharedTest`, selected
+through `ThreadReadViewportDeviceTest` in `androidTest`. They cover lifecycle,
+scrolled-away updates, dialogs, production-host scroll composition, replacement tool
+versions and the tall-row edge rule. See [testing guidance and counted evidence](thread-screen-testing.md#foreground-read-tracking-1912-1953).
 
 `ThreadScreen` uses a `Scaffold` with `ThreadTopAppBar`, a message-region `Box` containing either `EmptyThreadState` or the remembered reverse-layout `LazyColumn`, and a composer column in `bottomBar`. Connecting and Reconnecting appear in the composer status band; Offline Retry and pairing Re-pair appear in `ThreadTopOverlay`, pinned over the message region without reflowing the list. The list folds delivered and queued rows, draws every row at full opacity (session boundaries included, since #1578), and leaves each row's rendering to its own component. The footer, attachments and input keep their existing behavior and visual ownership. The header menu uses the shared Actions overlay below the live button (#1666), hosted over the Scaffold with IME-constrained scrolling and header-priority Back; see [overlay wiring](thread-screen-how-it-works-overlays-and-app-bar.md#header-actions-overlay-1666).
 
