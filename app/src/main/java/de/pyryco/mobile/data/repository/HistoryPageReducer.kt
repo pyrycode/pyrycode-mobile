@@ -829,7 +829,8 @@ internal fun List<ThreadItem>.mergeUnsignedHistoryRows(
     rows: List<ThreadItem>,
     order: Map<Any, ULong>,
     firstEvidence: Set<Any> = emptySet(),
-): List<ThreadItem> = mergeRows(rows, order, firstEvidence = firstEvidence)
+    rendererOwners: List<ThreadItem> = emptyList(),
+): List<ThreadItem> = mergeRows(rows, order, firstEvidence = firstEvidence, rendererOwners = rendererOwners)
 
 /** Insert fresh history or reconnect evidence beside its neighbours; held markers never move on replay. */
 private fun List<ThreadItem>.withHistoryLifecyclePositions(
@@ -880,7 +881,8 @@ internal fun List<ThreadItem>.mergeCachedRows(
 internal fun List<ThreadItem>.mergeUnsignedCachedRows(
     cached: List<ThreadItem>,
     order: Map<Any, ULong>,
-): List<ThreadItem> = mergeRows(cached, order, cacheRestore = true)
+    rendererOwners: List<ThreadItem> = emptyList(),
+): List<ThreadItem> = mergeRows(cached, order, cacheRestore = true, rendererOwners = rendererOwners)
 
 /** Resolve persisted hashes once when restoring a base, rather than on every live delta emission. */
 internal fun List<ThreadItem>.receivedHistoryOrder(positions: Map<String, Long>): Map<Any, Long> = resolveHistoryOrder(positions)
@@ -911,8 +913,9 @@ private fun List<ThreadItem>.mergeRows(
     order: Map<Any, ULong>,
     cacheRestore: Boolean = false,
     firstEvidence: Set<Any> = emptySet(),
+    rendererOwners: List<ThreadItem> = emptyList(),
 ): List<ThreadItem> {
-    if (incoming.isEmpty()) return this
+    if (incoming.isEmpty()) return if (rendererOwners.isEmpty()) this else withUniqueMessageKeys(this, incoming, rendererOwners)
     val parents =
         assistantParents().apply {
             incoming.assistantParents().forEach { (turn, parent) -> putIfAbsent(turn, parent) }
@@ -1056,7 +1059,8 @@ private fun List<ThreadItem>.mergeRows(
         floor = slot
     }
     if (slots.isEmpty() && lifecycle.isEmpty() && legacyMatches.isEmpty() && legacy.records.isEmpty()) {
-        return hinted.withBackgroundTaskLaunches()
+        val unchanged = if (rendererOwners.isEmpty()) hinted else hinted.withUniqueMessageKeys(hinted, attributedIncoming, rendererOwners)
+        return unchanged.withBackgroundTaskLaunches()
     }
     val ordinary =
         buildList {
@@ -1065,7 +1069,7 @@ private fun List<ThreadItem>.mergeRows(
                 add(row)
             }
             slots[base.size]?.let(::addAll)
-        }.withJoinedSegments().withUniqueMessageKeys(hinted, attributedIncoming)
+        }.withJoinedSegments().withUniqueMessageKeys(hinted, attributedIncoming, rendererOwners)
     val merged = ordinary.withHistoryLifecyclePositions(incoming, lifecycle).withBackgroundTaskLaunches()
     return if (merged == hinted) hinted else merged
 }
@@ -1245,15 +1249,23 @@ private fun legacyDeltaMatches(
 private fun List<ThreadItem>.withUniqueMessageKeys(
     held: List<ThreadItem>,
     incoming: List<ThreadItem>,
+    rendererOwners: List<ThreadItem>,
 ): List<ThreadItem> {
+    val ownerKeys = rendererOwners.filterIsInstance<ThreadItem.MessageItem>().associate { it.mergeIdentity() to it.message.id }
     val heldKeys = held.filterIsInstance<ThreadItem.MessageItem>().associate { it.mergeIdentity() to it.message.id }
     val incomingKeys = incoming.filterIsInstance<ThreadItem.MessageItem>().associate { it.mergeIdentity() to it.message.id }
     val keys = arrayOfNulls<String>(size)
     val claimed = HashSet<String>()
 
-    // Atomization uses canonical ids for admission; recover the displayed owner's exact alias here.
+    // Displayed/cache and provisional claims can outlive the receiving projection's placement list.
     forEachIndexed { index, row ->
         if (row !is ThreadItem.MessageItem) return@forEachIndexed
+        val key = ownerKeys[row.mergeIdentity()] ?: return@forEachIndexed
+        if (claimed.add(key)) keys[index] = key
+    }
+    // Atomization uses canonical ids for admission; recover remaining receiver aliases here.
+    forEachIndexed { index, row ->
+        if (row !is ThreadItem.MessageItem || keys[index] != null) return@forEachIndexed
         val key = heldKeys[row.mergeIdentity()] ?: return@forEachIndexed
         if (claimed.add(key)) keys[index] = key
     }

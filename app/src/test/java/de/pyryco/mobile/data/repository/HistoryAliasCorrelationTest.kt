@@ -257,6 +257,50 @@ class HistoryAliasCorrelationTest {
             assertEquals(2, projection.observe("c").first().size)
         }
 
+    @Test fun firstHistoryDeliveryReservesProvisionalAliasBeforeAllocatingOccupiedAlternativeAndReplay() =
+        runTest {
+            val projection = ThreadProjection()
+            val user = Message("$wireId~1", "s", Role.User, "own", ts, false, reconciliationId = wireId)
+            projection.appendMessages(listOf("c" to segment, "c" to user))
+            projection.recordMinted("c", wireId)
+            val queue = QueueProjection()
+            queue.apply(
+                frame(
+                    "queue_state",
+                    """{"conversation_id":"c","queued":[{"queued_msg_id":9,
+                    "message_id":"$wireId","text":"own","ts":"$ts"}]}""",
+                ),
+            )
+            projection.settleQueuedEchoes(queue) { true }
+            queue.apply(frame("queue_state", """{"conversation_id":"c","queued":[]}"""))
+            projection.settleQueuedEchoes(queue) { true }
+            assertEquals(setOf(wireId), projection.observeSnapshot("c").first().suppressedUserMessageIds)
+            val distinct = Message("$wireId~1~1", "", Role.User, "distinct", ts, false, reconciliationId = "$wireId~1")
+            val page =
+                HistoryPage(
+                    listOf(
+                        entry(2u, "message", """{"conversation_id":"c","message_id":"$wireId~1","role":"user","text":"distinct"}"""),
+                        entry(
+                            3u,
+                            "message",
+                            """{"conversation_id":"c","message_id":"$wireId",
+                        "role":"user","text":"own","queued_msg_id":9}""",
+                        ),
+                    ).asReversed(),
+                    "",
+                    true,
+                )
+            val expected = listOf(segment, distinct, user).map { ThreadItem.MessageItem(it) }
+            for (entries in listOf(page.entries, page.entries, emptyList(), page.entries)) {
+                projection.mergeHistoryPage("c", page.copy(entries = entries), true)
+                val actual = projection.observe("c").first()
+                assertEquals("delivery/replay with ${entries.size} entries", expected, actual)
+                val keys = foldQueuedRows(actual, emptyList()).mapIndexed { index, row -> row.listKey(index) }
+                assertEquals(listOf("msg:$wireId", "msg:${distinct.id}", "msg:${user.id}"), keys)
+                assertEquals(actual.size, keys.distinct().size)
+            }
+        }
+
     @Test fun restoredAliasedUserSuppressionAppliesAtObservationAndHistoryWriteBoundaries() =
         runTest {
             val cache = FileConversationCache(tmp.newFolder(), UnconfinedTestDispatcher(testScheduler))

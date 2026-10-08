@@ -273,6 +273,96 @@ class HistoryMessageIdentityTest {
             }
         }
 
+    @Test
+    fun displayedIdentityInvariant_unseededReconnectPreservesCacheOwners_onReplayAndEmptyEmissions() =
+        runTest(UnconfinedTestDispatcher()) {
+            val opener = segment("t", 0, "novel", at = 2)
+            val legacy = message("t", "unmatched legacy", at = 1)
+            val legacyPage =
+                historyPage(1, "message", """{"conversation_id":"c","message_id":"t","role":"assistant","text":"unmatched legacy"}""")
+            val openerPage = historyPage(2, "assistant_delta", """{"conversation_id":"c","turn_id":"t","seq":0,"text":"novel"}""")
+            for (legacyFirst in listOf(false, true)) {
+                val root = tmp.newFolder()
+                val cache = FileConversationCache(root, UnconfinedTestDispatcher(testScheduler))
+                val first = if (legacyFirst) legacy else opener
+                val expected =
+                    rows(
+                        if (legacyFirst) legacy else legacy.copy(id = "t#0", reconciliationId = "t"),
+                        if (legacyFirst) opener.copy(id = "t#0") else opener,
+                    )
+                cache.writeThread("host", "c", rows(first)).getOrThrow()
+                val live = MutableStateFlow(ThreadSnapshot(emptyList()))
+                val delegate =
+                    object : ConversationRepository by FakeConversationRepository(), ThreadSnapshotSource {
+                        override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> = live
+                    }
+                val repository = CachingConversationRepository(delegate, cache, "host")
+                val emissions = mutableListOf<List<ThreadItem>>()
+                val job =
+                    backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+                        repository.observeMessages("c").collect { emissions += it }
+                    }
+                runCurrent()
+                assertEquals(rows(first), emissions.last())
+                // Each connection starts empty: restored rows never seed the live projection.
+                repeat(2) {
+                    val projection = ThreadProjection()
+                    val pages = if (legacyFirst) listOf(openerPage, legacyPage) else listOf(legacyPage, openerPage)
+                    for (page in listOf(pages[0], historyPage(), pages[0], pages[1], pages[0])) {
+                        projection.mergeHistoryPage("c", page, true)
+                        live.value = projection.observeSnapshot("c").first()
+                        runCurrent()
+                        assertEquals(expected, emissions.last())
+                        assertEquals(
+                            2,
+                            emissions
+                                .last()
+                                .filterIsInstance<ThreadItem.MessageItem>()
+                                .map { it.message.id }
+                                .distinct()
+                                .size,
+                        )
+                        repository.writeHistoryPosition("c", HistoryPosition("", false, coverage = HistoryCoverage()))
+                        assertEquals(expected, FileConversationCache(root, UnconfinedTestDispatcher(testScheduler)).readThread("host", "c"))
+                    }
+                    live.value = ThreadSnapshot(emptyList())
+                    runCurrent()
+                    assertEquals(expected, emissions.last())
+                }
+                job.cancel()
+            }
+        }
+
+    @Test
+    fun displayedIdentityInvariant_historyWriteFallbackPreservesRestoredOwnerInBothArrivalOrders() =
+        runTest {
+            val opener = segment("t", 0, "novel", at = 2)
+            val legacy = message("t", "unmatched legacy", at = 1)
+            for (legacyFirst in listOf(false, true)) {
+                val root = tmp.newFolder()
+                val cache = FileConversationCache(root, UnconfinedTestDispatcher(testScheduler))
+                val first = if (legacyFirst) legacy else opener
+                val second = if (legacyFirst) opener else legacy
+                cache.writeThread("host", "c", rows(first)).getOrThrow()
+                val projection = ThreadProjection()
+                projection.appendMessages(listOf("c" to second))
+                val delegate =
+                    object : ConversationRepository by FakeConversationRepository(), ThreadSnapshotSource {
+                        override fun observeThreadSnapshot(conversationId: String) = projection.observeSnapshot(conversationId)
+                    }
+                val repository = CachingConversationRepository(delegate, cache, "host")
+                val expected =
+                    rows(
+                        if (legacyFirst) legacy else legacy.copy(id = "t#0", reconciliationId = "t"),
+                        if (legacyFirst) opener.copy(id = "t#0") else opener,
+                    )
+                repeat(2) {
+                    repository.writeHistoryPosition("c", HistoryPosition("", false, coverage = HistoryCoverage()))
+                    assertEquals(expected, FileConversationCache(root, UnconfinedTestDispatcher(testScheduler)).readThread("host", "c"))
+                }
+            }
+        }
+
     private fun historyPage(
         id: Int = 0,
         type: String = "",

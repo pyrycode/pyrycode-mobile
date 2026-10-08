@@ -119,7 +119,7 @@ class CachingConversationRepository(
                                 it.message.ordinaryId in snapshot.suppressedUserMessageIds
                         }
                     }
-                val drawn = live.mergeUnsignedCachedRows(restored, baseOrder + snapshot.unsignedHistoryOrder)
+                val drawn = live.mergeUnsignedCachedRows(restored, baseOrder + snapshot.unsignedHistoryOrder, rendererOwners = lastDrawn)
                 lastDrawn = drawn
                 lastOrder = snapshot.unsignedHistoryOrder
                 drawnThreads[conversationId] = drawn
@@ -194,7 +194,7 @@ class CachingConversationRepository(
             val order =
                 (snapshot.rows + restored).receivedUnsignedHistoryOrder(position.coverage.unsignedPositions()) +
                     snapshot.unsignedHistoryOrder
-            val rows = snapshot.rows.mergeUnsignedCachedRows(restored, order)
+            val rows = snapshot.rows.mergeUnsignedCachedRows(restored, order, rendererOwners = base)
             if (cache.writeThread(serverId, conversationId, rows).isFailure) {
                 RelayLog.d { "event=history_rows_write_failed" }
                 return@withLock
