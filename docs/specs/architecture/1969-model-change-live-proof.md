@@ -30,3 +30,13 @@ The second acceptance criterion remains pending until a fresh **full** dispatche
 ## Revisions
 
 2026-10-08: The isolated daemon worktree build omitted `vcs.revision` even with `-buildvcs=true`. A separate clean clone at the same merged commit produces versioned metadata. Use its binary/source for the final focused proof and dispatcher handoff; preserve all mobile scenarios and settings contracts.
+
+## Execution evidence and blocker
+
+2026-10-08: The versioned focused run used mobile `81ad5e795114655f53f8105b4a45643a51402d2a`, daemon `b799ba5afb8d86b79f1d1eb20c737c15a632db5f` (`vcs.modified=false`) and Claude 2.1.280. It exited 1: 2 executed, 1 passed, 1 failed, 0 errors/skipped. `interactiveTurn_modelChange_roundTripsAndStaysPerConversation` passed. `interactiveTurn_attentionDot_followsARealTurn` failed at A's phone-confirmed read before B's permission/peer-read checks. Diagnostic: `rows=2 unidentified=0 malformed=0 gaps=0 versions=2 checkpoint_reaches_target=false read_reaches_target=false`.
+
+Fresh XML is retained in `build/dispatcher-tests/live-c7calbjd/dispatcher.xml` and `0-TEST-pixel2Api33Atd-_app-.xml`. The earlier `live-4errldb5` run at mobile `a1e388ce1e5060b6f8506560252ff6f90159842e` used the same daemon source without binary VCS metadata and produced the same counts/outcomes. Copies of both runs are under `/tmp/builder-1969/proof-20261008/`.
+
+Filed and linked [#1989](https://github.com/pyrycode/pyrycode-mobile/issues/1989) for diagnosis/repair of the repeated attention failure. It is an implementation dependency, not a split child. Repository ownership of the defect remains unproven; no mobile workaround, assertion change, timeout increase or ignored method was introduced. This proof-only ticket waits for that repair. The fresh full dispatcher live gate and its explicit passes remain unverified.
+
+Builder lint, debug assembly and Android-test compilation passed. Production, tests and scripts remain identical to `origin/main`.
