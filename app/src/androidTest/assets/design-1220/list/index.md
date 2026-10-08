@@ -288,7 +288,9 @@ This judges notice reuse, not Archive-frame or app-wide parity.
   surfaces quote y with the 24 px bar removed. Data differs from the frames on purpose (the demo host is "Demo",
   its channels "Joi Pilates", "Personal" and "Pyrycode Mobile", its chats unnamed); text content and text widths
   are not judged. A dialog-window capture's sidecar `imePx` reads the activity window's insets, not the dialog's, so
-  it records `bottom=0` even where the keyboard is up (`save-as-channel.txt`); the image is the record.
+  dialog sidecars do not always report `bottom=0`. Unsettled capture timing can produce image/inset
+  disagreement, as in the old `save-as-channel.txt` capture. Establish keyboard state from the focused
+  dialog window before and after capture; Activity insets alone cannot establish it.
 - **Inputs:** Archive's empty Discussions tab unarchives the demo's archived discussion around its capture. The
   host rows swap the harness's demo host for three test hosts in the capture class (`hostStates`): "Pyry" on the
   demo rows with `RelayLinkStatus.Offline`, and row-less "MB Second brain" (`PairingRejected`) and "MB Game dev"
@@ -318,26 +320,44 @@ This judges notice reuse, not Archive-frame or app-wide parity.
 
 ### Edit channel — `671:5415`
 
-- **Owning ticket:** #667; reached through the thread's More actions, Edit, since #1561 and #1563
-- **Capture:** `edit-channel.png`, `edit-channel-compact.png` · **Side-by-side:** `edit-channel-side-by-side.png` · **Overlay:** `edit-channel-overlay.png`
-- Opens with the name focused and the keyboard up, so the shell ends above the keyboard and its content slot is
-  shorter than the frame's. The frame draws the keyboard closed.
+- **Owning tickets:** #667; settled capture #1862.
+- **Fresh evidence:** [default capture](1862-edit-channel.png), [sidecar](1862-edit-channel.txt),
+  [compact capture](1862-edit-channel-compact.png), [compact sidecar](1862-edit-channel-compact.txt),
+  [Figma export](1862-figma-edit-channel.png), [side-by-side](1862-edit-channel-side-by-side.png),
+  [overlay](1862-edit-channel-overlay.png), [inset-aligned footer comparison](1862-edit-channel-footer-side-by-side.png)
+  and [footer overlay](1862-edit-channel-footer-overlay.png). These supersede this form's #1504 evidence.
+- **Provenance:** captured 2026-10-08 on `feature/1862`, base `f702aa78`, plan `355a98ff` plus
+  sequencing changes; captured test source blob `fa7e2845e6f203181c8c6cba15ab50b4f1df3e4e`.
+  Later source changes only reorder imports/wrap assertions. Full configured `pixel8Api35`, API 35
+  `google_apis_playstore`, hardware rendering, fixed dark, density/font scale 1, 412×892 px,
+  `syntheticBars=false`, real 24 px status/navigation insets, `requireRealSystemBars=true`.
+  [Command and measurements](1862-evidence.txt) retain capture times and the exact focused `--rerun`
+  command selecting both list walks. [Fresh XML](1862-results.xml), `2026-10-08T07:13:14` UTC:
+  **2 executed/passed, 0 failed/errors/skipped**; `ListDesignCaptureTest.listFramesAt412By892`
+  and `listFramesAt320By700LargeText` are present and passed.
+- Reached through the channel thread’s More actions → Edit. The walk identifies the modal's own label/title and focused dialog root,
+  observes visible IME with a positive dialog inset, then sends physical Back. The same form/window
+  and footer remain; hidden IME and zero dialog inset are checked before and after hardware capture.
+  Production opening focus behavior is unchanged.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | unverified: with the keyboard up the field block starts at "Channel name:" glyph top 161 against 271 (raw) and the footer sits above the keyboard; the keyboard-closed state was not captured (#1651) |
-| Padding | match: 28 px gutters, field text inset 16 px, Mute checkbox and Archive channel at the frame's x |
-| Spacing | mismatch: "Channel name:" to "Channel system prompt:" glyph tops 88 px against 92, the Create channel field gap; prompt label to Mute 160 against 162; Mute to Archive channel 58 in both |
-| Typography | match: title, labels, value, Mute label, Archive channel, buttons |
-| Colour | match: shell, fields, error-toned Mute outline, outlined Archive channel, filled OK |
-| Borders | match: header rule, outlines |
-| Radii | match: shell, fields, buttons |
-| Icon paths | match: close |
-| Component state | mismatch: keyboard up with the name focused against the frame's closed keyboard; the prompt is empty in the demo where the frame shows one (data) |
+| Field gap | pass: exact fill bands y=295..347 and 387..499; name-well-bottom to prompt-well-top 40 dp in app and frame (12 dp between complete blocks plus 20 dp prompt label and 8 dp label gap), within 2 dp |
+| Footer surfaces | pass: Cancel 91×40 dp and OK 63×40 dp versus frame 92×40 and 62×40; widths differ by 1 dp, heights exact, within 2 dp; compare visible surfaces separately from 48 dp touch targets |
+| Footer spacing | pass: 20 dp horizontal gap in both; app surfaces end at y=844, so 892 − 24 navigation inset − 844 = 24 dp bottom clearance, matching frame 892 − 868 = 24 dp |
+| Typography | exact frame roles: titleLarge 22/28/400/0; emphasized labelLarge 14/20/600/0.1; bodyMedium 14/20/400/0.25; emphasized bodyLarge 16/24/500/0.5 (size/line height/weight/tracking) |
+| Colour | exact frame tokens: onPrimaryFixed shell #001D34, onPrimaryContainer labels #CFE4FF, onPrimary wells #003355 at 41% (composite #002642), onBackground field text #E0E2E8, primary/onPrimary footer #9DCBFC/#003355 |
+| Component state | match: keyboard closed with the same focused name field; fixture text and cursor/handle are not judged |
 
-- **Compact:** at 320x700 the prompt field is cut by the action bar and Mute and Archive channel sit below it; the
-  walk scrolls to Archive channel with the keyboard up and asserts it is displayed, so both stay reachable.
-- **Routed:** #1651
+- **Insets:** the real status bar shifts the header down 24 px; navigation shifts the footer up 24 px.
+  The centered field midpoint is preserved: do not subtract the status inset from field coordinates.
+  Full comparisons retain raw bars; footer crops translate the frame by the navigation inset without rescaling.
+- **Compact:** Archive channel remains reachable by scrolling while the IME is open; after Back, the form and both footer actions remain reachable.
+- **Verdict:** only Default `671:5415` and the requested field/footer measurements are judged.
+  All requested sizes/spacing pass within 2 dp; colour/type roles match exactly. No visual follow-up required.
+  [Verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1952#issuecomment-6055286158)
+  independently confirms frames and retained evidence. Routine ATD gate results supplement this full-device
+  pixel evidence; they do not replace it.
 
 ### Edit chat — `671:5499`
 
@@ -370,25 +390,44 @@ This judges notice reuse, not Archive-frame or app-wide parity.
 
 ### Save as channel — `671:5718`
 
-- **Owning ticket:** #957
-- **Capture:** `save-as-channel.png`, `save-as-channel-compact.png` · **Side-by-side:** `save-as-channel-side-by-side.png` · **Overlay:** `save-as-channel-overlay.png`
-- Opened from the first chat's thread, More actions, "Save as channel…". The unnamed chat prefills "New channel".
+- **Owning tickets:** #957; settled capture #1862.
+- **Fresh evidence:** [default capture](1862-save-as-channel.png), [sidecar](1862-save-as-channel.txt),
+  [compact capture](1862-save-as-channel-compact.png), [compact sidecar](1862-save-as-channel-compact.txt),
+  [Figma export](1862-figma-save-as-channel.png), [side-by-side](1862-save-as-channel-side-by-side.png),
+  [overlay](1862-save-as-channel-overlay.png), [inset-aligned footer comparison](1862-save-as-channel-footer-side-by-side.png)
+  and [footer overlay](1862-save-as-channel-footer-overlay.png). These supersede this form's #1504 evidence.
+- **Provenance:** captured 2026-10-08 on `feature/1862`, base `f702aa78`, plan `355a98ff` plus
+  sequencing changes; captured test source blob `fa7e2845e6f203181c8c6cba15ab50b4f1df3e4e`.
+  Later source changes only reorder imports/wrap assertions. Full configured `pixel8Api35`, API 35
+  `google_apis_playstore`, hardware rendering, fixed dark, density/font scale 1, 412×892 px,
+  `syntheticBars=false`, real 24 px status/navigation insets, `requireRealSystemBars=true`.
+  [Command and measurements](1862-evidence.txt) retain capture times and the exact focused `--rerun`
+  command selecting both list walks. [Fresh XML](1862-results.xml), `2026-10-08T07:13:14` UTC:
+  **2 executed/passed, 0 failed/errors/skipped**; `ListDesignCaptureTest.listFramesAt412By892`
+  and `listFramesAt320By700LargeText` are present and passed.
+- Reached through the first chat’s More actions → Save as channel; the unnamed chat prefills "New channel". The walk identifies the modal's own label/title and focused dialog root,
+  observes visible IME with a positive dialog inset, then sends physical Back. The same form/window
+  and footer remain; hidden IME and zero dialog inset are checked before and after hardware capture.
+  Production opening focus behavior is unchanged.
 
 | Aspect | Verdict |
 |---|---|
-| Geometry | unverified: opens with the keyboard up, so the shell ends above it and the block starts at "Channel name:" glyph top 225 against 335 (raw); the keyboard-closed state was not captured (#1651) |
-| Padding | match: 28 px gutters, value inset 16 px |
-| Spacing | mismatch: "Channel name:" to "Channel system prompt:" glyph tops 88 px against 92, as Create channel and Edit channel |
-| Typography | match: title, labels, value, buttons |
-| Colour | match: shell, fields, outlined Cancel, filled OK |
-| Borders | match: header rule, Cancel outline |
-| Radii | match: shell, fields, buttons |
-| Icon paths | match: close |
-| Component state | mismatch: keyboard up and the prefilled name selected, against the frame's closed keyboard and unselected name |
+| Field gap | pass: exact fill bands y=359..411 and 451..563; name-well-bottom to prompt-well-top 40 dp in app and frame (12 dp between complete blocks plus 20 dp prompt label and 8 dp label gap), within 2 dp |
+| Footer surfaces | pass: Cancel 91×40 dp and OK 63×40 dp versus frame 92×40 and 62×40; widths differ by 1 dp, heights exact, within 2 dp; compare visible surfaces separately from 48 dp touch targets |
+| Footer spacing | pass: 20 dp horizontal gap in both; app surfaces end at y=844, so 892 − 24 navigation inset − 844 = 24 dp bottom clearance, matching frame 892 − 868 = 24 dp |
+| Typography | exact frame roles: titleLarge 22/28/400/0; emphasized labelLarge 14/20/600/0.1; bodyMedium 14/20/400/0.25; emphasized bodyLarge 16/24/500/0.5 (size/line height/weight/tracking) |
+| Colour | exact frame tokens: onPrimaryFixed shell #001D34, onPrimaryContainer labels #CFE4FF, onPrimary wells #003355 at 41% (composite #002642), onBackground field text #E0E2E8, primary/onPrimary footer #9DCBFC/#003355 |
+| Component state | match: keyboard closed with the same focused name field; fixture text and cursor/handle are not judged |
 
-- **Compact:** the footer covers the prompt field's lower part above the keyboard; the field scrolls and Cancel and
-  OK stay reachable.
-- **Routed:** #1651
+- **Insets:** the real status bar shifts the header down 24 px; navigation shifts the footer up 24 px.
+  The centered field midpoint is preserved: do not subtract the status inset from field coordinates.
+  Full comparisons retain raw bars; footer crops translate the frame by the navigation inset without rescaling.
+- **Compact:** The form and Cancel/OK remain reachable after Back at 320×700 dp and 1.5× font scale.
+- **Verdict:** only Prefilled `671:5718` and the requested field/footer measurements are judged.
+  All requested sizes/spacing pass within 2 dp; colour/type roles match exactly. No visual follow-up required.
+  [Verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1952#issuecomment-6055286158)
+  independently confirms frames and retained evidence. Routine ATD gate results supplement this full-device
+  pixel evidence; they do not replace it.
 
 ### Delete confirmation — `673:3665`
 
