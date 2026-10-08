@@ -277,6 +277,17 @@ Local `ReadPosition` remains the fallback. These repository facts support agreem
 between phone and desktop; viewport eligibility, attention dots and notification
 cancellation belong to the dependent UI slices.
 
+`latestEntryId` is the filtered unread watermark, not the highest received durable
+id (#1948). Live and replay receipt and fetched history exclude exactly `turn_state`,
+`stall`, `api_retry`, `compacting` and `session_transition` when raising it, matching
+the daemon's watermark and mark-read clamp. Every other durable type counts,
+including unknown types and malformed payloads with valid identities. A status-only
+page leaves latest unavailable or preserves the held value; original status entries
+and IDs still reach history, replay and read evidence. Daemon list watermarks remain
+authoritative merge inputs. Filtering before the monotonic merge matters: once a
+status tail has raised latest, a lower daemon watermark cannot undo it. Reconnecting
+and fetching history must apply the same filter or the tail returns as unread.
+
 `ConversationListProjection` keeps rows and a conversation-keyed fact ledger in one
 atomic state. List snapshots replace rows while merging each supplied fact by unsigned
 maximum. Both ordinary correlated updates and unsolicited `conversation_updated`
@@ -303,7 +314,7 @@ See [wire validation and confirmation](mobile-protocol-v2-wire-layer.md#daemon-r
 `history_entry_id` claims to the exact row version they produced, across history pages,
 direct live delivery and reconnect replay, including every delta folded into a streaming
 row. Envelope ids, replay `event_id`, a list's latest id and fetched rows never prove
-sight. A valid live id also raises the latest durable id without any viewport. Each
+sight. A valid non-excluded live id raises the unread watermark without any viewport. Each
 entry gets a fact: visible, deliberately nonvisual (state frames, info banners, menus,
 MCP and usage reports, plain background-task lifecycle) or unknown. A malformed or
 unsupported entry, a hole in received ids or a persisted gap stops the checkpoint before
@@ -312,6 +323,16 @@ nonvisual receipt. Live content without an id is held as an unidentified barrier
 by type, normalized timestamp and payload; only an ordinary matching history entry
 clears it, and no extra fetch is made to find it. Valid timestamps are canonicalized on
 both lanes, since `2026-10-07T00:00:00.1234Z` parses to `.123400Z`.
+
+Unread classification and evidence classification are independent. Excluding a
+status type from latest grants no sight and bypasses none of the unknown, malformed,
+missing-identity or receipt-gap barriers. Conversely, a strictly decoded
+`RateLimitedPayloadDto` is understood nonvisual receipt in an interactive session,
+including its benign `allowed` clearing edge and opaque future statuses. Its
+`toReading()` mapper can return null for a valid clearing edge, so mapper nullability
+cannot decide receipt validity. `rate_limited` still raises unread; it extends a
+checkpoint only after foreground presentation of a row. Malformed usage windows
+and non-interactive receipts remain barriers.
 
 Live evidence must describe the row the projection actually drew. Re-reducing one
 envelope in isolation is wrong when the fold depends on earlier state or on a locally
@@ -372,6 +393,14 @@ failures. Its two session-rotation regressions exercise repeated `startNewSessio
 `changeWorkspace` calls: assert retained old history ids, an unchanged latest id at
 rotation, and new entries above the checkpoint that can be marked. Clamping tests
 without a session boundary cannot catch a history reset.
+
+The watermark regressions drive both live/replay and correlated history for every
+excluded type, status-only pages, duplicates, reordered/overlapping pages and a
+history reload after reconnect, while retaining original entries and IDs. They also
+require later non-excluded content, including unknown types, to raise latest.
+`ThreadReadClaimsTest.understoodUsageWindowReceiptsExtendPresentationButMalformedWindowsRemainBarriers`
+separately guards decoded clearing edges versus malformed/non-interactive evidence;
+an unread-only assertion would miss a valid receipt that still blocks phone reads.
 
 ## Related
 
