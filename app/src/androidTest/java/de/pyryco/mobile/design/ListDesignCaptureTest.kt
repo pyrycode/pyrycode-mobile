@@ -14,6 +14,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasSetTextAction
@@ -31,6 +32,7 @@ import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.ViewCompat
@@ -216,13 +218,21 @@ class ListDesignCaptureTest {
         shell("input keyevent KEYCODE_BACK")
         awaitModalKeyboard(modal, visible = false)
         assertModalKeyboardClosed(modal)
-        rule.onNodeWithText("OK").assertIsEnabled().performClick()
+        rule.onNodeWithText("OK").assertIsEnabled().performTouchInput { click(Offset(center.x, 1f)) }
         val error = InstrumentationRegistry.getInstrumentation().targetContext.getString(errorResource)
         awaitText(error)
         val field = rule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG)
         field.assertIsDisplayed().assertTextEquals(FRAME_NAME).assertIsNotEnabled()
         val prompt = rule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG)
         prompt.assertIsDisplayed().assertTextEquals(FRAME_PROMPT).assertIsEnabled()
+        val promptLayouts = mutableListOf<TextLayoutResult>()
+        prompt.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(promptLayouts) }
+        val promptLayout = promptLayouts.single()
+        val density = modal.resources.displayMetrics.density
+        val promptHeight = prompt.fetchSemanticsNode().boundsInRoot.height / density
+        assertEquals("retained prompt draws two lines", 2, promptLayout.lineCount)
+        assertEquals("prompt-failed well height", 132f, promptHeight, 2f)
+        assertEquals("blank space below prompt line box", 76f, promptHeight - 16f - promptLayout.size.height / density, 2f)
         rule.onNodeWithText("OK").assertIsDisplayed().assertIsEnabled()
         val errorNode = rule.onNodeWithText(error).fetchSemanticsNode()
         assertTrue("error ends the form content", errorNode.boundsInRoot.top >= prompt.fetchSemanticsNode().boundsInRoot.bottom)
@@ -251,6 +261,10 @@ class ListDesignCaptureTest {
             val bounds = node.fetchSemanticsNode().boundsInRoot.translate(Offset(location[0].toFloat(), location[1].toFloat()))
             output.appendText("$label screenBoundsPx=$bounds\n")
         }
+        prompt.performTouchInput { click(Offset(center.x, height - 2f)) }
+        awaitModalKeyboard(modal, visible = true)
+        shell("input keyevent KEYCODE_BACK")
+        awaitModalKeyboard(modal, visible = false)
         assertModalKeyboardClosed(modal)
     }
 
