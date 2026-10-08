@@ -517,9 +517,11 @@ class DeterministicInteractiveStreamE2ETest {
                 assertTrue(
                     "peer received the durable post",
                     history.any {
-                        it.type == "assistant_delta" && it.payload.jsonObject["text"]
-                            ?.jsonPrimitive
-                            ?.content == postText
+                        val text =
+                            it.payload.jsonObject["text"]
+                                ?.jsonPrimitive
+                                ?.content
+                        it.type == "assistant_delta" && text == postText
                     },
                 )
                 val latest = requireNotNull(history.maxOfOrNull { it.id })
