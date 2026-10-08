@@ -8,16 +8,28 @@ import de.pyryco.mobile.data.cache.threadRowsWereTrimmed
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ordinaryId
 import de.pyryco.mobile.data.network.RelayLog
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Keeps one host's threads readable while that host is unreachable (#797).
@@ -53,8 +65,8 @@ import java.util.concurrent.ConcurrentHashMap
  * What is written is the thread as drawn, restored-plus-live, not the live projection alone: right
  * after a reconnect the live side holds only the newest page and would shrink the cache. It is written
  * only when its [cacheableThreadRows] differ from the last set written, so an `assistant_delta` stream
- * writes nothing until the turn settles. Holds no scope and launches nothing; cancellation is the
- * collector's.
+ * writes nothing until the turn settles. A collection-owned writer coalesces settled changes for
+ * 100 ms without delaying subsequent snapshots, and flushes accepted rows during orderly cleanup.
  *
  * The thread's saved history position (#1354) passes straight through to the cache under [serverId]: the
  * row writer above keeps it, and the thread screen reads it at open and writes it when an ask settles.
@@ -81,7 +93,117 @@ class CachingConversationRepository(
     // and a write from that collector after the removal would put the rows straight back.
     private val deleted = ConcurrentHashMap.newKeySet<String>()
     private val historyWrites = Mutex()
-    private val drawnThreads = ConcurrentHashMap<String, List<ThreadItem>>()
+
+    private data class DrawnThread(
+        val rows: List<ThreadItem>,
+        val generation: Long,
+    )
+
+    private val generations = AtomicLong()
+    private val drawnThreads = ConcurrentHashMap<String, DrawnThread>()
+
+    // Updated under historyWrites by both row writers; coverage alone supersedes older candidates.
+    private data class PersistedThread(
+        val coverageGeneration: Long,
+        val coverageRevision: Long,
+        val cacheable: List<ThreadItem>,
+    )
+
+    private val persistedThreads = ConcurrentHashMap<String, PersistedThread>()
+
+    private data class CacheCandidate(
+        val drawn: DrawnThread,
+        val cacheable: List<ThreadItem>,
+        val ready: CompletableDeferred<Unit> = CompletableDeferred(),
+    )
+
+    private inner class ThreadWriter(
+        private val conversationId: String,
+        private val scope: CoroutineScope,
+        restored: List<ThreadItem>,
+        private val collectionCoverageRevision: Long,
+    ) {
+        private val latest = AtomicReference<CacheCandidate?>()
+        private val retry = AtomicBoolean()
+        private val signals = Channel<Unit>(Channel.CONFLATED)
+        private var timer: Job? = null
+        private val initial = restored
+        private var completed: CacheCandidate? = null
+        private val writer =
+            scope.launch(processingDispatcher, start = CoroutineStart.UNDISPATCHED) {
+                for (signal in signals) {
+                    val candidate = latest.get() ?: continue
+                    if (candidate.ready.isCompleted) persist(candidate)
+                }
+            }
+
+        // Called sequentially on the processing dispatcher; disk work never holds this path.
+        fun accept(drawn: DrawnThread) {
+            val cacheable = cacheableThreadRows(drawn.rows)
+            val previous = latest.get()
+            val changed = cacheable != (previous?.cacheable ?: initial)
+            val persisted = persistedThreads[conversationId]
+            // Completion order identifies overlapping saves; capture order rejects stale snapshots.
+            val superseded =
+                persisted != null &&
+                    persisted.coverageRevision > collectionCoverageRevision &&
+                    (previous?.drawn?.generation ?: 0) <= persisted.coverageGeneration &&
+                    drawn.generation > persisted.coverageGeneration &&
+                    cacheable != persisted.cacheable
+            if (!changed && !superseded && !retry.getAndSet(false)) return
+            retry.set(false)
+            val candidate = CacheCandidate(drawn, cacheable)
+            latest.set(candidate)
+            timer?.cancel()
+            // Signal readiness separately so a long write cannot queue obsolete intermediate rows.
+            timer =
+                scope.launch {
+                    delay(100)
+                    candidate.ready.complete(Unit)
+                    signals.trySend(Unit)
+                }
+        }
+
+        private suspend fun persist(candidate: CacheCandidate) {
+            if (candidate === completed) return
+            val result =
+                historyWrites.withLock {
+                    val persisted = persistedThreads[conversationId]
+                    if (conversationId in deleted ||
+                        candidate.drawn.generation <= (persisted?.coverageGeneration ?: 0)
+                    ) {
+                        return@withLock null
+                    }
+                    val baseline = persisted?.cacheable ?: initial
+                    if (candidate.cacheable == baseline) return@withLock Result.success(Unit)
+                    // Untrimmed drawn rows let the cache invalidate cursor/stop claims on retention loss.
+                    // Finish mutation and bookkeeping together: cancellation can otherwise hide a committed write.
+                    withContext(NonCancellable) {
+                        val result = cache.writeThread(serverId, conversationId, candidate.drawn.rows)
+                        if (result.isSuccess) {
+                            persistedThreads[conversationId] =
+                                PersistedThread(persisted?.coverageGeneration ?: 0, persisted?.coverageRevision ?: 0, candidate.cacheable)
+                        }
+                        result
+                    }
+                } ?: return
+            if (result.isSuccess) {
+                completed = candidate
+            } else {
+                retry.set(true)
+                RelayLog.d { "event=thread_cache_write_failed" }
+            }
+        }
+
+        suspend fun finish() {
+            withContext(NonCancellable + processingDispatcher) {
+                timer?.cancelAndJoin()
+                writer.cancelAndJoin()
+                signals.close()
+                latest.get()?.let { persist(it) }
+            }
+        }
+    }
 
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
         flow {
@@ -96,6 +218,8 @@ class CachingConversationRepository(
 
     override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> =
         flow {
+            // A save captured before entry can still complete while restoration suspends.
+            val collectionCoverageRevision = persistedThreads[conversationId]?.coverageRevision ?: 0
             var base = cache.readThread(serverId, conversationId)
             val savedPosition = cache.readHistoryPosition(serverId, conversationId)
             var baseOrder =
@@ -103,56 +227,47 @@ class CachingConversationRepository(
                     base.receivedUnsignedHistoryOrder(savedPosition?.coverage?.unsignedPositions().orEmpty())
                 }
             var lastOrder = emptyMap<Any, ULong>()
-            var lastWritten = base
             var lastDrawn = base
-            delegate.threadSnapshots(conversationId).collect { snapshot ->
-                val drawn =
-                    withContext(processingDispatcher) {
-                        val live = snapshot.rows
-                        // Awaiting delivery can hide the only live row; that is not a connection boundary.
-                        if (live.isEmpty() && snapshot.suppressedUserMessageIds.isEmpty()) {
-                            base = settledThreadRows(lastDrawn)
-                            baseOrder = baseOrder + lastOrder
-                        }
-                        val restored =
-                            if (snapshot.suppressedUserMessageIds.isEmpty()) {
-                                base
-                            } else {
-                                base.filterNot {
-                                    it is ThreadItem.MessageItem &&
-                                        it.message.role == Role.User &&
-                                        it.message.ordinaryId in snapshot.suppressedUserMessageIds
-                                }
-                            }
+            coroutineScope {
+                val writer = ThreadWriter(conversationId, this, base, collectionCoverageRevision)
+                try {
+                    delegate.threadSnapshots(conversationId).collect { snapshot ->
+                        val generation = generations.incrementAndGet()
                         val drawn =
-                            live.mergeUnsignedCachedRows(
-                                restored,
-                                baseOrder + snapshot.unsignedHistoryOrder,
-                                rendererOwners = lastDrawn,
-                            )
-                        lastDrawn = drawn
-                        lastOrder = snapshot.unsignedHistoryOrder
-                        drawn
+                            withContext(processingDispatcher) {
+                                val live = snapshot.rows
+                                // Awaiting delivery can hide the only live row; that is not a connection boundary.
+                                if (live.isEmpty() && snapshot.suppressedUserMessageIds.isEmpty()) {
+                                    base = settledThreadRows(lastDrawn)
+                                    baseOrder = baseOrder + lastOrder
+                                }
+                                val restored =
+                                    if (snapshot.suppressedUserMessageIds.isEmpty()) {
+                                        base
+                                    } else {
+                                        base.filterNot {
+                                            it is ThreadItem.MessageItem &&
+                                                it.message.role == Role.User &&
+                                                it.message.ordinaryId in snapshot.suppressedUserMessageIds
+                                        }
+                                    }
+                                val drawn =
+                                    live.mergeUnsignedCachedRows(
+                                        restored,
+                                        baseOrder + snapshot.unsignedHistoryOrder,
+                                        rendererOwners = lastDrawn,
+                                    )
+                                lastDrawn = drawn
+                                lastOrder = snapshot.unsignedHistoryOrder
+                                drawn
+                            }
+                        val published = DrawnThread(drawn, generation)
+                        drawnThreads[conversationId] = published
+                        emit(snapshot.copy(rows = drawn))
+                        withContext(processingDispatcher) { writer.accept(published) }
                     }
-                drawnThreads[conversationId] = drawn
-                emit(snapshot.copy(rows = drawn))
-                val cacheable =
-                    withContext(processingDispatcher) {
-                        cacheableThreadRows(drawn).takeIf { it != lastWritten }
-                    }
-                if (cacheable != null && conversationId !in deleted) {
-                    // A failed write leaves lastWritten behind, so the next change retries it. The cache is
-                    // handed the drawn rows, not the already-trimmed cacheable ones, so it can see a trim at
-                    // MAX_CACHED_THREAD_ROWS and drop the saved history position (#1354).
-                    if (historyWrites
-                            .withLock {
-                                if (conversationId in deleted) Result.success(Unit) else cache.writeThread(serverId, conversationId, drawn)
-                            }.isSuccess
-                    ) {
-                        lastWritten = cacheable
-                    } else {
-                        RelayLog.d { "event=thread_cache_write_failed" }
-                    }
+                } finally {
+                    writer.finish()
                 }
             }
         }
@@ -196,9 +311,11 @@ class CachingConversationRepository(
             return
         }
         val snapshot = delegate.threadSnapshots(conversationId).first()
+        val historyGeneration = generations.incrementAndGet()
         historyWrites.withLock {
             if (conversationId in deleted) return@withLock
-            val base = drawnThreads[conversationId] ?: cache.readThread(serverId, conversationId)
+            val drawn = drawnThreads[conversationId]
+            val base = drawn?.rows ?: cache.readThread(serverId, conversationId)
             if (conversationId in deleted) return@withLock
             val restored =
                 base.filterNot {
@@ -210,7 +327,21 @@ class CachingConversationRepository(
                 (snapshot.rows + restored).receivedUnsignedHistoryOrder(position.coverage.unsignedPositions()) +
                     snapshot.unsignedHistoryOrder
             val rows = snapshot.rows.mergeUnsignedCachedRows(restored, order, rendererOwners = base)
-            if (cache.writeThread(serverId, conversationId, rows).isFailure) {
+            val cacheable = withContext(processingDispatcher) { cacheableThreadRows(rows) }
+            val result =
+                withContext(NonCancellable) {
+                    val result = cache.writeThread(serverId, conversationId, rows)
+                    if (result.isSuccess) {
+                        persistedThreads[conversationId] =
+                            PersistedThread(
+                                maxOf(historyGeneration, drawn?.generation ?: 0),
+                                (persistedThreads[conversationId]?.coverageRevision ?: 0) + 1,
+                                cacheable,
+                            )
+                    }
+                    result
+                }
+            if (result.isFailure) {
                 RelayLog.d { "event=history_rows_write_failed" }
                 return@withLock
             }
@@ -249,6 +380,7 @@ class CachingConversationRepository(
         withContext(NonCancellable) {
             historyWrites.withLock {
                 drawnThreads.remove(conversationId)
+                persistedThreads.remove(conversationId)
                 cache.removeConversation(serverId, conversationId)
             }
         }.onFailure { RelayLog.d { "event=conversation_cache_remove_failed" } }
