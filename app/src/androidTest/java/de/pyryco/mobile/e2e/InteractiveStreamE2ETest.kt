@@ -4554,8 +4554,14 @@ class InteractiveStreamE2ETest {
             // 6. The peer reads B's actual durable reply while the phone remains on the list.
             val history = peerStep(peer, "read B's real reply history") { peer.history(chatB, THREAD_TIMEOUT_MS) }
             assertTrue("peer received B's assistant reply", history.any { it.type == "assistant_delta" })
-            val peerCheckpoint = requireNotNull(history.maxOfOrNull { it.id }) { "peer received no durable history" }
             val beforePeerRead = peerStep(peer, "confirm B is still unread") { peer.readMarks(chatB, THREAD_TIMEOUT_MS) }
+            val peerCheckpoint = requireNotNull(beforePeerRead.latestEntryId) { "daemon omitted B's unread watermark" }
+            assertTrue(
+                "peer received the entry backing B's filtered daemon watermark",
+                history.any {
+                    it.id == peerCheckpoint && it.type !in setOf("turn_state", "stall", "api_retry", "compacting", "session_transition")
+                },
+            )
             assertTrue("the list did not acknowledge B", (beforePeerRead.readUpTo ?: 0uL) < peerCheckpoint)
             val confirmed = peerStep(peer, "acknowledge the peer's read of B") { peer.markRead(chatB, peerCheckpoint, THREAD_TIMEOUT_MS) }
             assertTrue("peer read was durably confirmed", confirmed >= peerCheckpoint)

@@ -621,6 +621,237 @@ class ConversationReadMarksTest {
             }
         }
 
+    @Test fun invariantEachExcludedLiveAndReplayTypeKeepsReceiptWithoutRaisingUnread() =
+        runTest {
+            for (type in excludedTypes) {
+                val pump = Pump()
+                val repository = interactiveRepo(pump)
+                pump.push(snapshot(row("a", "0", "0")))
+                pump.push(content(41u))
+                val tail = status(42u, type)
+                for (receipt in listOf(tail, tail.copy(id = 999, eventId = 9001))) {
+                    pump.push(receipt)
+                    runCurrent()
+                    assertEquals(type, ConversationReadMarks(0u, 41u), repository.observeReadMarks("a").first())
+                    val held = repository.observeThreadSnapshot("a").first()
+                    assertTrue("$type retains its durable receipt", 42uL in held.readEvidence.facts)
+                    assertTrue(
+                        "$type retains the content identity",
+                        held.readEvidence.versions.values
+                            .any { 41uL in it },
+                    )
+                    if (type == "session_transition") assertTrue(held.rows.any { it is ThreadItem.SessionBoundary })
+                    assertTrue(pump.sent.none { it.type == "mark_conversation_read" })
+                }
+                pump.push(content(43u))
+                pump.push(tail)
+                runCurrent()
+                assertEquals(type, ConversationReadMarks(0u, 43u), repository.observeReadMarks("a").first())
+            }
+        }
+
+    @Test fun invariantEachExcludedHistoryTypeAndStatusOnlyPagePreserveOriginalEntries() =
+        runTest {
+            for (type in excludedTypes) {
+                val pump = Pump()
+                val repository = interactiveRepo(pump)
+                assertTrue(history(repository, pump, emptyList()).entries.isEmpty())
+                assertNull(repository.observeReadMarks("a").first())
+                val tail = status(42u, type)
+                val statusOnly = history(repository, pump, listOf(tail))
+                assertEquals(listOf(42uL), statusOnly.entries.map { it.unsignedId })
+                assertEquals(type, statusOnly.entries.single().type)
+                assertNull("$type cannot invent a latest watermark", repository.observeReadMarks("a").first())
+                pump.push(snapshot(row("a", "41", "41")))
+                runCurrent()
+                repeat(2) {
+                    val received = history(repository, pump, listOf(tail, content(41u)))
+                    assertEquals(listOf(42uL, 41uL), received.entries.map { it.unsignedId })
+                    assertEquals(listOf(tail.payload, content(41u).payload), received.entries.map { it.payload })
+                    assertEquals(type, ConversationReadMarks(41u, 41u), repository.observeReadMarks("a").first())
+                    assertTrue(
+                        42uL in
+                            repository
+                                .observeThreadSnapshot("a")
+                                .first()
+                                .readEvidence.facts,
+                    )
+                }
+                history(repository, pump, listOf(content(43u), tail))
+                assertEquals(type, ConversationReadMarks(41u, 43u), repository.observeReadMarks("a").first())
+            }
+        }
+
+    @Test fun invariantStatusTailCannotReturnThroughHistoryAfterReconnectAtAnyReceiptStep() =
+        runTest {
+            val arrivals = listOf(content(41u), status(42u, "turn_state"), status(43u, "api_retry"))
+            for (split in 0..arrivals.size) {
+                val oldPump = Pump()
+                val old = interactiveRepo(oldPump)
+                val current = MutableStateFlow<ConversationRepository?>(old)
+                val stable = StableConversationRepository(current)
+                oldPump.push(snapshot(row("a", "41", "41")))
+                arrivals.take(split).forEach(oldPump::push)
+                runCurrent()
+                assertEquals(ConversationReadMarks(41u, 41u), stable.observeReadMarks("a").first())
+                oldPump.close()
+                current.value = null
+                runCurrent()
+                assertNull(stable.observeReadMarks("a").first())
+                val freshPump = Pump()
+                val fresh = interactiveRepo(freshPump)
+                current.value = fresh
+                freshPump.push(snapshot(row("a", "41", "41")))
+                arrivals.drop(split).forEach(freshPump::push)
+                runCurrent()
+                history(fresh, freshPump, arrivals.reversed())
+                assertEquals(ConversationReadMarks(41u, 41u), stable.observeReadMarks("a").first())
+                history(fresh, freshPump, listOf(content(44u), arrivals.last()))
+                assertEquals(ConversationReadMarks(41u, 44u), stable.observeReadMarks("a").first())
+                assertTrue(oldPump.sent.none { it.type == "mark_conversation_read" })
+            }
+        }
+
+    @Test fun invariantReorderedAndOverlappingHistoryCannotRegressReadFactsOrMixIdentities() =
+        runTest {
+            for (position in 0..2) {
+                val pump = Pump()
+                val otherHost = Pump()
+                val repository = interactiveRepo(pump)
+                val other = interactiveRepo(otherHost)
+                pump.push(snapshot(row("a", "43", "43"), row("b", "1", "1")))
+                otherHost.push(snapshot(row("a", "1", "1")))
+                val overlap = mutableListOf(content(41u), status(44u, "turn_state"))
+                overlap.add(position, content(43u))
+                for (receipt in overlap.reversed() + overlap) pump.push(receipt)
+                runCurrent()
+                repeat(2) { history(repository, pump, overlap) }
+                history(repository, pump, listOf(status(ULong.MAX_VALUE, "turn_state")))
+                assertEquals(ConversationReadMarks(43u, 43u), repository.observeReadMarks("a").first())
+                assertEquals(ConversationReadMarks(1u, 1u), repository.observeReadMarks("b").first())
+                assertEquals(ConversationReadMarks(1u, 1u), other.observeReadMarks("a").first())
+            }
+        }
+
+    @Test fun invariantEveryOtherDurableTypeIncludingUnknownStillRaisesBothReceiptWatermarks() =
+        runTest {
+            val types =
+                listOf(
+                    "message",
+                    "assistant_delta",
+                    "turn_end",
+                    "thinking_progress",
+                    "resetting",
+                    "banner",
+                    "context_usage",
+                    "model_list",
+                    "slash_command_list",
+                    "mcp_status",
+                    "compaction_boundary",
+                    "future_type",
+                    "Turn_state",
+                )
+            for (type in types) {
+                for (fromHistory in listOf(false, true)) {
+                    val pump = Pump()
+                    val repository = interactiveRepo(pump)
+                    pump.push(snapshot(row("a", "0", "0")))
+                    val receipt = content(41u).copy(type = type)
+                    if (fromHistory) history(repository, pump, listOf(receipt)) else pump.push(receipt)
+                    runCurrent()
+                    assertEquals("$type history=$fromHistory", ConversationReadMarks(0u, 41u), repository.observeReadMarks("a").first())
+                }
+            }
+        }
+
+    @Test fun invariantFilteredUnreadDoesNotBypassUnknownMalformedMissingOrGapEvidence() =
+        runTest {
+            for (fromHistory in listOf(false, true)) {
+                for (type in listOf("future_type", "turn_state", "api_retry", "compacting", "session_transition")) {
+                    val pump = Pump()
+                    val repository = interactiveRepo(pump)
+                    pump.push(snapshot(row("a", "0", "0")))
+                    val barrier = content(42u).copy(type = type, payload = MobileJson.parseToJsonElement("""{"conversation_id":"a"}"""))
+                    val receipts = listOf(content(41u), barrier, content(43u))
+                    if (fromHistory) history(repository, pump, receipts.reversed()) else receipts.forEach(pump::push)
+                    runCurrent()
+                    val held = repository.observeThreadSnapshot("a").first()
+                    assertEquals(ConversationReadMarks(0u, 43u), repository.observeReadMarks("a").first())
+                    assertTrue(42uL in held.readEvidence.facts)
+                    assertNull(
+                        "$type history=$fromHistory",
+                        held.readEvidence.checkpoint(held.rows.filterIsInstance<ThreadItem.MessageItem>().last(), 0u),
+                    )
+                }
+                val pump = Pump()
+                val repository = interactiveRepo(pump)
+                val gapped = listOf(content(41u), content(43u))
+                if (fromHistory) history(repository, pump, gapped.reversed()) else gapped.forEach(pump::push)
+                runCurrent()
+                val gap = repository.observeThreadSnapshot("a").first()
+                assertNull(gap.readEvidence.checkpoint(gap.rows.last(), 0u))
+                pump.push(content(44u).copy(historyEntryId = null))
+                pump.push(status(45u, "turn_state"))
+                runCurrent()
+                val missing = repository.observeThreadSnapshot("a").first()
+                assertNull(missing.readEvidence.checkpoint(missing.rows.last(), 0u))
+                assertEquals(43uL, repository.observeReadMarks("a").first()?.latestEntryId)
+            }
+        }
+
+    private fun TestScope.interactiveRepo(pump: Pump) =
+        RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+
+    private fun content(id: ULong) =
+        Envelope(
+            901,
+            "message",
+            TS,
+            MobileJson.parseToJsonElement("""{"conversation_id":"a","message_id":"m$id","role":"user","text":"received"}"""),
+            eventId = 5001,
+            historyEntryId = id,
+        )
+
+    private fun status(
+        id: ULong,
+        type: String,
+    ): Envelope {
+        val fields =
+            when (type) {
+                "turn_state" -> "\"state\":\"idle\""
+                "api_retry" -> "\"active\":false,\"current\":2,\"total\":10"
+                "compacting" -> "\"active\":true"
+                "session_transition" ->
+                    "\"previous_session_id\":\"s1\",\"new_session_id\":\"s2\",\"reason\":\"clear\"," +
+                        "\"occurred_at\":\"$TS\",\"workspace_cwd\":null"
+                else -> "\"unused\":false"
+            }
+        return content(id).copy(type = type, payload = MobileJson.parseToJsonElement("""{"conversation_id":"a",$fields}"""))
+    }
+
+    private suspend fun TestScope.history(
+        repository: ConversationRepository,
+        pump: Pump,
+        entries: List<Envelope>,
+    ): HistoryPage {
+        val request = backgroundScope.async { repository.requestHistory("a", "", 100) }
+        runCurrent()
+        val rows = entries.joinToString { """{"id":${it.historyEntryId},"type":"${it.type}","ts":"${it.ts}","payload":${it.payload}}""" }
+        pump.push(
+            Envelope(
+                99,
+                "history_page",
+                TS,
+                MobileJson.parseToJsonElement("""{"entries":[$rows],"cursor":"","at_start":true}"""),
+                inReplyTo = pump.sent.last { it.type == "request_history" }.id,
+            ),
+        )
+        runCurrent()
+        return request.await()
+    }
+
+    private val excludedTypes = listOf("turn_state", "stall", "api_retry", "compacting", "session_transition")
+
     private fun TestScope.repo(pump: Pump) = RemoteConversationRepository(pump, backgroundScope)
 
     private fun row(
