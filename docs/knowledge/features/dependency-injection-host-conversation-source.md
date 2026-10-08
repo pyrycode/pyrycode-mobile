@@ -359,10 +359,18 @@ its teardown lock: the owner must be active, its transport must be identical to
 the supervisor's current transport, and that connection's actual pump must be
 `Open`.
 
-The asynchronous `currentRepository` cache can still hold a retired repository
-when a replacement transport first arrives. Cached rows or status therefore do
-not establish current availability. This lookup returns availability at the time
-of the check; a later disconnect can still make an operation fail. See the
+Collection of `currentRepository` remains asynchronous and can lag replacement;
+since #1884 its synchronous `.value` and replay cache select through `liveRepository()`.
+Cached rows or collected status therefore do not establish current availability.
+`currentReadMarks(serverId, conversationId)` uses that authoritative selection to
+read the remote repository's atomic facts, retaining accepted facts while offline
+but rejecting old support for a replacement. The host-first `readMarks` flow triggers
+[notification reconciliation](push-messaging-service.md#confirmed-daemon-read-cancellation-1884);
+the synchronous lookup prevents a queued covered trigger from cancelling a new
+unread completion, or spending it against a retired repository's mark. Delaying
+real coordinator publication, rather than substituting a repository flow, is needed
+to test this ordering. This lookup returns availability at the time of the check;
+a later disconnect can still make an operation fail. See the
 [coordinator's availability checks](relay-repository-coordinator.md#the-single-connection-source-and-the-open-gated-currentrepository-421--493).
 
 ### Destination ownership
