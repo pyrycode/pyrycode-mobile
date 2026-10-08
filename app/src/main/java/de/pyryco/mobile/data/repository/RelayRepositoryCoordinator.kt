@@ -24,9 +24,12 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
+import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -189,11 +192,22 @@ class RelayRepositoryCoordinator(
      * (`Handshaking`) → `null` first, and there is no path that pairs `connB.repo` with any pump but B's own.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
-    val currentRepository: StateFlow<ConversationRepository?> =
+    private val publishedRepository: StateFlow<ConversationRepository?> =
         activeConnection
             .flatMapLatest { conn ->
                 conn?.pump?.state?.map { if (it is PumpState.Open) conn.repo else null } ?: flowOf(null)
             }.stateIn(scope, SharingStarted.Eagerly, null)
+
+    /** Collection remains Open-gated; synchronous readers select the actual connection, not its cache. */
+    @OptIn(InternalCoroutinesApi::class, ExperimentalForInheritanceCoroutinesApi::class)
+    val currentRepository: StateFlow<ConversationRepository?> =
+        object : StateFlow<ConversationRepository?> {
+            override val value: ConversationRepository? get() = liveRepository()
+            override val replayCache: List<ConversationRepository?> get() = listOf(value)
+
+            override suspend fun collect(collector: FlowCollector<ConversationRepository?>): Nothing =
+                publishedRepository.collect(collector)
+        }
 
     /** The decoded v2 structured live-session events (#385) for the current connection, surfaced off the
      *  connection-scoped concrete [RemoteConversationRepository] (#406). The events are not on the

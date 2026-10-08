@@ -677,7 +677,7 @@ private fun JsonElement?.toInputFields(): Map<String, String> {
  * Total field copy: every string passes through verbatim (consumers map and sanitize the wire values). The
  * cost (#1346) is kept only when the wire carried a JSON number.
  */
-internal fun TurnEndPayloadDto.toEvent(): LiveSessionEvent =
+internal fun TurnEndPayloadDto.toEvent(historyEntryId: ULong? = null): LiveSessionEvent =
     LiveSessionEvent.TurnEnd(
         conversationId,
         turnId,
@@ -687,6 +687,7 @@ internal fun TurnEndPayloadDto.toEvent(): LiveSessionEvent =
         terminalReason,
         errorCategory,
         costUsdTotal.jsonNumberOrNull(),
+        historyEntryId,
     )
 
 /** A JSON number's value; `null` for a string, a boolean, `null`, an object or an array. */
