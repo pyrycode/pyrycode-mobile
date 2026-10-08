@@ -67,3 +67,7 @@ Pending for the documentation stage: update `docs/knowledge/features/remote-conv
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-08
+
+## Revisions
+
+- 2026-10-08: Broader focused tests exposed arbitrary relocation without a durable neighbour in `AssistantParentAttributionTest.olderPagePrepend_splitRejoinAndReplay_preserveHeldSeparatorsAndParents`. Narrow release to newly evidenced held assistant atoms whose current position conflicts with a known held durable neighbour, using prefix maxima/suffix minima of exact positions. Unbounded first evidence retains the existing slot; incoming separators can still split atomized text through normal ordered insertion. Two older live/history tests explicitly expected now-invalid separator sides despite complete durable evidence; update their expectations to the repaired durable order while retaining text, uniqueness and settled-state assertions.

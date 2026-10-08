@@ -822,7 +822,8 @@ internal fun List<ThreadItem>.mergeOrderedHistoryRows(
 internal fun List<ThreadItem>.mergeUnsignedHistoryRows(
     rows: List<ThreadItem>,
     order: Map<Any, ULong>,
-): List<ThreadItem> = mergeRows(rows, order)
+    firstEvidence: Set<Any> = emptySet(),
+): List<ThreadItem> = mergeRows(rows, order, firstEvidence = firstEvidence)
 
 /** Insert fresh history or reconnect evidence beside its neighbours; held markers never move on replay. */
 private fun List<ThreadItem>.withHistoryLifecyclePositions(
@@ -903,6 +904,7 @@ private fun List<ThreadItem>.mergeRows(
     incoming: List<ThreadItem>,
     order: Map<Any, ULong>,
     cacheRestore: Boolean = false,
+    firstEvidence: Set<Any> = emptySet(),
 ): List<ThreadItem> {
     if (incoming.isEmpty()) return this
     val parents =
@@ -917,6 +919,8 @@ private fun List<ThreadItem>.mergeRows(
     val heldAtoms = if (legacy.records.isEmpty()) heldDeltas else heldDeltas.withLegacyRecords(legacy.records).deltaRows()
     val incomingAtoms = if (legacy.records.isEmpty()) incomingDeltas else incomingDeltas.withLegacyRecords(legacy.records).deltaRows()
     val legacyMatches = legacy.identities
+    // Only a first durable claim that conflicts with a known neighbour releases a held delta's slot.
+    val relocating = heldAtoms.provisionalPlacementConflicts(order, firstEvidence - legacyMatches, incomingAtoms)
     // If a legacy row replaces known text in the middle, retain that slot rather than prepend it.
     val legacyByTurn =
         incomingAtoms
@@ -931,6 +935,7 @@ private fun List<ThreadItem>.mergeRows(
     val placedLegacy = HashSet<String>()
     val base =
         heldAtoms.mapNotNull { row ->
+            if (row.mergeIdentity() in relocating) return@mapNotNull null
             if (row.mergeIdentity() !in legacyMatches) return@mapNotNull row
             val segment = (row as? ThreadItem.MessageItem)?.message?.segment ?: return@mapNotNull row
             val legacy = legacyByTurn[segment.turnId] ?: return@mapNotNull null
@@ -943,7 +948,7 @@ private fun List<ThreadItem>.mergeRows(
                 null
             }
         }
-    val rows = incomingAtoms
+    val rows = incomingAtoms.map { relocating[it.mergeIdentity()] ?: it }
     val positions = HashMap<Any, Int>(base.size)
     val turns = HashMap<String, TreeMap<Int, Int>>()
     base.forEachIndexed { index, row ->
@@ -998,7 +1003,7 @@ private fun List<ThreadItem>.mergeRows(
         val message = (row as? ThreadItem.MessageItem)?.message
         val segment = message?.segment
         val keyTwin = message?.let { heldMessageIds[it.id]?.message }
-        if (segment != null && keyTwin != null && keyTwin.segment?.turnId != segment.turnId) {
+        if (identity !in relocating && segment != null && keyTwin != null && keyTwin.segment?.turnId != segment.turnId) {
             // Only a same-turn legacy opener may use the explicit #0 alias. Other collisions lose incoming text.
             val legacyOpener = segment.firstSeq == 0 && keyTwin.role == Role.Assistant && keyTwin.id == segment.turnId
             if (!legacyOpener || "${segment.turnId}#0" in heldMessageIds) return@forEachIndexed
@@ -1039,6 +1044,8 @@ private fun List<ThreadItem>.mergeRows(
         lower?.let { slot = maxOf(slot, it + 1) }
         upper?.let { slot = minOf(slot, it) }
         slot = maxOf(floor, slot).coerceAtMost(base.size)
+        // Provisional sequence/page neighbours cannot overrule this newly durable delta's log bounds.
+        if (identity in relocating && logBounds != null && !logBounds.isEmpty()) slot = slot.coerceIn(logBounds)
         slots.getOrPut(slot) { mutableListOf() } += row
         floor = slot
     }
@@ -1055,6 +1062,37 @@ private fun List<ThreadItem>.mergeRows(
         }.withJoinedSegments().withUniqueMessageKeys()
     val merged = ordinary.withHistoryLifecyclePositions(incoming, lifecycle).withBackgroundTaskLaunches()
     return if (merged == hinted) hinted else merged
+}
+
+/** Keep unbounded live placement intact; durable neighbours alone justify a first-evidence repair. */
+private fun List<ThreadItem>.provisionalPlacementConflicts(
+    order: Map<Any, ULong>,
+    firstEvidence: Set<Any>,
+    incoming: List<ThreadItem>,
+): Map<Any, ThreadItem> {
+    if (firstEvidence.isEmpty()) return emptyMap()
+    val incomingIdentities = incoming.mapTo(HashSet()) { it.mergeIdentity() }
+    val following = arrayOfNulls<ULong>(size)
+    var next: ULong? = null
+    for (index in indices.reversed()) {
+        following[index] = next
+        order[this[index].mergeIdentity()]?.let { next = minOf(next ?: it, it) }
+    }
+    return buildMap {
+        var previous: ULong? = null
+        forEachIndexed { index, row ->
+            val identity = row.mergeIdentity()
+            val position = order[identity] ?: return@forEachIndexed
+            if (identity in firstEvidence &&
+                identity in incomingIdentities &&
+                (row as? ThreadItem.MessageItem)?.message?.segment != null &&
+                ((previous?.let { it > position } == true) || (following[index]?.let { it < position } == true))
+            ) {
+                put(identity, row)
+            }
+            previous = maxOf(previous ?: position, position)
+        }
+    }
 }
 
 private fun List<Instant>.insertionSlot(timestamp: Instant): Int {
