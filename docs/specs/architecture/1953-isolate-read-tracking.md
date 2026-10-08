@@ -57,3 +57,7 @@ No new I/O or error branches. Missing candidate, layout, edge, reveal, visible m
 ## Open Questions
 
 None. Exact row identity, edge meaning, reveal readiness and gate selection are supplied by #1912 and this ticket.
+
+## Revisions
+
+- 2026-10-08: Add a production-screen regression for a tool version replacement with unchanged collapsed geometry. The test must settle the snapshot-driven UI update with `waitForIdle()` before polling the checkpoint. The existing global-position callbacks refresh the new holder correctly; no placement wrapper or geometry change is required. The direct holder probe explicitly sends snapshot apply notifications for externally mutated readiness fields.

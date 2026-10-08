@@ -14,6 +14,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadReadEvidence
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -132,6 +133,43 @@ open class ThreadReadViewportTest {
         compose.waitForIdle()
         compose.waitUntil(5000) { events.size == 2 }
         compose.runOnIdle { assertEquals(41uL, events.last().checkpoint) }
+    }
+
+    @Test fun foregroundCheckpoint_replacementToolVersionGetsFreshMeasurementWithoutGeometryChange() {
+        val owner = Owner().apply { registry.currentState = Lifecycle.State.RESUMED }
+        val tool =
+            ThreadItem.MessageItem(
+                (row(30) as ThreadItem.MessageItem).message.copy(
+                    role = Role.Tool,
+                    toolCall = ToolCall("Bash", "echo hello", "old output"),
+                ),
+            )
+        val state = mutableStateOf(state().let { it.copy(items = listOf(tool), readEvidence = evidence(tool, 40u)) })
+        val events = mutableListOf<ThreadEvent.NewestContentPresented>()
+        compose.setContent {
+            CompositionLocalProvider(LocalLifecycleOwner provides owner) {
+                PyrycodeMobileTheme {
+                    ThreadScreen(state.value, {}, {}, ConnectionState.Connected, {}, onOverflowEvent = {
+                        if (it is ThreadEvent.NewestContentPresented) events += it
+                    })
+                }
+            }
+        }
+        compose.waitUntil(5000) { events.size == 1 }
+        // Collapsed output is not a layout input, but this is still a new exact delivered version.
+        val replacement =
+            ThreadItem.MessageItem(
+                tool.message.copy(toolCall = requireNotNull(tool.message.toolCall).copy(output = "new output")),
+            )
+        compose.runOnIdle {
+            state.value = state.value.copy(items = state.value.items.dropLast(1) + replacement, readEvidence = evidence(replacement, 41u))
+        }
+        compose.waitForIdle()
+        compose.waitUntil(5000) { events.size == 2 }
+        compose.runOnIdle {
+            assertEquals(replacement, events.last().row)
+            assertEquals(41uL, events.last().checkpoint)
+        }
     }
 
     @Test open fun scrolling_doesNotRecomposeProductionListHost() {
