@@ -541,6 +541,42 @@ class CoalescedThreadWritesTest {
             f.reader.join()
         }
 
+    @Test fun baselineInvariant_resubscriptionPersistsRowsAfterObserverSupersedesCoverage() = resubscribeAfterCoverage(false)
+
+    @Test fun baselineInvariant_resubscriptionFlushesRowsAfterObserverSupersedesCoverage() = resubscribeAfterCoverage(true)
+
+    private fun resubscribeAfterCoverage(flush: Boolean) =
+        runTest {
+            val f = Fixture(this)
+            val a = reduceHistoryPage(page(1).entries, true)
+            val ab = reduceHistoryPage(page(1, 2).entries, true)
+            f.source.snapshots.value = ThreadSnapshot(ab)
+            f.repository.writeHistoryPosition("c", HistoryPosition("older", false, HistoryCoverage().received(page(1, 2))))
+            f.source.snapshots.value = ThreadSnapshot(a)
+            quiet()
+            assertEquals(a, f.restored())
+            f.reader.cancel()
+            f.reader.join()
+            assertEquals(2, f.cache.writes.size)
+
+            // WhileSubscribed restarts collection on the same destination wrapper with fresh disk rows.
+            f.source.snapshots.value = ThreadSnapshot(ab)
+            val delivered = mutableListOf<ThreadSnapshot>()
+            val reader =
+                backgroundScope.launch(f.dispatcher) {
+                    f.repository.observeThreadSnapshot("c").collect { delivered += it }
+                }
+            assertEquals(ab, delivered.single().rows)
+            if (!flush) {
+                quiet()
+                assertEquals(ab, f.restored())
+            }
+            reader.cancel()
+            reader.join()
+            assertEquals(ab, f.restored())
+            assertEquals(listOf(ab, a, ab), f.cache.writes)
+        }
+
     @Test fun coverageInvariant_newSnapshotDuringCoverageWriteRemainsEligibleAndRowsPrecedeState() =
         runTest {
             val f = Fixture(this)

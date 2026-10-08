@@ -102,13 +102,13 @@ class CachingConversationRepository(
     private val generations = AtomicLong()
     private val drawnThreads = ConcurrentHashMap<String, DrawnThread>()
 
-    // Guarded by historyWrites: successful coverage row writes supersede older observer candidates.
-    private data class PersistedHistory(
-        val generation: Long,
+    // Updated under historyWrites by both row writers; coverage alone supersedes older candidates.
+    private data class PersistedThread(
+        val coverageGeneration: Long,
         val cacheable: List<ThreadItem>,
     )
 
-    private val persistedHistory = ConcurrentHashMap<String, PersistedHistory>()
+    private val persistedThreads = ConcurrentHashMap<String, PersistedThread>()
 
     private data class CacheCandidate(
         val drawn: DrawnThread,
@@ -126,8 +126,6 @@ class CachingConversationRepository(
         private val signals = Channel<Unit>(Channel.CONFLATED)
         private var timer: Job? = null
         private val initial = restored
-        private var lastWritten = restored
-        private var lastHistory: PersistedHistory? = null
         private val writer =
             scope.launch(processingDispatcher, start = CoroutineStart.UNDISPATCHED) {
                 for (signal in signals) {
@@ -141,13 +139,13 @@ class CachingConversationRepository(
             val cacheable = cacheableThreadRows(drawn.rows)
             val previous = latest.get()
             val changed = cacheable != (previous?.cacheable ?: initial)
-            val history = persistedHistory[conversationId]
+            val persisted = persistedThreads[conversationId]
             // A coverage save can change disk rows without the observer ever seeing its snapshot.
             val superseded =
-                history != null &&
-                    (previous?.drawn?.generation ?: 0) <= history.generation &&
-                    drawn.generation > history.generation &&
-                    cacheable != history.cacheable
+                persisted != null &&
+                    (previous?.drawn?.generation ?: 0) <= persisted.coverageGeneration &&
+                    drawn.generation > persisted.coverageGeneration &&
+                    cacheable != persisted.cacheable
             if (!changed && !superseded && !retry.getAndSet(false)) return
             retry.set(false)
             val candidate = CacheCandidate(drawn, cacheable)
@@ -163,30 +161,24 @@ class CachingConversationRepository(
         }
 
         private suspend fun persist(candidate: CacheCandidate) {
-            val (result, history) =
+            val result =
                 historyWrites.withLock {
-                    val history = persistedHistory[conversationId]
+                    val persisted = persistedThreads[conversationId]
                     if (conversationId in deleted ||
-                        candidate.drawn.generation <= (history?.generation ?: 0)
+                        candidate.drawn.generation <= (persisted?.coverageGeneration ?: 0)
                     ) {
                         return@withLock null
                     }
-                    val baseline = if (history != null && history !== lastHistory) history.cacheable else lastWritten
+                    val baseline = persisted?.cacheable ?: initial
+                    if (candidate.cacheable == baseline) return@withLock Result.success(Unit)
                     // Untrimmed drawn rows let the cache invalidate cursor/stop claims on retention loss.
-                    val result =
-                        if (candidate.cacheable ==
-                            baseline
-                        ) {
-                            Result.success(Unit)
-                        } else {
-                            cache.writeThread(serverId, conversationId, candidate.drawn.rows)
-                        }
-                    result to history
+                    val result = cache.writeThread(serverId, conversationId, candidate.drawn.rows)
+                    if (result.isSuccess) {
+                        persistedThreads[conversationId] = PersistedThread(persisted?.coverageGeneration ?: 0, candidate.cacheable)
+                    }
+                    result
                 } ?: return
-            if (result.isSuccess) {
-                lastWritten = candidate.cacheable
-                lastHistory = history
-            } else {
+            if (result.isFailure) {
                 retry.set(true)
                 RelayLog.d { "event=thread_cache_write_failed" }
             }
@@ -327,7 +319,7 @@ class CachingConversationRepository(
                 RelayLog.d { "event=history_rows_write_failed" }
                 return@withLock
             }
-            persistedHistory[conversationId] = PersistedHistory(maxOf(historyGeneration, drawn?.generation ?: 0), cacheable)
+            persistedThreads[conversationId] = PersistedThread(maxOf(historyGeneration, drawn?.generation ?: 0), cacheable)
             if (conversationId in deleted) return@withLock
             val trimmed = threadRowsWereTrimmed(rows)
             val coverage = position.coverage.boundTo(rows)
@@ -363,7 +355,7 @@ class CachingConversationRepository(
         withContext(NonCancellable) {
             historyWrites.withLock {
                 drawnThreads.remove(conversationId)
-                persistedHistory.remove(conversationId)
+                persistedThreads.remove(conversationId)
                 cache.removeConversation(serverId, conversationId)
             }
         }.onFailure { RelayLog.d { "event=conversation_cache_remove_failed" } }

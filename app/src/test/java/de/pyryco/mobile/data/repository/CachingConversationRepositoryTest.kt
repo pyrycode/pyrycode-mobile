@@ -700,6 +700,9 @@ class CachingConversationRepositoryTest {
             val atLimit = (1..MAX_CACHED_THREAD_ROWS).map { message("m$it") }
 
             live.value = atLimit
+            advanceTimeBy(100)
+            runCurrent()
+            assertEquals(atLimit, cache.readThread("server-a", "conv-1"))
             // Exactly at the limit nothing was trimmed, so the oldest saved row still matches the position.
             assertEquals(position, repository.readHistoryPosition("conv-1")?.copy(coverage = null))
 
