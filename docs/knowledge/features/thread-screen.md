@@ -70,6 +70,28 @@ rules. See [list reservations](thread-screen-how-it-works-list-and-status-row.md
 [chrome and overlays](thread-screen-how-it-works-overlays-and-app-bar.md#threadtopappbar--figma-168-chrome)
 and [hardware evidence](thread-screen-testing.md#testing).
 
+**Foreground read checkpoints (#1912).** `ThreadReadViewport` sends
+`ThreadEvent.NewestContentPresented` only when the destination is resumed, the newest
+rendered row has finished its reveal for the exact version on screen, and that row's
+trailing edge sits inside the message viewport, below the measured header or top-overlay
+pills and above the composer and IME. Any surface that hides the list blocks it: the
+permission or question prompt, Channel info, the background-task panel, the status sheet,
+rename, edit-channel, save-as-channel, delete and workspace dialogs, the overflow and header
+menus and slash-command suggestions. Such surfaces leave the destination resumed and the
+list composed, so lifecycle alone cannot prove sight; a reply that arrives behind one
+qualifies only after it closes. A row update while the reader has scrolled away, merely
+opening the thread, or a recomposition with an unchanged checkpoint sends nothing. A
+shown Agent block takes the lifecycle claims of its hidden local-agent task updates, so a
+changed block must itself be presented; plain task lifecycle is deliberately invisible
+receipt. The ViewModel forwards only increasing checkpoints. Repository rules for
+claims, barriers and retries are under
+[daemon conversation read marks](remote-conversation-repository.md#daemon-conversation-read-marks).
+
+Required device probes live in `ThreadReadViewportTest` in `sharedTest`, which the UI
+gate does not select, so `ThreadReadViewportDeviceTest` in `androidTest` re-declares the
+lifecycle, scrolled-away and dialog methods for the managed device. Under Robolectric,
+closing a dialog window needs a `waitForIdle()` before polling for the next checkpoint.
+
 `ThreadScreen` uses a `Scaffold` with `ThreadTopAppBar`, a message-region `Box` containing either `EmptyThreadState` or the remembered reverse-layout `LazyColumn`, and a composer column in `bottomBar`. Connecting and Reconnecting appear in the composer status band; Offline Retry and pairing Re-pair appear in `ThreadTopOverlay`, pinned over the message region without reflowing the list. The list folds delivered and queued rows, draws every row at full opacity (session boundaries included, since #1578), and leaves each row's rendering to its own component. The footer, attachments and input keep their existing behavior and visual ownership. The header menu uses the shared Actions overlay below the live button (#1666), hosted over the Scaffold with IME-constrained scrolling and header-priority Back; see [overlay wiring](thread-screen-how-it-works-overlays-and-app-bar.md#header-actions-overlay-1666).
 
 Back, title and overflow stay reachable through their callbacks. The overflow opens `ThreadOverflowMenu` beneath its control; screen-owned state hosts the rename, save-as-channel, status and other modal flows described in the linked topics. Workspace picker state remains in the screen contract for older flows, but the current thread frame and overflow expose no workspace chip, label, picker trigger or workspace-edit action.

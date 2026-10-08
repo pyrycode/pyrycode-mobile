@@ -67,8 +67,19 @@ file cache and ViewModel, receive a later signed terminal page and demand older 
 `received` alone or keeping one cacheable row misses this restore failure. Unsigned persistence and
 restored order are described under [saved position](#resuming-from-the-saved-position-1354).
 The completed [unsigned gap path (#1911)](#resuming-from-the-saved-position-1354) consumes authoritative
-coverage independently of these signed guards. Foreground acknowledgement remains #1912;
-conservative completeness guards establish no seen state.
+coverage independently of these signed guards. Conservative completeness guards establish
+no seen state: coverage proves receipt, never sight.
+
+**Read evidence from history pages (#1912).** `reduceOrderedHistoryPage` returns, beside
+rows, each durable id's claim on the row it produced and a fact per entry: visible,
+understood nonvisual or unknown. Nonvisual means the entry decoded through its existing
+payload decoder and is deliberately drawn without a row, such as state frames, info
+banners, model and command menus, MCP and usage reports and background-task lifecycle.
+A malformed or unsupported entry is unknown and blocks any read checkpoint past it, even
+when later visible content exists. A page also clears a live unidentified barrier whose
+type, canonical timestamp and payload it matches. A merge or re-delivery never turns an
+earlier barrier into seen content or lowers a claim. The checkpoint rules themselves are
+under [daemon conversation read marks](remote-conversation-repository.md#daemon-conversation-read-marks).
 
 **History establishes modern queued delivery (#1655).** A stored user `message` with a valid
 `queued_msg_id` can arrive with its answering delta 0 before the first live push, even before

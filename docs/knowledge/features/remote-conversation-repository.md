@@ -299,6 +299,34 @@ Server errors, send refusal and transport teardown return sanitized failures; ca
 cancellation propagates. The repository performs no retry: the viewport slice owns it.
 See [wire validation and confirmation](mobile-protocol-v2-wire-layer.md#daemon-read-fields-and-confirmation).
 
+**What may become a read mark (#1912).** `ThreadSnapshot.readEvidence` binds durable
+`history_entry_id` claims to the exact row version they produced, across history pages,
+direct live delivery and reconnect replay, including every delta folded into a streaming
+row. Envelope ids, replay `event_id`, a list's latest id and fetched rows never prove
+sight. A valid live id also raises the latest durable id without any viewport. Each
+entry gets a fact: visible, deliberately nonvisual (state frames, info banners, menus,
+MCP and usage reports, plain background-task lifecycle) or unknown. A malformed or
+unsupported entry, a hole in received ids or a persisted gap stops the checkpoint before
+it. A presented row's checkpoint is its highest claim, extended only through contiguous
+nonvisual receipt. Live content without an id is held as an unidentified barrier keyed
+by type, normalized timestamp and payload; only an ordinary matching history entry
+clears it, and no extra fetch is made to find it. Valid timestamps are canonicalized on
+both lanes, since `2026-10-07T00:00:00.1234Z` parses to `.123400Z`.
+
+Live evidence must describe the row the projection actually drew. Re-reducing one
+envelope in isolation is wrong when the fold depends on earlier state or on a locally
+assigned time: the falling `compacting` edge draws a divider only after a rising one,
+so live claims start from the conversation's current compaction fold, and a stopped-turn
+summary is matched on its displayed fields, not its phone-clock time.
+
+`ReadCheckpointRetries` keeps the highest qualified checkpoint per host connection
+source and conversation for the app process. It retries on that host's next connection,
+even after the thread closed, and clears only on a confirmed mark at or beyond it. A
+failed or malformed reply keeps it, and it is never sent to another host. Daemons that
+never report `read_up_to` receive no command and keep local `ReadPosition`. The thread
+ViewModel shares one snapshot subscription for rows and evidence, because each cold
+subscription sends its own `backfill_since`.
+
 The [stable facade](stable-conversation-repository.md) switches observation to the
 current live delegate with null while disconnected. A write snapshots its entry
 delegate once, returns failure when absent and never retries on a replacement. Cache
