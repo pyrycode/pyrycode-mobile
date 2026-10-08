@@ -52,21 +52,21 @@ class SettingsScreenGeometryTest {
         val frame =
             listOf(
                 // From the 28 dp header row, 24 dp below the sheet top: the header row, the 12 dp gap, the 1 dp
-                // divider and the 20 dp gap.
-                FrameRow("Notifications", 85f, roundings = 4),
+                // divider, the Header area's 4 dp bottom padding (#1588) and the 20 dp gap.
+                FrameRow("Notifications", 89f, roundings = 5),
                 // The 20 sp Notifications line, the 12 dp column gap and the row's 12 dp inset. The label wraps to
                 // two 24 sp lines, as tall as the switch target, so centring it adds nothing.
-                FrameRow("Push notifications when claude responds", 129f, roundings = 3),
+                FrameRow("Push notifications when claude responds", 133f, roundings = 3),
                 // The row's 12 dp bottom inset, the 12 dp column gap and the next row's 12 dp inset.
-                FrameRow("Notification sound", 213f, roundings = 3),
+                FrameRow("Notification sound", 217f, roundings = 3),
                 // The 2 dp gap below the 24 sp line.
-                FrameRow("Default", 239f, roundings = 1),
+                FrameRow("Default", 243f, roundings = 1),
                 // Frame 726:8150: the sound row ends at 267 and a 12 dp gap follows each block. Here: the row's
                 // 12 dp bottom inset and the 12 dp column gap.
-                FrameRow("Thread", 279f, roundings = 2),
+                FrameRow("Thread", 283f, roundings = 2),
                 // The 20 sp Thread line, the 12 dp column gap, the row's 4 dp inset, and the 24 sp label centred
                 // against the 48 dp switch target, which splits 24 dp in half.
-                FrameRow("Collapse assistant tool uses", 327f, roundings = 4),
+                FrameRow("Collapse assistant tool uses", 331f, roundings = 4),
             )
         val tops = frame.map { (rule.onNodeWithText(it.text).getUnclippedBoundsInRoot().top - sheet.top).value }
         // The close glyph fills the header row, so its top is the row's top.
@@ -86,7 +86,7 @@ class SettingsScreenGeometryTest {
         // The label's centring in the row rounds; the switch's 32 dp track centred in its 48 dp target does not.
         val collapse = rule.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Switch))[1]
         assertDpEquals(
-            (327f - 323f).dp,
+            (331f - 327f).dp,
             (tops.last() - (collapse.getUnclippedBoundsInRoot().top - sheet.top).value).dp,
             "Collapse switch above its label",
         )
