@@ -389,6 +389,9 @@ interface ConversationRepository {
     /** Live read facts only; absent before this connection reports them, never sourced from cache. */
     fun observeReadMarks(conversationId: String): Flow<ConversationReadMarks?> = flowOf(null)
 
+    /** All live read facts for this host connection; cache and local positions cannot establish support. */
+    fun observeHostReadMarks(): Flow<Map<String, ConversationReadMarks>> = flowOf(emptyMap())
+
     /**
      * Confirm a shared read mark in the durable history id space. Success is the stored mark after
      * the correlated update, which may be clamped below [upTo]. Failure never optimistically advances

@@ -1471,6 +1471,8 @@ class RemoteConversationRepository(
     override fun observeReadMarks(conversationId: String): Flow<ConversationReadMarks?> =
         conversationListProjection.observeReadMarks(conversationId)
 
+    override fun observeHostReadMarks(): Flow<Map<String, ConversationReadMarks>> = conversationListProjection.observeHostReadMarks()
+
     override suspend fun markConversationRead(
         conversationId: String,
         upTo: ULong,

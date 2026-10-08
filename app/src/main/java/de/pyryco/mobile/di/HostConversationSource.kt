@@ -12,6 +12,7 @@ import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ConversationFilter
+import de.pyryco.mobile.data.repository.ConversationReadMarks
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import kotlinx.coroutines.CoroutineDispatcher
@@ -142,8 +143,8 @@ class HostConversationSource internal constructor(
     }
 
     /**
-     * The operator opened [conversationId] on [serverId]: its unread and failed states clear on that host
-     * only. A host that is not held yet has nothing to clear.
+     * The operator opened [conversationId] on [serverId]: clear its legacy local unread position.
+     * A modern conversation stays unread until its confirmed shared mark covers its newest known entry.
      */
     @Synchronized
     fun markOpened(
@@ -239,6 +240,13 @@ class HostConversationSource internal constructor(
         }
         scope.launch(entry.job) {
             connection.repositories.collectLatest { repository ->
+                if (repository != null) {
+                    repository.observeHostReadMarks().collect { marks -> updateReadMarks(entry, repository, marks) }
+                }
+            }
+        }
+        scope.launch(entry.job) {
+            connection.repositories.collectLatest { repository ->
                 // Each connection's repository starts its thread store empty, so its baseline is zero rows:
                 // rows a replay delivered before this first read are new (#1361).
                 var seen = emptyMap<String, Int>()
@@ -246,7 +254,7 @@ class HostConversationSource internal constructor(
                     val grown = counts.filter { (id, count) -> count > (seen[id] ?: 0) }.keys
                     seen = counts
                     if (grown.isNotEmpty()) {
-                        updateAttention(entry) {
+                        updateAttention(entry, repository) {
                             attention =
                                 grown.fold(attention) { state, id ->
                                     state.rowsAdded(id, viewing.isViewing(connection.serverId, id), UUID.randomUUID().toString())
@@ -303,11 +311,30 @@ class HostConversationSource internal constructor(
     }
 
     @Synchronized
+    private fun updateReadMarks(
+        entry: Held,
+        repository: ConversationRepository,
+        marks: Map<String, ConversationReadMarks>,
+    ) {
+        updateAttention(entry, repository) { attention = attention.withReadMarks(marks) }
+        RelayLog.d { "event=conversation_attention_read_facts" }
+    }
+
+    @Synchronized
     private fun updateAttention(
         entry: Held,
+        repository: ConversationRepository? = null,
         change: Held.() -> Unit,
     ) {
         if (!isCurrent(entry)) return
+        val current = entry.connection.repositories.value
+        if (repository != null && current !== repository) return
+        // Establish the generation in the same critical section as every consumer, including events
+        // that beat the repository collectors. Offline retains facts; a new daemon starts without them.
+        if (entry.attentionRepository !== current) {
+            entry.attentionRepository = current
+            if (current != null) entry.attention = entry.attention.withReadMarks(emptyMap())
+        }
         entry.change()
         if (entry.positions.value != null) entry.positions.value = entry.attention.positions
         entry.resolved = entry.attention.resolve(entry.modals, entry.batches)
@@ -397,6 +424,7 @@ class HostConversationSource internal constructor(
         var live = false
 
         var attention = HostAttentionState()
+        var attentionRepository: ConversationRepository? = null
         var modals: List<ModalUiState.Open> = emptyList()
         var batches: List<QuestionBatch> = emptyList()
         var resolved: Map<String, ConversationAttention> = emptyMap()

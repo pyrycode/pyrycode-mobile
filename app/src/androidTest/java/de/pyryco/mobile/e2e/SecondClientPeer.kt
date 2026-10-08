@@ -192,6 +192,33 @@ class SecondClientPeer(
             .ConversationReadMarks(row.readUpTo, row.latestEntryId)
     }
 
+    /** Confirm only a checkpoint obtained from this peer's received durable history. */
+    internal suspend fun markRead(
+        conversationId: String,
+        checkpoint: ULong,
+        timeoutMs: Long,
+    ): ULong {
+        val reply =
+            exchange(
+                "mark_conversation_read",
+                MobileJson.encodeToJsonElement(
+                    de.pyryco.mobile.data.network
+                        .MarkConversationReadPayloadDto(conversationId, checkpoint),
+                ),
+                timeoutMs,
+                resend = true,
+            )
+        check(reply.type == "conversation_updated") { "peer read mark refused" }
+        val row =
+            MobileJson.decodeFromJsonElement(
+                de.pyryco.mobile.data.network.ConversationResponseDto
+                    .serializer(),
+                reply.payload,
+            )
+        check(row.id == conversationId) { "peer read mark target mismatch" }
+        return requireNotNull(row.readUpTo) { "peer read mark unavailable" }
+    }
+
     internal suspend fun awaitReadMark(
         conversationId: String,
         checkpoint: ULong,

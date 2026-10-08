@@ -81,20 +81,27 @@ for lazy demand and marker/cursor behavior.
 Visible marker eligibility is documented in the parent
 [cache contract](conversation-cache.md#the-contract); saved unresolved coverage remains authoritative.
 
-**The read-position family (#877).** `readReadPositions`/`writeReadPositions` follow the same
-graceful-read, reporting-mutation, default-bodied shape as the other two families, over
-`Map<String, ReadPosition>` keyed by conversation id. `writeReadPositions` is a **whole-host
-replace**, like `writeConversations`. `ReadPosition.completedTurnId` is the latest turn this
-phone saw complete live for that conversation; `readTurnId` is the one the operator had seen
-as of their last open, or `null` if they have not opened it since a turn completed —
-`unread` is simply `readTurnId != completedTurnId`. A conversation absent from the map is
-read. Both ids are daemon-authored turn ids, used only for equality, exactly like
-`Conversation.id` above. The one production writer and reader is
-`HostConversationSource`'s per-host attention fold — see
-[dependency injection § Attention state](dependency-injection-host-conversation-source.md#attention-state-877) for
-`HostAttentionState`, the pure fold that produces the map this family persists, and for the
-bounds (`MAX_READ_POSITIONS`, `MAX_TURN_ID_CHARS`) that keep a hostile daemon from growing
-the document without limit.
+**The read-position family (#877, fallback-only since #1883).**
+`readReadPositions`/`writeReadPositions` retain their graceful-read,
+reporting-mutation, default-bodied shape over `Map<String, ReadPosition>` keyed by
+conversation id. Writes replace the whole host map. No format replacement or migration
+is needed: this app-private, backup-excluded family remains the older-daemon fallback.
+
+`completedTurnId` holds a completed daemon turn id or a phone-minted UUID row token;
+`readTurnId` is the token copied on local open, or `null`. `unread` is their inequality,
+and an absent position is locally read. These are equality keys, never durable entry ids.
+`HostConversationSource` is the production reader/writer, retaining bounded positions
+across restart. For a conversation with a confirmed daemon `readUpTo`, completion,
+row growth and opening leave local positions unchanged and attention instead compares
+the repository's known unsigned latest durable id with that shared mark. Old stored
+positions may remain but cannot override shared facts.
+
+Shared marks are not restored from disk, and cached conversation fields cannot establish
+connected-daemon support. A replacement repository drops the previous connection's read
+facts; an older daemon omitting them resumes local bookkeeping. See
+[Attention state](dependency-injection-host-conversation-source.md#attention-state-877)
+for support lifetime, generation ordering and bounds (`MAX_READ_POSITIONS`,
+`MAX_TURN_ID_CHARS`).
 
 Two top-level functions in `ConversationCache.kt` define what a thread may hold, used by both the
 cache (enforced on write) and [`CachingConversationRepository`](caching-conversation-repository.md)

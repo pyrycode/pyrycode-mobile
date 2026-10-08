@@ -275,6 +275,9 @@ internal class ConversationListProjection {
     fun observeReadMarks(conversationId: String): Flow<ConversationReadMarks?> =
         projection.map { it.readMarks[conversationId] }.distinctUntilChanged()
 
+    /** Shares the same merged facts as the per-conversation read, without another request or fold. */
+    fun observeHostReadMarks(): Flow<Map<String, ConversationReadMarks>> = projection.map { it.readMarks }.distinctUntilChanged()
+
     fun recordLatestEntry(
         conversationId: String,
         id: ULong,

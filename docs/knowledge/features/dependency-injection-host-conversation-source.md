@@ -106,9 +106,9 @@ Every conversation row on every host carries exactly one `ConversationAttention`
 exactly, with no mobile-only state. An earlier mobile-only `Failed` state sat after `Running`
 and before `Unread`; #1451 removed it to match desktop, which has no failed state — a turn
 that ends Failed or StoppedEarly while not viewed now folds as an ordinary completed turn and
-resolves Unread, then Idle once opened.
-Drawing the state on `TreeConversationRow` is a separate, blocked ticket; this
-slice only publishes it.
+uses the applicable shared or local unread rule below.
+`TreeConversationRow` preserves the green Unread dot and existing accessibility
+descriptions; other attention consumers use the same precedence.
 
 `HostConversationSource.attention: StateFlow<Map<String, Map<String, ConversationAttention>>>`
 is keyed by `serverId` then conversation id and holds **non-Idle entries only** — a
@@ -119,8 +119,30 @@ attention. `ChannelListViewModel.hostState` joins the two at the entry level (se
 [state projection § Attention join](channel-list-viewmodel-projection.md#attention-join-877)).
 
 The fold itself is the internal, pure `HostAttentionState` data class — no clock, no
-I/O, no logging, because every id it touches is daemon-authored and used only as an
-equality key:
+I/O or logging. Turn ids and local row tokens are equality keys; durable entry ids
+are compared as unsigned values.
+
+**Shared unread (#1883).** For each conversation with a present confirmed `readUpTo` (wire `read_up_to`),
+unread is exactly `latestEntryId > readUpTo` (wire latest is `latest_entry_id`). An unknown latest id asserts no durable
+unread; zero is a valid mark. `observeHostReadMarks()` projects the repository's existing
+`ConversationReadMarks` map, with no new request, inbound consumer or checkpoint fold.
+List refreshes, confirmed replies/peer pushes and received history/live/replay durable
+identity recompute attention immediately. `conversation_updated` supplies a mark,
+not a new latest id. The mark is shared across paired clients on that daemon host,
+never across hosts with equal conversation ids. See the
+[repository read facts](remote-conversation-repository.md) and
+[phone read proof](../../e2e-interactive-stream.md#phone-read-mark-proof-1912).
+
+Opening or viewing a supported conversation, adding local rows and completing a turn
+do not change its local positions or override the shared comparison. Completion still
+updates bounded counted-turn bookkeeping for once-per-turn alert candidates. A modern
+thread remains unread until the daemon confirms a mark covering its newest known entry.
+Local UUIDs/turn ids never become durable ids; notification cancellation is a separate
+consumer concern.
+
+**Older-daemon fallback.** When `readUpTo` is absent, only that conversation uses
+the existing host-keyed, persisted `ReadPosition` rules below. Cached read-field
+presence cannot negotiate support for a connected daemon.
 
 **`busy` (#1452).** A conversation blinks `Running` not only while a turn runs, but also while it
 is stalled, retrying the API, compacting or resetting — desktop's `isWorking`
@@ -146,14 +168,15 @@ since desktop has no such edge. No new visuals: a busy conversation resolves to 
   clears `running` and, unless its `turnId` is blank, over `MAX_TURN_ID_CHARS` (256), or
   already **counted** — in the bounded per-conversation `counted` list (newest last, capped
   at `MAX_COUNTED_TURNS_PER_CONVERSATION` = 16) or equal to the stored position's
-  `completedTurnId`/`readTurnId` — records the turn as counted and sets a `ReadPosition`
+  `completedTurnId`/`readTurnId` — records the turn as counted. Only for fallback
+  conversations, it also sets a `ReadPosition`
   (read immediately if `viewing`, else `completedTurnId` only, keeping the prior
   `readTurnId`). `completed` draws no distinction by how the turn ended — a failed, interrupted
   or early-stopped turn sets that same `ReadPosition` like any other completed turn (#1451
   removed the separate `failed` fold this used to feed; [#1357](turn-outcome-indicator.md)
   later removed the outcome classifier itself, which this fold never called), so it resolves
   Unread when not viewed and Idle once opened. Every other event is a no-op.
-- `rowsAdded(conversationId, viewing, token)` (#1361) is the other way a conversation turns
+- For fallback conversations, `rowsAdded(conversationId, viewing, token)` (#1361) is the other way a conversation turns
   Unread: a row — a text delta's bubble, a tool call, a banner, a session boundary, a
   compaction divider, a refusal, an attachment offer, a `TurnEnd` — appended to the thread,
   rather than only a turn ending. A compaction divider now counts from two triggers (#1358):
@@ -174,8 +197,8 @@ since desktop has no such edge. No new visuals: a busy conversation resolves to 
   `ConversationCache.kt`). A `TurnEnd` that follows rows already counted by `rowsAdded` still
   runs its own counted/alert bookkeeping — the two folds are independent, so a turn with no
   rows still marks Unread as before, and a turn after rows still alerts once.
-- `opened(conversationId)` sets `readTurnId = completedTurnId`.
-- `disconnected()` clears `running` only — positions survive a lost
+- `opened(conversationId)` is a no-op with shared marks; otherwise it sets `readTurnId = completedTurnId`.
+- `disconnected()` clears `running` and `busy` — read facts and positions survive a lost
   connection in memory, matching the lifecycle driver closing a supervisor and the
   collector below seeing a null repository.
 - `restored(stored)` merges positions read from the cache under the live ones — a live
@@ -200,10 +223,11 @@ constructor parameter (`relay(...)` and `demo(...)` both default to a fresh inst
 folds `viewing.viewed` per host, re-opening every currently-viewed conversation of that
 host on each change. `ChannelListViewModel.onHostRowTapped` calls
 `hostSource.markOpened(serverId, conversationId)` directly instead — the list tap has no
-`ConversationViewing` handle of its own, so opening it also advances the read position via
-`opened`, but does not hold the conversation read past that one call the way a thread's view does.
+`ConversationViewing` handle of its own, so opening it advances the fallback read
+position via `opened`, but does not hold the fallback conversation read past that one call the way a thread's view does. Neither signal
+is read proof for a modern daemon.
 
-`HostConversationSource.launchAttention(entry)` runs six collectors under the same
+`HostConversationSource.launchAttention(entry)` runs independent collectors under the same
 `entry.job` `reconcile` already cancels on bundle replacement or removal: the live-event
 fold (reading `viewing` under the class monitor via `updateAttention`), a `repositories`
 null emission → `disconnected()`, a second, independent `connection.repositories.collectLatest`
@@ -222,12 +246,21 @@ emission; `collectLatest` cancels the previous repository's `seen` along with it
 replacement, so the next repository restarts at zero rather than carrying over the old one's
 counts. The combined `modals`/`questionBatches` → `resolve`, and, only when a `cache` is
 bound, a one-shot restore followed by a collector over each distinct positions map, written
-through `ConversationCache.writeReadPositions`, round out the six. All of them
-route through one `@Synchronized updateAttention(entry, change)`, which reuses `update`'s
-staleness guard (factored out as `isCurrent(entry)`) so a retired bundle cannot publish or
-persist.
+through `ConversationCache.writeReadPositions`, complete the collection paths. All of them
+route through one synchronized `updateAttention` mutation, which rejects retired bundles.
+The host-read-facts collector uses `collectLatest`, and row/read-fact callbacks also
+check exact current repository identity to reject superseded callbacks. A disconnect
+retains last-known shared attention; each non-null replacement clears prior read facts
+exactly once, before any consumer mutation. Restoration supplies only local positions.
 
-Rows the phone already had re-enter a repository's `ThreadProjection` only through
+**Replacement ordering matters (#1883).** Cancelling separate collectors does not
+order the read-fact reset before replay rows or completion events. `Held.attentionRepository`
+is established inside the same monitor as every attention mutation, so replacement
+rows/completions cannot consume a previous daemon's support and lose fallback bookkeeping.
+Consumer-first dispatcher regressions force both orderings. No suspension occurs under
+that monitor; entry removal, bundle replacement and disposal cancel owned jobs.
+
+For fallback tracking, rows the phone already had re-enter a repository's `ThreadProjection` only through
 `observeMessages`'s `backfill_since` and `requestHistory` pages, and only `ThreadViewModel`
 asks for those, whose lifetime is the `ConversationViewing` view — so a conversation's own
 backfill, including the one a reconnect repeats against the new repository, lands while it is
@@ -250,14 +283,14 @@ heals it. A fix needs to close both paths together, either by folding the clear 
 write with `connection.repositories.value === repository`, the way the snapshot path's
 `update(entry, repository)` already does.
 
-**Known gap: a restore landing after a view opens does not re-mark it read.** The restore
+**Fallback-only known gap: a restore landing after a view opens does not re-mark it read.** The restore
 collector folds `attention.restored(written)` directly, without re-applying `opened` for
 this host's currently-viewed conversations — unlike the `viewing.viewed` collector, which
 does re-open on every change. Concretely: process death while the operator is on a thread,
 Android restores straight into that thread (registering the view against empty positions),
 and the stored `ReadPosition(T, null)` that arrives afterward reads Unread while the thread
 is open, and stays Unread after backing out. Flagged as a verifier SHOULD FIX on the PR;
-low impact today because nothing draws attention yet, so it did not block. The fix belongs
+this historical finding remains scoped to local fallback positions. The fix belongs
 with whichever ticket next touches `launchAttention`'s restore branch (candidate: fold
 `opened` for this host's `viewing.viewed` entries right after `restored`).
 

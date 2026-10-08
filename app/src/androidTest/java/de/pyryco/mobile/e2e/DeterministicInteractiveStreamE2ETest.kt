@@ -59,6 +59,8 @@ import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -472,6 +474,64 @@ class DeterministicInteractiveStreamE2ETest {
         // Keep driving Compose frames while layout/reveal qualification catches up with receipt.
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
             runBlocking { (repository.observeReadMarks(conversationId).first()?.readUpTo ?: 0uL) >= checkpoint }
+        }
+
+        // #1883 rung 4: a new durable post stays unread until a peer reads it, with no phone reopen.
+        composeTestRule.onNodeWithContentDescription("Back").performClick()
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isNotEmpty()
+        }
+        // The owned post control admits only the existing e2e1833 fixture prefix.
+        DaemonFaultControl().posts(SEED_CHANNEL_NAME, "e2e1833-attention-read", 1)
+        val postText = "e2e1833-attention-read-000"
+        runBlocking {
+            withTimeout(REPLY_TIMEOUT_MS) {
+                repository.threadSnapshots(conversationId).first { snapshot ->
+                    snapshot.rows.filterIsInstance<ThreadItem.MessageItem>().any {
+                        it.message.content == postText && !it.message.isStreaming
+                    }
+                }
+            }
+            // Channel-post pushes omit durable ids. After receipt proves the append completed, a
+            // fresh list subscription requests latest_entry_id without reopening or reading the post.
+            repository.observeConversations(ConversationFilter.All).first()
+        }
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val row = hasText(SEED_CHANNEL_NAME) and hasTestTag(de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG)
+        val unread = context.getString(R.string.cd_conversation_attention_unread)
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(row and hasContentDescription(unread)).fetchSemanticsNodes().isNotEmpty()
+        }
+        val args = InstrumentationRegistry.getArguments()
+        SecondClientPeer(
+            PairedServer(
+                requireNotNull(args.getString("serverId")),
+                requireNotNull(args.getString("peerToken")),
+                requireNotNull(args.getString("relayUrl")),
+                requireNotNull(args.getString("serverStaticPublicKey")),
+            ),
+        ).use { peer ->
+            runBlocking {
+                peer.open(CONNECT_TIMEOUT_MS)
+                val history = peer.history(conversationId, THREAD_TIMEOUT_MS)
+                assertTrue(
+                    "peer received the durable post",
+                    history.any {
+                        val text =
+                            it.payload.jsonObject["text"]
+                                ?.jsonPrimitive
+                                ?.content
+                        it.type == "assistant_delta" && text == postText
+                    },
+                )
+                val latest = requireNotNull(history.maxOfOrNull { it.id })
+                assertTrue("peer read confirmed", peer.markRead(conversationId, latest, THREAD_TIMEOUT_MS) >= latest)
+            }
+            val idle = context.getString(R.string.cd_conversation_attention_idle)
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(row and hasContentDescription(idle)).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNodeWithTag(CHANNEL_LIST_TEST_TAG).assertIsDisplayed()
         }
     }
 
