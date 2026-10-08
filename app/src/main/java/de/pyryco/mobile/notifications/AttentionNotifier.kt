@@ -117,7 +117,7 @@ class AttentionNotifier(
                 else ->
                     notificationLock.withLock {
                         if (alert.kind == AttentionAlert.Kind.TurnCompleted &&
-                            readMarksOf(alert.serverId, alert.conversationId)?.coversLatest() == true
+                            readMarksOf(alert.serverId, alert.conversationId)?.coversCompletion(alert.historyEntryId) == true
                         ) {
                             "read"
                         } else {
@@ -173,6 +173,10 @@ private fun ConversationReadMarks.coversLatest(): Boolean {
     val latest = latestEntryId ?: return false
     return confirmed >= latest
 }
+
+/** A read replay stays read even when the conversation already holds newer unread activity. */
+private fun ConversationReadMarks.coversCompletion(historyEntryId: ULong?): Boolean =
+    if (historyEntryId != null) readUpTo?.let { it >= historyEntryId } == true else coversLatest()
 
 /**
  * The notification tap's contract with `MainActivity` (#685). `MainActivity` is exported, so any app can

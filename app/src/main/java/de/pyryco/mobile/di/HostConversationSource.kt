@@ -58,6 +58,8 @@ data class AttentionAlert(
     val conversationId: String,
     val kind: Kind,
     val key: String,
+    /** Present only for a history-backed completion; never inferred from the conversation's latest. */
+    val historyEntryId: ULong? = null,
 ) {
     enum class Kind { TurnCompleted, Prompt }
 }
@@ -249,7 +251,13 @@ class HostConversationSource internal constructor(
                     attention = attention.onEvent(event, viewing.isViewing(connection.serverId, event.conversationId))
                     // The fold appends a turn id to `counted` only when it counts that turn for the first time.
                     if (event is LiveSessionEvent.TurnEnd && attention.counted[event.conversationId] != before) {
-                        alert(connection.serverId, event.conversationId, AttentionAlert.Kind.TurnCompleted, event.turnId)
+                        alert(
+                            connection.serverId,
+                            event.conversationId,
+                            AttentionAlert.Kind.TurnCompleted,
+                            event.turnId,
+                            event.historyEntryId,
+                        )
                     }
                 }
             }
@@ -367,8 +375,9 @@ class HostConversationSource internal constructor(
         conversationId: String,
         kind: AttentionAlert.Kind,
         key: String,
+        historyEntryId: ULong? = null,
     ) {
-        alertEvents.tryEmit(AttentionAlert(serverId, conversationId, kind, key))
+        alertEvents.tryEmit(AttentionAlert(serverId, conversationId, kind, key, historyEntryId))
     }
 
     /** Each outstanding prompt's key and its conversation; a blank-conversation prompt belongs to none. */

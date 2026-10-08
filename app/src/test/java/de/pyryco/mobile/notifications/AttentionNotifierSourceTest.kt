@@ -2,6 +2,7 @@ package de.pyryco.mobile.notifications
 
 import android.Manifest
 import android.app.Application
+import android.app.Notification
 import android.app.NotificationManager
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -104,6 +105,34 @@ class AttentionNotifierSourceTest {
             a.end("future", 6u)
             runCurrent()
             assertTrue(postedTargets().isEmpty())
+        }
+
+    @Test
+    fun aReadReplayBehindANewerUnreadEntryPreservesThePromptAndTheNextUnreadCompletionPosts() =
+        withSource { a, _, _ ->
+            a.list(5u, 6u)
+            runCurrent()
+            a.prompt("outstanding")
+            runCurrent()
+            val prompt = shadowOf(manager).allNotifications.single()
+            a.end("unseen-read-replay", 5u)
+            runCurrent()
+            assertEquals(prompt, shadowOf(manager).allNotifications.single())
+            a.read(5u)
+            a.end("unseen-read-replay", 5u)
+            runCurrent()
+            assertEquals(prompt, shadowOf(manager).allNotifications.single())
+            a.end("subsequent-unread", 7u)
+            runCurrent()
+            assertEquals(setOf(target("a")), postedTargets())
+            assertEquals(
+                app.getString(de.pyryco.mobile.R.string.notification_turn_completed),
+                shadowOf(manager)
+                    .allNotifications
+                    .single()
+                    .extras
+                    .getString(Notification.EXTRA_TEXT),
+            )
         }
 
     @Test
