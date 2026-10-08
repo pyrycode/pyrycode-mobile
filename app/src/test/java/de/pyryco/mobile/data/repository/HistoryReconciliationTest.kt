@@ -208,7 +208,15 @@ class HistoryReconciliationTest {
             val emissions = mutableListOf<List<ThreadItem>>()
             val job =
                 backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
-                    CachingConversationRepository(delegate, cache, "host").observeMessages("c").collect { emissions += it }
+                    CachingConversationRepository(
+                        delegate,
+                        cache,
+                        "host",
+                        processingDispatcher = UnconfinedTestDispatcher(),
+                    ).observeMessages("c").collect {
+                        emissions +=
+                            it
+                    }
                 }
             runCurrent()
             live.value = reduced(user(1, "u", ids = "[\"$ATTACHMENT\"]"), delta(3, 1, "b"), tool(4), result(4), delta(6, 3, "d"), end(7))
@@ -340,7 +348,7 @@ class HistoryReconciliationTest {
                 object : ConversationRepository by FakeConversationRepository() {
                     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = live
                 }
-            val repository = CachingConversationRepository(delegate, cache, "host")
+            val repository = CachingConversationRepository(delegate, cache, "host", processingDispatcher = UnconfinedTestDispatcher())
             repeat(2) {
                 val emissions = mutableListOf<List<ThreadItem>>()
                 val reader =
@@ -407,7 +415,15 @@ class HistoryReconciliationTest {
             val emissions = mutableListOf<List<ThreadItem>>()
             val job =
                 backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
-                    CachingConversationRepository(delegate, cache, "host").observeMessages("c").collect { emissions += it }
+                    CachingConversationRepository(
+                        delegate,
+                        cache,
+                        "host",
+                        processingDispatcher = UnconfinedTestDispatcher(),
+                    ).observeMessages("c").collect {
+                        emissions +=
+                            it
+                    }
                 }
             runCurrent()
             live.value = reduced(user(1, "kept"), user(3, "newer"))

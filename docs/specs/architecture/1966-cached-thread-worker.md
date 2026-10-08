@@ -43,3 +43,7 @@ Inject an immediate test dispatcher into existing cache-observer fixtures withou
 ## Open Questions
 
 None.
+
+## Revisions
+
+- 2026-10-08: Final sizing is approximately 850 written lines, including seven scheduling/invariant probes and 40 existing constructor injections across seven test files. The raw consumer count exceeds ten; dispatcher plumbing remains a one-consumer prerequisite of this ticket, so the handoffs floor exception still applies. The two 100,000-row fixtures separately guard cache/live merge traversal and direct cache-policy traversal; publication and write timing remain unchanged.
