@@ -20,6 +20,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import org.junit.After
@@ -117,6 +119,8 @@ class CachingConversationRepositoryTest {
                 ).observeMessages("conv-1").first()
 
             assertEquals(restored, drawn)
+            advanceTimeBy(100)
+            runCurrent()
             assertEquals(emptyList<List<ThreadItem>>(), cache.writes)
         }
 
@@ -146,6 +150,8 @@ class CachingConversationRepositoryTest {
                 listOf(message("m1"), boundary, message("m2"), tool("toolu_1", ToolCallStatus.Done), message("m3")),
                 emissions.last(),
             )
+            advanceTimeBy(100)
+            runCurrent()
             assertEquals(emissions.last(), cache.writes.single())
             job.cancel()
         }
@@ -170,12 +176,16 @@ class CachingConversationRepositoryTest {
 
             live.value = listOf(message("m1"), message("m2"), message("t1", isStreaming = true))
             val written = listOf(message("m1"), message("m2"))
+            advanceTimeBy(100)
+            runCurrent()
             assertEquals(listOf(written), cache.writes)
 
             // The stable facade's empty emission on a connection loss.
             live.value = emptyList()
 
             assertEquals(written, emissions.last())
+            advanceTimeBy(100)
+            runCurrent()
             assertEquals(listOf(written), cache.writes)
             job.cancel()
         }
@@ -205,6 +215,8 @@ class CachingConversationRepositoryTest {
 
             val drawn = listOf(message("m1"), message("m2"), message("m3"))
             assertEquals(drawn, emissions.last())
+            advanceTimeBy(100)
+            runCurrent()
             assertEquals(drawn, cache.writes.last())
             job.cancel()
         }
@@ -239,6 +251,8 @@ class CachingConversationRepositoryTest {
             live.value = listOf(message("m1"), message("a1"), message("a2"), message("m3"))
             val drawn = listOf(message("m1"), message("a1"), offer, message("a2"), message("m3"))
             assertEquals(drawn, emissions.last())
+            advanceTimeBy(100)
+            runCurrent()
             assertEquals(drawn, cache.writes.last())
             job.cancel()
         }
@@ -267,6 +281,8 @@ class CachingConversationRepositoryTest {
 
             val drawn = listOf(message("m1"), message("a1"), offer, message("a2"))
             assertEquals(drawn, emissions.last())
+            advanceTimeBy(100)
+            runCurrent()
             assertEquals(drawn, cache.writes.last())
             job.cancel()
         }
@@ -323,6 +339,8 @@ class CachingConversationRepositoryTest {
             live.value = listOf(sent(MessageAttachment(ATTACHMENT_ID)), message("a1"))
 
             assertEquals(listOf(sent(named), message("a1")), emissions.last())
+            advanceTimeBy(100)
+            runCurrent()
             assertEquals(listOf(sent(named), message("a1")), cache.writes.last())
             job.cancel()
         }
@@ -361,6 +379,8 @@ class CachingConversationRepositoryTest {
             assertEquals(listOf(message("older")), emissions.last())
             snapshots.value = ThreadSnapshot(emptyList(), setOf("mine", "another-pending-echo"))
             assertEquals(listOf(message("older")), emissions.last())
+            advanceTimeBy(100)
+            runCurrent()
             assertEquals(listOf(message("older")), cache.writes.last())
 
             // Pending suppression must not rebase the cache as if the connection closed. Otherwise
@@ -368,6 +388,8 @@ class CachingConversationRepositoryTest {
             val delivered = ThreadItem.MessageItem(sent.message.copy(attachments = listOf(MessageAttachment(ATTACHMENT_ID))))
             snapshots.value = ThreadSnapshot(listOf(delivered))
             assertEquals(listOf(message("older"), sent), emissions.last())
+            advanceTimeBy(100)
+            runCurrent()
             assertEquals(listOf(message("older"), sent), cache.writes.last())
             job.cancel()
         }
@@ -426,6 +448,8 @@ class CachingConversationRepositoryTest {
 
             val drawn = listOf(message("m1"), row, message("m2"), message("m3"))
             assertEquals(drawn, emissions.last())
+            advanceTimeBy(100)
+            runCurrent()
             assertEquals(drawn, cache.writes.last())
             job.cancel()
         }
@@ -448,11 +472,15 @@ class CachingConversationRepositoryTest {
             live.value = listOf(message("m1"), message("t1", isStreaming = true, content = "Hel"))
             live.value =
                 listOf(message("m1"), message("t1", isStreaming = true, content = "Hello"), tool("toolu_1", ToolCallStatus.Running))
+            advanceTimeBy(100)
+            runCurrent()
             assertEquals(emptyList<List<ThreadItem>>(), cache.writes)
 
             live.value = listOf(message("m1"), message("t1", content = "Hello"), tool("toolu_1", ToolCallStatus.Done))
             live.value = listOf(message("m1"), message("t1", content = "Hello"), tool("toolu_1", ToolCallStatus.Done))
 
+            advanceTimeBy(100)
+            runCurrent()
             assertEquals(
                 listOf(listOf(message("m1"), message("t1", content = "Hello"), tool("toolu_1", ToolCallStatus.Done))),
                 cache.writes,
@@ -492,9 +520,13 @@ class CachingConversationRepositoryTest {
                 }
 
             live.value = listOf(message("m1"))
+            advanceTimeBy(100)
+            runCurrent()
             cache.failWrites = false
             live.value = listOf(message("m1"), message("m2"))
 
+            advanceTimeBy(100)
+            runCurrent()
             assertEquals(2, cache.writes.size)
             assertTrue(logs.any { it.contains("event=thread_cache_write_failed") })
             logs.forEach { assertTrue("log leaked an identifier or row: $it", !it.contains("SECRET") && !it.contains("content of")) }
@@ -600,12 +632,16 @@ class CachingConversationRepositoryTest {
             val repository = CachingConversationRepository(delegate, cache, "server-a", processingDispatcher = UnconfinedTestDispatcher())
             val job = launch { repository.observeMessages("conv-1").collect { } }
             live.value = listOf(message("m1"), message("m3"))
+            advanceTimeBy(100)
+            runCurrent()
             assertEquals(listOf(message("m1"), message("m3")), cache.readThread("server-a", "conv-1"))
 
             repository.delete("conv-1")
             // A late row between the delete and the screen's PopBack must not resurrect the document.
             live.value = listOf(message("m1"), message("m3"), message("m4"))
 
+            advanceTimeBy(100)
+            runCurrent()
             assertEquals(emptyList<ThreadItem>(), cache.readThread("server-a", "conv-1"))
             job.cancel()
         }
@@ -633,6 +669,8 @@ class CachingConversationRepositoryTest {
             repository.writeHistoryPosition("conv-1", position)
             // A row write after the position write keeps it.
             live.value = listOf(message("m0"), message("m1"))
+            advanceTimeBy(100)
+            runCurrent()
             assertEquals(listOf(message("m0"), message("m1")), cache.readThread("server-a", "conv-1"))
 
             assertEquals(position, repository.readHistoryPosition("conv-1")?.copy(coverage = null))
@@ -645,6 +683,8 @@ class CachingConversationRepositoryTest {
 
             repository.writeHistoryPosition("conv-1", null)
             assertTrue(repository.readHistoryPosition("conv-1")?.coverage?.unknown == true)
+            advanceTimeBy(100)
+            runCurrent()
             assertEquals(listOf(message("m0"), message("m1")), cache.readThread("server-a", "conv-1"))
             job.cancel()
         }
@@ -664,6 +704,8 @@ class CachingConversationRepositoryTest {
             assertEquals(position, repository.readHistoryPosition("conv-1")?.copy(coverage = null))
 
             live.value = atLimit + message("newest")
+            advanceTimeBy(100)
+            runCurrent()
             assertEquals(MAX_CACHED_THREAD_ROWS, cache.readThread("server-a", "conv-1").size)
             assertTrue(repository.readHistoryPosition("conv-1")?.coverage?.unknown == true)
             job.cancel()

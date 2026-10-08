@@ -61,13 +61,21 @@ None.
 
 - [Trust boundaries] No new parser or trust boundary. Candidates contain existing `ThreadSnapshot` model rows; cache restoration does not grant read evidence or make daemon text trusted.
 - [Tokens] No token/key storage or handling is added. Candidate diagnostics must not interpolate rows, ids, cursors or exceptions.
-- [Files and storage] Retain `FileConversationCache` app-private hashed host/conversation paths, atomic replacement and existing backup exclusions. The existing plaintext conversation cache policy and rooted-device confidentiality are outside this scheduling ticket; no new secret or file format is introduced.
+- [Files and storage] Retain `FileConversationCache` app-private `noBackupFilesDir` root, hashed host/conversation paths, atomic replacement and existing backup exclusions. The existing plaintext conversation cache policy and rooted-device confidentiality are outside this scheduling ticket; no new secret or file format is introduced.
 - [Android attack surface] No manifest, exported component, intent, provider or WebView change.
 - [Cryptography] No handshake, nonce, randomness or key changes; the vendored Noise variant remains unchanged.
 - [Network and I/O] The daemon stream stays sequential. Pending disk work is conflated and failed writes do not busy-loop. Cleanup uses the cache's existing I/O scheduling and completion contract.
 - [Errors, logs and telemetry] Retain only the existing debug static failure event; no new telemetry or identifying diagnostics.
-- [Concurrency] SHOULD FIX: a delayed candidate could overwrite newer coverage rows. The drawn-generation satisfaction guard under `historyWrites` is required, including successful rows followed by failed state persistence. SHOULD FIX: deletion must defeat delayed and cleanup writes; preserve the in-lock tombstone guard and join the child before cleanup returns.
+- [Concurrency] SHOULD FIX: a delayed candidate could overwrite newer coverage rows. The drawn-generation satisfaction guard under `historyWrites` is required, including successful rows followed by failed state persistence; newer candidates must compare with the actual successful history baseline. SHOULD FIX: deletion must defeat delayed and cleanup writes; preserve the in-lock tombstone guard and join the child before cleanup returns.
 - [Threat model] Relay delay/flood/replay is handled by existing Noise/wire validation and bounded pending scheduling, without plaintext logs. Hostile text stays in existing typed/cache-policy paths. Token theft and UI screenshot/accessibility/keyboard leakage are unaffected; current key-store/render owners retain those mitigations. Process termination may lose pending rows, as explicitly permitted by the cleanup contract.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-08
+
+## Revisions
+
+- 2026-10-08: `coverageInvariant_newerRemovalComparedWithActualPersistedHistoryRows` exposed a baseline gap: a coverage save can add rows while the observer still remembers an earlier successful write. Keep the coverage save's cacheable rows together with its satisfied generation. Later candidates compare against that actual successful history baseline, and unchanged candidates superseded by a history save remain eligible when a newer drawn generation deliberately removes history rows. Only successful storage updates publish this bookkeeping. The bounded timer runs in the collecting scope and only signals readiness; filtering/comparison and the writer remain on the processing dispatcher.
+
+- 2026-10-08: Final sizing is approximately 930 written lines including deleted/replaced code, the plan and 23 new probes. There are no exported declarations or signature migrations; the four acceptance criteria and scheduling/reject branches remain within the ticket limits.
+
+- 2026-10-08: The renderer-collision probe independently fails in the unchanged `mergeUnsignedCachedRows`, before the writer runs. Filed #1979 in Inbox and retained `identityInvariant_collidingRendererKeysKeepBothIdentitiesThroughPendingReconnect` with an explicit ignored blocker. The scheduling implementation does not change merge admission; existing renderer-owner and reconnect probes remain enabled.
