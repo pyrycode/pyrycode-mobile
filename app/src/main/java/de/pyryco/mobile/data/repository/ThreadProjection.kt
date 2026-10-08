@@ -1006,11 +1006,23 @@ internal class ThreadProjection(
                             it.message.ordinaryId in mintedMessageIds.value[conversationId].orEmpty()
                     }.associateBy { it.message.ordinaryId }
             val receiving = existing.filterNot { it is ThreadItem.MessageItem && it.message.ordinaryId in provisional }
+            val placementTimestamps =
+                reduced.rows
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .filter { it.message.ordinaryId in provisional }
+                    .associate { it.mergeIdentity() to it.message.timestamp }
             val incoming =
                 reduced.rows.map { row ->
                     if (row is ThreadItem.MessageItem) provisional[row.message.ordinaryId] ?: row else row
                 }
-            val merged = receiving.mergeUnsignedHistoryRows(incoming, order, firstEvidence, rendererOwners = existing)
+            val merged =
+                receiving.mergeUnsignedHistoryRows(
+                    incoming,
+                    order,
+                    firstEvidence,
+                    rendererOwners = existing,
+                    placementTimestamps = placementTimestamps,
+                )
             val settledEchoes =
                 deliveries.fold(echoes) { echoes, delivery ->
                     val entryId = delivery.queuedMsgId ?: return@fold echoes

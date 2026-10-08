@@ -830,7 +830,9 @@ internal fun List<ThreadItem>.mergeUnsignedHistoryRows(
     order: Map<Any, ULong>,
     firstEvidence: Set<Any> = emptySet(),
     rendererOwners: List<ThreadItem> = emptyList(),
-): List<ThreadItem> = mergeRows(rows, order, firstEvidence = firstEvidence, rendererOwners = rendererOwners)
+    placementTimestamps: Map<Any, Instant> = emptyMap(),
+): List<ThreadItem> =
+    mergeRows(rows, order, firstEvidence = firstEvidence, rendererOwners = rendererOwners, placementTimestamps = placementTimestamps)
 
 /** Insert fresh history or reconnect evidence beside its neighbours; held markers never move on replay. */
 private fun List<ThreadItem>.withHistoryLifecyclePositions(
@@ -914,8 +916,13 @@ private fun List<ThreadItem>.mergeRows(
     cacheRestore: Boolean = false,
     firstEvidence: Set<Any> = emptySet(),
     rendererOwners: List<ThreadItem> = emptyList(),
+    placementTimestamps: Map<Any, Instant> = emptyMap(),
 ): List<ThreadItem> {
     if (incoming.isEmpty()) return if (rendererOwners.isEmpty()) this else withUniqueMessageKeys(this, incoming, rendererOwners)
+
+    // Retained provisional metadata must not replace the incoming delivery's placement evidence.
+    fun ThreadItem.placementTimestamp(): Instant = placementTimestamps[mergeIdentity()] ?: mergeTimestamp()
+
     val parents =
         assistantParents().apply {
             incoming.assistantParents().forEach { (turn, parent) -> putIfAbsent(turn, parent) }
@@ -990,7 +997,7 @@ private fun List<ThreadItem>.mergeRows(
         following[index] = next
         positions[rows[index].mergeIdentity()]?.let { next = it }
     }
-    val runTimestamp = rows.minOfOrNull { it.mergeTimestamp() } ?: Instant.DISTANT_PAST
+    val runTimestamp = rows.minOfOrNull { it.placementTimestamp() } ?: Instant.DISTANT_PAST
     val heldMessageIds = base.filterIsInstance<ThreadItem.MessageItem>().associateBy { it.message.id }
     val slots = HashMap<Int, MutableList<ThreadItem>>()
     val lifecycle = mutableListOf<ThreadItem.BackgroundTaskLifecycle>()
@@ -1032,7 +1039,7 @@ private fun List<ThreadItem>.mergeRows(
         val logBefore = logId?.let { logPositions.lowerEntry(it)?.value?.plus(1) }
         val logAfter = logId?.let { logPositions.higherEntry(it)?.value }
         val logBounds = if (logBefore == null && logAfter == null) null else (logBefore ?: 0)..(logAfter ?: base.size)
-        val logSlot = logBounds?.let { maxOf(it.first, minOf(it.last, clocks.insertionSlot(row.mergeTimestamp()))) }
+        val logSlot = logBounds?.let { maxOf(it.first, minOf(it.last, clocks.insertionSlot(row.placementTimestamp()))) }
         val neighbour =
             previous?.plus(1) ?: following[index].takeIf { it >= 0 }?.let {
                 // Leading restored rows preceded live-only rows before the cache was written.
@@ -1041,10 +1048,10 @@ private fun List<ThreadItem>.mergeRows(
         var slot =
             when {
                 lower != null ->
-                    maxOf(lower + 1, neighbour ?: logSlot ?: clocks.insertionSlot(row.mergeTimestamp())).coerceAtMost(
+                    maxOf(lower + 1, neighbour ?: logSlot ?: clocks.insertionSlot(row.placementTimestamp())).coerceAtMost(
                         upper ?: base.size,
                     )
-                upper != null -> minOf(upper, neighbour ?: logSlot ?: clocks.insertionSlot(row.mergeTimestamp()))
+                upper != null -> minOf(upper, neighbour ?: logSlot ?: clocks.insertionSlot(row.placementTimestamp()))
                 neighbour != null -> neighbour
                 logSlot != null -> logSlot
                 else -> clocks.insertionSlot(runTimestamp)

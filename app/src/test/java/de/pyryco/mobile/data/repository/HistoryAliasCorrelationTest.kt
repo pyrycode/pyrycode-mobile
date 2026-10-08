@@ -301,6 +301,71 @@ class HistoryAliasCorrelationTest {
             }
         }
 
+    @Test fun unchangedOrderInvariant_firstHistoryDeliveryUsesDeliveryClockAndRetainsHeldAliasOnReplay() =
+        runTest {
+            val projection = ThreadProjection()
+            val assistant = segment.copy(timestamp = ts)
+            val user = Message("$wireId~1", "s", Role.User, "own", clock(1), false, reconciliationId = wireId)
+            val tool = Message("tool", "s", Role.Tool, "Read", clock(2), false, toolCall = ToolCall("Read", "held input", ""))
+            projection.appendMessages(listOf("c" to assistant, "c" to user, "c" to tool))
+            parkOwnEchoes(projection, listOf(user))
+            val before = projection.observeSnapshot("c").first()
+            assertEquals(listOf(assistant, tool).map { ThreadItem.MessageItem(it) }, before.rows)
+            assertEquals(setOf(wireId), before.suppressedUserMessageIds)
+            assertEquals(emptyMap<Any, ULong>(), before.unsignedHistoryOrder)
+            val delivery =
+                entry(3u, "message", """{"conversation_id":"c","message_id":"$wireId","role":"user","text":"own","queued_msg_id":1}""")
+                    .copy(timestamp = clock(3))
+            for (entries in listOf(listOf(delivery), listOf(delivery), emptyList(), listOf(delivery))) {
+                projection.mergeHistoryPage("c", HistoryPage(entries, "", true), true)
+                assertDeliveredRows(projection, listOf(assistant, tool, user))
+                assertEquals(
+                    setOf(ThreadItem.MessageItem(user).mergeIdentity()),
+                    projection
+                        .observeSnapshot("c")
+                        .first()
+                        .unsignedHistoryOrder.keys,
+                )
+            }
+        }
+
+    @Test fun unchangedOrderInvariant_multipleProvisionalClocksCannotMoveTheirIncomingRunNeighbours() =
+        runTest {
+            for (newcomerIndex in 0..2) {
+                val projection = ThreadProjection()
+                val assistant = segment.copy(timestamp = ts)
+                val first = Message("$wireId~1", "s", Role.User, "first", clock(1), false, reconciliationId = wireId)
+                val second = Message("second~1", "s", Role.User, "second", clock(-1), false, reconciliationId = "second")
+                val tool = Message("tool", "s", Role.Tool, "Read", clock(2), false, toolCall = ToolCall("Read", "held input", ""))
+                projection.appendMessages(listOf("c" to assistant, "c" to first, "c" to second, "c" to tool))
+                parkOwnEchoes(projection, listOf(first, second))
+                assertEquals(emptyMap<Any, ULong>(), projection.observeSnapshot("c").first().unsignedHistoryOrder)
+                // All wire clocks are after the held tool; either substituted send clock is earlier.
+                val run = mutableListOf(first, second)
+                run.add(newcomerIndex, Message("new", "", Role.User, "neighbour", clock(3 + newcomerIndex), false))
+                val entries =
+                    run
+                        .mapIndexed { index, message ->
+                            val id = message.reconciliationId ?: message.id
+                            val queuedId =
+                                when (message) {
+                                    first -> ",\"queued_msg_id\":1"
+                                    second -> ",\"queued_msg_id\":2"
+                                    else -> ""
+                                }
+                            entry(
+                                (index + 3).toULong(),
+                                "message",
+                                """{"conversation_id":"c","message_id":"$id","role":"user","text":"${message.content}"$queuedId}""",
+                            ).copy(timestamp = clock(index + 3))
+                        }.asReversed()
+                for (page in listOf(entries, entries, emptyList(), entries)) {
+                    projection.mergeHistoryPage("c", HistoryPage(page, "", true), true)
+                    assertDeliveredRows(projection, listOf(assistant, tool) + run)
+                }
+            }
+        }
+
     @Test fun restoredAliasedUserSuppressionAppliesAtObservationAndHistoryWriteBoundaries() =
         runTest {
             val cache = FileConversationCache(tmp.newFolder(), UnconfinedTestDispatcher(testScheduler))
@@ -410,6 +475,44 @@ class HistoryAliasCorrelationTest {
             )
         assertEquals(listOf(ThreadItem.MessageItem(segment), ThreadItem.MessageItem(tool)), projection.observe("c").first())
         return projection
+    }
+
+    private fun clock(seconds: Int) = Instant.fromEpochSeconds(ts.epochSeconds + seconds)
+
+    private fun parkOwnEchoes(
+        projection: ThreadProjection,
+        users: List<Message>,
+    ) {
+        users.forEach { projection.recordMinted("c", it.reconciliationId ?: it.id) }
+        val queued =
+            users
+                .mapIndexed { index, user ->
+                    """{"queued_msg_id":${index + 1},"message_id":"${user.reconciliationId ?: user.id}","text":"${user.content}","ts":"${user.timestamp}"}"""
+                }.joinToString(",")
+        val queue = QueueProjection()
+        queue.apply(frame("queue_state", """{"conversation_id":"c","queued":[$queued]}"""))
+        projection.settleQueuedEchoes(queue) { true }
+        queue.apply(frame("queue_state", """{"conversation_id":"c","queued":[]}"""))
+        projection.settleQueuedEchoes(queue) { true }
+    }
+
+    private suspend fun assertDeliveredRows(
+        projection: ThreadProjection,
+        expected: List<Message>,
+    ) {
+        val snapshot = projection.observeSnapshot("c").first()
+        assertEquals(expected.map { ThreadItem.MessageItem(it) }, snapshot.rows)
+        assertEquals(emptySet<String>(), snapshot.suppressedUserMessageIds)
+        val keys = foldQueuedRows(snapshot.rows, emptyList()).mapIndexed { index, row -> row.listKey(index) }
+        assertEquals(expected.map { "msg:${it.id}" }, keys)
+        assertEquals(expected.size, keys.distinct().size)
+        assertEquals(
+            expected.size,
+            snapshot.rows
+                .map { it.mergeIdentity() }
+                .distinct()
+                .size,
+        )
     }
 
     private fun toolEntry() =
