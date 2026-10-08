@@ -126,6 +126,7 @@ class CachingConversationRepository(
         private val signals = Channel<Unit>(Channel.CONFLATED)
         private var timer: Job? = null
         private val initial = restored
+        private var completed: CacheCandidate? = null
         private val writer =
             scope.launch(processingDispatcher, start = CoroutineStart.UNDISPATCHED) {
                 for (signal in signals) {
@@ -161,6 +162,7 @@ class CachingConversationRepository(
         }
 
         private suspend fun persist(candidate: CacheCandidate) {
+            if (candidate === completed) return
             val result =
                 historyWrites.withLock {
                     val persisted = persistedThreads[conversationId]
@@ -178,7 +180,9 @@ class CachingConversationRepository(
                     }
                     result
                 } ?: return
-            if (result.isFailure) {
+            if (result.isSuccess) {
+                completed = candidate
+            } else {
                 retry.set(true)
                 RelayLog.d { "event=thread_cache_write_failed" }
             }

@@ -545,6 +545,27 @@ class CoalescedThreadWritesTest {
 
     @Test fun baselineInvariant_resubscriptionFlushesRowsAfterObserverSupersedesCoverage() = resubscribeAfterCoverage(true)
 
+    @Test fun baselineInvariant_completedCandidateCannotOverwriteAnotherCollectorsNewerRows() =
+        runTest {
+            val f = Fixture(this)
+            f.send(row("a"))
+            quiet()
+            f.deliveryGate = CompletableDeferred()
+            f.send(row("a"), row("stream", true))
+            val reader = backgroundScope.launch(f.dispatcher) { f.repository.observeThreadSnapshot("c").collect {} }
+            f.send(row("a"), row("b"))
+            quiet()
+            assertEquals(listOf(row("a"), row("b")), f.restored())
+
+            // The held collector already persisted its latest accepted candidate before this newer write.
+            f.reader.cancel()
+            f.reader.join()
+            assertEquals(listOf(row("a"), row("b")), f.restored())
+            reader.cancel()
+            reader.join()
+            assertEquals(2, f.cache.writes.size)
+        }
+
     private fun resubscribeAfterCoverage(flush: Boolean) =
         runTest {
             val f = Fixture(this)
