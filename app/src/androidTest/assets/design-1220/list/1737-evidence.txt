@@ -64,6 +64,11 @@ Figma's page-position x/y is removed, retaining the frame-local coordinates.
 The name/prompt/error coordinates are centered content coordinates: DO NOT
 subtract the status inset from them. Status shifts the header +24 px; navigation
 shifts the bottom-anchored footer -24 px. Real system chrome is outside the audit.
+The drawing's 4 dp outer-frame strip plus 20 dp modal header padding is the
+same effective 24 dp top clearance as the app below its real status bar.
+The drawing's outer frame is replaced by platform bars, not treated as an
+additional app inset. Visible outer clipping is 44 dp in both; the internal
+field/action radii below remain 6 dp.
 
 Aspect                Figma                       App                         Verdict
 Header title row      x28,y24,28 high              x28,y48,28 high             match after status inset
