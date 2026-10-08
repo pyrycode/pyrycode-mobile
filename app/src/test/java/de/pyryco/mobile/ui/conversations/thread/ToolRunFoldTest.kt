@@ -141,6 +141,6 @@ class ToolRunFoldTest {
             val keys = folded.mapIndexed { index, row -> row.listKey(index) }
             assertEquals(keys.toSet().size, keys.size)
         }
-        assertEquals("tool-run:t1", run(tool("t1"), tool("t2")).listKey(0))
+        assertEquals("msg:t1", run(tool("t1"), tool("t2")).listKey(0))
     }
 }

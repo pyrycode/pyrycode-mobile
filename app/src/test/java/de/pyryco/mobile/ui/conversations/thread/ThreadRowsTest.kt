@@ -11,7 +11,6 @@ import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -197,15 +196,15 @@ class ThreadRowsTest {
     }
 
     // A matched row's key is its echo's, so delivery cannot move or recreate it; an unmatched row's key
-    // is positional, so it never depends on a daemon-supplied value.
+    // uses its snapshot occurrence, independently of its thread position.
     @Test
-    fun `a matched row keys on its echo and an unmatched row keys on its position`() {
+    fun `a matched row keys on its echo and an unmatched row keys on its snapshot occurrence`() {
         val items = listOf(userMessage("m-1", "mine"))
         val rows = foldQueuedRows(items, listOf(queued(1L, "mine", messageId = "m-1"), queued(2L, "theirs")))
 
         assertEquals("msg:m-1", rows[0].listKey(0))
         assertEquals(ThreadRow.Delivered(items[0]).listKey(0), rows[0].listKey(0))
-        assertTrue(rows[1].listKey(1).startsWith("queued-row:"))
+        assertEquals("queued-row:2:0", rows[1].listKey(1))
     }
 
     // AC #4 — replacement truth. The fold holds no state, so a second snapshot leaves nothing of the

@@ -40,11 +40,14 @@ sealed interface ThreadRow {
      *   snapshot's own `message_id` would not be (see [QueuedMessage.messageId]): it is read out of the
      *   thread's items, which `withMessage`'s upsert keeps unique, and [foldQueuedRows] lets at most
      *   one row claim a given echo.
+     * @param occurrence Zero-based occurrence of this queued id in the snapshot, counting matched
+     *   entries too. Together with the id it identifies an unmatched row independently of thread position.
      */
     data class Queued(
         val queuedMessageId: Long,
         val text: String,
         val echoId: String?,
+        val occurrence: Int = 0,
     ) : ThreadRow
 
     /**
@@ -124,18 +127,21 @@ internal fun foldQueuedRows(
 
     val claimed = mutableMapOf<Int, ThreadRow.Queued>()
     val unmatched = mutableListOf<ThreadRow.Queued>()
+    val occurrences = mutableMapOf<Long, Int>()
     for (entry in queued) {
+        val occurrence = occurrences[entry.id] ?: 0
+        occurrences[entry.id] = occurrence + 1
         val position = entry.messageId.takeIf { it.isNotEmpty() }?.let { echoPositions[it]?.removeFirstOrNull() }
         if (position == null) {
             // Carries the snapshot's own text and NO echo id: an id this device did not mint must never
             // look like one it did, or a later reader would treat somebody else's message as this
             // device's own.
-            unmatched += ThreadRow.Queued(queuedMessageId = entry.id, text = entry.text, echoId = null)
+            unmatched += ThreadRow.Queued(queuedMessageId = entry.id, text = entry.text, echoId = null, occurrence = occurrence)
         } else {
             // The echo's own content, not the snapshot's: the two are the same message, and the one this
             // device sent is the one it can vouch for.
             val echo = (items[position] as ThreadItem.MessageItem).message
-            claimed[position] = ThreadRow.Queued(queuedMessageId = entry.id, text = echo.content, echoId = echo.id)
+            claimed[position] = ThreadRow.Queued(queuedMessageId = entry.id, text = echo.content, echoId = echo.id, occurrence = occurrence)
         }
     }
 
@@ -205,7 +211,8 @@ internal fun ThreadRow?.isToolRow(): Boolean {
 }
 
 /**
- * The row's `LazyColumn` key, at its [chronologicalIndex] in the folded list. Lives beside the fold
+ * The row's `LazyColumn` key. [chronologicalIndex] is retained for existing callers but does not
+ * participate in identity. Lives beside the fold
  * rather than inside the screen so it is unit-testable, and so the two halves of the uniqueness
  * argument below sit next to each other.
  *
@@ -213,25 +220,28 @@ internal fun ThreadRow?.isToolRow(): Boolean {
  * what leaves the row in place across delivery instead of recreating it at a new identity.
  *
  * Key uniqueness, which the list depends on — a duplicate key throws and takes the thread down:
- * - The namespaces are distinct string literals, so no arm can collide with another.
+ * - Distinct string-literal namespaces separate unrelated identities. Message keys are shared only
+ *   by mutually exclusive representatives of the same message.
  * - `msg:` keys are unique because `withMessage` upserts by id, and because [foldQueuedRows] lets at
  *   most one row claim a given echo (rule 2) and never emits the claimed item a second time.
  * - `boundary:` keys encode exactly the `(previousSessionId, newSessionId, occurredAt)` identity both
  *   boundary writers dedup on (`holdsBoundary`, #775), so no two boundaries the thread holds share a key.
  *   The two ids are daemon-supplied and length-prefixed, so an id containing a separator cannot make two
  *   different triples spell the same key; `occurredAt` comes last and needs no prefix.
- * - An **unmatched** row keys on its position, deliberately **not** on `queued_msg_id`: that value is
- *   daemon-supplied and nothing on this client checks it for uniqueness, so a snapshot repeating one
- *   would mint two identical keys. Position is unique by construction.
- * - A [ThreadRow.ToolRun] (#1635) keys on `tool-run:` and its first row's id. That id is a `msg:` id, unique
- *   as above, and two runs never share a first row. A collapsed run's rows are not emitted and an expanded
- *   run's rows are emitted once, under their own `msg:` keys, so folding adds no duplicate.
+ * - An **unmatched** row keys on `(queued_msg_id, occurrence)`, where [foldQueuedRows] counts every
+ *   occurrence of that id in the snapshot. Repeated ids remain distinct without depending on delivered
+ *   rows, history or display folds. Neither field contains separators: both are decimal numbers.
+ * - A collapsed [ThreadRow.ToolRun] adopts its first tool's `msg:` key; that tool is consumed by the
+ *   fold, so it cannot also be emitted. A lone or marker-exposed tool has the same key. An expanded
+ *   header instead uses `tool-run:` with that id, leaving its re-exposed children their `msg:` keys.
+ *   Two runs never share a first tool, so both collapsed representatives and expanded headers are unique.
  */
+@Suppress("UNUSED_PARAMETER") // Preserve the indexed call shape while identity no longer depends on position.
 internal fun ThreadRow.listKey(chronologicalIndex: Int): String =
     when (this) {
         is ThreadRow.Delivered -> item.listKey()
-        is ThreadRow.Queued -> echoId?.let { "msg:$it" } ?: "queued-row:$chronologicalIndex"
-        is ThreadRow.ToolRun -> "tool-run:$runId"
+        is ThreadRow.Queued -> echoId?.let { "msg:$it" } ?: "queued-row:$queuedMessageId:$occurrence"
+        is ThreadRow.ToolRun -> if (expanded) "tool-run:$runId" else "msg:$runId"
         is ThreadRow.AgentStartMarker -> "agent-start:$agentId"
     }
 

@@ -49,6 +49,11 @@ internal fun ComposeTestRule.verifyAgentRunNavigation(
         return childIds.map { index("msg:$it") }
     }
 
+    // The closed header now represents the first tool under that tool's message key (#1940).
+    // All other child keys must disappear; opening restores every child's independent row.
+    fun childMembership(expanded: Boolean): Boolean =
+        childIds.zip(childIndexes()).all { (id, index) -> (index >= 0) == (expanded || id == runId) }
+
     fun identity(id: String) =
         MessageDigest
             .getInstance("SHA-256")
@@ -81,7 +86,7 @@ internal fun ComposeTestRule.verifyAgentRunNavigation(
     fun assertClosed(stage: String) {
         questionAnswerTarget(closed).assertIsDisplayed()
         record(stage)
-        assertTrue("collapsed owned children must be removed from the list, not disposed", childIndexes().all { it < 0 })
+        assertTrue("only the first-tool representative may retain a collapsed child key", childMembership(expanded = false))
         onAllNodes(ownedChild, useUnmergedTree = true).assertCountEquals(0)
     }
 
@@ -95,7 +100,7 @@ internal fun ComposeTestRule.verifyAgentRunNavigation(
         record("before-$stage")
         target.performTouchInput { click(center) }
         try {
-            waitUntil(10_000) { childIndexes().all { (it >= 0) == expandedAfter } }
+            waitUntil(10_000) { childMembership(expandedAfter) }
             // Opening a tall block can dispose its header. Reveal it once after the state transition.
             list.performScrollToNode(run)
             onNode(to).assertIsDisplayed()

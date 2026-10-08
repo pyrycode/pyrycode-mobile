@@ -187,7 +187,7 @@ class BackgroundAgentBlocksTest {
     @Test fun runningMovesLoadedFamilyAfterNewUsersAndQueueWithoutMutatingItems() {
         val items = listOf(row("a", "Agent"), start(), row("child", "Read", "a"), row("user"), row("grandchild", "Bash", "child"))
         val rows = project(items, queued = listOf(QueuedMessage(7, "queued", ts, "unknown")))
-        assertEquals(listOf("agent-start:a", "msg:user", "queued-row:2", "msg:a", "msg:child", "msg:grandchild"), keys(rows))
+        assertEquals(listOf("agent-start:a", "msg:user", "queued-row:7:0", "msg:a", "msg:child", "msg:grandchild"), keys(rows))
         assertEquals(ToolCallStatus.Running, message(rows, "a").toolCall?.status)
         assertEquals(ToolCallStatus.Done, (items.first() as ThreadItem.MessageItem).message.toolCall?.status)
         assertEquals(mapOf("child" to 1, "grandchild" to 2), toolNestingDepths(items))
@@ -301,7 +301,7 @@ class BackgroundAgentBlocksTest {
         // Each root draws as itself (#1827 follow-up); only its own two-or-more-child run collapses, and
         // that run never merges with the ordinary tool row or with the other block's rows.
         assertEquals(
-            listOf("agent-start:a", "agent-start:b", "msg:ordinary", "msg:a", "tool-run:a-child1", "msg:b", "tool-run:b-child1"),
+            listOf("agent-start:a", "agent-start:b", "msg:ordinary", "msg:a", "msg:a-child1", "msg:b", "msg:b-child1"),
             keys(folded),
         )
         val expanded = foldToolRuns(projected, setOf("a-child1"))
@@ -315,7 +315,7 @@ class BackgroundAgentBlocksTest {
                 "msg:a-child1",
                 "msg:a-child2",
                 "msg:b",
-                "tool-run:b-child1",
+                "msg:b-child1",
             ),
             keys(expanded),
         )

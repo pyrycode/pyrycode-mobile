@@ -49,8 +49,12 @@ Add `ThreadRowAnchorTest.loneToolGrowth_preservesBottomAnchorAndOffset` in share
 
 Run existing tool fold/collapse, background Agent fold/expansion, queue and read viewport coverage, focused device probe and scripted `tool`. Run lint, assemble, Android-test compilation and forced Spotless. After final main merge and push, run the whole JVM/shared suite, assemble and `scripts/pre-verify.py --gradle` with the PR body.
 
-Preserve `InteractiveStreamE2ETest.interactiveTurn_toolPrompt_rendersToolStepInThread`; list it under Live tests. Dispatcher owns the fresh live gate after verification, including executed/failed/skipped evidence; pending execution is explicitly handed off.
+Preserve `InteractiveStreamE2ETest.interactiveTurn_toolPrompt_rendersToolStepInThread`; request `all` under Live tests to satisfy the full live-gate acceptance. Dispatcher owns the fresh live gate after verification, including executed/failed/skipped evidence; pending execution is explicitly handed off.
 
 ## Open Questions
 
 None. Sizing: approximately 500–650 written lines including probes and this plan, one production file, no new exported production type, no consumer migration, five acceptance criteria and no new reject branches; within all limits.
+
+## Revisions
+
+- 2026-10-08: focused coverage exposed an old literal-key assumption in `AgentRunNavigationProof.childIndexes`: it expected every collapsed child's message key absent. With the planned representative policy, the first tool's key belongs to the closed header. Update membership checks to require that key present and every other child absent when closed, and all children present when open. Retain pointer taps, owned-prose visibility and expansion assertions. This is an assertion-policy correction, with no change to folding or navigation. Include the affected background-Agent live scenario in the dispatcher handoff.
