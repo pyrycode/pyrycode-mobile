@@ -157,6 +157,7 @@ class Case:
     def record(self, event, status):
         with (self.evidence / "control.jsonl").open("a") as writer:
             writer.write(json.dumps({"event": event, **status}) + "\n")
+        print(f"session_error arm={self.arm} action={event} phase=observed", flush=True)
 
     def pairing(self, label):
         result = subprocess.run([self.args.daemon, "pair", "-pyry-name=" + self.name, "--name=" + label],
@@ -310,6 +311,7 @@ def main():
                 self.send_error(404)
                 return
             try:
+                print(f"session_error arm={arm} action={action} phase=started", flush=True)
                 if action == "start":
                     if arm in cases:
                         raise RuntimeError("case_already_started")
@@ -327,12 +329,14 @@ def main():
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)
+                print(f"session_error arm={arm} action={action} phase=finished", flush=True)
             except (OSError, RuntimeError, KeyError, ValueError, subprocess.SubprocessError) as error:
                 evidence = Path(args.evidence) / arm
                 evidence.mkdir(parents=True, exist_ok=True, mode=0o700)
                 # RuntimeErrors in this module contain static codes only.
                 code = str(error) if type(error) is RuntimeError else type(error).__name__
                 (evidence / "failure-code.txt").write_text(code + "\n")
+                print(f"session_error arm={arm} action={action} phase=failed", flush=True)
                 # No exception details: pairing and process errors can contain credentials.
                 self.send_error(503, "session_error_fixture_failed; inspect private evidence")
 
