@@ -2742,7 +2742,43 @@ class InteractiveStreamE2ETest {
             beforeByHost[serverIdA] = hostConversationIds(serverIdA)
             val chatA = createChatOn(serverIdA)
             createdByHost[serverIdA] = chatA
-            renameOpenThread(chatName)
+            composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(RENAME_ITEM).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNodeWithText(RENAME_ITEM).performClick()
+            composeTestRule.renameDiscussionInDialog(
+                newName = chatName,
+                fieldLabel = string(R.string.rename_dialog_field_label),
+                saveLabel = RENAME_SAVE,
+                timeoutMillis = THREAD_TIMEOUT_MS,
+                diagnostic = {
+                    val bundle = GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverIdA)
+                    val repository = bundle?.coordinator?.currentRepository?.value
+                    val renamed =
+                        repository?.let {
+                            runBlocking {
+                                withTimeoutOrNull(1_000) {
+                                    it.observeConversations(ConversationFilter.All).first().any { row ->
+                                        row.id == chatA && row.name == chatName
+                                    }
+                                }
+                            }
+                        }
+                    "owner registered=${bundle != null}, repository present=${repository != null}, confirmed rename=$renamed"
+                },
+                awaitOwningHost = {
+                    val current =
+                        checkNotNull(
+                            GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverIdA),
+                        ).coordinator.currentRepository
+                    runBlocking {
+                        withTimeout(THREAD_TIMEOUT_MS) {
+                            current.awaitDiscussionRenameOwner()
+                        }
+                    }
+                },
+            )
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
             awaitListText(chatName)

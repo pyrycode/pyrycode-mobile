@@ -6,6 +6,7 @@
 - `app/src/main/java/de/pyryco/mobile/ui/conversations/components/RenameDialog.kt`: the Name field has its own content description; focus arrives from a dialog-local effect.
 - `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModel.kt`: `Rename` opens the dialog through asynchronously combined state; `RenameSubmit` dismisses it and launches the repository write.
 - `app/src/main/java/de/pyryco/mobile/data/repository/ConversationCommands.kt`: `rename` confirms the daemon reply before updating the title projection.
+- `app/src/main/java/de/pyryco/mobile/data/repository/StableConversationRepository.kt` and `RelayRepositoryCoordinator.kt`: one-shots reject an absent delegate; collected publication can lag synchronous authenticated availability.
 - `app/src/sharedTest/java/de/pyryco/mobile/e2e/ArchiveRoundTripChatTest.kt`: precedent for a shared helper and deterministic fixture that drive the same live-test operation.
 - `docs/knowledge/features/development-verification-emulator-evidence.md`: historical focus records after Activity destruction cannot establish focus during the failed action; preserve partial-setup cleanup.
 - `docs/knowledge/features/rename-dialog.md`, `thread-screen.md`, `remote-conversation-repository.md`, and `archived-discussions-screen.md`: dialog focus, confirmed rename, host-owned Archive and restore-destination lifetime.
@@ -29,7 +30,7 @@ Add fixed stage labels and content-free diagnostics to this operation. A timeout
 
 ## State and concurrency model
 
-No product state or jobs change. Tests run synchronous Compose operations; the fixture holds dialog appearance while the existing composer remains focused, then releases it through the Compose clock. The live write remains owned by the thread ViewModel and its host's repository.
+No product state or jobs change. Tests run synchronous Compose operations; the fixture holds dialog appearance while the existing composer remains focused, then releases it through the Compose clock. The reconnect regression schedules replacement in a bounded `runBlocking` scope, without real-time sleep, and exposes a stale collected publication while synchronous availability is null. Both the live callback and regression use `awaitDiscussionRenameOwner`. The live write remains owned by the thread ViewModel and its host's repository.
 
 ## State transitions and identity reuse
 
@@ -59,3 +60,9 @@ Pending documentation stage: update `docs/e2e-interactive-stream.md`, “Live mo
 
 - Does delayed dialog appearance reproduce composer replacement with the old selector? Resolve with red/green counted regression evidence; revise the design if it does not.
 - Does the fresh live baseline reveal another failure layer? Keep historical and fresh findings separate.
+
+## Revisions
+
+- 2026-10-09: The delayed-dialog regression reproduced an early composer match (one executed/failed, zero errors/skipped), but retained daemon evidence supplies a stronger lead for the original occurrence. A created `e1d67fd8-5c5a-42f7-a1d6-d2ac698dc071` at 00:07:08.098 +03:00, closed its phone connection at 00:07:08.660, re-handshook at 00:07:09.616, and deleted the chat in cleanup at 00:07:38.794. No rename event exists for that id. The original phone logcat remains unavailable, so the connection gap's attribution is an inference, not proof of the original Save's timing.
+- 2026-10-09: Added `DiscussionRenameTest.owningHostGapDoesNotLoseRenameWhenAnotherHostIsReady`, driving the real `StableConversationRepository` with A absent and another host ready. Without the pre-Save wait it fails at `await renamed title`, reporting `submitted=1, rejected=1, owner ready=false, other ready=true` (one executed/failed, zero errors/skipped). With the wait it confirms exactly one accepted rename. The new contract waits for A's current repository immediately before the single Save, within the existing 30-second bound. A cached repository emission must equal the coordinator's synchronous current value; compatibility connection readiness is insufficient. No write is retried. Timeout diagnostics now report repository presence and confirmed-rename booleans; collection failures retain the original cause. Composer diagnostics were unnecessary once this controlled failure identified the rejected submission.
+- 2026-10-09: Fresh unchanged live baseline at mobile `ba5724b08019030e677e372570e281ed3a742d84`, daemon `55f1f1839c72ebd140679ddcb3c1db3d2d30c0d3`: the selected method passed (one executed/passed, zero failed/errors/skipped), artifacts `build/dispatcher-tests/live-orc1emdh`. This is a baseline observation, not acceptance of the repair. The full post-verification dispatcher live gate remains pending.
