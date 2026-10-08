@@ -98,10 +98,10 @@ wrapper's own direction: paging normally prepends an *older* page onto what is o
 restored rows are the older set and the live projection is the receiver:
 
 ```
-drawn = snapshot.rows.mergeUnsignedCachedRows(restoredWithoutSuppressedUserEchoes, baseOrder + snapshot.unsignedHistoryOrder)
+drawn = snapshot.rows.mergeUnsignedCachedRows(restoredWithoutSuppressedUserEchoes, baseOrder + snapshot.unsignedHistoryOrder, rendererOwners = lastDrawn)
 ```
 
-`mergeUnsignedCachedRows` shares `mergeUnsignedHistoryRows`'s join (`message_id` for a message, covering a
+`mergeUnsignedCachedRows` shares `mergeUnsignedHistoryRows`'s join (ordinary logical id for a message, covering a
 `tool_use_id` and a `turn_id`; the `(previousSessionId, newSessionId, occurredAt)` triple for a
 boundary) and its [attachment-reference hint fill](remote-conversation-repository-reads-and-thread-store-history-paging.md),
 so a restored row the daemon re-delivers is never drawn twice and a sent row's names come back even
@@ -126,6 +126,15 @@ order from the same projection generation. Shared neighbours and timestamps rema
 for rows without durable order; live rows are never sorted. The lookup stays key-indexed on large
 threads. The fixed connection merge base and
 the deliberate-removal suppression below are unchanged, so a removed live row is not resurrected.
+
+Renderer ownership is independent of that fixed content/placement base (#1941).
+`observeThreadSnapshot` supplies `lastDrawn` as owner claims; coverage writes supply the selected
+drawn base or file fallback. Claims reserve ids only for identities surviving reconciliation,
+before live receiver claims and newcomer allocation, including empty and overlap-only merges.
+They supply no content, admission or placement and cannot resurrect a removed row. A fresh,
+unseeded projection can hold an unmatched legacy row whose bare id belongs to a displayed cached
+opening segment: treating the fresh live receiver as the only owner would transfer the reader's
+key to the newcomer. See [segment allocation](remote-conversation-repository-assistant-reply-segments.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350).
 
 Unsigned positions preserve ordering across the signed boundary and through `ULong.MAX_VALUE`,
 including held rows on both sides of an unresolved gap and split assistant deltas. The signed
@@ -156,11 +165,12 @@ both exclude them, so evidence alone cannot clear a saved history position.
 
 For queue delivery (#1642), `ThreadSnapshotSource` supplies visible rows and
 `suppressedUserMessageIds` together through Remote → Stable → Caching. The cache filters only
-restored `Role.User` messages whose ids are suppressed while awaiting a delivered push.
+restored `Role.User` messages whose ordinary logical ids are suppressed while awaiting a delivered push.
 Missing live rows alone never justify deleting unrelated offline history or cache-only rows.
 The original base remains available for attachment hints when delivery arrives; suppression
 is connection-local and is never serialized. Repositories without this contract retain the
-list-only fallback with empty suppression.
+list-only fallback with empty suppression. Renderer aliases must never shield a suppressed echo
+from filtering, either in observation or history-position writes.
 
 Rows and suppression must come from the same `ThreadProjection.ProjectionState` generation.
 Independent StateFlows could pair old tap-time rows with newly cleared suppression during
@@ -414,6 +424,12 @@ sibling container already carried for #796 — before this change only `HostConv
 containers needed it. Any future container built the same way inherits this requirement.
 
 ## Testing
+
+`HistoryMessageIdentityTest` uses a real file cache for both arrival orders, unseeded reconnects,
+original-page replay, empty emissions, persisted rows and coverage saves. Its independent writer
+probe exercises file fallback without an observer; seeding every fresh projection with cached rows
+would bypass the ownership failure. `HistoryAliasCorrelationTest` checks logical echo suppression
+through observation and history writes, alongside replay and delivery.
 
 [`CachingConversationRepositoryTest.kt`](../../../app/src/test/java/de/pyryco/mobile/data/repository/CachingConversationRepositoryTest.kt) —
 JVM unit tests against a fake `ConversationCache` and a `MutableStateFlow`-backed delegate. Cases:
