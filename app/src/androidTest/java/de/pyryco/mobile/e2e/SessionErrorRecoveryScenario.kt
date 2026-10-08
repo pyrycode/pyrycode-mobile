@@ -1,6 +1,8 @@
 package de.pyryco.mobile.e2e
 
+import android.util.Log
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -105,7 +107,7 @@ internal class SessionErrorRecoveryScenario(
         val fresh = fixture.value("freshMarker")
         val heldPrompt = sessionErrorRecoveryPrompt(held)
         val freshPrompt = sessionErrorRecoveryPrompt(fresh)
-        pair(fixture.value("pairCode"), fixture.value("channel"))
+        pair(arm, fixture.value("serverId"), fixture.value("pairCode"), fixture.value("channel"))
         SecondClientPeer(
             PairedServer(
                 serverId = fixture.value("serverId"),
@@ -194,6 +196,8 @@ internal class SessionErrorRecoveryScenario(
     }
 
     private fun pair(
+        arm: String,
+        serverId: String,
         code: String,
         name: String,
     ) {
@@ -207,8 +211,28 @@ internal class SessionErrorRecoveryScenario(
         compose.onNode(hasSetTextAction() and hasText("Pairing code")).performTextInput(code)
         compose.onNode(hasText("Pair") and hasClickAction()).performClick()
         await(hasText("Confirm pairing"))
+        Log.i("SessionErrorRecovery", "arm=$arm phase=confirm_ready")
         compose.onNodeWithText("Confirm pairing").performClick()
-        await(hasTestTag(CHANNEL_LIST_TEST_TAG))
+        try {
+            await(hasTestTag(CHANNEL_LIST_TEST_TAG))
+        } catch (failure: ComposeTimeoutException) {
+            val store = GlobalContext.get().get<PairedServerCollectionStore>()
+            val registry = GlobalContext.get().get<RelayConnectionRegistry>()
+            val connection = registry.connectionFor(serverId)
+            val saved = runBlocking { store.loadById(serverId) } != null
+            val status = connection?.coordinator?.connectionStatus?.value
+            val selected = connection != null && registry.selected.value === connection
+            val unavailable = nodes(hasText("temporarily unavailable", substring = true)).isNotEmpty()
+            val rejected = nodes(hasText("Pairing rejected", substring = true)).isNotEmpty()
+            val confirm = nodes(hasText("Confirm pairing")).isNotEmpty()
+            throw AssertionError(
+                "session-error arm=$arm phase=pair_return saved=$saved selected=$selected " +
+                    "relay=${status?.relay?.javaClass?.simpleName} session=${status?.pyrycode?.javaClass?.simpleName} " +
+                    "unavailable=$unavailable rejected=$rejected confirm=$confirm",
+                failure,
+            )
+        }
+        Log.i("SessionErrorRecovery", "arm=$arm phase=pair_return")
     }
 
     private fun send(prompt: String) {

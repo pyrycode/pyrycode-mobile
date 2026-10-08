@@ -65,3 +65,7 @@ Pending documentation stage: update `docs/e2e-interactive-stream.md`, Session-er
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-08
+
+## Revisions
+
+- 2026-10-08: the unchanged phone/control behavior with added diagnostics passed focused live recovery (1 executed/passed, 0 failed/errors/skipped; `build/dispatcher-tests/live-ee_lgy4a/dispatcher.xml`), scripted recovery (1 executed/passed, 0 failed/errors/skipped; `build/dispatcher-tests/scripted-wgha84iz/dispatcher.xml`) and the four-method live host/rebuild prefix (4 executed/passed, 0 failed/errors/skipped; `build/dispatcher-tests/live-o7_cqc5a/dispatcher.xml`). Both arms' completed child inputs were 1/0 retained and 0/1 dropped, with unchanged daemon/Runner/session identity. These passing baselines do not identify the historical arm or establish a repair. Replaying all 15 historical predecessors remains the next diagnostic step. The controller observation regression failed because its log was empty before the change; 10 Python tests pass afterward, including a real authenticated failed-start request that logs only arm/action/static phase.
