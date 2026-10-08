@@ -115,6 +115,9 @@ import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.SessionPromptStatus
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.di.AttentionAlert
+import de.pyryco.mobile.di.ConversationAttention
+import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.di.RelayConnectionBundle
 import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_RELAY_URL
@@ -3568,9 +3571,10 @@ class InteractiveStreamE2ETest {
      * permission lever while the phone leaves A for B, so A never draws its reply however fast claude is. The peer
      * allows it and the turn ends with B on screen. Rows that reach a closed thread live only in the connection's
      * projection, never the thread cache, and a reconnect discards them with the replay cursor already past them.
-     *  * **Off screen** — the phone itself folded A's `turn_end` while A was not viewed: its stored read position
-     *    names that turn as completed and unread. Waiting on the phone, not the peer's copy, keeps the cut after the
-     *    phone had the turn, or the reconnect's ring replay would deliver it and the test would prove nothing.
+     *  * **Off screen** — the phone itself folded A's exact `turn_end` while A was not viewed: its completion alert
+     *    names that turn, its durable facts cover that entry, and shared-mark attention is unread. Waiting on the
+     *    phone, not the peer's copy, keeps the cut after the phone had the turn, or the reconnect's ring replay would
+     *    deliver it and the test would prove nothing.
      *  * **Not cached** — after the cut and restore, A's thread cache holds the ping's reply and not [WAIT_REPLY].
      *  * **Recovered** — opening A, with no other gesture, draws the reply from the open's newest-page ask (#1572),
      *    and the ping, its reply, [WAIT_PROMPT] and [WAIT_REPLY] each once, top to bottom.
@@ -3610,10 +3614,33 @@ class InteractiveStreamE2ETest {
             assertShowingThread(nameB, nameA)
 
             // 4. AC-2: released with B open, A's turn ends; the phone folds that turn_end while B is still shown.
-            peerStep(peer, "allow A's prompt") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
-            val turnEnd =
-                peerStep(peer, "await A's held turn_end") { peer.awaitFrame(chatA, "turn_end", WAIT_TURN_TIMEOUT_MS, occurrence = 2) }
-            awaitUnreadCompletion(serverId, chatA, checkNotNull(peer.field(turnEnd, "turn_id")) { "A's turn_end has no turn_id" })
+            val source = GlobalContext.get().get<HostConversationSource>()
+            val repository = checkNotNull(source.repositoryFor(serverId))
+            runBlocking {
+                // Subscribe before release: the alert proves the phone folded this exact completion.
+                val completed =
+                    async(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
+                        withTimeout(WAIT_TURN_TIMEOUT_MS) {
+                            source.alerts.first {
+                                it.serverId == serverId && it.conversationId == chatA && it.kind == AttentionAlert.Kind.TurnCompleted
+                            }
+                        }
+                    }
+                peerStep(peer, "allow A's prompt") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
+                val turnEnd =
+                    peerStep(peer, "await A's held turn_end") { peer.awaitFrame(chatA, "turn_end", WAIT_TURN_TIMEOUT_MS, occurrence = 2) }
+                val turnId = checkNotNull(peer.field(turnEnd, "turn_id")) { "A's turn_end has no turn_id" }
+                assertTrue("the phone counted a different off-screen completion", completed.await().key == turnId)
+                val entryId = checkNotNull(turnEnd.historyEntryId) { "A's turn_end has no durable identity" }
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    repository.observeReadMarks(chatA).filterNotNull().first {
+                        val latest = it.latestEntryId
+                        val read = it.readUpTo
+                        latest != null && latest >= entryId && read != null && latest > read
+                    }
+                    source.attention.first { it[serverId]?.get(chatA) == ConversationAttention.Unread }
+                }
+            }
             assertShowingThread(nameB, nameA)
             composeTestRule.onAllNodes(waitReply, useUnmergedTree = true).assertCountEquals(0)
 
@@ -8045,32 +8072,6 @@ class InteractiveStreamE2ETest {
                 }
             }
         }
-    }
-
-    /**
-     * Wait until the phone's stored read position for [conversationId] names [turnId] as its completed turn, then
-     * assert it is unread (#1581). The attention fold records a `turn_end` as it handles it, after every frame
-     * before it on the one inbound stream, and marks it read only while the conversation is viewed.
-     */
-    private fun awaitUnreadCompletion(
-        serverId: String,
-        conversationId: String,
-        turnId: String,
-    ) {
-        val cache = GlobalContext.get().get<ConversationCache>()
-        val position =
-            runBlocking {
-                withTimeoutOrNull(THREAD_TIMEOUT_MS) {
-                    var stored = cache.readReadPositions(serverId)[conversationId]
-                    while (stored?.completedTurnId != turnId) {
-                        delay(CACHE_POLL_MS)
-                        stored = cache.readReadPositions(serverId)[conversationId]
-                    }
-                    stored
-                }
-            }
-        assertNotNull("the phone never recorded the off-screen turn's turn_end", position)
-        assertTrue("the phone recorded the off-screen turn as read", checkNotNull(position).unread)
     }
 
     /** Assert the phone's thread cache for [conversationId] holds an assistant row, and none whose text is [reply]. */

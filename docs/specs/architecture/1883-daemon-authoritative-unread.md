@@ -30,7 +30,7 @@ Read design context and screenshot on 2026-10-08. The host/channel tree has comp
 
 Forecast: approximately 650–850 written lines including tests and this plan, five small production edits, no new exported types, one additive observer and one production consumer. Three acceptance criteria and fewer than ten conditional branches. The nearest analogue `cabf8b95` added 281 and removed 7 lines; the extra work here covers mixed versions, unsigned comparisons and peer evidence. No consumer migration or declaration removal is required.
 
-Overlap: #1682, #1689, #1690, #1691, #1693, #1695, #1766, #1879 and #1888 edit other live methods in `InteractiveStreamE2ETest`; changes here stay local to the attention method and additive peer helpers.
+Overlap: #1682, #1689, #1690, #1691, #1693, #1695, #1766, #1879 and #1888 edit other live methods in `InteractiveStreamE2ETest`; changes stay local to the attention and offscreen reconnect methods and additive peer helpers.
 
 ## Design
 
@@ -67,12 +67,15 @@ None. Facts already merged in the repository remain the single authority; absenc
 - 2026-10-08 (rework, finding 1): Independent replacement collectors did not order the read-fact reset before rows/completions. Move generation establishment into synchronized `updateAttention`, record the exact repository on `Held`, reset facts only once per replacement, and guard row callbacks by repository identity. Reverse-order dispatcher tests force replay rows and completion before the read collector and prove legacy unread plus duplicate immunity.
 - 2026-10-08 (rework, finding 2): The daemon protocol explicitly omits `history_entry_id` from channel-post pushes. The scripted twin now waits for the completed post to arrive, then requests a fresh list to obtain its durable latest id before the unchanged unread/peer-clear assertions. Peer history must contain that exact post. No production wire or identity fold changes.
 
+- 2026-10-08 (live rework): The offscreen reconnect scenario waited for a modern daemon to persist a local `ReadPosition`, contradicting the fallback-only contract. Subscribe to host-qualified `HostConversationSource.alerts` before releasing the held permission, require its completion key to match the peer's exact turn, then wait for the phone's durable facts to cover that turn's history id and resolve Unread. Preserve B remaining visible, absence from A's cache, and unique ordered recovery after reconnect. No production changes or new shared helper; the failing live method is the regression test.
+
 ## Documentation handoff
 
 Pending for the documentation stage:
 
 - `docs/knowledge/features/dependency-injection-host-conversation-source.md`, Attention state: daemon-authoritative unread, legacy-only local positions and per-connection support/lifetime.
 - `docs/knowledge/features/conversation-cache.md` and `conversation-cache-contract.md`, read-position family: `ReadPosition` remains the older-daemon fallback without a format replacement.
+- `docs/e2e-interactive-stream.md`, offscreen-reply-survives-reconnect scenario: replace the persisted local position fence with the exact phone completion alert, durable entry coverage and shared unread proof.
 - `docs/e2e-interactive-stream.md`, verification status: record fresh dispatcher full live-gate executed/failed/skipped counts and confirmation that `interactiveTurn_attentionDot_followsARealTurn` ran and passed.
 
 ## Security review
@@ -86,7 +89,7 @@ Pending for the documentation stage:
 - [Cryptography] Reuse Noise_IK_25519_ChaChaPoly_BLAKE2s and existing Keystore credentials; no new cryptographic operation or nonce lifecycle.
 - [Network/I/O] Reuse existing bounded transport, unsigned decoder, request timeouts and reconnect backoff. No additional request or subscription at the wire boundary. Unknown latest ids never become permission to mark content read.
 - [Errors/logs] New logs contain only static event names. Never log marks, ids, tokens, keys, pairing records, frames, message bodies or peer history.
-- [Concurrency] MUST FIX from re-review addressed: `updateAttention` establishes the current repository generation under the monitor before any event, row or read-fact mutation; every replacement resets prior read facts exactly once. Repository-qualified row/read callbacks reject superseded sources. This prevents rows or completions from consuming prior-daemon support and losing fallback positions. All jobs are cancelled through entry/source ownership; no monitor is held across suspension.
+- [Concurrency] Live rework: the test subscribes undispatched before permission release, filters by host/conversation/kind, and compares the exact turn key. Its bounded child collector belongs to `runBlocking` and cancels on failure; no production jobs or trust boundaries change. MUST FIX from re-review addressed: `updateAttention` establishes the current repository generation under the monitor before any event, row or read-fact mutation; every replacement resets prior read facts exactly once. Repository-qualified row/read callbacks reject superseded sources. This prevents rows or completions from consuming prior-daemon support and losing fallback positions. All jobs are cancelled through entry/source ownership; no monitor is held across suspension.
 - [Threat model] A malicious relay can delay/drop but cannot forge authenticated marks through Noise. A hostile daemon can misstate its own facts; unsigned comparison uses no arithmetic, scheduling or file paths. Rooted disk token theft and UI screenshot/accessibility/keyboard leakage remain governed by existing Keystore/UI controls, unchanged by a content-free state projection. Existing busy/event callback races outside read-fact collection remain out of scope.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
