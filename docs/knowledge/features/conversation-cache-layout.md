@@ -82,8 +82,17 @@ epoch millis. `occurredAt` is also each of the three new kinds' dedupe key — t
 `ThreadRow.listKey()`, `HistoryPageReducer`'s `holdsBanner`/`holdsCompactionBoundary`/
 `holdsModelRefusal` and `decodeThread` below all join on.
 
+`CachedMessage.reconciliationId: String? = null` (#1941) round-trips the original ordinary id
+through both mappings alongside the emitted `id`. The optional null default keeps older records
+readable under version 1. Retaining only an emitted collision alias would make an original daemon
+page look like a new ordinary row after process death. Explicit metadata preserves replay matching
+without parsing aliases that could themselves be real daemon ids. Segment identity still comes
+from `CachedSegment`; when reconciliation converts legacy content to segments, ordinary-only
+metadata is cleared. See [Message identities](data-model.md#message) and
+[restore ownership](caching-conversation-repository.md#how-the-restore-merges-with-live-rows).
+
 Assistant attribution (`Message.parentToolUseId`, #1826) is also absent from disk serialization;
-`CachedMessage`/`CachedSegment` and the document version are unchanged. Cache-only assistant rows
+The reconciliation field above does not add attribution storage or change the document version. Cache-only assistant rows
 therefore restore with unknown (empty) attribution. Same-conversation wire/history evidence enriches
 those rows in memory through `mergeCachedRows`, including legacy rows without recoverable segment
 records. The wrapper retains reconciled rows across reconnect, so a later unattributed cache copy

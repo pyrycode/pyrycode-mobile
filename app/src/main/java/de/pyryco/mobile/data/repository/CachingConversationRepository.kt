@@ -6,6 +6,7 @@ import de.pyryco.mobile.data.cache.cacheableThreadRows
 import de.pyryco.mobile.data.cache.settledThreadRows
 import de.pyryco.mobile.data.cache.threadRowsWereTrimmed
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.model.ordinaryId
 import de.pyryco.mobile.data.network.RelayLog
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
@@ -115,10 +116,10 @@ class CachingConversationRepository(
                         base.filterNot {
                             it is ThreadItem.MessageItem &&
                                 it.message.role == Role.User &&
-                                it.message.id in snapshot.suppressedUserMessageIds
+                                it.message.ordinaryId in snapshot.suppressedUserMessageIds
                         }
                     }
-                val drawn = live.mergeUnsignedCachedRows(restored, baseOrder + snapshot.unsignedHistoryOrder)
+                val drawn = live.mergeUnsignedCachedRows(restored, baseOrder + snapshot.unsignedHistoryOrder, rendererOwners = lastDrawn)
                 lastDrawn = drawn
                 lastOrder = snapshot.unsignedHistoryOrder
                 drawnThreads[conversationId] = drawn
@@ -186,12 +187,14 @@ class CachingConversationRepository(
             if (conversationId in deleted) return@withLock
             val restored =
                 base.filterNot {
-                    it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.id in snapshot.suppressedUserMessageIds
+                    it is ThreadItem.MessageItem &&
+                        it.message.role == Role.User &&
+                        it.message.ordinaryId in snapshot.suppressedUserMessageIds
                 }
             val order =
                 (snapshot.rows + restored).receivedUnsignedHistoryOrder(position.coverage.unsignedPositions()) +
                     snapshot.unsignedHistoryOrder
-            val rows = snapshot.rows.mergeUnsignedCachedRows(restored, order)
+            val rows = snapshot.rows.mergeUnsignedCachedRows(restored, order, rendererOwners = base)
             if (cache.writeThread(serverId, conversationId, rows).isFailure) {
                 RelayLog.d { "event=history_rows_write_failed" }
                 return@withLock
