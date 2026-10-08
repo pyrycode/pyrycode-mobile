@@ -247,7 +247,15 @@ class HistoryMessageIdentityTest {
                 val emissions = mutableListOf<List<ThreadItem>>()
                 val job =
                     backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
-                        CachingConversationRepository(delegate, cache, "host").observeMessages("c").collect { emissions += it }
+                        CachingConversationRepository(
+                            delegate,
+                            cache,
+                            "host",
+                            processingDispatcher = UnconfinedTestDispatcher(),
+                        ).observeMessages("c").collect {
+                            emissions +=
+                                it
+                        }
                     }
                 runCurrent()
                 assertRows(listOf(first), emissions.last())
@@ -296,7 +304,7 @@ class HistoryMessageIdentityTest {
                     object : ConversationRepository by FakeConversationRepository(), ThreadSnapshotSource {
                         override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> = live
                     }
-                val repository = CachingConversationRepository(delegate, cache, "host")
+                val repository = CachingConversationRepository(delegate, cache, "host", processingDispatcher = UnconfinedTestDispatcher())
                 val emissions = mutableListOf<List<ThreadItem>>()
                 val job =
                     backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
@@ -350,7 +358,7 @@ class HistoryMessageIdentityTest {
                     object : ConversationRepository by FakeConversationRepository(), ThreadSnapshotSource {
                         override fun observeThreadSnapshot(conversationId: String) = projection.observeSnapshot(conversationId)
                     }
-                val repository = CachingConversationRepository(delegate, cache, "host")
+                val repository = CachingConversationRepository(delegate, cache, "host", processingDispatcher = UnconfinedTestDispatcher())
                 val expected =
                     rows(
                         if (legacyFirst) legacy else legacy.copy(id = "t#0", reconciliationId = "t"),
