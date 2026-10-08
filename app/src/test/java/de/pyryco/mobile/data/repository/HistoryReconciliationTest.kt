@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
@@ -237,6 +238,8 @@ class HistoryReconciliationTest {
             assertEquals(merged.ids(), emissions.last().ids())
             assertEquals(merged.messages().map { it.content }, emissions.last().messages().map { it.content })
             assertEquals(merged.seqs(), emissions.last().seqs())
+            advanceTimeBy(100)
+            runCurrent()
             val persisted = cache.readThread("host", "c")
             assertEquals(merged.ids(), persisted.ids())
             assertEquals(merged.messages().map { it.content }, persisted.messages().map { it.content })

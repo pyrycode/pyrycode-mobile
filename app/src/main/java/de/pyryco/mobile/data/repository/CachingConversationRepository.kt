@@ -227,6 +227,7 @@ class CachingConversationRepository(
                 val writer = ThreadWriter(conversationId, this, base)
                 try {
                     delegate.threadSnapshots(conversationId).collect { snapshot ->
+                        val generation = generations.incrementAndGet()
                         val drawn =
                             withContext(processingDispatcher) {
                                 val live = snapshot.rows
@@ -255,7 +256,7 @@ class CachingConversationRepository(
                                 lastOrder = snapshot.unsignedHistoryOrder
                                 drawn
                             }
-                        val published = DrawnThread(drawn, generations.incrementAndGet())
+                        val published = DrawnThread(drawn, generation)
                         drawnThreads[conversationId] = published
                         emit(snapshot.copy(rows = drawn))
                         withContext(processingDispatcher) { writer.accept(published) }
@@ -305,6 +306,7 @@ class CachingConversationRepository(
             return
         }
         val snapshot = delegate.threadSnapshots(conversationId).first()
+        val historyGeneration = generations.incrementAndGet()
         historyWrites.withLock {
             if (conversationId in deleted) return@withLock
             val drawn = drawnThreads[conversationId]
@@ -325,7 +327,7 @@ class CachingConversationRepository(
                 RelayLog.d { "event=history_rows_write_failed" }
                 return@withLock
             }
-            persistedHistory[conversationId] = PersistedHistory(drawn?.generation ?: 0, cacheable)
+            persistedHistory[conversationId] = PersistedHistory(maxOf(historyGeneration, drawn?.generation ?: 0), cacheable)
             if (conversationId in deleted) return@withLock
             val trimmed = threadRowsWereTrimmed(rows)
             val coverage = position.coverage.boundTo(rows)

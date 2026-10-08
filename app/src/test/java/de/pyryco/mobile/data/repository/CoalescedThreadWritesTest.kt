@@ -11,6 +11,7 @@ import de.pyryco.mobile.data.model.ordinaryId
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,6 +34,7 @@ import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration.Companion.minutes
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -130,6 +132,30 @@ class CoalescedThreadWritesTest {
         }
 
         suspend fun restored() = FileConversationCache(tmp.root, dispatcher).readThread("host", "c")
+    }
+
+    private class HeldWorker : CoroutineDispatcher() {
+        val pending = ArrayDeque<Runnable>()
+
+        override fun dispatch(
+            context: CoroutineContext,
+            block: Runnable,
+        ) {
+            pending.addLast(block)
+        }
+
+        fun next(last: Boolean = false) {
+            (if (last) pending.removeLast() else pending.removeFirst()).run()
+        }
+    }
+
+    private fun TestScope.drain(worker: HeldWorker) {
+        repeat(40) {
+            runCurrent()
+            if (worker.pending.isEmpty()) return
+            worker.next()
+        }
+        error("worker did not settle")
     }
 
     private fun TestScope.quiet() {
@@ -446,6 +472,50 @@ class CoalescedThreadWritesTest {
             )
             f.reader.cancel()
             f.reader.join()
+        }
+
+    @Test fun coverageInvariant_capturedOlderSnapshotCannotInvalidateNewerSaveWhenWorkerResumes() =
+        runTest {
+            val dispatcher = UnconfinedTestDispatcher(testScheduler)
+            val worker = HeldWorker()
+            val a = reduceHistoryPage(page(1).entries, true)
+            val ab = reduceHistoryPage(page(1, 2).entries, true)
+            val source = Source().apply { snapshots.value = ThreadSnapshot(a) }
+            val cache = Cache(FileConversationCache(tmp.root, dispatcher))
+            val repository = CachingConversationRepository(source, cache, "host", processingDispatcher = worker)
+            val reader = backgroundScope.launch(dispatcher) { repository.observeThreadSnapshot("c").collect {} }
+            drain(worker)
+            source.snapshots.value = ThreadSnapshot(a + row("stream", true)) // capture an older snapshot and hold its merge
+            source.snapshots.value = ThreadSnapshot(ab)
+            val save =
+                launch(dispatcher) {
+                    repository.writeHistoryPosition("c", HistoryPosition("older", false, HistoryCoverage().received(page(1, 2))))
+                }
+            worker.next(last = true) // history cache-policy work can finish on another worker before the older merge
+            runCurrent()
+            save.join()
+            worker.next() // resume the older captured merge
+            runCurrent()
+            worker.next() // accept its cacheable candidate; hold the subsequent newer merge
+            runCurrent()
+            quiet()
+            if (worker.pending.size > 1) worker.next(last = true) // run a ready disk writer while the newest merge is held
+            runCurrent()
+            try {
+                assertEquals(ab, FileConversationCache(tmp.root, dispatcher).readThread("host", "c"))
+                assertEquals(
+                    listOf(HistorySpan(1, 2)),
+                    cache.disk
+                        .readHistoryPosition("host", "c")
+                        ?.coverage
+                        ?.spans,
+                )
+                assertEquals(1, cache.writes.size)
+            } finally {
+                reader.cancel()
+                drain(worker)
+                reader.join()
+            }
         }
 
     @Test fun coverageInvariant_newerRemovalComparedWithActualPersistedHistoryRows() =
