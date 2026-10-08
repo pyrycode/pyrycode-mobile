@@ -59,6 +59,7 @@ import de.pyryco.mobile.ui.conversations.thread.McpFailureAcknowledgements
 import de.pyryco.mobile.ui.conversations.thread.OwnedPasteCopy
 import de.pyryco.mobile.ui.conversations.thread.PermissionDraftStore
 import de.pyryco.mobile.ui.conversations.thread.QuestionDraftStore
+import de.pyryco.mobile.ui.conversations.thread.ThreadContentScheduling
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.conversations.thread.UsageLimitDismissals
 import de.pyryco.mobile.ui.conversations.thread.asRememberedEffortStore
@@ -460,7 +461,14 @@ internal class ThreadDestinationFactory(
         }
         RelayLog.d { "event=thread_destination_bound" }
         if (!useRelay && serverId == HostConversationSource.DEMO_SERVER_ID) {
-            return ThreadViewModel(handle, repository, FakeConnectionStateSource(), draftStore, attachmentReader = attachmentReader.value)
+            return ThreadViewModel(
+                handle,
+                repository,
+                FakeConnectionStateSource(),
+                draftStore,
+                attachmentReader = attachmentReader.value,
+                contentScheduling = ThreadContentScheduling(),
+            )
         }
         val connection =
             object : ConnectionStateSource {
@@ -508,6 +516,7 @@ internal class ThreadDestinationFactory(
             attachmentReader = attachmentReader.value,
             rememberedEffort = preferences.asRememberedEffortStore(),
             rememberModel = { model -> preferences.setRememberedModel(model) },
+            contentScheduling = ThreadContentScheduling(),
         )
     }
 

@@ -61,7 +61,7 @@ No new network, persistence or user-facing error path. Cancellation propagates t
 
 Write failing controlled-frame ViewModel tests before implementation. Advance explicit 60 Hz and 120 Hz frames, not virtual fixed-delay timers. Compare event permutations against the real pure fold; test boundary effects, reconnect overlap, exact evidence and cancellation. A held dispatcher proves main progress and input preservation. Existing ThreadFold, ViewModel, history worker, read subscription/evidence/viewport and repository/cache tests retain their semantic assertions.
 
-Add one device-only probe using `ThreadDestinationFactory` with a demo repository, real worker dispatcher and real Android frame clock. This belongs in androidTest because JVM virtual clocks cannot prove real Choreographer scheduling or real worker/main progress. Observe frame timestamps/publication bursts, complete final content and cancellation/recollection; compile and execute its focused method on the managed Android 13 device.
+Add one device-only probe using `ThreadDestinationFactory` with an inert snapshot repository, real worker dispatcher and real Android frame clock. This belongs in androidTest because JVM virtual clocks cannot prove real Choreographer scheduling or real worker/main progress. Observe frame timestamps/publication bursts, complete final content and cancellation/recollection; compile and execute its focused method on the managed Android 13 device.
 
 Preserve `InteractiveStreamE2ETest.interactiveTurn_pingPrompt_streamsPingReplyIntoThread` and `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`. Run focused scripted `stream`; fresh full-live and scripted-all named-method counts/evidence are dispatcher-owned handoff. Run focused JVM tests, lint, assemble, Android-test compilation, formatting and forced Spotless. Merge main, push, then run final assemble and `scripts/pre-verify.py --gradle` before opening the PR.
 
@@ -89,3 +89,9 @@ Pending documentation stage: record dispatcher-produced evidence paths and execu
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-08
+
+## Revisions
+
+2026-10-08: The first regression executed once and failed because new receipt evidence accompanied an older displayed row. Bind evidence during the sequential fold and carry it through the paced content arm. The production-wired device fixture uses an inert decorated relay destination rather than the demo repository so it can hold complete streaming snapshot versions without any network connection. Add `ThreadPacedReadViewportTest.readVersionInvariant_pendingAndSkippedContent_waitForFrameLifecycleAndReveal` to prove the paced versions still pass the actual screen's lifecycle, overlay, viewport and reveal qualification.
+
+2026-10-08: A new held-worker boundary probe executed once and failed: clearing after worker reduction lets an older boundary erase a later turn outcome. Run `noteNewestBoundary` on main when each snapshot enters its merge arm, before queueing reduction. Matching live deltas establish the same nonempty baseline as their synthetic rows. Worker rendering has no boundary mutation; all ordered raw inputs still reduce. `boundaryInvariant_heldWorkerCannotClearALaterTurnOutcome` holds an earlier receipt as well as the boundary and proves the newer outcome survives.
