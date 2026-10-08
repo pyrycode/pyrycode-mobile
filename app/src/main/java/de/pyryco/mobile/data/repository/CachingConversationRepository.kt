@@ -120,6 +120,7 @@ class CachingConversationRepository(
         private val conversationId: String,
         private val scope: CoroutineScope,
         restored: List<ThreadItem>,
+        private val collectionGeneration: Long,
     ) {
         private val latest = AtomicReference<CacheCandidate?>()
         private val retry = AtomicBoolean()
@@ -141,10 +142,10 @@ class CachingConversationRepository(
             val previous = latest.get()
             val changed = cacheable != (previous?.cacheable ?: initial)
             val persisted = persistedThreads[conversationId]
-            // A coverage save can change disk rows without the observer ever seeing its snapshot.
+            // Only coverage saved during this collection can supersede its unchanged rows.
             val superseded =
                 persisted != null &&
-                    persisted.coverageGeneration > 0 &&
+                    persisted.coverageGeneration > collectionGeneration &&
                     (previous?.drawn?.generation ?: 0) <= persisted.coverageGeneration &&
                     drawn.generation > persisted.coverageGeneration &&
                     cacheable != persisted.cacheable
@@ -212,6 +213,8 @@ class CachingConversationRepository(
 
     override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> =
         flow {
+            // Include coverage saved while restoration suspends, but exclude earlier collections' saves.
+            val collectionGeneration = generations.get()
             var base = cache.readThread(serverId, conversationId)
             val savedPosition = cache.readHistoryPosition(serverId, conversationId)
             var baseOrder =
@@ -221,7 +224,7 @@ class CachingConversationRepository(
             var lastOrder = emptyMap<Any, ULong>()
             var lastDrawn = base
             coroutineScope {
-                val writer = ThreadWriter(conversationId, this, base)
+                val writer = ThreadWriter(conversationId, this, base, collectionGeneration)
                 try {
                     delegate.threadSnapshots(conversationId).collect { snapshot ->
                         val generation = generations.incrementAndGet()

@@ -591,6 +591,111 @@ class CoalescedThreadWritesTest {
             assertEquals(listOf(row("a")), f.restored())
         }
 
+    @Test fun unchangedInvariant_retainedCoverageCannotEraseFailedRestoreAfterQuietPeriod() = retainedCoverageAfterFailedRestore(false)
+
+    @Test fun unchangedInvariant_retainedCoverageCannotEraseFailedRestoreOnFinalFlush() = retainedCoverageAfterFailedRestore(true)
+
+    private fun retainedCoverageAfterFailedRestore(flush: Boolean) =
+        runTest {
+            val f = Fixture(this)
+            val saved = reduceHistoryPage(page(1, 2).entries, true)
+            f.source.snapshots.value = ThreadSnapshot(saved)
+            f.repository.writeHistoryPosition("c", HistoryPosition("older", false, HistoryCoverage().received(page(1, 2))))
+            f.reader.cancel()
+            f.reader.join()
+            assertEquals(saved, f.restored())
+            val savedPosition = f.cache.disk.readHistoryPosition("host", "c") ?: error("missing history")
+            assertEquals(listOf(HistorySpan(1, 2)), savedPosition.coverage?.spans)
+            assertEquals(1, f.cache.writes.size)
+
+            f.source.snapshots.value = ThreadSnapshot(emptyList())
+            f.cache.failRead = true
+            val delivered = mutableListOf<ThreadSnapshot>()
+            val reader = backgroundScope.launch(f.dispatcher) { f.repository.observeThreadSnapshot("c").collect { delivered += it } }
+            assertTrue(delivered.single().rows.isEmpty())
+            f.send(row("stream", true))
+            assertEquals(listOf(row("stream", true)), delivered.last().rows)
+            if (!flush) {
+                quiet()
+                assertEquals(saved, f.restored())
+                assertEquals(savedPosition, FileConversationCache(tmp.root, f.dispatcher).readHistoryPosition("host", "c"))
+            }
+            reader.cancel()
+            reader.join()
+            assertEquals(saved, f.restored())
+            assertEquals(savedPosition, FileConversationCache(tmp.root, f.dispatcher).readHistoryPosition("host", "c"))
+            assertEquals(1, f.cache.writes.size)
+        }
+
+    @Test fun retryInvariant_retainedCoverageStillAllowsChangedRowsAndUnchangedFailureRetry() =
+        runTest {
+            val f = Fixture(this)
+            val saved = reduceHistoryPage(page(1, 2).entries, true)
+            f.source.snapshots.value = ThreadSnapshot(saved)
+            f.repository.writeHistoryPosition("c", HistoryPosition("older", false, HistoryCoverage().received(page(1, 2))))
+            f.reader.cancel()
+            f.reader.join()
+            f.source.snapshots.value = ThreadSnapshot(emptyList())
+            f.cache.failRead = true
+            val reader = backgroundScope.launch(f.dispatcher) { f.repository.observeThreadSnapshot("c").collect {} }
+            f.cache.failures = 1
+            f.send(row("new"))
+            quiet()
+            assertEquals(saved, f.restored())
+            assertEquals(2, f.cache.writes.size)
+            advanceTimeBy(1000)
+            runCurrent()
+            assertEquals(2, f.cache.writes.size)
+            f.send(row("new"), row("stream", true))
+            quiet()
+            assertEquals(listOf(row("new")), f.restored())
+            reader.cancel()
+            reader.join()
+            assertEquals(3, f.cache.writes.size)
+            assertEquals(1, logs.count { it == "event=thread_cache_write_failed" })
+        }
+
+    @Test fun coverageInvariant_saveDuringRestoreStillAllowsNewerUnchangedRemoval() =
+        runTest {
+            val dispatcher = UnconfinedTestDispatcher(testScheduler)
+            val a = reduceHistoryPage(page(1).entries, true)
+            val ab = reduceHistoryPage(page(1, 2).entries, true)
+            val disk = FileConversationCache(tmp.root, dispatcher)
+            disk.writeThread("host", "c", a).getOrThrow()
+            val cache = Cache(disk)
+            val restoreEntered = CompletableDeferred<Unit>()
+            val restoreRelease = CompletableDeferred<Unit>()
+            val heldCache =
+                object : ConversationCache by cache {
+                    override suspend fun readThread(
+                        serverId: String,
+                        conversationId: String,
+                    ): List<ThreadItem> {
+                        val rows = cache.readThread(serverId, conversationId)
+                        if (!restoreEntered.isCompleted) {
+                            restoreEntered.complete(Unit)
+                            restoreRelease.await()
+                        }
+                        return rows
+                    }
+                }
+            val source = Source().apply { snapshots.value = ThreadSnapshot(a) }
+            val repository = CachingConversationRepository(source, heldCache, "host", processingDispatcher = dispatcher)
+            val reader = backgroundScope.launch(dispatcher) { repository.observeThreadSnapshot("c").collect {} }
+            assertTrue(restoreEntered.isCompleted)
+            source.snapshots.value = ThreadSnapshot(ab)
+            repository.writeHistoryPosition("c", HistoryPosition("older", false, HistoryCoverage().received(page(1, 2))))
+            assertEquals(ab, FileConversationCache(tmp.root, dispatcher).readThread("host", "c"))
+            source.snapshots.value = ThreadSnapshot(a)
+            restoreRelease.complete(Unit)
+            quiet()
+            assertEquals(a, FileConversationCache(tmp.root, dispatcher).readThread("host", "c"))
+            assertEquals(listOf(ab, a), cache.writes)
+            assertEquals(listOf(HistorySpan(1, 1)), disk.readHistoryPosition("host", "c")?.coverage?.spans)
+            reader.cancel()
+            reader.join()
+        }
+
     private fun resubscribeAfterCoverage(flush: Boolean) =
         runTest {
             val f = Fixture(this)
