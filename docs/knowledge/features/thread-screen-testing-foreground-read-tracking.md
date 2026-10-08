@@ -26,8 +26,27 @@ a removed/reintroduced equal version.
 
 `ThreadReadContentEdgeTest` checks the message's inner-column edge with and without
 metadata, and the tool surface edge collapsed and expanded. Preserve the distinction
-between those content edges and whole-row padding/spacing. Read qualification remains
+between those content edges and whole-row padding/spacing. In each metadata state,
+compare the message edge with that state's measured bubble bottom minus
+`BubbleVerticalPadding`, within one pixel, and assert it is inside the bubble.
+`MessageContainer` has a minimum surface height (`MessageActionPairHeight`), so
+showing metadata need not enlarge the surface or move the absolute edge downward.
+Keep the tool's collapsed/expanded surface comparisons and expansion assertion.
+A Robolectric pass alone can miss the invalid metadata-growth assumption: the
+original #1964 focused Robolectric run passed while managed Android failed it.
+Shared tests need focused managed Android execution because the normal UI gate
+selects device-only tests; see [verification gates](development-verification-gates.md#where-a-screen-test-goes).
+Read qualification remains
 the [foreground presentation contract](thread-screen.md#what-it-does).
+
+The [#1964 focused evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1974#issuecomment-6060893133)
+records fresh Robolectric and managed Android runs of `ThreadReadContentEdgeTest`,
+each with 2 executed, 2 passed, 0 failed and 0 skipped. Both methods passed in each:
+`messageEdge_isInsideBubblePaddingWithAndWithoutMetadata` and
+`toolEdge_usesToolSurfaceIncludingExpandedContent`. The preserved Android XML is
+timestamped `2026-10-08T12:56:24`; the verifier also confirmed both methods in fresh
+dispatcher Robolectric XML at `2026-10-08T13:07:42.017Z`. These focused runs establish
+the repair's coverage; the later full Android main sweep remains dispatcher-owned.
 
 The [#1953 verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1959#issuecomment-6056075065)
 and dispatcher's per-method gate report for `26a910dc6c65` confirm the UI gate ran

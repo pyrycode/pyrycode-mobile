@@ -32,7 +32,6 @@ class ThreadReadContentEdgeTest {
 
     @Test fun messageEdge_isInsideBubblePaddingWithAndWithoutMetadata() {
         val metadata = mutableStateOf(false)
-        var bubble: Rect? = null
         var edge: Float? = null
         var padding = 0f
         compose.setContent {
@@ -48,19 +47,17 @@ class ThreadReadContentEdgeTest {
 
         fun assertEdge() {
             val bounds = compose.onNodeWithTag(MESSAGE_BUBBLE_TEST_TAG, useUnmergedTree = true).fetchSemanticsNode().boundsInWindow
-            bubble = bounds
-            compose.runOnIdle { assertEquals(bounds.bottom - padding, requireNotNull(edge), 1f) }
+            compose.runOnIdle {
+                assertEquals(bounds.bottom - padding, requireNotNull(edge), 1f)
+                assertTrue(requireNotNull(edge) < bounds.bottom)
+            }
         }
         compose.waitForIdle()
         assertEdge()
-        val initial = requireNotNull(edge)
         compose.runOnIdle { metadata.value = true }
         compose.waitForIdle()
+        // MessageContainer's minimum surface height means metadata need not move the edge.
         assertEdge()
-        compose.runOnIdle {
-            assertTrue(requireNotNull(edge) > initial)
-            assertTrue(requireNotNull(edge) < requireNotNull(bubble).bottom)
-        }
     }
 
     @Test fun toolEdge_usesToolSurfaceIncludingExpandedContent() {
