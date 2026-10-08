@@ -2181,7 +2181,7 @@ stopped; pairing material remains in its private host storage.
 `InteractiveStreamE2ETest.interactiveTurn_attentionDot_followsARealTurn` keeps its
 permission and attention-dot checks and adds the shared read mark. After the real
 reply, `SecondClientPeer` reads the daemon's facts for the conversation: the latest
-durable id must be positive and the stored mark below it, so viewing the list reads
+filtered unread id must be positive and the stored mark below it, so viewing the list reads
 nothing. The phone then opens the thread at the newest end, and the peer waits for a
 stored mark at or beyond that reply's id. The peer's latest id is only the assertion
 target; the phone's mark must come from its own foreground checkpoint.
@@ -2197,8 +2197,29 @@ deterministic viewport probes ran in that branch's UI gate:
 `InteractiveStreamE2ETest.interactiveTurn_attentionDot_followsARealTurn` preserves
 \#1912's phone-to-peer mark assertion and B's permission checks. After B becomes Unread,
 `SecondClientPeer` receives B's actual assistant reply from durable history and confirms
-a mark through that history's newest id. The phone remains on the channel list: B's
+a mark through the daemon's filtered unread watermark, backed by a received history
+entry outside `turn_state`, `stall`, `api_retry`, `compacting` and `session_transition`
+(#1948). A's phone-read assertion uses the same history-backed filtered target;
+the phone still derives its acknowledgement from its own foreground checkpoint.
+The raw history maximum can include an excluded status tail beyond the daemon's
+mark-read clamp. The phone remains on the channel list: B's
 dot becomes Idle without reopening, while A stays Idle.
+
+Dispatcher evidence, 2026-10-08: the full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` run
+(`2026-10-08T15-57-51-729Z`, JUnit XML results) tested `feature/1948` at
+`550b3e95fb`, merged with `origin/main` at `0c22abc99d`: **65 executed, 64 passed,
+1 failed, 0 skipped**.
+`InteractiveStreamE2ETest.interactiveTurn_attentionDot_followsARealTurn` executed
+and passed, proving phone-read and peer-read clearing with the permission checks
+preserved. This is a named pass in the full suite, not a separate focused run or
+an all-green suite. The unrelated
+`interactiveTurn_modelChange_roundTripsAndStaysPerConversation` failure also
+reproduced on main and is tracked by #1969. The run supplied no daemon-revision
+annotation; the prior diagnosis and focused repair evidence identify the fixed
+daemon as `55f1f1839c72ebd140679ddcb3c1db3d2d30c0d3`. The
+[operator acceptance](https://github.com/pyrycode/pyrycode-mobile/issues/1948#issuecomment-6066393092)
+accepted this named full-suite result as the ticket's live proof.
 
 The rung-4 twin is
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread`,
@@ -5210,6 +5231,17 @@ The remaining checks here are specific to a real relay or real Claude execution:
   coverage and shared Unread instead of legacy-only persisted positions.
   [Fresh full-suite evidence](#verification-status) closes the live handoff; no
   scenario follow-up remains. The pre-ship command remains
+  `python3 scripts/android-test-gate.py live`.
+
+- **Filtered unread (#1948):**
+  `InteractiveStreamE2ETest.interactiveTurn_attentionDot_followsARealTurn` uses
+  history-backed filtered daemon targets for phone and peer reads, preserving
+  permission checks. The named pass and full-run counts are recorded under
+  [Peer read clears phone attention](#peer-read-clears-phone-attention-1883);
+  no scenario follow-up remains. The existing rung-4 scripted `ping` twin in
+  `DeterministicInteractiveStreamE2ETest` keeps its target: its exact channel post
+  ends in non-excluded `assistant_delta` and `turn_end` entries. No new twin or
+  selector is added; the pre-ship command remains
   `python3 scripts/android-test-gate.py live`.
 
 - **Coverage — hardened:** [#1637](https://github.com/pyrycode/pyrycode-mobile/issues/1637)
