@@ -132,6 +132,30 @@ half. Since #1832 they also validate durable claims against the rows actually re
   operations. Its [rows-before-state mutex](caching-conversation-repository.md#the-saved-history-position-1354)
   supplies that ordering and preserves the trim reset in the subsequent state write.
 
+Deferred observer scheduling (#1967) does not change this document format. The wrapper's
+`historyWrites` mutex orders coalesced row writes, coverage row/state saves and confirmed
+removal. Both row writers publish actual successful cacheable rows into a shared baseline,
+including across observer restarts. Coverage row success satisfies candidates through the
+maximum captured history/selected drawn generation; worker publication order cannot make an
+older candidate eligible to overwrite newer coverage. Observer success preserves that boundary.
+Satisfaction advances even when the following position save fails, because its rows reached disk.
+
+Capture order alone cannot distinguish retained coverage from a save captured before observer
+entry that completes during restoration. The wrapper captures the successful `coverageRevision`
+before reads and advances it only after a successful coverage row write; observer writes preserve
+it. Already retained coverage cannot make an unchanged failed restore erase rows. A coverage save
+completed during this collection can instead permit a newer intentional removal. See [the
+wrapper's saved-history rules](caching-conversation-repository.md#the-saved-history-position-1354)
+for candidate eligibility. Generations, revisions and baselines are destination-local metadata,
+not serialized fields.
+
+Both row mutations and their successful baseline bookkeeping finish together non-cancellably
+under the wrapper lock. Atomic replacement may commit before a cancellable dispatcher return
+reports success; losing that result would let final flush compare with stale rows and skip a
+newer removal. Lock acquisition remains cancellable. Confirmed deletion marks its tombstone,
+waits for any started mutation and removes its results; pending and cleanup writes check the
+tombstone inside the same lock. A refused daemon deletion leaves cache state intact.
+
 Ordinary row proofs hash the exact cache-policy record, including retained tool output and
 attachments; an earliest order id or message text alone cannot prove all mutable producers.
 Assistant deltas use fragment-specific proofs. A received delta already present inside a legacy
