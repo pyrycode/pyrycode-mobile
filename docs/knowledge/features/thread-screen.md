@@ -109,7 +109,7 @@ behind: all three belong to the single candidate.
 Required device probes live in `ThreadReadViewportTest` in `sharedTest`, selected
 through `ThreadReadViewportDeviceTest` in `androidTest`. They cover lifecycle,
 scrolled-away updates, dialogs, production-host scroll composition, replacement tool
-versions and the tall-row edge rule. See [testing guidance and counted evidence](thread-screen-testing.md#foreground-read-tracking-1912-1953).
+versions and the tall-row edge rule. See [testing guidance and counted evidence](thread-screen-testing-foreground-read-tracking.md#foreground-read-tracking-1912-1953).
 
 `ThreadScreen` uses a `Scaffold` with `ThreadTopAppBar`, a message-region `Box` containing either `EmptyThreadState` or the remembered reverse-layout `LazyColumn`, and a composer column in `bottomBar`. Connecting and Reconnecting appear in the composer status band; Offline Retry and pairing Re-pair appear in `ThreadTopOverlay`, pinned over the message region without reflowing the list. The list folds delivered and queued rows, draws every row at full opacity (session boundaries included, since #1578), and leaves each row's rendering to its own component. The footer, attachments and input keep their existing behavior and visual ownership. The header menu uses the shared Actions overlay below the live button (#1666), hosted over the Scaffold with IME-constrained scrolling and header-priority Back; see [overlay wiring](thread-screen-how-it-works-overlays-and-app-bar.md#header-actions-overlay-1666).
 

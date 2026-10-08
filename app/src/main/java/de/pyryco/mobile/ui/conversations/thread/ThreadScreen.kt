@@ -936,6 +936,7 @@ fun ThreadScreen(
                                 // ThreadRows.kt — a matched queued row deliberately takes the key its
                                 // delivered form carries, which is what leaves it in place across delivery.
                                 key = { reversedIndex, row -> row.listKey(rows.size - 1 - reversedIndex) },
+                                contentType = { _, row -> row.contentType() },
                             ) { reversedIndex, row ->
                                 val chronologicalIndex = rows.size - 1 - reversedIndex
                                 val candidate = readCandidate?.takeIf { row == readRow }
