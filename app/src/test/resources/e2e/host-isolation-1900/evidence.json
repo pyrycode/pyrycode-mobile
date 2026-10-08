@@ -23,5 +23,15 @@
       "raw_xml_sha256": "8499125574eb2cfe3585a8ca66c4280482b959db2098b5086181657865dc9dab",
       "working_tree_patch_sha256": "192d67f077e04e9cd100a9261acad49e275fb00dea33f5aaf902c324552e0874"
     }
-  ]
+  ],
+  "final_source": {
+    "run": "live-7sr98887",
+    "mobile": "d6fdec8c52285e7b54b2a6faf1a0ca5b3a41422f",
+    "merged_main": "f702aa78cc038ce7e0c97c02e79bed1b65d68dc2",
+    "executed": 1,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "raw_xml_sha256": "1361bd06b4106c1bdbe6c749a8e5269c6d9b22814c998e7b257ad4b633644787"
+  }
 }
