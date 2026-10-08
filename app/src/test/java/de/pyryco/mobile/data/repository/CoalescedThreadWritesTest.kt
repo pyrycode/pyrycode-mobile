@@ -696,6 +696,57 @@ class CoalescedThreadWritesTest {
             reader.join()
         }
 
+    @Test fun coverageInvariant_saveStartedBeforeCollectionPersistsNewerRemovalAfterQuietPeriod() = overlappingCoverageDuringRestore(false)
+
+    @Test fun coverageInvariant_saveStartedBeforeCollectionFlushesNewerRemovalOnCancellation() = overlappingCoverageDuringRestore(true)
+
+    private fun overlappingCoverageDuringRestore(flush: Boolean) =
+        runTest {
+            val dispatcher = UnconfinedTestDispatcher(testScheduler)
+            val worker = HeldWorker()
+            val a = reduceHistoryPage(page(1).entries, true)
+            val ab = reduceHistoryPage(page(1, 2).entries, true)
+            val disk = FileConversationCache(tmp.root, dispatcher)
+            disk.writeThread("host", "c", a).getOrThrow()
+            val cache = Cache(disk)
+            val source = Source().apply { snapshots.value = ThreadSnapshot(ab) }
+            val repository = CachingConversationRepository(source, cache, "host", processingDispatcher = worker)
+            // Capture the save before collection entry; hold its policy work before row I/O.
+            val save =
+                launch(dispatcher) {
+                    repository.writeHistoryPosition("c", HistoryPosition("older", false, HistoryCoverage().received(page(1, 2))))
+                }
+            assertEquals(1, worker.pending.size)
+            assertTrue(cache.writes.isEmpty())
+            val delivered = mutableListOf<ThreadSnapshot>()
+            val reader = backgroundScope.launch(dispatcher) { repository.observeThreadSnapshot("c").collect { delivered += it } }
+            assertEquals(2, worker.pending.size) // restoration has read [a] and is held on the worker
+            source.snapshots.value = ThreadSnapshot(a)
+            worker.next() // finish the already-captured save while restoration remains held
+            runCurrent()
+            save.join()
+            assertEquals(ab, FileConversationCache(tmp.root, dispatcher).readThread("host", "c"))
+            assertEquals(listOf(HistorySpan(1, 2)), disk.readHistoryPosition("host", "c")?.coverage?.spans)
+            drain(worker)
+            assertEquals(a, delivered.single().rows)
+            assertEquals(listOf(ab), cache.writes)
+            try {
+                if (!flush) {
+                    quiet()
+                    drain(worker)
+                    assertEquals(a, FileConversationCache(tmp.root, dispatcher).readThread("host", "c"))
+                    assertEquals(listOf(HistorySpan(1, 1)), disk.readHistoryPosition("host", "c")?.coverage?.spans)
+                }
+            } finally {
+                reader.cancel()
+                drain(worker)
+                reader.join()
+            }
+            assertEquals(a, FileConversationCache(tmp.root, dispatcher).readThread("host", "c"))
+            assertEquals(listOf(HistorySpan(1, 1)), disk.readHistoryPosition("host", "c")?.coverage?.spans)
+            assertEquals(listOf(ab, a), cache.writes)
+        }
+
     private fun resubscribeAfterCoverage(flush: Boolean) =
         runTest {
             val f = Fixture(this)

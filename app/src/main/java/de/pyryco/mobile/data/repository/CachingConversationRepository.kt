@@ -105,6 +105,7 @@ class CachingConversationRepository(
     // Updated under historyWrites by both row writers; coverage alone supersedes older candidates.
     private data class PersistedThread(
         val coverageGeneration: Long,
+        val coverageRevision: Long,
         val cacheable: List<ThreadItem>,
     )
 
@@ -120,7 +121,7 @@ class CachingConversationRepository(
         private val conversationId: String,
         private val scope: CoroutineScope,
         restored: List<ThreadItem>,
-        private val collectionGeneration: Long,
+        private val collectionCoverageRevision: Long,
     ) {
         private val latest = AtomicReference<CacheCandidate?>()
         private val retry = AtomicBoolean()
@@ -142,10 +143,10 @@ class CachingConversationRepository(
             val previous = latest.get()
             val changed = cacheable != (previous?.cacheable ?: initial)
             val persisted = persistedThreads[conversationId]
-            // Only coverage saved during this collection can supersede its unchanged rows.
+            // Completion order identifies overlapping saves; capture order rejects stale snapshots.
             val superseded =
                 persisted != null &&
-                    persisted.coverageGeneration > collectionGeneration &&
+                    persisted.coverageRevision > collectionCoverageRevision &&
                     (previous?.drawn?.generation ?: 0) <= persisted.coverageGeneration &&
                     drawn.generation > persisted.coverageGeneration &&
                     cacheable != persisted.cacheable
@@ -178,7 +179,8 @@ class CachingConversationRepository(
                     // Untrimmed drawn rows let the cache invalidate cursor/stop claims on retention loss.
                     val result = cache.writeThread(serverId, conversationId, candidate.drawn.rows)
                     if (result.isSuccess) {
-                        persistedThreads[conversationId] = PersistedThread(persisted?.coverageGeneration ?: 0, candidate.cacheable)
+                        persistedThreads[conversationId] =
+                            PersistedThread(persisted?.coverageGeneration ?: 0, persisted?.coverageRevision ?: 0, candidate.cacheable)
                     }
                     result
                 } ?: return
@@ -213,8 +215,8 @@ class CachingConversationRepository(
 
     override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> =
         flow {
-            // Include coverage saved while restoration suspends, but exclude earlier collections' saves.
-            val collectionGeneration = generations.get()
+            // A save captured before entry can still complete while restoration suspends.
+            val collectionCoverageRevision = persistedThreads[conversationId]?.coverageRevision ?: 0
             var base = cache.readThread(serverId, conversationId)
             val savedPosition = cache.readHistoryPosition(serverId, conversationId)
             var baseOrder =
@@ -224,7 +226,7 @@ class CachingConversationRepository(
             var lastOrder = emptyMap<Any, ULong>()
             var lastDrawn = base
             coroutineScope {
-                val writer = ThreadWriter(conversationId, this, base, collectionGeneration)
+                val writer = ThreadWriter(conversationId, this, base, collectionCoverageRevision)
                 try {
                     delegate.threadSnapshots(conversationId).collect { snapshot ->
                         val generation = generations.incrementAndGet()
@@ -327,7 +329,12 @@ class CachingConversationRepository(
                 RelayLog.d { "event=history_rows_write_failed" }
                 return@withLock
             }
-            persistedThreads[conversationId] = PersistedThread(maxOf(historyGeneration, drawn?.generation ?: 0), cacheable)
+            persistedThreads[conversationId] =
+                PersistedThread(
+                    maxOf(historyGeneration, drawn?.generation ?: 0),
+                    (persistedThreads[conversationId]?.coverageRevision ?: 0) + 1,
+                    cacheable,
+                )
             if (conversationId in deleted) return@withLock
             val trimmed = threadRowsWereTrimmed(rows)
             val coverage = position.coverage.boundTo(rows)
