@@ -6,6 +6,24 @@ import org.junit.Test
 
 class AttentionPreviewTest {
     @Test
+    fun linkLabelsKeepLiteralBlockMarkersInTheirOriginalInlineContext() {
+        listOf("1. Restart", "> Continue", "# Section", "- Option", "**bold** `# code`").forEach { label ->
+            val expected = if (label.startsWith("**")) "bold # code" else label
+            assertEquals(expected, notificationPreview("[$label](https://private.example/path)"))
+            assertEquals(expected, notificationPreview("[$label][ref]\n\n[ref]: https://private.example/path"))
+            assertEquals(expected, notificationPreview("[$label]\n\n[$label]: https://private.example/path"))
+        }
+        assertEquals("Before 1. Restart after", notificationPreview("Before [1. Restart](https://secret) after"))
+    }
+
+    @Test
+    fun originalFormattingStillStripsBlocksAndSingleStrikeButKeepsLiteralCodeAndPaths() {
+        assertEquals("Heading quoted first second", notificationPreview("## Heading\n\n> quoted\n\n1. first\n2. second"))
+        assertEquals("struck ~/a ~/b ~literal~", notificationPreview("~struck~ ~/a ~/b `~literal~`"))
+        assertEquals("struck # code", notificationPreview("[~struck~ `# code`](https://secret)"))
+    }
+
+    @Test
     fun markdownKeepsProseLabelsAndCodeButDropsDestinationsAndDelimiters() {
         assertEquals(
             "Heading bold italic struck label code ./gradlew lint",

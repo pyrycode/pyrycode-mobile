@@ -4,16 +4,19 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.components.MarkdownFlavour
 import de.pyryco.mobile.ui.conversations.components.markdownPlainText
+import de.pyryco.mobile.ui.conversations.components.singleTildeRuns
 import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.MarkdownTokenTypes
 import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.ast.getTextInNode
+import org.intellij.markdown.flavours.gfm.GFMElementTypes
+import org.intellij.markdown.flavours.gfm.GFMTokenTypes
 import org.intellij.markdown.parser.MarkdownParser
 
 /** Inert notification text; the bound includes the truncation mark and never splits a code point. */
 internal fun notificationPreview(text: String?): String? {
     if (text == null) return null
-    val plain = markdownPlainText(withoutLinkTargets(text))
+    val plain = previewPlainText(text)
     val cleaned = StringBuilder()
     var pendingSpace = false
     var index = 0
@@ -51,17 +54,21 @@ internal fun completionReply(
     return segments.lastOrNull { it.content.isNotBlank() }?.content
 }
 
-/** The existing prose conversion omits inline targets, but preserves reference-link source verbatim. */
-private fun withoutLinkTargets(source: String): String {
+/** Walk the original tree once so a link label's literal characters never become block syntax. */
+private fun previewPlainText(source: String): String {
     val root = MarkdownParser(MarkdownFlavour).buildMarkdownTreeFromString(source)
 
     fun rewrite(node: ASTNode): String =
         when (node.type) {
-            MarkdownElementTypes.CODE_SPAN, MarkdownElementTypes.CODE_FENCE, MarkdownElementTypes.CODE_BLOCK ->
-                node
-                    .getTextInNode(
-                        source,
-                    ).toString()
+            MarkdownElementTypes.CODE_SPAN -> node.getTextInNode(source).toString().trim('`')
+            MarkdownElementTypes.CODE_FENCE, MarkdownElementTypes.CODE_BLOCK -> markdownPlainText(node.getTextInNode(source).toString())
+            MarkdownElementTypes.EMPH, MarkdownElementTypes.STRONG ->
+                node.children.filter { it.type != MarkdownTokenTypes.EMPH }.joinToString("") { rewrite(it) }
+            GFMElementTypes.STRIKETHROUGH -> node.children.filter { it.type != GFMTokenTypes.TILDE }.joinToString("") { rewrite(it) }
+            MarkdownTokenTypes.ATX_HEADER, MarkdownTokenTypes.LIST_BULLET, MarkdownTokenTypes.LIST_NUMBER,
+            MarkdownTokenTypes.BLOCK_QUOTE, GFMTokenTypes.CHECK_BOX,
+            -> ""
+            GFMTokenTypes.TABLE_SEPARATOR -> " "
             MarkdownElementTypes.LINK_DEFINITION, MarkdownElementTypes.AUTOLINK, MarkdownTokenTypes.HORIZONTAL_RULE -> ""
             MarkdownTokenTypes.HTML_TAG -> ""
             MarkdownTokenTypes.HTML_BLOCK_CONTENT -> node.getTextInNode(source).toString().replace(Regex("<[^>]*>"), " ")
@@ -72,9 +79,7 @@ private fun withoutLinkTargets(source: String): String {
             MarkdownElementTypes.INLINE_LINK, MarkdownElementTypes.FULL_REFERENCE_LINK, MarkdownElementTypes.SHORT_REFERENCE_LINK ->
                 node.children
                     .firstOrNull { it.type == MarkdownElementTypes.LINK_TEXT || it.type == MarkdownElementTypes.LINK_LABEL }
-                    ?.children
-                    ?.filter { it.type != MarkdownTokenTypes.LBRACKET && it.type != MarkdownTokenTypes.RBRACKET }
-                    ?.joinToString("") { rewrite(it) }
+                    ?.let { rewrite(it) }
                     .orEmpty()
             MarkdownElementTypes.IMAGE ->
                 node.children.filter { it.type != MarkdownTokenTypes.EXCLAMATION_MARK }.joinToString(
@@ -84,11 +89,15 @@ private fun withoutLinkTargets(source: String): String {
                 if (node.children.isEmpty()) {
                     node.getTextInNode(source).toString()
                 } else {
+                    val tildePairs = singleTildeRuns(node.children, source)
+                    val delimiters = tildePairs.keys + tildePairs.values
+                    val label = node.type == MarkdownElementTypes.LINK_TEXT || node.type == MarkdownElementTypes.LINK_LABEL
                     buildString {
                         var cursor = node.startOffset
-                        node.children.forEach { child ->
+                        node.children.forEachIndexed { index, child ->
                             append(source, cursor, child.startOffset)
-                            append(rewrite(child))
+                            val bracket = child.type == MarkdownTokenTypes.LBRACKET || child.type == MarkdownTokenTypes.RBRACKET
+                            if (index !in delimiters && !(label && bracket)) append(rewrite(child))
                             cursor = child.endOffset
                         }
                         append(source, cursor, node.endOffset)

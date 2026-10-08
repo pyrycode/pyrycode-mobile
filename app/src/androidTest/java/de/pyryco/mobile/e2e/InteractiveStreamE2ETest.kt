@@ -5941,14 +5941,36 @@ class InteractiveStreamE2ETest {
         assertEquals("public fixed copy", fixed, public.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString())
         assertEquals("private conversation title", title, notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
         val preview = requireNotNull(notification.extras.getCharSequence(Notification.EXTRA_TEXT)).toString()
-        val parcel = android.os.Parcel.obtain()
-        try {
-            public.writeToParcel(parcel, 0)
-            val bytes = parcel.marshall().toString(Charsets.UTF_16LE)
-            assertFalse("public version carries preview content", bytes.contains(preview))
-        } finally {
-            parcel.recycle()
+
+        // Android attaches Binder-backed metadata after posting; Parcel.marshall cannot inspect it.
+        // Check the text-bearing object graph and exclude alternate rendering/tap surfaces instead.
+        fun assertNoPreview(value: Any?) {
+            when (value) {
+                is android.os.Bundle ->
+                    value.keySet().forEach { key ->
+                        assertFalse("public extra key carries preview content", key.contains(preview))
+                        assertNoPreview(value.get(key))
+                    }
+                is Array<*> -> value.forEach(::assertNoPreview)
+                is Iterable<*> -> value.forEach(::assertNoPreview)
+                is CharSequence ->
+                    assertTrue(
+                        "public text must be only the title or fixed copy",
+                        value.toString() == title || value.toString() == fixed,
+                    )
+                else -> assertFalse("public version carries preview content", value?.toString()?.contains(preview) == true)
+            }
         }
+        assertNoPreview(public.extras)
+        assertEquals("public ticker", null, public.tickerText)
+        assertEquals("public custom content", null, public.contentView)
+        assertEquals("public expanded content", null, public.bigContentView)
+        assertEquals("public heads-up content", null, public.headsUpContentView)
+        assertEquals("public actions", null, public.actions)
+        assertEquals("public tap", null, public.contentIntent)
+        assertEquals("public delete intent", null, public.deleteIntent)
+        assertEquals("public full-screen intent", null, public.fullScreenIntent)
+        assertEquals("nested public version", null, public.publicVersion)
     }
 
     /** Finish the activities a tap started. The tap's `CLEAR_TASK` replaced the rule's own, so the rule cannot. */
