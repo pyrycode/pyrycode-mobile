@@ -27,6 +27,7 @@ import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.espresso.Espresso
@@ -45,6 +46,7 @@ import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.di.HostConversationConnection
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.di.ThreadDestinationFactory
+import de.pyryco.mobile.ui.components.CHANNEL_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHAT_ROW_TEST_TAG
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
@@ -61,6 +63,7 @@ import org.koin.core.context.GlobalContext
 import org.koin.core.context.loadKoinModules
 import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.module
+import java.io.File
 
 /**
  * List-side surfaces of the assembled app (design-1220/list): the channel list, Settings, Archive, Edit host,
@@ -242,10 +245,12 @@ class ListDesignCaptureTest {
         design.openHeaderMenu()
         design.capture(FOLDER, "thread-menu$suffix", "none")
         rule.onNodeWithText("Edit").performClick()
-        rule.waitUntil(5_000) { rule.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
-        design.capture(FOLDER, "edit-channel$suffix", "671:5415")
+        awaitText("Channel name:")
+        val editModal = awaitModalFocus(rule.onNodeWithText("Edit channel"))
+        openChannelFormKeyboard(editModal)
         // At 320x700 the keyboard pushes Mute and Archive channel below the window; they must stay reachable.
         rule.onNodeWithText("Archive channel").performScrollTo().assertIsDisplayed()
+        captureChannelForm(editModal, "Edit channel", "edit-channel$suffix", "671:5415")
         relaunch()
 
         // Rename and Save as channel are on an unpromoted conversation's menu only; a channel's opens Edit (#1561).
@@ -260,7 +265,10 @@ class ListDesignCaptureTest {
         design.openHeaderMenu()
         rule.onNodeWithText("Save as channel…").performClick()
         awaitText("Save as channel")
-        design.capture(FOLDER, "save-as-channel$suffix", "671:5718")
+        awaitText("Channel name:")
+        val saveModal = awaitModalFocus(rule.onNodeWithText("Save as channel"))
+        openChannelFormKeyboard(saveModal)
+        captureChannelForm(saveModal, "Save as channel", "save-as-channel$suffix", "671:5718")
         relaunch()
 
         openFirst(TREE_CHANNEL_ROW_TEST_TAG)
@@ -432,6 +440,57 @@ class ListDesignCaptureTest {
         }
         InstrumentationRegistry.getInstrumentation().uiAutomation.waitForIdle(500, 5_000)
         rule.waitForIdle()
+    }
+
+    private fun assertModalKeyboardClosed(modal: View) {
+        rule.runOnIdle {
+            assertTrue("the form's dialog window keeps focus", modal.hasWindowFocus())
+            val insets = checkNotNull(ViewCompat.getRootWindowInsets(modal))
+            assertTrue("keyboard-closed capture requires hidden dialog IME", !insets.isVisible(WindowInsetsCompat.Type.ime()))
+            assertEquals(
+                "keyboard-closed capture requires zero dialog IME inset",
+                0,
+                insets.getInsets(WindowInsetsCompat.Type.ime()).bottom,
+            )
+        }
+    }
+
+    private fun openChannelFormKeyboard(modal: View) {
+        rule.runOnIdle {
+            assertTrue("channel form must own a dialog window", modal.parent is DialogWindowProvider)
+        }
+        rule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).performClick()
+        rule.runOnIdle { modal.windowInsetsController?.show(WindowInsets.Type.ime()) }
+        awaitModalKeyboard(modal, visible = true)
+    }
+
+    private fun captureChannelForm(
+        modal: View,
+        title: String,
+        name: String,
+        figmaNode: String,
+    ) {
+        // Send Back to the focused dialog; Espresso can instead select the unfocused Activity root.
+        shell("input keyevent KEYCODE_BACK")
+        awaitModalKeyboard(modal, visible = false)
+        rule.onNodeWithText(title).assertIsDisplayed()
+        assertEquals(modal, (checkNotNull(rule.onNodeWithText(title).fetchSemanticsNode().root) as ViewRootForTest).view)
+        rule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("Cancel").assertIsDisplayed()
+        rule.onNodeWithText("OK").assertIsDisplayed()
+        assertModalKeyboardClosed(modal)
+        design.capture(FOLDER, name, figmaNode)
+        // Activity insets in capture() cannot establish a separate dialog's IME state.
+        val dialogInsets = rule.runOnIdle { checkNotNull(ViewCompat.getRootWindowInsets(modal)) }
+        File(
+            checkNotNull(InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")),
+            "design-1220/$FOLDER/$name.txt",
+        ).appendText(
+            "dialogWindowFocused=true keyboardOpenObserved=true backKeptForm=true " +
+                "dialogImeVisible=${dialogInsets.isVisible(WindowInsetsCompat.Type.ime())} " +
+                "dialogImePx=${dialogInsets.getInsets(WindowInsetsCompat.Type.ime())}\n",
+        )
+        assertModalKeyboardClosed(modal)
     }
 
     /**

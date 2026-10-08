@@ -259,7 +259,15 @@ record `bottom=0` while the screenshot already shows the keyboard, or the
 reverse. Settle the keyboard state explicitly before capturing a dialog-window
 modal — as the Edit host steps already do with `awaitModalFocus` /
 `awaitModalKeyboard` / `pressBack` — rather than reading the race as a
-structural limit of dialog-window sidecars.
+structural limit of dialog-window sidecars. Activity insets alone cannot establish
+that dialog's keyboard state. The settled Edit channel and Save as channel walk
+(#1862) retains the same focused dialog root, observes visible IME with a positive
+dialog inset, then uses physical Back and checks invisible IME with zero dialog
+inset before and after hardware capture, while confirming the form/footer remain.
+For bar-free frame comparisons, measure visible footer surfaces separately from
+48 dp touch targets and account for the real navigation inset; do not subtract
+the status inset from centered field coordinates. See the
+[retained measurements](../../../app/src/androidTest/assets/design-1220/list/1862-evidence.txt).
 
 `ThreadDesignCaptureTest` (#1432) audited the thread, composer and thread
 status states through this harness. It runs in the UI gate on ATD, so a change
