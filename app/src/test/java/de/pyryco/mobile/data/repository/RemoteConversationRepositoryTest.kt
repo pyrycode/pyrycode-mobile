@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Clock
@@ -4126,6 +4127,8 @@ class RemoteConversationRepositoryTest {
             pump.push(toolUseEnvelope("c-1", "running", "tool-1", "Bash", "held command"))
             runCurrent()
             assertEquals(listOf("older", "tool-1", own), messageIds(first.last()))
+            advanceTimeBy(100)
+            runCurrent()
             assertTrue(messageIds(cache.readThread("host-a", "c-1")).contains(own))
             initialReader.cancel()
             runCurrent()
@@ -4152,6 +4155,8 @@ class RemoteConversationRepositoryTest {
             pump.push(messageEnvelope("c-1", own, "user", "marker request", TS))
             runCurrent()
             assertEquals(delivered, messageIds(reopened.last()))
+            advanceTimeBy(100)
+            runCurrent()
             assertEquals(delivered.filter { it != "tool-2" }, messageIds(cache.readThread("host-a", "c-1")))
 
             // A disconnect must keep legitimate history and the delivered echo, without transient tools.

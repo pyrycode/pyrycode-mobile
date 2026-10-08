@@ -194,7 +194,7 @@ inherited the collector dispatcher, normally `Main.immediate` through the ViewMo
 Restore-order lookup, suppression filtering, merge/rebase and cache-policy filtering/comparison
 now use the injected `processingDispatcher`, defaulting to `Dispatchers.Default`.
 Moving only the merge would still leave long-list equality on the collector: both the
-snapshot observer's comparison with `lastWritten` and the list-only observer's distinct
+snapshot observer's cache-policy comparison and the list-only observer's distinct
 comparison run on the worker. Worker scheduling is separate from write coalescing and UI
 pacing; the controlled probes establish scheduling and main progress, not measured device
 frame times.
@@ -236,18 +236,18 @@ a connection boundary combines it with the last live order. Each merge receives
 `baseOrder + snapshot.unsignedHistoryOrder`. Rows and ordering therefore survive reconnect together.
 Drawn rows are emitted and retained in `drawnThreads` before a cache write. The observer hands
 untrimmed `drawn` to `writeThread`, under the shared `historyWrites` mutex with a tombstone check
-inside the lock. Only a successful write advances `lastWritten`; static failure logging exposes
-no rows, ids or cursors.
+inside the lock. Only a successful write advances the shared persisted baseline; static failure
+logging exposes no rows, ids or cursors.
 
 An empty visible snapshot with nonempty suppression is a pending-delivery reading within the
 same connection, not a disconnect. Rebasing there would lose the fixed restore base and its
 attachment metadata. The filtered drawn rows are emitted and cached, so reopening cannot
 resurrect a hidden queued echo before its delivered push.
 
-After the rebase, `cacheableThreadRows(drawn)` equals whatever the previous emission already
-wrote, so a disconnect **writes nothing** — the only exception is retrying an earlier failed
-write. `settledThreadRows` (not `cacheableThreadRows`) is the rebase's own function: it drops only
-in-flight rows and applies no row-count bound, so a thread longer than
+After the rebase, `cacheableThreadRows(drawn)` matches the previous accepted candidate, so
+a disconnect creates no new settled change or quiet-period delay. Already pending rows still
+persist, and an earlier failed write remains retryable. `settledThreadRows` (not
+`cacheableThreadRows`) is the rebase's own function: it drops only in-flight rows and applies no row-count bound, so a thread longer than
 [`MAX_CACHED_THREAD_ROWS`](conversation-cache-contract.md#the-contract) does not visibly shrink on screen
 the moment its connection drops.
 
@@ -277,7 +277,7 @@ so the two can never disagree; the wrapper only decides *when* to call it, and, 
 `writeThread` itself applies `cacheableThreadRows` to what it is handed — see below.
 
 **`observeMessages` hands `writeThread` the drawn rows, not the already-trimmed cacheable ones
-(#1354).** The wrapper's own `cacheable` is still what it compares against `lastWritten` to decide
+(#1354).** The wrapper compares its `cacheable` rows against successful persisted rows to decide
 *whether* to write, but the call itself passes `drawn`, because `writeThread`'s own contract is to
 do the trimming and to drop a saved history position when that trim moves the oldest kept row away
 from it (see [Conversation cache § The thread document's two
@@ -289,52 +289,76 @@ matched the oldest saved row, a silent, permanent gap in a very long saved chann
 cache rule that depends on the shape of its input has to be tested through its real caller, not
 only called directly with the shape the rule expects.
 
-An observer write happens only when `cacheableThreadRows(drawn)` differs from `lastWritten` (initially the
-restored snapshot). Filtering and this equality comparison run on the worker only after
-downstream emission returns. Publication of `drawnThreads` and `snapshot.copy(rows = drawn)`
-stays on the collector; a suspended downstream consumer therefore holds back filtering and
-writing. Cache I/O keeps the cache implementation's scheduling, and the shared mutex and
-successful-write-only advancement of `lastWritten` retain their existing roles. That means:
+Since [#1967](../../specs/architecture/1967-coalesced-thread-writes.md), a collection-owned
+writer accepts immutable candidates after downstream emission returns. Cache-policy filtering
+and comparison run on `processingDispatcher`; a suspended downstream consumer still delays
+acceptance, but disk I/O no longer delays processing or delivery of subsequent snapshots.
 
-- Opening a conversation offline writes nothing — `drawn == restored`.
-- An `assistant_delta` stream writes nothing until the turn settles, because every intermediate
-  emission's cacheable set is unchanged until an in-flight row's exclusion condition clears.
-- A disconnect writes nothing, per the rebase above, unless retrying an earlier failed write.
+Settled changes separated by less than 100 ms form a burst. After 100 ms without a changed
+cacheable candidate, the writer persists the latest rows. It holds one replaceable pending
+candidate rather than a queue of whole-thread writes. A running write may finish first; newer
+pending candidates replace each other while it runs. Returning to the successful persisted rows
+also replaces obsolete pending work and can avoid I/O altogether.
 
-A failed write logs one static event (`RelayLog.d { "event=thread_cache_write_failed" }`) and does
-**not** advance `lastWritten`, so the next drawn change retries it. Nothing about a row, a
-conversation id or a server id is ever logged.
+Unchanged or streaming-only updates do not restart the delay. Opening offline creates no work
+when the drawn rows equal restoration; streaming/running rows alone trigger no persistence.
+Disconnect rebases retain the accepted settled rows without creating a new change. A coverage
+save completed during this collection can make a later removal eligible even when it matches
+restoration; the lifecycle rule is explained under [the saved history position](#the-saved-history-position-1354).
+
+A failed write logs only `event=thread_cache_write_failed`, leaves the successful baseline
+unchanged and enables retry on the next snapshot, including an unchanged one, or on final flush.
+It does not retry autonomously while idle. No rows, ids, cursors or exception details enter this
+event. Successful storage alone advances the comparison baseline shared by both row writers.
 
 ## State and concurrency
 
-No scope is owned and nothing is launched. Each cold snapshot flow owns its base, base order,
-last live order, last drawn rows and last successfully written rows. Sequential `withContext`
-calls are children of the collecting coroutine: they finish processing the captured immutable
-snapshot before taking another generation. No buffered `flowOn`, independent launch or
-latest-only cancellation is used. Collection cancellation prevents held processing from
-publishing or starting a later write.
+Each cold snapshot flow owns its merge base, ordering, last drawn rows and a structured
+`coroutineScope` with a writer child on `processingDispatcher`. Sequential worker hops finish
+processing each captured snapshot before taking another; merge generations are never conflated
+or cancelled in favour of newer input. Only pending disk work is conflated. The collection's
+bounded timer signals readiness; it does no merge or cache-policy work. No application or
+repository scope owns the writer.
 
 Only rows are replaced in the emitted snapshot; suppression, unsigned order and read evidence
 remain those of the captured generation. Restored rows create no sight claims, history requests
-or read commands. The list-only observer compares rows on the same worker and emits distinct
-lists on the collector. The wrapper retains latest drawn rows per conversation for history
-saves. A wrapper-level `historyWrites` mutex serializes observer writes, coverage-null position
-writes, the complete coverage row/state operation and confirmed deletion. The file cache's own
-mutex protects each disk operation; lock order is wrapper then file cache, with no callback into
-the wrapper. Cancellation belongs to the caller except confirmed-removal cleanup.
+or read commands. The list-only observer compares rows on the worker and emits distinct lists
+on the collector. Snapshot generations are allocated at upstream capture, before worker
+processing can suspend; held drawn rows carry that generation into coverage saves.
+
+The wrapper's `historyWrites` mutex serializes observer writes, coverage-null position writes,
+the complete coverage row/state operation and confirmed deletion. Lock order is wrapper then
+file cache, with no callback into the wrapper. Both row writers publish their successful
+`persistedThreads` baseline under this lock; it survives collection restarts. A writer also
+remembers its completed candidate by identity, so cleanup cannot repeat that completed write
+after another collector persists newer rows. Later candidates still compare against the shared
+successful rows, not an obsolete collection-local baseline.
+
+Lock acquisition and snapshot processing remain cancellable. Once either row writer starts a
+mutation, the mutation and its successful baseline update finish together in `NonCancellable`
+under `historyWrites`. Atomic replacement can commit before a cancellable dispatcher return
+delivers success: joining a cancelled writer alone would otherwise leave disk and baseline
+inconsistent and could skip a newer removal during flush. Failed writes update no baseline.
+
+Normal upstream completion, upstream failure and collector cancellation run non-cancellable
+cleanup: cancel/join the timer and writer, then attempt the latest accepted pending candidate
+once unless already completed, persisted, satisfied by coverage or deleted. Cleanup waits for
+actual I/O, leaves no orphan writer and never loops on storage failure. Cancellation then
+propagates. A snapshot interrupted before acceptance creates no flush work. This guarantees
+orderly cleanup with successful storage, not persistence through force-stop or process death.
 
 ## `delete` — removing the cache alongside the daemon (#798)
 
 The delegate deletes first; refusal propagates before touching cache state. After success the
 wrapper marks its thread-safe destination-local tombstone, then waits non-cancellably for
-`historyWrites`, clears held drawn metadata and removes the cached conversation under this
-wrapper's host id. A failed removal logs a static event and does not turn daemon success into a
+`historyWrites`, clears held drawn and persisted-generation metadata and removes the cached
+conversation under this wrapper's host id. A failed removal logs a static event and does not turn daemon success into a
 reported deletion failure. Archive/unarchive remain delegation.
 
 **A pre-I/O tombstone check is insufficient (#1832).** A writer can pass it, suspend, and recreate
-rows after removal. Every writer checks the tombstone under the shared mutex; deletion waits for
-an in-flight writer, then removes its results. This includes fallback row reads, observer writes,
-coverage-null writes and the interval between row and state writes. Once removal returns,
+rows after removal. Scheduled writes and final flushes check the tombstone under the shared
+mutex; deletion waits for an in-flight non-cancellable mutation, then removes its results.
+This includes fallback row reads, observer writes, coverage-null writes and the interval between row and state writes. Once removal returns,
 suspended writers cannot recreate the document. A fresh destination has a fresh tombstone set.
 
 ## The saved history position (#1354)
@@ -366,6 +390,25 @@ persists. Delta matches inside legacy whole turns prove retention, not completen
 Their whole-row proof alone is insufficient: restore and stale binding also require bounded,
 non-overlapping slices in unsigned durable order with matching fragment hashes. Removing a
 maximum-id producer terminates the retained interval rather than wrapping its successor to zero.
+
+**Capture order and save completion answer different questions (#1967).** After a successful
+coverage row write, `persistedThreads` records its actual cacheable rows and satisfies observer
+candidates through the maximum of the history snapshot's capture generation and the selected
+drawn base's generation. A candidate captured before that boundary cannot rewrite newer rows
+or coverage merely because its worker resumes later. Later drawn generations remain eligible.
+Observer successes replace the shared row baseline while preserving coverage satisfaction;
+otherwise resubscription could compare against older coverage rows and skip a needed write.
+
+Each successful coverage row write also advances `coverageRevision`, even if the subsequent
+position write fails or is cancelled. The observer captures that successful revision at entry,
+before restoration can suspend. Retained coverage completed before entry cannot alone turn an
+unchanged empty or streaming-only failed restore into a write. A save completed during restoration
+can supersede this collection's candidate, even if captured before entry: a later generation
+that intentionally removes its rows must remain eligible. Changed candidates and failed-write
+retries remain independent of this exception. Capture generations reject stale work; successful
+completion revisions distinguish overlapping saves from already retained coverage. Neither is a
+wire or disk field. Row success publishes rows, satisfaction and revision together in the
+non-cancellable section described above; position failure cannot undo that successful row write.
 
 The complete operation passes untrimmed rows and uses shared cache-policy trim accounting. If
 rows exceed the cap, the later position write also resets backwards cursor to empty and `atStart`
@@ -462,10 +505,26 @@ guarded lists assert traversal occurs in its context, avoiding elapsed-time thre
   merge is held leaves no downstream publication or write.
 
 Existing immediate cache/history fixtures inject `UnconfinedTestDispatcher(testScheduler)`
-as `processingDispatcher` to keep their synchronous observation assertions deterministic.
-This injection retains their persistence, retry and deletion assertions; it is not a substitute
+as `processingDispatcher` to keep observation assertions deterministic. Disk assertions also
+advance the 100 ms quiet period and run ready tasks; dispatcher injection alone does not make
+persistence synchronous. Exact-cap retention probes must first prove those rows reached disk
+before checking the position or replacing them with oversized rows. This is not a substitute
 for the held-worker probes. Keep the [real-file full-cap and fresh-instance
 checks](conversation-cache-testing.md#testing) alongside the scheduling probes.
+
+[`CoalescedThreadWritesTest.kt`](../../../app/src/test/java/de/pyryco/mobile/data/repository/CoalescedThreadWritesTest.kt)
+uses virtual time for burst boundaries, unchanged/streaming timing and bounded failure retries.
+Held I/O proves snapshot progress and pending replacement. Fresh file-cache instances check
+completion/cancellation flush, deletion, coverage overlap, trimming and reconnect. Same-wrapper
+resubscription and multiple-collector probes protect the shared baseline and completed-candidate
+guard. Failed-restore controls distinguish retained coverage from saves completed during restore,
+including a save captured before collection entry.
+
+The three `postCommit` probes hold real atomic replacement before success returns, then accept
+a newer removal: cancellation, normal completion and coverage-save cancellation must all wait
+and restore the latest rows. Holding only before mutation misses this boundary. The renderer-key
+collision probe remains explicitly ignored on [#1979](https://github.com/pyrycode/pyrycode-mobile/issues/1979),
+a pre-existing merge admission failure; the enabled neighbour/order probes do not prove that case.
 
 `HistoryMessageIdentityTest` uses a real file cache for both arrival orders, unseeded reconnects,
 original-page replay, empty emissions, persisted rows and coverage saves. Its independent writer
