@@ -1267,12 +1267,15 @@ Chat A gets one settled ping turn, which the phone draws and caches. A's second 
 (`WAIT_PROMPT`) until the peer answers it, and the phone leaves A for a second chat, B, before that
 happens — so the leave never depends on how fast claude answers. The peer allows the prompt once the
 phone is in B, and the turn ends there; A's thread never draws the reply, because it is not open. The
-test does not wait on the peer's own `turn_end` to know the phone has the reply, since the peer's copy
-can arrive first (the same race the offline-read-reconcile scenario above guards against): it instead
-polls the phone's persisted `ReadPosition` for A until `completedTurnId` names that turn, and asserts it
-is unread, which is the phone's own record that it folded the `turn_end` — and everything before it on
-the ordered inbound stream — while A was not viewed. Only then does it cut and restore the host link with
-`setHostLink`. Before reopening A, it also reads `ConversationCache` for A directly and asserts the cache
+test subscribes to host-qualified `HostConversationSource.alerts` before releasing the
+permission and requires the phone's `TurnCompleted` alert key to equal the peer's exact
+turn id (#1883). It then waits for the phone's own read facts to cover that turn's
+`history_entry_id` (`latestEntryId >= entryId`), with a present shared mark below latest,
+and for A to resolve Unread while B stays visible. A peer's `turn_end` alone can arrive
+before the phone's copy; the alert and durable facts fence phone receipt on the ordered
+inbound stream. Persisted `ReadPosition` is no longer a receipt fence for modern daemons,
+since it belongs only to the older-daemon fallback. Only then does it cut and restore the
+host link with `setHostLink`. Before reopening A, it also reads `ConversationCache` for A directly and asserts the cache
 holds the ping's cached reply but not the held turn's reply, so the live checks that follow cannot pass
 on an empty or wrongly keyed read. Reopening A, with no other gesture, must then draw all four rows —
 the ping prompt, its reply, the held prompt, and its reply — exactly once each, in `boundsInRoot.top`
@@ -2179,6 +2182,23 @@ Evidence, 2026-10-08, full live run of `python3 scripts/android-test-gate.py liv
 0 skipped. `interactiveTurn_attentionDot_followsARealTurn` ran and passed. The
 deterministic viewport probes ran in that branch's UI gate:
 `ThreadReadViewportDeviceTest`, 4 executed, 0 failed, 0 skipped.
+
+### Peer read clears phone attention (#1883)
+
+`InteractiveStreamE2ETest.interactiveTurn_attentionDot_followsARealTurn` preserves
+\#1912's phone-to-peer mark assertion and B's permission checks. After B becomes Unread,
+`SecondClientPeer` receives B's actual assistant reply from durable history and confirms
+a mark through that history's newest id. The phone remains on the channel list: B's
+dot becomes Idle without reopening, while A stays Idle.
+
+The rung-4 twin is
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread`,
+selected by ordinary scripted `ping`. After the foreground reply is acknowledged, it
+leaves the thread, receives an exact completed channel post, requests a fresh list for
+its durable latest id, and requires Unread. The peer's history must contain that exact
+post before its confirmed read clears the dot on the still-visible list. Channel-post
+pushes omit durable ids; receipt alone cannot prove the durable comparison. The owned
+post control retains its allowed `e2e1833-` fixture prefix.
 
 ### The render gap fixed first (#337)
 
@@ -3244,6 +3264,21 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+**Shared daemon unread (#1883, 2026-10-08).** The dispatcher ran fresh full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on
+`feature/1883` at `eea532fcc8b004ffe3f49da63600f0716279eb30`, merged with
+`origin/main` at `45cf6c37999c`: **65 executed, 65 passed, 0 failed, 0 skipped**,
+with 0 flaky passes; exit 0 in 15m 50s. The method-level JUnit gate report
+(`2026-10-08T02-07-05-790Z`) explicitly lists both
+`InteractiveStreamE2ETest#interactiveTurn_attentionDot_followsARealTurn` and
+`InteractiveStreamE2ETest#interactiveTurn_offscreenReply_survivesReconnectThroughNewestPageAsk`
+as executed and passed in this full suite. This is full-suite evidence, not a
+separate focused attention run. No daemon-revision annotation was supplied.
+The [issue's live-gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1883#issuecomment-6050873671)
+records the same tree and counts. Fresh verifier UI: **209 executed, 209 passed,
+0 failed, 1 skipped**; scripted-all: **22 executed, 22 passed, 0 failed, 0 skipped**.
+The verifier confirms both selected `ping` methods passed, including the peer-clear twin.
 
 **Archive/restore viewport synchronization (#1870, 2026-10-07).** At diagnostic mobile revision
 `a7d76be0b7ea68c0aa30ef3a34bbbb0b25192849`, daemon
@@ -5104,6 +5139,17 @@ The remaining checks here are specific to a real relay or real Claude execution:
   run, not a full-suite pass. Retained dispatcher reports are
   `2026-10-04T08-35-25-235Z_real-claude-gate_#1631.log` and its `-rerun_#1631.log` counterpart.
 
+
+- **Shared unread (#1883):**
+  `InteractiveStreamE2ETest.interactiveTurn_attentionDot_followsARealTurn` now proves
+  peer-to-phone clearing without reopening as well as #1912's phone-to-peer mark.
+  Its rung-4 twin in `DeterministicInteractiveStreamE2ETest` remains the original
+  scripted `ping` method, extended with an exact durable post and peer read.
+  The offscreen reconnect method uses the phone's exact completion alert, durable
+  coverage and shared Unread instead of legacy-only persisted positions.
+  [Fresh full-suite evidence](#verification-status) closes the live handoff; no
+  scenario follow-up remains. The pre-ship command remains
+  `python3 scripts/android-test-gate.py live`.
 
 - **Coverage — hardened:** [#1637](https://github.com/pyrycode/pyrycode-mobile/issues/1637)
   fixes pending CameraX initialization blocking scanner exit on main, protecting

@@ -24,6 +24,14 @@ writes it. [#798](../../specs/architecture/798-clear-cache-on-removal.md) wires 
 
 ## The contract
 
+**Read positions are the older-daemon fallback (#1883).** The host-keyed
+`ReadPosition` family keeps its existing format, storage custody and restart behavior.
+A daemon supplying confirmed read marks owns unread through its known latest durable id
+and shared mark; local opens, turn ids and row tokens cannot override it. Cached rows
+never establish connected-daemon support, and shared marks are not restored from disk.
+See the [read-position family](conversation-cache-contract.md#the-contract) and
+[attention lifetime](dependency-injection-host-conversation-source.md#attention-state-877).
+
 **Visible markers do not certify saved coverage (#1917).** Restored fragmented spans and their
 unresolved gaps remain authoritative even when projection suppresses most markers. Internal markers
 require delivered content in both immediately adjacent spans; at the oldest displayed row only the
