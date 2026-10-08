@@ -298,7 +298,10 @@ private fun MobileModalShell(
                             ).padding(start = 28.dp, end = 28.dp, top = 24.dp, bottom = bottomPadding),
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    // Figma's Header area carries 4 dp of its own bottom padding below the divider, on top
+                    // of the shell's 20 dp gap to content — together the frames' 25 dp from the divider's
+                    // top to the content slot's top (#1588). The 1 dp divider itself is the other dp.
+                    Column(modifier = Modifier.padding(bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(20.dp),
@@ -354,8 +357,14 @@ private fun MobileModalShell(
                         }
                     }
                     if (footer != null) {
+                        // No explicit top padding here: Figma's Footer carries its own 4 dp, but
+                        // `minimumInteractiveComponentSize`'s invisible 4 dp margin above each 40 dp visible
+                        // surface already supplies that dp for free. Adding padding on top of it double-counted
+                        // the margin and left the content slot 4 dp short at this edge (#1588) — the same
+                        // pattern #1503 fixed for MobileDismissModal's bottom offset. The visible action's own
+                        // position is unchanged: it was never inside this padding, only the dead space above it.
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                            modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(20.dp, footerAlignment),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
