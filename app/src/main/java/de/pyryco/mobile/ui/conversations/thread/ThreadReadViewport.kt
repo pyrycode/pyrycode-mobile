@@ -63,7 +63,9 @@ internal fun ThreadReadViewport(
             val bounds = viewportBounds.value
             val bottom = tracked.trailingEdge
             if (resumed &&
-                unobscured && tracked.laidOut && tracked.revealed &&
+                unobscured &&
+                tracked.laidOut &&
+                tracked.revealed &&
                 item != null &&
                 chrome.first > 0 &&
                 chrome.second > 0 &&
