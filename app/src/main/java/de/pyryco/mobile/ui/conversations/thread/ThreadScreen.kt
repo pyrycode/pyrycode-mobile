@@ -50,6 +50,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
@@ -91,7 +92,6 @@ import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
-import de.pyryco.mobile.data.repository.mergeIdentity
 import de.pyryco.mobile.ui.components.EditChannelModal
 import de.pyryco.mobile.ui.components.chromeBackdrop
 import de.pyryco.mobile.ui.components.defaultChromeShadow
@@ -137,6 +137,16 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
+
+// Observes the production list-host composition without adding snapshot dependencies.
+internal val LocalThreadListCompositionObserver =
+    staticCompositionLocalOf<
+        (
+            (
+                androidx.compose.foundation.lazy.LazyListState,
+            ) -> Unit
+        )?,
+    > { null }
 
 /** The status band's reading box (#1312), so a test can tell a band reading from the same words in a message. */
 internal const val STATUS_READING_TEST_TAG = "thread-status-reading"
@@ -664,13 +674,9 @@ fun ThreadScreen(
                         // #896: a subagent's tool rows indent under the Agent/Task call that spawned them.
                         val toolDepths = remember(state.items) { toolNestingDepths(state.items) }
                         val listState = rememberLazyListState()
-                        val laidOutVersions = remember(listState) { mutableStateMapOf<ThreadRow, Boolean>() }
-                        val trailingEdges = remember(listState) { mutableStateMapOf<ThreadItem, Float>() }
-                        var messageViewport by remember(listState) { mutableStateOf<Rect?>(null) }
-                        val revealedVersions = remember(listState) { mutableStateMapOf<ThreadItem, Boolean>() }
-                        SideEffect {
-                            laidOutVersions.keys.retainAll(rows.toSet())
-                        }
+                        val compositionObserver = LocalThreadListCompositionObserver.current
+                        SideEffect { compositionObserver?.invoke(listState) }
+                        val messageViewport = remember(listState) { mutableStateOf<Rect?>(null) }
                         val promptRowCount =
                             (shownQuestion?.let { it.batch.questions.size + 2 } ?: 0) +
                                 (if (state.historyMarkers.any { it.beforeRow.isEmpty() }) 1 else 0) +
@@ -697,23 +703,31 @@ fun ThreadScreen(
                             }
                         val readRow = newestRenderedRow as? ThreadRow.Delivered
                         val readItem = readRow?.item
+                        val readKey = newestRenderedRow?.listKey(rows.indexOf(newestRenderedRow))
+                        val readCandidate =
+                            remember(readKey, readRow) {
+                                if (readItem != null && readKey != null) ThreadReadCandidate(readKey, readItem) else null
+                            }
                         ThreadReadViewport(
                             state = state.copy(readEvidence = state.readEvidence?.forBackgroundAgentRows(state.items, agentRows)),
                             listState = listState,
-                            rowKey = newestRenderedRow?.listKey(rows.indexOf(newestRenderedRow)),
-                            row = readItem,
-                            laidOut = readRow != null && laidOutVersions[readRow] == true,
-                            trailingEdge = readItem?.let { trailingEdges[it] },
+                            candidate = readCandidate,
                             viewport = messageViewport,
-                            revealed = readItem !is ThreadItem.MessageItem || revealedVersions[readItem] == true,
                             headerHeight = maxOf(headerHeight, topOverlayHeight),
                             composerHeight = composerHeight,
                             visible =
-                                modalState == ModalUiState.Hidden && shownQuestion == null &&
-                                    !state.channelInfoOpen && !backgroundTasksOpen && !sheetVisible &&
-                                    !state.showRenameDialog && state.channelEditor == null &&
-                                    state.saveAsChannelDialog == null && !state.deleteConfirmVisible &&
-                                    !state.workspacePickerVisible && !overflowExpanded && openMenu == null &&
+                                modalState == ModalUiState.Hidden &&
+                                    shownQuestion == null &&
+                                    !state.channelInfoOpen &&
+                                    !backgroundTasksOpen &&
+                                    !sheetVisible &&
+                                    !state.showRenameDialog &&
+                                    state.channelEditor == null &&
+                                    state.saveAsChannelDialog == null &&
+                                    !state.deleteConfirmVisible &&
+                                    !state.workspacePickerVisible &&
+                                    !overflowExpanded &&
+                                    openMenu == null &&
                                     !typeAheadVisible,
                             onEvent = onOverflowEvent,
                         )
@@ -829,7 +843,7 @@ fun ThreadScreen(
                             modifier =
                                 Modifier.fillMaxSize().olderHistoryPull(listPull).onGloballyPositioned {
                                     val origin = it.positionInWindow()
-                                    messageViewport = Rect(origin.x, origin.y, origin.x + it.size.width, origin.y + it.size.height)
+                                    messageViewport.value = Rect(origin.x, origin.y, origin.x + it.size.width, origin.y + it.size.height)
                                 },
                             headerHeight = headerHeight,
                             composerHeight = composerHeight,
@@ -924,16 +938,18 @@ fun ThreadScreen(
                                 key = { reversedIndex, row -> row.listKey(rows.size - 1 - reversedIndex) },
                             ) { reversedIndex, row ->
                                 val chronologicalIndex = rows.size - 1 - reversedIndex
+                                val candidate = readCandidate?.takeIf { row == readRow }
                                 ThreadRowContent(
                                     rowRelocationSpec,
-                                    Modifier.onGloballyPositioned {
-                                        laidOutVersions[row] = true
-                                        val item = (row as? ThreadRow.Delivered)?.item
-                                        if (item != null &&
-                                            item !is ThreadItem.MessageItem
-                                        ) {
-                                            trailingEdges.recordReadVersion(item, it.positionInWindow().y + it.size.height)
+                                    if (candidate != null) {
+                                        Modifier.onGloballyPositioned {
+                                            candidate.laidOut = true
+                                            if (candidate.row !is ThreadItem.MessageItem) {
+                                                candidate.trailingEdge = it.positionInWindow().y + it.size.height
+                                            }
                                         }
+                                    } else {
+                                        Modifier
                                     },
                                 ) {
                                     historyMarkersFor(row, gapMarkers).forEach { marker ->
@@ -951,13 +967,11 @@ fun ThreadScreen(
                                                 is ThreadItem.MessageItem ->
                                                     MessageBubble(
                                                         message = item.message,
-                                                        onContentPresented = { revealedVersions.recordReadVersion(item, true) },
-                                                        onContentTrailingEdge = {
-                                                            _,
-                                                            bottom,
-                                                            ->
-                                                            trailingEdges.recordReadVersion(item, bottom)
-                                                        },
+                                                        onContentPresented = { candidate?.revealed = true },
+                                                        onContentTrailingEdge =
+                                                            candidate?.let { tracked ->
+                                                                { _, bottom -> tracked.trailingEdge = bottom }
+                                                            },
                                                         onReply = { pendingReplyDraft = onReplyToMessage(it) },
                                                         modifier =
                                                             if (row.agentBlockId ==
@@ -1724,11 +1738,3 @@ internal fun openToolCall(items: List<ThreadItem>): ToolCall? =
                 item.message.toolCall.parentToolUseId
                     .isEmpty()
         }.let { (it as? ThreadItem.MessageItem)?.message?.toolCall }
-
-private fun <T> MutableMap<ThreadItem, T>.recordReadVersion(
-    row: ThreadItem,
-    value: T,
-) {
-    keys.removeAll { it != row && it.mergeIdentity() == row.mergeIdentity() }
-    this[row] = value
-}

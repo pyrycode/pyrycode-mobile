@@ -7,6 +7,8 @@ import org.junit.runner.RunWith
 /** Required device probes exercise the platform destination lifecycle and obscuring dialog window. */
 @RunWith(AndroidJUnit4::class)
 class ThreadReadViewportDeviceTest : ThreadReadViewportTest() {
+    @Test override fun scrolling_doesNotRecomposeProductionListHost() = super.scrolling_doesNotRecomposeProductionListHost()
+
     @Test override fun foregroundCheckpoint_requiresResumedDestinationAndDoesNotRepeat() =
         super.foregroundCheckpoint_requiresResumedDestinationAndDoesNotRepeat()
 
