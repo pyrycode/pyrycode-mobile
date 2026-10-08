@@ -16,6 +16,13 @@ import de.pyryco.mobile.ui.conversations.list.ChannelEditorState
 import kotlinx.datetime.Instant
 
 sealed interface ThreadEvent {
+    data class NewestContentPresented(
+        val row: ThreadItem,
+        val checkpoint: ULong,
+    ) : ThreadEvent {
+        override fun toString(): String = "NewestContentPresented(<redacted>)"
+    }
+
     data class BackgroundTaskToggle(
         val taskId: String,
     ) : ThreadEvent {
@@ -155,6 +162,8 @@ data class ThreadUiState(
     val showRenameDialog: Boolean = false,
     val saveAsChannelDialog: SaveAsChannelDialogState? = null,
     val items: List<ThreadItem> = emptyList(),
+    val readEvidence: de.pyryco.mobile.data.repository.ThreadReadEvidence? = null,
+    val readUpTo: ULong? = null,
     val queuedMessages: List<QueuedMessage> = emptyList(),
     val channelInfoOpen: Boolean = false,
     val deleteConfirmVisible: Boolean = false,

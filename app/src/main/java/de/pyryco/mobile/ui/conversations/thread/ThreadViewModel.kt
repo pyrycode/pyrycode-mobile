@@ -47,6 +47,7 @@ import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.data.repository.projectDisplay
+import de.pyryco.mobile.data.repository.threadSnapshots
 import de.pyryco.mobile.ui.conversations.components.AttachmentAction
 import de.pyryco.mobile.ui.conversations.components.AttachmentSource
 import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
@@ -704,6 +705,12 @@ class ThreadViewModel(
                 if (!available) lastKnownSessionId = ""
             }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    // One receipt subscription feeds both the rows and their read evidence, so opening a thread backfills once.
+    private val receivedThread =
+        repository
+            .threadSnapshots(conversationId)
+            .shareIn(viewModelScope, SharingStarted.WhileSubscribed(replayExpirationMillis = 0), replay = 1)
+
     /**
      * The thread rows (#337): the #313 finished-message projection from [ConversationRepository.observeMessages]
      * folded together with the live `assistant_delta` stream so an in-flight turn renders as a single
@@ -717,7 +724,7 @@ class ThreadViewModel(
      */
     private val threadItems: Flow<List<ThreadItem>> =
         merge(
-            repository.observeMessages(conversationId).map(ThreadInput::Finished),
+            receivedThread.map { it.rows }.distinctUntilChanged().map(ThreadInput::Finished),
             liveSessionEvents.map { ThreadInput.Live(it) },
         ).scan(ThreadFold(emptyList(), null)) { fold, input -> fold.reduce(input, conversationId) }
             .map { it.render() }
@@ -827,6 +834,18 @@ class ThreadViewModel(
             uiState.copy(mcpStatus = mcp)
         }.combine(combine(channelEditor.state, hostAvailable, ::Pair)) { uiState, (editor, available) ->
             uiState.copy(channelEditor = editor, hostAvailable = available)
+        }.combine(
+            combine(
+                receivedThread,
+                repository.observeReadMarks(conversationId),
+                flow<HistoryCoverage?> {
+                    emit(null)
+                    historySeed.join()
+                    historyCoverage.collect { emit(it) }
+                },
+            ) { snapshot, marks, coverage -> Triple(snapshot, marks, coverage) },
+        ) { uiState, (snapshot, marks, coverage) ->
+            uiState.copy(readEvidence = coverage?.let { snapshot.readEvidence.copy(gaps = it.unsignedGaps) }, readUpTo = marks?.readUpTo)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -3081,8 +3100,19 @@ class ThreadViewModel(
         }
     }
 
+    private var highestQualifiedRead = 0uL
+
     fun onOverflowEvent(event: ThreadEvent) {
         when (event) {
+            is ThreadEvent.NewestContentPresented -> {
+                // The composition sampled sight and daemon support together before dispatch.
+                val checkpoint = event.checkpoint
+                if (checkpoint <= highestQualifiedRead) return
+                highestQualifiedRead = checkpoint
+                viewModelScope.launch(
+                    start = CoroutineStart.UNDISPATCHED,
+                ) { repository.acknowledgeReadCheckpoint(conversationId, checkpoint) }
+            }
             is ThreadEvent.BackgroundTaskToggle -> toggleBackgroundTask(event.taskId)
             is ThreadEvent.BackgroundTaskStop -> sendBackgroundTaskStop(event.taskId)
             ThreadEvent.Archive -> {

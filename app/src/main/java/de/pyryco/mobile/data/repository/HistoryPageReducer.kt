@@ -490,6 +490,8 @@ internal class ReducedHistoryPage(
     val rows: List<ThreadItem>,
     val unsignedOrder: Map<Any, ULong>,
     val unsignedClaims: Map<Any, Set<ULong>>,
+    val readFacts: Map<ULong, Boolean?> = emptyMap(),
+    val readClaims: Map<Any, Set<ULong>> = emptyMap(),
 ) {
     val order: Map<Any, Long> get() = unsignedOrder.signedHistoryOrder()
     val claims: Map<Any, Set<Long>>
@@ -504,12 +506,16 @@ internal class ReducedHistoryPage(
 internal fun reduceOrderedHistoryPage(
     entries: List<HistoryEntry>,
     interactive: Boolean,
+    initialRows: List<ThreadItem> = emptyList(),
+    initialCompaction: CompactionFold = CompactionFold(),
 ): ReducedHistoryPage {
-    var compaction = CompactionFold()
+    var compaction = initialCompaction
     val order = HashMap<Any, ULong>()
     val claims = HashMap<Any, MutableSet<ULong>>()
+    val readFacts = HashMap<ULong, Boolean?>()
+    val readClaims = HashMap<Any, MutableSet<ULong>>()
     val rows =
-        entries.asReversed().fold(emptyList<ThreadItem>()) { rows, entry ->
+        entries.asReversed().fold(initialRows) { rows, entry ->
             val next =
                 if (interactive && (entry.type == TYPE_COMPACTING || entry.type == TYPE_COMPACTION_BOUNDARY)) {
                     rows.withCompactionEntry(entry, compaction).let { (next, fold) ->
@@ -519,6 +525,8 @@ internal fun reduceOrderedHistoryPage(
                 } else {
                     rows.withHistoryEntry(entry, interactive)
                 }
+            val nonvisual = understoodNonvisualEntry(entry, interactive)
+            readFacts[entry.unsignedId] = if (nonvisual == true) true else null
             if (next !== rows) {
                 next.forEachIndexed { index, row ->
                     val previous = rows.getOrNull(index)
@@ -530,6 +538,10 @@ internal fun reduceOrderedHistoryPage(
                         } else {
                             entry.unsignedId
                         }
+                    if (row != previous) {
+                        if (nonvisual != true || row.isReadContent() && row !is ThreadItem.Banner) readFacts[entry.unsignedId] = false
+                        readClaims.getOrPut(row.mergeIdentity()) { HashSet() }.add(entry.unsignedId)
+                    }
                     val segment = (row as? ThreadItem.MessageItem)?.message?.segment
                     if (segment == null) {
                         order.putIfAbsent(row.mergeIdentity(), logId)
@@ -557,7 +569,7 @@ internal fun reduceOrderedHistoryPage(
             }
             next
         }
-    return ReducedHistoryPage(rows, order, claims)
+    return ReducedHistoryPage(rows, order, claims, readFacts, readClaims)
 }
 
 /**

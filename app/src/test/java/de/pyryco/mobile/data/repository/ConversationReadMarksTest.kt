@@ -456,6 +456,171 @@ class ConversationReadMarksTest {
         }
     }
 
+    @Test fun liveAndReplayDurableReceiptRaisesLatestIndependentlyOfViewport() =
+        runTest {
+            val pump = Pump()
+            val repository = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            pump.push(snapshot(row("a", "0", "0")))
+            val direct =
+                Envelope(
+                    901,
+                    "message",
+                    TS,
+                    MobileJson.parseToJsonElement("""{"conversation_id":"a","message_id":"m","role":"user","text":"received"}"""),
+                    eventId = 5001,
+                    historyEntryId = 41u,
+                )
+            pump.push(direct)
+            runCurrent()
+            val held = repository.observeThreadSnapshot("a").first()
+            assertEquals(ConversationReadMarks(0u, 41u), repository.observeReadMarks("a").first())
+            assertEquals(41uL, held.readEvidence.checkpoint(held.rows.single(), 0u))
+            assertTrue(pump.sent.none { it.type == "mark_conversation_read" || it.type == "request_history" })
+            pump.push(direct.copy(id = 902, eventId = 7001))
+            runCurrent()
+            val replay = repository.observeThreadSnapshot("a").first()
+            assertEquals(held.rows, replay.rows)
+            assertEquals(41uL, replay.readEvidence.checkpoint(replay.rows.single(), 0u))
+            pump.push(
+                direct.copy(
+                    id = 903,
+                    eventId = 7002,
+                    historyEntryId = null,
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"a","message_id":"n","role":"user","text":"unidentified"}""",
+                        ),
+                ),
+            )
+            runCurrent()
+            val missing = repository.observeThreadSnapshot("a").first()
+            assertNull(missing.readEvidence.checkpoint(missing.rows.last(), 0u))
+            assertEquals(41uL, repository.observeReadMarks("a").first()?.latestEntryId)
+            assertTrue(pump.sent.none { it.type == "mark_conversation_read" || it.type == "request_history" })
+        }
+
+    @Test
+    fun nonvisualBannerTailRetainsPresentedStreamingContentClaims() =
+        runTest {
+            val pump = Pump()
+            val repository = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            pump.push(snapshot(row("a", "0", "0")))
+            pump.push(
+                Envelope(
+                    501,
+                    "assistant_delta",
+                    TS,
+                    MobileJson.parseToJsonElement("""{"conversation_id":"a","turn_id":"t","seq":0,"text":"seen"}"""),
+                    historyEntryId = 71u,
+                ),
+            )
+            pump.push(
+                Envelope(
+                    502,
+                    "banner",
+                    TS,
+                    MobileJson.parseToJsonElement(
+                        """{"conversation_id":"a","level":"info","text":"inert","truncated":false,"stops_turn":false}""",
+                    ),
+                    historyEntryId = 72u,
+                ),
+            )
+            runCurrent()
+            val held = repository.observeThreadSnapshot("a").first()
+            val presented = held.rows.filterIsInstance<ThreadItem.MessageItem>().single()
+            assertFalse(presented.message.isStreaming)
+            assertEquals(72uL, held.readEvidence.checkpoint(presented, 0u))
+        }
+
+    @Test
+    fun slashCommandMetadataWithoutHistoryIdentityDoesNotBlockReceivedReply() =
+        runTest {
+            val pump = Pump()
+            val repository = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            pump.push(snapshot(row("a", "0", "0")))
+            pump.push(
+                Envelope(
+                    601,
+                    "slash_command_list",
+                    TS,
+                    MobileJson.parseToJsonElement("""{"conversation_id":"a","commands":[],"dropped_commands":0}"""),
+                ),
+            )
+            pump.push(
+                Envelope(
+                    602,
+                    "message",
+                    TS,
+                    MobileJson.parseToJsonElement("""{"conversation_id":"a","message_id":"m","role":"user","text":"seen"}"""),
+                    historyEntryId = 81u,
+                ),
+            )
+            runCurrent()
+            val held = repository.observeThreadSnapshot("a").first()
+            assertEquals(81uL, held.readEvidence.checkpoint(held.rows.single(), 0u))
+        }
+
+    @Test fun liveCompactionEdgesAndBoundaryFillRequireTheirPresentedVersions() =
+        runTest {
+            val pump = Pump()
+            val repository = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+
+            fun push(
+                id: ULong,
+                type: String,
+                payload: String,
+            ) {
+                pump.push(
+                    Envelope(
+                        900 + id.toLong(),
+                        type,
+                        TS,
+                        MobileJson.parseToJsonElement(payload),
+                        eventId = 7000 + id.toLong(),
+                        historyEntryId = id,
+                    ),
+                )
+            }
+            push(1u, "message", """{"conversation_id":"a","message_id":"m","role":"user","text":"seen"}""")
+            push(2u, "compacting", """{"conversation_id":"a","active":true}""")
+            runCurrent()
+            val rising = repository.observeThreadSnapshot("a").first()
+            assertEquals(2uL, rising.readEvidence.checkpoint(rising.rows.single(), 0u))
+            push(3u, "compacting", """{"conversation_id":"a","active":false}""")
+            runCurrent()
+            val falling = repository.observeThreadSnapshot("a").first()
+            assertTrue(falling.rows.last() is ThreadItem.CompactionBoundary)
+            assertEquals(2uL, falling.readEvidence.checkpoint(falling.rows.first(), 0u))
+            assertEquals(3uL, falling.readEvidence.checkpoint(falling.rows.last(), 0u))
+            push(4u, "compaction_boundary", """{"conversation_id":"a","trigger":"auto","pre_tokens":20}""")
+            runCurrent()
+            val filled = repository.observeThreadSnapshot("a").first()
+            assertEquals(4uL, filled.readEvidence.checkpoint(filled.rows.last(), 0u))
+            assertNull(filled.readEvidence.checkpoint(falling.rows.last(), 0u))
+        }
+
+    @Test fun unsuccessfulLiveTurnEndBindsActualSummaryWithoutGrantingChangedReport() =
+        runTest {
+            for (fields in listOf("\"is_error\":true", "\"outcome\":\"cancelled\"")) {
+                val pump = Pump()
+                val repository = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+                pump.push(
+                    Envelope(
+                        901,
+                        "turn_end",
+                        TS,
+                        MobileJson.parseToJsonElement("""{"conversation_id":"a","turn_id":"t","stop_reason":"end_turn",$fields}"""),
+                        historyEntryId = 1u,
+                    ),
+                )
+                runCurrent()
+                val snapshot = repository.observeThreadSnapshot("a").first()
+                val summary = snapshot.rows.single() as ThreadItem.StoppedTurn
+                assertEquals(1uL, snapshot.readEvidence.checkpoint(summary, 0u))
+                assertNull(snapshot.readEvidence.checkpoint(summary.copy(reason = "unseen"), 0u))
+            }
+        }
+
     private fun TestScope.repo(pump: Pump) = RemoteConversationRepository(pump, backgroundScope)
 
     private fun row(

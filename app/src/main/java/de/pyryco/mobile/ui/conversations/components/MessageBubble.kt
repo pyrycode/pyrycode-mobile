@@ -18,6 +18,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberUpdatedState
@@ -27,6 +28,8 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -121,7 +124,10 @@ fun MessageBubble(
     onToggleMetaRow: (() -> Unit)? = null,
     threadOpenedAt: Instant? = null,
     onReply: (Message) -> Unit = {},
+    onContentPresented: (Message) -> Unit = {},
+    onContentTrailingEdge: (Message, Float) -> Unit = { _, _ -> },
 ) {
+    if (!message.isStreaming) SideEffect { onContentPresented(message) }
     val metaRow = MetaRowControl(metaRowVisible, onToggleMetaRow)
     val attachments: @Composable () -> Unit = {
         MessageAttachments(
@@ -135,8 +141,19 @@ fun MessageBubble(
         )
     }
     when (message.role) {
-        Role.User -> UserMessageBubble(message, attachments, metaRow, onReply, modifier)
-        Role.Assistant -> AssistantMessage(message, attachments, onOpenMarkdownLink, metaRow, threadOpenedAt, onReply, modifier)
+        Role.User -> UserMessageBubble(message, attachments, metaRow, onReply, modifier, onContentTrailingEdge)
+        Role.Assistant ->
+            AssistantMessage(
+                message,
+                attachments,
+                onOpenMarkdownLink,
+                metaRow,
+                threadOpenedAt,
+                onReply,
+                onContentPresented,
+                modifier,
+                onContentTrailingEdge,
+            )
         // The gutter is applied here rather than inside ToolCallRow: moving it into the components left
         // the tool row as the one list kind still bleeding to the screen edge, which reads as a ragged
         // left edge next to the bubbles. The row's own layout belongs to #658, and this arm reaches it
@@ -152,6 +169,7 @@ fun MessageBubble(
                         ),
                     subagentDepth = toolNestingDepth,
                     joinsNextToolRow = joinsNextToolRow,
+                    onTrailingEdge = { bottom -> onContentTrailingEdge(message, bottom) },
                 )
             }
     }
@@ -170,6 +188,7 @@ private fun UserMessageBubble(
     metaRow: MetaRowControl,
     onReply: (Message) -> Unit,
     modifier: Modifier = Modifier,
+    onContentTrailingEdge: (Message, Float) -> Unit,
 ) {
     MessageContainer(
         message = message,
@@ -180,6 +199,7 @@ private fun UserMessageBubble(
         metaRow = metaRow,
         onReply = onReply,
         modifier = modifier,
+        onContentTrailingEdge = onContentTrailingEdge,
     ) {
         if (message.hasNoBody()) return@MessageContainer
         message.content.split(UserParagraphBreak).forEach { paragraph ->
@@ -212,7 +232,9 @@ private fun AssistantMessage(
     metaRow: MetaRowControl,
     threadOpenedAt: Instant?,
     onReply: (Message) -> Unit,
+    onContentPresented: (Message) -> Unit,
     modifier: Modifier = Modifier,
+    onContentTrailingEdge: (Message, Float) -> Unit,
 ) {
     MessageContainer(
         message = message,
@@ -223,6 +245,7 @@ private fun AssistantMessage(
         metaRow = metaRow,
         onReply = onReply,
         modifier = modifier,
+        onContentTrailingEdge = onContentTrailingEdge,
     ) {
         if (message.isStreaming) {
             // The one arm that keeps filling, deliberately. `caretVisible` toggles the rendered string
@@ -235,6 +258,7 @@ private fun AssistantMessage(
                 initialRevealedLength = if (threadOpenedAt != null && message.timestamp < threadOpenedAt) message.content.length else 0,
                 onOpenMarkdownLink = onOpenMarkdownLink,
                 modifier = Modifier.fillMaxWidth(),
+                onPresented = { onContentPresented(message) },
             )
         } else if (!message.hasNoBody()) {
             // No `fillMaxWidth()`. It sets minWidth = maxWidth, which pinned every finalized assistant
@@ -284,6 +308,7 @@ private fun MessageContainer(
     attachments: @Composable () -> Unit = {},
     metaRow: MetaRowControl = MetaRowControl(),
     onReply: (Message) -> Unit = {},
+    onContentTrailingEdge: (Message, Float) -> Unit = { _, _ -> },
     body: @Composable () -> Unit,
 ) {
     val isUserSide = alignment == Alignment.End
@@ -342,10 +367,11 @@ private fun MessageContainer(
             ) {
                 Column(
                     modifier =
-                        Modifier.padding(
-                            horizontal = BubbleHorizontalPadding,
-                            vertical = BubbleVerticalPadding,
-                        ),
+                        Modifier
+                            .padding(
+                                horizontal = BubbleHorizontalPadding,
+                                vertical = BubbleVerticalPadding,
+                            ).onGloballyPositioned { onContentTrailingEdge(message, it.positionInWindow().y + it.size.height) },
                     verticalArrangement = Arrangement.spacedBy(BubbleContentSpacing, Alignment.CenterVertically),
                     // The design puts `items-start` on the `Message` column for *both* roles — a short
                     // user body is left-aligned inside its bubble — and `justify-end` on the user's meta
@@ -497,6 +523,7 @@ private fun StreamingAssistantBody(
     initialRevealedLength: Int,
     onOpenMarkdownLink: ((String) -> Unit)?,
     modifier: Modifier = Modifier,
+    onPresented: () -> Unit = {},
 ) {
     val currentContent by rememberUpdatedState(content)
     val revealedLength by produceState(initialValue = initialRevealedLength, key1 = Unit) {
@@ -509,6 +536,7 @@ private fun StreamingAssistantBody(
             stepsRemaining = if (value == arrived.length) STREAMING_CATCH_UP_STEPS else stepsRemaining - 1
         }
     }
+    if (revealedLength >= content.length) SideEffect { onPresented() }
     val caretVisible by produceState(initialValue = true, key1 = Unit) {
         while (true) {
             delay(STREAMING_CARET_BLINK_PERIOD_MS)

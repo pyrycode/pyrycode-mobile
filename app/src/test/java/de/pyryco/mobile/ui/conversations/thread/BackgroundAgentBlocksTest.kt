@@ -16,10 +16,12 @@ import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadProjection
+import de.pyryco.mobile.data.repository.ThreadReadEvidence
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -69,6 +71,28 @@ class BackgroundAgentBlocksTest {
         agent: String? = null,
         status: String = "completed",
     ) = ThreadItem.BackgroundTaskLifecycle(task, ts, agent, terminal = BackgroundTaskUpdate("", status, "", null))
+
+    @Test fun lifecycleChangingAgentProjectionRequiresThatPresentedVersion() {
+        val root =
+            row("a", "Agent").let {
+                it.copy(message = it.message.copy(toolCall = it.message.toolCall?.copy(status = ToolCallStatus.Running)))
+            }
+        val launch = start()
+        val reply = row("reply")
+        val ended = finish(agent = "a").copy(taskType = "local_agent")
+        val items = listOf(root, launch, reply, ended)
+        val evidence =
+            ThreadReadEvidence(
+                versions = mapOf(root to setOf(1u), launch to setOf(2u), reply to setOf(3u), ended to setOf(4u)),
+                facts = mapOf(1uL to false, 2uL to true, 3uL to false, 4uL to true),
+            )
+        val rows = foldBackgroundAgentBlocks(foldQueuedRows(items, emptyList()), items, null)
+        val actual = rows.filterIsInstance<ThreadRow.Delivered>().first { it.agentBlockId == "a" }.item
+        val qualified = evidence.forBackgroundAgentRows(items, rows)
+        assertEquals(3uL, qualified.checkpoint(reply, 0u))
+        assertNull(qualified.checkpoint(root, 0u))
+        assertEquals(4uL, qualified.checkpoint(actual, 0u))
+    }
 
     private fun roster(vararg ids: String) =
         BackgroundTaskRoster(

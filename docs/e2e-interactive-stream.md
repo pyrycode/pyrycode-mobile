@@ -2164,6 +2164,22 @@ scenarios exercise the existing lifecycle-checked exact-host action with a real
 failure, without injected UI connection state. Only the harness-owned daemon is
 stopped; pairing material remains in its private host storage.
 
+### Phone read-mark proof (#1912)
+
+`InteractiveStreamE2ETest.interactiveTurn_attentionDot_followsARealTurn` keeps its
+permission and attention-dot checks and adds the shared read mark. After the real
+reply, `SecondClientPeer` reads the daemon's facts for the conversation: the latest
+durable id must be positive and the stored mark below it, so viewing the list reads
+nothing. The phone then opens the thread at the newest end, and the peer waits for a
+stored mark at or beyond that reply's id. The peer's latest id is only the assertion
+target; the phone's mark must come from its own foreground checkpoint.
+
+Evidence, 2026-10-08, full live run of `python3 scripts/android-test-gate.py live` on
+`feature/1912` at `a28cc4ea3` with current `main` merged: 65 executed, 0 failed,
+0 skipped. `interactiveTurn_attentionDot_followsARealTurn` ran and passed. The
+deterministic viewport probes ran in that branch's UI gate:
+`ThreadReadViewportDeviceTest`, 4 executed, 0 failed, 0 skipped.
+
 ### The render gap fixed first (#337)
 
 The test asserts streamed assistant *text* renders. Before this change there was nothing to assert:

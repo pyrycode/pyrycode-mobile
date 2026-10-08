@@ -44,7 +44,9 @@ import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
+import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.threadSnapshots
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.grantNotificationPermission
 import de.pyryco.mobile.notifications.NotificationTap
@@ -53,8 +55,10 @@ import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -425,6 +429,50 @@ class DeterministicInteractiveStreamE2ETest {
             .onAllNodesWithText(PING, substring = true, ignoreCase = true)
             .onFirst()
             .assertIsDisplayed()
+        // #1912: the scripted reply must be confirmed as read after it is rendered in the foreground.
+        val repository =
+            StableConversationRepository(
+                GlobalContext
+                    .get()
+                    .get<RelayRepositoryCoordinator>()
+                    .currentRepository,
+            )
+        val (conversationId, checkpoint) =
+            runBlocking {
+                val conversationId =
+                    withTimeout(THREAD_TIMEOUT_MS) {
+                        repository
+                            .observeConversations(ConversationFilter.All)
+                            .first { rows -> rows.any { it.name == SEED_CHANNEL_NAME } }
+                            .single { it.name == SEED_CHANNEL_NAME }
+                            .id
+                    }
+                val checkpoint =
+                    withTimeoutOrNull(REPLY_TIMEOUT_MS) {
+                        repository
+                            .threadSnapshots(conversationId)
+                            .mapNotNull { snapshot ->
+                                val reply =
+                                    snapshot.rows
+                                        .filterIsInstance<ThreadItem.MessageItem>()
+                                        .lastOrNull { it.message.role == Role.Assistant && it.message.content == PING }
+                                reply?.let { snapshot.readEvidence.checkpoint(it, 0uL) }
+                            }.first()
+                    }
+                if (checkpoint == null) {
+                    val evidence = repository.threadSnapshots(conversationId).first().readEvidence
+                    error(
+                        "No reply checkpoint: versions=${evidence.versions.size}, barriers=${evidence.facts.values.count {
+                            it == null
+                        }}, unidentified=${evidence.unidentified.size}",
+                    )
+                }
+                conversationId to checkpoint
+            }
+        // Keep driving Compose frames while layout/reveal qualification catches up with receipt.
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            runBlocking { (repository.observeReadMarks(conversationId).first()?.readUpTo ?: 0uL) >= checkpoint }
+        }
     }
 
     /**

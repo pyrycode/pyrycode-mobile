@@ -3,12 +3,30 @@ package de.pyryco.mobile.e2e
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.HistoryPage
+import de.pyryco.mobile.data.repository.ThreadReadEvidence
+import de.pyryco.mobile.data.repository.ThreadSnapshot
+import de.pyryco.mobile.data.repository.ThreadSnapshotSource
+import de.pyryco.mobile.data.repository.threadSnapshots
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DurableHistoryProbeTest {
+    @Test fun decoratorPreservesExactReadEvidenceWithoutAnotherSubscription() =
+        runBlocking {
+            var subscriptions = 0
+            val snapshot = ThreadSnapshot(emptyList(), readEvidence = ThreadReadEvidence(facts = mapOf(51uL to true)))
+            val delegate =
+                object : ConversationRepository by FakeConversationRepository(), ThreadSnapshotSource {
+                    override fun observeThreadSnapshot(conversationId: String) = flowOf(snapshot).also { subscriptions++ }
+                }
+            assertEquals(snapshot, TappingConversationRepository(delegate).threadSnapshots("selected").first())
+            assertEquals(1, subscriptions)
+        }
+
     @Test
     fun selected_requests_delegate_once_and_capture_newest_then_older_without_extra_subscription() =
         runBlocking {

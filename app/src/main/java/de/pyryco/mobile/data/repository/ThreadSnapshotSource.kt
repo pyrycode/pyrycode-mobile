@@ -11,6 +11,7 @@ data class ThreadSnapshot(
     val historyOrder: Map<Any, Long> = emptyMap(),
     /** Authoritative unsigned positions, scoped by the source host and observed conversation. */
     val unsignedHistoryOrder: Map<Any, ULong> = historyOrder.filterValues { it > 0 }.mapValues { it.value.toULong() },
+    val readEvidence: ThreadReadEvidence = ThreadReadEvidence(),
 )
 
 /**
