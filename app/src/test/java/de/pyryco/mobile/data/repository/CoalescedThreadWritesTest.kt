@@ -74,10 +74,16 @@ class CoalescedThreadWritesTest {
     ) : ConversationCache by disk {
         val writes = mutableListOf<List<ThreadItem>>()
         var failures = 0
+        var failRead = false
         var failState = false
         var hold = 0
         val entered = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
+
+        override suspend fun readThread(
+            serverId: String,
+            conversationId: String,
+        ): List<ThreadItem> = if (failRead) emptyList() else disk.readThread(serverId, conversationId)
 
         override suspend fun writeHistoryPosition(
             serverId: String,
@@ -564,6 +570,25 @@ class CoalescedThreadWritesTest {
             reader.cancel()
             reader.join()
             assertEquals(2, f.cache.writes.size)
+        }
+
+    @Test fun unchangedInvariant_observerBaselineDoesNotTurnFailedRestoreIntoAnEmptyWrite() =
+        runTest {
+            val f = Fixture(this)
+            f.send(row("a"))
+            quiet()
+            f.reader.cancel()
+            f.reader.join()
+            f.source.snapshots.value = ThreadSnapshot(emptyList())
+            f.cache.failRead = true
+            val reader = backgroundScope.launch(f.dispatcher) { f.repository.observeThreadSnapshot("c").collect {} }
+            f.send(row("stream", true))
+            quiet()
+            assertEquals(listOf(row("a")), f.restored())
+            reader.cancel()
+            reader.join()
+            assertEquals(1, f.cache.writes.size)
+            assertEquals(listOf(row("a")), f.restored())
         }
 
     private fun resubscribeAfterCoverage(flush: Boolean) =

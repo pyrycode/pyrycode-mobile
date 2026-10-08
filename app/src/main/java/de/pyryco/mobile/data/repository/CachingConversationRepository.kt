@@ -144,6 +144,7 @@ class CachingConversationRepository(
             // A coverage save can change disk rows without the observer ever seeing its snapshot.
             val superseded =
                 persisted != null &&
+                    persisted.coverageGeneration > 0 &&
                     (previous?.drawn?.generation ?: 0) <= persisted.coverageGeneration &&
                     drawn.generation > persisted.coverageGeneration &&
                     cacheable != persisted.cacheable
