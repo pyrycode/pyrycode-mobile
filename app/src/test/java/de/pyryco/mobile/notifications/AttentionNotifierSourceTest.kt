@@ -136,6 +136,99 @@ class AttentionNotifierSourceTest {
         }
 
     @Test
+    fun initialReadConfirmationCancelsAPostedReplayBehindNewerActivityOnlyOnItsHost() =
+        withSource { a, b, source ->
+            a.list(null, 6u)
+            b.list(null, 6u)
+            a.end("unseen-replay", 5u)
+            b.end("unseen-replay", 5u)
+            runCurrent()
+            assertEquals(setOf(target("a"), target("b")), postedTargets())
+
+            a.list(5u, 6u)
+            runCurrent()
+            assertEquals(ConversationReadMarks(5u, 6u), source.currentReadMarks("a", "same"))
+            assertEquals(setOf(target("b")), postedTargets())
+            a.read(5u)
+            a.end("unseen-replay", 5u)
+            runCurrent()
+            assertEquals(setOf(target("b")), postedTargets())
+
+            a.end("subsequent-unread", 7u)
+            runCurrent()
+            assertEquals(setOf(target("a"), target("b")), postedTargets())
+        }
+
+    @Test
+    fun anAdvancingReadMarkCancelsAPostedReplayWhileTheLatestEntryRemainsUnread() =
+        withSource { a, _, source ->
+            a.list(4u, 6u)
+            a.end("unseen-replay", 5u)
+            runCurrent()
+            assertEquals(setOf(target("a")), postedTargets())
+            a.read(5u)
+            runCurrent()
+            assertEquals(ConversationReadMarks(5u, 6u), source.currentReadMarks("a", "same"))
+            assertTrue(postedTargets().isEmpty())
+            a.end("unseen-replay", 5u)
+            a.read(5u)
+            runCurrent()
+            assertTrue(postedTargets().isEmpty())
+        }
+
+    @Test
+    fun lateReadConfirmationPreservesAPromptThatReplacedTheCoveredCompletion() =
+        withSource { a, _, source ->
+            a.list(null, 6u)
+            a.end("unseen-replay", 5u)
+            runCurrent()
+            assertEquals(setOf(target("a")), postedTargets())
+            a.prompt("replacement")
+            runCurrent()
+            val prompt = shadowOf(manager).allNotifications.single()
+            assertEquals(
+                app.getString(de.pyryco.mobile.R.string.notification_prompt),
+                prompt.extras.getString(Notification.EXTRA_TEXT),
+            )
+            a.list(5u, 6u)
+            runCurrent()
+            assertEquals(prompt, shadowOf(manager).allNotifications.single())
+            assertEquals(ConversationAttention.WaitingForAnswer, source.attention.value["a"]?.get("same"))
+            assertEquals(
+                "replacement",
+                a.modals.value.outstanding
+                    .single()
+                    .modalId,
+            )
+            a.end("unseen-replay", 5u)
+            a.read(5u)
+            runCurrent()
+            assertEquals(prompt, shadowOf(manager).allNotifications.single())
+        }
+
+    @Test
+    fun lateReadConfirmationPreservesANewerCompletionThatReplacedTheCoveredReplay() =
+        withSource { a, _, source ->
+            a.list(4u, 6u)
+            a.end("unseen-replay", 5u)
+            runCurrent()
+            assertEquals(setOf(target("a")), postedTargets())
+            a.end("newer-unread", 7u)
+            runCurrent()
+            val newer = shadowOf(manager).allNotifications.single()
+            a.read(5u)
+            runCurrent()
+            assertEquals(ConversationReadMarks(5u, 7u), source.currentReadMarks("a", "same"))
+            assertEquals(newer, shadowOf(manager).allNotifications.single())
+            a.end("unseen-replay", 5u)
+            runCurrent()
+            assertEquals(newer, shadowOf(manager).allNotifications.single())
+            a.read(7u)
+            runCurrent()
+            assertTrue(postedTargets().isEmpty())
+        }
+
+    @Test
     fun aCompletionDeliveredBeforeTheReadFactCollectorStillPostsItsNewUnreadCheckpoint() =
         withSource(eager = true) { a, _, source ->
             a.list(5u, 5u)

@@ -407,6 +407,47 @@ class AttentionNotifierTest {
     }
 
     @Test
+    fun lateConfirmationReconcilesAPostedCompletionsCheckpointAfterNotifierRestart() {
+        withNotifier {
+            marks("host-a", "conv", null, 6u)
+            alerts.emit(TURN.copy(historyEntryId = 5u))
+            assertEquals(1, posted().size)
+        }
+        marks("host-a", "conv", 5u, 6u)
+        withNotifier {
+            assertTrue(posted().isEmpty())
+            alerts.emit(TURN.copy(historyEntryId = 5u))
+            assertTrue(posted().isEmpty())
+        }
+    }
+
+    @Test
+    fun lateCompletionCoverageRetainsUnsignedCheckpointIdentityIncludingZero() =
+        withNotifier {
+            listOf(0uL, Long.MAX_VALUE.toULong() + 1u).forEachIndexed { index, checkpoint ->
+                marks("host-a", "conv", null, checkpoint + 1u)
+                alerts.emit(TURN.copy(key = "checkpoint-$index", historyEntryId = checkpoint))
+                assertEquals(1, posted().size)
+                marks("host-a", "conv", checkpoint, checkpoint + 1u)
+                assertTrue(posted().isEmpty())
+            }
+        }
+
+    @Test
+    fun aLaggingConfirmedProjectionCannotCancelACompletionTheCurrentRepositoryStillReportsUnread() {
+        var current = ConversationReadMarks(4u, 6u)
+        readMarksOf = { _, _ -> current }
+        withNotifier {
+            alerts.emit(TURN.copy(historyEntryId = 5u))
+            marks("host-a", "conv", 5u, 6u)
+            assertEquals(1, posted().size)
+            current = ConversationReadMarks(5u, 7u)
+            marks("host-a", "conv", 5u, 7u)
+            assertTrue(posted().isEmpty())
+        }
+    }
+
+    @Test
     fun cancellationIsHostIsolatedAndIndependentOfAllPostingGates() =
         withNotifier {
             alerts.emit(TURN)

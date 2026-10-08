@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -41,6 +42,9 @@ internal const val MAX_TAP_ID_CHARS = 256
 
 /** Enough recent alerts to recognise any replay a reconnect or a wake window can deliver. */
 internal const val MAX_LEDGER_ENTRIES = 512
+
+/** Metadata belongs to the posted completion, so replacement and process restart cannot lose its identity. */
+private const val EXTRA_COMPLETION_ENTRY_ID = "de.pyryco.mobile.notification.COMPLETION_ENTRY_ID"
 
 /**
  * Posts one Android notification per new [AttentionAlert] (#685) while the app is in the background.
@@ -88,14 +92,25 @@ class AttentionNotifier(
                 notificationLock.withLock {
                     // A queued emission may have been superseded while a post held the lock.
                     val current = readMarks.value
+                    val manager = NotificationManagerCompat.from(context)
+                    val posted = manager.activeNotifications
                     current.forEach { (serverId, conversations) ->
                         conversations.forEach { (conversationId, marks) ->
-                            if (marks != previous[serverId]?.get(conversationId) &&
-                                marks.coversLatest() &&
-                                readMarksOf(serverId, conversationId)?.coversLatest() == true
-                            ) {
-                                NotificationManagerCompat.from(context).cancel(digest(serverId, conversationId), 0)
-                                RelayLog.d { "event=attention_alert_cancelled reason=daemon_read" }
+                            if (marks != previous[serverId]?.get(conversationId)) {
+                                val tag = digest(serverId, conversationId)
+                                val completionEntryId =
+                                    posted
+                                        .firstOrNull { it.tag == tag && it.id == 0 }
+                                        ?.notification
+                                        ?.extras
+                                        ?.getString(EXTRA_COMPLETION_ENTRY_ID)
+                                        ?.toULongOrNull()
+                                if (marks.coversCompletion(completionEntryId) &&
+                                    readMarksOf(serverId, conversationId)?.coversCompletion(completionEntryId) == true
+                                ) {
+                                    manager.cancel(tag, 0)
+                                    RelayLog.d { "event=attention_alert_cancelled reason=daemon_read" }
+                                }
                             }
                         }
                     }
@@ -152,7 +167,13 @@ class AttentionNotifier(
                 .setContentText(text)
                 .setAutoCancel(true)
                 .setContentIntent(NotificationTap.pendingIntent(context, tag, alert.serverId, alert.conversationId))
-                .build()
+                .addExtras(
+                    Bundle().apply {
+                        if (alert.kind == AttentionAlert.Kind.TurnCompleted) {
+                            alert.historyEntryId?.let { putString(EXTRA_COMPLETION_ENTRY_ID, it.toString()) }
+                        }
+                    },
+                ).build()
         return try {
             manager.notify(tag, 0, notification)
             "posted"
