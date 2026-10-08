@@ -508,6 +508,7 @@ class HostConversationSource internal constructor(
                         "message",
                         "send_message",
                         "assistant_delta",
+                        "turn_end",
                         "tool_use",
                         "tool_result",
                         "tool_denied",

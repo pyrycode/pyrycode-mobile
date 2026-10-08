@@ -118,6 +118,40 @@ class AttentionPreviewSourceTest {
         }
 
     @Test
+    fun malformedStoppedTurnBoundaryNeverAuthorizesJoinedHistoryPreview() =
+        withSource {
+            val malformedEnd =
+                end(2, "turn").copy(
+                    payload =
+                        Json.parseToJsonElement(
+                            """{"conversation_id":"conv","turn_id":"turn","is_error":true,"outcome":"error"}""",
+                        ),
+                )
+            a.page = page(delta(1, "turn", 0, "Before"), malformedEnd, delta(3, "turn", 1, "After"), end(4, "turn"))
+            events.emit(LiveSessionEvent.TurnEnd("conv", "turn", "end_turn", historyEntryId = 4u))
+            runCurrent()
+            assertNull(alerts.single().preview?.invoke())
+            assertEquals(1, a.asks)
+        }
+
+    @Test
+    fun validStoppedTurnBoundarySelectsOnlyTheFollowingHistorySegment() =
+        withSource {
+            val validEnd =
+                end(2, "turn").copy(
+                    payload =
+                        Json.parseToJsonElement(
+                            """{"conversation_id":"conv","turn_id":"turn","stop_reason":"end_turn","is_error":true,"outcome":"error"}""",
+                        ),
+                )
+            a.page = page(delta(1, "turn", 0, "Before"), validEnd, delta(3, "turn", 1, "After"), end(4, "turn"))
+            events.emit(LiveSessionEvent.TurnEnd("conv", "turn", "end_turn", historyEntryId = 4u))
+            runCurrent()
+            assertEquals("After", alerts.single().preview?.invoke())
+            assertEquals(1, a.asks)
+        }
+
+    @Test
     fun missingTrailingDeltaAndDroppedToolSeamsNeverAuthorizeHistoryPreview() {
         val malformedTool =
             tool(2).copy(
