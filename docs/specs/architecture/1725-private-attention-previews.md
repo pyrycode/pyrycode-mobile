@@ -72,3 +72,11 @@ None.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-08
+
+## Revisions
+
+2026-10-08: Rechecking preferences after enrichment now occurs outside the post/cancel mutex; alerts without a supplier retain the original single preference read. Already-read completions are suppressed before lookup as well as immediately before posting. Existing #1884 source/coordinator fixtures now answer the new read-only history request with an empty page, preserving their original race timing and fixed completion fallback; permission assertions expect their existing title/prompt preview. No cancellation contract changes.
+
+2026-10-08: Sanitizer probes showed the existing plain-text converter retains reference definitions, shortcut labels, raw HTML and setext/rule markers. `notificationPreview` now first walks the existing markdown AST to remove destinations and these formatting nodes, preserving code literally, then uses the existing prose conversion. Invisible Unicode format controls are also dropped. A history probe with a missing durable entry proved contiguous delta sequences alone cannot certify the last segment: page evidence must also have consecutive newest-first durable ids, in addition to a matching end and exact conversation fields. These conservative notification-only checks neither merge nor alter history.
+
+2026-10-08: Broader source/coordinator tests exposed two existing side effects that initial code reading missed: `RemoteConversationRepository.observeMessages` sends `backfill_since`, and `requestHistory` merges the page and advances latest-entry facts. Add internal `attentionMessages` and `requestAttentionHistory` accessors, sharing the existing raw encrypted page request while leaving the public history API behavior unchanged. Enrichment now reads existing rows and a raw page without initiating backfill, merging, persisting or advancing read facts. History completion must match a known alert checkpoint when present. Retirement observes the repository's authoritative `value`, rather than a delayed emitted predecessor, preserving #1884's held-publication race. Integration tests cover both side-effect exclusion and that race. Final scope remains four production files, no new exported types, one production consumer and below 1,600 written lines.

@@ -10,18 +10,26 @@ import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.RelayLinkStatus
+import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.network.TurnEndPayloadDto
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationReadMarks
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
+import de.pyryco.mobile.data.repository.reduceHistoryPage
+import de.pyryco.mobile.notifications.completionReply
+import de.pyryco.mobile.notifications.notificationPreview
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,8 +41,13 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.decodeFromJsonElement
 import java.util.UUID
 
 /** Host identity surrounds unchanged, host-local conversation records. Contains no pairing secrets. */
@@ -51,7 +64,7 @@ data class HostConversationSnapshot(
 /**
  * One thing on one host that may deserve an alert (#685): a turn the attention fold counted for the first
  * time, or a prompt newly outstanding. [key] is the turn id, or `modal:<modalId>` / `batch:<batchId>`.
- * Every field is daemon-authored except [serverId], so each is an identity only, never text to show.
+ * Identity fields never supply display text. The optional [preview] supplies ephemeral untrusted content.
  */
 data class AttentionAlert(
     val serverId: String,
@@ -60,6 +73,10 @@ data class AttentionAlert(
     val key: String,
     /** Present only for a history-backed completion; never inferred from the conversation's latest. */
     val historyEntryId: ULong? = null,
+    /** Ephemeral untrusted display content; evaluated only by the notifier after its gates. */
+    val preview: (suspend () -> String?)? = null,
+    /** Rejects a host/repository generation retired while enrichment was pending. */
+    val isCurrent: () -> Boolean = { true },
 ) {
     enum class Kind { TurnCompleted, Prompt }
 }
@@ -252,11 +269,12 @@ class HostConversationSource internal constructor(
                     // The fold appends a turn id to `counted` only when it counts that turn for the first time.
                     if (event is LiveSessionEvent.TurnEnd && attention.counted[event.conversationId] != before) {
                         alert(
-                            connection.serverId,
+                            entry,
                             event.conversationId,
                             AttentionAlert.Kind.TurnCompleted,
                             event.turnId,
                             event.historyEntryId,
+                            preview = completionPreview(entry, event),
                         )
                     }
                 }
@@ -314,7 +332,21 @@ class HostConversationSource internal constructor(
                     this.batches = batches
                     val current = promptKeys(modals.outstanding, batches)
                     current.filterKeys { it !in prompts }.forEach { (key, conversationId) ->
-                        alert(connection.serverId, conversationId, AttentionAlert.Kind.Prompt, key)
+                        val modal = modals.outstanding.firstOrNull { "modal:${it.modalId}" == key }
+                        val prompt =
+                            if (modal?.modalClass == "permission") {
+                                notificationPreview(modal.prompt)?.let { "${modal.title}\n\n${modal.prompt}" }
+                            } else if (key.startsWith("batch:")) {
+                                batches
+                                    .firstOrNull { "batch:${it.questionBatchId}" == key }
+                                    ?.questions
+                                    ?.firstOrNull()
+                                    ?.question
+                                    ?.takeIf { it.isNotBlank() }
+                            } else {
+                                null
+                            }
+                        alert(entry, conversationId, AttentionAlert.Kind.Prompt, key, preview = { prompt })
                     }
                     prompts = current.keys
                 }
@@ -371,14 +403,111 @@ class HostConversationSource internal constructor(
     }
 
     private fun alert(
-        serverId: String,
+        entry: Held,
         conversationId: String,
         kind: AttentionAlert.Kind,
         key: String,
         historyEntryId: ULong? = null,
+        preview: (suspend () -> String?)? = null,
     ) {
-        alertEvents.tryEmit(AttentionAlert(serverId, conversationId, kind, key, historyEntryId))
+        val repository = entry.connection.repositories.value
+        alertEvents.tryEmit(
+            AttentionAlert(entry.connection.serverId, conversationId, kind, key, historyEntryId, preview) {
+                previewIsCurrent(entry, repository)
+            },
+        )
     }
+
+    @Synchronized
+    private fun previewIsCurrent(
+        entry: Held,
+        repository: ConversationRepository?,
+    ): Boolean = isCurrent(entry) && entry.connection.repositories.value === repository
+
+    /** Work remains owned by the host, even while the notifier waits independently of other alerts. */
+    private fun completionPreview(
+        entry: Held,
+        event: LiveSessionEvent.TurnEnd,
+    ): suspend () -> String? {
+        val repository = entry.connection.repositories.value
+        return {
+            if (!previewIsCurrent(entry, repository)) throw CancellationException("retired attention source")
+            val pending =
+                scope.async(entry.job) {
+                    coroutineScope {
+                        val lookup =
+                            async {
+                                withTimeoutOrNull(3_000) {
+                                    repository?.let { readCompletionPreview(it, event) }
+                                }.also { if (it == null) RelayLog.d { "event=attention_preview outcome=fallback" } }
+                            }
+                        val retirement =
+                            launch {
+                                entry.connection.repositories.first { entry.connection.repositories.value !== repository }
+                                lookup.cancel()
+                            }
+                        try {
+                            lookup.await().also {
+                                if (!previewIsCurrent(entry, repository)) throw CancellationException("retired attention source")
+                            }
+                        } finally {
+                            retirement.cancel()
+                        }
+                    }
+                }
+            try {
+                pending.await()
+            } finally {
+                pending.cancel()
+            }
+        }
+    }
+
+    /** Read-only evidence: neither the local snapshot nor this one newest page is merged or persisted. */
+    private suspend fun readCompletionPreview(
+        repository: ConversationRepository,
+        event: LiveSessionEvent.TurnEnd,
+    ): String? =
+        try {
+            val local =
+                if (repository is RemoteConversationRepository) {
+                    repository.attentionMessages(event.conversationId)
+                } else {
+                    repository.observeMessages(event.conversationId).first()
+                }
+            completionReply(local, event.turnId)
+                ?: run {
+                    val page =
+                        if (repository is RemoteConversationRepository) {
+                            repository.requestAttentionHistory(event.conversationId)
+                        } else {
+                            repository.requestHistory(event.conversationId)
+                        }
+                    val entries =
+                        page.entries.filter { item ->
+                            val id = (item.payload as? JsonObject)?.get("conversation_id") as? JsonPrimitive
+                            id?.isString == true && id.content == event.conversationId
+                        }
+                    val completed =
+                        entries.any { item ->
+                            item.type == "turn_end" &&
+                                (event.historyEntryId == null || item.unsignedId == event.historyEntryId) &&
+                                runCatching {
+                                    MobileJson.decodeFromJsonElement<TurnEndPayloadDto>(item.payload).let {
+                                        it.conversationId == event.conversationId && it.turnId == event.turnId
+                                    }
+                                }.getOrDefault(false)
+                        }
+                    // A missing durable entry could hide a tool seam or a later text segment.
+                    val continuous = page.entries.zipWithNext().all { (newer, older) -> newer.unsignedId - 1u == older.unsignedId }
+                    if (completed && continuous) completionReply(reduceHistoryPage(entries, interactive = true), event.turnId) else null
+                }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            RelayLog.d { "event=attention_preview outcome=unavailable" }
+            null
+        }
 
     /** Each outstanding prompt's key and its conversation; a blank-conversation prompt belongs to none. */
     private fun promptKeys(

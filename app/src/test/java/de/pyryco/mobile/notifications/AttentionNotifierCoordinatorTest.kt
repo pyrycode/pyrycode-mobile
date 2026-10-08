@@ -161,7 +161,23 @@ class AttentionNotifierCoordinatorTest {
             input.close()
         }
 
-        override fun send(envelope: Envelope) = mutableState.value is PumpState.Open
+        override fun send(envelope: Envelope): Boolean {
+            if (mutableState.value !is PumpState.Open) return false
+            if (envelope.type == "request_history") {
+                input.trySend(
+                    Envelope(
+                        id++,
+                        "history_page",
+                        TS,
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"same","entries":[],"cursor":"","at_start":true}""",
+                        ),
+                        inReplyTo = envelope.id,
+                    ),
+                )
+            }
+            return true
+        }
 
         fun open() {
             mutableState.value = PumpState.Open("test", setOf(CAPABILITY_INTERACTIVE))

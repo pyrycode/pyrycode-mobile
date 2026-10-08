@@ -55,7 +55,7 @@ private const val EXTRA_COMPLETION_ENTRY_ID = "de.pyryco.mobile.notification.COM
  * posts later. The ledger persists, which
  * is what holds "at most once" across a reconnect's replay, a new wake window and process death.
  *
- * The notification's text is fixed app copy naming the conversation's agent (#1116); its title is the
+ * The public notification uses fixed agent copy; the private body may show a cleaned ephemeral preview. Its title is the
  * conversation's cleaned name, or the app name (#1330). The alert's ids are identities: they pick the
  * notification's tag and the tap's target, and are never shown, logged or written in the clear.
  */
@@ -83,6 +83,8 @@ class AttentionNotifier(
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val ledger = AlertLedger(ledgerFile)
     private val notificationLock = Mutex()
+    private var nextSequence = 0L
+    private val latestAlerts = mutableMapOf<String, Long>()
 
     /** Android readback can lag notify; a present null records a prompt or unidentified completion replacement. */
     private val postedCompletionEntries = mutableMapOf<String, ULong?>()
@@ -137,16 +139,38 @@ class AttentionNotifier(
                 !notificationsEnabled.first() -> "disabled"
                 isMuted(alert.serverId, alert.conversationId) -> "muted"
                 !permitted() -> "no_permission"
-                else ->
-                    notificationLock.withLock {
-                        if (alert.kind == AttentionAlert.Kind.TurnCompleted &&
-                            readMarksOf(alert.serverId, alert.conversationId)?.coversCompletion(alert.historyEntryId) == true
-                        ) {
-                            "read"
-                        } else {
-                            post(alert)
+                alert.kind == AttentionAlert.Kind.TurnCompleted &&
+                    readMarksOf(alert.serverId, alert.conversationId)?.coversCompletion(alert.historyEntryId) == true -> "read"
+                else -> {
+                    val tag = digest(alert.serverId, alert.conversationId)
+                    val sequence =
+                        notificationLock.withLock {
+                            (++nextSequence).also { latestAlerts[tag] = it }
                         }
+                    scope.launch {
+                        val preview = notificationPreview(alert.preview?.invoke())
+                        // Only enrichment adds a wait after the first gate; never suspend under the post/cancel lock.
+                        val stillEnabled = alert.preview == null || notificationsEnabled.first()
+                        val posted =
+                            notificationLock.withLock {
+                                when {
+                                    latestAlerts[tag] != sequence || !alert.isCurrent() -> "superseded"
+                                    isForeground() -> "foreground"
+                                    !stillEnabled -> "disabled"
+                                    isMuted(alert.serverId, alert.conversationId) -> "muted"
+                                    !permitted() -> "no_permission"
+                                    alert.kind == AttentionAlert.Kind.TurnCompleted &&
+                                        readMarksOf(
+                                            alert.serverId,
+                                            alert.conversationId,
+                                        )?.coversCompletion(alert.historyEntryId) == true -> "read"
+                                    else -> post(alert, preview)
+                                }
+                            }
+                        RelayLog.d { "event=attention_alert outcome=$posted kind=$kind" }
                     }
+                    "enriching"
+                }
             }
         RelayLog.d { "event=attention_alert outcome=$outcome kind=$kind" }
     }
@@ -154,7 +178,10 @@ class AttentionNotifier(
     private fun permitted() =
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
-    private fun post(alert: AttentionAlert): String {
+    private fun post(
+        alert: AttentionAlert,
+        preview: String?,
+    ): String {
         val manager = NotificationManagerCompat.from(context)
         manager.createNotificationChannel(
             NotificationChannel(
@@ -167,12 +194,21 @@ class AttentionNotifier(
         val tag = digest(alert.serverId, alert.conversationId)
         val text = context.getString(copyFor(alert.kind, agentOf(alert.serverId, alert.conversationId)))
         val title = notificationTitle(nameOf(alert.serverId, alert.conversationId)) ?: context.getString(R.string.app_name)
-        val notification =
+        val public =
             NotificationCompat
                 .Builder(context, ATTENTION_CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle(title)
                 .setContentText(text)
+                .build()
+        val notification =
+            NotificationCompat
+                .Builder(context, ATTENTION_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(title)
+                .setContentText(preview ?: text)
+                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+                .setPublicVersion(public)
                 .setAutoCancel(true)
                 .setContentIntent(NotificationTap.pendingIntent(context, tag, alert.serverId, alert.conversationId))
                 .addExtras(
