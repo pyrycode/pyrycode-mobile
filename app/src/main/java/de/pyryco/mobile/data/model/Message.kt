@@ -18,6 +18,8 @@ data class Message(
     /** Assistant parent attribution, verbatim inert grouping data; never authority, a path or a log field.
      * Empty for main/unknown/cache-only rows. Tool attribution stays on [ToolCall.parentToolUseId]. */
     val parentToolUseId: String = "",
+    /** Original ordinary-row id when [id] is a local collision alias; never inferred from alias text. */
+    val reconciliationId: String? = null,
 )
 
 enum class Role { User, Assistant, Tool }
