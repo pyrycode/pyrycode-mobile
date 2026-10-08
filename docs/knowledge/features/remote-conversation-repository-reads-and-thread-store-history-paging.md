@@ -19,9 +19,10 @@ than the thread. `reduceOrderedHistoryPage` decodes the page once, outside the u
 with authoritative `unsignedOrder` and `unsignedClaims` for rows and individual assistant deltas,
 taken from the contextual fold, so a failed compaction divider gets its falling edge's id. Since #1909,
 `mergeUnsignedHistoryRows` compares exact `ULong` positions across `Long.MAX_VALUE` through the unsigned
-maximum. Inside the one `ProjectionState` update, it inserts only rows the thread lacks, so an older, newer or middle page lands in daemon order and a repeat page changes nothing.
-Established held rows retain their positions; pending own echoes with first modern delivery
-evidence use the exception below. The merge never sorts the whole thread by timestamp. A missing
+maximum. Inside the one `ProjectionState` update, it inserts missing rows and repairs eligible
+provisional assistant deltas as described below; a repeat page changes nothing. Established held rows
+retain their relative order, with separate exceptions for first durable assistant evidence and pending
+own echoes with first modern delivery evidence. The merge never sorts the whole thread by timestamp. A missing
 row goes after its nearest shared predecessor or before its nearest shared successor. Held rows with known log ids bound that slot, so a
 reused message id or a malformed entry cannot pull a row past a known position. With no shared row, log ids
 and then timestamps choose the slot. The unsigned placement map lives in `ProjectionState.historyOrder`
@@ -32,13 +33,29 @@ durable claims. A boundary that fills a pending divider in place carries its uns
 to its new identity. `ThreadSnapshot` publishes rows, suppression and `unsignedHistoryOrder` from this
 same generation, deriving signed `historyOrder` only for representable positions.
 
-Late durable evidence for an already held live delta can still strand it beyond its history separator.
-This also reproduces with lower-range ids and remains tracked by [#1913](https://github.com/pyrycode/pyrycode-mobile/issues/1913).
-Unsigned overlap probes establish the held delta's durable position before surrounding pages; they do
-not prove that unresolved provisional placement is repaired.
+**First durable assistant evidence (#1913).** A held `(turnId, seq)` delta is provisional until its
+first durable history position arrives. If that position conflicts with a known held durable neighbour,
+the merge extracts the delta even from a folded segment and reinserts its held version within exact
+unsigned bounds, including across a user or tool separator. First evidence without such a conflict
+keeps its slot. Previously durable deltas and unevidenced live-only atoms remain anchors in their
+relative order; replay or a conflicting later claim cannot grant another repair. The projection derives
+eligibility from the page's `unsignedOrder` minus prior scoped claims inside the same CAS update that
+publishes rows and accumulated claims. Prior values win conflicts, and a CAS retry recalculates eligibility.
+Timestamps, renderer keys and replay event ids never establish claims; sequence numbers identify deltas
+and allow adjacent rejoining, but cannot substitute for durable positions. Signed and cache merge entry
+points supply no first-evidence relocation permission. This assistant exception is independent of the
+pending-own-user-echo first-delivery rule below.
+
+Fresh admitted assistant deltas also obey durable bounds: a provisional sequence or shared-page
+neighbour cannot override them. Probe sparse held sequences as well as relocation alone. With held
+`user(id 4), ac(seq 0,2)`, an overlap admitting `b(seq 1/id 2)` while first evidencing `c(seq 2/id 3)`
+must produce `bc, user, a`; first evidence for `a(id 1)` then produces `abc, user`. Checking only repaired
+held atoms misses a fresh delta escaping its bound. Partial-page fixtures must retain the complete
+page's durable ids; renumbering cuts tests conflicting claims rather than consistent arrival permutations.
 
 Assistant text merges per delta, identified by `(turnId, seq)`. Segments split into single-delta pieces by
-their recorded lengths; only missing sequences enter, before, between or after held ones. Adjacent pieces of
+their recorded lengths; missing sequences enter and eligible held atoms relocate without replacing their
+text, timestamp, attribution or streaming state. Adjacent pieces of
 one turn then join again, so text stays on the correct side of a tool or user row, and ended turns stay
 settled through the existing post-merge pass. Held text wins any overlap. A legacy whole-turn row without
 sequence records suppresses only text it demonstrably contains. Renderer keys stay unique without dropping
@@ -88,7 +105,7 @@ and consumes that exact entry in the **requested conversation**, independently o
 routing id. Omitted/malformed identity and non-user rows do not establish modern delivery.
 Queue-entry consumption does not broaden the renderer's message-id deduplication.
 
-Only first-delivery, pending, minted held user echoes have provisional positions. Remove those
+For own user echoes, only first-delivery, pending, minted held rows have provisional positions. Remove those
 rows from the receiving list before `mergeUnsignedHistoryRows`, insert by incoming daemon
 order/delivery timestamp, then restore their exact held objects. Using their tap timestamps or
 retaining a legacy reserved slot can put an echo above the waiting turn's tool row. Content,
