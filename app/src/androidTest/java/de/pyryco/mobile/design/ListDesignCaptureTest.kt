@@ -11,9 +11,13 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -26,6 +30,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.ViewCompat
@@ -33,6 +38,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import de.pyryco.mobile.R
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.crypto.PairedServerEntry
@@ -47,6 +53,7 @@ import de.pyryco.mobile.di.HostConversationConnection
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.di.ThreadDestinationFactory
 import de.pyryco.mobile.ui.components.CHANNEL_NAME_FIELD_TAG
+import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHAT_ROW_TEST_TAG
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
@@ -87,6 +94,165 @@ class ListDesignCaptureTest {
     @Viewport("320x700", fontScale = 1.5f)
     @Test
     fun listFramesAt320By700LargeText() = walk(suffix = "-compact")
+
+    /** Real bars, hardware pixels and a settled dialog IME require the full device image. */
+    @Test
+    fun promptFailedFramesAt412By892() {
+        design.paired = true
+        val koin = GlobalContext.get()
+        val previous = koin.get<HostConversationSource>()
+        val fake = koin.get<FakeConversationRepository>()
+        val createdIds = MutableStateFlow<List<String>>(emptyList())
+        val previousFailure = design.inputs.failSystemPromptWrites
+        val failing =
+            object : ConversationRepository by fake {
+                override suspend fun createChannel(
+                    name: String,
+                    workspace: String?,
+                ): Conversation = fake.createChannel(name, workspace).also { createdIds.value += it.id }
+
+                override suspend fun setSystemPrompt(
+                    conversationId: String,
+                    systemPrompt: String?,
+                ) {
+                    assertEquals(FRAME_PROMPT, systemPrompt)
+                    val confirmed = fake.observeConversations(ConversationFilter.Channels).first().single { it.id == conversationId }
+                    assertTrue(confirmed.isPromoted)
+                    error("deterministic prompt write failure")
+                }
+            }
+        val source =
+            HostConversationSource(
+                MutableStateFlow(
+                    listOf(
+                        HostConversationConnection(
+                            HostConversationSource.DEMO_SERVER_ID,
+                            "Demo",
+                            MutableStateFlow(failing),
+                            MutableStateFlow(ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)),
+                        ),
+                    ),
+                ),
+                { serverId -> failing.takeIf { serverId == HostConversationSource.DEMO_SERVER_ID } },
+                viewing = koin.get(),
+            )
+        loadKoinModules(module { single { source } })
+        try {
+            design.inputs.failSystemPromptWrites = true
+            relaunch()
+            rule.onNodeWithContentDescription("New channel on Demo").performClick()
+            capturePromptFailure(
+                "Create channel",
+                R.string.create_channel_prompt_failed,
+                "create-channel-prompt-failed",
+                "784:7095",
+            )
+            val created =
+                runBlocking {
+                    fake.observeConversations(ConversationFilter.Channels).first().single {
+                        it.id ==
+                            createdIds.value.single()
+                    }
+                }
+            assertEquals(FRAME_NAME, created.name)
+            assertTrue(created.isPromoted)
+            // Keep the same-name channel present to exercise duplicate-name routing.
+            design.scenario?.close()
+
+            val sameNameChat = runBlocking { fake.createDiscussion(null) }
+            createdIds.value += sameNameChat.id
+            runBlocking { fake.rename(sameNameChat.id, FRAME_NAME) }
+            val chat = runBlocking { fake.createDiscussion(null) }
+            createdIds.value += chat.id
+            val routeName = "Prompt capture ${chat.id}"
+            runBlocking { fake.rename(chat.id, routeName) }
+            relaunch()
+            val chatRow = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(routeName)
+            rule.onNode(hasScrollToNodeAction()).performScrollToNode(chatRow)
+            rule.onNode(chatRow).assertIsDisplayed().performClick()
+            rule.waitUntil(5_000) {
+                design.inputs.thread.value
+                    ?.state
+                    ?.value
+                    ?.conversationId == chat.id
+            }
+            design.openHeaderMenu()
+            rule.onNodeWithText("Save as channel…").performClick()
+            capturePromptFailure(
+                "Save as channel",
+                R.string.save_as_channel_prompt_failed,
+                "save-as-channel-prompt-failed",
+                "784:7134",
+            )
+            val channels = runBlocking { fake.observeConversations(ConversationFilter.Channels).first() }
+            val saved = channels.single { it.id == chat.id }
+            assertEquals(FRAME_NAME, saved.name)
+            assertTrue(saved.isPromoted)
+            assertEquals(created, channels.single { it.id == created.id })
+            val decoy =
+                runBlocking { fake.observeConversations(ConversationFilter.Discussions).first().single { it.id == sameNameChat.id } }
+            assertEquals(FRAME_NAME, decoy.name)
+        } finally {
+            design.scenario?.close()
+            design.inputs.failSystemPromptWrites = previousFailure
+            loadKoinModules(module { single { previous } })
+            source.dispose()
+            runBlocking { createdIds.value.forEach { fake.delete(it) } }
+        }
+    }
+
+    private fun capturePromptFailure(
+        title: String,
+        errorResource: Int,
+        name: String,
+        figmaNode: String,
+    ) {
+        awaitText(title)
+        awaitText("Channel name:")
+        val modal = awaitModalFocus(rule.onNodeWithText(title))
+        openChannelFormKeyboard(modal)
+        rule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).performTextReplacement(FRAME_NAME)
+        rule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextReplacement(FRAME_PROMPT)
+        shell("input keyevent KEYCODE_BACK")
+        awaitModalKeyboard(modal, visible = false)
+        assertModalKeyboardClosed(modal)
+        rule.onNodeWithText("OK").assertIsEnabled().performClick()
+        val error = InstrumentationRegistry.getInstrumentation().targetContext.getString(errorResource)
+        awaitText(error)
+        val field = rule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG)
+        field.assertIsDisplayed().assertTextEquals(FRAME_NAME).assertIsNotEnabled()
+        val prompt = rule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG)
+        prompt.assertIsDisplayed().assertTextEquals(FRAME_PROMPT).assertIsEnabled()
+        rule.onNodeWithText("OK").assertIsDisplayed().assertIsEnabled()
+        val errorNode = rule.onNodeWithText(error).fetchSemanticsNode()
+        assertTrue("error ends the form content", errorNode.boundsInRoot.top >= prompt.fetchSemanticsNode().boundsInRoot.bottom)
+        val layouts = mutableListOf<TextLayoutResult>()
+        field.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        val nameStyle = layouts.single().layoutInput.style
+        assertEquals("locked name text opacity", 0.38f, nameStyle.color.alpha, 0.01f)
+        assertEquals(modal, (checkNotNull(errorNode.root) as ViewRootForTest).view)
+        awaitModalKeyboard(modal, visible = false)
+        assertModalKeyboardClosed(modal)
+        design.capture(FOLDER, name, figmaNode)
+        val location = IntArray(2)
+        rule.runOnIdle { modal.getLocationOnScreen(location) }
+        val dialogInsets = rule.runOnIdle { checkNotNull(ViewCompat.getRootWindowInsets(modal)) }
+        val output =
+            File(
+                checkNotNull(InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")),
+                "design-1220/$FOLDER/$name.txt",
+            )
+        output.appendText(
+            "dialogWindowFocused=true keyboardOpenObserved=true backKeptForm=true " +
+                "dialogImeVisible=${dialogInsets.isVisible(WindowInsetsCompat.Type.ime())} " +
+                "dialogImePx=${dialogInsets.getInsets(WindowInsetsCompat.Type.ime())} lockedNameAlpha=${nameStyle.color.alpha}\n",
+        )
+        listOf("name" to field, "prompt" to prompt, "error" to rule.onNodeWithText(error)).forEach { (label, node) ->
+            val bounds = node.fetchSemanticsNode().boundsInRoot.translate(Offset(location[0].toFloat(), location[1].toFloat()))
+            output.appendText("$label screenBoundsPx=$bounds\n")
+        }
+        assertModalKeyboardClosed(modal)
+    }
 
     /** Real bars and hardware pixels are the reason this notice capture is device-only. */
     @Test
@@ -623,6 +789,8 @@ class ListDesignCaptureTest {
     private companion object {
         const val FOLDER = "list"
         const val ARCHIVED_CHANNELS = 3
+        const val FRAME_NAME = "Release notes"
+        const val FRAME_PROMPT = "Summarise each merged pull request in one plain sentence for the release notes."
         val HOST_FOLDS_COLLAPSED =
             listOf(
                 "Chats on Pyry",
