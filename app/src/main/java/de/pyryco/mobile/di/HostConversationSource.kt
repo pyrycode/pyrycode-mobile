@@ -240,10 +240,7 @@ class HostConversationSource internal constructor(
         }
         scope.launch(entry.job) {
             connection.repositories.collectLatest { repository ->
-                // Retain last known attention while offline. Every new connection establishes support
-                // from its own facts, never from cached rows or the previous daemon's fields.
                 if (repository != null) {
-                    updateReadMarks(entry, repository, emptyMap())
                     repository.observeHostReadMarks().collect { marks -> updateReadMarks(entry, repository, marks) }
                 }
             }
@@ -257,7 +254,7 @@ class HostConversationSource internal constructor(
                     val grown = counts.filter { (id, count) -> count > (seen[id] ?: 0) }.keys
                     seen = counts
                     if (grown.isNotEmpty()) {
-                        updateAttention(entry) {
+                        updateAttention(entry, repository) {
                             attention =
                                 grown.fold(attention) { state, id ->
                                     state.rowsAdded(id, viewing.isViewing(connection.serverId, id), UUID.randomUUID().toString())
@@ -319,17 +316,25 @@ class HostConversationSource internal constructor(
         repository: ConversationRepository,
         marks: Map<String, ConversationReadMarks>,
     ) {
-        if (entry.connection.repositories.value !== repository) return
-        updateAttention(entry) { attention = attention.withReadMarks(marks) }
+        updateAttention(entry, repository) { attention = attention.withReadMarks(marks) }
         RelayLog.d { "event=conversation_attention_read_facts" }
     }
 
     @Synchronized
     private fun updateAttention(
         entry: Held,
+        repository: ConversationRepository? = null,
         change: Held.() -> Unit,
     ) {
         if (!isCurrent(entry)) return
+        val current = entry.connection.repositories.value
+        if (repository != null && current !== repository) return
+        // Establish the generation in the same critical section as every consumer, including events
+        // that beat the repository collectors. Offline retains facts; a new daemon starts without them.
+        if (entry.attentionRepository !== current) {
+            entry.attentionRepository = current
+            if (current != null) entry.attention = entry.attention.withReadMarks(emptyMap())
+        }
         entry.change()
         if (entry.positions.value != null) entry.positions.value = entry.attention.positions
         entry.resolved = entry.attention.resolve(entry.modals, entry.batches)
@@ -419,6 +424,7 @@ class HostConversationSource internal constructor(
         var live = false
 
         var attention = HostAttentionState()
+        var attentionRepository: ConversationRepository? = null
         var modals: List<ModalUiState.Open> = emptyList()
         var batches: List<QuestionBatch> = emptyList()
         var resolved: Map<String, ConversationAttention> = emptyMap()

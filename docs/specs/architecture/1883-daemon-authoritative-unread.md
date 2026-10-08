@@ -64,6 +64,9 @@ None. Facts already merged in the repository remain the single authority; absenc
 
 - 2026-10-08: The first scripted run rejected the new post prefix because `post_batch` restricts fixture names to `e2e1833-`. Reuse that existing allowed prefix; the peer-read contract and control boundary remain unchanged.
 
+- 2026-10-08 (rework, finding 1): Independent replacement collectors did not order the read-fact reset before rows/completions. Move generation establishment into synchronized `updateAttention`, record the exact repository on `Held`, reset facts only once per replacement, and guard row callbacks by repository identity. Reverse-order dispatcher tests force replay rows and completion before the read collector and prove legacy unread plus duplicate immunity.
+- 2026-10-08 (rework, finding 2): The daemon protocol explicitly omits `history_entry_id` from channel-post pushes. The scripted twin now waits for the completed post to arrive, then requests a fresh list to obtain its durable latest id before the unchanged unread/peer-clear assertions. Peer history must contain that exact post. No production wire or identity fold changes.
+
 ## Documentation handoff
 
 Pending for the documentation stage:
@@ -83,7 +86,7 @@ Pending for the documentation stage:
 - [Cryptography] Reuse Noise_IK_25519_ChaChaPoly_BLAKE2s and existing Keystore credentials; no new cryptographic operation or nonce lifecycle.
 - [Network/I/O] Reuse existing bounded transport, unsigned decoder, request timeouts and reconnect backoff. No additional request or subscription at the wire boundary. Unknown latest ids never become permission to mark content read.
 - [Errors/logs] New logs contain only static event names. Never log marks, ids, tokens, keys, pairing records, frames, message bodies or peer history.
-- [Concurrency] SHOULD FIX implemented with the new collector: stale read-map callbacks must check exact repository identity in addition to entry generation. All jobs are cancelled through entry/source ownership; no monitor is held across suspension.
+- [Concurrency] MUST FIX from re-review addressed: `updateAttention` establishes the current repository generation under the monitor before any event, row or read-fact mutation; every replacement resets prior read facts exactly once. Repository-qualified row/read callbacks reject superseded sources. This prevents rows or completions from consuming prior-daemon support and losing fallback positions. All jobs are cancelled through entry/source ownership; no monitor is held across suspension.
 - [Threat model] A malicious relay can delay/drop but cannot forge authenticated marks through Noise. A hostile daemon can misstate its own facts; unsigned comparison uses no arithmetic, scheduling or file paths. Rooted disk token theft and UI screenshot/accessibility/keyboard leakage remain governed by existing Keystore/UI controls, unchanged by a content-free state projection. Existing busy/event callback races outside read-fact collection remain out of scope.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)

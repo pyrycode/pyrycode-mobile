@@ -59,6 +59,8 @@ import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -481,6 +483,19 @@ class DeterministicInteractiveStreamE2ETest {
         }
         // The owned post control admits only the existing e2e1833 fixture prefix.
         DaemonFaultControl().posts(SEED_CHANNEL_NAME, "e2e1833-attention-read", 1)
+        val postText = "e2e1833-attention-read-000"
+        runBlocking {
+            withTimeout(REPLY_TIMEOUT_MS) {
+                repository.threadSnapshots(conversationId).first { snapshot ->
+                    snapshot.rows.filterIsInstance<ThreadItem.MessageItem>().any {
+                        it.message.content == postText && !it.message.isStreaming
+                    }
+                }
+            }
+            // Channel-post pushes omit durable ids. After receipt proves the append completed, a
+            // fresh list subscription requests latest_entry_id without reopening or reading the post.
+            repository.observeConversations(ConversationFilter.All).first()
+        }
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val row = hasText(SEED_CHANNEL_NAME) and hasTestTag(de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG)
         val unread = context.getString(R.string.cd_conversation_attention_unread)
@@ -499,7 +514,14 @@ class DeterministicInteractiveStreamE2ETest {
             runBlocking {
                 peer.open(CONNECT_TIMEOUT_MS)
                 val history = peer.history(conversationId, THREAD_TIMEOUT_MS)
-                assertTrue("peer received the durable post", history.any { it.type == "assistant_delta" })
+                assertTrue(
+                    "peer received the durable post",
+                    history.any {
+                        it.type == "assistant_delta" && it.payload.jsonObject["text"]
+                            ?.jsonPrimitive
+                            ?.content == postText
+                    },
+                )
                 val latest = requireNotNull(history.maxOfOrNull { it.id })
                 assertTrue("peer read confirmed", peer.markRead(conversationId, latest, THREAD_TIMEOUT_MS) >= latest)
             }

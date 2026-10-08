@@ -19,6 +19,7 @@ import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.SessionPump
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
@@ -38,6 +39,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import kotlin.coroutines.CoroutineContext
 
 /** The per-host attention plumbing (#877): each host's own events, prompts, read marks and legs. */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -558,6 +560,53 @@ class HostConversationSourceAttentionTest {
         }
 
     @Test
+    fun replacementReplayRowsBeforeReadCollectorEstablishLegacyUnread() {
+        val dispatcher = ReorderingDispatcher()
+        val host = Host("a")
+        host.rows.marks.value = mapOf("same" to ConversationReadMarks(9u, 9u))
+        val source = HostConversationSource(MutableStateFlow(listOf(host.entry)), { null }, dispatcher)
+        try {
+            dispatcher.drain()
+            val legacy = RowCountingRepository()
+            legacy.counts.value = mapOf("same" to 1)
+            host.repositories.value = legacy
+            // Run replacement consumers in reverse order: replay rows precede the read collector.
+            dispatcher.drainNewestFirst()
+            assertEquals(mapOf("same" to ConversationAttention.Unread), source.attention.value["a"])
+            source.markOpened("a", "same")
+            dispatcher.drain()
+            assertEquals(emptyMap<String, ConversationAttention>(), source.attention.value["a"])
+        } finally {
+            source.dispose()
+            dispatcher.drain()
+        }
+    }
+
+    @Test
+    fun replacementCompletionBeforeRepositoryCollectorsEstablishesLegacyUnreadOnce() {
+        val dispatcher = ReorderingDispatcher()
+        val host = Host("a")
+        host.rows.marks.value = mapOf("same" to ConversationReadMarks(9u, 9u))
+        val source = HostConversationSource(MutableStateFlow(listOf(host.entry)), { null }, dispatcher)
+        try {
+            dispatcher.drain()
+            host.repositories.value = RowCountingRepository()
+            assertTrue(host.events.tryEmit(end("same", "legacy-turn")))
+            // The live event was queued last; consume it before any repository replacement collector.
+            dispatcher.runNewest()
+            assertEquals(mapOf("same" to ConversationAttention.Unread), source.attention.value["a"])
+            dispatcher.drain()
+            source.markOpened("a", "same")
+            assertTrue(host.events.tryEmit(end("same", "legacy-turn")))
+            dispatcher.drain()
+            assertEquals(emptyMap<String, ConversationAttention>(), source.attention.value["a"])
+        } finally {
+            source.dispose()
+            dispatcher.drain()
+        }
+    }
+
+    @Test
     fun modernFactsOverrideRestoredTokensAndLocalActivityDoesNotWriteFallback() =
         runTest {
             val cache = MemoryCache()
@@ -753,6 +802,28 @@ class HostConversationSourceAttentionTest {
         override fun observeHostReadMarks() = marks
 
         override fun observeThreadRowCounts() = counts
+    }
+
+    /** Forces an actual consumer-before-reset ordering without timing or a scheduler race. */
+    private class ReorderingDispatcher : CoroutineDispatcher() {
+        private val queued = mutableListOf<Runnable>()
+
+        override fun dispatch(
+            context: CoroutineContext,
+            block: Runnable,
+        ) {
+            queued += block
+        }
+
+        fun runNewest() = queued.removeAt(queued.lastIndex).run()
+
+        fun drainNewestFirst() {
+            while (queued.isNotEmpty()) runNewest()
+        }
+
+        fun drain() {
+            while (queued.isNotEmpty()) queued.removeAt(0).run()
+        }
     }
 
     private class MemoryCache : ConversationCache {
