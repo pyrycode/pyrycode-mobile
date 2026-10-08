@@ -1,0 +1,6 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuite name="de.pyryco.mobile.ui.components.ChannelFormFieldsTest" tests="1" skipped="0" failures="1" errors="0" timestamp="2026-10-08T11:44:53.248Z" hostname="Juhanas-MacBook-Air.local" time="6.638">
+  <testcase name="promptWellKeepsBlankSpaceBelowWrappedAndExplicitLines" classname="de.pyryco.mobile.ui.components.ChannelFormFieldsTest" time="6.03">
+    <failure message="java.lang.AssertionError: blank space below drawn text expected:&lt;76.0&gt; but was:&lt;18.68531&gt;" type="java.lang.AssertionError" />
+  </testcase>
+</testsuite>
