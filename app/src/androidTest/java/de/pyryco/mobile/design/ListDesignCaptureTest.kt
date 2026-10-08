@@ -17,6 +17,7 @@ import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -155,16 +156,20 @@ class ListDesignCaptureTest {
                 }
             assertEquals(FRAME_NAME, created.name)
             assertTrue(created.isPromoted)
-            // Remove this channel before opening the temporary chat with the same frame name.
+            // Keep the same-name channel present to exercise duplicate-name routing.
             design.scenario?.close()
-            runBlocking { fake.delete(created.id) }
 
+            val sameNameChat = runBlocking { fake.createDiscussion(null) }
+            createdIds.value += sameNameChat.id
+            runBlocking { fake.rename(sameNameChat.id, FRAME_NAME) }
             val chat = runBlocking { fake.createDiscussion(null) }
             createdIds.value += chat.id
-            runBlocking { fake.rename(chat.id, FRAME_NAME) }
+            val routeName = "Prompt capture ${chat.id}"
+            runBlocking { fake.rename(chat.id, routeName) }
             relaunch()
-            rule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(FRAME_NAME))
-            rule.onNodeWithText(FRAME_NAME).performClick()
+            val chatRow = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(routeName)
+            rule.onNode(hasScrollToNodeAction()).performScrollToNode(chatRow)
+            rule.onNode(chatRow).assertIsDisplayed().performClick()
             rule.waitUntil(5_000) {
                 design.inputs.thread.value
                     ?.state
@@ -179,9 +184,14 @@ class ListDesignCaptureTest {
                 "save-as-channel-prompt-failed",
                 "784:7134",
             )
-            val saved = runBlocking { fake.observeConversations(ConversationFilter.Channels).first().single { it.id == chat.id } }
+            val channels = runBlocking { fake.observeConversations(ConversationFilter.Channels).first() }
+            val saved = channels.single { it.id == chat.id }
             assertEquals(FRAME_NAME, saved.name)
             assertTrue(saved.isPromoted)
+            assertEquals(created, channels.single { it.id == created.id })
+            val decoy =
+                runBlocking { fake.observeConversations(ConversationFilter.Discussions).first().single { it.id == sameNameChat.id } }
+            assertEquals(FRAME_NAME, decoy.name)
         } finally {
             design.scenario?.close()
             design.inputs.failSystemPromptWrites = previousFailure

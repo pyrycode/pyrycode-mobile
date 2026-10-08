@@ -1,5 +1,46 @@
 Ticket #1737: Create channel / Prompt failed and Save as channel / Prompt failed
 
+Rework evidence, 2026-10-08 (verifier finding 1)
+The initial capture/provenance below remains the audit history. The two retained
+PNGs and their comparisons were refreshed after the selector repair; paired
+metadata and every app-content pixel are unchanged. Only real status-bar clock
+pixels differ. Current-day Figma exports and measured mismatch verdicts are
+unchanged. No unrelated capture or production file was edited.
+
+Reproduction: keep this method's created Release notes channel beside its
+same-name temporary chat, using the original unscoped selectors. The full
+pixel8Api35 command below exited 1: 1 executed, 1 failed, 0 errors/skips.
+1737-selector-red.xml timestamp 2026-10-08T08:45:44 UTC records the exact
+promptFailedFramesAt412By892 failure: click matches tree-channel-row and
+tree-chat-row. It fails before Save as channel opens, as in the full UI gate.
+
+Repair: preserve the created channel and add a same-name temporary chat decoy.
+The target chat's route name contains its unique conversation ID; scrolling
+and clicking share a tree-chat-row plus exact-name matcher. The existing thread
+conversation-ID check still guards routing. The form replaces the route name
+with Release notes before submission. Both decoys' names/tiers are asserted
+unchanged. Finally deletes only this method's three conversations and restores
+the repository overrides. Inherited same-name fixtures are never mutated.
+
+The full pixel8Api35 command below then exited 0. Fresh 1737-rework-results.xml,
+timestamp 2026-10-08T08:48:58 UTC: 1 executed/passed, 0 failures/errors/skips;
+promptFailedFramesAt412By892 ran for 64.931 s and covers BOTH states.
+Capture-run ListDesignCaptureTest source blob:
+2bc0ef9cc24c9ffec147c6d47077d634309db25a.
+Retained source after formatting only:
+6e56b0a382496d96062a1640a63400ba9961d7aa.
+Both refreshed PNGs are nonblank 412x892, density/font scale 1.0, fixed dark,
+hardware-rendered, syntheticBars=false, with real 24 px status/navigation bars.
+Both dialog roots observed open IME then physical Back; focused-window IME was
+hidden/zero before and after capture. Locked-name alpha remains 0.38039216.
+
+Focused dispatcher-image check, exit 0:
+./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.design.ListDesignCaptureTest#promptFailedFramesAt412By892' -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain
+1737-atd-rework-results.xml timestamp 2026-10-08T08:57:49 UTC:
+1 executed/passed, 0 failures/errors/skips; selected method ran for 9.518 s.
+This proves routing on ATD, not real-bar pixel evidence. The fresh full UI gate
+and scripted-all remain dispatcher-owned and pending after this repair.
+
 Verdict
 Both frames are audited, mismatch. Only two out-of-tolerance causes were found:
 the multiline prompt well is 20 dp too short (#1957), and the two-line error box
