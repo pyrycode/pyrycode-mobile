@@ -983,7 +983,9 @@ internal class ThreadProjection(
                 }
             }
         state.update { current ->
-            val order = reduced.unsignedOrder + current.historyOrder[conversationId].orEmpty()
+            val previousOrder = current.historyOrder[conversationId].orEmpty()
+            val firstEvidence = reduced.unsignedOrder.keys - previousOrder.keys
+            val order = reduced.unsignedOrder + previousOrder
             val existing = current.threads[conversationId].orEmpty()
             val echoes = current.echoQueues[conversationId] ?: OwnEchoQueue()
             val pending = echoes.parked + echoes.awaitingPush + echoes.placementPending
@@ -991,7 +993,7 @@ internal class ThreadProjection(
                 deliveries
                     .filter { it.messageId !in echoes.pushed && it.queuedMsgId !in echoes.consumedBacklog }
                     .mapTo(HashSet()) { it.messageId }
-            // Only pending own user rows have provisional positions; keep their original objects at history's slot.
+            // Pending own echoes use their separate first-delivery exception; keep their original objects.
             val provisional =
                 existing
                     .filterIsInstance<ThreadItem.MessageItem>()
@@ -1003,7 +1005,7 @@ internal class ThreadProjection(
                     }.associateBy { it.message.id }
             val receiving = existing.filterNot { it is ThreadItem.MessageItem && it.message.id in provisional }
             val merged =
-                receiving.mergeUnsignedHistoryRows(reduced.rows, order).map { row ->
+                receiving.mergeUnsignedHistoryRows(reduced.rows, order, firstEvidence).map { row ->
                     if (row is ThreadItem.MessageItem) provisional[row.message.id] ?: row else row
                 }
             val settledEchoes =

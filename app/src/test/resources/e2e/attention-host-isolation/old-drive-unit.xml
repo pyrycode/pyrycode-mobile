@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuite name="de.pyryco.mobile.e2e.AttentionHostIsolationTest" tests="2" skipped="0" failures="2" errors="0" timestamp="2026-10-08T05:00:44.174Z" time="0.067">
+  <properties />
+  <testcase name="assertionFailure_restoresCredentialsNamesAndOrder_andPreservesFailure" classname="de.pyryco.mobile.e2e.AttentionHostIsolationTest" time="0.041">
+    <failure message="java.lang.AssertionError: expected same:&lt;java.lang.AssertionError: scenario failed&gt; was not:&lt;java.lang.AssertionError: expected:&lt;[answer]&gt; but was:&lt;[primary, answer]&gt;&gt;" type="java.lang.AssertionError" />
+  </testcase>
+  <testcase name="inheritedPermissionOnAnotherHost_cannotReplaceBsSingleWaitingWithCount" classname="de.pyryco.mobile.e2e.AttentionHostIsolationTest" time="0.024">
+    <failure message="java.lang.AssertionError: expected:&lt;ThreadAttention(waitingCount=1, target=HostConversationTarget(serverId=answer, conversationId=B), name=null)&gt; but was:&lt;ThreadAttention(waitingCount=2, target=null, name=null)&gt;" type="java.lang.AssertionError" />
+  </testcase>
+</testsuite>

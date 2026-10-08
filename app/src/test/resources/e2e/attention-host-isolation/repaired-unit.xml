@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuite name="de.pyryco.mobile.e2e.AttentionHostIsolationTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-08T05:06:41.646Z" time="0.3">
+  <properties />
+  <testcase name="assertionFailure_restoresCredentialsNamesAndOrder_andPreservesFailure" classname="de.pyryco.mobile.e2e.AttentionHostIsolationTest" time="0.214" />
+  <testcase name="inheritedPermissionOnAnotherHost_cannotReplaceBsSingleWaitingWithCount" classname="de.pyryco.mobile.e2e.AttentionHostIsolationTest" time="0.047" />
+  <testcase name="failedIsolationAfterRemoval_restoresSnapshotWithoutStartingScenario" classname="de.pyryco.mobile.e2e.AttentionHostIsolationTest" time="0.003" />
+  <testcase name="restorationFailure_preservesScenarioFailure_andStillRestoresLaterHosts" classname="de.pyryco.mobile.e2e.AttentionHostIsolationTest" time="0.012" />
+  <testcase name="originalHostSelectionAndNullableNames_areRestoredOnSuccess" classname="de.pyryco.mobile.e2e.AttentionHostIsolationTest" time="0.005" />
+  <testcase name="cancellation_restoresAllPairingsBeforeScopeFinishes" classname="de.pyryco.mobile.e2e.AttentionHostIsolationTest" time="0.009" />
+</testsuite>

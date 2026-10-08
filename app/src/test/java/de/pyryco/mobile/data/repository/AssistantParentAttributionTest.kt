@@ -119,7 +119,10 @@ class AssistantParentAttributionTest {
                     val projection = ThreadProjection()
                     val first = if (parentOnHeld) held else held.map { it.copy(parentToolUseId = "") }
                     val second = if (parentOnHeld) complete.map { it.copy(parentToolUseId = "") } else complete
-                    projection.mergeHistoryPage("c", HistoryPage(entries(first), "", false), true)
+                    // Page cuts retain the complete page's durable ids rather than renumbering held deltas.
+                    val firstEntries =
+                        entries(first).zip(first.asReversed()) { entry, event -> entry.copy(unsignedId = (event.seq + 1).toULong()) }
+                    projection.mergeHistoryPage("c", HistoryPage(firstEntries, "", false), true)
                     repeat(2) { projection.mergeHistoryPage("c", HistoryPage(entries(second), "", true), true) }
                     val rows = projection.observe("c").first().messages()
                     assertEquals(listOf("t"), rows.map { it.id })
