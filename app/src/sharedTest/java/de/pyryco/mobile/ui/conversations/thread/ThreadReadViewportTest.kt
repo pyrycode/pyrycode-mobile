@@ -1,5 +1,6 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.hasScrollToIndexAction
@@ -131,6 +132,58 @@ open class ThreadReadViewportTest {
         compose.waitForIdle()
         compose.waitUntil(5000) { events.size == 2 }
         compose.runOnIdle { assertEquals(41uL, events.last().checkpoint) }
+    }
+
+    @Test open fun scrolling_doesNotRecomposeProductionListHost() {
+        val owner = Owner().apply { registry.currentState = Lifecycle.State.RESUMED }
+        val rows = (1..60).map(::row)
+        val fixedState = state().copy(items = rows, readEvidence = evidence(rows.last(), 60u))
+        val events = mutableListOf<ThreadEvent.NewestContentPresented>()
+        var hostCompositions = 0
+        var list: LazyListState? = null
+        val observer: (LazyListState) -> Unit = {
+            hostCompositions++
+            list = it
+        }
+        compose.setContent {
+            CompositionLocalProvider(LocalLifecycleOwner provides owner, LocalThreadListCompositionObserver provides observer) {
+                PyrycodeMobileTheme {
+                    ThreadScreen(fixedState, {}, {}, ConnectionState.Connected, {}, onOverflowEvent = {
+                        if (it is ThreadEvent.NewestContentPresented) events += it
+                    })
+                }
+            }
+        }
+        compose.waitUntil(5000) { events.size == 1 }
+        compose.mainClock.advanceTimeBy(1000)
+        compose.waitForIdle()
+        var before = 0
+        var newestOffset = 0
+        compose.runOnIdle {
+            val current = requireNotNull(list)
+            assertEquals(60, current.layoutInfo.totalItemsCount)
+            newestOffset =
+                current.layoutInfo.visibleItemsInfo
+                    .first { it.index == 0 }
+                    .offset
+            before = hostCompositions
+            assertTrue("scroll consumes nonzero distance", current.dispatchRawDelta(20f) > 0f)
+        }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            val newest = requireNotNull(list).layoutInfo.visibleItemsInfo.first { it.index == 0 }
+            assertTrue("newest row moved within view", newest.offset != newestOffset)
+            assertEquals("moving candidate must not recompose list host", before, hostCompositions)
+        }
+        compose.onNode(hasScrollToIndexAction()).performScrollToIndex(40)
+        compose.waitForIdle()
+        compose.runOnIdle {
+            val current = requireNotNull(list)
+            assertTrue("scroll reached older rows", current.firstVisibleItemIndex >= 35)
+            assertFalse("newest is offscreen", current.layoutInfo.visibleItemsInfo.any { it.index == 0 })
+            assertEquals("laying out older rows must not recompose list host", before, hostCompositions)
+            assertEquals(1, events.size)
+        }
     }
 
     @Test fun viewportEdgeExcludesComposerAndImeAndAllowsTallRowTrailingEdge() {
