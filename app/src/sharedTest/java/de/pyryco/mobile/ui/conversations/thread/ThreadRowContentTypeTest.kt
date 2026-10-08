@@ -75,7 +75,7 @@ class ThreadRowContentTypeTest {
             }
         }
 
-        val keys = listOf("queued-row:4", "msg:second", "tool-run:run-first", "msg:first", "msg:single")
+        val keys = listOf("queued-row:7:0", "msg:second", "msg:run-first", "msg:first", "msg:single")
         val types = mutableMapOf<String, Any?>()
         compose.runOnIdle { assertEquals(keys.size, requireNotNull(list).layoutInfo.totalItemsCount) }
         keys.forEachIndexed { index, key ->
@@ -87,6 +87,6 @@ class ThreadRowContentTypeTest {
             }
         }
         assertEquals(types["msg:first"], types["msg:second"])
-        assertEquals(4, listOf("msg:first", "msg:single", "tool-run:run-first", "queued-row:4").map { types[it] }.toSet().size)
+        assertEquals(4, listOf("msg:first", "msg:single", "msg:run-first", "queued-row:7:0").map { types[it] }.toSet().size)
     }
 }
