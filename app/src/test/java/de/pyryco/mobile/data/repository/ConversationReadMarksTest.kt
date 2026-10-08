@@ -744,6 +744,7 @@ class ConversationReadMarksTest {
                     "resetting",
                     "banner",
                     "context_usage",
+                    "rate_limited",
                     "model_list",
                     "slash_command_list",
                     "mcp_status",
@@ -767,7 +768,7 @@ class ConversationReadMarksTest {
     @Test fun invariantFilteredUnreadDoesNotBypassUnknownMalformedMissingOrGapEvidence() =
         runTest {
             for (fromHistory in listOf(false, true)) {
-                for (type in listOf("future_type", "turn_state", "api_retry", "compacting", "session_transition")) {
+                for (type in listOf("future_type", "rate_limited", "turn_state", "api_retry", "compacting", "session_transition")) {
                     val pump = Pump()
                     val repository = interactiveRepo(pump)
                     pump.push(snapshot(row("a", "0", "0")))

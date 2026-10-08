@@ -57,3 +57,15 @@ No new device-only test: the existing rung-3 method requires real Claude and a r
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-08
+
+## Revisions
+
+### 2026-10-08 — Repair the named live phone-read failure
+
+The fixed-daemon live gate timed out awaiting A's phone read. A focused probe identified one unresolved `rate_limited` receipt, with no unidentified receipts or gaps. This existing usage-window state frame was missing from `understoodNonvisualEntry`, so valid receipt before/after the visible reply blocked its foreground checkpoint. Recognize only a successfully decoded `RateLimitedPayloadDto` as nonvisual evidence. Its benign `allowed` clearing edge is understood even though `toReading` returns null; other statuses remain opaque per the protocol. This does not add an unread exclusion: `rate_limited` still advances unread, and receipt alone still cannot create a visible checkpoint.
+
+`ThreadReadClaimsTest.understoodUsageWindowReceiptsExtendPresentationButMalformedWindowsRemainBarriers` fails before the repair and covers benign, warning and future opaque statuses, malformed frames both before and after the reply, and the non-interactive barrier. The live scenario also backs A's assertion target with received history, retains all permission checks, and reports content-free evidence counts on timeout. Run its named focused live gate after repair; the dispatcher still owns the fresh full live acceptance result.
+
+Security review of this revision: PASS. Reuse the existing strict-required DTO decoder and frame limits; do not branch on opaque status strings or log them. Malformed payloads, unknown entry types, missing identities, exact-version presentation and receipt gaps keep their existing barriers. No new storage, request, coroutine scope, cryptographic or Android attack surface. The timeout diagnostic contains only static event names, counts and Boolean facts. The existing read-confirmation logs cover this classification without adding production logging.
+
+Additional files read: `InteractivePayloads.kt` (`RateLimitedPayloadDto`, `toReading`) and sibling `docs/protocol-mobile.md` (**rate_limited**) define the existing clearing-edge and opaque-status contract. Production edits now span three files; no exported declaration or consumer migration is added. Total written work remains below 600 lines and the sizing boundaries still hold. `feature/1283-notice-placement` shares the thread screen but does not overlap this evidence classification; no dependency is required.
