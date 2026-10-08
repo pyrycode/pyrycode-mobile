@@ -1169,9 +1169,6 @@ class RemoteConversationRepository(
         return page
     }
 
-    /** Notification-only local evidence; observing the thread would initiate a backfill. */
-    internal fun attentionMessages(conversationId: String): List<ThreadItem> = threadProjection.readRows(conversationId)
-
     /** Notification enrichment fetches one newest page without changing rows, coverage or read facts. */
     internal suspend fun requestAttentionHistory(conversationId: String): HistoryPage = readHistoryPage(conversationId, "", 0)
 

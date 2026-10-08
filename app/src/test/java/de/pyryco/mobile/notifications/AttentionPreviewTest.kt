@@ -27,6 +27,8 @@ class AttentionPreviewTest {
     @Test
     fun unicodeWhitespaceCollapsesAndRemainingControlsAreDropped() {
         assertEquals("a b c d", notificationPreview(" \na\tb\r\nc\u00a0\u2003d\u0000\u0007\u200b\u202e "))
+        assertEquals("one two", notificationPreview("`one\u0085two`"))
+        assertEquals("one two three", notificationPreview("one\u0085two\u0085\n\tthree"))
         assertNull(notificationPreview("\n\t\u0000"))
         assertNull(notificationPreview(null))
     }

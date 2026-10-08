@@ -51,10 +51,17 @@ class AttentionNotifierSourceTest {
     private val manager get() = app.getSystemService(NotificationManager::class.java)
 
     @Test
-    fun localReplyPreviewDoesNotSubscribeToBackfillOrFetchHistory() =
+    fun localReplyStillRequiresRawHistoryButNeverSubscribesToBackfill() =
         withSource { a, _, _ ->
             a.list(0u, 2u)
             a.pump.push("assistant_delta", """{"conversation_id":"same","turn_id":"turn","seq":0,"text":"Local reply"}""", 1u)
+            a.pump.historyPayload =
+                """
+                {"entries":[
+                  {"id":2,"type":"turn_end","ts":"$TS","payload":{"conversation_id":"same","turn_id":"turn","stop_reason":"end_turn"}},
+                  {"id":1,"type":"assistant_delta","ts":"$TS","payload":{"conversation_id":"same","turn_id":"turn","seq":0,"text":"Local reply"}}
+                ],"cursor":"older","at_start":false}
+                """.trimIndent()
             a.end("turn", 2u)
             runCurrent()
             assertEquals(
@@ -66,12 +73,62 @@ class AttentionNotifierSourceTest {
                     .getString(Notification.EXTRA_TEXT),
             )
             assertEquals(
-                setOf("list_conversations"),
+                setOf("list_conversations", "request_history"),
                 a.pump.sent
                     .map { it.type }
                     .toSet(),
             )
         }
+
+    @Test
+    fun remoteDecodeDropCannotCertifyLocalReplyTail() = assertDroppedLiveEvidence("assistant_delta")
+
+    @Test
+    fun remoteDecodeDropCannotCertifyLocalToolSeam() = assertDroppedLiveEvidence("tool_use")
+
+    private fun assertDroppedLiveEvidence(type: String) {
+        val before = """{"conversation_id":"same","turn_id":"turn","seq":0,"text":"Before"}"""
+        val after = """{"conversation_id":"same","turn_id":"turn","seq":1,"text":"After"}"""
+        val brokenTail = """{"conversation_id":"same","turn_id":"turn","seq":1}"""
+        val brokenTool = """{"conversation_id":"same","turn_id":"turn","tool_use_id":"tool","input_summary":"target"}"""
+        val broken = if (type == "tool_use") brokenTool else brokenTail
+        withSource { a, _, _ ->
+            a.list(0u, 4u)
+            a.pump.push("assistant_delta", before, 1u)
+            a.pump.push(type, broken, 2u)
+            if (type == "tool_use") a.pump.push("assistant_delta", after, 3u)
+            // A complete history page can recover the dropped live evidence without merging it.
+            a.pump.historyPayload =
+                """
+                {"entries":[
+                  {"id":4,"type":"turn_end","ts":"$TS","payload":{"conversation_id":"same","turn_id":"turn","stop_reason":"end_turn"}},
+                  {"id":3,"type":"assistant_delta","ts":"$TS","payload":$after},
+                  {"id":2,"type":"tool_use","ts":"$TS","payload":{"conversation_id":"same","turn_id":"turn","tool_use_id":"tool","name":"Bash","input_summary":"target"}},
+                  {"id":1,"type":"assistant_delta","ts":"$TS","payload":$before}
+                ],"cursor":"older","at_start":false}
+                """.trimIndent()
+            a.end("turn", 4u)
+            runCurrent()
+            assertEquals(
+                "After",
+                shadowOf(manager)
+                    .allNotifications
+                    .single()
+                    .extras
+                    .getString(Notification.EXTRA_TEXT),
+            )
+            assertEquals(1, a.pump.sent.count { it.type == "request_history" })
+            assertTrue(a.pump.sent.none { it.type == "backfill_since" })
+            val local =
+                requireNotNull(a.repositories.value)
+                    .observeMessages("same")
+                    .first()
+                    .filterIsInstance<de.pyryco.mobile.data.repository.ThreadItem.MessageItem>()
+                    .map { it.message }
+            assertEquals(listOf(if (type == "tool_use") "BeforeAfter" else "Before"), local.map { it.content })
+            assertTrue(local.none { it.isStreaming })
+        }
+    }
 
     @Test
     fun historyPreviewFetchDoesNotMergeRowsAdvanceReadFactsOrRequestBackfill() =

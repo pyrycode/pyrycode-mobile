@@ -77,41 +77,83 @@ class AttentionPreviewSourceTest {
     @Test
     fun exactTurnLastNonblankTopLevelSegmentAndHostAreSelected() =
         withSource {
-            a.rows.value =
-                listOf(
-                    row(
-                        "turn",
-                        "First",
-                        0,
-                    ),
-                    row(
-                        "turn",
-                        "Last",
-                        1,
-                    ),
-                    row(
-                        "turn",
-                        "  ",
-                        2,
-                    ),
-                    row(
-                        "child",
-                        "Child",
-                        0,
-                        parent = "tool",
-                    ),
-                    row(
-                        "previous",
-                        "Previous",
-                        0,
-                    ),
+            a.page =
+                page(
+                    delta(1, "turn", 0, "First"),
+                    tool(2),
+                    delta(3, "turn", 1, "Last"),
+                    tool(4),
+                    delta(5, "turn", 2, "  "),
+                    end(6, "turn"),
+                    delta(7, "previous", 0, "Previous"),
+                    end(8, "previous"),
                 )
-            b.rows.value = listOf(row("turn", "Other host", 0))
-            events.emit(LiveSessionEvent.TurnEnd("conv", "turn", "end_turn"))
+            b.page = page(delta(1, "turn", 0, "Other host"), end(2, "turn"))
+            events.emit(LiveSessionEvent.TurnEnd("conv", "turn", "end_turn", historyEntryId = 6u))
             runCurrent()
             assertEquals("Last", alerts.single().preview?.invoke())
-            assertEquals(0, a.asks)
+            assertEquals(1, a.asks)
+            assertEquals(0, b.asks)
         }
+
+    @Test
+    fun settledLocalPrefixRequiresHistoryThroughCompletion() =
+        withSource {
+            a.rows.value = listOf(row("turn", "Before", 0))
+            a.page = page(delta(1, "turn", 0, "Before"), tool(2), delta(3, "turn", 1, "After"), end(4, "turn"))
+            events.emit(LiveSessionEvent.TurnEnd("conv", "turn", "end_turn"))
+            runCurrent()
+            assertEquals("After", alerts.single().preview?.invoke())
+            assertEquals(1, a.asks)
+        }
+
+    @Test
+    fun settledLocalPrefixFallsBackWhenHistoryCannotCertifyItsTail() =
+        withSource {
+            a.rows.value = listOf(row("turn", "Before", 0))
+            events.emit(LiveSessionEvent.TurnEnd("conv", "turn", "end_turn"))
+            runCurrent()
+            assertNull(alerts.single().preview?.invoke())
+            assertEquals(1, a.asks)
+        }
+
+    @Test
+    fun missingTrailingDeltaAndDroppedToolSeamsNeverAuthorizeHistoryPreview() {
+        val malformedTool =
+            tool(2).copy(
+                payload =
+                    Json.parseToJsonElement(
+                        """{"conversation_id":"conv","turn_id":"turn","tool_use_id":"tool","input_summary":"target"}""",
+                    ),
+            )
+        val wrongAttribution =
+            tool(2).copy(
+                payload =
+                    Json.parseToJsonElement(
+                        tool(2).payload.toString().replace("\"conv\"", "42"),
+                    ),
+            )
+        val malformedTail =
+            delta(2, "turn", 1, "After").copy(
+                payload =
+                    Json.parseToJsonElement(
+                        """{"conversation_id":"conv","turn_id":"turn","seq":1}""",
+                    ),
+            )
+        listOf(
+            page(delta(1, "turn", 0, "Before"), malformedTool, delta(3, "turn", 1, "After"), end(4, "turn")),
+            page(delta(1, "turn", 0, "Before"), wrongAttribution, delta(3, "turn", 1, "After"), end(4, "turn")),
+            page(delta(1, "turn", 0, "Before"), malformedTail, end(3, "turn")),
+        ).forEach { incomplete ->
+            withSource {
+                a.page = incomplete
+                events.emit(LiveSessionEvent.TurnEnd("conv", "turn", "end_turn"))
+                runCurrent()
+                assertNull(alerts.single().preview?.invoke())
+                assertEquals(1, a.asks)
+            }
+        }
+    }
 
     @Test
     fun previousLegacyChildAndDifferentConversationNeverSubstitute() =
@@ -513,6 +555,16 @@ class AttentionPreviewSourceTest {
         ),
         at,
     )
+
+    private fun tool(id: Long) =
+        HistoryEntry(
+            id,
+            "tool_use",
+            Json.parseToJsonElement(
+                """{"conversation_id":"conv","turn_id":"turn","tool_use_id":"tool$id","name":"Bash","input_summary":"target"}""",
+            ),
+            at,
+        )
 
     private fun end(
         id: Long,

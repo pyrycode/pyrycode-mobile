@@ -17,7 +17,7 @@ import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationReadMarks
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
-import de.pyryco.mobile.data.repository.reduceHistoryPage
+import de.pyryco.mobile.data.repository.reduceOrderedHistoryPage
 import de.pyryco.mobile.notifications.completionReply
 import de.pyryco.mobile.notifications.notificationPreview
 import kotlinx.coroutines.CancellationException
@@ -469,39 +469,62 @@ class HostConversationSource internal constructor(
         event: LiveSessionEvent.TurnEnd,
     ): String? =
         try {
-            val local =
+            // The projection can silently drop malformed deltas/tool seams; even a settled prefix
+            // starting at zero cannot certify the tail. Only raw evidence through the end can do so.
+            val page =
                 if (repository is RemoteConversationRepository) {
-                    repository.attentionMessages(event.conversationId)
+                    repository.requestAttentionHistory(event.conversationId)
                 } else {
-                    repository.observeMessages(event.conversationId).first()
+                    repository.requestHistory(event.conversationId)
                 }
-            completionReply(local, event.turnId)
-                ?: run {
-                    val page =
-                        if (repository is RemoteConversationRepository) {
-                            repository.requestAttentionHistory(event.conversationId)
-                        } else {
-                            repository.requestHistory(event.conversationId)
-                        }
-                    val entries =
-                        page.entries.filter { item ->
-                            val id = (item.payload as? JsonObject)?.get("conversation_id") as? JsonPrimitive
-                            id?.isString == true && id.content == event.conversationId
-                        }
-                    val completed =
-                        entries.any { item ->
-                            item.type == "turn_end" &&
-                                (event.historyEntryId == null || item.unsignedId == event.historyEntryId) &&
-                                runCatching {
-                                    MobileJson.decodeFromJsonElement<TurnEndPayloadDto>(item.payload).let {
-                                        it.conversationId == event.conversationId && it.turnId == event.turnId
-                                    }
-                                }.getOrDefault(false)
-                        }
-                    // A missing durable entry could hide a tool seam or a later text segment.
-                    val continuous = page.entries.zipWithNext().all { (newer, older) -> newer.unsignedId - 1u == older.unsignedId }
-                    if (completed && continuous) completionReply(reduceHistoryPage(entries, interactive = true), event.turnId) else null
+            val entries = page.entries
+            val attributed =
+                entries.all { item ->
+                    val id = (item.payload as? JsonObject)?.get("conversation_id") as? JsonPrimitive
+                    id?.isString == true && id.content == event.conversationId
                 }
+            val completed =
+                entries.any { item ->
+                    item.type == "turn_end" &&
+                        (event.historyEntryId == null || item.unsignedId == event.historyEntryId) &&
+                        runCatching {
+                            MobileJson.decodeFromJsonElement<TurnEndPayloadDto>(item.payload).let {
+                                it.conversationId == event.conversationId && it.turnId == event.turnId
+                            }
+                        }.getOrDefault(false)
+                }
+            val continuous =
+                entries.zipWithNext().all { (newer, older) ->
+                    newer.unsignedId > older.unsignedId && newer.unsignedId - older.unsignedId == 1uL
+                }
+            if (!attributed || !completed || !continuous) {
+                null
+            } else {
+                val reduced = reduceOrderedHistoryPage(entries, interactive = true)
+                // Every supported row producer/update must be represented or explicitly understood.
+                // A null fact means the forgiving reducer dropped evidence; do not trust its rows.
+                val rowTypes =
+                    setOf(
+                        "message",
+                        "send_message",
+                        "assistant_delta",
+                        "tool_use",
+                        "tool_result",
+                        "tool_denied",
+                        "tool_progress",
+                        "session_transition",
+                        "unrecognized_message",
+                        "banner",
+                        "compacting",
+                        "compaction_boundary",
+                        "model_refusal_fallback",
+                        "model_refusal_no_fallback",
+                        "background_task_started",
+                        "background_task_updated",
+                    )
+                val retained = entries.filter { it.type in rowTypes }.all { reduced.readFacts[it.unsignedId] != null }
+                if (retained) completionReply(reduced.rows, event.turnId) else null
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

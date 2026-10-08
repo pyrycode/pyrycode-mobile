@@ -21,7 +21,7 @@ internal fun notificationPreview(text: String?): String? {
         val point = plain.codePointAt(index)
         index += Character.charCount(point)
         when {
-            Character.isWhitespace(point) || Character.isSpaceChar(point) -> pendingSpace = cleaned.isNotEmpty()
+            point == 0x85 || Character.isWhitespace(point) || Character.isSpaceChar(point) -> pendingSpace = cleaned.isNotEmpty()
             Character.isISOControl(point) || Character.getType(point) == Character.FORMAT.toInt() -> Unit
             else -> {
                 if (pendingSpace) cleaned.append(' ')
@@ -35,7 +35,7 @@ internal fun notificationPreview(text: String?): String? {
     return if (result.codePointCount(0, result.length) > 200) result.substring(0, result.offsetByCodePoints(0, 199)) + "…" else result
 }
 
-/** Only exact segment identity and complete settled delta evidence authorize a reply preview. */
+/** Select from certified history only: settled contiguous rows alone cannot prove an undropped tail or seam. */
 internal fun completionReply(
     rows: List<ThreadItem>,
     turnId: String,
