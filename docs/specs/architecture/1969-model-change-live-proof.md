@@ -26,3 +26,7 @@ Run builder lint, assembly, Android-test compilation and forced Spotless checks.
 ## Dispatcher live handoff
 
 The second acceptance criterion remains pending until a fresh **full** dispatcher live gate after verification. Set `## Live tests` to `all` in the PR so the gate cannot select only the focused methods. Keep `needs-real-claude` on #1969. The dispatcher must use daemon #3017's merged result and report actual daemon/mobile revisions, full executed/failed/skipped counts and explicit passes for both inherited methods. Focused success does not satisfy full-suite acceptance.
+
+## Revisions
+
+2026-10-08: The isolated daemon worktree build omitted `vcs.revision` even with `-buildvcs=true`. A separate clean clone at the same merged commit produces versioned metadata. Use its binary/source for the final focused proof and dispatcher handoff; preserve all mobile scenarios and settings contracts.
