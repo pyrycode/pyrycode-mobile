@@ -55,6 +55,7 @@ None. Forecast: approximately 450 written lines including plan, production and p
 **Findings:**
 
 - [Trust boundaries] Preserve canonical admission in `mergeRows`. Daemon ids may deliberately spell aliases; explicit `reconciliationId` avoids parsing them into another row's identity. Probe hostile keys and occupied alternatives.
+- [Trust boundaries, rework] Ordinary logical ids must also drive wire updates, queue ownership and parent/lifecycle joins. A shared internal `Message.ordinaryId` accessor excludes segments, so a renderer key cannot impersonate an ordinary row. `withMessage` prefers an ordinary logical match and preserves its emitted id/metadata. Existing canonical hostile-collision rejection remains unchanged. Read evidence compares logical identity and all represented content/state independently of emitted aliases; a different content version receives no claim.
 - [Tokens] No token, credential or key enters these message-id indexes or the added cache field.
 - [Files and storage] `CachedMessage` adds inert optional identity metadata inside the existing app-private atomic thread document. Ids never become paths. Existing message storage/backup policy is unchanged; this ticket introduces no secret storage.
 - [Android attack surface] No component, intent, provider, permission or rendering surface changes.
@@ -66,3 +67,24 @@ None. Forecast: approximately 450 written lines including plan, production and p
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-08
+
+## Revisions
+
+### 2026-10-08 — verifier findings 1 and 2
+
+The initial design confined ordinary logical identity to the merge/cache boundary. The verifier identified read-checkpoint binding and wire-correlation consumers that still treated emitted ids as daemon ids. Extend the design with an internal nullable `Message.ordinaryId` accessor: ordinary rows return their explicit original id or emitted id; segments return null and keep matching by their segment metadata. This does not add a type, migrate a signature or change admission/ordering rules.
+
+Use the accessor for tool progress/result/denial and repeat-use lookup, ordinary message updates, legacy turn settlement, own-echo placement/removal/suppression and cache suppression. `ThreadProjection` uses ordinary identities for queue and wire correlation. `toolNestingDepths` walks logical parent ids but emits depths under renderer keys. `foldQueuedRows` joins logical ids and keeps renderer ids as queued list keys. `foldBackgroundAgentBlocks` joins logical tool/lifecycle ids while its marker, block and navigation identities remain renderer ids. `forBackgroundAgentRows` binds lifecycle read evidence by logical tool id. `ThreadFold` retains renderer collision guards and also recognizes an ordinary logical turn id. Read evidence normalizes renderer-only metadata while retaining content, role, attachments, parent and tool state checks.
+
+Add `HistoryAliasCorrelationTest` to exercise the production projection/reducer and pure thread folds: aliased legacy checkpoint plus original-page replay and changed-content negative control; tool progress, result, denial and repeat use; user push/upsert and queued renderer key; nested aliased tools; background lifecycle placement, root/run keys and presentation evidence; legacy turn-end settlement. Existing collision, cache, ordering and read-version suites remain required. No UI layout or wire contract changes are made. `origin/feature/1954` overlaps additively in `ThreadRow`, adding a separate content-type function; its changed block is independent of these correlation helpers.
+
+Measured after rework formatting: under 1,250 total written lines including the original implementation, plan and tests; zero new exported types or signature migrations, two acceptance criteria and no new reject branches. The eleven new correlation probes also cover alias-only restoration, queue pass-over/suppression/delivery, real-file cache suppression at observation and history-write boundaries, and synthetic-turn suppression. Security re-review passes with the additional trust-boundary contract above; credentials, storage, components, crypto, network, logging and concurrency remain as reviewed.
+
+## Documentation handoff
+
+Pending for the documentation stage:
+
+- `docs/knowledge/features/remote-conversation-repository-assistant-reply-segments.md`, segment keys/seam reconciliation: surviving held id ownership, alias replay and reconnect behavior, and the exception for removed/replaced/split/absorbed rows.
+- `docs/knowledge/features/data-model.md`, `Message`: distinguish emitted renderer ids from explicit ordinary reconciliation ids and their wire/read/grouping consumers.
+- `docs/knowledge/features/conversation-cache-layout.md`, cache-local message record: optional backward-readable reconciliation metadata and process-death replay continuity.
+- `docs/knowledge/features/caching-conversation-repository.md`, restore merges: receiving-list ownership and logical user-echo suppression.

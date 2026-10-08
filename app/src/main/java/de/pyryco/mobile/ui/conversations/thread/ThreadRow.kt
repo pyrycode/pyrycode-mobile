@@ -2,6 +2,7 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.model.ordinaryId
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
 
@@ -259,7 +260,8 @@ private fun ThreadItem.listKey(): String =
 
 /**
  * How many `Agent`/`Task` calls deep each subagent tool row sits (#896), keyed by the row's
- * [de.pyryco.mobile.data.model.Message.id] — its own `tool_use_id`. Holds only rows nested at least one
+ * [de.pyryco.mobile.data.model.Message.id] — its renderer key. Parent chains join ordinary wire ids.
+ * Holds only rows nested at least one
  * level; a row absent from the map renders at top level.
  *
  * `parentToolUseId` is a grouping hint, not a capability (`protocol-mobile.md` § `tool_use`), so every
@@ -276,10 +278,15 @@ private fun ThreadItem.listKey(): String =
  */
 internal fun toolNestingDepths(items: List<ThreadItem>): Map<String, Int> {
     val parentOf = mutableMapOf<String, String>()
+    val rendererIds = mutableMapOf<String, String>()
     for (item in items) {
         val message = (item as? ThreadItem.MessageItem)?.message ?: continue
         val toolCall = message.toolCall ?: continue
-        if (message.role == Role.Tool && message.id.isNotEmpty()) parentOf[message.id] = toolCall.parentToolUseId
+        val id = message.ordinaryId ?: continue
+        if (message.role == Role.Tool && id.isNotEmpty()) {
+            parentOf[id] = toolCall.parentToolUseId
+            rendererIds[id] = message.id
+        }
     }
 
     val depthOf = mutableMapOf<String, Int>()
@@ -303,7 +310,7 @@ internal fun toolNestingDepths(items: List<ThreadItem>): Map<String, Int> {
             depthOf[id] = base
         }
     }
-    return depthOf.filterValues { it > 0 }
+    return depthOf.filterValues { it > 0 }.mapKeys { (id, _) -> rendererIds.getValue(id) }
 }
 
 /**
@@ -314,8 +321,8 @@ internal fun toolNestingDepths(items: List<ThreadItem>): Map<String, Int> {
 private fun ThreadItem.userEchoId(): String? =
     (this as? ThreadItem.MessageItem)
         ?.message
-        ?.takeIf { it.role == Role.User && it.id.isNotEmpty() }
-        ?.id
+        ?.takeIf { it.role == Role.User && !it.ordinaryId.isNullOrEmpty() }
+        ?.ordinaryId
 
 /** Tool outlines join only inside the same background block or ordinary run. */
 internal fun ThreadRow.joinsToolRow(next: ThreadRow?): Boolean =

@@ -38,6 +38,7 @@ import de.pyryco.mobile.data.model.SegmentDelta
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.model.ToolDenial
+import de.pyryco.mobile.data.model.ordinaryId
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskStartedPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskUpdatedPayloadDto
@@ -86,7 +87,7 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import java.util.TreeMap
 
 /**
- * Index of the [ThreadItem.MessageItem] in this thread whose [Message.id] is [id] and [Message.role]
+ * Index of the ordinary [ThreadItem.MessageItem] whose [Message.ordinaryId] is [id] and [Message.role]
  * is [role], or -1 if none — the row guard shared by the id+role tool folds. The
  * `is ThreadItem.MessageItem` type-guard namespaces message rows from [ThreadItem.SessionBoundary]
  * rows, so a fold never mistakes a boundary for a message (and the `as` after a hit is always safe).
@@ -94,7 +95,7 @@ import java.util.TreeMap
 internal fun List<ThreadItem>.indexOfMessage(
     id: String,
     role: Role,
-): Int = indexOfFirst { it is ThreadItem.MessageItem && it.message.id == id && it.message.role == role }
+): Int = indexOfFirst { it is ThreadItem.MessageItem && it.message.ordinaryId == id && it.message.role == role }
 
 /**
  * Append [message] as a [ThreadItem.MessageItem], deduping by `message_id`: a first-seen id is appended
@@ -102,14 +103,19 @@ internal fun List<ThreadItem>.indexOfMessage(
  * occurrence, last write wins). The `is ThreadItem.MessageItem` guard skips any interleaved
  * [ThreadItem.SessionBoundary] so a `message_id` never matches a boundary row.
  *
- * Dedup here is **id-only, role-agnostic** — deliberately not routed through [indexOfMessage] — because
+ * Dedup here is **logical-id-only, role-agnostic** — deliberately not routed through [indexOfMessage] — because
  * that is what `appendMessages` has always done and routing it through the role-taking helper would
- * change semantics. It is also the key `ThreadScreen`'s `LazyColumn` uses for a message row.
+ * change semantics. An ordinary logical match keeps its renderer key and alias metadata. The existing
+ * renderer collision fallback still replaces a row when no ordinary logical match exists.
  */
 internal fun List<ThreadItem>.withMessage(message: Message): List<ThreadItem> {
-    val index = indexOfFirst { it is ThreadItem.MessageItem && it.message.id == message.id }
+    val ordinary = message.ordinaryId
+    val logicalIndex = if (ordinary != null) indexOfFirst { it is ThreadItem.MessageItem && it.message.ordinaryId == ordinary } else -1
+    val index = logicalIndex.takeIf { it >= 0 } ?: indexOfFirst { it is ThreadItem.MessageItem && it.message.id == message.id }
     return if (index >= 0) {
-        toMutableList().apply { this[index] = ThreadItem.MessageItem(message) }
+        val held = (this[index] as ThreadItem.MessageItem).message
+        val updated = if (logicalIndex >= 0) message.copy(id = held.id, reconciliationId = held.reconciliationId) else message
+        toMutableList().apply { this[index] = ThreadItem.MessageItem(updated) }
     } else {
         this + ThreadItem.MessageItem(message)
     }
@@ -130,7 +136,7 @@ internal fun List<ThreadItem>.withToolUse(
     event: LiveSessionEvent.ToolUse,
     timestamp: Instant,
 ): List<ThreadItem> =
-    if (any { it is ThreadItem.MessageItem && it.message.id == event.toolUseId }) {
+    if (any { it is ThreadItem.MessageItem && (it.message.ordinaryId == event.toolUseId || it.message.id == event.toolUseId) }) {
         this
     } else {
         this +
@@ -283,7 +289,7 @@ internal fun List<ThreadItem>.withAssistantDelta(
     val anchor =
         rows.indexOfLast { row ->
             row !is ThreadItem.BackgroundTaskLifecycle &&
-                !(row is ThreadItem.MessageItem && row.message.role == Role.User && row.message.id in passOver)
+                !(row is ThreadItem.MessageItem && row.message.role == Role.User && row.message.ordinaryId in passOver)
         }
     val last = (rows.getOrNull(anchor) as? ThreadItem.MessageItem)?.message
     val segment = last?.segment
@@ -297,7 +303,7 @@ internal fun List<ThreadItem>.withAssistantDelta(
         return rows.toMutableList().apply { this[anchor] = ThreadItem.MessageItem(extended) }
     }
     val key = segmentKey(event.turnId, event.seq)
-    if (rows.any { it is ThreadItem.MessageItem && it.message.id == key }) return rows
+    if (rows.any { it is ThreadItem.MessageItem && (it.message.id == key || it.message.ordinaryId == key) }) return rows
     return rows +
         ThreadItem.MessageItem(
             Message(
@@ -359,7 +365,7 @@ internal fun List<ThreadItem>.withSettledTurns(turnIds: Set<String>): List<Threa
     fun ofTurn(message: Message): Boolean =
         message.role == Role.Assistant &&
             message.isStreaming &&
-            (message.segment?.turnId?.let { it in turnIds } ?: (message.id in turnIds))
+            (message.segment?.turnId?.let { it in turnIds } ?: (message.ordinaryId in turnIds))
     if (turnIds.isEmpty() || none { it is ThreadItem.MessageItem && ofTurn(it.message) }) return this
     return map { row ->
         if (row is ThreadItem.MessageItem && ofTurn(row.message)) ThreadItem.MessageItem(row.message.copy(isStreaming = false)) else row

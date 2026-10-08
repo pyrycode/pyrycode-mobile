@@ -22,6 +22,9 @@ data class Message(
     val reconciliationId: String? = null,
 )
 
+/** Wire identity of an ordinary row; segment renderer keys never identify ordinary messages. */
+internal val Message.ordinaryId: String? get() = if (segment == null) reconciliationId ?: id else null
+
 enum class Role { User, Assistant, Tool }
 
 /**

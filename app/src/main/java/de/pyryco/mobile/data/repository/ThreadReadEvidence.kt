@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.model.ordinaryId
 import de.pyryco.mobile.data.network.ApiRetryPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskStartedPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskUpdatedPayloadDto
@@ -128,7 +129,14 @@ private fun ThreadItem.represents(source: ThreadItem): Boolean {
                 historyRowProofs(listOf(source)).all { (key, proof) -> historyRowProofs(listOf(this))[key] == proof } &&
                 (expected.isStreaming || !held.isStreaming)
         }
-        return held.copy(timestamp = expected.timestamp, sessionId = expected.sessionId) == expected
+        return held.segment == null &&
+            held.ordinaryId == expected.ordinaryId &&
+            held.copy(
+                id = expected.id,
+                reconciliationId = expected.reconciliationId,
+                timestamp = expected.timestamp,
+                sessionId = expected.sessionId,
+            ) == expected
     }
     if (this is ThreadItem.UnrecognizedMessage &&
         source is ThreadItem.UnrecognizedMessage

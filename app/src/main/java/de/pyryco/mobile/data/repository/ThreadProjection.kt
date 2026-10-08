@@ -5,6 +5,7 @@ import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.data.model.ordinaryId
 import de.pyryco.mobile.data.network.BackgroundTaskRosterPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskRowDto
 import de.pyryco.mobile.data.network.BackgroundTaskStartedPayloadDto
@@ -370,53 +371,54 @@ internal class ThreadProjection(
         sentNow: Boolean = false,
         queuedMessageId: Long? = null,
     ) {
-        if (message.id in mintedMessageIds.value[conversationId].orEmpty()) trail.delivered(message.id)
+        val messageId = message.ordinaryId ?: message.id
+        if (messageId in mintedMessageIds.value[conversationId].orEmpty()) trail.delivered(messageId)
         state.update { current ->
             val echoes = current.echoQueues[conversationId] ?: OwnEchoQueue()
             var rows = current.threads[conversationId].orEmpty()
             var queues = current.echoQueues
             val modern = queuedMessageId != null
-            val firstPush = message.id !in echoes.pushed && (!modern || queuedMessageId !in echoes.consumedBacklog)
-            val pendingPlacement = message.id in echoes.awaitingPush || message.id in echoes.placementPending
-            if (message.role == Role.User && firstPush && (message.id in echoes.queued || pendingPlacement)) {
+            val firstPush = messageId !in echoes.pushed && (!modern || queuedMessageId !in echoes.consumedBacklog)
+            val pendingPlacement = messageId in echoes.awaitingPush || messageId in echoes.placementPending
+            if (message.role == Role.User && firstPush && (messageId in echoes.queued || pendingPlacement)) {
                 val needsPlacement =
                     (
-                        (message.id in echoes.parked || message.id in echoes.awaitingPush) &&
-                            (modern || message.id !in echoes.reserved || sentNow || message.id in echoes.sendNow)
+                        (messageId in echoes.parked || messageId in echoes.awaitingPush) &&
+                            (modern || messageId !in echoes.reserved || sentNow || messageId in echoes.sendNow)
                     ) ||
-                        ((modern || sentNow) && message.id in echoes.placementPending)
+                        ((modern || sentNow) && messageId in echoes.placementPending)
                 if (needsPlacement) {
-                    rows = rows.moveOwnEchoToEnd(conversationId, message.id)
+                    rows = rows.moveOwnEchoToEnd(conversationId, messageId)
                 }
                 queues = queues + (
                     conversationId to
                         echoes.copy(
-                            queued = echoes.queued - message.id,
-                            delivered = echoes.delivered + message.id,
-                            behindTurn = echoes.behindTurn - message.id,
-                            sendNow = echoes.sendNow - message.id,
-                            awaitingPush = echoes.awaitingPush - message.id,
-                            placementPending = echoes.placementPending - message.id,
-                            reserved = echoes.reserved - message.id,
+                            queued = echoes.queued - messageId,
+                            delivered = echoes.delivered + messageId,
+                            behindTurn = echoes.behindTurn - messageId,
+                            sendNow = echoes.sendNow - messageId,
+                            awaitingPush = echoes.awaitingPush - messageId,
+                            placementPending = echoes.placementPending - messageId,
+                            reserved = echoes.reserved - messageId,
                         )
                 )
             }
             // Queue consumption uses entry identity; row deduplication and ownership stay id-only.
             if (message.role == Role.User) {
-                val entryId = queuedMessageId ?: echoes.backlog.firstOrNull { it.messageId == message.id }?.id
+                val entryId = queuedMessageId ?: echoes.backlog.firstOrNull { it.messageId == messageId }?.id
                 val next = queues[conversationId] ?: echoes
-                val own = message.id in mintedMessageIds.value[conversationId].orEmpty()
+                val own = messageId in mintedMessageIds.value[conversationId].orEmpty()
                 queues = queues + (
                     conversationId to
                         next.copy(
                             backlog = next.backlog.filterNot { it.id == entryId },
                             consumedBacklog = if (entryId != null) next.consumedBacklog + entryId else next.consumedBacklog,
-                            pushed = if (own) next.pushed + message.id else next.pushed,
-                            delivered = if (own) next.delivered + message.id else next.delivered,
+                            pushed = if (own) next.pushed + messageId else next.pushed,
+                            delivered = if (own) next.delivered + messageId else next.delivered,
                         )
                 )
             }
-            val held = rows.any { it is ThreadItem.MessageItem && it.message.id == message.id }
+            val held = rows.any { it is ThreadItem.MessageItem && (it.message.ordinaryId == messageId || it.message.id == message.id) }
             if (!held) rows = rows + ThreadItem.MessageItem(message)
             current.copy(threads = current.threads + (conversationId to rows), echoQueues = queues)
         }
@@ -708,7 +710,7 @@ internal class ThreadProjection(
                             id in mintedMessageIds.value[event.conversationId].orEmpty() &&
                             rows
                                 .filterIsInstance<ThreadItem.MessageItem>()
-                                .firstOrNull { it.message.id == id }
+                                .firstOrNull { it.message.ordinaryId == id }
                                 ?.message
                                 ?.role == Role.User
                     }
@@ -905,7 +907,7 @@ internal class ThreadProjection(
         messageId: String,
     ): List<ThreadItem> {
         if (messageId !in mintedMessageIds.value[conversationId].orEmpty()) return this
-        val index = indexOfFirst { it is ThreadItem.MessageItem && it.message.id == messageId }
+        val index = indexOfFirst { it is ThreadItem.MessageItem && it.message.ordinaryId == messageId }
         val row = getOrNull(index) as? ThreadItem.MessageItem ?: return this
         if (row.message.role != Role.User || index == lastIndex) return this
         return filterIndexed { i, _ -> i != index } + row
@@ -932,7 +934,7 @@ internal class ThreadProjection(
         mintedMessageIds.update { it + (conversationId to (it[conversationId].orEmpty() - messageId)) }
         updateThreads { current ->
             val rows = current[conversationId] ?: return@updateThreads current
-            current + (conversationId to rows.filterNot { it is ThreadItem.MessageItem && it.message.id == messageId })
+            current + (conversationId to rows.filterNot { it is ThreadItem.MessageItem && it.message.ordinaryId == messageId })
         }
     }
 
@@ -999,14 +1001,14 @@ internal class ThreadProjection(
                     .filterIsInstance<ThreadItem.MessageItem>()
                     .filter {
                         it.message.role == Role.User &&
-                            it.message.id in pending &&
-                            it.message.id in firstDeliveries &&
-                            it.message.id in mintedMessageIds.value[conversationId].orEmpty()
-                    }.associateBy { it.message.id }
-            val receiving = existing.filterNot { it is ThreadItem.MessageItem && it.message.id in provisional }
+                            it.message.ordinaryId in pending &&
+                            it.message.ordinaryId in firstDeliveries &&
+                            it.message.ordinaryId in mintedMessageIds.value[conversationId].orEmpty()
+                    }.associateBy { it.message.ordinaryId }
+            val receiving = existing.filterNot { it is ThreadItem.MessageItem && it.message.ordinaryId in provisional }
             val merged =
                 receiving.mergeUnsignedHistoryRows(reduced.rows, order, firstEvidence).map { row ->
-                    if (row is ThreadItem.MessageItem) provisional[row.message.id] ?: row else row
+                    if (row is ThreadItem.MessageItem) provisional[row.message.ordinaryId] ?: row else row
                 }
             val settledEchoes =
                 deliveries.fold(echoes) { echoes, delivery ->
@@ -1014,7 +1016,10 @@ internal class ThreadProjection(
                     val id = delivery.messageId
                     val own =
                         id in mintedMessageIds.value[conversationId].orEmpty() &&
-                            merged.filterIsInstance<ThreadItem.MessageItem>().any { it.message.id == id && it.message.role == Role.User }
+                            merged.filterIsInstance<ThreadItem.MessageItem>().any {
+                                it.message.ordinaryId == id &&
+                                    it.message.role == Role.User
+                            }
                     val settled = if (own) setOf(id) else emptySet()
                     echoes.copy(
                         backlog = echoes.backlog.filterNot { it.id == entryId },
@@ -1115,7 +1120,7 @@ internal class ThreadProjection(
                     current.threads[conversationId]
                         .orEmpty()
                         .filterNot {
-                            it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.id in suppressed
+                            it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.ordinaryId in suppressed
                         }.map { row ->
                             val hint =
                                 (row as? ThreadItem.BackgroundTaskLifecycle)?.let {
@@ -1150,10 +1155,13 @@ internal class ThreadProjection(
         backlog: List<String>,
     ): List<ThreadItem> {
         if (parkedIds.isEmpty()) return withOnlyLastRowStreaming()
-        val (parked, rest) = partition { it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.id in parkedIds }
+        val (parked, rest) =
+            partition {
+                it is ThreadItem.MessageItem && it.message.role == Role.User && it.message.ordinaryId in parkedIds
+            }
         // A reused row id takes its first pending entry's FIFO position, never the last one's.
         val order = backlog.withIndex().reversed().associate { it.value to it.index }
-        val queuedRows = parked.sortedBy { order[(it as ThreadItem.MessageItem).message.id] ?: Int.MAX_VALUE }
+        val queuedRows = parked.sortedBy { order[(it as ThreadItem.MessageItem).message.ordinaryId] ?: Int.MAX_VALUE }
         return if (parked.isEmpty()) withOnlyLastRowStreaming() else rest.withOnlyLastRowStreaming() + queuedRows
     }
 
