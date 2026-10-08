@@ -160,7 +160,9 @@ class UnsignedHistoryTest {
                                 val before = projection.observeSnapshot("c").first()
                                 val incoming = page(*pages[index].toTypedArray())
                                 projection.mergeHistoryPage("c", incoming, true)
-                                assertPlacementInvariants(label, before, projection.observeSnapshot("c").first(), incoming)
+                                val after = projection.observeSnapshot("c").first()
+                                assertPlacementInvariants(label, before, after, incoming)
+                                assertTrue(label, after.rows.filterIsInstance<ThreadItem.MessageItem>().none { it.message.isStreaming })
                             }
                             val beforeReplay = projection.observeSnapshot("c").first()
                             assertEquals(label, listOf("ab", name(positions[2]), "c"), beforeReplay.rows.texts())
