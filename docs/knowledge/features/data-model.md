@@ -105,6 +105,7 @@ data class Message(
     val attachments: List<MessageAttachment> = emptyList(),
     val segment: AssistantSegment? = null,
     val parentToolUseId: String = "",
+    val reconciliationId: String? = null,
 )
 
 enum class Role { User, Assistant, Tool }
@@ -128,6 +129,22 @@ data class ToolCall(
     val elapsedSeconds: Int? = null,                    // #812
 )
 ```
+
+`Message.id` is the emitted renderer identity (#1941), used for list keys and navigation.
+`reconciliationId` is the original ordinary-row id when collision allocation changes that emitted
+id; otherwise it is null. The internal `ordinaryId` accessor returns `reconciliationId ?: id`
+only for rows without a segment, and null for segments. Segment overlap remains `(turnId, seq)`.
+Never recover a wire id by stripping `#0` or `~n`: daemon ids can legitimately spell either.
+
+Ordinary logical identity drives history overlap, tool progress/result/denial and repeat-use lookup,
+user updates, queue ownership/suppression and legacy turn settlement. Parent/tool/lifecycle joins
+and queued folds use logical ids while emitting renderer keys for rows, blocks and navigation.
+Read evidence also matches logical identity independently of renderer-only metadata, retaining
+content, role, attachment, parent and tool-state checks; alias equality cannot certify a changed
+content version. `HistoryAliasCorrelationTest` covers these consumers and a changed-content
+negative control. See [renderer allocation](remote-conversation-repository-assistant-reply-segments.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350)
+and [disk replay identity](conversation-cache-layout.md#layout). This field is cache-local domain
+metadata, with no wire DTO change.
 
 `Message.parentToolUseId` (#1826) retains assistant attribution from
 `AssistantDeltaPayloadDto` through `LiveSessionEvent.AssistantDelta`, verbatim with an empty-string
