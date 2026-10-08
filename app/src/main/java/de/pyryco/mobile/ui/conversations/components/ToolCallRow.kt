@@ -116,7 +116,7 @@ fun ToolCallRow(
     modifier: Modifier = Modifier,
     subagentDepth: Int = 0,
     joinsNextToolRow: Boolean = false,
-    onTrailingEdge: (Float) -> Unit = {},
+    onTrailingEdge: ((Float) -> Unit)? = null,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     ToolCallRowContent(
@@ -144,7 +144,7 @@ private fun ToolCallRowContent(
     modifier: Modifier = Modifier,
     subagentDepth: Int = 0,
     joinsNextToolRow: Boolean = false,
-    onTrailingEdge: (Float) -> Unit = {},
+    onTrailingEdge: ((Float) -> Unit)? = null,
 ) {
     val clickLabel = stringResource(if (expanded) R.string.tool_row_collapse else R.string.tool_row_expand)
     val subagentDescription =
@@ -154,8 +154,13 @@ private fun ToolCallRowContent(
             modifier
                 .fillMaxWidth()
                 .then(if (joinsNextToolRow) Modifier.overlapNextByBorder() else Modifier.padding(bottom = MessageRowVerticalSpacing))
-                .onGloballyPositioned { onTrailingEdge(it.positionInWindow().y + it.size.height) }
-                .testTag(TOOL_ROW_TAG),
+                .then(
+                    if (onTrailingEdge != null) {
+                        Modifier.onGloballyPositioned { onTrailingEdge(it.positionInWindow().y + it.size.height) }
+                    } else {
+                        Modifier
+                    },
+                ).testTag(TOOL_ROW_TAG),
         shape = ToolCallShape,
         color = MaterialTheme.colorScheme.background,
         border = BorderStroke(ToolCallBorderWidth, MaterialTheme.colorScheme.primaryContainer),

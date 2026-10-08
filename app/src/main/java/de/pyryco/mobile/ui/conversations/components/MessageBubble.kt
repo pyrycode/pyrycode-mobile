@@ -125,7 +125,7 @@ fun MessageBubble(
     threadOpenedAt: Instant? = null,
     onReply: (Message) -> Unit = {},
     onContentPresented: (Message) -> Unit = {},
-    onContentTrailingEdge: (Message, Float) -> Unit = { _, _ -> },
+    onContentTrailingEdge: ((Message, Float) -> Unit)? = null,
 ) {
     if (!message.isStreaming) SideEffect { onContentPresented(message) }
     val metaRow = MetaRowControl(metaRowVisible, onToggleMetaRow)
@@ -169,7 +169,7 @@ fun MessageBubble(
                         ),
                     subagentDepth = toolNestingDepth,
                     joinsNextToolRow = joinsNextToolRow,
-                    onTrailingEdge = { bottom -> onContentTrailingEdge(message, bottom) },
+                    onTrailingEdge = onContentTrailingEdge?.let { report -> { bottom -> report(message, bottom) } },
                 )
             }
     }
@@ -188,7 +188,7 @@ private fun UserMessageBubble(
     metaRow: MetaRowControl,
     onReply: (Message) -> Unit,
     modifier: Modifier = Modifier,
-    onContentTrailingEdge: (Message, Float) -> Unit,
+    onContentTrailingEdge: ((Message, Float) -> Unit)?,
 ) {
     MessageContainer(
         message = message,
@@ -234,7 +234,7 @@ private fun AssistantMessage(
     onReply: (Message) -> Unit,
     onContentPresented: (Message) -> Unit,
     modifier: Modifier = Modifier,
-    onContentTrailingEdge: (Message, Float) -> Unit,
+    onContentTrailingEdge: ((Message, Float) -> Unit)?,
 ) {
     MessageContainer(
         message = message,
@@ -308,7 +308,7 @@ private fun MessageContainer(
     attachments: @Composable () -> Unit = {},
     metaRow: MetaRowControl = MetaRowControl(),
     onReply: (Message) -> Unit = {},
-    onContentTrailingEdge: (Message, Float) -> Unit = { _, _ -> },
+    onContentTrailingEdge: ((Message, Float) -> Unit)? = null,
     body: @Composable () -> Unit,
 ) {
     val isUserSide = alignment == Alignment.End
@@ -371,7 +371,18 @@ private fun MessageContainer(
                             .padding(
                                 horizontal = BubbleHorizontalPadding,
                                 vertical = BubbleVerticalPadding,
-                            ).onGloballyPositioned { onContentTrailingEdge(message, it.positionInWindow().y + it.size.height) },
+                            ).then(
+                                if (onContentTrailingEdge != null) {
+                                    Modifier.onGloballyPositioned {
+                                        onContentTrailingEdge(
+                                            message,
+                                            it.positionInWindow().y + it.size.height,
+                                        )
+                                    }
+                                } else {
+                                    Modifier
+                                },
+                            ),
                     verticalArrangement = Arrangement.spacedBy(BubbleContentSpacing, Alignment.CenterVertically),
                     // The design puts `items-start` on the `Message` column for *both* roles — a short
                     // user body is left-aligned inside its bubble — and `justify-end` on the user's meta
