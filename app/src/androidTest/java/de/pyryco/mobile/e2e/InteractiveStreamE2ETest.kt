@@ -6472,6 +6472,11 @@ class InteractiveStreamE2ETest {
      */
     @Test
     fun interactiveTurn_collidingConversationId_phoneFileStaysOnItsHost() {
+        fun <T> step(
+            label: String,
+            block: suspend () -> T,
+        ): T = runBlocking { withTimeoutDiagnostic({ "host-isolation step '$label' timed out" }, block) }
+
         val serverIdA = twoHostArg(ARG_SERVER_ID)
         val serverIdB = twoHostArg(ARG_SERVER_ID_B)
         val collisionId = twoHostArg(ARG_COLLISION_CONVERSATION_ID)
@@ -6486,13 +6491,13 @@ class InteractiveStreamE2ETest {
             val documentName = INTERRUPT_FILE_PREFIX + "collision-$stamp.txt"
 
             // 1. Pair host B as #847 does, and read each copy's current name by the shared id.
-            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            peerStep(peer, "open host-isolation peer on A") { peer.open(CONNECT_TIMEOUT_MS) }
             awaitChannelList()
-            awaitConnected()
+            step("wait for phone connection on A") { awaitConnected() }
             instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
             pairHostByCode(twoHostArg(ARG_PAIR_CODE_B))
-            val nameA = heldName(serverIdA, collisionId)
-            val nameB = heldName(serverIdB, collisionId)
+            val nameA = step("read A collision name") { heldName(serverIdA, collisionId) }
+            val nameB = step("read B collision name") { heldName(serverIdB, collisionId) }
             assertNotEquals("the two copies' names", nameA, nameB)
             assertPeerAnswers(peer, collisionId)
 
@@ -6514,12 +6519,13 @@ class InteractiveStreamE2ETest {
                 it.type ==
                     "turn_end"
             }
-            val named = userMessageAttachmentIds(runBlocking { peer.history(collisionId, THREAD_TIMEOUT_MS) })
+            val named =
+                userMessageAttachmentIds(peerStep(peer, "read A attachment history") { peer.history(collisionId, THREAD_TIMEOUT_MS) })
             assertEquals("user messages in the peer's view of A's copy", 1, named.size)
             val ids = named.single()
             assertEquals("attachment ids named by A's user message", 1, ids.size)
             val id = ids.single()
-            val fetched = runBlocking { peer.retrieveAttachment(collisionId, id, REPLY_TIMEOUT_MS) }
+            val fetched = peerStep(peer, "retrieve A attachment bytes") { peer.retrieveAttachment(collisionId, id, REPLY_TIMEOUT_MS) }
             assertEquals("digest of the file the peer fetched from host A", sha256(document), sha256(fetched.bytes))
             awaitReadyAttachmentRow(documentName, THREAD_TIMEOUT_MS)
 
@@ -6532,7 +6538,10 @@ class InteractiveStreamE2ETest {
                     item is ThreadItem.MessageItem && item.message.attachments.any { it.attachmentId == id }
                 }
             assertTrue("host B's thread cache names the file sent on host A", !cachedOnB)
-            val onB = runBlocking { withTimeout(REPLY_TIMEOUT_MS) { hostRepository(serverIdB).fetchAttachment(collisionId, id) } }
+            val onB =
+                step(
+                    "fetch A attachment from B",
+                ) { withTimeout(REPLY_TIMEOUT_MS) { hostRepository(serverIdB).fetchAttachment(collisionId, id) } }
             assertEquals("host B's answer for the file sent on host A", AttachmentRetrievalResult.NotFound, onB)
             leaveThread()
         } finally {
