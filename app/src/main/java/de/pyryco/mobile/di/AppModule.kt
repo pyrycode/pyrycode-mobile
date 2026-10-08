@@ -316,6 +316,7 @@ fun hostConversationModule(
             SharingShortcuts(context, get<HostConversationSource>().snapshots, saved)
         } onClose { it?.dispose() }
         // #797: the demo branch resolves no cache, as HostConversationSource's does below.
+        single { ThreadContentScheduling() }
         single {
             ThreadDestinationFactory(
                 useRelay,
@@ -329,6 +330,7 @@ fun hostConversationModule(
                 // ContentResolver can still build the factory for its other destinations.
                 attachmentReader = inject(),
                 readRetries = get(),
+                contentScheduling = get(),
             )
         }
         // #877: one viewing tracker per app, shared by the thread destinations and the host source.
@@ -394,6 +396,7 @@ internal class ThreadDestinationFactory(
     private val attachments: AttachmentStore? = null,
     private val attachmentReader: Lazy<AttachmentReader>,
     private val readRetries: de.pyryco.mobile.data.repository.ReadCheckpointRetries? = null,
+    private val contentScheduling: ThreadContentScheduling = ThreadContentScheduling(),
 ) {
     val hostConnections get() = registry.hostConnections
 
@@ -467,7 +470,7 @@ internal class ThreadDestinationFactory(
                 FakeConnectionStateSource(),
                 draftStore,
                 attachmentReader = attachmentReader.value,
-                contentScheduling = ThreadContentScheduling(),
+                contentScheduling = contentScheduling,
             )
         }
         val connection =
@@ -516,7 +519,7 @@ internal class ThreadDestinationFactory(
             attachmentReader = attachmentReader.value,
             rememberedEffort = preferences.asRememberedEffortStore(),
             rememberModel = { model -> preferences.setRememberedModel(model) },
-            contentScheduling = ThreadContentScheduling(),
+            contentScheduling = contentScheduling,
         )
     }
 

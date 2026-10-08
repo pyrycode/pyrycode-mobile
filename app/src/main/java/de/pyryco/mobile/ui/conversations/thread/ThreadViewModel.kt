@@ -79,6 +79,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -743,23 +744,28 @@ class ThreadViewModel(
                     }
                     FoldInput.Live(ThreadInput.Live(it))
                 },
-            ).collect { input ->
-                val reading =
-                    withContext(contentScheduling?.worker ?: Dispatchers.Main.immediate) {
-                        val event =
-                            when (input) {
-                                is FoldInput.Received -> {
-                                    evidence = input.snapshot.readEvidence
-                                    ThreadInput.Finished(input.snapshot.rows)
+            )
+                // Fuses with merge's intake channel: worker suspension must never stall either source
+                // or receipt-side boundary effects. The live source drops oldest events under pressure;
+                // only complete folded states may conflate. Collection cancellation discards this queue.
+                .buffer(Channel.UNLIMITED)
+                .collect { input ->
+                    val reading =
+                        withContext(contentScheduling?.worker ?: Dispatchers.Main.immediate) {
+                            val event =
+                                when (input) {
+                                    is FoldInput.Received -> {
+                                        evidence = input.snapshot.readEvidence
+                                        ThreadInput.Finished(input.snapshot.rows)
+                                    }
+                                    is FoldInput.Live -> input.input
                                 }
-                                is FoldInput.Live -> input.input
-                            }
-                        fold = fold.reduce(event, conversationId)
-                        val rows = fold.render()
-                        FoldedThread(rows, evidence.presentedAs(rows))
-                    }
-                emit(reading)
-            }
+                            fold = fold.reduce(event, conversationId)
+                            val rows = fold.render()
+                            FoldedThread(rows, evidence.presentedAs(rows))
+                        }
+                    emit(reading)
+                }
         }.distinctUntilChanged()
 
     /**

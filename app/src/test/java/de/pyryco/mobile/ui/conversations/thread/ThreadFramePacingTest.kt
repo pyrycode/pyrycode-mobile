@@ -24,9 +24,11 @@ import de.pyryco.mobile.data.repository.UnsignedHistoryGap
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
@@ -160,7 +162,9 @@ class ThreadFramePacingTest {
     ) {
         val frames = ManualFrames()
         val snapshots = MutableStateFlow(initial)
-        val events = MutableSharedFlow<LiveSessionEvent>(extraBufferCapacity = 256)
+
+        // Match RemoteConversationRepository and the coordinator's connection-switching seam.
+        val events = MutableSharedFlow<LiveSessionEvent>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
         var subscriptions = 0
         var asks = 0
         val acknowledged = mutableListOf<ULong>()
@@ -222,7 +226,7 @@ class ThreadFramePacingTest {
                 repository,
                 FakeConnectionStateSource(),
                 ComposerDraftStore(),
-                liveSessionEvents = events,
+                liveSessionEvents = MutableStateFlow(events).flatMapLatest { it },
                 repositoryAvailable = flowOf(false),
                 projectionDispatcher = StandardTestDispatcher(scope.testScheduler),
                 contentScheduling = ThreadContentScheduling(worker, frames::await),
@@ -472,9 +476,11 @@ class ThreadFramePacingTest {
                     runCurrent()
                 }
                 assertTrue(h.vm.turnOutcome.value != null)
-                // Hold an earlier receipt too: the boundary must not wait behind any queued reduction.
-                h.snapshots.value = ThreadSnapshot(listOf(user), readEvidence = ThreadReadEvidence(facts = mapOf(1uL to false)))
-                runCurrent()
+                // Exceed all upstream buffers while the worker cannot consume any receipt.
+                for (id in 1uL..200uL) {
+                    h.snapshots.value = ThreadSnapshot(listOf(user), readEvidence = ThreadReadEvidence(facts = mapOf(id to false)))
+                    runCurrent()
+                }
                 assertTrue(worker.pending.isNotEmpty())
                 val boundary = ThreadItem.SessionBoundary("s", "next", BoundaryReason.Clear, Instant.fromEpochSeconds(2))
                 h.snapshots.value = ThreadSnapshot(listOf(user, boundary))
@@ -660,8 +666,10 @@ class ThreadFramePacingTest {
                 h.vm.onOverflowEvent(ThreadEvent.Rename)
                 runCurrent()
                 assertEquals("main progresses", h.vm.draft.value)
-                for (seq in 1..100) h.event(LiveSessionEvent.AssistantDelta("c", "turn", seq, "x"))
-                runCurrent()
+                for (seq in 1..100) {
+                    h.event(LiveSessionEvent.AssistantDelta("c", "turn", seq, "x"))
+                    runCurrent()
+                }
                 assertTrue(
                     h.vm.state.value.items
                         .isEmpty(),
@@ -747,6 +755,68 @@ class ThreadFramePacingTest {
                 h.close()
                 runCurrent()
                 assertEquals(0, h.frames.waiting)
+            } finally {
+                h.close()
+                runCurrent()
+            }
+        }
+
+    @Test fun rawOrderInvariant_saturatedDroppingSourcePreservesEveryDelta() =
+        runTest {
+            val worker = HeldWorker()
+            val h = Harness(this, ThreadSnapshot(listOf(row("user"))), worker)
+            h.collect()
+            try {
+                runCurrent()
+                assertTrue(worker.pending.isNotEmpty())
+                for (seq in 1..1000) {
+                    h.event(LiveSessionEvent.AssistantDelta("c", "turn", seq, "x"))
+                    runCurrent()
+                }
+                h.event(LiveSessionEvent.TurnEnd("c", "turn", "end_turn"))
+                runCurrent()
+                while (worker.pending.isNotEmpty()) {
+                    worker.drain()
+                    runCurrent()
+                }
+                h.frames.fire()
+                runCurrent()
+                val reply =
+                    (
+                        h.vm.state.value.items
+                            .last() as ThreadItem.MessageItem
+                    ).message
+                assertEquals("all raw inputs must reduce despite worker suspension", "x".repeat(1000), reply.content)
+                assertFalse(reply.isStreaming)
+                // Cancellation must release saturated raw intake as well as the frame waiter.
+                for (seq in 1..1000) {
+                    h.event(LiveSessionEvent.AssistantDelta("c", "next", seq, "y"))
+                    runCurrent()
+                }
+                h.reader?.cancel()
+                runCurrent()
+                while (worker.pending.isNotEmpty()) {
+                    worker.drain()
+                    runCurrent()
+                }
+                assertEquals(0, h.frames.waiting)
+                assertEquals(
+                    reply,
+                    (
+                        h.vm.state.value.items
+                            .last() as ThreadItem.MessageItem
+                    ).message,
+                )
+                h.collect()
+                runCurrent()
+                while (worker.pending.isNotEmpty()) {
+                    worker.drain()
+                    runCurrent()
+                }
+                h.frames.fire()
+                runCurrent()
+                assertEquals(h.snapshots.value.rows, h.vm.state.value.items)
+                assertEquals(2, h.subscriptions)
             } finally {
                 h.close()
                 runCurrent()
