@@ -1,0 +1,9 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites tests="2" failures="0" errors="0" skipped="0" time="91.296" timestamp="2026-10-08T11:52:48" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.design.ListDesignCaptureTest" tests="1" failures="0" errors="0" skipped="0" time="70.632" timestamp="2026-10-08T11:52:48" hostname="localhost">
+    <testcase name="promptFailedFramesAt412By892" classname="de.pyryco.mobile.design.ListDesignCaptureTest" time="70.632" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.components.FormCallerCaptureTest" tests="1" failures="0" errors="0" skipped="0" time="15.422" timestamp="2026-10-08T11:52:48" hostname="localhost">
+    <testcase name="editChannel" classname="de.pyryco.mobile.ui.components.FormCallerCaptureTest" time="15.422" />
+  </testsuite>
+</testsuites>

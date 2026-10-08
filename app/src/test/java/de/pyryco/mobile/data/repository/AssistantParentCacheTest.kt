@@ -82,7 +82,15 @@ class AssistantParentCacheTest {
                 val emissions = mutableListOf<List<ThreadItem>>()
                 val job =
                     backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
-                        CachingConversationRepository(delegate, cache, "host").observeMessages("c").collect { emissions += it }
+                        CachingConversationRepository(
+                            delegate,
+                            cache,
+                            "host",
+                            processingDispatcher = UnconfinedTestDispatcher(),
+                        ).observeMessages("c").collect {
+                            emissions +=
+                                it
+                        }
                     }
                 assertEquals(
                     "",

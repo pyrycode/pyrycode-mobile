@@ -118,10 +118,10 @@ class UnsignedHistoryCacheTest {
                 disk().writeHistoryPosition("h", "c", HistoryPosition("oldest", false, coverage)).getOrThrow()
                 val middle = page(boundary + 2u, boundary + 3u)
                 val live = Live().apply { projection.mergeHistoryPage("c", middle, true) }
-                val wrapper = CachingConversationRepository(live, disk(), "h")
+                val wrapper = CachingConversationRepository(live, disk(), "h", processingDispatcher = UnconfinedTestDispatcher())
                 if (collect) wrapper.observeMessages("c").first()
                 wrapper.writeHistoryPosition("c", HistoryPosition("oldest", false, coverage.received(middle)))
-                val restored = CachingConversationRepository(Live(), disk(), "h")
+                val restored = CachingConversationRepository(Live(), disk(), "h", processingDispatcher = UnconfinedTestDispatcher())
                 assertEquals(
                     listOf(boundary - 1u, boundary, boundary + 2u, boundary + 3u, boundary + 4u, ULong.MAX_VALUE).map { "m$it" },
                     restored
@@ -130,7 +130,14 @@ class UnsignedHistoryCacheTest {
                         .filterIsInstance<ThreadItem.MessageItem>()
                         .map { it.message.id },
                 )
-                assertTrue(CachingConversationRepository(Live(), disk(), "other-host").observeMessages("c").first().isEmpty())
+                assertTrue(
+                    CachingConversationRepository(
+                        Live(),
+                        disk(),
+                        "other-host",
+                        processingDispatcher = UnconfinedTestDispatcher(),
+                    ).observeMessages("c").first().isEmpty(),
+                )
                 assertNull(disk().readHistoryPosition("h", "other-conversation"))
             }
         }
@@ -469,16 +476,24 @@ class UnsignedHistoryCacheTest {
             disk().writeThread("h", "c", held).getOrThrow()
             disk().writeHistoryPosition("h", "c", HistoryPosition("old", false, state)).getOrThrow()
             assertEquals(state.copy(deltaText = emptyMap()), disk().readHistoryPosition("h", "c")?.coverage)
-            assertEquals(held, CachingConversationRepository(Live(), disk(), "h").observeMessages("c").first())
+            assertEquals(
+                held,
+                CachingConversationRepository(
+                    Live(),
+                    disk(),
+                    "h",
+                    processingDispatcher = UnconfinedTestDispatcher(),
+                ).observeMessages("c").first(),
+            )
             val middle = HistoryPage(listOf(end, delta(ULong.MAX_VALUE - 2u, 1, "b")), "filled", false)
             val live = Live().apply { repeat(2) { projection.mergeHistoryPage("c", middle, true) } }
-            val wrapper = CachingConversationRepository(live, disk(), "h")
+            val wrapper = CachingConversationRepository(live, disk(), "h", processingDispatcher = UnconfinedTestDispatcher())
             val received =
                 requireNotNull(
                     wrapper.readHistoryPosition("c")?.coverage,
                 ).receivedUnsigned(middle, target = ULong.MAX_VALUE - 3u)
             wrapper.writeHistoryPosition("c", HistoryPosition("old", false, received))
-            val restored = CachingConversationRepository(Live(), disk(), "h")
+            val restored = CachingConversationRepository(Live(), disk(), "h", processingDispatcher = UnconfinedTestDispatcher())
             val row = restored.observeMessages("c").first().single() as ThreadItem.MessageItem
             assertEquals("abc", row.message.content)
             assertEquals(

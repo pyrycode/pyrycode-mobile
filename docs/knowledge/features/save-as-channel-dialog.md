@@ -88,7 +88,7 @@ the caller owns both values and every callback, no I/O.
   when the request fires (#589; the same fix `RenameDialog` needed for the same reason). Fires cleanly
   either way (`requestFocus()` throws nothing when unbound), which is what made the original defect
   invisible until it was actually measured.
-- **Prompt field** — multi-line, `minLines = 4`, tagged `CHANNEL_PROMPT_FIELD_TAG`, no `maxLines`: the
+- **Prompt field** — multi-line, tagged `CHANNEL_PROMPT_FIELD_TAG`, no `maxLines`: the
   modal's content column already scrolls, so a long prompt just grows the well. When
   `!SystemPromptLimit.fits(systemPrompt)` it exposes an error semantic and shows the static
   `channel_form_prompt_too_long` message in the error color; an optional caller note occupies that
@@ -101,8 +101,15 @@ the caller owns both values and every callback, no I/O.
   `labelLarge` SemiBold labels in `onPrimaryContainer`, 8dp above filled wells and 12dp between field
   blocks. A `BasicTextField` inside an explicit 6dp rounded well avoids Material `TextField`'s extra
   minimum height and content insets. The name well is at least 52dp high, with 16dp top, bottom and
-  left insets and 56dp reserved on the right; the prompt well is at least 112dp high, with 16dp on
-  every side. Both use `bodyMedium` text and the shared modal field fill/text tokens, without a border
+  left insets and 56dp reserved on the right. The prompt uses actual, untrimmed `bodyMedium` line boxes
+  (`LineHeightStyle.Trim.None`), with 16dp top/side padding and 76dp blank space below the text box
+  (64dp inner plus 12dp outer space in the reference). Empty and one-line prompts keep the 112dp
+  minimum; at font scale 1, two 20dp lines produce a 132dp well, and each further drawn line adds 20dp.
+  Wrapping, explicit newlines and trailing blank lines all grow it; shrinking the content restores the
+  default height. A minimum text-line count reserves space inside the text layout and cannot maintain
+  this bottom gap as drawn lines increase. [Channel info](channel-info-sheet.md) retains its separate
+  four-line minimum and the shared `PROMPT_MIN_LINES`/`PromptWellHeight` constants.
+  Both fields use `bodyMedium` text and the shared modal field fill/text tokens, without a border
   or indicator. These are minimum heights: text and font scaling can grow the wells. The field nodes
   carry their label as a `contentDescription`; disabled fields remain readable without edit actions.
   Figma specified only the default dark state, so focus, disabled and over-limit appearances follow
@@ -235,6 +242,18 @@ verbatim prompt edits, error semantics, disabled fields and separation at 240dp 
 Those layout bounds do not prove rendered pixels: `ChannelFormFieldsCaptureTest#createFormAt412By892`
 provides the API 33 capture used in the visual comparison above. Scaling the wider Figma render down
 would also shrink its well and conceal a size mismatch, so the comparison uses a native-scale crop.
+
+`ChannelFormFieldsTest.promptWellKeepsBlankSpaceBelowWrappedAndExplicitLines` uses native fonts and a
+forced 356dp form width to inspect actual `TextLayoutResult` line counts and the bottom gap separately
+from the well bounds. It covers wrapping, explicit/trailing newlines, shrinking, verbatim editing and
+pointer focus at the grown well's bottom edge. Checking only the default well height would miss the
+multiline shortfall. `ListDesignCaptureTest.promptFailedFramesAt412By892` checks both failed forms with
+the retained release-notes prompt, two drawn lines, a 132dp well and 76dp bottom gap at 412×892,
+density/font scale 1, static dark and closed IME. The [retained evidence](../../../app/src/androidTest/assets/forms-1957/evidence.txt)
+and [final full-image JUnit report](../../../app/src/androidTest/assets/forms-1957/device-green.xml)
+record one executed/passed method covering both forms, zero failures/errors/skips; the focused shared
+and caller report records 71 executed/passed, zero failures/errors/skips. The separate error-line
+geometry correction belongs to [#1958](https://github.com/pyrycode/pyrycode-mobile/issues/1958).
 
 **`SaveAsChannelDialogTest`** (`app/src/sharedTest/.../components/SaveAsChannelDialogTest.kt`, Robolectric)
 covers: the title, both labels and the footer render, with no "Keep in scratch" remnant; the name prefills
