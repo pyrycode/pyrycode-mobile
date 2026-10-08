@@ -19,3 +19,7 @@ This is one test repair: approximately 40 written lines including the plan, no p
 Run the existing class first under fresh focused Robolectric execution and inspect its XML to reproduce the movement assertion failure. After the repair, rerun both methods with `testDebugUnitTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadReadContentEdgeTest --rerun`, then select that same class with `:app:pixel2Api33AtdDebugAndroidTest --rerun`. Record both method names and executed, failed and skipped counts from fresh XML in the PR. Keep the tests in `sharedTest`; no new device-only test, operator flow or live scenario is needed.
 
 Run lint, assembleDebug, Android test Kotlin compilation and Spotless. After the final main merge and push, run the full unit/shared suite, assembleDebug and `scripts/pre-verify.py --gradle` with the PR body. The later main Android sweep remains dispatcher-owned.
+
+## Revisions
+
+- 2026-10-08: The original focused Robolectric run executed both methods successfully (2 passed, 0 failed/skipped). The original managed Android run reproduced the movement assertion failure in `messageEdge_isInsideBubblePaddingWithAndWithoutMetadata` (2 executed, 1 passed, 1 failed, 0 skipped); `toolEdge_usesToolSurfaceIncludingExpandedContent` passed. Use that device failure as the red baseline; the repair contract remains unchanged.
