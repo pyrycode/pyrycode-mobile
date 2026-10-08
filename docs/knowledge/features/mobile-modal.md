@@ -247,22 +247,34 @@ uses 28 dp horizontal padding, a 24 dp top inset, 44 dp corners and a flexible
 content area. The `titleLarge` header holds the exported 28 dp close vector
 (`489:1898`, `primary` over `onPrimary`) in a 28 dp layout slot. Its centered
 48 dp hit region fits within the title and divider gaps; it does not enlarge
-the row. A 12 dp gap leads to the 1 dp `inversePrimary` divider at 60% opacity.
-The footer is centered with a 20 dp action gap. The shared `bodyLarge` medium
-actions have 40 dp visible surfaces and 6 dp corners: the primary uses 20 × 8 dp
-internal padding and `primary`/`onPrimary`; the outlined secondary uses
-19 × 7 dp plus a 1 dp `primary` border. `minimumInteractiveComponentSize`
-reserves 48 dp invisibly around each action. The shell's 20 dp bottom padding
-and footer's 4 dp top padding place the visible action bottom 24 dp above the
-safe-area edge. Keep that spacing on the parent: an action-local visual offset
-made compact-landscape scrolling stall when `performScrollTo` targeted the
-footer. `MobileDismissModal` once passed its own `bottomPadding = 24.dp` on
-top of that default, which stacked with `minimumInteractiveComponentSize`'s
-invisible 4 dp margin below Done's 40 dp surface and left Done 28 dp above the
-[Settings](settings-screen.md) sheet's edge instead of 24 — #1503 dropped the
-override so this entry point takes the shell's default like the others. A
-caller on this shell should rely on the shell's own bottom padding rather than
-re-adding it, since the two compose rather than override. The controlled hover fills follow Figma `489:1876`; suppress the
+the row. A 12 dp gap leads to the 1 dp `inversePrimary` divider at 60% opacity,
+then the Header area's own 4 dp bottom padding, then the shell's 20 dp gap to
+content — 25 dp in total from the divider's top to the content slot's top
+(#1588). The footer is centered with a 20 dp action gap. The shared `bodyLarge`
+medium actions have 40 dp visible surfaces and 6 dp corners: the primary uses
+20 × 8 dp internal padding and `primary`/`onPrimary`; the outlined secondary
+uses 19 × 7 dp plus a 1 dp `primary` border. `minimumInteractiveComponentSize`
+reserves 48 dp invisibly around each action, 4 dp above and below the visible
+surface. The content slot ends 24 dp above the visible action top: the shell's
+20 dp gap plus that invisible 4 dp margin. The footer `Row` carries no padding
+of its own for this — Figma's Footer has a 4 dp top padding, but the touch
+target's built-in margin already supplies it; an explicit `padding(top = 4.dp)`
+on top of that margin double-counted the same 4 dp and left the slot 4 dp short
+at this edge (#1588), the same double-count #1503 fixed for
+`MobileDismissModal`'s bottom offset (next paragraph). Separately, the shell's
+20 dp bottom padding plus that same invisible 4 dp margin place the visible
+action **bottom** 24 dp above the safe-area edge — unaffected by the Row's own
+padding, since the action is bottom-anchored in pinned layout and the removed
+padding only shrank dead space above it. Keep that spacing on the parent: an
+action-local visual offset made compact-landscape scrolling stall when
+`performScrollTo` targeted the footer. `MobileDismissModal` once passed its
+own `bottomPadding = 24.dp` on top of that default, which stacked with
+`minimumInteractiveComponentSize`'s invisible 4 dp margin below Done's 40 dp
+surface and left Done 28 dp above the [Settings](settings-screen.md) sheet's
+edge instead of 24 — #1503 dropped the override so this entry point takes the
+shell's default like the others. A caller on this shell should rely on the
+shell's own bottom padding rather than re-adding it, since the two compose
+rather than override. The controlled hover fills follow Figma `489:1876`; suppress the
 extra Material hover ripple while retaining native press feedback. Figma has
 no disabled, loading or pressed reference; the existing loading indicator,
 native disabled content colour and press feedback remain.
@@ -288,6 +300,11 @@ themes, then toggles gate `sending` and checks native disabled content colour
 and the 40 dp visible height. It also samples the header/divider and action
 pixels, including Hover. Enabled-state or border assertions alone miss the grey
 text regression; inspect the composed text's colour.
+`contentSlotMatchesFigmaDividerAndFooterOffsets` pins the 25 dp divider-to-slot
+and 24 dp slot-to-footer gaps (#1588): an overflowing solid-fill probe starts
+flush with the slot's top and the scroll viewport clips its fill exactly at
+the slot's bottom, since neither edge survives a plain semantics-bounds read
+once the content is inside the shell's scroll-plus-weight layout.
 
 [`BackgroundTaskPanelInsetsTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/BackgroundTaskPanelInsetsTest.kt)
 (#1496) dispatches a fixed 48 dp navigation-bar inset to every window

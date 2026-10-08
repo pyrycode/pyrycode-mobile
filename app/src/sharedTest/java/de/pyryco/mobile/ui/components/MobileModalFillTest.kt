@@ -3,14 +3,19 @@ package de.pyryco.mobile.ui.components
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.view.View
+import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.HoverInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
@@ -112,6 +117,64 @@ class MobileModalFillTest {
         assertTrue("primary action must be visible", actionRows.isNotEmpty())
         assertEquals(40f, (actionRows.last() - actionRows.first() + 1) / density, 1f)
         assertEquals(24f, (bitmap.height - actionRows.last() - 1) / density, 1f)
+    }
+
+    /**
+     * Pins #1588: the content slot starts 25 dp below the divider's top and ends 24 dp above the
+     * visible footer surfaces, per Figma's Header area (4 dp bottom padding) and Footer (4 dp top
+     * padding) once the divider's own 1 dp thickness and the footer action's built-in 4 dp touch
+     * margin are folded in. The probe content is a solid-fill block taller than any slot, so its
+     * top is flush with the slot's top (no leftover space left to centre it), and the scrollable
+     * viewport clips its fill exactly at the slot's bottom — both edges read straight off the
+     * painted pixels rather than through the scroll/weight layout, which does not report a plain
+     * semantics size for an overflowing child.
+     *
+     * Tolerance is device pixels, not a flat dp slack: one pixel per length that Compose rounds
+     * independently during layout. The top gap sums three such lengths (divider thickness, the
+     * header's bottom padding, the shell's arrangement gap); the bottom gap sums two (the shell's
+     * arrangement gap, the touch target's built-in margin). Text width may drift with font
+     * rendering, but these are line-height-equivalent vertical gaps, so this holds them exact.
+     */
+    @Test
+    fun contentSlotMatchesFigmaDividerAndFooterOffsets() {
+        val probeColor = Color(0xFF00FF00)
+        rule.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                MobileModal(title = title, onDismissRequest = {}, onSubmit = {}) {
+                    dialogView = LocalView.current
+                    Box(Modifier.fillMaxWidth().height(2000.dp).background(probeColor))
+                }
+            }
+        }
+
+        val bitmap =
+            rule.runOnIdle {
+                val view = checkNotNull(dialogView)
+                Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888).also { view.draw(Canvas(it)) }
+            }
+        val density = checkNotNull(dialogView).resources.displayMetrics.density
+        val scanX = bitmap.width / 2
+        val navy = Color(0xFF001D34).toArgb()
+        val probe = probeColor.toArgb()
+        val rowTop =
+            rule
+                .onNodeWithContentDescription("Close", useUnmergedTree = true)
+                .fetchSemanticsNode()
+                .boundsInRoot.top
+        val dividerTop =
+            (rowTop.toInt() until (rowTop + 100 * density).toInt()).first { bitmap.getPixel(scanX, it) != navy }
+        val probeRows = (dividerTop until bitmap.height).filter { bitmap.getPixel(scanX, it) == probe }
+        val slotTop = probeRows.first()
+        val slotBottom = probeRows.last() + 1
+
+        val primary = Color(0xFF9DCBFC).toArgb()
+        val footerVisibleTop =
+            ((bitmap.height - 100 * density).toInt() until bitmap.height).first { y ->
+                (0 until bitmap.width).count { x -> bitmap.getPixel(x, y) == primary } > 40 * density
+            }
+
+        assertEquals(25f * density, (slotTop - dividerTop).toFloat(), 3f)
+        assertEquals(24f * density, (footerVisibleTop - slotBottom).toFloat(), 2f)
     }
 
     @Test
