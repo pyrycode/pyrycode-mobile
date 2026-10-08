@@ -67,6 +67,18 @@ appears after the content in the scroll area, with error color, error semantics
 and a polite live region. Showing an error does not reset entered values or
 replace the form.
 
+The final error locally copies `bodyMedium` with
+`LineHeightStyle(Alignment.Center, Trim.None)` (#1958), preserving its
+14 sp / 20 sp / 400 / 0.25 sp metrics and `colorScheme.error`. At 412 × 892 dp
+and font scale 1.0, `create_channel_prompt_failed` and
+`save_as_channel_prompt_failed` each occupy two full 20 dp lines. Default
+outer trimming reduced the box to 36 dp and shifted the centered group's
+geometry; preserve the natural line box rather than fixing its height or
+changing the [shared type ramp](shared-typography.md#density-10-hinting-and-the-trimmed-line-box-1489).
+The error remains the final item, 12 dp after the preceding content, with its
+exact string in error semantics and a polite announcement. The shell centers
+the whole group in its content slot.
+
 ## The hardened gate: `MobileGateModal`
 
 ```kotlin
@@ -293,6 +305,27 @@ ellipsized to one line in the value slot. The shell's scrolling keeps the name
 field and Unpair, Cancel and OK actions reachable.
 
 ## Focus and verification
+
+[`MobileModalErrorLayoutTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/components/MobileModalErrorLayoutTest.kt)
+guards both exact resources through
+`createdChannelPromptError_keepsFullLineBoxAndCenteredGroup` and
+`savedChannelPromptError_keepsFullLineBoxAndCenteredGroup` (#1958). It checks
+two lines, a 40 dp semantics height within 2 dp, metrics, colour, accessibility,
+the preceding gap and group centering. Assert the local no-trim style as well
+as height, since Robolectric and device font metrics can differ. Native
+graphics, a window qualifier and an explicit dialog size establish the
+measured 412 × 892 dp frame; `ForcedSize` also fits it on devices, which ignore
+the qualifier. Noneditable name/prompt probes avoid the wider editable-dialog
+idle bug described in [verification gates](development-verification-gates.md#where-a-screen-test-goes).
+Measure the visible Close icon through the unmerged semantics tree when
+deriving the content slot; its larger touch target gives a different anchor.
+
+Native-graphics shared tests and ATD capture sidecars establish line-box
+geometry, not real-bar pixel fidelity. Real-bar PNG comparisons provide
+separate visual evidence; an unavailable PNG cannot establish that comparison.
+The prompt-well mismatch seen alongside the original 36 dp error was owned by
+\#1957; its separate correction is documented in
+[Save as channel](save-as-channel-dialog.md).
 
 [`MobileModalFillTest`](../../../app/src/sharedTest/java/de/pyryco/mobile/ui/components/MobileModalFillTest.kt)
 checks Cancel's `TextLayoutResult.layoutInput.style.color` against primary in both
