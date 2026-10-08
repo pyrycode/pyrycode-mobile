@@ -6,6 +6,7 @@
 - `app/src/main/java/de/pyryco/mobile/ui/conversations/components/MarkdownText.kt`: `MarkdownText` and `StreamingMarkdownText` use content-sized columns and preserve source separately from rendered text.
 - `app/src/main/java/de/pyryco/mobile/ui/conversations/components/MessageAttachments.kt`: `MessageAttachments` contributes content height before the body.
 - `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MessageReplyTargetsTest.kt`: extend real pointer ownership and target geometry for both arrangements and same-role neighbours.
+- `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MessageNaturalHeightTest.kt`: new coverage compares visible content bounds plus padding, attachments and timestamp transitions.
 - `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/components/MessageBubbleTest.kt`: retain tall side geometry, source-copy bounds and streaming coverage.
 - `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/BackgroundAgentRestGapTest.kt`: add short-message rest regressions while retaining its 12dp expectation.
 - `docs/knowledge/features/message-bubble.md` and `message-bubble-testing.md`: preserve content hugging, streaming fill, attachment-only spacing, glyph assets and source-copy semantics; the ticket supersedes the 96dp floor.
