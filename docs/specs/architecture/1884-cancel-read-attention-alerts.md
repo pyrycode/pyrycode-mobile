@@ -8,7 +8,9 @@
 - `app/src/main/java/de/pyryco/mobile/di/ConversationAttention.kt`: `HostAttentionState.readMarks` is independent of Running/WaitingForAnswer and never restored from cache.
 - `app/src/main/java/de/pyryco/mobile/data/repository/ConversationReadMarks.kt`: nullable unsigned durable identities distinguish unsupported/unknown facts from checkpoint zero.
 - `app/src/main/java/de/pyryco/mobile/data/repository/RemoteConversationRepository.kt`: `onInbound` and `observeHostReadMarks` record received durable identity and expose merged list/push/reply facts.
+- `app/src/main/java/de/pyryco/mobile/data/repository/ConversationListProjection.kt`: `recordLatestEntry`, `observeHostReadMarks` and `currentReadMarks` expose the same atomic repository facts without a second fold.
 - `app/src/test/java/de/pyryco/mobile/notifications/AttentionNotifierTest.kt`: `withNotifier` and `posted` exercise actual Android notifications through Robolectric.
+- `app/src/test/java/de/pyryco/mobile/notifications/AttentionNotifierSourceTest.kt`: the new real-repository notification harness uses the established source/pump patterns to prove read/alert wiring end to end.
 - `app/src/test/java/de/pyryco/mobile/di/HostConversationSourceAttentionTest.kt`: real repository/pump harness exercises list refresh, pushes, durable identity and repository replacement.
 - `app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt`: `interactiveTurn_attentionDot_followsARealTurn` already proves phone and peer read directions; preserve unchanged.
 - `docs/knowledge/INDEX.md`, `docs/knowledge/features/push-messaging-service.md`, `docs/knowledge/features/dependency-injection-host-conversation-source.md`: retain ledger-before-gates, exact-host identity, and live-only read-fact support.
@@ -30,7 +32,7 @@ One deliverable, three acceptance criteria, approximately 650 written lines incl
 
 Expose an internal host-first `StateFlow<Map<String, Map<String, ConversationReadMarks>>>` from `HostConversationSource`, projected from the existing guarded attention facts during `publish`. It follows the same host removal, repository reset and offline retention rules as the existing fold. Do not infer or persist additional read facts.
 
-Pass this flow to `AttentionNotifier` from `AppModule`, using an inert default for existing test/demo consumers. Keep the coverage predicate and cancellation consumer inside `AttentionNotifier.kt`, since cancellation has one consumer. A new or changed covered checkpoint cancels `digest(serverId, conversationId)` with notification id zero, regardless of the permission/settings/mute/foreground gates. Initial state collection also cancels an existing notification without requiring a new alert. Repeated unchanged facts do not cancel a prompt posted subsequently; changes on another conversation/host do not recancel that prompt.
+Pass this flow to `AttentionNotifier` from `AppModule`, using an inert default for existing test/demo consumers. Keep the coverage predicate and cancellation consumer inside `AttentionNotifier.kt`, since cancellation has one consumer. A new or changed covered checkpoint cancels `digest(serverId, conversationId)` with notification id zero, regardless of the permission/settings/mute/foreground gates. Initial state collection also cancels an existing notification without requiring a new alert. Repeated unchanged facts do not cancel a prompt posted subsequently; changes on another conversation/host do not recancel that prompt. The current-repository lookup described in Revisions additionally verifies coverage before cancellation or completion posting.
 
 Completion alerts keep the existing ledger and gates, then check the current flow value immediately before posting. A covered completion is spent without posting. Prompt alerts retain all existing gates and can post even while the conversation is read. Cancellation never writes repository state, answers a prompt, or changes running/busy state. Missing either read fact leaves current behaviour intact. Future known latest identities exceeding the mark permit new unread completion notifications.
 
@@ -56,7 +58,7 @@ None.
 
 ## Documentation handoff
 
-Pending for documentation stage: update `docs/knowledge/features/push-messaging-service.md`, “Attention notifications”/gates, logging and testing sections with daemon read cancellation, host isolation, unchanged local fallback and retained ledger semantics. Record the distinction between deterministic notification proof and dispatcher-produced shared-mark live scenario evidence.
+Pending for documentation stage: update `docs/knowledge/features/push-messaging-service.md`, “Attention alerts and the tap route (#685)”, “Logging (#685)” and “Testing (#685)” with daemon read cancellation, host isolation, unchanged local fallback and retained ledger semantics. Record the distinction between deterministic notification proof and dispatcher-produced shared-mark live scenario evidence.
 
 ## Security review
 
@@ -70,7 +72,18 @@ Pending for documentation stage: update `docs/knowledge/features/push-messaging-
 - [Network and I/O] Reuse decoded read facts and the existing inbound consumer. No new request, socket, retry loop or frame parser; transport bounds and authentication remain unchanged.
 - [Errors and logs] Use static outcomes only; do not log notification text, ids, read checkpoints, decrypted data or credentials. Existing debug-only RelayLog controls remain.
 - [Concurrency] SHOULD FIX: a read can land while `notificationsEnabled.first` is suspended. Read coverage again inside the same mutex as post/cancel, and prove this ordering with a controlled flow test. Compare changed checkpoints per host/conversation so an unrelated update cannot clear a later prompt.
+- [Concurrency / generation isolation] Resolved by the revision below: synchronous current facts and pre-emission completion identity prevent a delayed source collector from treating future unread activity as read. `HostConversationSource.currentReadMarks` rejects retired hosts and uses the current remote repository directly, with no old-generation fallback when a replacement exists.
 - [Threat model] Authenticated hostile daemon facts can suppress that daemon's own alerts but cannot cancel another host's tag. Relay delays may delay cancellation; Noise prevents forged read facts. Rooted-device token theft and screenshot/accessibility leakage remain handled by the existing protocol/storage/UI boundaries; no new plaintext or UI surface is added here.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-08
+
+## Revisions
+
+### 2026-10-08 — Completion delivery can overtake read-fact publication
+
+The executed `aCompletionDeliveredBeforeTheReadFactCollectorStillPostsItsNewUnreadCheckpoint` probe failed: Unconfined consumers resumed inside the repository's `tryEmit` while `onInbound` still held the previous latest durable id. A future unread completion was spent as already read. This is within the ticket's completion/read race contract, not an unrelated bug.
+
+`onInbound` now records a valid `turn_end` durable identity before routing that completion, using the same recording helper as its retained finally path. `ConversationListProjection.currentReadMarks` and `RemoteConversationRepository.currentReadMarks` expose the existing atomic facts, without another flow collector, request, cache or checkpoint fold. `HostConversationSource.currentReadMarks` selects the exact current host/repository under its generation guard, retains accepted facts while offline, and does not inherit old support for a replacement. `AppModule` injects this synchronous lookup into the notifier. Its mutex-protected post/cancel checks consult those current facts, while the projected flow remains the cancellation trigger. This also prevents a queued covered projection from cancelling a newly unread notification.
+
+Revised size: approximately 700 written lines across five production files, two test files and the plan; three new internal accessors, one production notifier consumer update, no new type, unchanged acceptance criteria and fewer than ten new decision branches. Within all sizing ceilings. Include `RemoteConversationRepositoryTest` in focused checks and rerun lint/build after the ordering change. Preserve the failing probe and the existing live scenario; no wire field or event type changes.

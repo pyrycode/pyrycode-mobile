@@ -15,12 +15,16 @@ import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
+import de.pyryco.mobile.data.repository.ConversationReadMarks
 import de.pyryco.mobile.di.AttentionAlert
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -53,6 +57,11 @@ class AttentionNotifierTest {
     private val manager get() = app.getSystemService(NotificationManager::class.java)
     private val alerts = MutableSharedFlow<AttentionAlert>(extraBufferCapacity = 16)
     private val enabled = MutableStateFlow(true)
+    private val readMarks = MutableStateFlow<Map<String, Map<String, ConversationReadMarks>>>(emptyMap())
+    private var readMarksOf: (
+        String,
+        String,
+    ) -> ConversationReadMarks? = { server, conversation -> readMarks.value[server]?.get(conversation) }
     private var foreground = false
     private val muted = mutableSetOf<Pair<String, String>>()
     private val agents = mutableMapOf(("host-a" to "conv") to ConversationAgent.Claude, ("host-b" to "conv") to ConversationAgent.Claude)
@@ -345,6 +354,147 @@ class AttentionNotifierTest {
         }
 
     @Test
+    fun aConfirmedPeerReadCancelsTheRealPostedNotificationAndRepeatedUpdatesAreHarmless() =
+        withNotifier {
+            marks("host-a", "conv", 4u, 5u)
+            alerts.emit(TURN)
+            assertEquals(1, posted().size)
+            marks("host-a", "conv", 5u, 5u)
+            assertTrue(posted().isEmpty())
+            marks("host-a", "conv", 5u, 5u)
+            marks("host-a", "absent", 0u, 0u)
+            alerts.emit(TURN)
+            assertTrue(posted().isEmpty())
+        }
+
+    @Test
+    fun readBeforeCompletionSpendsItsLedgerEntryAndFutureUnreadTurnsAndPromptsStillPost() {
+        withNotifier {
+            marks("host-a", "conv", 5u, 5u)
+            alerts.emit(TURN)
+            assertTrue(posted().isEmpty())
+            marks("host-a", "conv", 5u, 6u)
+            alerts.emit(TURN)
+            assertTrue(posted().isEmpty())
+            alerts.emit(TURN.copy(key = "t2"))
+            assertEquals(1, posted().size)
+            marks("host-a", "conv", 6u, 6u)
+            assertTrue(posted().isEmpty())
+            alerts.emit(AttentionAlert("host-a", "conv", AttentionAlert.Kind.Prompt, "modal:new"))
+            assertEquals(app.getString(R.string.notification_prompt), posted().single().extras.getString(Notification.EXTRA_TEXT))
+            // An unchanged checkpoint or an unrelated host's update must not erase this new prompt.
+            marks("host-a", "conv", 6u, 6u)
+            marks("host-b", "conv", 9u, 9u)
+            assertEquals(1, posted().size)
+        }
+        manager.cancelAll()
+        withNotifier {
+            readMarks.value = emptyMap()
+            alerts.emit(TURN)
+            alerts.emit(TURN.copy(key = "t2"))
+            assertTrue(posted().isEmpty())
+        }
+    }
+
+    @Test
+    fun anInitialConfirmedSnapshotCancelsANotificationLeftByAnEarlierProcess() {
+        withNotifier {
+            alerts.emit(TURN)
+            assertEquals(1, posted().size)
+        }
+        marks("host-a", "conv", 8u, 8u)
+        withNotifier { assertTrue(posted().isEmpty()) }
+    }
+
+    @Test
+    fun cancellationIsHostIsolatedAndIndependentOfAllPostingGates() =
+        withNotifier {
+            alerts.emit(TURN)
+            alerts.emit(TURN.copy(serverId = "host-b"))
+            foreground = true
+            enabled.value = false
+            muted += "host-a" to "conv"
+            shadowOf(app).denyPermissions(Manifest.permission.POST_NOTIFICATIONS)
+            marks("host-a", "conv", 1u, 1u)
+            val target = NotificationTap.target(shadowOf(posted().single().contentIntent).savedIntent)
+            assertEquals(HostConversationTarget("host-b", "conv"), target)
+        }
+
+    @Test
+    fun missingReadFactsRetainLegacyBehaviourAndAnUncoveredLatestDoesNotCancel() =
+        withNotifier {
+            alerts.emit(TURN)
+            marks("host-a", "conv", null, 5u)
+            assertEquals(1, posted().size)
+            marks("host-a", "conv", 5u, null)
+            assertEquals(1, posted().size)
+            marks("host-a", "conv", 4u, 5u)
+            assertEquals(1, posted().size)
+            marks("host-a", "conv", null, null)
+            alerts.emit(TURN.copy(key = "legacy"))
+            assertEquals(1, posted().size)
+        }
+
+    @Test
+    fun coverageUsesUnsignedDurableIdsIncludingZeroAndEquality() =
+        withNotifier {
+            marks("host-a", "conv", 0u, 0u)
+            alerts.emit(TURN)
+            assertTrue(posted().isEmpty())
+            marks("host-a", "conv", 0u, ULong.MAX_VALUE)
+            alerts.emit(TURN.copy(key = "large"))
+            assertEquals(1, posted().size)
+            marks("host-a", "conv", ULong.MAX_VALUE, ULong.MAX_VALUE)
+            assertTrue(posted().isEmpty())
+        }
+
+    @Test
+    fun aLaggingCoveredProjectionCannotCancelANewUnreadNotification() {
+        var current = ConversationReadMarks(5u, 6u)
+        readMarksOf = { _, _ -> current }
+        withNotifier {
+            alerts.emit(TURN)
+            assertEquals(1, posted().size)
+            marks("host-a", "conv", 5u, 5u)
+            assertEquals(1, posted().size)
+            current = ConversationReadMarks(6u, 6u)
+            marks("host-a", "conv", 6u, 6u)
+            assertTrue(posted().isEmpty())
+        }
+    }
+
+    @Test
+    fun aReadDuringASuspendedPreferenceGateCannotBeUndoneByItsPendingPost() =
+        runTest {
+            val preference = Channel<Boolean>()
+            val notifier = notifier(UnconfinedTestDispatcher(testScheduler), preference.receiveAsFlow())
+            try {
+                alerts.emit(TURN)
+                assertTrue(posted().isEmpty())
+                marks("host-a", "conv", 5u, 5u)
+                preference.send(true)
+                assertTrue(posted().isEmpty())
+                marks("host-a", "conv", 5u, 6u)
+                alerts.emit(TURN.copy(key = "later"))
+                preference.send(true)
+                assertEquals(1, posted().size)
+            } finally {
+                notifier.dispose()
+                preference.close()
+            }
+        }
+
+    private fun marks(
+        server: String,
+        conversation: String,
+        read: ULong?,
+        latest: ULong?,
+    ) {
+        readMarks.value =
+            readMarks.value + (server to (readMarks.value[server].orEmpty() + (conversation to ConversationReadMarks(read, latest))))
+    }
+
+    @Test
     fun anUnreadableLedgerStartsEmpty() {
         ledger.mkdirs()
         withNotifier {
@@ -378,24 +528,30 @@ class AttentionNotifierTest {
 
     private fun withNotifier(block: suspend TestScope.() -> Unit) =
         runTest {
-            val notifier =
-                AttentionNotifier(
-                    app,
-                    alerts,
-                    enabled,
-                    { server, conversation -> (server to conversation) in muted },
-                    { server, conversation -> agents[server to conversation] },
-                    { server, conversation -> names[server to conversation] },
-                    { foreground },
-                    ledger,
-                    UnconfinedTestDispatcher(testScheduler),
-                )
+            val notifier = notifier(UnconfinedTestDispatcher(testScheduler))
             try {
                 block()
             } finally {
                 notifier.dispose()
             }
         }
+
+    private fun notifier(
+        dispatcher: kotlinx.coroutines.CoroutineDispatcher,
+        preference: Flow<Boolean> = enabled,
+    ) = AttentionNotifier(
+        app,
+        alerts,
+        preference,
+        { server, conversation -> (server to conversation) in muted },
+        { server, conversation -> agents[server to conversation] },
+        { server, conversation -> names[server to conversation] },
+        { foreground },
+        ledger,
+        dispatcher,
+        readMarks = readMarks,
+        readMarksOf = readMarksOf,
+    )
 
     private companion object {
         val TURN = AttentionAlert("host-a", "conv", AttentionAlert.Kind.TurnCompleted, "t1")

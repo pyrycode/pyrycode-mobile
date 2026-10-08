@@ -14,6 +14,7 @@ import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.repository.ConversationReadMarks
 import de.pyryco.mobile.di.AttentionAlert
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
@@ -23,8 +24,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
@@ -63,12 +68,41 @@ class AttentionNotifier(
     private val isForeground: () -> Boolean,
     ledgerFile: File,
     dispatcher: CoroutineDispatcher = Dispatchers.IO,
+    /** Live, host-qualified daemon facts: only confirmed coverage cancels or suppresses a completion. */
+    private val readMarks: StateFlow<Map<String, Map<String, ConversationReadMarks>>> = MutableStateFlow(emptyMap()),
+    /** The current repository can be ahead of the source flow when a completion arrives. */
+    private val readMarksOf: (
+        String,
+        String,
+    ) -> ConversationReadMarks? = { server, conversation -> readMarks.value[server]?.get(conversation) },
 ) {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val ledger = AlertLedger(ledgerFile)
+    private val notificationLock = Mutex()
 
     init {
         scope.launch { alerts.collect { handle(it) } }
+        scope.launch {
+            var previous = emptyMap<String, Map<String, ConversationReadMarks>>()
+            readMarks.collect {
+                notificationLock.withLock {
+                    // A queued emission may have been superseded while a post held the lock.
+                    val current = readMarks.value
+                    current.forEach { (serverId, conversations) ->
+                        conversations.forEach { (conversationId, marks) ->
+                            if (marks != previous[serverId]?.get(conversationId) &&
+                                marks.coversLatest() &&
+                                readMarksOf(serverId, conversationId)?.coversLatest() == true
+                            ) {
+                                NotificationManagerCompat.from(context).cancel(digest(serverId, conversationId), 0)
+                                RelayLog.d { "event=attention_alert_cancelled reason=daemon_read" }
+                            }
+                        }
+                    }
+                    previous = current
+                }
+            }
+        }
     }
 
     private suspend fun handle(alert: AttentionAlert) {
@@ -80,7 +114,16 @@ class AttentionNotifier(
                 !notificationsEnabled.first() -> "disabled"
                 isMuted(alert.serverId, alert.conversationId) -> "muted"
                 !permitted() -> "no_permission"
-                else -> post(alert)
+                else ->
+                    notificationLock.withLock {
+                        if (alert.kind == AttentionAlert.Kind.TurnCompleted &&
+                            readMarksOf(alert.serverId, alert.conversationId)?.coversLatest() == true
+                        ) {
+                            "read"
+                        } else {
+                            post(alert)
+                        }
+                    }
             }
         RelayLog.d { "event=attention_alert outcome=$outcome kind=$kind" }
     }
@@ -122,6 +165,13 @@ class AttentionNotifier(
     fun dispose() {
         scope.cancel()
     }
+}
+
+/** Absence of either live fact proves nothing; checkpoint zero and unsigned equality are valid. */
+private fun ConversationReadMarks.coversLatest(): Boolean {
+    val confirmed = readUpTo ?: return false
+    val latest = latestEntryId ?: return false
+    return confirmed >= latest
 }
 
 /**

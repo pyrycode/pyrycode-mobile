@@ -292,6 +292,9 @@ internal class ConversationListProjection {
 
     fun currentReadMark(conversationId: String): ULong? = projection.value.readMarks[conversationId]?.readUpTo
 
+    /** The same authoritative facts as the flow, without waiting for a consumer's projection. */
+    fun currentReadMarks(conversationId: String): ConversationReadMarks? = projection.value.readMarks[conversationId]
+
     private fun mergeReadMarks(
         marks: MutableMap<String, ConversationReadMarks>,
         id: String,
