@@ -137,7 +137,7 @@ class HistoryCacheReworkTest {
         val vm =
             ThreadViewModel(
                 SavedStateHandle(mapOf("conversationId" to "c")),
-                CachingConversationRepository(live, disk(), "h"),
+                CachingConversationRepository(live, disk(), "h", processingDispatcher = UnconfinedTestDispatcher()),
                 FakeConnectionStateSource(),
                 ComposerDraftStore(),
                 projectionDispatcher = UnconfinedTestDispatcher(testScheduler),
@@ -171,7 +171,7 @@ class HistoryCacheReworkTest {
 
         val lower = page(1).copy(cursor = "", atStart = true)
         val reopenedLive = Live().apply { answer = { lower } }
-        val repository = CachingConversationRepository(reopenedLive, disk(), "h")
+        val repository = CachingConversationRepository(reopenedLive, disk(), "h", processingDispatcher = UnconfinedTestDispatcher())
         assertEquals("empty cache must preserve its coverage and cursor", saved, repository.readHistoryPosition("c"))
         val reopened =
             ThreadViewModel(
@@ -223,7 +223,7 @@ class HistoryCacheReworkTest {
         val unsupported =
             HistoryPage(listOf(upper) + if (mixed) lower.entries else emptyList(), if (terminal) "" else "older", terminal)
         val live = Live().apply { answer = { unsupported } }
-        val repository = CachingConversationRepository(live, disk(), "h")
+        val repository = CachingConversationRepository(live, disk(), "h", processingDispatcher = UnconfinedTestDispatcher())
         val vm =
             ThreadViewModel(
                 SavedStateHandle(mapOf("conversationId" to "c")),
@@ -257,7 +257,7 @@ class HistoryCacheReworkTest {
         val reopened =
             ThreadViewModel(
                 SavedStateHandle(mapOf("conversationId" to "c")),
-                CachingConversationRepository(reopenedLive, disk(), "h"),
+                CachingConversationRepository(reopenedLive, disk(), "h", processingDispatcher = UnconfinedTestDispatcher()),
                 FakeConnectionStateSource(),
                 ComposerDraftStore(),
                 projectionDispatcher = UnconfinedTestDispatcher(testScheduler),
@@ -281,7 +281,7 @@ class HistoryCacheReworkTest {
             val coverage = HistoryCoverage(unknown = true, unsignedIncomplete = true).received(received)
             val unsafe = HistoryPosition("", true, coverage)
             val live = Live().apply { projection.mergeHistoryPage("c", received, true) }
-            val repository = CachingConversationRepository(live, disk(), "h")
+            val repository = CachingConversationRepository(live, disk(), "h", processingDispatcher = UnconfinedTestDispatcher())
             repository.writeHistoryPosition("c", unsafe)
             assertFalse(disk().readHistoryPosition("h", "c")?.atStart ?: true)
             // Read independently saved contradictory metadata through a fresh cache instance.
@@ -334,7 +334,7 @@ class HistoryCacheReworkTest {
                         answer =
                             { cursor -> if (cursor.isEmpty()) page(20, 21, cursor = "nineteen") else page(6, 7, 8, 9, cursor = "five") }
                     }
-                val repository = CachingConversationRepository(live, disk(), "h")
+                val repository = CachingConversationRepository(live, disk(), "h", processingDispatcher = UnconfinedTestDispatcher())
                 if (!collectRows) {
                     val seed = repository.readHistoryPosition("c") ?: error("missing seed")
                     val newest = live.requestHistory("c", "", 0)
@@ -384,7 +384,7 @@ class HistoryCacheReworkTest {
                     store.clear()
                     collector.cancel()
                 }
-                val restored = CachingConversationRepository(Live(), disk(), "h")
+                val restored = CachingConversationRepository(Live(), disk(), "h", processingDispatcher = UnconfinedTestDispatcher())
                 assertEquals(
                     listOf(1, 2, 6, 7, 8, 9, 10, 11, 20, 21).map {
                         "m$it"
@@ -441,7 +441,7 @@ class HistoryCacheReworkTest {
                 object : ConversationRepository by FakeConversationRepository() {
                     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = flowOf(many)
                 }
-            val repository = CachingConversationRepository(live, disk(), "h")
+            val repository = CachingConversationRepository(live, disk(), "h", processingDispatcher = UnconfinedTestDispatcher())
             repository.writeHistoryPosition("c", saved.copy(coverage = coverage.received(page(2), newest = true)))
             val restored = CachingConversationRepository(Live(), disk(), "h").readHistoryPosition("c") ?: error("missing state")
             assertEquals("", restored.cursor)
@@ -508,7 +508,7 @@ class HistoryCacheReworkTest {
                     }
                 }
             val live = Live().apply { projection.mergeHistoryPage("c", page(1), true) }
-            val repository = CachingConversationRepository(live, gated, "h")
+            val repository = CachingConversationRepository(live, gated, "h", processingDispatcher = UnconfinedTestDispatcher())
             val writer =
                 launch {
                     if (point == "observer") {

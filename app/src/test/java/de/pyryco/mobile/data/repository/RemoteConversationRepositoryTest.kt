@@ -4115,7 +4115,7 @@ class RemoteConversationRepositoryTest {
             val cache = FileConversationCache(tmp.newFolder(), UnconfinedTestDispatcher(testScheduler))
             val older = ThreadItem.MessageItem(Message("older", "s-old", Role.Assistant, "offline history", Instant.parse(TS), false))
             assertTrue(cache.writeThread("host-a", "c-1", listOf(older)).isSuccess)
-            val repository = CachingConversationRepository(stable, cache, "host-a")
+            val repository = CachingConversationRepository(stable, cache, "host-a", processingDispatcher = UnconfinedTestDispatcher())
             val first = mutableListOf<List<ThreadItem>>()
             val initialReader = backgroundScope.launch { repository.observeMessages("c-1").collect { first += it } }
             runCurrent()

@@ -108,7 +108,13 @@ class CachingConversationRepositoryTest {
             val restored = listOf(message("m1"), boundary, message("m2"))
             val cache = RecordingCache(restored)
 
-            val drawn = CachingConversationRepository(delegate, cache, "server-a").observeMessages("conv-1").first()
+            val drawn =
+                CachingConversationRepository(
+                    delegate,
+                    cache,
+                    "server-a",
+                    processingDispatcher = UnconfinedTestDispatcher(),
+                ).observeMessages("conv-1").first()
 
             assertEquals(restored, drawn)
             assertEquals(emptyList<List<ThreadItem>>(), cache.writes)
@@ -122,7 +128,12 @@ class CachingConversationRepositoryTest {
             val emissions = mutableListOf<List<ThreadItem>>()
             val job =
                 launch {
-                    CachingConversationRepository(delegate, cache, "server-a").observeMessages("conv-1").collect {
+                    CachingConversationRepository(
+                        delegate,
+                        cache,
+                        "server-a",
+                        processingDispatcher = UnconfinedTestDispatcher(),
+                    ).observeMessages("conv-1").collect {
                         emissions +=
                             it
                     }
@@ -145,7 +156,17 @@ class CachingConversationRepositoryTest {
             val cache = RecordingCache(listOf(message("m1")))
             val emissions = mutableListOf<List<ThreadItem>>()
             val job =
-                launch { CachingConversationRepository(delegate, cache, "server-a").observeMessages("conv-1").collect { emissions += it } }
+                launch {
+                    CachingConversationRepository(
+                        delegate,
+                        cache,
+                        "server-a",
+                        processingDispatcher = UnconfinedTestDispatcher(),
+                    ).observeMessages("conv-1").collect {
+                        emissions +=
+                            it
+                    }
+                }
 
             live.value = listOf(message("m1"), message("m2"), message("t1", isStreaming = true))
             val written = listOf(message("m1"), message("m2"))
@@ -165,7 +186,17 @@ class CachingConversationRepositoryTest {
             val cache = RecordingCache(listOf(message("m1")))
             val emissions = mutableListOf<List<ThreadItem>>()
             val job =
-                launch { CachingConversationRepository(delegate, cache, "server-a").observeMessages("conv-1").collect { emissions += it } }
+                launch {
+                    CachingConversationRepository(
+                        delegate,
+                        cache,
+                        "server-a",
+                        processingDispatcher = UnconfinedTestDispatcher(),
+                    ).observeMessages("conv-1").collect {
+                        emissions +=
+                            it
+                    }
+                }
 
             live.value = listOf(message("m1"), message("m2"))
             live.value = emptyList()
@@ -189,7 +220,17 @@ class CachingConversationRepositoryTest {
             val cache = RecordingCache(listOf(message("m1"), message("a1"), offer, message("a2")))
             val emissions = mutableListOf<List<ThreadItem>>()
             val job =
-                launch { CachingConversationRepository(delegate, cache, "server-a").observeMessages("conv-1").collect { emissions += it } }
+                launch {
+                    CachingConversationRepository(
+                        delegate,
+                        cache,
+                        "server-a",
+                        processingDispatcher = UnconfinedTestDispatcher(),
+                    ).observeMessages("conv-1").collect {
+                        emissions +=
+                            it
+                    }
+                }
 
             // The daemon never replays the offer: the first page holds only its neighbours.
             live.value = listOf(message("m1"), message("a1"), message("a2"))
@@ -208,7 +249,17 @@ class CachingConversationRepositoryTest {
             val cache = RecordingCache(emptyList())
             val emissions = mutableListOf<List<ThreadItem>>()
             val job =
-                launch { CachingConversationRepository(delegate, cache, "server-a").observeMessages("conv-1").collect { emissions += it } }
+                launch {
+                    CachingConversationRepository(
+                        delegate,
+                        cache,
+                        "server-a",
+                        processingDispatcher = UnconfinedTestDispatcher(),
+                    ).observeMessages("conv-1").collect {
+                        emissions +=
+                            it
+                    }
+                }
 
             live.value = listOf(message("m1"), message("a1"), offer, message("a2"))
             live.value = emptyList()
@@ -226,7 +277,17 @@ class CachingConversationRepositoryTest {
             val cache = RecordingCache(listOf(offer, message("m1"), message("m2")))
             val emissions = mutableListOf<List<ThreadItem>>()
             val job =
-                launch { CachingConversationRepository(delegate, cache, "server-a").observeMessages("conv-1").collect { emissions += it } }
+                launch {
+                    CachingConversationRepository(
+                        delegate,
+                        cache,
+                        "server-a",
+                        processingDispatcher = UnconfinedTestDispatcher(),
+                    ).observeMessages("conv-1").collect {
+                        emissions +=
+                            it
+                    }
+                }
 
             // A page that does not overlap the cache at all: every cached row goes above it, in cached order.
             live.value = listOf(message("m3"))
@@ -247,7 +308,17 @@ class CachingConversationRepositoryTest {
             val cache = RecordingCache(listOf(sent(named)))
             val emissions = mutableListOf<List<ThreadItem>>()
             val job =
-                launch { CachingConversationRepository(delegate, cache, "server-a").observeMessages("conv-1").collect { emissions += it } }
+                launch {
+                    CachingConversationRepository(
+                        delegate,
+                        cache,
+                        "server-a",
+                        processingDispatcher = UnconfinedTestDispatcher(),
+                    ).observeMessages("conv-1").collect {
+                        emissions +=
+                            it
+                    }
+                }
 
             live.value = listOf(sent(MessageAttachment(ATTACHMENT_ID)), message("a1"))
 
@@ -275,7 +346,15 @@ class CachingConversationRepositoryTest {
             val emissions = mutableListOf<List<ThreadItem>>()
             val job =
                 launch {
-                    CachingConversationRepository(source, cache, "server-a").observeMessages("conv-1").collect { emissions += it }
+                    CachingConversationRepository(
+                        source,
+                        cache,
+                        "server-a",
+                        processingDispatcher = UnconfinedTestDispatcher(),
+                    ).observeMessages("conv-1").collect {
+                        emissions +=
+                            it
+                    }
                 }
 
             snapshots.value = ThreadSnapshot(emptyList(), setOf("mine"))
@@ -305,7 +384,13 @@ class CachingConversationRepositoryTest {
             val cache = fileCache()
             cache.writeThread("server-a", "conv-1", rows).getOrThrow()
 
-            val drawn = CachingConversationRepository(delegate, cache, "server-a").observeMessages("conv-1").first()
+            val drawn =
+                CachingConversationRepository(
+                    delegate,
+                    cache,
+                    "server-a",
+                    processingDispatcher = UnconfinedTestDispatcher(),
+                ).observeMessages("conv-1").first()
 
             assertEquals(rows, drawn)
         }
@@ -325,7 +410,17 @@ class CachingConversationRepositoryTest {
             val cache = RecordingCache(listOf(message("m1"), row, message("m2")))
             val emissions = mutableListOf<List<ThreadItem>>()
             val job =
-                launch { CachingConversationRepository(delegate, cache, "server-a").observeMessages("conv-1").collect { emissions += it } }
+                launch {
+                    CachingConversationRepository(
+                        delegate,
+                        cache,
+                        "server-a",
+                        processingDispatcher = UnconfinedTestDispatcher(),
+                    ).observeMessages("conv-1").collect {
+                        emissions +=
+                            it
+                    }
+                }
 
             live.value = listOf(message("m1"), row, message("m2"), message("m3"))
 
@@ -339,7 +434,16 @@ class CachingConversationRepositoryTest {
     fun `an in-flight turn writes nothing until it settles`() =
         runTest(UnconfinedTestDispatcher()) {
             val cache = RecordingCache(listOf(message("m1")))
-            val job = launch { CachingConversationRepository(delegate, cache, "server-a").observeMessages("conv-1").collect { } }
+            val job =
+                launch {
+                    CachingConversationRepository(
+                        delegate,
+                        cache,
+                        "server-a",
+                        processingDispatcher = UnconfinedTestDispatcher(),
+                    ).observeMessages("conv-1").collect {
+                    }
+                }
 
             live.value = listOf(message("m1"), message("t1", isStreaming = true, content = "Hel"))
             live.value =
@@ -361,7 +465,13 @@ class CachingConversationRepositoryTest {
         runTest(UnconfinedTestDispatcher()) {
             live.value = listOf(message("m1"))
 
-            val drawn = CachingConversationRepository(delegate, RecordingCache(emptyList()), "server-a").observeMessages("conv-1").first()
+            val drawn =
+                CachingConversationRepository(
+                    delegate,
+                    RecordingCache(emptyList()),
+                    "server-a",
+                    processingDispatcher = UnconfinedTestDispatcher(),
+                ).observeMessages("conv-1").first()
 
             assertEquals(listOf(message("m1")), drawn)
         }
@@ -370,7 +480,16 @@ class CachingConversationRepositoryTest {
     fun `a failed write is retried on the next change and logs a static event only`() =
         runTest(UnconfinedTestDispatcher()) {
             val cache = RecordingCache(emptyList(), failWrites = true)
-            val job = launch { CachingConversationRepository(delegate, cache, "server-SECRET").observeMessages("conv-SECRET").collect { } }
+            val job =
+                launch {
+                    CachingConversationRepository(
+                        delegate,
+                        cache,
+                        "server-SECRET",
+                        processingDispatcher = UnconfinedTestDispatcher(),
+                    ).observeMessages("conv-SECRET").collect {
+                    }
+                }
 
             live.value = listOf(message("m1"))
             cache.failWrites = false
@@ -478,7 +597,7 @@ class CachingConversationRepositoryTest {
     fun `the thread that issued the delete never writes its rows back`() =
         runTest(UnconfinedTestDispatcher()) {
             val cache = fileCache().also { it.seed() }
-            val repository = CachingConversationRepository(delegate, cache, "server-a")
+            val repository = CachingConversationRepository(delegate, cache, "server-a", processingDispatcher = UnconfinedTestDispatcher())
             val job = launch { repository.observeMessages("conv-1").collect { } }
             live.value = listOf(message("m1"), message("m3"))
             assertEquals(listOf(message("m1"), message("m3")), cache.readThread("server-a", "conv-1"))
@@ -507,7 +626,7 @@ class CachingConversationRepositoryTest {
     fun `a saved history position survives the row writer and reads back under this host`() =
         runTest(UnconfinedTestDispatcher()) {
             val cache = fileCache().also { it.seed() }
-            val repository = CachingConversationRepository(delegate, cache, "server-a")
+            val repository = CachingConversationRepository(delegate, cache, "server-a", processingDispatcher = UnconfinedTestDispatcher())
             val job = launch { repository.observeMessages("conv-1").collect { } }
             val position = HistoryPosition(cursor = "opaque-cursor", atStart = false)
 
@@ -534,7 +653,7 @@ class CachingConversationRepositoryTest {
     fun `a drawn thread trimmed at the row limit drops the saved history position`() =
         runTest(UnconfinedTestDispatcher()) {
             val cache = fileCache().also { it.seed() }
-            val repository = CachingConversationRepository(delegate, cache, "server-a")
+            val repository = CachingConversationRepository(delegate, cache, "server-a", processingDispatcher = UnconfinedTestDispatcher())
             val job = launch { repository.observeMessages("conv-1").collect { } }
             val position = HistoryPosition(cursor = "opaque-cursor", atStart = false)
             repository.writeHistoryPosition("conv-1", position)

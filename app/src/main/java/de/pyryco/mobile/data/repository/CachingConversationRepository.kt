@@ -8,12 +8,12 @@ import de.pyryco.mobile.data.cache.threadRowsWereTrimmed
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ordinaryId
 import de.pyryco.mobile.data.network.RelayLog
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -74,6 +74,7 @@ class CachingConversationRepository(
     private val cache: ConversationCache,
     private val serverId: String,
     private val attachments: AttachmentStore? = null,
+    private val processingDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : ConversationRepository by delegate,
     ThreadSnapshotSource {
     // Ids this destination deleted. The thread that issued the delete keeps collecting until its PopBack,
@@ -83,49 +84,63 @@ class CachingConversationRepository(
     private val drawnThreads = ConcurrentHashMap<String, List<ThreadItem>>()
 
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
-        observeThreadSnapshot(conversationId)
-            .map {
-                it.rows
-            }.distinctUntilChanged()
+        flow {
+            var previous: List<ThreadItem>? = null
+            observeThreadSnapshot(conversationId).collect { snapshot ->
+                if (withContext(processingDispatcher) { snapshot.rows != previous }) {
+                    previous = snapshot.rows
+                    emit(snapshot.rows)
+                }
+            }
+        }
 
     override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> =
         flow {
             var base = cache.readThread(serverId, conversationId)
+            val savedPosition = cache.readHistoryPosition(serverId, conversationId)
             var baseOrder =
-                base.receivedUnsignedHistoryOrder(
-                    cache
-                        .readHistoryPosition(serverId, conversationId)
-                        ?.coverage
-                        ?.unsignedPositions()
-                        .orEmpty(),
-                )
+                withContext(processingDispatcher) {
+                    base.receivedUnsignedHistoryOrder(savedPosition?.coverage?.unsignedPositions().orEmpty())
+                }
             var lastOrder = emptyMap<Any, ULong>()
             var lastWritten = base
             var lastDrawn = base
             delegate.threadSnapshots(conversationId).collect { snapshot ->
-                val live = snapshot.rows
-                // Awaiting delivery can hide the only live row; that is not a connection boundary.
-                if (live.isEmpty() && snapshot.suppressedUserMessageIds.isEmpty()) {
-                    base = settledThreadRows(lastDrawn)
-                    baseOrder = baseOrder + lastOrder
-                }
-                val restored =
-                    if (snapshot.suppressedUserMessageIds.isEmpty()) {
-                        base
-                    } else {
-                        base.filterNot {
-                            it is ThreadItem.MessageItem &&
-                                it.message.role == Role.User &&
-                                it.message.ordinaryId in snapshot.suppressedUserMessageIds
+                val drawn =
+                    withContext(processingDispatcher) {
+                        val live = snapshot.rows
+                        // Awaiting delivery can hide the only live row; that is not a connection boundary.
+                        if (live.isEmpty() && snapshot.suppressedUserMessageIds.isEmpty()) {
+                            base = settledThreadRows(lastDrawn)
+                            baseOrder = baseOrder + lastOrder
                         }
+                        val restored =
+                            if (snapshot.suppressedUserMessageIds.isEmpty()) {
+                                base
+                            } else {
+                                base.filterNot {
+                                    it is ThreadItem.MessageItem &&
+                                        it.message.role == Role.User &&
+                                        it.message.ordinaryId in snapshot.suppressedUserMessageIds
+                                }
+                            }
+                        val drawn =
+                            live.mergeUnsignedCachedRows(
+                                restored,
+                                baseOrder + snapshot.unsignedHistoryOrder,
+                                rendererOwners = lastDrawn,
+                            )
+                        lastDrawn = drawn
+                        lastOrder = snapshot.unsignedHistoryOrder
+                        drawn
                     }
-                val drawn = live.mergeUnsignedCachedRows(restored, baseOrder + snapshot.unsignedHistoryOrder, rendererOwners = lastDrawn)
-                lastDrawn = drawn
-                lastOrder = snapshot.unsignedHistoryOrder
                 drawnThreads[conversationId] = drawn
                 emit(snapshot.copy(rows = drawn))
-                val cacheable = cacheableThreadRows(drawn)
-                if (cacheable != lastWritten && conversationId !in deleted) {
+                val cacheable =
+                    withContext(processingDispatcher) {
+                        cacheableThreadRows(drawn).takeIf { it != lastWritten }
+                    }
+                if (cacheable != null && conversationId !in deleted) {
                     // A failed write leaves lastWritten behind, so the next change retries it. The cache is
                     // handed the drawn rows, not the already-trimmed cacheable ones, so it can see a trim at
                     // MAX_CACHED_THREAD_ROWS and drop the saved history position (#1354).
