@@ -224,11 +224,15 @@ internal class SessionErrorRecoveryScenario(
             val selected = connection != null && registry.selected.value === connection
             val unavailable = nodes(hasText("temporarily unavailable", substring = true)).isNotEmpty()
             val rejected = nodes(hasText("Pairing rejected", substring = true)).isNotEmpty()
+            val saveFailed = nodes(hasText("Could not save pairing", substring = true)).isNotEmpty()
+            val nameFailed = nodes(hasText("host name could not be saved", substring = true)).isNotEmpty()
+            val updateRequired = nodes(hasText("This app is too old", substring = true)).isNotEmpty()
             val confirm = nodes(hasText("Confirm pairing")).isNotEmpty()
             throw AssertionError(
                 "session-error arm=$arm phase=pair_return saved=$saved selected=$selected " +
                     "relay=${status?.relay?.javaClass?.simpleName} session=${status?.pyrycode?.javaClass?.simpleName} " +
-                    "unavailable=$unavailable rejected=$rejected confirm=$confirm",
+                    "unavailable=$unavailable rejected=$rejected save_failed=$saveFailed name_failed=$nameFailed " +
+                    "update_required=$updateRequired confirm=$confirm",
                 failure,
             )
         }
