@@ -143,7 +143,7 @@ class HistoryReconciliationTest {
         }
 
     @Test
-    fun liveOverlap_retainsUserSeparator_andAddsOnlyMissingSequences() =
+    fun liveOverlap_firstDurableEvidenceRepairsSeparatorSides_andAddsOnlyMissingSequences() =
         runTest {
             val projection = ThreadProjection()
             projection.applyAssistantDelta(LiveSessionEvent.AssistantDelta("c", "t", 1, "b"))
@@ -154,7 +154,7 @@ class HistoryReconciliationTest {
                 page(delta(1, 0, "a"), delta(2, 1, "b"), delta(3, 2, "c"), delta(4, 3, "d"), delta(5, 4, "e"), user(6, "echo"), end(7))
             repeat(2) { projection.mergeHistoryPage("c", history, true) }
             val rows = projection.observe("c").first()
-            assertEquals(listOf("abc", "echo", "de"), rows.messages().map { it.content })
+            assertEquals(listOf("abcde", "echo"), rows.messages().map { it.content })
             assertEquals(listOf(0, 1, 2, 3, 4), rows.seqs())
             assertTrue(rows.messages().none { it.isStreaming })
         }
