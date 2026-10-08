@@ -97,6 +97,23 @@ unmatched arm's key is deliberately position-derived, the one namespace where po
 
 **Above-delimiter opacity (since [#136](../codebase/136.md)).** Each row is wrapped in `Box(Modifier.alpha(rowAlpha))` around the existing `when (row)` dispatch. `rowAlpha` is computed inline: a `chronologicalIndex` is reconstructed from the reversed-list index (`rows.size - 1 - reversedIndex`, since #782 — pre-#782 this read `state.items.size`), then compared strict-`<` against a `cutoffChronologicalIndex = remember(state.items) { mostRecentSessionBoundaryIndex(state.items) }` — **this cutoff itself still reads `state.items`, unchanged by #782**, because `rows` shares a prefix with `items` index-for-index and only ever appends unmatched queued rows after them, so the two index spaces agree wherever a boundary can land. Rows above the cutoff render at the file-private `ABOVE_DELIMITER_ALPHA = 0.55f` constant; rows at or after the cutoff (including the boundary itself) render at `1f`. `mostRecentSessionBoundaryIndex` is an `internal` top-level helper at the bottom of the file (`items.indexOfLast { it is ThreadItem.SessionBoundary }`); its `-1` return for the no-boundary case combines with the strict `<` to give AC3 ("zero boundaries → all rows full opacity") for free. The wrap inherits to every row variant — user/assistant `MessageBubble`, `ToolCallRow`, nested `SessionBoundaryDelimiter`, and since #782 `QueuedMessageRow` — because `Modifier.alpha(...)` is a render-only `graphicsLayer` effect and none of the row composables hold internal opacity state. **Interaction is not gated** — `ToolCallRow`'s `clickable` `Surface` stays expandable above the cutoff (alpha runs in the draw layer, after pointer input). That matches the user-story intent ("still legible, can scroll up and re-read"); if a future ticket gates above-cutoff interaction, it adds the gate at the inner `Surface`'s `enabled =` (not by stripping the alpha modifier).
 
+### Folded-row content types (#1954)
+
+`itemsIndexed(reversedRows)` supplies `ThreadRow.contentType()` independently of
+`listKey`: keys identify entries, while static, non-null kind tokens let Compose
+reuse compositions across different entries of the same rendered kind. User and
+assistant bubbles share `message`; `Role.Tool` uses `tool`, matching the rendering
+dispatch. Tool-run headers, queued rows and agent-start markers use `tool-run`,
+`queued` and `agent-start`. Each remaining delivered kind has its own token:
+`session-boundary`, `unrecognized`, `banner`, `compaction-boundary`, `model-refusal`,
+`background-task-lifecycle` and `stopped-turn`.
+
+Identity, text, position, nesting, run expansion and agent completion do not change
+the type. A matched queued row retains its message key on delivery but changes
+from the queued kind to the delivered kind. Auxiliary prompt/history slots are
+outside this folded-row contract. Keep the mapping exhaustive as row kinds grow;
+see [production-layout and mapping coverage](thread-screen-testing.md#folded-row-composition-reuse-1954).
+
 ### Subagent tool-row nesting (#896)
 
 Split out to [Thread screen — subagent tool-row nesting](thread-screen-subagent-tool-rows.md) on 2026-10-01 to keep this document under the docs guard's size cap. See that document for the full section.

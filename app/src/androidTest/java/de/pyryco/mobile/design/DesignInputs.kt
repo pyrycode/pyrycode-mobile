@@ -91,6 +91,9 @@ class DesignInputs {
     /** While `true`, the thread's question answer throws, as a failed send does, so Continue ends `Failed` (#1502). */
     @Volatile var failQuestionSends = false
 
+    /** Test-only second-leg failure after Save as channel has confirmed promotion (#1737). */
+    @Volatile var failSystemPromptWrites = false
+
     /** The view models the override built last, for states only an event reaches. */
     val thread = MutableStateFlow<ThreadViewModel?>(null)
     val scanner = MutableStateFlow<ScannerViewModel?>(null)
@@ -159,6 +162,14 @@ class DesignInputs {
                         override fun observeSessionFacts(conversationId: String) = sessionFacts
 
                         override fun observeContextUsage(conversationId: String) = contextUsage
+
+                        override suspend fun setSystemPrompt(
+                            conversationId: String,
+                            systemPrompt: String?,
+                        ) {
+                            check(!failSystemPromptWrites) { "design: the system prompt write fails" }
+                            fake.setSystemPrompt(conversationId, systemPrompt)
+                        }
                     }
                 val connection =
                     object : ConnectionStateSource {

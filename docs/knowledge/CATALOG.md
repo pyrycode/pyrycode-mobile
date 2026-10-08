@@ -227,3 +227,5 @@ _(none yet — system overview will land when there's more than one screen to ma
 - [Conversation cache — Removal on unpair — forgetRemovedHost](features/conversation-cache-removal.md) — host and conversation eviction.
 - [Conversation cache — Testing](features/conversation-cache-testing.md) — fresh-instance persistence, restoration and durability regression coverage.
 - [Conversation cache — Related](features/conversation-cache-related.md) — cache design and owning-topic references.
+
+- [Thread screen — foreground read tracking tests](features/thread-screen-testing-foreground-read-tracking.md): production list-host composition isolation, content-edge qualification and retained gate evidence; split from thread-screen-testing.md.

@@ -236,6 +236,25 @@ internal fun ThreadRow.listKey(chronologicalIndex: Int): String =
         is ThreadRow.AgentStartMarker -> "agent-start:$agentId"
     }
 
+/** Composition reuse follows rendered kind, independently of the row's key and changing content. */
+internal fun ThreadRow.contentType(): String =
+    when (this) {
+        is ThreadRow.Delivered ->
+            when (item) {
+                is ThreadItem.MessageItem -> if (item.message.role == Role.Tool) "tool" else "message"
+                is ThreadItem.SessionBoundary -> "session-boundary"
+                is ThreadItem.UnrecognizedMessage -> "unrecognized"
+                is ThreadItem.Banner -> "banner"
+                is ThreadItem.CompactionBoundary -> "compaction-boundary"
+                is ThreadItem.ModelRefusal -> "model-refusal"
+                is ThreadItem.BackgroundTaskLifecycle -> "background-task-lifecycle"
+                is ThreadItem.StoppedTurn -> "stopped-turn"
+            }
+        is ThreadRow.Queued -> "queued"
+        is ThreadRow.ToolRun -> "tool-run"
+        is ThreadRow.AgentStartMarker -> "agent-start"
+    }
+
 private fun ThreadItem.listKey(): String =
     when (this) {
         is ThreadItem.MessageItem -> "msg:${message.id}"

@@ -515,18 +515,72 @@ This judges notice reuse, not Archive-frame or app-wide parity.
 - **Compact:** as the Channels tab.
 - **Routed:** none
 
+### Prompt-failed frames — #1737
+
+Both **Create channel / Prompt failed `784:7095`** and **Save as channel / Prompt failed
+`784:7134`** are **audited, mismatch**. This comparison covers only these two frames,
+from `CreateChannelModalBinding` in `ChannelListScreen` and the `SaveAsChannelDialog`
+binding in `ThreadScreen`.
+
+| Frame | App capture / sidecar | Fresh Figma export / node metadata | Comparisons |
+|---|---|---|---|
+| Create channel / Prompt failed | [PNG](create-channel-prompt-failed.png), [sidecar](create-channel-prompt-failed.txt) | [PNG](figma-784-7095.png), [XML](figma-784-7095-metadata.xml) | [Side-by-side](create-channel-prompt-failed-side-by-side.png), [overlay](create-channel-prompt-failed-overlay.png) |
+| Save as channel / Prompt failed | [PNG](save-as-channel-prompt-failed.png), [sidecar](save-as-channel-prompt-failed.txt) | [PNG](figma-784-7134.png), [XML](figma-784-7134-metadata.xml) | [Side-by-side](save-as-channel-prompt-failed-side-by-side.png), [overlay](save-as-channel-prompt-failed-overlay.png) |
+
+- **Provenance:** refreshed 2026-10-08 after the selector repair, full configured
+  `pixel8Api35` API 35 `google_apis_playstore`, with `requireRealSystemBars=true`.
+  Nonblank hardware-rendered 412×892 PNGs, density/font scale 1.0, fixed dark,
+  `syntheticBars=false`, real 24 px status/navigation bars. The retained
+  [measurement report](1737-evidence.txt) records the command and source blobs;
+  current capture source blob is `2bc0ef9cc24c9ffec147c6d47077d634309db25a`
+  (formatting-only retained source `6e56b0a382496d96062a1640a63400ba9961d7aa`).
+  Figma exports/metadata were fetched on 2026-10-08; comparisons use native scale.
+  No 320×700 capture was added.
+- **Execution:** [fresh full-image XML](1737-rework-results.xml), timestamp
+  2026-10-08T08:48:58 UTC: **1 executed/passed, 0 failed/errors/skipped**.
+  `ListDesignCaptureTest.promptFailedFramesAt412By892` is present and passed,
+  covering both states sequentially. [Focused ATD XML](1737-atd-rework-results.xml)
+  records **1 executed/passed, 0 failed/errors/skipped**. The
+  [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1960)
+  records the subsequent full UI gate at commit `8703c25376a3`: **212 executed/passed,
+  0 failed/errors, 1 skipped**, with this method passed; scripted-all:
+  **22 executed/passed, 0 failed/errors/skipped**. These supersede the report's
+  historical pending-gate note. ATD proves routing; full-image pixels supply the audit.
+- **State:** assembled app creation/promotion succeeds, then each actual repository
+  consumer rejects the nonblank prompt write. Exact `create_channel_prompt_failed` /
+  `save_as_channel_prompt_failed` errors are asserted. Both retain `Release notes`
+  and `Summarise each merged pull request in one plain sentence for the release notes.`
+  Name is locked, prompt editable, error final in content, OK enabled. Locked-name
+  alpha **0.38039216** meets 0.38 ±0.01. Each focused modal observed open IME,
+  physical Back, then hidden/zero dialog IME before and after capture. Overrides,
+  temporary source collectors and owned fixtures are restored afterwards.
+
+| Aspect, both frames | Measurement / verdict |
+|---|---|
+| Prompt well | **Mismatch:** app 112 dp versus frame 132 dp; [#1957](https://github.com/pyrycode/pyrycode-mobile/issues/1957) |
+| Error line box | **Mismatch:** app 36 dp versus frame 40 dp (outer line trimming); [#1958](https://github.com/pyrycode/pyrycode-mobile/issues/1958) |
+| Centered group | App 280 dp versus frame 304 dp total; name/prompt tops displaced +12.5 dp by the shorter group. No independent shell-centering finding |
+| Geometry / spacing | Match within 2 dp: 28 dp gutters, 356 dp field width, 52 dp name well, 8 dp label gap, 12 dp block/error gaps, 16 dp field text padding, 20 dp action gap |
+| Borders / radii / asset | Match: 1 dp Cancel/rule borders, no well borders, 6 dp well/action radii, 28 dp circle-xmark `ic_modal_close` asset; 44 dp outer clipping |
+| Insets / anchored controls | Header y=48 versus frame y=24 after +24 status inset; footer bottom y=844 versus frame y=868 after −24 navigation inset. Bottom clearance 892−24−844=24 dp. Centered field coordinates retain their screen origin; do not subtract status inset |
+| Colours / type | Exact role samples: shell #001D34, title/labels #CFE4FF, primary #9DCBFC, error #FFB4AB, field text #E0E2E8, OK text #003355; well On Primary at 41%, rule Inverse Primary at 60%. Roboto titleLarge 22/28/400, labelLarge 14/20/600, bodyMedium 14/20/400, emphasized bodyLarge 16/24/500; error line-box treatment routed separately |
+| Values / actions | Match: preserved prompt/name, locked-name opacity, final-content error, enabled OK |
+
+The two linked findings cover both frames. Within-tolerance button-width differences
+are not findings. Platform chrome, other states and app-wide parity are outside this audit.
+
 ## Gaps
 
 States reachable from `MainActivity` with no current Mobile frame, plus Edit chat, the one framed state that is not
 reachable and so has no capture. Every state #1431 listed here now has a frame in List states `670:5299` and a
-section above. The saving, failure, snackbar and Archive loading and error states raised
-on #1504 have no frame; #1592 asks for frames or an out-of-reference decision.
+section above. #1592 resolved the saving, inline failure, host-unavailable, snackbar and Archive
+loading/error references; see the [inventory](../README.md). The two new prompt-failed
+frames are audited above by #1737; failure notices were captured by #1604.
 
 | State | Capture | Owning ticket | Routed |
 |---|---|---|---|
 | Edit chat modal `671:5499` (unreachable since #1563; chats are renamed from the thread's More actions, Rename) | none | #827 | none: not reachable |
 | Archive, Discussions tab with rows | `archive-discussions.png`, `archive-discussions-compact.png` | #1265 | #1487 |
-| List-side saving, failure and snackbar states; Archive loading and error | none | #958, #957, #827, #667, #1277, #1265 | #1592 |
 
 Create folder and the pickers' new-folder dialog are reachable only from `AddWorkspaceModal` and `WorkspacePicker`
 (below), so they are not reachable. Paste code is the Pair Screen, audited in `onboarding/`.

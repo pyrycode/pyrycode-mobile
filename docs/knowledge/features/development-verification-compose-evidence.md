@@ -269,6 +269,18 @@ For bar-free frame comparisons, measure visible footer surfaces separately from
 the status inset from centered field coordinates. See the
 [retained measurements](../../../app/src/androidTest/assets/design-1220/list/1862-evidence.txt).
 
+The capture fake outlives individual methods. Cleaning up a method's owned fixtures
+cannot make a visible-name selector unique when another method left a same-name
+channel or chat. For temporary promotion routes, use the chat-row tag plus a unique
+route name for both scroll and click, assert the opened conversation ID, then replace
+the form name with the drawn value. Keep same-name decoys unchanged and delete only
+owned fixtures. Also inject second-leg prompt failures into both consumers:
+`HostConversationSource` supplies list creation, while `DesignInputs` supplies the
+thread repository separately. A list-only override can capture Create's failure while
+Save still succeeds. The [prompt-failed audit](../../../app/src/androidTest/assets/design-1220/list/index.md#prompt-failed-frames--1737)
+exercises both paths. Include multiline prompt content when measuring the well;
+a default or one-line capture does not reveal content-dependent height differences.
+
 `ThreadDesignCaptureTest` (#1432) audited the thread, composer and thread
 status states through this harness. It runs in the UI gate on ATD, so a change
 to a thread panel, menu or status band can break it. Header-menu captures use
