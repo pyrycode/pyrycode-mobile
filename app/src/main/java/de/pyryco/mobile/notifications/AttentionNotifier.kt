@@ -84,6 +84,9 @@ class AttentionNotifier(
     private val ledger = AlertLedger(ledgerFile)
     private val notificationLock = Mutex()
 
+    /** Android readback can lag notify; a present null records a prompt or unidentified completion replacement. */
+    private val postedCompletionEntries = mutableMapOf<String, ULong?>()
+
     init {
         scope.launch { alerts.collect { handle(it) } }
         scope.launch {
@@ -99,16 +102,21 @@ class AttentionNotifier(
                             if (marks != previous[serverId]?.get(conversationId)) {
                                 val tag = digest(serverId, conversationId)
                                 val completionEntryId =
-                                    posted
-                                        .firstOrNull { it.tag == tag && it.id == 0 }
-                                        ?.notification
-                                        ?.extras
-                                        ?.getString(EXTRA_COMPLETION_ENTRY_ID)
-                                        ?.toULongOrNull()
+                                    if (tag in postedCompletionEntries) {
+                                        postedCompletionEntries[tag]
+                                    } else {
+                                        posted
+                                            .firstOrNull { it.tag == tag && it.id == 0 }
+                                            ?.notification
+                                            ?.extras
+                                            ?.getString(EXTRA_COMPLETION_ENTRY_ID)
+                                            ?.toULongOrNull()
+                                    }
                                 if (marks.coversCompletion(completionEntryId) &&
                                     readMarksOf(serverId, conversationId)?.coversCompletion(completionEntryId) == true
                                 ) {
                                     manager.cancel(tag, 0)
+                                    postedCompletionEntries.remove(tag)
                                     RelayLog.d { "event=attention_alert_cancelled reason=daemon_read" }
                                 }
                             }
@@ -176,6 +184,7 @@ class AttentionNotifier(
                 ).build()
         return try {
             manager.notify(tag, 0, notification)
+            postedCompletionEntries[tag] = alert.historyEntryId.takeIf { alert.kind == AttentionAlert.Kind.TurnCompleted }
             "posted"
         } catch (e: SecurityException) {
             // The permission can be revoked between the check and the post.

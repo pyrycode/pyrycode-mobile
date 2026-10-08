@@ -5,6 +5,7 @@ import android.app.Application
 import android.app.Notification
 import android.app.NotificationManager
 import android.content.Intent
+import android.service.notification.StatusBarNotification
 import androidx.core.content.ContextCompat
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -40,6 +41,10 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.Implementation
+import org.robolectric.annotation.Implements
+import org.robolectric.shadows.ShadowNotificationManager
 import org.xmlpull.v1.XmlPullParser
 import java.io.File
 import kotlin.math.roundToInt
@@ -448,6 +453,48 @@ class AttentionNotifierTest {
     }
 
     @Test
+    @Config(shadows = [LaggingActiveNotificationManager::class])
+    fun lateConfirmationCancelsEvenBeforeAndroidReadbackExposesThePostedCompletion() =
+        withNotifier {
+            marks("host-a", "conv", null, 6u)
+            (shadowOf(manager) as LaggingActiveNotificationManager).snapshot = emptyArray()
+            alerts.emit(TURN.copy(historyEntryId = 5u))
+            assertEquals(1, posted().size)
+            assertTrue(manager.activeNotifications.isEmpty())
+            marks("host-a", "conv", 5u, 6u)
+            assertTrue(posted().isEmpty())
+        }
+
+    @Test
+    @Config(shadows = [LaggingActiveNotificationManager::class])
+    fun staleAndroidReadbackCannotCancelThePromptReplacingACoveredCompletion() =
+        withNotifier {
+            marks("host-a", "conv", 4u, 6u)
+            alerts.emit(TURN.copy(historyEntryId = 5u))
+            (shadowOf(manager) as LaggingActiveNotificationManager).snapshot = manager.activeNotifications
+            alerts.emit(AttentionAlert("host-a", "conv", AttentionAlert.Kind.Prompt, "replacement"))
+            val prompt = posted().single()
+            assertEquals(app.getString(R.string.notification_prompt), prompt.extras.getString(Notification.EXTRA_TEXT))
+            marks("host-a", "conv", 5u, 6u)
+            assertEquals(prompt, posted().single())
+        }
+
+    @Test
+    @Config(shadows = [LaggingActiveNotificationManager::class])
+    fun staleAndroidReadbackCannotCancelTheNewerUnreadCompletionReplacingACoveredReplay() =
+        withNotifier {
+            marks("host-a", "conv", 4u, 6u)
+            alerts.emit(TURN.copy(historyEntryId = 5u))
+            (shadowOf(manager) as LaggingActiveNotificationManager).snapshot = manager.activeNotifications
+            alerts.emit(TURN.copy(key = "newer", historyEntryId = 7u))
+            val newer = posted().single()
+            marks("host-a", "conv", 5u, 7u)
+            assertEquals(newer, posted().single())
+            marks("host-a", "conv", 7u, 7u)
+            assertTrue(posted().isEmpty())
+        }
+
+    @Test
     fun cancellationIsHostIsolatedAndIndependentOfAllPostingGates() =
         withNotifier {
             alerts.emit(TURN)
@@ -593,6 +640,15 @@ class AttentionNotifierTest {
         readMarks = readMarks,
         readMarksOf = readMarksOf,
     )
+
+    /** The OS can still expose the previous notification while its enqueue worker processes a replacement. */
+    @Implements(NotificationManager::class)
+    class LaggingActiveNotificationManager : ShadowNotificationManager() {
+        var snapshot: Array<StatusBarNotification>? = null
+
+        @Implementation
+        override fun getActiveNotifications(): Array<StatusBarNotification> = snapshot ?: super.getActiveNotifications()
+    }
 
     private companion object {
         val TURN = AttentionAlert("host-a", "conv", AttentionAlert.Kind.TurnCompleted, "t1")
