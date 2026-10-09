@@ -14,6 +14,16 @@ class BackgroundAgentViewportDeviceTest : BackgroundAgentViewportTest() {
 
     @Test override fun followerMultipleCompletions_keepNewestEveryFrame() = super.followerMultipleCompletions_keepNewestEveryFrame()
 
+    @Test override fun delayedReceipt_followerKeepsNewestEveryFrame() = super.delayedReceipt_followerKeepsNewestEveryFrame()
+
+    @Test override fun delayedReceiptAtNewest_followerKeepsNewestEveryFrame() = super.delayedReceiptAtNewest_followerKeepsNewestEveryFrame()
+
+    @Test override fun delayedReceipt_readerKeepsStationaryRows_collapsed() = super.delayedReceipt_readerKeepsStationaryRows_collapsed()
+
+    @Test override fun delayedReceipt_readerKeepsStationaryRows_uncollapsed() = super.delayedReceipt_readerKeepsStationaryRows_uncollapsed()
+
+    @Test override fun delayedReceiptAtNewest_readerKeepsStationaryRows() = super.delayedReceiptAtNewest_readerKeepsStationaryRows()
+
     @Test override fun visibleCompletion_preservesStationaryRows_collapsed() = super.visibleCompletion_preservesStationaryRows_collapsed()
 
     @Test override fun visibleCompletion_preservesStationaryRows_uncollapsed() =

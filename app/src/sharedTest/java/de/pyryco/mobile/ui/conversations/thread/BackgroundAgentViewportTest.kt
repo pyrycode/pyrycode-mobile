@@ -20,6 +20,8 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import de.pyryco.mobile.data.model.BackgroundTask
+import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.BackgroundTaskUpdate
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
@@ -54,6 +56,7 @@ open class BackgroundAgentViewportTest {
     private val mainRowFrames = mutableListOf<Map<Any, Int?>>()
     private val tallVisibleFrames = mutableListOf<Boolean>()
     private var watchVacatedBoundary = false
+    private var remainingOlderBlockHeight = 0
     private val vacatedBoundaryFrames = mutableListOf<Float>()
     private val ends = mutableListOf<Pair<Int, Int>>()
 
@@ -70,7 +73,8 @@ open class BackgroundAgentViewportTest {
         assertTrue(
             "other block remains running",
             state.value.items.none {
-                it is ThreadItem.BackgroundTaskLifecycle && it.taskId == "ta" &&
+                it is ThreadItem.BackgroundTaskLifecycle &&
+                    it.taskId == "ta" &&
                     it.terminal != null
             },
         )
@@ -85,6 +89,95 @@ open class BackgroundAgentViewportTest {
         compose.runOnUiThread { finish(setOf("a", "b")) }
         frames(8)
         assertNewestFrames()
+    }
+
+    @Test open fun delayedReceipt_followerKeepsNewestEveryFrame() = delayedFollower(newest = false)
+
+    @Test open fun delayedReceiptAtNewest_followerKeepsNewestEveryFrame() = delayedFollower(newest = true)
+
+    @Test open fun delayedReceipt_readerKeepsStationaryRows_collapsed() = delayedReader(collapsed = true, newest = false)
+
+    @Test open fun delayedReceipt_readerKeepsStationaryRows_uncollapsed() = delayedReader(collapsed = false, newest = false)
+
+    @Test open fun delayedReceiptAtNewest_readerKeepsStationaryRows() = delayedReader(collapsed = false, newest = true)
+
+    private fun delayedFollower(newest: Boolean) {
+        mount(collapsed = false)
+        recording = true
+        compose.mainClock.autoAdvance = false
+        compose.runOnUiThread { finishRoster() }
+        frames(5)
+        assertNewestFrames()
+        compose.runOnUiThread { finish(setOf("a"), newest) }
+        frames(8)
+        assertNewestFrames()
+        compose.runOnUiThread { finish(setOf("a"), newest) }
+        frames(3)
+        assertNewestFrames()
+    }
+
+    private fun delayedReader(
+        collapsed: Boolean,
+        newest: Boolean,
+    ) {
+        mount(collapsed)
+        compose.runOnUiThread { finishRoster() }
+        compose.waitForIdle()
+        val rows = foldBackgroundAgentBlocks(foldQueuedRows(state.value.items, emptyList()), state.value.items, state.value.backgroundTasks)
+        val displayed = if (collapsed) foldToolRuns(rows, emptySet()) else rows
+        val key = if (collapsed) "msg:a-1" else "msg:a-2"
+        val index = displayed.asReversed().indexOfFirst { it.listKey(0) == key }
+        assertTrue("finished block must have a displayed child", index >= 0)
+        list().performScrollToIndex(index)
+        compose.runOnIdle { listState.dispatchRawDelta(12f) }
+        compose.waitForIdle()
+        assertEquals(
+            "already-finished child is the lazy anchor",
+            key,
+            listState.layoutInfo.visibleItemsInfo
+                .first {
+                    it.index ==
+                        listState.firstVisibleItemIndex
+                }.key,
+        )
+        anchor =
+            bubble("old-35")
+                .assertIsDisplayed()
+                .fetchSemanticsNode()
+                .layoutInfo.coordinates
+        stationaryKey = "msg:old-35"
+        val top = requireNotNull(anchor).positionInRoot().y
+        recording = true
+        compose.mainClock.autoAdvance = false
+        compose.runOnUiThread { finish(setOf("a"), newest) }
+        frames(8)
+        assertStationaryFrames(top)
+        compose.runOnUiThread { finish(setOf("a"), newest) }
+        frames(3)
+        assertStationaryFrames(top)
+        assertTrue("reader must remain unfollowed", listState.firstVisibleItemIndex > 0)
+    }
+
+    private fun finishRoster() {
+        state.value =
+            state.value.copy(
+                backgroundTasks =
+                    BackgroundTaskRoster(
+                        listOf(
+                            BackgroundTask(
+                                taskId = "ta",
+                                toolCallId = "a",
+                                taskType = "local_agent",
+                                description = "Background agent",
+                                truncatedFields = null,
+                                latestUpdate = null,
+                                finish = BackgroundTaskUpdate("", "completed", "", null),
+                                isFinished = true,
+                            ),
+                        ),
+                        droppedTasks = 0,
+                    ),
+            )
     }
 
     @Test open fun visibleCompletion_preservesStationaryRows_collapsed() = visibleReader(collapsed = true)
@@ -186,12 +279,20 @@ open class BackgroundAgentViewportTest {
                     .first { it.key == key }
                     .size
         }
+        listOf("msg:b", "msg:b-1", "msg:b-2").forEach { key ->
+            list().performScrollToIndex(index(key))
+            compose.waitForIdle()
+            remainingOlderBlockHeight +=
+                listState.layoutInfo.visibleItemsInfo
+                    .first { it.key == key }
+                    .size
+        }
         list().performScrollToIndex(index("msg:tall-a"))
         compose.waitForIdle()
         val info = listState.layoutInfo
         val height = info.visibleItemsInfo.first { it.key == "msg:tall-a" }.size
-        // Keep the block's actual older boundary just outside the viewport, with its root still measured.
-        val offset = height + olderBlockHeight - info.viewportSize.height + info.beforeContentPadding - 20
+        // Read inside the tall child: the root and older children are wholly offscreen.
+        val offset = height - info.viewportSize.height + info.beforeContentPadding - 20
         compose.runOnIdle { listState.dispatchRawDelta(offset.toFloat()) }
         compose.waitForIdle()
         val old = listState.layoutInfo
@@ -202,8 +303,9 @@ open class BackgroundAgentViewportTest {
                     setOf("msg:a", "msg:a-1", "msg:a-2", "msg:tall-a")
             },
         )
-        val root = old.visibleItemsInfo.first { it.key == "msg:a" }
-        val boundary = (old.viewportSize.height - old.beforeContentPadding - root.offset - root.size).toFloat()
+        assertTrue("only the tall child is measured in the old viewport", old.visibleItemsInfo.all { it.key == "msg:tall-a" })
+        val child = old.visibleItemsInfo.first { it.key == "msg:tall-a" }
+        val boundary = (old.viewportSize.height - old.beforeContentPadding - child.offset - child.size - olderBlockHeight).toFloat()
         watchVacatedBoundary = true
         completeAndRecord("a")
         assertTrue("must draw remaining block against the vacated older boundary", vacatedBoundaryFrames.isNotEmpty())
@@ -342,9 +444,12 @@ open class BackgroundAgentViewportTest {
                                     val info = listState.layoutInfo
                                     tallVisibleFrames += info.visibleItemsInfo.any { it.key == "msg:tall-a" }
                                     if (watchVacatedBoundary && info.visibleItemsInfo.none { it.key == "msg:tall-a" }) {
-                                        info.visibleItemsInfo.firstOrNull { it.key == "msg:b" }?.let {
+                                        info.visibleItemsInfo.firstOrNull { it.key == "msg:tall-b" }?.let {
                                             vacatedBoundaryFrames +=
-                                                (info.viewportSize.height - info.beforeContentPadding - it.offset - it.size).toFloat()
+                                                (
+                                                    info.viewportSize.height - info.beforeContentPadding - it.offset - it.size -
+                                                        remainingOlderBlockHeight
+                                                ).toFloat()
                                         }
                                     }
                                     if (mainRowBaselines.isNotEmpty()) {
@@ -389,7 +494,10 @@ open class BackgroundAgentViewportTest {
         frames(3)
     }
 
-    private fun finish(ids: Set<String>) {
+    private fun finish(
+        ids: Set<String>,
+        newest: Boolean = false,
+    ) {
         val terminal =
             ids.map {
                 ThreadItem.BackgroundTaskLifecycle(
@@ -400,7 +508,7 @@ open class BackgroundAgentViewportTest {
             }
         // Terminal receipts precede the later main rows: completion must really move into history.
         val items = state.value.items
-        val insertion = items.indexOfFirst { it is ThreadItem.MessageItem && it.message.id == "main-6" }
+        val insertion = if (newest) items.size else items.indexOfFirst { it is ThreadItem.MessageItem && it.message.id == "main-6" }
         state.value = state.value.copy(items = items.take(insertion) + terminal + items.drop(insertion))
     }
 

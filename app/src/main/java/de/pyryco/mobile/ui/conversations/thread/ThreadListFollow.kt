@@ -172,6 +172,7 @@ internal class ThreadListViewport(
         private set
     private var previousRows = emptyList<ThreadRow>()
     private var previousBlocks = emptyList<ThreadRow>()
+    private val rowHeights = mutableMapOf<Any, Int>()
     var relocationPending = false
         private set
     private var relocationAnchor: ThreadAnchorTransfer? = null
@@ -188,17 +189,33 @@ internal class ThreadListViewport(
         if (rows === previousRows && blocks === previousBlocks) return null
         val oldRows = previousRows
         val oldBlocks = previousBlocks
-        val previouslyRunning =
-            oldBlocks.filterIsInstance<ThreadRow.AgentStartMarker>().filter { !it.finished }.mapTo(
-                HashSet(),
-            ) { it.agentId }
+        // Controls can finish a roster before the terminal receipt supplies the final position.
+        // Compare placement against common stationary rows, rather than the marker's status edge.
+        val stationaryKeys =
+            oldBlocks
+                .filter { it !is ThreadRow.Delivered || it.agentBlockId == null }
+                .mapTo(HashSet()) { it.listKey(0) }
+                .intersect(blocks.mapTo(HashSet()) { it.listKey(0) })
+
+        fun placements(source: List<ThreadRow>): Map<String, Any?> {
+            var olderKey: Any? = null
+            val positions = mutableMapOf<String, Any?>()
+            source.forEach { row ->
+                val key = row.listKey(0)
+                if (key in stationaryKeys) olderKey = key
+                val agent = (row as? ThreadRow.Delivered)?.agentBlockId
+                if (agent != null && key == "msg:$agent") positions[agent] = olderKey
+            }
+            return positions
+        }
+        val oldPlacements = placements(oldBlocks)
+        val newPlacements = placements(blocks)
         val finished =
             blocks
                 .filterIsInstance<ThreadRow.AgentStartMarker>()
-                .filter {
-                    it.finished && it.agentId in previouslyRunning
-                }.mapTo(HashSet()) { it.agentId }
-        if (finished.isEmpty() || oldRows.map { it.listKey(0) } == rows.map { it.listKey(0) }) return null
+                .filter { it.finished && it.agentId in oldPlacements && oldPlacements[it.agentId] != newPlacements[it.agentId] }
+                .mapTo(HashSet()) { it.agentId }
+        if (finished.isEmpty()) return null
         val movedMessages =
             oldBlocks
                 .filterIsInstance<ThreadRow.Delivered>()
@@ -229,18 +246,18 @@ internal class ThreadListViewport(
             val oldReversed = oldRows.asReversed()
             val oldestMoving = info.visibleItemsInfo.filter { it.key in movingKeys }.maxByOrNull { it.index }
             val oldIndex = oldReversed.indexOfFirst { it.listKey(0) == oldestMoving?.key }
-            val olderKey =
+            val intervening =
                 oldReversed
-                    .drop(
-                        oldIndex + 1,
-                    ).firstOrNull { it.listKey(0) !in movingKeys && it.listKey(0) in currentIndices }
-                    ?.listKey(0)
+                    .drop(oldIndex + 1)
+                    .takeWhile { it.listKey(0) in movingKeys || it.listKey(0) !in currentIndices }
+            val olderKey = oldReversed.getOrNull(oldIndex + 1 + intervening.size)?.listKey(0)
             index = olderKey?.let { currentIndices[it] } ?: 0
             offset =
                 if (olderKey == null || oldestMoving == null) {
                     0
                 } else {
-                    -oldestMoving.offset - oldestMoving.size
+                    // Older block rows can be outside the measured viewport while a tall child fills it.
+                    -oldestMoving.offset - oldestMoving.size - intervening.sumOf { rowHeights[it.listKey(0)] ?: 0 }
                 }
         }
         return if (!following &&
@@ -259,6 +276,7 @@ internal class ThreadListViewport(
     ) {
         previousRows = rows
         previousBlocks = blocks
+        rowHeights.keys.retainAll(rows.mapTo(HashSet()) { it.listKey(0) })
         if (transfer == null) return
         sizeDelta = 0
         relocationPending = true
@@ -271,6 +289,7 @@ internal class ThreadListViewport(
         key: Any,
         height: Int,
     ) {
+        rowHeights[key] = height
         if (following || correcting) return
         if (relocationPending) {
             relocationAnchor?.takeIf { it.key == key }?.let { sizeDelta = height - it.height }
