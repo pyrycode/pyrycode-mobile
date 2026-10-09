@@ -5579,11 +5579,46 @@ class InteractiveStreamE2ETest {
             allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "newer phone turn did not finish", allowed) {
                 it.type == "turn_end" && peer.recorded(chat).count { frame -> frame.type == "turn_end" } > priorEnds
             }
+            // The peer connection can finish before the phone folds and renders that same reply.
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    hostRepository().observeMessages(chat).first { items ->
+                        items.filterIsInstance<ThreadItem.MessageItem>().any {
+                            it.message.role == Role.Assistant &&
+                                it.message.parentToolUseId.isEmpty() &&
+                                "newer1783" in it.message.content &&
+                                !it.message.isStreaming
+                        }
+                    }
+                    hostRepository().observeTurnPhase(chat).first { it == LiveSessionEvent.TurnState.Phase.Idle }
+                }
+            }
             val go = string(R.string.agent_go_to)
-            val marker = hasText(go) and hasClickAction()
+            val marker = hasText(go) and hasClickAction() and hasText(task.description.orEmpty().take(4096))
             val header = hasTestTag("background-agent:$agentId")
-            composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(marker)
-            composeTestRule.onNode(marker).performClick()
+            val markerTarget =
+                composeTestRule.questionAnswerTarget(marker, lazyKey = "agent-start:$agentId") {
+                    val frames = peer.recorded(chat)
+                    val finished =
+                        frames.any {
+                            it.type == "background_task_updated" &&
+                                peer.field(it, "task_id") == task.taskId &&
+                                !peer.field(it, "status").isNullOrEmpty()
+                        }
+                    val phase = runBlocking { hostRepository().observeTurnPhase(chat).first() }
+                    val markerIndex =
+                        composeTestRule
+                            .onNode(
+                                hasScrollToNodeAction(),
+                            ).fetchSemanticsNode()
+                            .config[SemanticsProperties.IndexForKey]("agent-start:$agentId")
+                    val composed = composeTestRule.onAllNodes(marker).fetchSemanticsNodes().size
+                    Log.i(
+                        "AgentRunProof",
+                        "event=first_marker task_finished=$finished peer_turn_ended=true phone_phase=$phase marker_index=$markerIndex composed=$composed $it",
+                    )
+                }
+            markerTarget.performTouchInput { click(center) }
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
             composeTestRule.onNode(header).assertIsDisplayed()
             val user = composeTestRule.onNode(inThreadList(newer), useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
@@ -5668,6 +5703,7 @@ class InteractiveStreamE2ETest {
                 childIds = ownedMessages.map { it.id },
                 ownedChild = hasText(childReply) and hasAnyAncestor(hasTestTag("background-agent-child:$agentId")),
                 goLabel = go,
+                markerMatcher = marker,
                 expandLabel = string(R.string.tool_run_expand),
                 collapseLabel = string(R.string.tool_run_collapse),
                 evidence = { Log.i("AgentRunProof", "proof_run=$proofRun $it") },

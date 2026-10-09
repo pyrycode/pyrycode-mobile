@@ -1,0 +1,157 @@
+# Saved-thread first-draw reliability (#2018)
+
+## Files read
+
+- `SavedThreadFirstDrawDeviceTest.kt`: `Probe`, `repository`, `installHost`, `openAndMeasure`; monotonic construction-to-committed-frame contract and fixtures.
+- `FileConversationCache.kt`: `readDecodedThread`, `decodeHistory`, `validatedRows`, `CachedThreadRead`; validated decode reuse still builds an optional-history JSON tree.
+- `HistoryCoverage.kt`: `validated`, `retainedBy`, `historyRowProofs`; preserve all structural and retained-content checks.
+- `CachingConversationRepository.kt`: `observeThreadSnapshot`, `readHistoryPosition`; four fresh document reads across the independent restore consumers.
+- `ThreadViewModel.kt`: `historySeed`, `threadItems`, `threadContent`; restore, fold, projection and frame publication remain timed.
+- `ThreadContentScheduling.kt`: `paceThreadContent`; retain real Android frame scheduling.
+- `ThreadScreen.kt`: `ThreadMessageList`; retain layout and viewport geometry.
+- `DecodedThreadRestoreTest.kt`, `CachedThreadWorkerTest.kt`: decode freshness, metadata fallback and worker contracts.
+- `AppModule.kt`: `ThreadDestinationFactory.repository` must give cached snapshot processing the destination's configured worker.
+- `RelayConnectionFactoryTest.kt`: destination host isolation, explicit frame advancement and ViewModel teardown before resetting Main.
+- `docs/knowledge/features/development-verification-test-scheduling.md`: a cancelled worker must finish before `Dispatchers.resetMain`; asynchronous failures can attach to the next test.
+- `docs/knowledge/features/thread-screen-testing.md`: Saved-thread first draw (#1949); an isolated pass cannot erase a full-gate miss, and sparse fixtures conceal allocations.
+- `docs/knowledge/features/conversation-cache-layout.md`: exact freshly read bytes and path, independent metadata rejection and proof compatibility.
+- `docs/specs/architecture/1949-saved-thread-first-draw.md` and merged change `d7c1e20e8a43a871164f3a7c83ae430bc233fb7b`: prior allocation repairs and remaining margin.
+
+## Design source
+
+**Figma:** https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8
+
+Read design context and screenshot: dark radial background, left/right message bubbles using on-primary-fixed/on-primary roles, body-medium text, session rule/label/rule delimiters, top title/back/menu and bottom composer/footer. This repair changes cache restore work only; existing screen geometry, tokens, assets and interactions remain the visual target.
+
+## Context
+
+At base `5133aa796352a5136df426979ab0634e8a554140`, the whole device class passed (2 executed, 2 passed, zero failures/skips), drawing fragmented fresh instances at 850/762 ms. The named method alone then failed (1 executed, 0 passed, 1 failed, zero skips): fragmented offline first open restored/snapshotted/completed/drew at 954/1325/1579/1722 ms. Fresh XML and logcat are retained under `/tmp/builder-2018/baseline-isolated/`. Allocation-blocking GC occurred in that interval. The differing outcomes expose insufficient allocation margin; the bound and probe endpoint remain valid. No decision record is required.
+
+## Design
+
+First add content-free cache phase timing to distinguish document read, typed row decode, row validation, metadata decode and proof retention. Use that fresh evidence to pin the allocation repair in Revisions before changing behavior. The leading candidate is decoding valid optional history directly into the existing typed record instead of building a large JSON tree and then the same typed coverage. Preserve the current independent fallback for malformed metadata and legacy compatibility. Reuse still requires a successful fresh read of exact document bytes and matching host/conversation path. Every version, row identity, structural coverage and content proof check remains mandatory; writers, schema and retention do not change.
+
+No new dependency, exported type, ViewModel, UI state/event or consumer migration is planned. Expected written work is under 500 lines (plan, diagnostics, local cache repair and regression tests); at most two production files, zero signature changes, three acceptance criteria, and fewer than ten error branches. Remote numeric feature branches have no overlapping edits in the proposed cache/repository/probe files as of the initial fetch.
+
+## State and concurrency model
+
+Keep the cache's existing IO dispatcher and mutex, one immutable retained decode, and existing invalidation on writes/missing/changed/unreadable documents. No scope or job is added. Repository restore consumers, ViewModel cancellation and main/worker/frame scheduling remain unchanged. Diagnostics measure synchronous phases with a monotonic clock and emit only phase durations and counts.
+
+## State transitions and identity reuse
+
+| Event | Coverage |
+| --- | --- |
+| Fresh ordinary/fragmented cache and repository, offline or held newest | Existing named first-draw device method, isolated and whole-class execution |
+| Reopen same repository with fresh ViewModel/composition | Same device method; all four reopen cases |
+| Same-length external replacement / same ids on different hosts | `DecodedThreadRestoreTest` freshness and host tests |
+| Malformed optional metadata / invalid rows / changed proof | Decode regression tests plus existing unsigned-cache/durability tests |
+| Mutation, removal or unreadable replacement after retained decode | Existing `DecodedThreadRestoreTest` cases |
+| Injected 3000 ms cache read | Existing negative control rejects the identical 1000 ms assertion |
+| Destination snapshot processing and cancellation under an injected worker | `destinationCacheUsesConfiguredWorker`; existing host-isolation destination test awaits every ViewModel job before Main reset |
+
+## Error handling
+
+Retain classified read fallback: invalid rows/version reject the document; malformed optional metadata withholds history while keeping valid rows. Cancellation and unrelated programming errors remain unclassified. Logs contain static event names, counts and timings only. No daemon text, identifiers, paths, cursors, hashes or decrypted content is logged.
+
+## Testing strategy
+
+The existing isolated first-draw method is the observed red test. Add cache compatibility/rejection regressions before the repair. Run affected decode, unsigned coverage/cache, durability, hash compatibility, held-newest and projection tests; run the first-draw method alone and the complete device class, preserving XML/logcat and all cumulative timings. Device-only reason: real disk, allocation/worker scheduling and committed Android frames cannot be established by Robolectric virtual time. Retain fixture sizes, exact rows/markers, ask counts and held response; leave the 1000 ms assertion and 3000 ms negative control unchanged. Run lint, assemble, Android-test compilation, formatting and final pre-verify after merging main. The dispatcher owns the full UI gate. #1949 already owns live offline/reconnect integration; no new live scenario is required.
+
+## Open Questions
+
+- Which synchronous cache phase dominates the reproduced restore interval? Resolve with fresh diagnostics before the repair and record the exact replacement contract in Revisions.
+
+## Revisions
+
+### 2026-10-10 — Measured restore allocation repair
+
+The instrumented isolated run failed on fragmented held-newest first open at 1476 ms (restore/snapshot/content 758/1157/1337 ms). Cache phases measured read/decode/row-validation/metadata/proofs at 45/139/77/210/192 ms. The prior offline opening passed at 906 ms, but even its retained-decode reopen took 937 ms. The raw metadata tree followed by typed coverage consumes substantial restore time and allocations, and four full `readText` calls allocate whole-document buffers even when only comparing unchanged bytes. Fresh evidence is under `/tmp/builder-2018/diagnosis/`; exit 1, one executed/failed, zero passed/skipped.
+
+Decode the usual valid document directly as the existing `CachedThread`; on serialization failure, use the existing `CachedThreadRead`/raw-metadata fallback. Validate rows before accepting history, independently catch metadata structural failure, and retain all content proof checks. Missing legacy `spans` remains compatible through that fallback. For a retained decode at the same path, compare the entire freshly opened document text against the held text through a fixed-size character buffer; return the held value only after matching all characters and EOF. A mismatch retires it and freshly reads/decodes the current document. This preserves the existing UTF-8 `readText` interpretation and freshness contract while avoiding whole-document temporary strings on unchanged reads. No file length or timestamp participates, and no first-open fixture is warmed.
+
+Add regressions for fully typed unsigned coverage (including maximum unsigned ids), stale direct proofs, legacy omitted spans, structural metadata rejection, and a same-length replacement whose difference crosses the comparison buffer boundary. Keep the observed red device probe and all measurement/fixture assertions unchanged. One production file, no exported declarations or signature/call-site updates; forecast remains below 500 written lines.
+
+### 2026-10-10 — Remove first-decode document string
+
+The complete class still missed: fragmented offline first open drew at 2058 ms (restore/snapshot/content 1323/1727/1877 ms), despite the isolated pass. Cache read/decode/validation/metadata/proofs were 84/534/216/108/281 ms, and GC reclaimed whole-document large objects. Retain this miss under `/tmp/builder-2018/repair-class-miss/`; exit 1, two executed, one passed/one failed, zero skips. The negative control still rejected its 3640 ms draw.
+
+Keep one exact document **byte array**, decode it through the installed kotlinx-serialization JSON stream API and compare freshly opened bytes through a fixed-size byte buffer before reuse. This eliminates the additional whole-document UTF-16 string on valid first restore and its subsequent retention. Serialization failure still uses the prior UTF-8 text/raw-metadata fallback; no disk encoding or writer changes. Path plus all bytes plus EOF establish freshness. Add valid whitespace growth/truncation and trailing-second-document rejection controls, retaining the existing multibyte boundary/replacement tests. `decodeFromStream` is present in the installed 1.8.1 artifact and its existing serializers remain the authority. No new dependency or exported declaration; still one production file and under 500 written lines.
+
+### 2026-10-10 — Defer unused signed compatibility collections
+
+The streamed reader still missed on isolated fragmented offline first open: 1216/1542/1851/2103 ms cumulative restore/snapshot/content/draw, with cache phases 63/598/114/91/249 ms and repeated allocation GC. Keep the fresh exit-1 XML (one executed/failed, zero passes/skips) under `/tmp/builder-2018/stream-miss/`. The device setup first waited for another managed-device process's AVD lock; that wait is outside the measured interval.
+
+`HistoryCoverage` eagerly constructs signed span/gap/cursor/walk/order/entry collections alongside its unsigned authoritative collections, even when the restore pipeline only consumes unsigned fields. Defer these immutable compatibility views and their span-derived high-water/unknown-edge values with thread-safe `lazy`; preserve their public getter types, signed clipping/filtering, independent copies and exclusion from disk serialization. No consumers migrate and no scheduling changes. Existing signed/unsigned coverage tests plus the new `signedCompatibilityInvariant_restoredAndCopiedViewsStayIndependentAndOffDisk` cover the contract; the unchanged first-draw device probe is the red performance regression. Two production files, still below 500 written lines. Initial plan's one-file repair candidate expands to the second measured allocation source.
+
+### 2026-10-10 — Share typed decoding with metadata writes
+
+Deferring signed views reduced the isolated fragmented offline opening to 920 ms, but held-newest fresh opening still missed at 1297 ms (798/1004/1182 ms cumulative restore/snapshot/content; cache 6/379/122/47/175 ms). Fresh one-executed/failed XML and log are under `/tmp/builder-2018/lazy-miss/`. Before that restore, GC reclaimed millions of temporary objects from the repeated metadata write, and continued during restore. `readThreadRecord`, used by `writeHistoryPosition`, still builds the whole row JSON tree before typed decoding. Share the streamed typed decoder and independent metadata validation between the restore reader and this writer's reread, eliminating that allocation burst while preserving its row/version/coverage checks and exact serialized output. Remove the private single-caller `decodeStoredRows`; no public signature changes. Tests remain the existing writer/metadata compatibility suite and unchanged device probe. Delegated compatibility properties are inherently excluded by serialization; remove their redundant `@Transient` annotations, retaining annotations on stored derived fields.
+
+### 2026-10-10 — Use the faster typed string parser
+
+Sharing the writer decoder did not establish the bound: isolated fragmented offline first open measured 843/1139/1273/1369 ms; cache 3/472/105/54/177 ms. Retain this exit-1, one-executed/failed XML under `/tmp/builder-2018/writer-miss/`. The stream decoder remains the largest phase and has materially higher decode duration than the initial directly typed string decoder. Use the directly typed string parser for the shared decoder while retaining only document bytes after decode. The temporary UTF-8-decoded string is released after construction; unchanged subsequent reads still compare through the bounded buffer. This revision supersedes stream parsing, without reinstating either the metadata/row JSON tree or repeated retained-read strings. No experimental API or dependency remains.
+
+### 2026-10-10 — Validate in place
+
+The directly typed string/shared-writer run still failed: fragmented offline 940/1191/1378/1483 ms cumulative, cache 61/347/155/67/250 ms. Retain its one-executed/failed fresh XML under `/tmp/builder-2018/typed-writer-miss/`. The cache remains the dominant miss, and all its checks stay inside the measured interval. Replace `validatedRows`' filtered/distinct temporary lists with one identity-set pass over the mapped domain rows, preserving every running-tool and kind-specific duplicate rejection. Validate already-normalized unsigned spans in stored order (positive, non-reversed, sorted, disjoint and non-adjacent), and validate each gap directly against its neighbouring spans instead of sorting/merging and allocating zipped collections. The normalized-span/max-endpoint regression ran before implementation; existing cache rejection tests cover every row kind. No lifecycle state, proof policy, disk field, consumer or reject branch is added. Recount including deleted/replaced lines and the diagnostic revisions is about 550 written lines across two production and two test files plus the plan; this exceeds the initial 500-line forecast and remains below the 1600-line one-ticket ceiling.
+
+### 2026-10-10 — Reuse validated domain rows during metadata writes
+
+The metadata writer mapped every saved row into the domain four times: for optional old-history validation, whole-row validation, incoming claim retention and incoming claim binding. `decodeThreadDocument` now returns its stored records together with the single validated domain list, and `writeHistoryPosition` reuses that list for both incoming coverage operations. Preserve version/row/old-metadata validation, stale-proof removal, binding and serialized records; only duplicate mapping allocations disappear. Remove the single-caller `readThreadRecord`; the private helper has one consumer to update. This reduces the measured fixture-write allocation burst preceding the restore without changing the fixture, warming the restore reader or moving its timer. Expected total remains around 600 written lines, two production files and no public migration.
+
+### 2026-10-10 — Coordinate focused device execution
+
+At `ac2dfc64a`, the queued raw Gradle run eventually executed and failed: fragmented offline 1451/1843/2208/2344 ms, cache 21/680/176/117/369 ms. Fresh XML timestamp `2026-10-09T22:38:42`, exit 1, one executed/failed, no passes/skips, retained under `/tmp/builder-2018/validation-miss/`. Read-only Gradle diagnostics confirmed another live gate was active, and own setup progressed from shared AVD locking to waiting for a snapshot subprocess. Raw focused Gradle does not acquire the Python gate's shared device hold. Subsequent focused commands take the existing FIFO `device_hold` from the pipeline helper before executing the same managed-device task, with `disableAnimations=true` as the dispatcher UI gate uses. This changes no fixture, cache instance, assertion, measurement start or committed-frame endpoint. Retain all raw-run misses; exclusive focused evidence supplements them and the full UI gate remains dispatcher-owned. This is a test-execution coordination adjustment, with no repository harness/configuration edit.
+
+### 2026-10-10 — Stream atomic thread writes
+
+Exclusive focused execution at `4d1026e74` still failed held-newest fragmented first open: 784/947/1046/1146 ms cumulative, cache 23/336/110/39/235 ms. Offline first/reopen were 781/392 ms. Preserve exit-1, one-executed/failed fresh XML timestamp `2026-10-09T22:41:52` under `/tmp/builder-2018/exclusive-miss/`. GC reclaimed 49 MB of large objects after the second whole-document write and continued through restore. Device coordination alone does not repair this miss.
+
+For the two thread-document writers, encode the same `CachedThread` serializer/configuration directly to a buffered UTF-8 temporary-file stream, close it, then perform the existing atomic move. The shared atomic-write helper still handles directory creation and commit; other document writers retain their existing text encoding. This eliminates whole-document string/byte buffers during large thread saves and preserves field names, schema/version, row order, proofs, retention, error classification and atomic replacement. Existing `HistoryHashCompatibilityTest` verifies canonical persisted row hashes, including multibyte text; the full cache writer/unsigned claim regression selection already passed before the change. Stream decoding remains superseded by the faster typed string parser. No new dependency, public signature or timer/fixture change.
+
+### 2026-10-10 — Remove per-row identity formatting temporaries
+
+At `53aa7eb90`, exclusive streamed-write execution still failed fragmented offline: 1052/1361/1560/1668 ms cumulative; cache 2/464/177/39/267 ms. Retain exit-1, one-executed/failed fresh XML timestamp `2026-10-09T22:44:52` under `/tmp/builder-2018/streamed-write-miss/`. Whole-document write buffers disappeared, but the remaining read/validation/proof path still allocates heavily.
+
+Build the existing length-prefixed identity text directly in one string builder rather than a formatted temporary string for each identity part; preserve UTF-16 lengths and every scalar/null/list conversion. Expanded `HistoryHashCompatibilityTest` vectors (null/nested empty list, Unicode, signed/unsigned extremes and ambiguous concatenations) passed before the change. Count nullable row kinds directly instead of allocating a six-element array and filtered list on every row. Keep the same exactly-one-kind rejection and all existing cache rejection tests. No public signature, hash encoding, kind semantics, fixture or timer changes; total forecast remains under 700 written lines.
+
+### 2026-10-10 — Distinguish worker CPU from elapsed restore time
+
+Add content-free wall/CPU diagnostics around the existing IO dispatcher's runnable in `SavedThreadFirstDrawDeviceTest.repository`, delegated to `Dispatchers.IO` with the original context and cancellation behavior. Android `Debug.threadCpuTimeNanos` measures CPU spent on the same worker; monotonic elapsed time includes allocation GC and scheduling delays. It is diagnostic evidence, never the acceptance clock: `Probe.start`, all four cumulative phase markers, exact viewport/committed-frame checks, fixtures, cold cache/repository instances, ask counts, 1000 ms assertion and 3000 ms negative control remain unchanged. No job, scope, test retry or artificial delay is added. The device-only reason remains real disk/worker/committed Android frames. Use this measurement to resolve the large variation across restore phases before further changes.
+
+### 2026-10-10 — Remove redundant setup codec echo
+
+The CPU-diagnostic run at `c59ee2527` failed fragmented offline at 2028 ms, cumulative restore/snapshot/content 1313/1659/1890 ms. Cache worker elapsed/CPU were 1293/577 ms; cache phase wall durations were 5/657/325/60/234 ms. Fresh exit-1 XML timestamp `2026-10-09T22:49:41`, one executed/failed and no passes/skips, is retained under `/tmp/builder-2018/cpu-diagnosis/`. More than half the elapsed worker interval is GC/scheduling rather than its CPU work.
+
+`fragmentedHistoryFixture` constructs a bound canonical value, then needlessly serializes/deserializes that value into another in-process copy before returning it. Return the already validated bound value, eliminating setup-only document strings and duplicate metadata objects. The real `FileConversationCache` writes/reads remain, and restore decoding/collection/projection/committed drawing stay inside the unchanged wall-clock timer. No fixture size, row, durable entry, span, marker, proof, ask, start, endpoint, retry or bound changes. This removes setup garbage and removes serializer warming; it does not warm the first-open reader. `fragmentedFixtureIsCanonicalWithoutDependingOnASetupCodecEcho` ran and passed before the change, proving canonical encode/decode equality, 18000 spans/36000 durable entries, exact sampled rows, endpoint ids and proofs. CodeGraph shows 19 references, no signature or consumer edit is required; run all owning unit classes plus the existing device interaction test. Total written work is under 800 lines, two production files, no exported types or migration, three criteria and unchanged reject branches.
+
+### 2026-10-10 — Prepare only the active fixture
+
+At `b65380876`, even ordinary first open missed: restore/snapshot/content/draw 89/905/933/1330 ms. Its IO worker used 62 ms wall and 9 ms CPU; the miss is now mostly between restore and snapshot plus frame work, despite only 20 cache rows. Preserve exit-1, one-executed/failed fresh XML timestamp `2026-10-09T22:53:39` under `/tmp/builder-2018/setup-echo-miss/`. The method eagerly prepared all 18000 fragmented rows/coverage before any ordinary case, leaking unrelated setup allocations into the first 20-row measurement.
+
+Construct each fixture immediately before its case group: the same ordinary rows first, then the same complete fragmented fixture. Generation still finishes before `Probe.start`, with no delay, cache read, repository/ViewModel construction, warm first-open fixture, changed assertion or endpoint. The eight cases, first/open-reopen ordering, exact rows/markers, zero offline/one held-online ask and 3000 ms negative control stay unchanged. This removes unused large setup data from the ordinary cases and avoids warming their serializers through another fixture. Existing device method is the red regression; unit fixture consumers remain at 119 executed/passed, zero failures/skips.
+
+### 2026-10-10 — Resolve diagnosis and verify final merged source
+
+At final merged runtime commit `b3cbeb687d812bcb81f832106252dee2c8be87a4`, exclusive isolated execution passed all eight cases (maximum 858 ms), then the full focused class plus existing fragmented-history interaction method passed 3/3, zero failures/skips. Fresh XML timestamp `2026-10-09T23:00:14` and logs are retained under `/tmp/builder-2018/final-class/`; ordinary committed draws were 154/128/116/143 ms and fragmented draws 698/338/619/267 ms. The identical-bound negative control restored at 3011 ms and drew at 3160 ms, correctly rejecting 1000 ms. The final unit selection passed 119/119. All earlier misses remain recorded above and in their fresh evidence folders; no retry discards a miss.
+
+The open diagnosis question is resolved: allocation-heavy decode/validation/proof and duplicate writer/setup work delayed restore, and eager unrelated fixture preparation leaked GC/scheduling into even the ordinary snapshot phase. The final design removes those allocations, keeps the complete cold read/render interval and exact assertion, and prepares only the active fixture outside that interval. Dispatcher UI-gate verification and the documentation handoff remain pending later stages.
+
+### 2026-10-10 — Verifier unit-gate findings: destination cache scheduling and teardown
+
+The verifier's PR XML at `8b819e571e48` records an empty host-A message list immediately after `presentFrame`, followed by an unset-Main exception from a completed `Dispatchers.Default` child at the next registry test. A fresh focused class run on that head passed 19/19, confirming the failure is scheduling-dependent. `ThreadDestinationFactory.repository` creates its cache wrapper without forwarding `contentScheduling.worker`, so draining the controlled fold/frame scheduler cannot drain cache snapshot preparation or its non-cancellable writer cleanup.
+
+Pass the existing configured worker to `CachingConversationRepository` from the destination factory. Production still uses `Dispatchers.Default`; no new dispatcher, job, signature, cache or UI contract is introduced. Add `destinationCacheUsesConfiguredWorker` before the repair: collect a real cached destination snapshot to completion and require dispatch through an instrumented configured worker, which fails deterministically with the current factory. Preserve every host-isolation/content/queue/action/reconnect assertion in the existing destination method. Its teardown cancels and joins each ViewModel job before closing the graph and resetting Main, including assertion-failure exits, so no cache finalizer can resume on Main after reset. Run the full 20-method relay factory class and affected worker/frame/cache tests with fresh XML; dispatcher full gates remain pending. Recount: fewer than 900 inserted/deleted plan, production and test lines, three production files, no exported types or migrated consumers, three criteria and unchanged reject branches. No overlapping numeric feature branch touched either rework file at the fresh fetch.
+
+The new regression failed before the factory repair (exit 1, executed/passed/failed/skipped 1/0/1/0; XML timestamp `2026-10-09T23:17:20.600Z`, retained under `/tmp/builder-2018/rework-red/`). After the repair, the full relay class and affected cache/frame/open/projection selection passed 47/47/0/0 (exit 0), with all three named relay methods each 1/1/0/0 and the relay class 20/20/0/0; fresh XML is retained under `/tmp/builder-2018/rework-focused/`. These focused passes supplement the reported full-gate miss; dispatcher full checks and UI timing verification remain pending.
+
+After merging main, runtime commit `5f48c2c51bac985adee1c597d9b8e2fe7dc1c586` passed the complete corrected 13-class unit selection, 152/152/0/0 (exit 0); XML and class/named counts are under `/tmp/builder-2018/rework-final-unit/`. The relay class passed 20/20/0/0, including each verifier method and the worker regression at 1/1/0/0. Focused Android execution of the saved-thread class, production frame-pacing method and fragmented-history interaction passed 4/4/0/0 (exit 0; XML timestamp `2026-10-09T23:21:13`, under `/tmp/builder-2018/rework-final-device/`). Saved-thread class and both named methods passed 2/2/0/0 and 1/1/0/0 respectively. Ordinary cumulative restore/snapshot/content/draw was 28/30/53/141, 19/24/52/101, 4/24/56/118 and 17/22/50/157 ms; fragmented was 376/479/639/724, 25/107/246/356, 327/407/531/616 and 34/116/209/268 ms, in offline first/reopen then held-newest first/reopen order. The unchanged negative control measured 3043/3054/3099/3163 ms and rejected the identical 1000 ms bound. The dispatcher still owns the full gates.
+
+## Documentation handoff
+
+- Pending documentation stage: `docs/knowledge/features/conversation-cache-layout.md`, Thread document readers — exact byte-array retention, bounded fresh-byte comparison and direct typed decoding with independent optional-metadata fallback; unchanged format, proofs and invalidation.
+- Pending documentation stage: `docs/knowledge/features/thread-screen-testing.md`, Saved-thread first draw — retain the baseline/partial-repair misses, fresh isolated and class timings, and the dispatcher-owned UI gate result when available.
+
+- Pending documentation stage: `docs/knowledge/features/conversation-cache-layout.md`, history coverage — signed compatibility collections are computed once on demand; unsigned disk fields and validation remain authoritative.
+
+- Pending documentation stage: `docs/knowledge/features/conversation-cache-layout.md`, Thread document writers — buffered JSON encoding into the same atomic temporary-file replacement, with one reused validated domain row list for metadata writes.

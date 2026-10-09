@@ -97,31 +97,34 @@ data class HistoryCoverage(
         signedUncertainty = unsignedIncomplete,
     )
 
-    @Transient val spans: List<HistorySpan> =
+    // Unsigned restore consumers do not need the legacy signed collections.
+    val spans: List<HistorySpan> by lazy {
         unsignedSpans.mapNotNull { span ->
             span.first.signedId()?.let { HistorySpan(it, minOf(span.last, Long.MAX_VALUE.toULong()).toLong()) }
         }
+    }
 
-    @Transient val gaps: List<HistoryGap> =
+    val gaps: List<HistoryGap> by lazy {
         unsignedGaps.mapNotNull { gap ->
             gap.anchor.signedId()?.let { anchor -> gap.edge.signedId()?.let { HistoryGap(anchor, it) } }
         }
+    }
 
-    @Transient val cursors: Map<Long, String> = unsignedCursors.mapNotNull { (id, value) -> id.signedId()?.let { it to value } }.toMap()
+    val cursors: Map<Long, String> by lazy {
+        unsignedCursors.mapNotNull { (id, value) -> id.signedId()?.let { it to value } }.toMap()
+    }
 
-    @Transient val walks: Map<Long, String> =
-        unsignedWalks
-            .mapNotNull { (id, value) ->
-                id.signedId(allowZero = true)?.let { it to value }
-            }.toMap()
+    val walks: Map<Long, String> by lazy {
+        unsignedWalks.mapNotNull { (id, value) -> id.signedId(allowZero = true)?.let { it to value } }.toMap()
+    }
 
-    @Transient val rowOrder: Map<String, Long> = unsignedRowOrder.mapNotNull { (key, id) -> id.signedId()?.let { key to it } }.toMap()
+    val rowOrder: Map<String, Long> by lazy {
+        unsignedRowOrder.mapNotNull { (key, id) -> id.signedId()?.let { key to it } }.toMap()
+    }
 
-    @Transient val rowEntries: Map<String, Set<Long>> =
-        unsignedRowEntries
-            .mapValues { (_, ids) ->
-                ids.mapNotNull { it.signedId() }.toSet()
-            }.filterValues { it.isNotEmpty() }
+    val rowEntries: Map<String, Set<Long>> by lazy {
+        unsignedRowEntries.mapValues { (_, ids) -> ids.mapNotNull { it.signedId() }.toSet() }.filterValues { it.isNotEmpty() }
+    }
 
     @Transient val unsignedHighWater: ULong = unsignedSpans.maxOfOrNull { it.last } ?: 0u
 
@@ -131,9 +134,9 @@ data class HistoryCoverage(
 
     @Transient val unknown: Boolean = unsignedUnknown || unsignedIncomplete
 
-    @Transient val highWater: Long = spans.maxOfOrNull { it.last } ?: 0
+    val highWater: Long by lazy { spans.maxOfOrNull { it.last } ?: 0 }
 
-    @Transient val unknownEdge: Long? = if (unknown) spans.minOfOrNull { it.first } else null
+    val unknownEdge: Long? by lazy { if (unknown) spans.minOfOrNull { it.first } else null }
 
     fun cursorFor(anchor: Long): String {
         require(anchor >= 0) { "invalid history anchor" }
@@ -405,16 +408,23 @@ data class HistoryCoverage(
 
     /** Validate optional disk claims independently from the retained rows. */
     internal fun validated(rows: List<ThreadItem>? = null): HistoryCoverage {
-        require(
-            unsignedSpans.all { it.first > 0u && it.first <= it.last } && normalize(unsignedSpans) == unsignedSpans,
-        ) { "invalid history spans" }
-        val holes = unsignedSpans.zipWithNext()
-        require(
-            unsignedGaps.size == holes.size &&
-                unsignedGaps.zip(holes).all { (gap, spans) ->
-                    gap.anchor in spans.first.first..spans.first.last && gap.edge == spans.second.first
-                },
-        ) { "invalid history gaps" }
+        var previousLast = 0uL
+        for (index in unsignedSpans.indices) {
+            val span = unsignedSpans[index]
+            require(
+                span.first > 0u &&
+                    span.first <= span.last &&
+                    (index == 0 || span.first > previousLast && span.first - 1u != previousLast),
+            ) { "invalid history spans" }
+            previousLast = span.last
+        }
+        require(unsignedGaps.size == (unsignedSpans.size - 1).coerceAtLeast(0)) { "invalid history gaps" }
+        for (index in unsignedGaps.indices) {
+            val gap = unsignedGaps[index]
+            val older = unsignedSpans[index]
+            val newer = unsignedSpans[index + 1]
+            require(gap.anchor in older.first..older.last && gap.edge == newer.first) { "invalid history gaps" }
+        }
 
         fun covered(id: ULong): Boolean {
             val found = unsignedSpans.binarySearch { it.first.compareTo(id) }
@@ -480,7 +490,18 @@ internal fun historyIdentity(
 ): String = historyHash(historyIdentityText(identity), digest)
 
 private fun historyIdentityText(identity: Any): String =
-    (identity as? List<*>)?.joinToString("") { value -> value.toString().let { "${it.length}:$it" } } ?: identity.toString()
+    if (identity is List<*>) {
+        buildString {
+            identity.forEach { value ->
+                val text = value.toString()
+                append(text.length)
+                append(':')
+                append(text)
+            }
+        }
+    } else {
+        identity.toString()
+    }
 
 internal fun ThreadItem.historyKeys(): List<String> {
     val segment = (this as? ThreadItem.MessageItem)?.message?.segment

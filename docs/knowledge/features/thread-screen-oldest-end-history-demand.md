@@ -7,13 +7,13 @@ that parent document is the map, this child covers the oldest-end history slot i
 ### The oldest-end history demand (#777)
 
 `requestHistory` ([remote repository § the walk that finally calls
-`requestHistory`](remote-conversation-repository-reads-and-thread-store-history-paging.md#the-walk-that-finally-calls-requesthistory-777))
+`requestHistory`](remote-conversation-repository-history-walk.md#the-walk-that-finally-calls-requesthistory-777))
 had no caller until #777 wired the screen to `ThreadViewModel.onDemandOlderHistory()` via a defaulted
 `onDemandOlderHistory: () -> Unit = {}` parameter (`MainActivity` binds `vm::onDemandOlderHistory`, the
 only consumer). #777 drove that call from a scroll-position `snapshotFlow` that fired whenever the oldest
 loaded row came into view, and the opening and every reconnect asked unconditionally beside it (owned by
 `ThreadViewModel`, see [remote repository §
-the walk that finally calls `requestHistory`](remote-conversation-repository-reads-and-thread-store-history-paging.md#the-walk-that-finally-calls-requesthistory-777)).
+the walk that finally calls `requestHistory`](remote-conversation-repository-history-walk.md#the-walk-that-finally-calls-requesthistory-777)).
 [#1352](https://github.com/pyrycode/pyrycode-mobile/issues/1352) replaced all of that with a single
 trigger, copying desktop's rule: older pages load only on a reader's own pull toward older messages, on
 both apps, and never because a screen opened, a connection returned, a page arrived, or a row scrolled
@@ -253,7 +253,7 @@ widened the **same slot** to four mutually exclusive states, and [#1352](https:/
 widened it again to five, still without adding rows — the one-slot invariant is enforced by construction,
 since `when (state.historyTail)` emits at most one `item(key = HISTORY_TAIL_KEY)`. Despite the heading's
 name carried over from #778, there is no restart left on the screen side either: see [remote repository §
-the retry and the two restarts](remote-conversation-repository-reads-and-thread-store-history-paging.md#the-retry-and-the-two-restarts-778)
+the retry and the two restarts](remote-conversation-repository-history-walk.md#the-retry-and-the-two-restarts-778)
 for why #1352 removed both.
 
 - **`ThreadUiState.historyLoading: Boolean` was replaced outright by `historyTail: ThreadHistoryTail`**

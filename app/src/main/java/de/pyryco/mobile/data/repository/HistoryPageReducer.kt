@@ -1000,7 +1000,6 @@ private fun List<ThreadItem>.mergeRows(
         positions[rows[index].mergeIdentity()]?.let { next = it }
     }
     val runTimestamp = rows.minOfOrNull { it.placementTimestamp() } ?: Instant.DISTANT_PAST
-    val heldMessageIds = base.filterIsInstance<ThreadItem.MessageItem>().associateBy { it.message.id }
     val slots = HashMap<Int, MutableList<ThreadItem>>()
     val lifecycle = mutableListOf<ThreadItem.BackgroundTaskLifecycle>()
     val admitted = positions.keys.toMutableSet()
@@ -1020,18 +1019,7 @@ private fun List<ThreadItem>.mergeRows(
         }
         val message = (row as? ThreadItem.MessageItem)?.message
         val segment = message?.segment
-        val keyTwin = message?.let { heldMessageIds[it.id]?.message }
-        if (identity !in relocating && segment != null && keyTwin != null && keyTwin.segment?.turnId != segment.turnId) {
-            // Only a same-turn legacy opener may use the explicit #0 alias. Other collisions lose incoming text.
-            val legacyOpener = segment.firstSeq == 0 && keyTwin.role == Role.Assistant && keyTwin.id == segment.turnId
-            if (!legacyOpener || "${segment.turnId}#0" in heldMessageIds) return@forEachIndexed
-        }
-        if (segment == null &&
-            keyTwin?.segment != null &&
-            (message.role != Role.Assistant || message.id != keyTwin.segment.turnId)
-        ) {
-            return@forEachIndexed
-        }
+        // Typed admission above determines overlap; renderer collisions are allocated after placement.
         val turn = segment?.let { turns[it.turnId] }
         val lower = segment?.let { turn?.lowerEntry(it.firstSeq)?.value }
         val upper = segment?.let { turn?.higherEntry(it.firstSeq)?.value }
@@ -1079,7 +1067,9 @@ private fun List<ThreadItem>.mergeRows(
             }
             slots[base.size]?.let(::addAll)
         }.withJoinedSegments().withUniqueMessageKeys(hinted, attributedIncoming, rendererOwners)
-    val merged = ordinary.withHistoryLifecyclePositions(incoming, lifecycle).withBackgroundTaskLaunches()
+    // Keep each segment's combined neighbour range; recovered legacy rows carry only proven sequences.
+    val lifecyclePage = attributedIncoming.withLegacyRecords(legacy.records)
+    val merged = ordinary.withHistoryLifecyclePositions(lifecyclePage, lifecycle).withBackgroundTaskLaunches()
     return if (merged == hinted) hinted else merged
 }
 
@@ -1200,7 +1190,7 @@ private class LegacyMatches(
 private fun List<ThreadItem>.withLegacyRecords(records: Map<String, AssistantSegment>): List<ThreadItem> =
     map { row ->
         val message = (row as? ThreadItem.MessageItem)?.message
-        val record = message?.takeIf { it.role == Role.Assistant && it.segment == null }?.let { records[it.id] }
+        val record = message?.takeIf { it.role == Role.Assistant && it.segment == null }?.let { records[it.ordinaryId] }
         if (message == null || record == null) row else ThreadItem.MessageItem(message.copy(segment = record))
     }
 
@@ -1338,7 +1328,7 @@ private class ThreadRowAnchors(
 
     init {
         rows.forEachIndexed { index, row ->
-            identities.putIfAbsent(row.joinIdentity(), index)
+            identities.putIfAbsent(row.mergeIdentity(), index)
             val message = (row as? ThreadItem.MessageItem)?.message
             if (message?.role == Role.Assistant &&
                 message.segment == null
@@ -1369,7 +1359,7 @@ private class ThreadRowAnchors(
             if (last >= 0) return first..last
         }
         segment?.let { wholeTurns[it.turnId] }?.let { return it..it }
-        return identities[row.joinIdentity()]?.let { it..it }
+        return identities[row.mergeIdentity()]?.let { it..it }
     }
 }
 
