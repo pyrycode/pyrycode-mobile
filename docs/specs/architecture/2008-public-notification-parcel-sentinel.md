@@ -13,3 +13,7 @@ Replace only the serialized-parcel sentinel `/private` with the fixture's exact 
 ## Testing strategy
 
 Run the unchanged privacy method first and inspect fresh JUnit XML for its executed count and assertion failure. After the sentinel correction, rerun that method and the complete `AttentionNotifierTest` class, recording executed/passed counts. Run lint, assemble and formatting checks, then merge main, push and run the final assemble and `scripts/pre-verify.py --gradle` gates. The dispatcher owns the full unit/shared suite required by the second acceptance criterion; its result remains pending at builder handoff.
+
+## Revisions
+
+2026-10-09: The unchanged method passed in the normal worktree because its build path lacks `/private`. A temporary Gradle init script outside the worktree redirects build output to `/private/tmp/builder-2008/private-build`, reproducing the parcel assertion failure. The identical build-path setup passes after the sentinel correction; no production behavior or privacy contract changes.
