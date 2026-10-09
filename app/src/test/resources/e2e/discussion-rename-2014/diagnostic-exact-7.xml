@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.e2e.DiscussionRenameTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-09T23:28:31.651Z" hostname="Juhanas-MacBook-Air.local" time="10.895">
+  <properties/>
+  <testcase name="delayedDialogDoesNotReplaceComposer" classname="de.pyryco.mobile.e2e.DiscussionRenameTest" time="10.012"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
