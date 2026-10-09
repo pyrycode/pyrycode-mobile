@@ -42,3 +42,9 @@ Fresh XML is retained in `build/dispatcher-tests/live-c7calbjd/dispatcher.xml` a
 Filed and linked [#1989](https://github.com/pyrycode/pyrycode-mobile/issues/1989) for diagnosis/repair of the repeated attention failure. It is an implementation dependency, not a split child. Repository ownership of the defect remains unproven; no mobile workaround, assertion change, timeout increase or ignored method was introduced. This proof-only ticket waits for that repair. The fresh full dispatcher live gate and its explicit passes remain unverified.
 
 Builder lint, debug assembly and Android-test compilation passed. Production, tests and scripts remain identical to `origin/main`.
+
+## Restored focused proof
+
+2026-10-09: The unchanged pair passed together through `scripts/android-test-gate.py live --tests` on mobile `e42c98f786c50eadaf9a864230069846326eb5ed`, daemon `a39c72739eb2e811708a67b08906614a4316b834` (`vcs.modified=false`), Claude Code 2.1.280 and managed `pixel2Api33Atd`. Exit 0: 2 executed, 2 passed, 0 failed/errors, 0 skipped. Both `interactiveTurn_modelChange_roundTripsAndStaysPerConversation` and `interactiveTurn_attentionDot_followsARealTurn` explicitly passed with their inherited assertions and timeouts unchanged.
+
+Fresh counted XML: `build/dispatcher-tests/live-659mf9c_/dispatcher.xml`, SHA-256 `b54d8a88af7ee5aa72ba4168870ca593a0aeac3fa901bc5ca265ffcf500ea773`. The same directory retains raw device XML and per-test logcat. This resolves the focused failure recorded above; #1989 is closed. Full-suite acceptance remains pending on this ticket's fresh dispatcher gate after verification, with `## Live tests` set to `all` and `needs-real-claude` retained. That gate must report actual mobile/daemon revisions, full executed/failed/skipped counts and both named passes.
