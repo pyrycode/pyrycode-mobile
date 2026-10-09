@@ -104,6 +104,25 @@ Navigation preserves the reader's collapse state. A placement test must assert t
 navigation and explicitly open the owned child run before inspecting its prose (#1904); reaching
 the always-visible Agent root does not prove that its children are visible.
 
+The first held-Agent marker proof fences the phone repository's finalized newer
+main reply and Idle phase before revealing (#1994); peer completion alone does
+not synchronize phone rendering. Newer reply growth can leave the marker projected
+while disposing its lazy row. The test helper supplies `agent-start:<Agent id>`,
+checks `IndexForKey` on a zero-node sample, reveals that same key and remeasures
+chrome before one physical tap. Missing keys and ambiguous matches fail. The live
+selector includes the held task's bounded launch description to distinguish equally
+labelled markers; the description remains inert and is never logged. Settled
+`verifyAgentRunNavigation` also supplies the owned key and preserves scroll-only
+navigation and closed/open/closed membership assertions.
+
+`BackgroundAgentBlocksScreenTest.lateNewerReplyDisposesMarkerButKeyedRevealStillNavigatesHeldAgent`
+reproduces disposal after the first reveal while the task stays running;
+`keyedMarkerWithHeldDescriptionNavigatesOnlyItsAgent` proves the exact destination
+with two markers; `removedMarkerFailsInsteadOfBeingTreatedAsLazyDisposal` rejects
+projection removal. These are harness proofs, with placement rules unchanged.
+See [Compose sampling guidance](development-verification-compose-evidence.md#compose-evidence)
+and [fresh live/scripted evidence](../../e2e-interactive-stream.md#held-agent-marker-reveal-1994).
+
 **Pending marker navigation (#1956).** A tap survives its root disappearing from loaded
 rows while the reader waits in the same mounted destination. When the root returns,
 `ThreadAgentNavigation` scrolls once and consumes that request. Every fresh tap replaces
