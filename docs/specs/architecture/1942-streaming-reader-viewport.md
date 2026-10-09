@@ -6,6 +6,7 @@
 - `ThreadListFollow.kt`: `followStep`, `FollowNewestEnd`, and `pinToNewest`; existing follow, accepted-send and prompt-departure rules.
 - `ThreadRow.kt`: `listKey`; #1940 / PR #1965 is merged and all anchors retain its displayed-identity keys.
 - `MessageBubble.kt`: `AssistantMessage` and progressive reveal; preserve streaming and settled renderers.
+- `ComposerFileTileTintTest.kt`: explicit native `View.draw(Canvas)` evidence under JVM and Android.
 - `ThreadScreenFollowTest.kt` and `ThreadReadViewportDeviceTest.kt`: real-screen regressions and inherited Android-visible probes.
 - `docs/knowledge/features/thread-screen.md` and `thread-screen-how-it-works-list-and-status-row.md`: reverse-layout bottom anchoring, short-thread top alignment and measured reservations.
 - `docs/knowledge/features/development-verification-gates.md`: shared tests, physical-pixel bounds and device probe selection.
@@ -41,7 +42,7 @@ Bookkeeping belongs to the remembered list composition; no ViewModel or reposito
 | Finger held without movement during growth | `restingTouch_holdsReaderEveryFrame` |
 | Drag or fling while geometry changes | `movingReader_preservesConsumedMovement` |
 | Ordinary spacing changes 4dp → 16dp → 4dp at index zero or in history | `endSpacing_preservesReaderInBothDirections` |
-| Reader moves to another keyed anchor | motion regression; refresh geometry rather than restore stale position |
+| Reader moves to another keyed anchor | `endSpacing_preservesReaderInBothDirections` moves from the reply to a history key; refresh rather than restore a stale position |
 | Following growth, accepted send, prompt departure, save/restore | existing `ThreadListFollowTest` and `ThreadScreenFollowTest` |
 | Thread exits/reopens or list identity changes | remembered geometry resets with list; existing restoration coverage |
 
@@ -53,8 +54,14 @@ No I/O or new error surface. A missing/retired anchor establishes a fresh baseli
 
 Write the real-screen regressions first and confirm they fail on the existing implementation. Use an overflowing thread with a pre-existing reply taller than the viewport, then move to its top. Capture layout at rendered frames, advance progressive reveal explicitly, and exercise both markdown height directions and both end-spacing directions. Motion checks account for consumed movement and prove touch/fling continuity. Shared tests run under AndroidJUnit4 on JVM; Android-visible overrides select the same named methods through the UI gate, mirroring `ThreadReadViewportDeviceTest`. The probes exist because acceptance explicitly requires platform rendered-frame and gesture evidence in the routine gate.
 
-Run focused new regressions and existing follow/layout tests, lint, assembleDebug, androidTest compilation, formatting and final pre-verify. Run the affected device probe class during development; dispatcher owns the full UI and fresh full live gate. Preserve `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread` and list it in the PR's Live tests section; no claim of live success until fresh counted evidence exists.
+Run focused new regressions and existing follow/layout tests, lint, assembleDebug, androidTest compilation, formatting and final pre-verify. Run the affected device probe class during development; dispatcher owns the full UI and fresh full live gate. Preserve `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread` and request `all` in the PR's Live tests section because acceptance requires a fresh full live gate; no claim of live success until fresh counted evidence exists.
 
 ## Open Questions
 
 - Confirm synchronous relative correction settles before drawing on JVM and Android through rendered-frame assertions. If timing requires a different layout hook, record the evidence and revised contract here before handoff.
+
+## Revisions
+
+- 2026-10-09: Capture the anchor's row-height delta in `ThreadRowContent` measurement before the lazy measure publishes a possibly different anchor after a shrink; apply size and reservation deltas in `ThreadMessageList`'s placement callback. Read the old lazy geometry without snapshot observation to avoid making item measurement depend on its own measure result. `dispatchRawDelta` preserves the active scroll mutation; `ListFrame.compensatedScroll` distinguishes that displacement from reader input. The five initial real-screen negative controls executed and failed with zero skips (40px reveal drift, 60px attachment drift and 3032px markdown drift).
+- 2026-10-09: Native JVM drawing follows `ComposerFileTileTintTest`'s explicit `View.draw(Canvas)` pattern. A root draw modifier alone records no JVM frames, and `captureToImage` times out; explicit draws observe the real composed bubble coordinates at each advanced frame. Paragraph breaks provide a genuine settled-markdown shrink; heading syntax provides growth of the same text at settlement. Progressive reveal also ends into settled markdown while the reader's finger remains down.
+- 2026-10-09: Motion assertions now take the fling baseline after finger release, require a live fling at each geometry update, and finish into settled markdown during that fling. A final burst supplies fresh velocity samples after the frame-by-frame drag; without it the gesture can produce no fling. A resting finger does not set `isScrollInProgress`, so its guarantee is the recorded geometry while the injected pointer remains down, rather than that flag.

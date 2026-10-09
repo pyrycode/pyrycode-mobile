@@ -1,0 +1,321 @@
+package de.pyryco.mobile.ui.conversations.thread
+
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.view.View
+import androidx.compose.foundation.LocalOverscrollFactory
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.test.hasScrollToIndexAction
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.MessageAttachment
+import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
+import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import kotlinx.datetime.Instant
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.annotation.GraphicsMode
+
+/** Observe actual rendered bubble coordinates, including intermediate reveal frames. */
+@RunWith(AndroidJUnit4::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+open class ThreadReaderGeometryTest {
+    @get:Rule val compose = createComposeRule()
+    private lateinit var listState: LazyListState
+    private lateinit var view: View
+    private lateinit var replyCoordinates: LayoutCoordinates
+    private var olderCoordinates: LayoutCoordinates? = null
+    private var olderTop = 0f
+    private val renderedOlderTops = mutableListOf<Float>()
+    private var recording = false
+    private val renderedTops = mutableListOf<Float>()
+    private var consumedMovement = 0f
+    private val motion =
+        object : NestedScrollConnection {
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource,
+            ): Offset {
+                consumedMovement += consumed.y
+                return Offset.Zero
+            }
+        }
+    private val body = (1..95).joinToString("\n\n") { "Reader line $it." }
+    private val state =
+        mutableStateOf(
+            ThreadUiState(
+                conversationId = "reader",
+                displayName = "Reader",
+                isPromoted = true,
+                hasMessages = true,
+                items = (1..25).map { message("old-$it", "Older row $it.", false) } + message("reply", body, true),
+            ),
+        )
+
+    @Test open fun streamingReader_holdsTopAndOlderRowsEveryFrame() {
+        openReader()
+        val top = replyCoordinates.positionInRoot().y
+        recording = true
+        appendAndReveal()
+        finishReply()
+        frames(5)
+        assertFrames(top)
+    }
+
+    @Test open fun restingTouch_holdsReaderEveryFrame() {
+        openReader()
+        val top = replyCoordinates.positionInRoot().y
+        list().performTouchInput { down(Offset(centerX, height / 2f)) }
+        recording = true
+        appendAndReveal()
+        finishReply()
+        frames(5)
+        assertFrames(top)
+        list().performTouchInput { up() }
+    }
+
+    @Test open fun settledMarkdown_holdsTopForGrowthAndShrink() {
+        openReader()
+        val top = replyCoordinates.positionInRoot().y
+        recording = true
+        val headings = body.replace("Reader line", "# Reader line")
+        updateReply(headings, true)
+        frames(5)
+        val headingPlainHeight = replyCoordinates.size.height
+        updateReply(headings, false)
+        frames(5)
+        assertTrue("heading markdown grows", replyCoordinates.size.height > headingPlainHeight)
+        assertFrames(top)
+        renderedTops.clear()
+        updateReply(body, true)
+        frames(5)
+        assertFrames(top)
+        val plainHeight = replyCoordinates.size.height
+        renderedTops.clear()
+        updateReply(body, false)
+        frames(5)
+        assertTrue("soft-line markdown shrinks", replyCoordinates.size.height < plainHeight)
+        assertFrames(top)
+    }
+
+    @Test open fun endSpacing_preservesReaderInBothDirections() {
+        openReader()
+        val top = replyCoordinates.positionInRoot().y
+        recording = true
+        repeat(2) {
+            attachments(true)
+            frames(5)
+            attachments(false)
+            frames(5)
+        }
+        assertFrames(top)
+        recording = false
+        compose.mainClock.autoAdvance = true
+        list().performScrollToIndex(12)
+        compose.waitForIdle()
+        replyCoordinates =
+            compose
+                .onAllNodesWithTag(MESSAGE_BUBBLE_TEST_TAG, useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .maxBy {
+                    it.layoutInfo.coordinates
+                        .positionInRoot()
+                        .y
+                }.layoutInfo.coordinates
+        olderCoordinates = null
+        renderedTops.clear()
+        val historyTop = replyCoordinates.positionInRoot().y
+        compose.mainClock.autoAdvance = false
+        recording = true
+        attachments(true)
+        frames(5)
+        attachments(false)
+        frames(5)
+        assertFrames(historyTop)
+    }
+
+    @Test open fun movingReader_preservesConsumedMovement() {
+        openReader()
+        val top = replyCoordinates.positionInRoot().y
+        recording = true
+        list().performTouchInput { down(Offset(centerX, height / 2f)) }
+        repeat(6) { step ->
+            list().performTouchInput { moveBy(Offset(0f, -15f), delayMillis = 32) }
+            if (step == 2) updateReply(body + "\n" + (1..15).joinToString("\n") { "Delta $it." }, true)
+            if (step == 3) {
+                assertTrue("spacing changes during the active drag", listState.isScrollInProgress)
+                attachments(true)
+            }
+            if (step == 4) attachments(false)
+            frames(3)
+        }
+        val dragMovement = consumedMovement
+        assertTrue("the drag consumed real movement", dragMovement < -10f)
+        list().performTouchInput {
+            // Frame sampling leaves the preceding velocity samples far apart. Finish with a real burst.
+            repeat(4) { moveBy(Offset(0f, -30f), delayMillis = 10) }
+            up()
+        }
+        val beforeFling = consumedMovement
+        val tail = (1..20).joinToString("\n") { "Appended line $it." }
+        updateReply(body + "\n" + tail, true)
+        frames(4)
+        assertTrue("the fling remains active after reveal", listState.isScrollInProgress)
+        attachments(true)
+        frames(2)
+        assertTrue("the fling remains active after spacing growth", listState.isScrollInProgress)
+        attachments(false)
+        frames(2)
+        assertTrue("settlement arrives during the fling", listState.isScrollInProgress)
+        finishReply()
+        frames(30)
+        assertTrue("the fling consumes movement after the update", consumedMovement < beforeFling - 1f)
+        assertFrames(top)
+    }
+
+    private fun finishReply() {
+        val text = (state.value.items.last() as ThreadItem.MessageItem).message.content
+        updateReply(text, false)
+    }
+
+    private fun attachments(present: Boolean) {
+        compose.runOnUiThread {
+            val reply = (state.value.items.last() as ThreadItem.MessageItem).message
+            val updated =
+                reply.copy(
+                    attachments = if (present) listOf(MessageAttachment("file", "Notes.pdf", "application/pdf")) else emptyList(),
+                )
+            state.value = state.value.copy(items = state.value.items.dropLast(1) + ThreadItem.MessageItem(updated))
+        }
+    }
+
+    private fun updateReply(
+        text: String,
+        streaming: Boolean,
+    ) {
+        compose.runOnUiThread {
+            state.value = state.value.copy(items = state.value.items.dropLast(1) + message("reply", text, streaming))
+        }
+    }
+
+    private fun frames(count: Int) {
+        repeat(count) {
+            compose.mainClock.advanceTimeByFrame()
+            compose.waitForIdle()
+            drawFrame()
+        }
+    }
+
+    private fun drawFrame() {
+        // The native JVM renderer needs an explicit View draw; use the same real composition on Android.
+        compose.runOnUiThread {
+            val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+            view.draw(Canvas(bitmap))
+            bitmap.recycle()
+        }
+    }
+
+    private fun openReader() {
+        compose.setContent {
+            view = LocalView.current
+            CompositionLocalProvider(
+                LocalOverscrollFactory provides null,
+                LocalThreadListCompositionObserver provides { listState = it },
+            ) {
+                PyrycodeMobileTheme {
+                    ThreadScreen(
+                        state = state.value,
+                        onBack = {},
+                        onSendMessage = {},
+                        connectionState = ConnectionState.Connected,
+                        onRetry = {},
+                        modifier =
+                            Modifier.nestedScroll(motion).drawWithContent {
+                                val hasRows = listState.layoutInfo.visibleItemsInfo.isNotEmpty()
+                                drawContent()
+                                if (recording && hasRows && replyCoordinates.isAttached) {
+                                    renderedTops += replyCoordinates.positionInRoot().y - consumedMovement
+                                    olderCoordinates?.takeIf { it.isAttached && olderTop + consumedMovement >= 0f }?.let {
+                                        renderedOlderTops +=
+                                            it.positionInRoot().y - consumedMovement
+                                    }
+                                }
+                            },
+                    )
+                }
+            }
+        }
+        compose.waitForIdle()
+        // The newest reply is the first lazy row. Capture the actual un-clipped layout coordinates.
+        replyCoordinates =
+            compose
+                .onAllNodesWithTag(MESSAGE_BUBBLE_TEST_TAG, useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .minBy {
+                    it.layoutInfo.coordinates
+                        .positionInRoot()
+                        .y
+                }.layoutInfo.coordinates
+        compose.runOnIdle {
+            assertTrue("fixture reply must overflow", replyCoordinates.size.height > listState.layoutInfo.viewportSize.height)
+            listState.dispatchRawDelta(with(compose.density) { 180.dp.toPx() } - replyCoordinates.positionInRoot().y)
+        }
+        compose.waitForIdle()
+        assertEquals(0, listState.firstVisibleItemIndex)
+        assertTrue(listState.firstVisibleItemScrollOffset > 4)
+        olderCoordinates =
+            compose
+                .onAllNodesWithTag(MESSAGE_BUBBLE_TEST_TAG, useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .map { it.layoutInfo.coordinates }
+                .filter { it.positionInRoot().y < replyCoordinates.positionInRoot().y && it.positionInRoot().y >= 0f }
+                .maxByOrNull { it.positionInRoot().y }
+        assertTrue("an older row must be visible above the reply", olderCoordinates != null)
+        olderTop = olderCoordinates?.positionInRoot()?.y ?: 0f
+        compose.mainClock.autoAdvance = false
+    }
+
+    private fun appendAndReveal() {
+        val tail = (1..20).joinToString("\n") { "Appended line $it." }
+        updateReply(body + "\n" + tail, true)
+        frames(45)
+    }
+
+    private fun assertFrames(top: Float) {
+        assertTrue("must observe rendered reveal frames", renderedTops.isNotEmpty())
+        renderedTops.forEachIndexed { frame, actual -> assertEquals("rendered frame $frame", top, actual, 1f) }
+        renderedOlderTops.forEachIndexed { frame, actual -> assertEquals("older row rendered frame $frame", olderTop, actual, 1f) }
+    }
+
+    private fun list() = compose.onNode(hasScrollToIndexAction())
+
+    private fun message(
+        id: String,
+        text: String,
+        streaming: Boolean,
+    ): ThreadItem =
+        ThreadItem.MessageItem(Message(id, "s1", Role.Assistant, text, Instant.parse("2026-10-01T00:00:00Z"), isStreaming = streaming))
+}

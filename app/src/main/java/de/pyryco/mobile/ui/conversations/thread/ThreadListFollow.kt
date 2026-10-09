@@ -4,16 +4,18 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import de.pyryco.mobile.data.network.RelayLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlin.math.roundToInt
 
 /** Desktop's `AT_BOTTOM_TOLERANCE_PX`: this close to the newest end still counts as following. */
 private val AtNewestEndTolerance = 4.dp
@@ -22,6 +24,7 @@ private val AtNewestEndTolerance = 4.dp
  * One layout frame of the thread list as the follow rule reads it (#1314): the first visible row's key,
  * index and scroll offset, a [content] signature whose change means the newest rows grew, whether a
  * scroll, such as a finger on the list, is in progress, and how many prompt rows lead the list (#1449).
+ * [compensatedScroll] accounts for geometry displacement, which must not count as reader movement.
  */
 internal data class ListFrame(
     val anchorKey: Any?,
@@ -30,6 +33,7 @@ internal data class ListFrame(
     val content: Any?,
     val scrolling: Boolean = false,
     val promptRows: Int = 0,
+    val compensatedScroll: Int = 0,
 )
 
 internal data class FollowStep(
@@ -39,7 +43,7 @@ internal data class FollowStep(
 
 /**
  * Desktop's `useThreadScrollPin` as one step per frame (#1314). A change to the anchor's key or offset is a
- * scroll, of any source, and recomputes following from position. Under reverseLayout an insert at index 0
+ * scroll after excluding geometry compensation, and recomputes following from position. Under reverseLayout an insert at index 0
  * moves only the anchor's index, a history page moves nothing, and an overscroll at the end moves nothing,
  * so none of them reads as a scroll. Growth with no scroll pins while following.
  *
@@ -61,7 +65,9 @@ internal fun followStep(
     val atEnd = current.anchorIndex == 0 && current.anchorOffset <= tolerancePx
     if (previous == null) return FollowStep(following = atEnd, pin = false)
     if (previous.anchorIndex < previous.promptRows && current.promptRows == 0) return FollowStep(following = true, pin = true)
-    if (previous.anchorKey != current.anchorKey || previous.anchorOffset != current.anchorOffset) {
+    if (previous.anchorKey != current.anchorKey ||
+        current.anchorOffset - previous.anchorOffset != current.compensatedScroll - previous.compensatedScroll
+    ) {
         return FollowStep(following = atEnd, pin = false)
     }
     val grew = previous.anchorIndex != current.anchorIndex || previous.content != current.content
@@ -79,6 +85,7 @@ internal fun followStep(
 @Composable
 internal fun FollowNewestEnd(
     listState: LazyListState,
+    viewport: ThreadListViewport,
     newestRowKey: Any?,
     newestRow: Any?,
     promptIdentity: Any?,
@@ -92,8 +99,8 @@ internal fun FollowNewestEnd(
     val prompt by rememberUpdatedState(promptIdentity)
     val maskSizes by rememberUpdatedState(promptPresent)
     val promptRowCount by rememberUpdatedState(promptRows)
-    // Read only inside the collectors below, never inside the snapshotFlow, so it cannot drive a frame.
-    val follow = remember(listState) { Following() }
+    // Following is plain bookkeeping: changing it does not invalidate layout or drive a frame.
+    val follow = viewport
     LaunchedEffect(listState, tolerancePx) {
         var previous: ListFrame? = null
         snapshotFlow {
@@ -106,19 +113,20 @@ internal fun FollowNewestEnd(
                 content = listOf(newestKey, prompt, newest.takeUnless { maskSizes }, anchor?.size.takeUnless { maskSizes }),
                 scrolling = listState.isScrollInProgress,
                 promptRows = promptRowCount,
+                compensatedScroll = viewport.compensatedScroll,
             )
         }.distinctUntilChanged()
             .collect { frame ->
-                val step = followStep(previous, frame, follow.value, tolerancePx)
+                val step = followStep(previous, frame, follow.following, tolerancePx)
                 previous = frame
-                follow.value = step.following
+                follow.following = step.following
                 if (step.pin) pinToNewest(listState)
             }
     }
     // Desktop's followBottom: an accepted send follows again, and scrolls now rather than on the next growth.
     LaunchedEffect(listState, sentMessages) {
         sentMessages.collect {
-            follow.value = true
+            follow.following = true
             pinToNewest(listState)
         }
     }
@@ -136,6 +144,47 @@ private suspend fun pinToNewest(listState: LazyListState) {
     }
 }
 
-private class Following(
-    var value: Boolean = true,
-)
+/**
+ * Reverse layout holds an item's bottom; a history reader needs its top held instead. Capture the
+ * size delta during item measurement, before a shrink can move the anchor to another item. Apply
+ * only geometry displacement after placement, without taking a scroll mutation from a finger/fling.
+ */
+internal class ThreadListViewport(
+    private val listState: LazyListState,
+) {
+    var following = true
+    var compensatedScroll = 0
+        private set
+    private var sizeDelta = 0
+    private var beforePadding: Int? = null
+    private var correcting = false
+
+    fun onRowMeasured(
+        key: Any,
+        height: Int,
+    ) {
+        if (following || correcting) return
+        val anchor =
+            Snapshot.withoutReadObservation {
+                listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == listState.firstVisibleItemIndex }
+            }
+        if (anchor?.key == key) sizeDelta = height - anchor.size
+    }
+
+    fun onPositioned() {
+        if (correcting) return
+        val padding = listState.layoutInfo.beforeContentPadding
+        val delta = if (following) 0 else sizeDelta + padding - (beforePadding ?: padding)
+        sizeDelta = 0
+        beforePadding = padding
+        if (delta == 0) return
+        correcting = true
+        try {
+            val consumed = listState.dispatchRawDelta(delta.toFloat()).roundToInt()
+            compensatedScroll += consumed
+            RelayLog.d { "event=thread_reader_compensation delta_px=$delta consumed_px=$consumed" }
+        } finally {
+            correcting = false
+        }
+    }
+}
