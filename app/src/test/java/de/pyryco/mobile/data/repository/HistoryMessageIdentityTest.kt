@@ -136,6 +136,47 @@ class HistoryMessageIdentityTest {
     }
 
     @Test
+    fun placementInvariant_lifecycleUsesCombinedSplitSegmentRange_inHistoryAndCacheReplay() {
+        val keyOwner = message("t#1", "separator", at = 3, role = Role.User)
+        val suffixOwner = message("t#1~1", "suffix owner", at = 4, role = Role.User)
+        val original =
+            segment("t", 0, "abc", at = 5).copy(
+                segment = AssistantSegment("t", listOf(SegmentDelta(0, 1), SegmentDelta(1, 1), SegmentDelta(2, 1))),
+            )
+        val firstEvidence = rows(segment("t", 1, "changed", at = 2))
+        val order = mapOf(keyOwner.row().mergeIdentity() to 3uL, firstEvidence.single().mergeIdentity() to 2uL)
+        val held =
+            rows(keyOwner, suffixOwner, original).mergeUnsignedHistoryRows(
+                firstEvidence,
+                order,
+                firstEvidence.mapTo(mutableSetOf()) { it.mergeIdentity() },
+            )
+        val middle = segment("t", 1, "b", at = 5).copy(id = "t#1~2")
+        val remainder = original.copy(content = "ac", segment = AssistantSegment("t", listOf(SegmentDelta(0, 1), SegmentDelta(2, 1))))
+        assertEquals(rows(middle, keyOwner, suffixOwner, remainder), held)
+        val marker = ThreadItem.BackgroundTaskLifecycle("task", original.timestamp)
+        val legacy = message("t", "abc", at = 5)
+        for (cache in listOf(false, true)) {
+            for (leading in listOf(true, false)) {
+                fun merge(
+                    receiving: List<ThreadItem>,
+                    page: List<ThreadItem>,
+                ) = if (cache) receiving.mergeUnsignedCachedRows(page, emptyMap()) else receiving.mergeUnsignedHistoryRows(page, emptyMap())
+                for (represented in listOf(original, legacy, legacy.copy(id = "t#0", reconciliationId = "t"))) {
+                    val incoming = if (leading) listOf(marker) + rows(represented) else rows(represented) + marker
+                    val expected = if (leading) listOf(marker) + held else held + marker
+                    var merged = merge(held, incoming)
+                    assertEquals("cache=$cache leading=$leading", expected, merged)
+                    for (replay in listOf(incoming, rows(original), emptyList(), incoming)) {
+                        merged = merge(merged, replay)
+                        assertEquals("cache=$cache leading=$leading", expected, merged)
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
     fun logicalIdentityInvariant_aliasedLegacyStillReconcilesLaterMatchingText_withoutDuplicatingIt() {
         val opener = segment("t", 0, "a", at = 2)
         val legacy = message("t", "bc", at = 1)

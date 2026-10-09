@@ -1067,7 +1067,9 @@ private fun List<ThreadItem>.mergeRows(
             }
             slots[base.size]?.let(::addAll)
         }.withJoinedSegments().withUniqueMessageKeys(hinted, attributedIncoming, rendererOwners)
-    val merged = ordinary.withHistoryLifecyclePositions(incomingAtoms, lifecycle).withBackgroundTaskLaunches()
+    // Keep each segment's combined neighbour range; recovered legacy rows carry only proven sequences.
+    val lifecyclePage = attributedIncoming.withLegacyRecords(legacy.records)
+    val merged = ordinary.withHistoryLifecyclePositions(lifecyclePage, lifecycle).withBackgroundTaskLaunches()
     return if (merged == hinted) hinted else merged
 }
 
@@ -1188,7 +1190,7 @@ private class LegacyMatches(
 private fun List<ThreadItem>.withLegacyRecords(records: Map<String, AssistantSegment>): List<ThreadItem> =
     map { row ->
         val message = (row as? ThreadItem.MessageItem)?.message
-        val record = message?.takeIf { it.role == Role.Assistant && it.segment == null }?.let { records[it.id] }
+        val record = message?.takeIf { it.role == Role.Assistant && it.segment == null }?.let { records[it.ordinaryId] }
         if (message == null || record == null) row else ThreadItem.MessageItem(message.copy(segment = record))
     }
 
