@@ -31,11 +31,34 @@ with and without the status band's running-tasks pill. Non-rendering Info banner
 their stable rows and keys but are skipped when finding the newest rendered row;
 otherwise appending an invisible banner would change the ordinary-message resting gap.
 
-Reservations follow actual attachment and draft height changes. When a prompt or
-row-kind change changes the rest adjustment, an idle history reader's keyed anchor
-and physical offset are preserved with `requestScrollToItem`; active drags are not
-cancelled. `FollowNewestEnd` retains its existing rules. The empty state is centered
-within measured chrome reservations rather than behind the bars.
+Reservations follow actual attachment and draft height changes. Since
+[#1942](https://github.com/pyrycode/pyrycode-mobile/issues/1942), non-following readers
+retain the anchored row's top through both row-height and newest-end padding changes,
+including progressive reveal and taller or shorter settled markdown. Index zero does
+not imply following: a reply taller than the viewport can still be anchored there
+while its reader is far from the newest end. The empty state is centered within
+measured chrome reservations rather than behind the bars.
+
+`ThreadListViewport`, remembered with the list, shares geometry bookkeeping with
+`FollowNewestEnd`. Row measurement captures the current keyed anchor's height delta
+before a shrink can cause lazy measurement to publish a different anchor. It reads
+the old layout through `Snapshot.withoutReadObservation`, so row measurement does
+not observe its own measurement result. The list's placement callback combines that
+size delta with the newest-end padding delta and applies `dispatchRawDelta` before
+drawing. It corrects relative displacement without taking the scroll mutation from
+a resting finger, drag or fling. The former separate idle-only
+`requestScrollToItem` rest-adjustment effect is removed; applying both would compensate
+twice. Only the current anchor's matching displayed key contributes size compensation,
+so moving to another row does not restore a stale reading position.
+
+`ListFrame.compensatedScroll` accumulates the displacement actually consumed, including
+clamping at a list end. `followStep` excludes its change from the anchor-offset change
+when detecting reader movement. Otherwise compensation itself could change following
+state. Followers still pin growth, accepted sends resume following, prompt sizes stay
+masked from the growth signature, and a reader anchored on a departing prompt resumes
+following under #1449. Keep these rules together with geometry compensation; see
+[rendered-frame and gesture coverage](thread-screen-testing.md#reader-geometry-during-streaming-1942)
+and [the newest-end follow rule](thread-screen-subagent-tool-rows.md#the-newest-end-follow-rule-1314).
 
 The body shape since [#246](../codebase/246.md) iterated `state.items.asReversed()` with stable composite keys and dispatched at the `ThreadItem` sealed-interface level. **Since [#782](../codebase/782.md) the list walks `ThreadRow`s, not `ThreadItem`s directly:** `val rows = remember(state.items, state.queuedMessages) { foldQueuedRows(state.items, state.queuedMessages) }` joins the thread's items against the daemon's queued backlog (see
 [Queued backlog rendering § The render-time join](queued-backlog-section.md#the-render-time-join-782)),
