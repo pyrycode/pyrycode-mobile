@@ -16,6 +16,7 @@ import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ConversationReadMarks
 import de.pyryco.mobile.di.AttentionAlert
 import de.pyryco.mobile.di.HostConversationSnapshot
@@ -30,6 +31,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -72,9 +74,21 @@ class AttentionNotifierTest {
     private val agents = mutableMapOf(("host-a" to "conv") to ConversationAgent.Claude, ("host-b" to "conv") to ConversationAgent.Claude)
     private val names = mutableMapOf<Pair<String, String>, String>()
     private lateinit var ledger: File
+    private val oldSink = RelayLog.sink
+    private val oldEnabled = RelayLog.enabled
+    private val logs = mutableListOf<String>()
+
+    @After
+    fun restoreLogs() {
+        RelayLog.sink = oldSink
+        RelayLog.enabled = oldEnabled
+        assertTrue(logs.none { line -> listOf("Reply secret", "gradlew", "/private", "Which secret", "Late reply").any { it in line } })
+    }
 
     @Before
     fun setUp() {
+        RelayLog.enabled = true
+        RelayLog.sink = { _, _, text -> logs += text }
         shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
         ledger = File(folder.root, "attention_alerts")
     }
@@ -94,6 +108,139 @@ class AttentionNotifierTest {
             val intent = shadowOf(tap).savedIntent
             assertEquals(MainActivity::class.java.name, intent.component?.className)
             assertEquals(HostConversationTarget("host-a", "conv"), NotificationTap.target(intent))
+        }
+
+    @Test
+    fun previewsArePrivateAndPublicVersionsContainOnlyFixedCopy() =
+        withNotifier {
+            names["host-a" to "conv"] = " Conversation\u0000 "
+            listOf(
+                TURN to "Reply secret **words**",
+                TURN.copy(kind = AttentionAlert.Kind.Prompt) to "Allow Bash? run: /private/secret ./gradlew lint",
+                TURN.copy(kind = AttentionAlert.Kind.Prompt) to "Which secret question?",
+            ).forEachIndexed { index, (alert, content) ->
+                alerts.emit(alert.copy(key = "preview-$index", preview = { content }))
+                val private = posted().single()
+                assertEquals(Notification.VISIBILITY_PRIVATE, private.visibility)
+                assertEquals(notificationPreview(content), private.extras.getString(Notification.EXTRA_TEXT))
+                val public = requireNotNull(private.publicVersion)
+                assertEquals("Conversation", public.extras.getString(Notification.EXTRA_TITLE))
+                val fixed =
+                    if (alert.kind ==
+                        AttentionAlert.Kind.TurnCompleted
+                    ) {
+                        R.string.notification_turn_completed
+                    } else {
+                        R.string.notification_prompt
+                    }
+                assertEquals(app.getString(fixed), public.extras.getString(Notification.EXTRA_TEXT))
+                assertEquals(null, public.contentIntent)
+                assertTrue(
+                    public.extras.keySet().none { key ->
+                        val value =
+                            public.extras
+                                .get(key)
+                                ?.toString()
+                                .orEmpty()
+                        listOf("secret", "gradlew", "/private", "Which", "Reply").any { it in value }
+                    },
+                )
+                val parcel = android.os.Parcel.obtain()
+                try {
+                    public.writeToParcel(parcel, 0)
+                    val bytes = parcel.marshall()
+                    listOf(Charsets.UTF_8, Charsets.UTF_16LE).forEach { charset ->
+                        val serialized = bytes.toString(charset)
+                        assertTrue(listOf("secret", "gradlew", "/private", "Which", "Reply").none { it in serialized })
+                    }
+                } finally {
+                    parcel.recycle()
+                }
+                assertFalse(ledger.readText().contains(content))
+            }
+        }
+
+    @Test
+    fun publicFallbackKeepsAgentCopyAndAppNameForEmptyTitlesAndPreviews() =
+        withNotifier {
+            names["host-a" to "conv"] = "\u0000 "
+            listOf(
+                ConversationAgent.Claude to R.string.notification_turn_completed,
+                ConversationAgent.Codex to R.string.notification_turn_completed_codex,
+                null to R.string.notification_turn_completed_neutral,
+            ).forEachIndexed { index, (agent, fixed) ->
+                if (agent == null) agents.remove("host-a" to "conv") else agents["host-a" to "conv"] = agent
+                alerts.emit(TURN.copy(key = "fallback-$index", preview = { "\u0000\t" }))
+                val notification = posted().single()
+                assertEquals(app.getString(fixed), notification.extras.getString(Notification.EXTRA_TEXT))
+                assertEquals(app.getString(fixed), notification.publicVersion.extras.getString(Notification.EXTRA_TEXT))
+                assertEquals(app.getString(R.string.app_name), notification.publicVersion.extras.getString(Notification.EXTRA_TITLE))
+            }
+        }
+
+    @Test
+    fun alreadyReadCompletionNeverStartsPreviewEnrichment() =
+        withNotifier {
+            var lookups = 0
+            marks("host-a", "conv", 5u, 5u)
+            alerts.emit(
+                TURN.copy(historyEntryId = 5u, preview = {
+                    lookups++
+                    "Read reply"
+                }),
+            )
+            assertEquals(0, lookups)
+            assertTrue(posted().isEmpty())
+        }
+
+    @Test
+    fun duplicatesAndForegroundAlertsNeverEvaluateThePreviewSupplier() =
+        withNotifier {
+            var lookups = 0
+            val alert =
+                TURN.copy(preview = {
+                    lookups++
+                    "Private reply"
+                })
+            foreground = true
+            alerts.emit(alert)
+            foreground = false
+            alerts.emit(alert)
+            assertEquals(0, lookups)
+            assertTrue(posted().isEmpty())
+            alerts.emit(alert.copy(key = "new"))
+            alerts.emit(alert.copy(key = "new"))
+            assertEquals(1, lookups)
+            assertEquals(1, posted().size)
+        }
+
+    @Test
+    fun slowEnrichmentDoesNotBlockOtherAlertsOrReplaceANewerPrompt() =
+        withNotifier {
+            val reply = kotlinx.coroutines.CompletableDeferred<String?>()
+            alerts.emit(TURN.copy(preview = { reply.await() }))
+            alerts.emit(TURN.copy(conversationId = "other", key = "other", preview = { "Other reply" }))
+            assertEquals("Other reply", posted().single().extras.getString(Notification.EXTRA_TEXT))
+            alerts.emit(TURN.copy(kind = AttentionAlert.Kind.Prompt, key = "modal:new", preview = { "New prompt" }))
+            reply.complete("Late reply")
+            assertEquals(setOf("Other reply", "New prompt"), posted().map { it.extras.getString(Notification.EXTRA_TEXT) }.toSet())
+        }
+
+    @Test
+    fun gatesAndReadMarksAreCheckedAfterEnrichmentAndRetiredHostsDoNotPost() =
+        withNotifier {
+            val reply = kotlinx.coroutines.CompletableDeferred<String?>()
+            alerts.emit(TURN.copy(historyEntryId = 5u, preview = { reply.await() }))
+            readMarks.value = mapOf("host-a" to mapOf("conv" to ConversationReadMarks(5u, 5u)))
+            reply.complete("Read reply")
+            assertTrue(posted().isEmpty())
+            alerts.emit(TURN.copy(key = "retired", preview = { "Retired reply" }, isCurrent = { false }))
+            assertTrue(posted().isEmpty())
+            val held = kotlinx.coroutines.CompletableDeferred<String?>()
+            alerts.emit(TURN.copy(key = "foreground", preview = { held.await() }))
+            foreground = true
+            held.complete("Hidden reply")
+            assertTrue(posted().isEmpty())
         }
 
     @Test
