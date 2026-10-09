@@ -30,6 +30,91 @@ probes establish the rate bound; the retained live ping and scripted multi-delta
 scenarios establish streaming integration. See
 [counted dispatcher evidence](../../e2e-interactive-stream.md#verification-status).
 
+## Saved-thread first draw (#1949)
+
+`SavedThreadFirstDrawDeviceTest.savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen`
+uses real `FileConversationCache`, `CachingConversationRepository`, `ThreadViewModel`,
+production `ThreadContentScheduling` and `ThreadScreen` on the configured Android 13
+managed device. It persists two fixtures before timing: **20 ordinary saved messages**,
+and **18,000 displayed message rows / 36,000 durable entries / 18,000 spans**. Each
+fixture runs offline and with a connected delegate whose newest response stays held.
+First opens create fresh cache/repository instances; reopening uses that repository
+with a new ViewModel and composition. All eight cases require the newest saved message
+to draw within **1,000 ms**, without waiting for the newest response.
+
+`SystemClock.elapsedRealtimeNanos` starts before cache/repository and ViewModel
+construction. Cache reading, collection, projection and drawing are inside the interval;
+fixture generation and APK/activity startup are outside it. Cumulative probes record
+row restore, repository snapshot, complete screen content and the committed newest-row
+frame. A root `OnDrawListener` checks exact newest text, placed semantics and nonzero
+bounds wholly inside the message viewport, then registers a frame-commit callback.
+Only that callback records draw time. A parent draw modifier missed child render-layer
+updates; first StateFlow emission, Compose virtual time, loading semantics and eventual
+idleness cannot establish the draw deadline. Polling only waits for recorded evidence.
+
+`slowRestore_negativeControlRejectsTheSameFirstDrawBound` inserts **3,000 ms** into
+cache reading in the same timed open path and catches the identical bound assertion's
+failure. The latest full UI run drew at **3,266 ms**, with restore/snapshot/content at
+**3,024/3,033/3,136 ms**. Passing this test means the latency assertion rejected the
+slow path, not that the slow path met the deadline.
+
+`SavedThreadOpenTest.savedRowsDoNotWaitForNewestResponse` independently holds newest
+completion in controlled tests. Device assertions retain exact saved rows, marker
+anchors, one newest ask per connected opening and zero offline asks. Keep
+`ThreadHistoryProjectionWorkerTest` and
+`ThreadFragmentedHistoryDeviceTest.sparseFragmentedRestore_opensEditsAndScrolls_onePagePerPull`
+for projection and reader-only gap paging. The older sparse four-row fixture and its
+15-second eventual-completion allowance concealed large displayed-history allocations;
+keep the full displayed-row fixture and phase measurements when changing restore work.
+See [validated decode reuse](conversation-cache-layout.md#thread-document-readers-1949)
+for exact-byte freshness and proof compatibility.
+
+**Counted evidence, 2026-10-09.** The original
+[full UI failure](https://github.com/pyrycode/pyrycode-mobile/pull/2015#issuecomment-6086154606)
+on `2367d43a7` recorded **222 executed, 221 passed, 1 failed, 1 skipped**. Fragmented
+offline first open drew at **1,026 ms** (restore/snapshot/content **600/808/933 ms**),
+stopping the method before the other three fragmented cases. A focused reproduction
+missed at **1,012 ms** (**533/764/932 ms**). The PR also preserves a repaired-commit
+run under competing host build load that missed at **1,334 ms** (**705/1,014/1,249 ms**).
+Neither a focused pass nor later success erases these misses; the measured bound is for
+the configured device, not arbitrary host contention.
+
+The repaired
+[verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2015#issuecomment-6087126093)
+on `c5b6319c78c2` cites fresh UI XML timestamp **2026-10-09T18:36:59** and records
+these cumulative monotonic milliseconds:
+
+| Fixture / mode / opening | Restore | Snapshot | Complete content | Newest drawn |
+| --- | ---: | ---: | ---: | ---: |
+| Ordinary / offline / first | 12 | 16 | 57 | 116 |
+| Ordinary / offline / reopen | 11 | 12 | 64 | 109 |
+| Ordinary / held newest / first | 12 | 16 | 67 | 116 |
+| Ordinary / held newest / reopen | 12 | 13 | 22 | 149 |
+| Fragmented / offline / first | 480 | 657 | 766 | 852 |
+| Fragmented / offline / reopen | 82 | 267 | 407 | 453 |
+| Fragmented / held newest / first | 585 | 752 | 850 | 913 |
+| Fragmented / held newest / reopen | 90 | 272 | 351 | 400 |
+
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui` recorded
+**222 executed, 222 passed, 0 failed, 1 skipped**. The first-draw, negative-control
+and sparse reader-paging methods each executed once and passed (**1/0/0** for
+executed/failed/skipped); the sole skip was `RenameDialogCaptureTest.renameAtFigmaViewport`.
+The full scripted-all gate recorded **22 executed, 22 passed, 0 failed, 0 skipped**.
+Fresh unit evidence in the review records `DecodedThreadRestoreTest` (7),
+`HistoryHashCompatibilityTest` (5), the held-newest method (1) and
+`ThreadHistoryProjectionWorkerTest` (6), all passed with zero failures or skips.
+
+The subsequent dispatcher
+[full live PASS](https://github.com/pyrycode/pyrycode-mobile/issues/1949#issuecomment-6087370255)
+ran `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on
+`c5b6319c78c2` merged with `origin/main` at `7c1eb26fccfb`. The dispatcher report
+`2026-10-09T18-45-37-128Z` records **65 executed, 65 passed, 0 failed, 0 skipped**,
+with no flaky passes.
+`InteractiveStreamE2ETest.interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect`
+executed and passed (**1/0/0**) in that full suite. This retained rung-3 operator flow
+proves offline/reconnect integration; the controlled device fixtures establish the
+latency bound. No separate focused live run or new ladder scenario is claimed.
+
 ## Folded-row composition reuse (#1954)
 
 `ThreadRowContentTypeTest.foldedRows_exposeDistinctKindsAndSharedMessageTypeInActualListLayout`
