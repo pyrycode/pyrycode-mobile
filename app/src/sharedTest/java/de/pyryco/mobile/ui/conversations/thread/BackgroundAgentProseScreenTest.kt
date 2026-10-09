@@ -272,7 +272,8 @@ class BackgroundAgentProseScreenTest {
                 println(stage)
                 if ("stage=before" in stage && !grew) {
                     grew = true
-                    val lateProse = (0 until 5).joinToString("\n\n") { "Late child paragraph $it" }
+                    // Six paragraphs put the reply's tap point behind the header at this fixed device size.
+                    val lateProse = (0 until 6).joinToString("\n\n") { "Late child paragraph $it" }
                     compose.runOnIdle {
                         items =
                             items.map { item ->
