@@ -298,3 +298,15 @@ system dialogs (shipped at `186c399b`). It restores the dialog setting on finish
 Bluetooth off. The [earlier-Other evidence](development-verification-emulator-evidence.md#emulator-and-real-evidence)
 shows the unchanged IME method passing even during a native Bluetooth crash; this mitigation
 does not establish that the emulator service itself is repaired.
+
+## Full-cap storage proofs
+
+Ordinary `./gradlew test` excludes the four `FullRetentionTest` cases that repeatedly
+rewrite and restore 100000 disk rows. Fast retention policy, cache and history tests still run.
+Run `./gradlew test -PfullRetentionTests=true` after changing cache retention or saved history
+position handling. The flag includes those proofs in the ordinary suite.
+
+Pipeline implementations and their tests live in `pyrycode-mobile-agents/scripts`.
+The existing product script paths are compatibility launchers.
+Deploy the agents checkout first and set `AGENTS_REPO_PATH` for a non-sibling installation.
+Test the moved tools with the agents repo's `bin/test-mobile-tools /path/to/pyrycode-mobile`.

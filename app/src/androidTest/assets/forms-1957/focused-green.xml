@@ -1,0 +1,84 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="de.pyryco.mobile.ui.components.ChannelFormFieldsTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-08T11:48:41.434Z" hostname="Juhanas-MacBook-Air.local" time="24.888">
+    <testcase name="wellsHaveExactDesignHeightAndSpacingWithoutMaterialInsets" classname="de.pyryco.mobile.ui.components.ChannelFormFieldsTest" time="19.157" />
+    <testcase name="compactWidthAndEnlargedTextKeepLabelsAndWellsSeparate" classname="de.pyryco.mobile.ui.components.ChannelFormFieldsTest" time="0.527" />
+    <testcase name="promptWellKeepsBlankSpaceBelowWrappedAndExplicitLines" classname="de.pyryco.mobile.ui.components.ChannelFormFieldsTest" time="2.456" />
+    <testcase name="nameWellToPromptWellMatchesTheFrame" classname="de.pyryco.mobile.ui.components.ChannelFormFieldsTest" time="0.47" />
+    <testcase name="editingAndValidationKeepTheSharedContract" classname="de.pyryco.mobile.ui.components.ChannelFormFieldsTest" time="0.774" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.components.CreateChannelModalTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-08T11:49:06.367Z" hostname="Juhanas-MacBook-Air.local" time="26.31">
+    <testcase name="bothFieldsOpenEmptyAndTheNameIsTheOneFocusedField" classname="de.pyryco.mobile.ui.components.CreateChannelModalTest" time="20.191" />
+    <testcase name="cancelAndCloseDismissWithoutSubmitting" classname="de.pyryco.mobile.ui.components.CreateChannelModalTest" time="1.73" />
+    <testcase name="rendersTheTitleBothLabelsAndTheFooter" classname="de.pyryco.mobile.ui.components.CreateChannelModalTest" time="1.075" />
+    <testcase name="okNeedsANonBlankNameAnAvailableHostAndAPromptWithinTheByteLimit" classname="de.pyryco.mobile.ui.components.CreateChannelModalTest" time="1.038" />
+    <testcase name="okSubmitsTheTrimmedNameAndTheVerbatimPrompt" classname="de.pyryco.mobile.ui.components.CreateChannelModalTest" time="1.078" />
+    <testcase name="anErrorKeepsTheTypedValuesAndAConfirmedCreateLocksOnlyTheName" classname="de.pyryco.mobile.ui.components.CreateChannelModalTest" time="1.006" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.components.ModalFieldPaletteTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-08T11:49:32.710Z" hostname="Juhanas-MacBook-Air.local" time="3.601">
+    <testcase name="lightFieldsKeepTheirExistingPaletteInBothFocusStates" classname="de.pyryco.mobile.ui.components.ModalFieldPaletteTest" time="2.467" />
+    <testcase name="darkFieldsMatchTheReferenceInBothFocusStates" classname="de.pyryco.mobile.ui.components.ModalFieldPaletteTest" time="1.121" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialogTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-10-08T11:49:36.413Z" hostname="Juhanas-MacBook-Air.local" time="5.76">
+    <testcase name="anErrorIsShownAndTheTypedValuesSurviveIt" classname="de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialogTest" time="0.53" />
+    <testcase name="cancelAndCloseDismissWithoutSubmitting" classname="de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialogTest" time="0.547" />
+    <testcase name="aLongDaemonNameIsClampedWithoutSplittingASurrogatePair" classname="de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialogTest" time="0.665" />
+    <testcase name="theNameFieldIsTheOneFocusedFieldOnceTheModalComposes" classname="de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialogTest" time="0.465" />
+    <testcase name="rendersTheTitleBothLabelsAndTheFooter" classname="de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialogTest" time="0.59" />
+    <testcase name="okFollowsThePromptsUtf8ByteLimit" classname="de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialogTest" time="0.767" />
+    <testcase name="okSubmitsTheTrimmedNameAndTheVerbatimPrompt" classname="de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialogTest" time="0.702" />
+    <testcase name="okWithAnEmptyPromptSubmitsAnEmptyPrompt" classname="de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialogTest" time="0.416" />
+    <testcase name="prefillsTheNameAndOpensThePromptEmpty" classname="de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialogTest" time="0.295" />
+    <testcase name="okIsDisabledForABlankOrWhitespaceName" classname="de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialogTest" time="0.371" />
+    <testcase name="aConfirmedPromoteLocksTheNameButLeavesThePromptEditable" classname="de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialogTest" time="0.401" />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" tests="47" skipped="0" failures="0" errors="0" timestamp="2026-10-08T11:49:42.201Z" hostname="Juhanas-MacBook-Air.local" time="22.823">
+    <testcase name="aDisconnectedHostDrawsNoSectionPlusAndTheyReturnOnReconnect" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.83" />
+    <testcase name="tree_rendersBothSectionsFromRealHostData_expandedOnFirstShow" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.414" />
+    <testcase name="chatsSectionAddControl_targetsItsOwnHost" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.381" />
+    <testcase name="editWorkspaceModal_isSeeded_reportsTheNameAndTheArchiveSteps" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="1.092" />
+    <testcase name="conversationRows_drawTheirOwnAttentionStateFromTheHostEntry" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.407" />
+    <testcase name="hostRowReconnectControl_targetsItsOwnHost_andLeavesEveryHostsRowsDrawn" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.439" />
+    <testcase name="collapsedRowsDrawNoChildren_andHostContainersKeepTheSixteenDpFigmaGap" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.436" />
+    <testcase name="editHostModal_unpairAction_asksForConfirmationNamingTheHost_andDecliningReturnsToTheEditor" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="1.248" />
+    <testcase name="conversationRows_carryTheirSectionTier" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.341" />
+    <testcase name="namelessHostAndConversation_renderTheirFallbackLabels" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.38" />
+    <testcase name="editHostModal_drawsTheOpenEditorsOwnValuesAndReportsOkAndDismissal" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.469" />
+    <testcase name="hostRowEditControl_targetsItsOwnHost_andDoesNotFoldTheRowItSitsIn" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.462" />
+    <testcase name="addWorkspaceModal_showsACreatedSelectionAndReportsANewFolderAndStaticFailures" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="2.18" />
+    <testcase name="listBar_drawsMenuAndPairingAndNoneOfTheRetiredChrome_onEveryDraw" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.93" />
+    <testcase name="createChannelModal_reportsTheTypedValues_failuresAreStatic_andOkFollowsItsOwnHost" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.596" />
+    <testcase name="hostsContainOrderedChannelsAndChatsWithAnEmptyChannelsAddAction" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.355" />
+    <testcase name="selection_highlightsOnlyTheLastOpenedRowAcrossBothSections" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.326" />
+    <testcase name="siblingConversationRowsKeepTheFourDpFigmaGap" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.403" />
+    <testcase name="menuTouchEdgesOpenIt_andThePairingEdgeStillRoutesOnlyToPairing" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.499" />
+    <testcase name="emptyState_rendersPlaceholder_whenThereAreNoHosts" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.273" />
+    <testcase name="channelsSectionPlus_namesItsHostAndWorksWhenItsSectionIsEmpty" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.398" />
+    <testcase name="resortedRows_keepTheirSelectionAndTapTargets" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.246" />
+    <testcase name="foldingAHostHidesItsSections_andFoldingASectionHidesOnlyItsOwnConversations" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.426" />
+    <testcase name="arrivalMarker_isCarriedByEveryDrawOfTheList_exactlyOnce" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.231" />
+    <testcase name="editHostModal_whileSaving_cannotStartASecondSave" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.549" />
+    <testcase name="treeSections_sortAlphabeticallyWithinEachHost_andResortOnEveryEmission" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.31" />
+    <testcase name="multiHostTreeKeepsTargetsThroughFoldsEditingPromotionReconnectAndTheFinalRow" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="1.019" />
+    <testcase name="editHostModal_afterAFailure_staysOpenAndActionableAndStatesItGenerically" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.35" />
+    <testcase name="failedDirectCreateShowsGenericErrorWithoutOpeningDialog" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.141" />
+    <testcase name="editHostModal_unpairConfirmation_namesAnUnnamedHostByItsRowsOwnFallback" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.201" />
+    <testcase name="editWorkspaceModal_failuresAreStaticAndTheTypedNameSurvives_andOkFollowsItsOwnHost" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.277" />
+    <testcase name="tallTree_reachesItsLastRowInOneScrollContainer" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.525" />
+    <testcase name="archiveMenuRow_emitsArchiveTapped" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.425" />
+    <testcase name="sectionRowsNameTheirHostAndLeaveFolderSettingsOutOfTheTree" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.388" />
+    <testcase name="emptySecondHostHasItsOwnChatsCreateControlWithoutFolding" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.247" />
+    <testcase name="editHostModal_afterAFailedUnpair_namesTheUnpairRatherThanTheSaveAndStaysActionable" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.182" />
+    <testcase name="trailingControlsFormOneColumnAtPixel2Width" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.276" />
+    <testcase name="noConversationRowDrawsAPen_andRowsStillOpen" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.313" />
+    <testcase name="settingsMenuRow_emitsSettingsTapped" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.245" />
+    <testcase name="menuOutsideTapAndBack_closeWithoutTapThrough" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.999" />
+    <testcase name="addWorkspaceModal_drawsOnItsStateAndGatesOkOnSelectionAndItsHost" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.715" />
+    <testcase name="menuSurvivesRecomposition_andUsesLiveBoundsInAnInsetScreen" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.508" />
+    <testcase name="trailingControlsFormOneColumnAtNarrowWidth" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.255" />
+    <testcase name="hostRowUpdateControl_opensTheStore_whileTheOtherHostsKeepTheirPlug" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.451" />
+    <testcase name="hostRowPlugControl_onARejectedPairing_opensRePairingForItsOwnHost" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.203" />
+    <testcase name="conversationRow_emitsATargetForItsOwnHost_notTheSelectedOne" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.204" />
+    <testcase name="chatsSectionAddControl_doesNotFoldTheRowItSitsIn" classname="de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest" time="0.236" />
+  </testsuite>
+</testsuites>

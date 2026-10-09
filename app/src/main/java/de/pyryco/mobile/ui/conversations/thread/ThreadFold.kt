@@ -3,6 +3,7 @@ package de.pyryco.mobile.ui.conversations.thread
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.model.ordinaryId
 import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.coroutines.flow.map
 import kotlinx.datetime.Clock
@@ -141,7 +142,11 @@ internal fun ThreadFold.render(): List<ThreadItem> {
     // this turn's id — render-time, source-independent, total over every interleaving. Nor while it holds
     // any assistant segment of the turn (#1350): a later segment is keyed "<turnId>#<seq>", and the synthetic
     // would draw the turn's text a second time beside it.
-    if (finished.any { it is ThreadItem.MessageItem && (it.message.id == turn.turnId || it.message.isSegmentOf(turn.turnId)) }) {
+    if (finished.any {
+            it is ThreadItem.MessageItem &&
+                (it.message.id == turn.turnId || it.message.ordinaryId == turn.turnId || it.message.isSegmentOf(turn.turnId))
+        }
+    ) {
         return finished
     }
     val lastMessage = finished.lastOrNull { it is ThreadItem.MessageItem } as? ThreadItem.MessageItem

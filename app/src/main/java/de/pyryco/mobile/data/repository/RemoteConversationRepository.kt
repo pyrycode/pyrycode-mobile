@@ -470,6 +470,7 @@ class RemoteConversationRepository(
         envelope: Envelope,
         conversation: String,
     ) {
+        if (!contributesToUnreadWatermark(envelope.type)) return
         envelope.historyEntryId
             ?.takeIf { it > 0u && conversation.isNotEmpty() }
             ?.let { conversationListProjection.recordLatestEntry(conversation, it) }
@@ -1177,7 +1178,11 @@ class RemoteConversationRepository(
         // {entries,cursor,at_start} page; a malformed one throws here and mutates nothing.
         val reply = relayRequests.sendAndAwaitReply(request)
         val page = MobileJson.decodeFromJsonElement<HistoryPagePayloadDto>(reply).toHistoryPage()
-        page.entries.maxOfOrNull { it.unsignedId }?.let { conversationListProjection.recordLatestEntry(conversationId, it) }
+        page.entries
+            .asSequence()
+            .filter { contributesToUnreadWatermark(it.type) }
+            .maxOfOrNull { it.unsignedId }
+            ?.let { conversationListProjection.recordLatestEntry(conversationId, it) }
         threadProjection.mergeHistoryPage(conversationId, page, CAPABILITY_INTERACTIVE in negotiatedCapabilities())
         return page
     }

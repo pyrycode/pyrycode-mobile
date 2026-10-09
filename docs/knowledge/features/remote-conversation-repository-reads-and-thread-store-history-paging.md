@@ -59,8 +59,8 @@ text, timestamp, attribution or streaming state. Adjacent pieces of
 one turn then join again, so text stays on the correct side of a tool or user row, and ended turns stay
 settled through the existing post-merge pass. Held text wins any overlap. A legacy whole-turn row without
 sequence records suppresses only text it demonstrably contains. Renderer keys stay unique without dropping
-text: ordinary ids claim keys first, then each turn's opener, then other segments, and a segment whose key a
-different identity holds takes a `~n` suffix.
+text: surviving displayed/held claims precede newcomers, which take unused aliases or suffixes.
+See [renderer ownership](remote-conversation-repository-assistant-reply-segments.md#assistant-reply-segments-the-key-the-seam-join-and-the-turn-seq-dedupe-1350).
 
 **Signed consumers must retain omitted-content uncertainty (#1909).** The positive unsigned
 [domain identity](data-model.md#historyentry--received-durable-identity-1909) is authoritative. Signed
@@ -105,12 +105,16 @@ and consumes that exact entry in the **requested conversation**, independently o
 routing id. Omitted/malformed identity and non-user rows do not establish modern delivery.
 Queue-entry consumption does not broaden the renderer's message-id deduplication.
 
-For own user echoes, only first-delivery, pending, minted held rows have provisional positions. Remove those
-rows from the receiving list before `mergeUnsignedHistoryRows`, insert by incoming daemon
-order/delivery timestamp, then restore their exact held objects. Using their tap timestamps or
-retaining a legacy reserved slot can put an echo above the waiting turn's tool row. Content,
-attachment hints and original timestamp survive; idle, foreign/non-user and already delivered
-held rows keep their positions. This exception also handles two own echoes on the same page.
+For own echoes, only first-delivery, pending, minted held rows have provisional positions.
+Remove them from the receiving placement list, substitute their held objects into incoming rows
+**before allocation**, and supply original held rows as renderer owners (#1941). Restoring objects
+after allocation can duplicate a newcomer's key. Capture original delivery timestamps separately
+by logical identity: incoming insertion and the run minimum use those clocks, not retained tap
+clocks. With multiple provisional rows, a substituted minimum can also move an unrelated fresh
+neighbour. Held receiver clocks and assistant first-evidence relocation stay unchanged. Content,
+attachment hints and original timestamp survive; idle, foreign/non-user and delivered rows keep
+positions. The two `HistoryAliasCorrelationTest.unchangedOrderInvariant_*` probes cover distinct
+send/delivery clocks, two echoes with a newcomer before/between/after, and original/empty replay.
 
 Commit placement, exact entry consumption, first-delivery row identity and cleared queued/
 suppressed/reserved eligibility in the same CAS update. Otherwise the first replayed live push

@@ -1,0 +1,182 @@
+Ticket #1737: Create channel / Prompt failed and Save as channel / Prompt failed
+
+Rework evidence, 2026-10-08 (verifier finding 1)
+The initial capture/provenance below remains the audit history. The two retained
+PNGs and their comparisons were refreshed after the selector repair; paired
+metadata and every app-content pixel are unchanged. Only real status-bar clock
+pixels differ. Current-day Figma exports and measured mismatch verdicts are
+unchanged. No unrelated capture or production file was edited.
+
+Reproduction: keep this method's created Release notes channel beside its
+same-name temporary chat, using the original unscoped selectors. The full
+pixel8Api35 command below exited 1: 1 executed, 1 failed, 0 errors/skips.
+1737-selector-red.xml timestamp 2026-10-08T08:45:44 UTC records the exact
+promptFailedFramesAt412By892 failure: click matches tree-channel-row and
+tree-chat-row. It fails before Save as channel opens, as in the full UI gate.
+
+Repair: preserve the created channel and add a same-name temporary chat decoy.
+The target chat's route name contains its unique conversation ID; scrolling
+and clicking share a tree-chat-row plus exact-name matcher. The existing thread
+conversation-ID check still guards routing. The form replaces the route name
+with Release notes before submission. Both decoys' names/tiers are asserted
+unchanged. Finally deletes only this method's three conversations and restores
+the repository overrides. Inherited same-name fixtures are never mutated.
+
+The full pixel8Api35 command below then exited 0. Fresh 1737-rework-results.xml,
+timestamp 2026-10-08T08:48:58 UTC: 1 executed/passed, 0 failures/errors/skips;
+promptFailedFramesAt412By892 ran for 64.931 s and covers BOTH states.
+Capture-run ListDesignCaptureTest source blob:
+2bc0ef9cc24c9ffec147c6d47077d634309db25a.
+Retained source after formatting only:
+6e56b0a382496d96062a1640a63400ba9961d7aa.
+Both refreshed PNGs are nonblank 412x892, density/font scale 1.0, fixed dark,
+hardware-rendered, syntheticBars=false, with real 24 px status/navigation bars.
+Both dialog roots observed open IME then physical Back; focused-window IME was
+hidden/zero before and after capture. Locked-name alpha remains 0.38039216.
+
+Focused dispatcher-image check, exit 0:
+./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.design.ListDesignCaptureTest#promptFailedFramesAt412By892' -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain
+1737-atd-rework-results.xml timestamp 2026-10-08T08:57:49 UTC:
+1 executed/passed, 0 failures/errors/skips; selected method ran for 9.518 s.
+This proves routing on ATD, not real-bar pixel evidence. The fresh full UI gate
+and scripted-all remain dispatcher-owned and pending after this repair.
+
+Verdict
+Both frames are audited, mismatch. Only two out-of-tolerance causes were found:
+the multiline prompt well is 20 dp too short (#1957), and the two-line error box
+is 4 dp too short (#1958). Their combined effect shifts the centered field/error
+group. All remaining requested measurements match within tolerance. This is an
+audit of 784:7095 and 784:7134 only, not app-wide parity or an audit of other states.
+
+Provenance and execution
+Captured 2026-10-08 on feature/1737, base main
+5341e4f55c24c86f2f6c1b5cdfcd289056af1ea0 (merge of #1862), plan commit cb862b9a5.
+The test-only implementation was subsequently formatted without changing behavior.
+Retained ListDesignCaptureTest source blob after formatting:
+e52dd02771e97e6bb0bb0a2d05aa32c0e9519737.
+Retained DesignInputs source blob after formatting:
+126eed8ddcba492fbe1e990fd283a3473a27de03.
+Configured full pixel8Api35, Pixel 8, API 35, google_apis_playstore;
+runtime device sdk_gphone64_arm64. Both PNGs are nonblank 412x892 px/dp,
+density 1.0, font scale 1.0, fixed dark, hardwareAccelerated=true,
+syntheticBars=false. Real status/navigation insets are 24 px each.
+requireRealSystemBars=true rejects ATD/synthetic bars and blank captures.
+
+Command, exit 0:
+./gradlew :app:pixel8Api35DebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.design.ListDesignCaptureTest#promptFailedFramesAt412By892' -Pandroid.testInstrumentationRunnerArguments.requireRealSystemBars=true --console=plain
+1737-results.xml timestamp 2026-10-08T08:07:45 UTC:
+1 executed, 1 passed, 0 failed, 0 errors, 0 skipped.
+ListDesignCaptureTest.promptFailedFramesAt412By892 ran and passed, 51.425 s,
+and covers BOTH states sequentially. The first test execution, before the
+thread override was wired, ran 1 and failed 1: Create reached its failure,
+but Save's exact error assertion timed out because its repository still succeeded.
+An earlier compiler attempt executed no tests and is not test evidence.
+
+Both paths use the assembled MainActivity and normal create/menu/save routes.
+The list source delegates creation to FakeConversationRepository, then rejects
+the nonblank prompt write. DesignInputs separately rejects the thread's prompt
+write after confirmed promotion. Both assert the relevant string resource error,
+retained frame name/prompt, disabled name, editable prompt and enabled OK.
+The fake's confirmed promoted conversation and retained name are checked too.
+Temporary conversations are deleted, host source and failure switch restored,
+and the temporary source disposed in finally. No production file changes.
+No 320x700 capture is added; other committed capture files are untouched.
+
+Before input each modal's own dialog root acquired focus, observed visible
+IME with positive inset, then physical Back closed the keyboard before OK.
+Before and after failure capture it held the same focused root, hidden IME
+and zero dialog IME inset. Paired .txt files retain these observations plus
+screen-coordinate bounds. The Activity's zero IME alone is not the proof.
+Output source:
+app/build/intermediates/managed_device_android_test_additional_output/debugAndroidTest/pixel8Api35DebugAndroidTest/design-1220/list/.
+
+Reference and comparisons
+Figma get_design_context, get_metadata and get_screenshot fetched 2026-10-08.
+Fresh 412x892 exports: figma-784-7095.png, figma-784-7134.png.
+The paired figma-*-metadata.xml records exact local coordinates.
+scripts/design-compare.py generated each state's -side-by-side.png (Figma
+left, app right) and -overlay.png at native scale, with no image resizing.
+These raw comparisons retain real bars; the measurements below account for
+insets explicitly rather than stretching the reference to fit app content.
+
+Measurements and verdicts, both frames
+Coordinates are screen px, equal to dp at density 1; right/bottom are exclusive.
+Figma's page-position x/y is removed, retaining the frame-local coordinates.
+The name/prompt/error coordinates are centered content coordinates: DO NOT
+subtract the status inset from them. Status shifts the header +24 px; navigation
+shifts the bottom-anchored footer -24 px. Real system chrome is outside the audit.
+The drawing's 4 dp outer-frame strip plus 20 dp modal header padding is the
+same effective 24 dp top clearance as the app below its real status bar.
+The drawing's outer frame is replaced by platform bars, not treated as an
+additional app inset. Visible outer clipping is 44 dp in both; the internal
+field/action radii below remain 6 dp.
+
+Aspect                Figma                       App                         Verdict
+Header title row      x28,y24,28 high              x28,y48,28 high             match after status inset
+Close asset           x356,y24,28x28               x356,y48,28x28              match after status inset
+Header rule           x28..384,y64,1 high          x28..384,y88,1 high         match after status inset
+Name label box        x28,y294.5,20 high           x28,y307,20 high            displaced by group height
+Name well             (28,322.5)..(384,374.5)       (28,335)..(384,387)          size match; +12.5 top displacement
+Prompt label box      x28,y386.5,20 high           x28,y399,20 high            displaced by group height
+Prompt well           (28,414.5)..(384,546.5)       (28,427)..(384,539)          mismatch: 132 vs 112 high (#1957)
+Error text box        (28,558.5)..(384,598.5)       (28,551)..(384,587)          mismatch: 40 vs 36 high (#1958)
+Label/well gap        8                            8                           match
+Field-block gap       12                           12                          match
+Name bottom/prompt top 40                          40                          match
+Prompt bottom/error top 12                         12                          match
+Field width/gutters   356 / 28 each                356 / 28 each               match
+Field text left/top   16 / 16                      16 / 16                     match
+Cancel surface        (119,828)..(211,868),92x40   (119,804)..(210,844),91x40   match within 2 dp + nav inset
+OK surface            (231,828)..(293,868),62x40   (230,804)..(293,844),63x40   match within 2 dp + nav inset
+Visible action gap    20                           20                          match
+Footer clearance      892-868=24                   892-24(nav)-844=24          match
+Borders               Cancel/rule 1; wells none    Cancel/rule 1; wells none   match
+Radii                 Wells/actions 6              Wells/actions 6             match
+
+The frame's total name-to-error content height is 304 dp, versus 280 dp in
+the app. Centering the shorter group explains the name/prompt top displacement
+and error's higher bottom; there is no independent shell centering finding.
+The frame error uses two untrimmed 20 dp line boxes; MobileModal's bodyMedium
+Text trims the outer edges to 36 dp. Its source text, line count, numeric font
+role and final-content placement match, but its line-box treatment does not.
+
+Colours, typography and assets
+Exact opaque samples in both exports and captures: shell #001D34, label/title
+#CFE4FF, primary #9DCBFC, error #FFB4AB, field text #E0E2E8, OK text #003355.
+Wells #002642 are On Primary #003355 at 41% over shell #001D34. Rule is
+Inverse Primary #32628D at 60%. Source uses these fixed-dark theme roles.
+Name's layout style alpha is 0.38039216 (8-bit colour quantization), within
+0.38 +/- 0.01; opaque name glyph pixels #556E81 match the Figma export.
+Roboto roles match size/line-height/weight/tracking: titleLarge 22/28/400/0,
+labelLarge 14/20/600/0.1, fields/errors bodyMedium 14/20/400/0.25,
+footer emphasized bodyLarge 16/24/500/0.5. Error outer line trimming is routed
+separately above, not declared an exact full-style match.
+The source painter is ic_modal_close, the existing circle-xmark-solid-full
+asset, at the exact 28 dp slot with Primary glyph and On Primary backing.
+The fresh design's circle-xmark vector is the same silhouette (20 dp component
+path scaled to the 28 dp instance). Platform/Figma raster antialiasing differs;
+no icon substitution or out-of-tolerance asset geometry was found.
+
+Component state
+Exact name and prompt preserved. Name locked and dimmed; prompt editable,
+with a visible focus caret after keyboard dismissal. Error is the final content
+item, with exact created/saved-specific copy and two lines; OK is enabled.
+The caret is normal editing state, not a separate frame mismatch.
+
+Routed findings
+Existing issue searches (all-state prompt-failure/channel-field/height searches,
+open modal-error and prompt-height searches) found no open matching fix.
+#1957: https://github.com/pyrycode/pyrycode-mobile/issues/1957
+#1958: https://github.com/pyrycode/pyrycode-mobile/issues/1958
+Both are focused production follow-ups on board 5 in Inbox. Neither blocks
+completion of this test-only audit, and no production fix was folded into it.
+Within-tolerance 1 dp button width differences and subpixel Figma field edges
+are not findings. No other inventory rows were re-audited.
+
+Pending documentation stage
+Add both audited, mismatch verdicts under List states in list/index.md, with
+these capture paths, provenance, counts, measurements and #1957/#1958 links.
+Update only #1592's decisions in design-1220/README.md as enumerated in the
+plan's Documentation handoff: split mixed-status rows, identify each reused
+reference/component with (decision on #1592), replace decided-state gap prose,
+and attribute these two node verdicts to #1737 rather than #1504.

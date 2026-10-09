@@ -580,6 +580,8 @@ private data class CachedMessage(
     val attachments: List<CachedAttachment> = emptyList(),
     /** #1350. Defaulted, so a row written before segments existed reads back with none. */
     val segment: CachedSegment? = null,
+    /** Local ordinary-row identity survives emitted collision aliases and restart. */
+    val reconciliationId: String? = null,
 )
 
 /**
@@ -680,6 +682,7 @@ private fun ThreadItem.toRecord(): CachedThreadRow =
                 message =
                     CachedMessage(
                         id = message.id,
+                        reconciliationId = message.reconciliationId,
                         sessionId = message.sessionId,
                         role = message.role,
                         content = message.content,
@@ -714,6 +717,7 @@ private fun CachedThreadRow.toDomain(): ThreadItem {
         return ThreadItem.MessageItem(
             Message(
                 id = message.id,
+                reconciliationId = message.reconciliationId,
                 sessionId = message.sessionId,
                 role = message.role,
                 content = message.content,

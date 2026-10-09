@@ -7,10 +7,13 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.verification.FullRetentionTest
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import kotlinx.datetime.Instant
 import kotlinx.serialization.encodeToString
 import org.junit.After
@@ -20,6 +23,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import org.junit.experimental.categories.Category
 import org.junit.rules.TemporaryFolder
 import java.io.IOException
 
@@ -259,21 +263,26 @@ class HistoryDurabilityTest {
             }
         }
 
-    @Test fun trimmingAndStaleRowWritersRemoveClaimsForDiscardedContent() =
-        runTest {
+    @Category(FullRetentionTest::class)
+    @Test
+    fun trimmingAndStaleRowWritersRemoveClaimsForDiscardedContent() =
+        runBlocking {
+            // This test writes and decodes 100000 real disk rows. Use production IO rather than
+            // runTest's one-minute deadline for the sum of those blocking operations.
+            val diskCache = { FileConversationCache(tmp.root) }
             val old = page(1, 2)
             val held = rows(old)
             val state = HistoryCoverage().received(old).boundTo(held)
-            cache().writeThread("h", "c", held)
-            cache().writeHistoryPosition("h", "c", HistoryPosition("older", true, state))
+            withTimeout(60_000) { diskCache().writeThread("h", "c", held) }
+            withTimeout(60_000) { diskCache().writeHistoryPosition("h", "c", HistoryPosition("older", true, state)) }
             val newest = held.last() as ThreadItem.MessageItem
             val many = List(MAX_CACHED_THREAD_ROWS) { index -> newest.copy(message = newest.message.copy(id = "new-$index")) }
-            cache().writeThread("h", "c", held + many)
-            val restored = cache().readHistoryPosition("h", "c")?.coverage
-            assertTrue(restored?.spans?.isEmpty() == true)
-            assertTrue(restored?.unknown == true)
-            assertEquals("", cache().readHistoryPosition("h", "c")?.cursor)
-            assertEquals(false, cache().readHistoryPosition("h", "c")?.atStart)
-            assertEquals(MAX_CACHED_THREAD_ROWS, cache().readThread("h", "c").size)
+            withTimeout(60_000) { diskCache().writeThread("h", "c", held + many) }
+            val restored = withTimeout(60_000) { diskCache().readHistoryPosition("h", "c") }
+            assertTrue(restored?.coverage?.spans?.isEmpty() == true)
+            assertTrue(restored?.coverage?.unknown == true)
+            assertEquals("", restored?.cursor)
+            assertEquals(false, restored?.atStart)
+            assertEquals(MAX_CACHED_THREAD_ROWS, withTimeout(60_000) { diskCache().readThread("h", "c") }.size)
         }
 }

@@ -1,0 +1,2 @@
+activity=MainActivity figma=671:5415 sizePx=320x700 density=1.0 fontScale=1.5 staticDark=true hardwareAccelerated=true syntheticBars=false systemBarsPx=Insets{left=0, top=24, right=0, bottom=24} imePx=Insets{left=0, top=0, right=0, bottom=0} api=35 device=sdk_gphone64_arm64
+dialogWindowFocused=true keyboardOpenObserved=true backKeptForm=true dialogImeVisible=false dialogImePx=Insets{left=0, top=0, right=0, bottom=0}

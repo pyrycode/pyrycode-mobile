@@ -51,14 +51,17 @@ private val FieldGap = 12.dp
 
 // Figma 671:5558 draws each field's label in its full line box; the theme's default trims it to its
 // glyphs, which pulls the next block's label a couple of px closer than the frame (#1651).
-private val FieldLabelLineBox = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
+private val FieldLineBox = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None)
 
-// The prompt well opens tall enough to read as a paragraph box; the shell scrolls beyond that.
-// Channel info's System prompt well (#1342) borrows both, so the two wells stay one size.
+// Channel info's System prompt well (#1342) keeps its four-line minimum and shares the default height.
+// Form prompts grow from their drawn lines plus blank space; the shell scrolls beyond that.
 internal const val PROMPT_MIN_LINES = 4
 private val NameWellHeight = 52.dp
 internal val PromptWellHeight = 112.dp
 private val WellInset = 16.dp
+
+// Prompt-failed frames retain 64dp inner + 12dp outer space below the actual text line box.
+private val PromptBottomInset = 76.dp
 private val NameTrailingInset = 56.dp
 
 /**
@@ -133,11 +136,16 @@ internal fun ChannelFormFields(
                     textStyle =
                         MaterialTheme.typography.bodyMedium.copy(
                             color = if (promptEnabled) fieldText else fieldText.copy(alpha = 0.38f),
+                            lineHeightStyle = FieldLineBox,
                         ),
-                    minLines = PROMPT_MIN_LINES,
                     cursorBrush = cursor,
                     decorationBox = { innerTextField ->
-                        FieldWell(minHeight = PromptWellHeight, trailingInset = WellInset, content = innerTextField)
+                        FieldWell(
+                            minHeight = PromptWellHeight,
+                            trailingInset = WellInset,
+                            bottomInset = PromptBottomInset,
+                            content = innerTextField,
+                        )
                     },
                 )
                 when {
@@ -166,7 +174,7 @@ private fun LabelledField(
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.labelLarge.copy(lineHeightStyle = FieldLabelLineBox),
+            style = MaterialTheme.typography.labelLarge.copy(lineHeightStyle = FieldLineBox),
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onPrimaryContainer,
         )
@@ -179,6 +187,7 @@ private fun LabelledField(
 private fun FieldWell(
     minHeight: Dp,
     trailingInset: Dp,
+    bottomInset: Dp = WellInset,
     content: @Composable () -> Unit,
 ) {
     Box(
@@ -187,7 +196,7 @@ private fun FieldWell(
                 .fillMaxWidth()
                 .heightIn(min = minHeight)
                 .background(MaterialTheme.colorScheme.modalFieldContainer, RoundedCornerShape(6.dp))
-                .padding(start = WellInset, end = trailingInset, top = WellInset, bottom = WellInset),
+                .padding(start = WellInset, end = trailingInset, top = WellInset, bottom = bottomInset),
     ) {
         content()
     }
