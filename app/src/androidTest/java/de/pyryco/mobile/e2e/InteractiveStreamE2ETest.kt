@@ -2351,7 +2351,13 @@ class InteractiveStreamE2ETest {
             //    A's thread and A's row only; B's row and thread keep B's name.
             val renamedA = RENAMED_NAME_PREFIX + System.currentTimeMillis()
             openRow(nameA)
-            renameOpenThread(renamedA)
+            val beforeRename =
+                runCatching { collisionRenameEvidence(serverIdA) }
+                    .getOrElse { "diagnostic_error=${it.javaClass.simpleName}" }
+            Log.i("E2E", "event=collision_rename_begin $beforeRename")
+            collisionRenameStep({ "before=[$beforeRename] failure=[${collisionRenameEvidence(serverIdA)}]" }) {
+                renameOpenThread(renamedA)
+            }
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
             awaitChannelRow(renamedA)
@@ -2381,6 +2387,26 @@ class InteractiveStreamE2ETest {
             runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverIdB) }
             relaunched?.close()
         }
+    }
+
+    /** Only static flags; read inside the scenario, before its Activity and pairing cleanup. */
+    private fun collisionRenameEvidence(serverId: String): String {
+        val bundle = GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)
+        val repository = bundle?.coordinator?.currentRepository?.value
+        var focused = false
+        var resumed = false
+        composeTestRule.activityRule.scenario.onActivity { activity ->
+            focused = activity.hasWindowFocus()
+            resumed = activity.lifecycle.currentState == Lifecycle.State.RESUMED
+        }
+        val menuOpen =
+            composeTestRule.onAllNodesWithText(string(R.string.thread_overflow_channel_info)).fetchSemanticsNodes().isNotEmpty()
+        val editVisible =
+            composeTestRule.onAllNodesWithText(string(R.string.thread_overflow_edit)).fetchSemanticsNodes().isNotEmpty()
+        val renameVisible = composeTestRule.onAllNodesWithText(RENAME_ITEM).fetchSemanticsNodes().isNotEmpty()
+        return "owner_registered=${bundle != null} owner_live=${repository != null} " +
+            "owner_mutations=${repository?.mutationsSupported} menu_open=$menuOpen " +
+            "edit_visible=$editVisible rename_visible=$renameVisible focused=$focused resumed=$resumed"
     }
 
     /**

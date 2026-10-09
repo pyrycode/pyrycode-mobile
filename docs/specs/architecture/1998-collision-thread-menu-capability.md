@@ -37,6 +37,7 @@ Reuse `hostAvailable`, derived from the destination-bound `repositoryAvailable` 
 | Reconnect to a non-supporting delegate | unit `mutationCapabilityFollowsOwningRepositoryAcrossReconnect` |
 | Other host connects with colliding conversation ID | shared `otherHostArrivalDoesNotEnableOwnersEdit` |
 | Rebuild app graph over saved pairings; each host link cycles | existing live `interactiveTurn_twoHostsCollidingConversationId_stayPerHost`, unchanged checks and B cleanup |
+| State collection stops, owner arrives, same destination recollects | unit `mutationCapabilityFollowsOwningRepositoryAcrossReconnect` |
 | Initial/steady supporting and non-supporting fake | existing capability unit tests |
 
 ## Error handling
@@ -52,3 +53,6 @@ Pending for the documentation stage: update `docs/e2e-interactive-stream.md`, â€
 
 ## Open Questions
 The controlled regression must confirm that the menu itself opens but the stale capability hides mutation rows. If it does not, revise the diagnosis before repair. Historical attribution cannot be proven by the retained stack alone.
+
+## Revisions
+2026-10-09: The controlled baseline reached the exact menu condition: Channel info rendered after More actions, while Edit was absent (shared 2 executed / 1 failed / 0 errors / 0 skipped; unit 1 executed / 1 failed / 0 errors / 0 skipped). The initial property-only Compose readiness wait did not drain the paused main Looper; the retained regression instead waits on actual title semantics before the single menu tap. The repaired owning-host projection passed the affected focused set (91 executed / 0 failed / 0 errors / 0 skipped), and the strengthened two-host regression passed on managed Android (2 executed / 0 failed / 0 errors / 0 skipped). This resolves the controlled menu question; the historical live attribution remains an inference. Diagnostics are confined to rename entry/failure and preserve the original exception object with suppressed context.
