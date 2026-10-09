@@ -1,0 +1,22 @@
+package de.pyryco.mobile.e2e
+
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.isFocused
+import androidx.compose.ui.test.junit4.ComposeTestRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextReplacement
+
+internal fun ComposeTestRule.renameDiscussionInDialog(
+    newName: String,
+    fieldLabel: String,
+    saveLabel: String,
+    timeoutMillis: Long,
+    diagnostic: () -> String = { "" },
+) {
+    waitUntil(timeoutMillis) { onAllNodes(hasSetTextAction() and isFocused()).fetchSemanticsNodes().isNotEmpty() }
+    onNode(hasSetTextAction() and isFocused()).performTextReplacement(newName)
+    onNodeWithText(saveLabel).performClick()
+    waitUntil(timeoutMillis) { onAllNodesWithText(newName).fetchSemanticsNodes().isNotEmpty() }
+}

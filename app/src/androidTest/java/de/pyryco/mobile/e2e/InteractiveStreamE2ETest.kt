@@ -2774,7 +2774,43 @@ class InteractiveStreamE2ETest {
             beforeByHost[serverIdA] = hostConversationIds(serverIdA)
             val chatA = createChatOn(serverIdA)
             createdByHost[serverIdA] = chatA
-            renameOpenThread(chatName)
+            composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(RENAME_ITEM).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNodeWithText(RENAME_ITEM).performClick()
+            composeTestRule.renameDiscussionInDialog(
+                newName = chatName,
+                fieldLabel = string(R.string.rename_dialog_field_label),
+                saveLabel = RENAME_SAVE,
+                timeoutMillis = THREAD_TIMEOUT_MS,
+                diagnostic = {
+                    val bundle = GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverIdA)
+                    val repository = bundle?.coordinator?.currentRepository?.value
+                    val renamed =
+                        repository?.let {
+                            runBlocking {
+                                withTimeoutOrNull(1_000) {
+                                    it.observeConversations(ConversationFilter.All).first().any { row ->
+                                        row.id == chatA && row.name == chatName
+                                    }
+                                }
+                            }
+                        }
+                    "owner registered=${bundle != null}, repository present=${repository != null}, confirmed rename=$renamed"
+                },
+                awaitOwningHost = {
+                    val current =
+                        checkNotNull(
+                            GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverIdA),
+                        ).coordinator.currentRepository
+                    runBlocking {
+                        withTimeout(THREAD_TIMEOUT_MS) {
+                            current.awaitDiscussionRenameOwner()
+                        }
+                    }
+                },
+            )
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
             awaitListText(chatName)
@@ -5274,15 +5310,23 @@ class InteractiveStreamE2ETest {
             composeTestRule.onNode(closedRun).assertExists()
             composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(0)
             // ScrollTo uses the drawing viewport; reveal the actual tap center between the chrome bars.
-            composeTestRule.questionAnswerTarget(closedRun).performClick()
+            composeTestRule.questionAnswerTarget(closedRun).performTouchInput { click(center) }
             // Expansion can put this early paragraph outside composition as later tool rows arrive.
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 runCatching { list.performScrollToNode(reply) }.isSuccess &&
                     composeTestRule.onAllNodes(reply and hasAnyAncestor(child), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
-            composeTestRule.questionAnswerTarget(reply and hasAnyAncestor(child)).assertIsDisplayed()
+            composeTestRule
+                .questionAnswerTarget(
+                    reply and hasAnyAncestor(child),
+                ) { android.util.Log.i("AgentReplyReveal", it) }
+                .assertIsDisplayed()
             composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(1)
-            composeTestRule.questionAnswerTarget(openedRun).performClick()
+            composeTestRule
+                .questionAnswerTarget(
+                    openedRun,
+                ) { android.util.Log.i("AgentReplyReveal", it) }
+                .performTouchInput { click(center) }
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 runCatching { list.performScrollToNode(closedRun) }.isSuccess &&
                     composeTestRule.onAllNodes(reply, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
