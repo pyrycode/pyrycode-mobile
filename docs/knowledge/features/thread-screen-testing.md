@@ -35,8 +35,9 @@ scenarios establish streaming integration. See
 `SavedThreadFirstDrawDeviceTest.savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen`
 uses real `FileConversationCache`, `CachingConversationRepository`, `ThreadViewModel`,
 production `ThreadContentScheduling` and `ThreadScreen` on the configured Android 13
-managed device. It persists two fixtures before timing: **20 ordinary saved messages**,
-and **18,000 displayed message rows / 36,000 durable entries / 18,000 spans**. Each
+managed device. It prepares and persists each active fixture before its case group: **20 ordinary
+saved messages**, then **18,000 displayed message rows / 36,000 durable entries /
+18,000 spans**. Each
 fixture runs offline and with a connected delegate whose newest response stays held.
 First opens create fresh cache/repository instances; reopening uses that repository
 with a new ViewModel and composition. All eight cases require the newest saved message
@@ -54,8 +55,8 @@ idleness cannot establish the draw deadline. Polling only waits for recorded evi
 
 `slowRestore_negativeControlRejectsTheSameFirstDrawBound` inserts **3,000 ms** into
 cache reading in the same timed open path and catches the identical bound assertion's
-failure. The latest full UI run drew at **3,266 ms**, with restore/snapshot/content at
-**3,024/3,033/3,136 ms**. Passing this test means the latency assertion rejected the
+failure. The #2018 full UI run drew at **3,188 ms**, with restore/snapshot/content at
+**3,040/3,048/3,102 ms**. Passing this test means the latency assertion rejected the
 slow path, not that the slow path met the deadline.
 
 `SavedThreadOpenTest.savedRowsDoNotWaitForNewestResponse` independently holds newest
@@ -114,6 +115,101 @@ with no flaky passes.
 executed and passed (**1/0/0**) in that full suite. This retained rung-3 operator flow
 proves offline/reconnect integration; the controlled device fixtures establish the
 latency bound. No separate focused live run or new ladder scenario is claimed.
+
+### Allocation margin and retained evidence (#2018)
+
+The [repair and final verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/2024#issuecomment-6091171021)
+preserve the same first-draw bound and endpoint. At builder base
+`5133aa796352a5136df426979ab0634e8a554140`, the whole class passed (2/2/0/0),
+then the isolated named method failed (1/0/1/0, exit 1). Fresh baseline XML
+`/tmp/builder-2018/baseline-isolated/TEST-pixel2Api33Atd-_app-.xml`, timestamp
+`2026-10-09T22:01:09`, records fragmented offline first-open phases
+**954/1325/1579/1722 ms**. The raw focused command used
+`./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun` with
+`-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.thread.SavedThreadFirstDrawDeviceTest#savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen`
+and `--console=plain`; retained invocations and revisions are in the
+[plan](../../specs/architecture/2018-saved-thread-first-draw.md).
+Counts below are **executed/passed/failed/skipped**, and phase tuples are
+**restore/snapshot/complete-content/committed-draw**, cumulative monotonic ms.
+
+Cache decode, validation and proofs dominated restore, amplified by GC/scheduling:
+the IO-worker diagnostic measured **1293 ms elapsed / 577 ms CPU**. CPU time
+explains elapsed variation but never replaces the wall-clock acceptance interval.
+Duplicate metadata-write mapping and setup serialization also generated garbage
+that survived into restore. Preparing the entire fragmented fixture before the
+ordinary group delayed even a 20-row snapshot/draw. Prepare only the active fixture
+and return its already-bound canonical coverage instead of a setup codec echo.
+Generation remains outside the timer; real writes/reads and cold construction remain
+intact. `fragmentedFixtureIsCanonicalWithoutDependingOnASetupCodecEcho` pins canonical
+codec equality, counts, sampled rows, endpoint ids and proofs. Neither serializer
+warming nor delaying the timer is a repair.
+
+All partial-repair misses remain evidence. Each directory below is under
+`/tmp/builder-2018/` and contains fresh `TEST-pixel2Api33Atd-_app-.xml` and logcat;
+every run exited 1. They are first opens; the negative control is excluded here.
+
+| Evidence directory | Fixture / mode | Cumulative phases | Counts |
+| --- | --- | --- | --- |
+| `baseline-isolated` | fragmented / offline | 954/1325/1579/1722 | 1/0/1/0 |
+| `diagnosis` | fragmented / held newest | 758/1157/1337/1476 | 1/0/1/0 |
+| `repair-class-miss` | fragmented / offline | 1323/1727/1877/2058 | 2/1/1/0 |
+| `stream-miss` | fragmented / offline | 1216/1542/1851/2103 | 1/0/1/0 |
+| `lazy-miss` | fragmented / held newest | 798/1004/1182/1297 | 1/0/1/0 |
+| `writer-miss` | fragmented / offline | 843/1139/1273/1369 | 1/0/1/0 |
+| `typed-writer-miss` | fragmented / offline | 940/1191/1378/1483 | 1/0/1/0 |
+| `validation-miss` | fragmented / offline | 1451/1843/2208/2344 | 1/0/1/0 |
+| `exclusive-miss` | fragmented / held newest | 784/947/1046/1146 | 1/0/1/0 |
+| `streamed-write-miss` | fragmented / offline | 1052/1361/1560/1668 | 1/0/1/0 |
+| `cpu-diagnosis` | fragmented / offline | 1313/1659/1890/2028 | 1/0/1/0 |
+| `setup-echo-miss` | ordinary / offline | 89/905/933/1330 | 1/0/1/0 |
+
+The final isolated pass on `b3cbeb687d812bcb81f832106252dee2c8be87a4` exited 0,
+**1/1/0/0**, XML `/tmp/builder-2018/final-isolated/TEST-pixel2Api33Atd-_app-.xml`
+(`2026-10-09T22:59:04`). The subsequent focused class plus fragmented interaction
+passed **3/3/0/0**, saved-thread class **2/2/0/0**, both named methods **1/1/0/0**;
+XML `/tmp/builder-2018/final-class/TEST-pixel2Api33Atd-_app-.xml`
+(`2026-10-09T23:00:14`). Its negative control measured **3011/3074/3106/3160 ms**.
+
+After destination-worker rework, runtime commit
+`5f48c2c51bac985adee1c597d9b8e2fe7dc1c586` passed the focused device selection:
+`python3 /tmp/builder-2018/focused-device.py` with fully qualified
+`SavedThreadFirstDrawDeviceTest`, `ThreadFramePacingDeviceTest` and
+`ThreadFragmentedHistoryDeviceTest` class arguments, comma-separated. The wrapper
+acquires the existing FIFO `device_hold`, then runs the managed-device Gradle task
+above with that class selection, `-Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e`
+and `-Pandroid.testInstrumentationRunnerArguments.disableAnimations=true`, as the
+UI gate does. Exit 0; suite **4/4/0/0**, saved-thread class **2/2/0/0**, each named
+first-draw/negative-control method **1/1/0/0**. Fresh XML is
+`/tmp/builder-2018/rework-final-device/TEST-pixel2Api33Atd-_app-.xml`
+(`2026-10-09T23:21:13`); logcats and `result.json` are beside it.
+
+The dispatcher full UI command
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui`
+exited 0 on reviewed head `38659221b1dfa6949f979c2fcedb04690bf4cfda`:
+**254/254/0/1**, saved-thread class **2/2/0/0**, each named method **1/1/0/0**.
+Inspected XML `/tmp/verifier-2024/re-review-evidence/dispatcher-ui.xml`
+(`2026-10-09T23:37:25`) and saved-thread logcats agree. The sole skip is
+`RenameDialogCaptureTest.renameAtFigmaViewport`. The scripted-all gate passed
+**22/22/0/0**; no new real-Claude scenario is needed.
+
+| Case | Isolated | Initial focused class | Final focused class | Full UI gate |
+| --- | --- | --- | --- | --- |
+| Ordinary offline first | 180/202/224/330 | 35/44/57/154 | 28/30/53/141 | 21/23/46/98 |
+| Ordinary offline reopen | 29/39/54/136 | 23/31/35/128 | 19/24/52/101 | 10/12/57/126 |
+| Ordinary held newest first | 20/27/56/117 | 20/26/55/116 | 4/24/56/118 | 17/19/64/99 |
+| Ordinary held newest reopen | 19/27/61/150 | 18/23/64/143 | 17/22/50/157 | 18/25/41/105 |
+| Fragmented offline first | 420/547/752/858 | 372/481/583/698 | 376/479/639/724 | 381/480/592/667 |
+| Fragmented offline reopen | 68/234/417/577 | 25/115/249/338 | 25/107/246/356 | 19/107/236/300 |
+| Fragmented held newest first | 311/378/494/604 | 326/408/509/619 | 327/407/531/616 | 405/475/574/678 |
+| Fragmented held newest reopen | 26/97/262/341 | 23/96/201/267 | 34/116/209/268 | 22/95/221/269 |
+
+The final focused negative control measured **3043/3054/3099/3163 ms**;
+the full UI control measured **3040/3048/3102/3188 ms**. Both passed by rejecting
+the identical 1000 ms assertion with the 3000 ms read delay still inside the timed
+path. Preserve all misses alongside these passes, exact rows/marker anchors, zero
+offline asks, one newest-page ask per connected opening and the held response.
+Device execution coordination supplements diagnosis; it does not erase a miss or
+replace full-suite evidence.
 
 ## Folded-row composition reuse (#1954)
 

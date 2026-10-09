@@ -119,22 +119,36 @@ span/gap counts and the unknown flag, never opaque cursors, identity proofs or e
 
 `readThread` and `readHistoryPosition` share one immutable `DecodedThread` under
 `FileConversationCache`'s existing mutex. Each read still opens the current document
-and reads its text from disk. Reuse requires both the same host/conversation document
-path and byte-identical freshly read text; file length and modification time cannot
-establish freshness. A second cache instance's same-size/same-time replacement must
-therefore be observed. This retains only one document, not an unbounded thread cache.
+from disk. Since #2018 the retained value holds the exact document byte array; a
+bounded byte buffer compares freshly opened bytes through EOF before reuse. Reuse
+requires both the same host/conversation document path and identical bytes, including
+length; file length and modification time alone cannot establish freshness. A second
+cache instance's same-size/same-time replacement must therefore be observed. This retains only one document, not an unbounded thread cache.
 
 Mutations clear the retained decode before running. Missing files clear it, and changed
-text or a different path retires it before decoding. An unreadable document cannot
+bytes or a different path retires it before decoding. An unreadable document cannot
 supply cached rows or position: a successful fresh read remains a prerequisite for
 reuse. Host changes cannot borrow another host's decode even with colliding conversation
 ids. No schema, durable retention or coroutine ownership changes accompany this reuse.
 
-The read envelope `CachedThreadRead` decodes typed `CachedThreadRow` records directly,
-leaving only optional `history` as a JSON element. Version and domain-row validation
-still precede metadata acceptance. Malformed optional metadata yields readable rows
-with no position; invalid rows withhold both rows and position. Field order and unknown
-fields do not change that boundary. Writers retain their existing decoding behavior.
+Valid documents decode directly into typed `CachedThread` records with the string
+parser (#2018), avoiding a large optional-history JSON tree followed by a second
+metadata decode. The temporary UTF-8 string is released after decoding; only the
+bytes and validated value are retained. Stream decoding was measured slower and
+is not the reader path. On serialization failure, `CachedThreadRead` decodes typed
+rows with optional `history` as a JSON element, retaining malformed-metadata and
+legacy omitted-`spans` compatibility. Version and domain-row validation precede
+metadata acceptance; malformed or structurally invalid optional metadata yields
+readable rows with no position, while invalid rows withhold both. Field order and
+unknown fields do not change that boundary. Metadata writers share this decoder.
+
+Row validation uses one identity-set pass and rejects every running tool and
+kind-specific duplicate as before. Coverage validation checks already-normalized
+unsigned spans in stored order and each gap against its neighbouring spans; it
+must reject reversed, overlapping, adjacent or unsorted spans rather than repair
+them by sorting/merging. Maximum unsigned endpoints remain valid. Fresh-byte tests
+include same-length replacements across buffer/multibyte boundaries, valid
+whitespace growth/truncation and rejection of a trailing second JSON document.
 
 Coverage remains checked against every retained direct proof and any legacy binding.
 When no legacy aliases exist, only alias-specific work is skipped. `retainedBy` reuses
@@ -147,10 +161,27 @@ between independent inputs; it never crosses a suspension point or thread bounda
 See [decode freshness tests](conversation-cache-testing.md#testing) and the
 [committed-frame restore regression](thread-screen-testing.md#saved-thread-first-draw-1949).
 
+### History coverage compatibility views (#2018)
+
+Unsigned stored spans, gaps, cursors, walks, row order and entry claims remain the
+authoritative coverage representation. Signed compatibility collections and their
+span-derived `highWater`/`unknownEdge` are computed once on demand with thread-safe
+`lazy`, avoiding unused copies during unsigned restore. Public getter types and
+signed clipping/filtering are unchanged: spans clip at `Long.MAX_VALUE`, while
+unrepresentable ids are omitted from the applicable views. Each copied coverage
+owns independent lazy views; accessing them does not add disk fields.
+`UnsignedHistoryCoverageTest.signedCompatibilityInvariant_restoredAndCopiedViewsStayIndependentAndOffDisk`
+pins these properties alongside existing signed/unsigned validation tests.
+
 ### The thread document's two writers (#1354)
 
 Both writers rewrite one thread document under the file cache's `Mutex`, preserving the other
-half. Since #1832 they also validate durable claims against the rows actually retained:
+half. Since #2018 they encode the same `CachedThread` serializer/configuration directly
+to a buffered UTF-8 temporary-file stream, close it, then perform the existing atomic
+replacement. This avoids whole-document string/byte write buffers without changing
+version, fields, row order, proofs, retention or error classification. Other document
+writers keep their text encoding. Since #1832 they also validate durable claims
+against the rows actually retained:
 
 - **`writeThread`** receives untrimmed drawn rows, applies `cacheableThreadRows`, reads the stored
   position through the header-only decode, and calls `coverage.retainedBy(kept)`. Changed or removed
@@ -158,7 +189,9 @@ half. Since #1832 they also validate durable claims against the rows actually re
   Row-limit trimming resets backwards cursor/`atStart` while preserving conservative gap metadata.
   Without coverage it retains #1354's trim behavior of dropping the position altogether.
 - **`writeHistoryPosition`** reads the stored rows through the validated decode and checks/binds
-  coverage against them before replacement. A corrupt row document supplies no retained rows;
+  coverage against them before replacement. One validated domain-row list is reused
+  for old-metadata validation and incoming claim retention/binding; the original
+  stored records are serialized. A corrupt row document supplies no retained rows;
   a null clear of a never-written document remains a no-op. The wrapper must have written rows
   first: the file lock prevents torn read-modify-write, but does not by itself order two caller
   operations. Its [rows-before-state mutex](caching-conversation-repository.md#the-saved-history-position-1354)
