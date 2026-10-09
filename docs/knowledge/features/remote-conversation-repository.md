@@ -334,6 +334,25 @@ cannot decide receipt validity. `rate_limited` still raises unread; it extends a
 checkpoint only after foreground presentation of a row. Malformed usage windows
 and non-interactive receipts remain barriers.
 
+Compatible runtime receipts preserve numeric continuity without creating sight (#1989).
+Daemon [#3026](https://github.com/pyrycode/pyrycode/issues/3026) repaired omitted
+`main_turn_opened` IDs by projecting known runtime facts as existing empty info-banner
+receipts with their original IDs and timestamps. Mobile decodes these as nonvisual evidence without a new runtime-type allowance. Removing receipt ID 2 from
+an otherwise valid page still blocks the checkpoint even when stored `gaps` is empty.
+Controlled reproduction established daemon ownership; historical live captures
+lacked IDs, leaving their exact sequence unproven.
+
+Receipt accounting, the exact presented version, client latest and correlated
+confirmation must agree. Daemon [#3029](https://github.com/pyrycode/pyrycode/issues/3029)
+repaired a second mismatch: stored visibility excluded successful `turn_end` from the
+clamp while its unchanged wire payload raised mobile latest. Legacy payloads carry no
+stored visibility, so mobile cannot infer it to repair that disagreement. The repaired
+legacy target uses eligible wire types and validated runtime receipts with mobile’s
+five status exclusions. Completed-reply checkpoint/latest/confirmation is 6/5/5 with runtime enabled,
+5/4/4 disabled. Fetching history or receiving only a receipt sends no read command, and
+sending the qualified request still requires correlated daemon confirmation. See the
+[full live evidence](../../e2e-interactive-stream.md#verification-status).
+
 Live evidence must describe the row the projection actually drew. Re-reducing one
 envelope in isolation is wrong when the fold depends on earlier state or on a locally
 assigned time: the falling `compacting` edge draws a divider only after a rising one,
@@ -401,6 +420,22 @@ require later non-excluded content, including unknown types, to raise latest.
 `ThreadReadClaimsTest.understoodUsageWindowReceiptsExtendPresentationButMalformedWindowsRemainBarriers`
 separately guards decoded clearing edges versus malformed/non-interactive evidence;
 an unread-only assertion would miss a valid receipt that still blocks phone reads.
+
+`ThreadReadRuntimeReceiptsTest` decodes the serialized real-store examples from
+[daemon PR #3034](https://github.com/pyrycode/pyrycode/pull/3034) in
+`app/src/test/resources/daemon-contract/runtime-read-{enabled,disabled}.json` through
+the real DTO, ordered reducer and projection. Its probes are
+`runtimeReceiptRepairsTheDiagnosedHoleWithoutChangingContent`,
+`invariantOnlyUnderstoodIdentifiedReceiptsAccountForTheHole`,
+`invariantReplayAndOverlappingHistoryPreserveExactClaims` and
+`invariantMissingLiveIdentityNeedsHistoryAndFreshConnectionHasNoSight`.
+They retain omitted-ID, unknown/malformed, stored-gap, exact-version, replay,
+missing-identity and fresh-connection barriers. Reordering moves the nonvisual receipt;
+arbitrarily reversing content lifecycle entries is not an equivalent history page.
+`ConversationReadMarksTest.runtimeReceiptHistoryRequiresCorrelatedDaemonReadConfirmation`
+exercises both controls through the repository: no command before presentation, no
+confirmation from sending or unrelated replies, clamped read/latest agreement, and
+host/conversation isolation. A checkpoint-only assertion would miss the clamp defect.
 
 ## Related
 
