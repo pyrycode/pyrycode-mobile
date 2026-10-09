@@ -134,6 +134,24 @@ class ThreadListFollowTest {
         assertEquals(FollowStep(following = false, pin = false), step(reading, left, following = false))
     }
 
+    @Test
+    fun geometryCompensationIsNotReaderMovement_evenWhenShrinkReachesTheEnd() {
+        val before = frame(offset = 80)
+        val grown = before.copy(anchorOffset = 120, content = "grown", compensatedScroll = 40)
+        assertEquals(FollowStep(following = false, pin = false), step(before, grown, following = false))
+        val shrunk = grown.copy(anchorOffset = 0, content = "shrunk", compensatedScroll = -80)
+        assertEquals(FollowStep(following = false, pin = false), step(grown, shrunk, following = false))
+    }
+
+    @Test
+    fun readerMovementAlongsideCompensationStillRecomputesFollowing() {
+        val before = frame(offset = 80)
+        val atEnd = before.copy(anchorOffset = 0, compensatedScroll = 40)
+        assertEquals(FollowStep(following = true, pin = false), step(before, atEnd, following = false))
+        val away = frame().copy(anchorOffset = 120, compensatedScroll = 40)
+        assertEquals(FollowStep(following = false, pin = false), step(frame(), away, following = true))
+    }
+
     private companion object {
         const val TOLERANCE = 11
     }

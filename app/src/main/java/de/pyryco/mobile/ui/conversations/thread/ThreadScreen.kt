@@ -674,6 +674,7 @@ fun ThreadScreen(
                         // #896: a subagent's tool rows indent under the Agent/Task call that spawned them.
                         val toolDepths = remember(state.items) { toolNestingDepths(state.items) }
                         val listState = rememberLazyListState()
+                        val readerViewport = remember(listState) { ThreadListViewport(listState) }
                         val compositionObserver = LocalThreadListCompositionObserver.current
                         SideEffect { compositionObserver?.invoke(listState) }
                         val messageViewport = remember(listState) { mutableStateOf<Rect?>(null) }
@@ -732,27 +733,6 @@ fun ThreadScreen(
                             onEvent = onOverflowEvent,
                         )
                         val restAdjustment = ordinaryMessageRestAdjustment(newestRenderedRow, promptRowCount)
-                        var previousRestAdjustment by remember(listState) { mutableStateOf(restAdjustment) }
-                        SideEffect {
-                            val delta = with(density) { (previousRestAdjustment - restAdjustment).roundToPx() }
-                            // End spacing must not move a keyed history reader when a prompt or row kind changes.
-                            if (delta != 0 && listState.firstVisibleItemIndex > 0 && !listState.isScrollInProgress) {
-                                val anchor =
-                                    listState.layoutInfo.visibleItemsInfo.firstOrNull {
-                                        it.index == listState.firstVisibleItemIndex
-                                    }
-                                reversedRows.indices
-                                    .firstOrNull { index ->
-                                        reversedRows[index].listKey(rows.lastIndex - index) == anchor?.key
-                                    }?.let { index ->
-                                        listState.requestScrollToItem(
-                                            index + promptRowCount,
-                                            listState.firstVisibleItemScrollOffset + delta,
-                                        )
-                                    }
-                            }
-                            previousRestAdjustment = restAdjustment
-                        }
                         // #1352: prompt rows take the lowest indices of the reversed list and are never
                         // history, so the oldest thread row sits after them.
                         val oldestRowIndex by rememberUpdatedState(if (rows.isEmpty()) -1 else rows.size + promptRowCount - 1)
@@ -806,6 +786,7 @@ fun ThreadScreen(
                         val promptIdentity by rememberUpdatedState(shownQuestion?.generation to openRequest?.modalId)
                         FollowNewestEnd(
                             listState = listState,
+                            viewport = readerViewport,
                             newestRowKey = rows.lastOrNull()?.listKey(rows.lastIndex),
                             newestRow =
                                 remember(rows, agentRows) {
@@ -840,6 +821,7 @@ fun ThreadScreen(
                         val rowRelocationSpec = LocalBringIntoViewSpec.current
                         ThreadMessageList(
                             state = listState,
+                            viewport = readerViewport,
                             modifier =
                                 Modifier.fillMaxSize().olderHistoryPull(listPull).onGloballyPositioned {
                                     val origin = it.positionInWindow()
@@ -942,16 +924,23 @@ fun ThreadScreen(
                                 val candidate = readCandidate?.takeIf { row == readRow }
                                 ThreadRowContent(
                                     rowRelocationSpec,
-                                    if (candidate != null) {
-                                        Modifier.onGloballyPositioned {
-                                            candidate.laidOut = true
-                                            if (candidate.row !is ThreadItem.MessageItem) {
-                                                candidate.trailingEdge = it.positionInWindow().y + it.size.height
-                                            }
-                                        }
-                                    } else {
-                                        Modifier
-                                    },
+                                    Modifier
+                                        .layout { measurable, constraints ->
+                                            val placeable = measurable.measure(constraints)
+                                            readerViewport.onRowMeasured(row.listKey(chronologicalIndex), placeable.height)
+                                            layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
+                                        }.then(
+                                            if (candidate != null) {
+                                                Modifier.onGloballyPositioned {
+                                                    candidate.laidOut = true
+                                                    if (candidate.row !is ThreadItem.MessageItem) {
+                                                        candidate.trailingEdge = it.positionInWindow().y + it.size.height
+                                                    }
+                                                }
+                                            } else {
+                                                Modifier
+                                            },
+                                        ),
                                 ) {
                                     historyMarkersFor(row, gapMarkers).forEach { marker ->
                                         HistoryGapRow(
@@ -1332,6 +1321,7 @@ private fun ThreadRowContent(
 @Composable
 private fun ThreadMessageList(
     state: LazyListState,
+    viewport: ThreadListViewport,
     headerHeight: Dp,
     composerHeight: Dp,
     contentPadding: PaddingValues,
@@ -1360,7 +1350,7 @@ private fun ThreadMessageList(
     CompositionLocalProvider(LocalBringIntoViewSpec provides relocationSpec) {
         LazyColumn(
             state = state,
-            modifier = modifier,
+            modifier = modifier.onGloballyPositioned { viewport.onPositioned() },
             reverseLayout = true,
             contentPadding = contentPadding,
             verticalArrangement = verticalArrangement,
