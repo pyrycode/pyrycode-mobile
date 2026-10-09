@@ -18,6 +18,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.height
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
@@ -28,6 +29,7 @@ import de.pyryco.mobile.ui.conversations.components.MessageRowVerticalSpacing
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -130,6 +132,18 @@ class BackgroundAgentRestGapTest {
         mount(filler(30))
         assertRestGap(rule.onNode(hasTestTag("message-bubble") and hasAnyDescendant(hasText("Filler message number 30", substring = true))))
     }
+
+    private fun assertShortMessageRestGap(role: Role) {
+        val newest = ThreadItem.MessageItem(Message("short", "s", role, "Hi", ts, false))
+        mount(filler(30) + newest)
+        val bubble = rule.onNode(hasTestTag("message-bubble") and hasAnyDescendant(hasText("Hi")))
+        assertTrue("one-line bubble has no action floor", bubble.getUnclippedBoundsInRoot().height < 96.dp)
+        assertRestGap(bubble)
+    }
+
+    @Test fun short_user_message_keeps_natural_height_and_rest_gap() = assertShortMessageRestGap(Role.User)
+
+    @Test fun short_assistant_message_keeps_natural_height_and_rest_gap() = assertShortMessageRestGap(Role.Assistant)
 
     @Test fun closed_running_agent_run_block_rests_the_documented_gap_above_the_band() {
         // The exact release-4592 repro: a running background Agent with no children loaded yet draws as one

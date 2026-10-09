@@ -10,6 +10,7 @@ import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
 import de.pyryco.mobile.ui.conversations.thread.ThreadHistoryDemand
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
+import de.pyryco.mobile.verification.FullRetentionTest
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -32,6 +33,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import org.junit.experimental.categories.Category
 import org.junit.rules.TemporaryFolder
 import kotlin.time.Duration.Companion.minutes
 
@@ -423,9 +425,13 @@ class HistoryCacheReworkTest {
             }
         }
 
-    @Test fun stateWriteAfterTrimmingCannotRestoreSavedStop() = trimmingResetsWalk(HistoryPosition("", true))
+    @Category(FullRetentionTest::class)
+    @Test
+    fun stateWriteAfterTrimmingCannotRestoreSavedStop() = trimmingResetsWalk(HistoryPosition("", true))
 
-    @Test fun stateWriteAfterTrimmingCannotRestoreSavedCursor() = trimmingResetsWalk(HistoryPosition("past-discarded", false))
+    @Category(FullRetentionTest::class)
+    @Test
+    fun stateWriteAfterTrimmingCannotRestoreSavedCursor() = trimmingResetsWalk(HistoryPosition("past-discarded", false))
 
     private fun trimmingResetsWalk(saved: HistoryPosition) =
         // Crossing the real 100,000-row cap rewrites and reloads disk records; the full-suite

@@ -36,6 +36,17 @@ heading, so its anchor is unchanged; the parent's own `## Testing` heading now j
 
 - **Disabled while not connected ([#1319](https://github.com/pyrycode/pyrycode-mobile/issues/1319)):** `FooterMenuTest` asserts `footerControlEnabled` is `false` for Model, Effort, Permission and Actions when `connected = false`, even with an otherwise writable, non-pending config, and `true` for Actions when connected with no session — every pre-#1319 call site in the file gained an explicit `connected = true`. `ThreadScreenConnectionGateTest` (`app/src/sharedTest/`, Robolectric) drives `ThreadScreen`'s connection state through Offline, Connecting and Connected: the footer's Actions button is disabled Offline and enabled once Connected, and opening the Status sheet Offline shows its model row not enabled, enabled once Connected. See [Thread composer footer § How it works](thread-composer-footer.md#how-it-works) and [Thread input bar](thread-input-bar.md) for the paired Send/Stop gating, and [Connection state](connection-state.md) for why the tap-time re-check needed `ThreadViewModel.connectionState` started `Eagerly`.
 
+A published pinned model can be the only offered identity for its family. In
+[#1969](https://github.com/pyrycode/pyrycode-mobile/issues/1969#issuecomment-6066764274),
+`claude-fable-5-1[1m]` was offered while `fable[1m]` was absent; daemon family
+normalization before validation rejected the phone's verbatim pick. Acceptance
+and fresh settings readback must agree with the published row. Keep exact
+published-value acknowledgement and X/Y isolation assertions: accepting a family
+alias in the test would hide publication/validation/readback disagreement.
+Daemon [#3017](https://github.com/pyrycode/pyrycode/issues/3017) owns that repair;
+the unchanged mobile scenario's [restored evidence](../../e2e-interactive-stream.md#verification-status)
+retains announcement/inheritance and reopen persistence checks.
+
 ## Related
 
 The five live settings scenarios restored by [#1397](https://github.com/pyrycode/pyrycode-mobile/issues/1397)

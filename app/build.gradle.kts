@@ -158,6 +158,14 @@ android {
         unitTests.isIncludeAndroidResources = true
         unitTests.all {
             it.maxHeapSize = "2g"
+            if (!providers
+                    .gradleProperty("fullRetentionTests")
+                    .orElse("false")
+                    .get()
+                    .toBoolean()
+            ) {
+                it.useJUnit { excludeCategories("de.pyryco.mobile.verification.FullRetentionTest") }
+            }
             // Robolectric reads FileDescriptor internals when it sets up Android 16 shared memory.
             it.jvmArgs("--add-opens=java.base/java.io=ALL-UNNAMED", "--add-exports=java.base/jdk.internal.access=ALL-UNNAMED")
             // Independent expectation lets the binding test catch an incorrectly generated flag.

@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.verification.FullRetentionTest
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -20,6 +21,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import org.junit.experimental.categories.Category
 import org.junit.rules.TemporaryFolder
 import java.io.IOException
 
@@ -259,7 +261,9 @@ class HistoryDurabilityTest {
             }
         }
 
-    @Test fun trimmingAndStaleRowWritersRemoveClaimsForDiscardedContent() =
+    @Category(FullRetentionTest::class)
+    @Test
+    fun trimmingAndStaleRowWritersRemoveClaimsForDiscardedContent() =
         runTest {
             val old = page(1, 2)
             val held = rows(old)
