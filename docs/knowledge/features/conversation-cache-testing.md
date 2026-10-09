@@ -86,7 +86,7 @@ reusing immutable coverage must never bypass proof checks.
 partial fills, conservative legacy migration, cache exclusions, failed row writes and interruption
 between row/state writes. `HistoryCacheReworkTest` exercises complete production paths for durable
 order, saved cursor/stop trim reset and deletion during suspended writers; see
-[wrapper testing](caching-conversation-repository.md#testing).
+[wrapper testing](caching-conversation-repository-testing.md#testing).
 
 Real app process death is proved on a device: [#1833](https://github.com/pyrycode/pyrycode-mobile/issues/1833)'s
 external force-stop proof stops the app without clearing data, and a post made meanwhile appears
@@ -109,7 +109,7 @@ now covers real cache/repository/ViewModel restoration and committed drawing. Se
 Testing](dependency-injection.md#testing) for `HostConversationSourceTest`'s restore/live-race
 cases and for why every other instrumented container built from `appModule` overrides this binding
 with a shared `InertConversationCache` fake rather than supplying a real `Context`. See [Caching
-conversation repository § Testing](caching-conversation-repository.md#testing) for the restore
+conversation repository § Testing](caching-conversation-repository-testing.md#testing) for the restore
 merge's own unit coverage. Live continuity across a real reconnect — a loaded conversation staying
 readable while its host link is cut and reconciling a peer's turn once the link is restored — is
 proven live by [#850](https://github.com/pyrycode/pyrycode-mobile/issues/850)
