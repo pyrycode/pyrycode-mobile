@@ -27,6 +27,7 @@ sealed interface ThreadRow {
         val agentId: String,
         val description: String,
         val finished: Boolean,
+        val finishAnchor: String? = null,
     ) : ThreadRow
 
     /**

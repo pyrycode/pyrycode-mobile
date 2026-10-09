@@ -59,7 +59,9 @@ import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextInputSelection
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.core.view.ViewCompat
@@ -341,7 +343,9 @@ class QuestionBatchModalTest {
             .assertIsFocused()
             .assertIsDisplayed()
             .assertTextContains("draft")
-            .performTextInput(" typed")
+            // Select the insertion point explicitly after the IME/reveal scroll recomposes the field.
+            .performTextInputSelection(TextRange("draft".length))
+        rule.onNodeWithTag(last).performTextInput(" typed")
         rule.onNodeWithTag(last).assertTextContains("draft typed")
         val field = rule.onNodeWithTag(last).fetchSemanticsNode().boundsInRoot
         rule.runOnIdle {
