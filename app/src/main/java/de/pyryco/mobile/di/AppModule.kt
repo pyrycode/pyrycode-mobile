@@ -59,6 +59,7 @@ import de.pyryco.mobile.ui.conversations.thread.McpFailureAcknowledgements
 import de.pyryco.mobile.ui.conversations.thread.OwnedPasteCopy
 import de.pyryco.mobile.ui.conversations.thread.PermissionDraftStore
 import de.pyryco.mobile.ui.conversations.thread.QuestionDraftStore
+import de.pyryco.mobile.ui.conversations.thread.ThreadContentScheduling
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.conversations.thread.UsageLimitDismissals
 import de.pyryco.mobile.ui.conversations.thread.asRememberedEffortStore
@@ -315,6 +316,7 @@ fun hostConversationModule(
             SharingShortcuts(context, get<HostConversationSource>().snapshots, saved)
         } onClose { it?.dispose() }
         // #797: the demo branch resolves no cache, as HostConversationSource's does below.
+        single { ThreadContentScheduling() }
         single {
             ThreadDestinationFactory(
                 useRelay,
@@ -328,6 +330,7 @@ fun hostConversationModule(
                 // ContentResolver can still build the factory for its other destinations.
                 attachmentReader = inject(),
                 readRetries = get(),
+                contentScheduling = get(),
             )
         }
         // #877: one viewing tracker per app, shared by the thread destinations and the host source.
@@ -393,6 +396,7 @@ internal class ThreadDestinationFactory(
     private val attachments: AttachmentStore? = null,
     private val attachmentReader: Lazy<AttachmentReader>,
     private val readRetries: de.pyryco.mobile.data.repository.ReadCheckpointRetries? = null,
+    private val contentScheduling: ThreadContentScheduling = ThreadContentScheduling(),
 ) {
     val hostConnections get() = registry.hostConnections
 
@@ -460,7 +464,14 @@ internal class ThreadDestinationFactory(
         }
         RelayLog.d { "event=thread_destination_bound" }
         if (!useRelay && serverId == HostConversationSource.DEMO_SERVER_ID) {
-            return ThreadViewModel(handle, repository, FakeConnectionStateSource(), draftStore, attachmentReader = attachmentReader.value)
+            return ThreadViewModel(
+                handle,
+                repository,
+                FakeConnectionStateSource(),
+                draftStore,
+                attachmentReader = attachmentReader.value,
+                contentScheduling = contentScheduling,
+            )
         }
         val connection =
             object : ConnectionStateSource {
@@ -508,6 +519,7 @@ internal class ThreadDestinationFactory(
             attachmentReader = attachmentReader.value,
             rememberedEffort = preferences.asRememberedEffortStore(),
             rememberModel = { model -> preferences.setRememberedModel(model) },
+            contentScheduling = contentScheduling,
         )
     }
 

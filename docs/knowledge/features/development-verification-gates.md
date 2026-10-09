@@ -187,7 +187,7 @@ When the total position or height itself is a design target, retain it and
 justify any larger `pixels` allowance from the measured, independently rounded
 segments. Check the component gaps and line boxes separately within one pixel
 so a permissive total cannot hide a spacing regression. The
-[thread geometry examples](thread-screen-testing.md#testing) retain 97dp and
+[thread geometry examples](thread-screen-testing-coverage.md#testing) retain 97dp and
 60dp totals with measured two-pixel allowances; integral-density checks remain
 exact even with that allowance.
 The device also ignores `@Config` qualifiers and Robolectric's 320dp width,

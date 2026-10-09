@@ -68,7 +68,13 @@ IME opening, dismissal and reopening resize the drawing viewport and lift the
 composer. The remembered reverse list retains its follow-newest and history-reader
 rules. See [list reservations](thread-screen-how-it-works-list-and-status-row.md),
 [chrome and overlays](thread-screen-how-it-works-overlays-and-app-bar.md#threadtopappbar--figma-168-chrome)
-and [hardware evidence](thread-screen-testing.md#testing).
+and [hardware evidence](thread-screen-testing-coverage.md#testing).
+
+Complete thread content publishes at most once per actual display frame during
+snapshot/live bursts; unrelated composer and action state remains responsive.
+Rows and exact read evidence travel together. See
+[worker admission, pacing and cancellation](thread-screen-how-it-works-state.md#combineobserveconversations-observemessages-pendingworkspacepickerstateinwhilesubscribed--three-upstreams-since-137)
+and [frame probes](thread-screen-testing.md#frame-paced-content-1968).
 
 **Foreground read checkpoints (#1912).** `ThreadReadViewport` sends
 `ThreadEvent.NewestContentPresented` only when the destination is resumed, the newest
