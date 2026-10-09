@@ -21,6 +21,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.Instant
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
@@ -29,6 +30,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.encodeToStream
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
@@ -139,7 +141,7 @@ class FileConversationCache(
                     )
                 }
             val record = CachedThread(VERSION, kept.map { it.toRecord() }, history)
-            writeAtomically(document, MobileJson.encodeToString(record))
+            writeAtomically(document, record)
         }
 
     override suspend fun readHistoryPosition(
@@ -181,7 +183,7 @@ class FileConversationCache(
                 }
             val coverage = position?.coverage?.retainedBy(rows)?.boundTo(rows)
             val record = CachedThread(VERSION, storedRows, position?.let { CachedHistoryPosition(it.cursor, it.atStart, coverage) })
-            writeAtomically(document, MobileJson.encodeToString(record))
+            writeAtomically(document, record)
         }
 
     override suspend fun readReadPositions(serverId: String): Map<String, ReadPosition> =
@@ -461,17 +463,30 @@ class FileConversationCache(
         ),
     )
 
-    /** Temp file plus atomic move: process death mid-write leaves the previous document or the new one. */
     private fun writeAtomically(
         document: File,
         text: String,
+    ) = writeAtomically(document) { it.writeText(text) }
+
+    @OptIn(ExperimentalSerializationApi::class)
+    private fun writeAtomically(
+        document: File,
+        record: CachedThread,
+    ) = writeAtomically(document) { temporary ->
+        temporary.outputStream().buffered().use { MobileJson.encodeToStream(record, it) }
+    }
+
+    /** Temp file plus atomic move: process death mid-write leaves the previous document or the new one. */
+    private fun writeAtomically(
+        document: File,
+        write: (File) -> Unit,
     ) {
         val directory = document.parentFile ?: throw IOException("conversation cache directory unavailable")
         if (!directory.isDirectory && !directory.mkdirs()) {
             throw IOException("conversation cache directory unavailable")
         }
         val temporary = File(directory, "${document.name}.tmp")
-        temporary.writeText(text)
+        write(temporary)
         Files.move(temporary.toPath(), document.toPath(), StandardCopyOption.ATOMIC_MOVE)
     }
 

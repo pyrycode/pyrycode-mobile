@@ -99,9 +99,17 @@ The metadata writer mapped every saved row into the domain four times: for optio
 
 At `ac2dfc64a`, the queued raw Gradle run eventually executed and failed: fragmented offline 1451/1843/2208/2344 ms, cache 21/680/176/117/369 ms. Fresh XML timestamp `2026-10-09T22:38:42`, exit 1, one executed/failed, no passes/skips, retained under `/tmp/builder-2018/validation-miss/`. Read-only Gradle diagnostics confirmed another live gate was active, and own setup progressed from shared AVD locking to waiting for a snapshot subprocess. Raw focused Gradle does not acquire the Python gate's shared device hold. Subsequent focused commands take the existing FIFO `device_hold` from the pipeline helper before executing the same managed-device task, with `disableAnimations=true` as the dispatcher UI gate uses. This changes no fixture, cache instance, assertion, measurement start or committed-frame endpoint. Retain all raw-run misses; exclusive focused evidence supplements them and the full UI gate remains dispatcher-owned. This is a test-execution coordination adjustment, with no repository harness/configuration edit.
 
+### 2026-10-10 — Stream atomic thread writes
+
+Exclusive focused execution at `4d1026e74` still failed held-newest fragmented first open: 784/947/1046/1146 ms cumulative, cache 23/336/110/39/235 ms. Offline first/reopen were 781/392 ms. Preserve exit-1, one-executed/failed fresh XML timestamp `2026-10-09T22:41:52` under `/tmp/builder-2018/exclusive-miss/`. GC reclaimed 49 MB of large objects after the second whole-document write and continued through restore. Device coordination alone does not repair this miss.
+
+For the two thread-document writers, encode the same `CachedThread` serializer/configuration directly to a buffered UTF-8 temporary-file stream, close it, then perform the existing atomic move. The shared atomic-write helper still handles directory creation and commit; other document writers retain their existing text encoding. This eliminates whole-document string/byte buffers during large thread saves and preserves field names, schema/version, row order, proofs, retention, error classification and atomic replacement. Existing `HistoryHashCompatibilityTest` verifies canonical persisted row hashes, including multibyte text; the full cache writer/unsigned claim regression selection already passed before the change. Stream decoding remains superseded by the faster typed string parser. No new dependency, public signature or timer/fixture change.
+
 ## Documentation handoff
 
 - Pending documentation stage: `docs/knowledge/features/conversation-cache-layout.md`, Thread document readers — exact byte-array retention, bounded fresh-byte comparison and direct typed decoding with independent optional-metadata fallback; unchanged format, proofs and invalidation.
 - Pending documentation stage: `docs/knowledge/features/thread-screen-testing.md`, Saved-thread first draw — retain the baseline/partial-repair misses, fresh isolated and class timings, and the dispatcher-owned UI gate result when available.
 
 - Pending documentation stage: `docs/knowledge/features/conversation-cache-layout.md`, history coverage — signed compatibility collections are computed once on demand; unsigned disk fields and validation remain authoritative.
+
+- Pending documentation stage: `docs/knowledge/features/conversation-cache-layout.md`, Thread document writers — buffered JSON encoding into the same atomic temporary-file replacement, with one reused validated domain row list for metadata writes.
