@@ -1264,7 +1264,7 @@ that reconnect re-ask's history page to supply the prompt text.
 **[#1352](https://github.com/pyrycode/pyrycode-mobile/issues/1352) removed the reconnect re-ask outright**
 (older history now loads only on the reader's own pull, never on a reconnect — see [Remote conversation
 repository § the retry and the two
-restarts](knowledge/features/remote-conversation-repository-reads-and-thread-store-history-paging.md#the-retry-and-the-two-restarts-778)),
+restarts](knowledge/features/remote-conversation-repository-history-walk.md#the-retry-and-the-two-restarts-778)),
 so this scenario no longer has a history page to lean on for `OFFLINE_PROMPT`'s text. It still needs none:
 since pyrycode#2699, landed before #1352, the daemon pushes each delivered user message **live and into
 the replay ring**, not only into history, so the missed-event `last_event_id` replay that #1352 explicitly
