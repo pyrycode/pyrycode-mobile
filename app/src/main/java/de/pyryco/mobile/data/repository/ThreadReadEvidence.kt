@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.model.ordinaryId
 import de.pyryco.mobile.data.network.ApiRetryPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskStartedPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskUpdatedPayloadDto
@@ -10,6 +11,7 @@ import de.pyryco.mobile.data.network.McpStatusPayloadDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.ModelAnnouncedPayloadDto
 import de.pyryco.mobile.data.network.ModelListPayloadDto
+import de.pyryco.mobile.data.network.RateLimitedPayloadDto
 import de.pyryco.mobile.data.network.ResettingPayloadDto
 import de.pyryco.mobile.data.network.SessionFactsPayloadDto
 import de.pyryco.mobile.data.network.SlashCommandListPayloadDto
@@ -128,7 +130,14 @@ private fun ThreadItem.represents(source: ThreadItem): Boolean {
                 historyRowProofs(listOf(source)).all { (key, proof) -> historyRowProofs(listOf(this))[key] == proof } &&
                 (expected.isStreaming || !held.isStreaming)
         }
-        return held.copy(timestamp = expected.timestamp, sessionId = expected.sessionId) == expected
+        return held.segment == null &&
+            held.ordinaryId == expected.ordinaryId &&
+            held.copy(
+                id = expected.id,
+                reconciliationId = expected.reconciliationId,
+                timestamp = expected.timestamp,
+                sessionId = expected.sessionId,
+            ) == expected
     }
     if (this is ThreadItem.UnrecognizedMessage &&
         source is ThreadItem.UnrecognizedMessage
@@ -165,6 +174,8 @@ internal fun understoodNonvisualEntry(
             "slash_command_list" -> MobileJson.decodeFromJsonElement<SlashCommandListPayloadDto>(entry.payload).toMenu().let { true }
             "mcp_status" -> MobileJson.decodeFromJsonElement<McpStatusPayloadDto>(entry.payload).toReport()?.let { true }
             "context_usage" -> MobileJson.decodeFromJsonElement<ContextUsagePayloadDto>(entry.payload).toReading()?.let { true }
+            // A benign usage-window clearing edge maps to null, but is still understood receipt.
+            "rate_limited" -> MobileJson.decodeFromJsonElement<RateLimitedPayloadDto>(entry.payload).let { true }
             "model_announced" -> MobileJson.decodeFromJsonElement<ModelAnnouncedPayloadDto>(entry.payload).toReading()?.let { true }
             "session_facts" -> MobileJson.decodeFromJsonElement<SessionFactsPayloadDto>(entry.payload).toFacts().let { true }
             "turn_state" -> MobileJson.decodeFromJsonElement<TurnStatePayloadDto>(entry.payload).toEvent()?.let { true }

@@ -1,0 +1,129 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites tests="91" failures="0" errors="0" skipped="0">
+  <testsuite name="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" tests="53" skipped="0" failures="0" errors="0" timestamp="2026-10-09T09:03:52.506Z" hostname="Juhanas-MacBook-Air.local" time="0.311">
+    <properties />
+    <testcase name="heldSettingsAndMenu_readInvalidatedThroughTheGap_liveWhileConnected_andDropWhenThePairingEnds" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.148" />
+    <testcase name="observeResetting_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.004" />
+    <testcase name="observeAttachmentOffers_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.004" />
+    <testcase name="observeTurnPhase_whileAbsent_emitsIdle" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.002" />
+    <testcase name="observeContextUsage_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.003" />
+    <testcase name="observeApiRetry_whileAbsent_emitsNotRetrying" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.002" />
+    <testcase name="observeAttachmentOffers_whileAbsent_emitsEmpty" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.001" />
+    <testcase name="requestContextUsage_whileAbsent_isSilentNoOp" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.001" />
+    <testcase name="oneShots_whileAbsent_throwIllegalState" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.0" />
+    <testcase name="observeContextUsage_whileAbsent_emitsNull" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.001" />
+    <testcase name="observeCompacting_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.003" />
+    <testcase name="sendMessageWithAttachments_delegatesToTheLiveRepositoryOrThrowsWhileAbsent" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.002" />
+    <testcase name="requestContextUsage_delegatesToLiveRepo" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.001" />
+    <testcase name="observeStall_whileAbsent_emitsFalse" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.001" />
+    <testcase name="coldReads_whileAbsent_emitDefinedEmptyProjection" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.005" />
+    <testcase name="refreshSessionSettings_whileAbsent_isSilentNoOp" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.001" />
+    <testcase name="observeTurnPhase_afterAReconnect_everyConversationReadsIdleUntilTheDaemonReportsAgain" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.003" />
+    <testcase name="observeThinkingProgress_whileAbsent_emitsNull" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.002" />
+    <testcase name="oneShots_whenLive_delegateWithExactArgsAndReturn" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.001" />
+    <testcase name="setMuted_whenLive_delegatesVerbatim" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.001" />
+    <testcase name="observeResetting_whileAbsent_emitsNull" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.001" />
+    <testcase name="observeSlashCommandMenu_whileAbsent_emitsNull" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.002" />
+    <testcase name="observeQueue_whileAbsent_emitsEmpty" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.002" />
+    <testcase name="mutationsSupported_delegatesToLiveValue_andReReadsAcrossChurn" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.0" />
+    <testcase name="refreshSessionSettings_delegatesToLiveRepo" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.001" />
+    <testcase name="observeStall_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.002" />
+    <testcase name="fetchAttachment_whileAbsent_isUnavailable" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.001" />
+    <testcase name="observeThinkingProgress_delegatesToLiveRepo_andDoesNotSurviveAReconnect" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.002" />
+    <testcase name="observeUsageLimit_whileAbsent_emitsNull" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.002" />
+    <testcase name="observeModelMenu_whileAbsent_emitsNull" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.001" />
+    <testcase name="observeQueue_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.003" />
+    <testcase name="coldRead_afterReconnect_neverObservesPreviousConnectionData" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.003" />
+    <testcase name="liveRefusalEvents_followTheLiveConnection_andTheGapEmitsNothing" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.015" />
+    <testcase name="observeSessionSettings_whileAbsent_emitsNull" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.001" />
+    <testcase name="heldReadings_readThroughTheDisconnectedGap_andDropWhenThePairingEnds" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.058" />
+    <testcase name="coldRead_switchesTransparentlyBetweenConnections" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.002" />
+    <testcase name="observeAnnouncedModelAndSessionFacts_whileAbsent_emitNull" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.002" />
+    <testcase name="observeCompacting_whileAbsent_emitsFalse" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.002" />
+    <testcase name="uploadAttachment_whileAbsent_isReconnectRequiredOrTooLarge" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.002" />
+    <testcase name="observeModelMenu_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.002" />
+    <testcase name="uploadAttachment_staysOnTheRepositoryLiveAtEntry" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.002" />
+    <testcase name="oneShot_stubOnLiveRepo_passesThroughUnchanged" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.001" />
+    <testcase name="mutationsSupported_whileAbsent_isFalse" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.0" />
+    <testcase name="readWorkspaceFile_whileAbsent_isUnavailable" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.0" />
+    <testcase name="coldRead_resumesWhenConnectionArrives" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.002" />
+    <testcase name="observeAnnouncedModelAndSessionFacts_delegateToLiveRepo_andDoNotLeakAcrossSwitch" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.002" />
+    <testcase name="systemPrompt_whenLive_delegatesVerbatim" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.001" />
+    <testcase name="workspaceVerbs_whenLive_delegateVerbatim" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.0" />
+    <testcase name="stableReference_servesEveryConnectionAcrossChurn" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.0" />
+    <testcase name="observeUsageLimit_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.002" />
+    <testcase name="observeSlashCommandMenu_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.002" />
+    <testcase name="observeApiRetry_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.002" />
+    <testcase name="observeSessionSettings_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch" classname="de.pyryco.mobile.data.repository.StableConversationRepositoryTest" time="0.001" />
+    <system-out />
+    <system-err />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.e2e.CollisionRenameDiagnosticTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-09T09:03:52.819Z" hostname="Juhanas-MacBook-Air.local" time="0.002">
+    <properties />
+    <testcase name="menuTimeoutRetainsTheOriginalExceptionAndInStepEvidence" classname="de.pyryco.mobile.e2e.CollisionRenameDiagnosticTest" time="0.002" />
+    <testcase name="successDoesNotReadFailureDiagnostics" classname="de.pyryco.mobile.e2e.CollisionRenameDiagnosticTest" time="0.0" />
+    <testcase name="diagnosticFailureCannotMaskTheMenuTimeout" classname="de.pyryco.mobile.e2e.CollisionRenameDiagnosticTest" time="0.0" />
+    <system-out />
+    <system-err />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadMutationArrivalTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-09T09:03:52.926Z" hostname="Juhanas-MacBook-Air.local" time="10.431">
+    <properties />
+    <testcase name="otherHostArrivalDoesNotEnableOwnersEdit" classname="de.pyryco.mobile.ui.conversations.thread.ThreadMutationArrivalTest" time="7.602" />
+    <testcase name="owningHostArrivalEnablesEditAfterComposerWasAlreadyDrawn" classname="de.pyryco.mobile.ui.conversations.thread.ThreadMutationArrivalTest" time="2.464" />
+    <system-out />
+    <system-err />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" tests="14" skipped="0" failures="0" errors="0" timestamp="2026-10-09T09:04:03.360Z" hostname="Juhanas-MacBook-Air.local" time="0.535">
+    <properties />
+    <testcase name="channel_menu_items_render_in_documented_order_when_expanded" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.047" />
+    <testcase name="tapping_channel_info_dismisses_then_dispatches_event" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.044" />
+    <testcase name="tapping_backgroundTasks_dismisses_then_opensPanel_withoutDispatchingAnEvent" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.038" />
+    <testcase name="discussion_menu_items_render_in_documented_order_when_expanded" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.035" />
+    <testcase name="channel_install_item_tracks_current_report" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.042" />
+    <testcase name="tapping_archive_dismisses_then_dispatches_event" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.035" />
+    <testcase name="tapping_save_as_channel_dismisses_then_dispatches_event" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.033" />
+    <testcase name="tapping_rename_dismisses_then_dispatches_event" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.031" />
+    <testcase name="mutation_actions_are_hidden_when_mutations_unsupported" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.028" />
+    <testcase name="actionRows_keepFullOrder_andButtonSemantics_inBothThemes" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.05" />
+    <testcase name="tapping_edit_in_a_channel_dismisses_then_dispatches_edit_channel" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.032" />
+    <testcase name="backgroundTasks_followsChannelInfo_inChannelsAndChats_withAndWithoutMutations" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.048" />
+    <testcase name="tapping_new_session_dismisses_then_dispatches_event" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.032" />
+    <testcase name="tapping_install_memory_plugin_dismisses_and_opens_docs_url" classname="de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenuTest" time="0.033" />
+    <system-out />
+    <system-err />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadScreenConnectionGateTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-09T09:04:03.897Z" hostname="Juhanas-MacBook-Air.local" time="0.357">
+    <properties />
+    <testcase name="actions_followsTheConnection" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenConnectionGateTest" time="0.065" />
+    <testcase name="send_followsTheConnection_andTheDraftSurvives" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenConnectionGateTest" time="0.112" />
+    <testcase name="stop_followsTheConnection" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenConnectionGateTest" time="0.058" />
+    <testcase name="statusSheetSettings_followTheConnection" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenConnectionGateTest" time="0.12" />
+    <system-out />
+    <system-err />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest" tests="12" skipped="0" failures="0" errors="0" timestamp="2026-10-09T09:04:04.258Z" hostname="Juhanas-MacBook-Air.local" time="0.893">
+    <properties />
+    <testcase name="tapping_new_session_fires_event_and_closes_menu" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest" time="0.06" />
+    <testcase name="resetFailure_showsFixedMessageAndRetainsThread" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest" time="0.055" />
+    <testcase name="tapping_overflow_icon_renders_all_six_menu_items" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest" time="0.05" />
+    <testcase name="outsideTap_consumesBackControl_andPreservesComposerFocus" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest" time="0.076" />
+    <testcase name="boundary_and_overflow_follow_report_and_conversation_change" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest" time="0.062" />
+    <testcase name="edit_channel_modal_shows_while_open_and_reports_ok_and_cancel" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest" time="0.15" />
+    <testcase name="back_press_dismisses_open_menu_without_firing_event" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest" time="0.101" />
+    <testcase name="headerAndFooterMenus_doNotStack" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest" time="0.11" />
+    <testcase name="headerMenu_tracksLiveWindowAnchor_andLayerOrigin" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest" time="0.062" />
+    <testcase name="tapping_channel_info_fires_event_and_closes_menu" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest" time="0.052" />
+    <testcase name="tapping_edit_fires_event_and_closes_menu" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest" time="0.056" />
+    <testcase name="tapping_archive_fires_event_and_closes_menu" classname="de.pyryco.mobile.ui.conversations.thread.ThreadScreenOverflowTest" time="0.055" />
+    <system-out />
+    <system-err />
+  </testsuite>
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-09T09:04:05.165Z" hostname="Juhanas-MacBook-Air.local" time="0.139">
+    <properties />
+    <testcase name="mutationCapabilityFollowsOwningRepositoryAcrossReconnect" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest" time="0.115" />
+    <testcase name="mutationsSupported_fromFakeRepository_isTrueInInitialValueAndCombine" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest" time="0.011" />
+    <testcase name="mutationsSupported_fromNonSupportingRepository_isFalse" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest" time="0.012" />
+    <system-out />
+    <system-err />
+  </testsuite>
+</testsuites>
