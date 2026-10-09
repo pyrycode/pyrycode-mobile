@@ -54,6 +54,17 @@ class HistoryHashCompatibilityTest {
             assertEquals(legacyDigest(record.toString()), cachedThreadRowProof(row))
         }
 
+    @Test fun bulkProofsRemainIndependentAcrossEveryRow() {
+        val rows =
+            (0 until 20).map { index ->
+                ThreadItem.MessageItem(
+                    Message("row-$index", "s", Role.User, "café 🦉 $index", Instant.fromEpochSeconds(index.toLong()), false),
+                )
+            }
+        val expected = rows.associate { historyIdentity(it.mergeIdentity()) to cachedThreadRowProof(it) }
+        assertEquals(expected, historyRowProofs(rows))
+    }
+
     private fun legacyDigest(text: String) =
         MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8)).joinToString("") {
             "%02x".format(it)

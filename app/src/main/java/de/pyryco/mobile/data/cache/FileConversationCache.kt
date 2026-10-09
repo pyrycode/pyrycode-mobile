@@ -699,11 +699,13 @@ private data class CachedStoppedTurn(
 )
 
 // Only settled rows reach here: `cacheableThreadRows` has already dropped in-flight and unrecognized ones.
-internal fun cachedThreadRowProof(row: ThreadItem): String =
-    MessageDigest
-        .getInstance("SHA-256")
-        .digest(MobileJson.encodeToString(row.toRecord()).toByteArray(Charsets.UTF_8))
-        .toHexString()
+internal fun cachedThreadRowProof(row: ThreadItem): String = cachedThreadRowProof(row, MessageDigest.getInstance("SHA-256"))
+
+/** The caller owns this digest for one synchronous batch; digest() resets it between rows. */
+internal fun cachedThreadRowProof(
+    row: ThreadItem,
+    digest: MessageDigest,
+): String = digest.digest(MobileJson.encodeToString(row.toRecord()).toByteArray(Charsets.UTF_8)).toHexString()
 
 private fun ThreadItem.toRecord(): CachedThreadRow =
     when (this) {

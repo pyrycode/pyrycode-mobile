@@ -464,10 +464,10 @@ private fun Long.positiveHistoryId(allowZero: Boolean = false): ULong {
 private fun ULong.signedId(allowZero: Boolean = false): Long? =
     takeIf { (allowZero || it > 0u) && it <= Long.MAX_VALUE.toULong() }?.toLong()
 
-internal fun historyIdentity(identity: Any): String =
-    historyHash(
-        (identity as? List<*>)?.joinToString("") { value -> value.toString().let { "${it.length}:$it" } } ?: identity.toString(),
-    )
+internal fun historyIdentity(identity: Any): String = historyHash(historyIdentityText(identity))
+
+private fun historyIdentityText(identity: Any): String =
+    (identity as? List<*>)?.joinToString("") { value -> value.toString().let { "${it.length}:$it" } } ?: identity.toString()
 
 internal fun ThreadItem.historyKeys(): List<String> {
     val segment = (this as? ThreadItem.MessageItem)?.message?.segment
@@ -477,6 +477,7 @@ internal fun ThreadItem.historyKeys(): List<String> {
 
 internal fun historyRowProofs(rows: List<ThreadItem>): Map<String, String> =
     buildMap {
+        val digest = MessageDigest.getInstance("SHA-256")
         rows.forEach { row ->
             val message = (row as? ThreadItem.MessageItem)?.message
             val segment = message?.segment
@@ -484,14 +485,19 @@ internal fun historyRowProofs(rows: List<ThreadItem>): Map<String, String> =
                 var offset = 0
                 segment.deltas.forEach { delta ->
                     val end = (offset + delta.length).coerceIn(offset, message.content.length)
-                    put(historyIdentity(listOf("delta", segment.turnId, delta.seq)), historyHash(message.content.substring(offset, end)))
+                    put(
+                        historyHash(historyIdentityText(listOf("delta", segment.turnId, delta.seq)), digest),
+                        historyHash(message.content.substring(offset, end), digest),
+                    )
                     offset = end
                 }
             } else {
-                put(historyIdentity(row.mergeIdentity()), cachedThreadRowProof(row))
+                put(historyHash(historyIdentityText(row.mergeIdentity()), digest), cachedThreadRowProof(row, digest))
             }
         }
     }
 
-private fun historyHash(value: String): String =
-    MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8)).toHexString()
+private fun historyHash(
+    value: String,
+    digest: MessageDigest = MessageDigest.getInstance("SHA-256"),
+): String = digest.digest(value.toByteArray(Charsets.UTF_8)).toHexString()
