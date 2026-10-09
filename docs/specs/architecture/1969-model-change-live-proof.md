@@ -31,6 +31,8 @@ The second acceptance criterion remains pending until a fresh **full** dispatche
 
 2026-10-08: The isolated daemon worktree build omitted `vcs.revision` even with `-buildvcs=true`. A separate clean clone at the same merged commit produces versioned metadata. Use its binary/source for the final focused proof and dispatcher handoff; preserve all mobile scenarios and settings contracts.
 
+2026-10-09: Blocker #1989 is closed and its regression coverage is merged through PR #1995. Diagnosis established daemon ownership: #3026 restores continuous legacy history across runtime-only receipts, and #3029 aligns legacy unread targets and read confirmation. Resume the unchanged focused pair using a clean daemon clone at `a39c72739eb2e811708a67b08906614a4316b834`, which includes all three daemon repairs. Preserve the historical failed runs below; this ticket still requires its own fresh full dispatcher live gate after verification. No implementation, scenario, helper, assertion or deadline changes are planned.
+
 ## Execution evidence and blocker
 
 2026-10-08: The versioned focused run used mobile `81ad5e795114655f53f8105b4a45643a51402d2a`, daemon `b799ba5afb8d86b79f1d1eb20c737c15a632db5f` (`vcs.modified=false`) and Claude 2.1.280. It exited 1: 2 executed, 1 passed, 1 failed, 0 errors/skipped. `interactiveTurn_modelChange_roundTripsAndStaysPerConversation` passed. `interactiveTurn_attentionDot_followsARealTurn` failed at A's phone-confirmed read before B's permission/peer-read checks. Diagnostic: `rows=2 unidentified=0 malformed=0 gaps=0 versions=2 checkpoint_reaches_target=false read_reaches_target=false`.
