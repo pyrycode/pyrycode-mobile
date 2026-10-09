@@ -171,16 +171,16 @@ class FileConversationCache(
         mutate("write_history") {
             val document = threadDocumentFor(serverId, conversationId)
             if (position == null && !document.isFile) return@mutate
-            val rows =
+            val (storedRows, rows) =
                 try {
-                    decodeThreadDocument(document)?.rows.orEmpty()
+                    decodeThreadDocument(document) ?: (emptyList<CachedThreadRow>() to emptyList<ThreadItem>())
                 } catch (error: Exception) {
                     val code = failureCode(error) ?: throw error
                     RelayLog.d { "conversation_cache operation=write_history_read status=failed code=$code" }
-                    emptyList()
+                    emptyList<CachedThreadRow>() to emptyList<ThreadItem>()
                 }
-            val coverage = position?.coverage?.retainedBy(rows.map { it.toDomain() })?.boundTo(rows.map { it.toDomain() })
-            val record = CachedThread(VERSION, rows, position?.let { CachedHistoryPosition(it.cursor, it.atStart, coverage) })
+            val coverage = position?.coverage?.retainedBy(rows)?.boundTo(rows)
+            val record = CachedThread(VERSION, storedRows, position?.let { CachedHistoryPosition(it.cursor, it.atStart, coverage) })
             writeAtomically(document, MobileJson.encodeToString(record))
         }
 
@@ -315,13 +315,13 @@ class FileConversationCache(
      * The thread document, or `null` when none was written, rejected whole unless every row passes
      * [validatedRows], so a position is never read from a document whose rows are unreadable (#1354).
      */
-    private fun decodeThreadDocument(document: File): CachedThread? = readThreadRecord(document)?.also { validatedRows(it) }
-
-    private fun readThreadRecord(document: File): CachedThread? {
+    private fun decodeThreadDocument(document: File): Pair<List<CachedThreadRow>, List<ThreadItem>>? {
         if (!document.isFile) return null
         val stored = decodeThreadRecord(document.readBytes())
         require(stored.version == VERSION) { "unsupported conversation cache version" }
-        return stored.copy(history = validatedHistory(stored.history, stored.rows.map { it.toDomain() }))
+        val rows = validatedRows(stored)
+        validatedHistory(stored.history, rows)
+        return stored.rows to rows
     }
 
     private fun decodeThreadRecord(bytes: ByteArray): CachedThread =
