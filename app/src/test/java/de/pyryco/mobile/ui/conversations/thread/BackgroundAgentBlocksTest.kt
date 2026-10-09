@@ -72,6 +72,62 @@ class BackgroundAgentBlocksTest {
         status: String = "completed",
     ) = ThreadItem.BackgroundTaskLifecycle(task, ts, agent, terminal = BackgroundTaskUpdate("", status, "", null))
 
+    @Test fun invariantLoadedParentChainsOwnEverySiblingPermutationOnce() {
+        val children = listOf(row("first", "Read", "a"), row("nested", "Read", "parent"), row("parent", "Agent", "a"))
+        val orders = listOf(children, children.reversed(), listOf(children[1], children[0], children[2]))
+        for (siblings in orders) {
+            for (rootFirst in listOf(true, false)) {
+                val roots = listOf(row("a", "Agent"), start(), row("b", "Agent"), start("task-b", "b"))
+                val others = listOf(row("foreground", "Read"), row("foreign", "Read", "b"), row("reply"))
+                val items = if (rootFirst) roots + siblings + others else siblings + others + roots
+                val projected = project(items)
+                val owned = projected.filterIsInstance<ThreadRow.Delivered>().filter { it.agentBlockId == "a" }
+                assertEquals(
+                    items.filterIsInstance<ThreadItem.MessageItem>().map { it.message.id }.filter {
+                        it in
+                            listOf("a", "first", "nested", "parent")
+                    },
+                    owned.map { (it.item as ThreadItem.MessageItem).message.id },
+                )
+                assertEquals(4, owned.size)
+                assertEquals(projected.size, keys(projected).toSet().size)
+                assertEquals(2, toolNestingDepths(items)["nested"])
+                // Parent loading order never moves a foreground or the other Agent's child into a.
+                assertNull(
+                    projected
+                        .filterIsInstance<ThreadRow.Delivered>()
+                        .single {
+                            (it.item as ThreadItem.MessageItem).message.id ==
+                                "foreground"
+                        }.agentBlockId,
+                )
+                assertEquals(
+                    "b",
+                    projected
+                        .filterIsInstance<ThreadRow.Delivered>()
+                        .single {
+                            (it.item as ThreadItem.MessageItem).message.id ==
+                                "foreign"
+                        }.agentBlockId,
+                )
+            }
+        }
+        for (siblings in listOf(emptyList(), children.take(1))) {
+            val items = listOf(row("a", "Agent"), start(), row("reply")) + siblings
+            val projected = project(items)
+            assertEquals(
+                listOf("a") + siblings.map { it.message.id },
+                projected
+                    .filterIsInstance<ThreadRow.Delivered>()
+                    .filter {
+                        it.agentBlockId ==
+                            "a"
+                    }.map { (it.item as ThreadItem.MessageItem).message.id },
+            )
+            assertTrue(foldToolRuns(projected, emptySet()).none { it is ThreadRow.ToolRun })
+        }
+    }
+
     @Test fun lifecycleChangingAgentProjectionRequiresThatPresentedVersion() {
         val root =
             row("a", "Agent").let {

@@ -71,6 +71,28 @@ Loaded tool-parent chains are memoised with a cycle guard; each claimed family m
 original internal order, with its message keys and nesting intact. Repository arrival/history order
 never changes.
 
+Main-turn completion does not end ownership or finish the Agent (#1951). With the root and
+local-agent launch evidence loaded, every loaded tool-parent chain reaching that root stays
+exclusively in its block, including children received while idle or during a later main turn.
+Foreground tools and another Agent's children remain separate. Do not infer ownership from
+adjacency, a matching tool count or a turn id. Correctly attributed post-turn frames already
+pass the unchanged Mobile production path; [daemon #2960](https://github.com/pyrycode/pyrycode/issues/2960)
+supplies the attribution fix. The wire contract remains in the daemon's `docs/protocol-mobile.md`.
+
+`ScriptedBackgroundAgentToolsTest.lateToolsRemainOwnedAcrossMainCompletion` drives received
+frames through the repository, ViewModel and rendered thread: one child starts before main
+completion and finishes afterward, and two more arrive later, including during a later main
+turn. It checks sibling identity/order/status, collapse off, closed and expanded states, the
+separate Running header and terminal-task settlement. Its replay/interleaving companion checks
+another Agent, foreground tools and parent backfill; a repository-visible replay barrier ensures
+assertions run after duplicates have actually been reduced. The sibling-permutation probe in
+`BackgroundAgentBlocksTest` checks exclusive ownership independently of loaded parent order.
+Removing `late-two`'s received parent made the ownership control fail (1 executed, 1 failed,
+0 skipped); restoring attribution passed. This demonstrates the renderer's dependence on
+received attribution, not correctness of an older daemon. The strengthened
+[live and scripted proofs](../../e2e-interactive-stream.md#late-background-agent-tools-1951)
+check actual post-main-end frame order as well as owned placement and expansion.
+
 The launch slot becomes a separately keyed `agent-start:<Agent message id>` marker: a Busy dot and
 “Agent started, still working”, or a Success dot and “Agent finished” for any terminal status,
 beside “Go to agent ↓”. The second line is an ellipsized launch description. The description is inert `Text`,
