@@ -115,6 +115,38 @@ schema-version change. `CachedThread.history` still defaults to null, and older 
 decode with null coverage. Its `toString` prints only `atStart`; `HistoryCoverage.toString` prints
 span/gap counts and the unknown flag, never opaque cursors, identity proofs or entry content.
 
+### Thread document readers (#1949)
+
+`readThread` and `readHistoryPosition` share one immutable `DecodedThread` under
+`FileConversationCache`'s existing mutex. Each read still opens the current document
+and reads its text from disk. Reuse requires both the same host/conversation document
+path and byte-identical freshly read text; file length and modification time cannot
+establish freshness. A second cache instance's same-size/same-time replacement must
+therefore be observed. This retains only one document, not an unbounded thread cache.
+
+Mutations clear the retained decode before running. Missing files clear it, and changed
+text or a different path retires it before decoding. An unreadable document cannot
+supply cached rows or position: a successful fresh read remains a prerequisite for
+reuse. Host changes cannot borrow another host's decode even with colliding conversation
+ids. No schema, durable retention or coroutine ownership changes accompany this reuse.
+
+The read envelope `CachedThreadRead` decodes typed `CachedThreadRow` records directly,
+leaving only optional `history` as a JSON element. Version and domain-row validation
+still precede metadata acceptance. Malformed optional metadata yields readable rows
+with no position; invalid rows withhold both rows and position. Field order and unknown
+fields do not change that boundary. Writers retain their existing decoding behavior.
+
+Coverage remains checked against every retained direct proof and any legacy binding.
+When no legacy aliases exist, only alias-specific work is skipped. `retainedBy` reuses
+the immutable coverage only after every claim matches its freshly calculated proof;
+missing claims and delta-proof replacements still use the pruning/update path. Hash
+inputs, full SHA-256 digests and lowercase hex encoding remain compatible with persisted
+records. Proof and restore-order batches each own a local digest, reset by `digest()`
+between independent inputs; it never crosses a suspension point or thread boundary.
+
+See [decode freshness tests](conversation-cache-testing.md#testing) and the
+[committed-frame restore regression](thread-screen-testing.md#saved-thread-first-draw-1949).
+
 ### The thread document's two writers (#1354)
 
 Both writers rewrite one thread document under the file cache's `Mutex`, preserving the other
