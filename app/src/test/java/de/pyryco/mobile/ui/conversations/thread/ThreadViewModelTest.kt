@@ -160,6 +160,57 @@ class ThreadViewModelTest {
             collector.cancel()
         }
 
+    @Test
+    fun mutationCapabilityFollowsOwningRepositoryAcrossReconnect() =
+        runTest {
+            val current = MutableStateFlow<ConversationRepository?>(null)
+            val supporting = FakeConversationRepository()
+            val unsupported =
+                object : ConversationRepository by supporting {
+                    override val mutationsSupported = false
+                }
+            val vm =
+                makeVm(
+                    SavedStateHandle(mapOf("conversationId" to "seed-channel-personal")),
+                    StableConversationRepository(current),
+                    repositoryAvailable = current.map { it != null },
+                )
+            val owner = ViewModelStore().apply { put("vm", vm) }
+            var collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+            try {
+                advanceUntilIdle()
+                assertFalse(vm.state.value.mutationsSupported)
+                current.value = supporting
+                advanceUntilIdle()
+                assertEquals("Personal", vm.state.value.displayName)
+                assertTrue("owner arrival must enable mutations without reopening the thread", vm.state.value.mutationsSupported)
+                current.value = null
+                advanceUntilIdle()
+                assertFalse("disconnect must deny mutations", vm.state.value.mutationsSupported)
+                current.value = unsupported
+                advanceUntilIdle()
+                assertFalse("a non-supporting replacement remains denied", vm.state.value.mutationsSupported)
+                current.value = null
+                advanceUntilIdle()
+                current.value = supporting
+                advanceUntilIdle()
+                assertTrue("same conversation can enable again after reconnect", vm.state.value.mutationsSupported)
+                current.value = null
+                advanceUntilIdle()
+                collector.cancel()
+                advanceTimeBy(5_001)
+                runCurrent()
+                current.value = supporting
+                runCurrent()
+                collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+                advanceUntilIdle()
+                assertTrue("recollection must use the current owner capability", vm.state.value.mutationsSupported)
+            } finally {
+                collector.cancel()
+                owner.clear()
+            }
+        }
+
     // ---- #1113: the conversation's agent rides the state, for the rows that name it ----
 
     @Test
