@@ -1164,6 +1164,24 @@ class RemoteConversationRepository(
         cursor: String,
         limit: Int,
     ): HistoryPage {
+        val page = readHistoryPage(conversationId, cursor, limit)
+        page.entries
+            .asSequence()
+            .filter { contributesToUnreadWatermark(it.type) }
+            .maxOfOrNull { it.unsignedId }
+            ?.let { conversationListProjection.recordLatestEntry(conversationId, it) }
+        threadProjection.mergeHistoryPage(conversationId, page, CAPABILITY_INTERACTIVE in negotiatedCapabilities())
+        return page
+    }
+
+    /** Notification enrichment fetches one newest page without changing rows, coverage or read facts. */
+    internal suspend fun requestAttentionHistory(conversationId: String): HistoryPage = readHistoryPage(conversationId, "", 0)
+
+    private suspend fun readHistoryPage(
+        conversationId: String,
+        cursor: String,
+        limit: Int,
+    ): HistoryPage {
         val request =
             Envelope(
                 id = relayRequests.nextRequestId(),
@@ -1177,14 +1195,7 @@ class RemoteConversationRepository(
         // Throws on a server `error` / not-Open session before the decode below. The reply is the
         // {entries,cursor,at_start} page; a malformed one throws here and mutates nothing.
         val reply = relayRequests.sendAndAwaitReply(request)
-        val page = MobileJson.decodeFromJsonElement<HistoryPagePayloadDto>(reply).toHistoryPage()
-        page.entries
-            .asSequence()
-            .filter { contributesToUnreadWatermark(it.type) }
-            .maxOfOrNull { it.unsignedId }
-            ?.let { conversationListProjection.recordLatestEntry(conversationId, it) }
-        threadProjection.mergeHistoryPage(conversationId, page, CAPABILITY_INTERACTIVE in negotiatedCapabilities())
-        return page
+        return MobileJson.decodeFromJsonElement<HistoryPagePayloadDto>(reply).toHistoryPage()
     }
 
     /** The run configuration of a conversation's session (#590); see [SessionSettingsCommands.observeSessionSettings]. */
