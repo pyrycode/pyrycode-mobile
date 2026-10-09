@@ -49,3 +49,19 @@ First capture the failing operation with diagnostics and counted XML. Then execu
 ## Open Questions
 
 - Which boundary is responsible in a fresh failing run: timer resumption, recomposition or dialog semantics? Record the evidence and selected repair under Revisions before handoff.
+
+## Revisions
+
+### 2026-10-10 — control the fixture timer after the missing-field observation
+
+A fresh low-priority exact-method run (`taskpolicy -b`, separate Gradle daemon) executed one test and failed at `await dialog field`. Diagnostics show `delayStartedAt=48`, `delayFinishedAt=null`, Compose clock `160`, `autoAdvance=true`, no visible dialog, an empty composer and zero submissions. The fixture needed virtual time 248 before mounting; frame-by-frame wall-clock polling expired first. Ordinary baseline and diagnostic runs passed. This establishes the fixture timer/polling mismatch under constrained scheduling; it does not prove that the earlier anonymous failures had the identical trigger.
+
+`renameDiscussionInDialog` gains an optional `onDialogFieldAbsent` fixture hook. Only callers supplying it perform an initial labelled-field probe. If the field is absent, the hook runs once before the unchanged timed window wait. Existing live and other regression callers leave it unset and keep their previous operations and deadlines.
+
+`delayedDialogDoesNotReplaceComposer` freezes automatic advancement, advances until the opening effect has armed its timer, and calls the helper while the timer is held. The hook proves no dialog, a focused empty composer, an armed timer and no submissions, then advances virtual time until the fixture's visible state changes and restores automatic advancement. No semantics query occurs inside `advanceTimeUntil`. The helper still owns field replacement, one Save, dismissal and external-title confirmation; the fixture still asserts an empty composer and one exact submission. A `finally` restores the clock on failure.
+
+The first repair attempt exposed a separate fixture setup error: one frame did not yet start the opening effect (`delayStartedAt=null`, clock 48). Its fresh one-test failure is retained. Replacing the guessed frame count with the explicit timer-armed predicate makes the setup boundary observable.
+
+This resolves the open scheduling question with retained fresh failure evidence; dialog selectors and production UI were not responsible in this reproduction. The virtual-time bound is the existing 1,000 ms; the helper's wall-clock bounds remain unchanged.
+
+A temporary negative control replacing the labelled in-dialog matcher with a focused editable-field matcher failed the exact method at `await enabled Save`, with composer length 12 and zero submissions. The repaired fixture therefore still exposes composer contamination while its dialog is held. The control was removed before acceptance runs. The repaired exact method also passed under the same low-priority command that reproduced the timer failure.
