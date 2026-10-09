@@ -81,6 +81,8 @@ Run focused new cases plus existing `BackgroundAgentBlocksTest`, `BackgroundAgen
 
 - 2026-10-09 (third verifier rework, findings 1–2): Carry the block's own terminal destination key on its start marker and require a status/destination change as well as changed displayed placement. A neighbour's insertion cannot classify an unchanged finished block as moving. Direct and split completion regressions read inside finished B while A crosses it. Hoist individual tool expansion into conversation-keyed saved screen state and share it through `ThreadRowContent` with normal and unplaced renderers; neighbour invalidation and cold restored geometry use the actual expansion. New shared frame cases have Android overrides. All four new cases fail on the previous code (stationary B disappears; expansion boundary differs by 96 physical pixels), then pass on JVM and Android; all 23 viewport methods pass on both platforms with zero failures/skips. No fold placement, key, order or visual token changes; one new internal expansion type and no public signature migration. Re-fetched numeric feature branches have no overlap.
 
+- 2026-10-09 (third verifier rework, finding 3): The named Android IME method reproduces ` typeddraft`. Its synthetic append now explicitly selects the draft's end after keyboard/reveal relocation, keeping the exact `draft typed` and reachability assertions. Device-only coverage is required for the real IME. The named method passes 1/0/0 and the full question class passes 12/0/0 on managed Android 13; evidence is preserved under `/tmp/builder-1955/rework3/viewport-question-device/`.
+
 ## Documentation handoff
 
 Pending for the documentation stage, from verifier review:
