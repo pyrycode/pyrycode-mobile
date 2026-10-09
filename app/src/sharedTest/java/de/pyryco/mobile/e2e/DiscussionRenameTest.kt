@@ -13,7 +13,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.test.ComposeTimeoutException
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -35,6 +38,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -49,36 +53,73 @@ class DiscussionRenameTest {
     @Test fun delayedDialogDoesNotReplaceComposer() {
         val composer = mutableStateOf("")
         val submissions = mutableListOf<String>()
+        val opening = mutableStateOf(false)
+        val visible = mutableStateOf(false)
+        var delayStartedAt: Long? = null
+        var delayFinishedAt: Long? = null
         compose.setContent {
             PyrycodeMobileTheme {
                 val focus = remember { FocusRequester() }
-                var opening by remember { mutableStateOf(false) }
-                var visible by remember { mutableStateOf(false) }
                 var title by remember { mutableStateOf("old name") }
                 Column {
                     Text(title)
                     BasicTextField(composer.value, { composer.value = it }, Modifier.focusRequester(focus))
-                    Button(onClick = { opening = true }) { Text("Open rename") }
+                    Button(onClick = { opening.value = true }) { Text("Open rename") }
                 }
                 LaunchedEffect(Unit) { focus.requestFocus() }
-                LaunchedEffect(opening) {
-                    if (opening) {
+                LaunchedEffect(opening.value) {
+                    if (opening.value) {
+                        delayStartedAt = compose.mainClock.currentTime
                         delay(200)
-                        visible = true
+                        delayFinishedAt = compose.mainClock.currentTime
+                        visible.value = true
                     }
                 }
-                if (visible) {
+                if (visible.value) {
                     RenameDialog(title, onSubmit = {
                         submissions.add(it)
                         title = it
-                        visible = false
-                    }, onDismiss = { visible = false })
+                        visible.value = false
+                    }, onDismiss = { visible.value = false })
                 }
             }
         }
         compose.waitUntil(1_000) { compose.onAllNodes(hasSetTextAction() and isFocused()).fetchSemanticsNodes().size == 1 }
-        compose.onNodeWithText("Open rename").performClick()
-        compose.renameDiscussionInDialog("archive-1992", "Name", "Save", 1_000)
+        // Hold the opening timer until the helper has rejected the still-focused composer.
+        compose.mainClock.autoAdvance = false
+        var absentFieldObservations = 0
+        try {
+            compose.onNodeWithText("Open rename").performClick()
+            compose.mainClock.advanceTimeUntil(1_000) { delayStartedAt != null }
+            compose.renameDiscussionInDialog(
+                "archive-1992",
+                "Name",
+                "Save",
+                1_000,
+                diagnostic = {
+                    "opening=${opening.value}, visible=${visible.value}, delayStartedAt=$delayStartedAt, " +
+                        "delayFinishedAt=$delayFinishedAt, clock=${compose.mainClock.currentTime}, " +
+                        "autoAdvance=${compose.mainClock.autoAdvance}, composer=${composer.value.length}, submissions=${submissions.size}"
+                },
+                onDialogFieldAbsent = {
+                    absentFieldObservations++
+                    compose.onNode(hasSetTextAction() and isFocused()).assertIsFocused()
+                    compose.onAllNodes(isDialog()).assertCountEquals(0)
+                    compose.runOnIdle {
+                        assertTrue("the opening effect must have armed its timer", delayStartedAt != null)
+                        assertFalse(visible.value)
+                        assertEquals("", composer.value)
+                        assertTrue(submissions.isEmpty())
+                    }
+                    // This predicate is fixture state, never a semantics query on the UI thread.
+                    compose.mainClock.advanceTimeUntil(1_000) { visible.value }
+                    compose.mainClock.autoAdvance = true
+                },
+            )
+        } finally {
+            compose.mainClock.autoAdvance = true
+        }
+        assertEquals("the helper must observe the held dialog's missing field once", 1, absentFieldObservations)
         assertEquals("the rename drive must not type into the thread composer", "", composer.value)
         assertEquals(listOf("archive-1992"), submissions)
     }
