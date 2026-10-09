@@ -5316,6 +5316,34 @@ at `:app:compileDebugUnitTestKotlin` after 60 minutes without counted unit resul
 UI and `scripted-all` gate entries have missing logs and no per-test counts. The focused results
 above do not establish a full deterministic gate pass. Documentation ran only the docs guard.
 
+### Stale Agent navigation cancellation (#1956)
+
+The existing rung-3
+`InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`
+and rung-4
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`
+remain unchanged. They preserve integrated marker navigation and owned-run collapse coverage.
+[Production-screen regressions and Android wrappers](knowledge/features/thread-screen-subagent-tool-rows.md#background-agent-lifecycle-placement-1783)
+prove stale-request cancellation, including accessibility, departure/restoration and replacement.
+
+The [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2019#issuecomment-6089149709)
+on `005e15f4cb724cd137ab484cc401b46531033bab` records the full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all`
+result: **22 executed, 22 passed, 0 failed, 0 skipped**. Its fresh
+`build/dispatcher-tests/scripted-all-008lfg42/dispatcher.xml` review and the supplied
+per-method JUnit-XML gate report confirm the named rung-4 method executed and passed:
+**1 executed, 1 passed, 0 failed, 0 skipped**.
+
+The [dispatcher full live PASS](https://github.com/pyrycode/pyrycode-mobile/issues/1956#issuecomment-6089455387),
+report `2026-10-09T20-59-16-477Z`, ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on
+`feature/1956` at `005e15f4cb72`, merged with `origin/main` at `60ba3f24fed1`:
+**65 executed, 65 passed, 0 failed, 0 skipped**, none flaky, exit 0 in 21m 23s.
+The supplied fresh per-method JUnit-XML report explicitly lists the named rung-3
+method as passed: **1 executed, 1 passed, 0 failed, 0 skipped**. No daemon-revision
+annotation was supplied. Both named results came from full suites; no separate
+focused live run is claimed. Documentation ran only the docs guard.
+
 ### Background-agent viewport preservation (#1955)
 
 The [final verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2016#issuecomment-6088220558)
@@ -5410,6 +5438,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Stale Agent navigation cancellation (#1956):** Preserved rung-3
+  `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`
+  and rung-4
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`
+  each passed **1/0/0** (executed/failed/skipped) in the fresh full live/scripted
+  gates [above](#stale-agent-navigation-cancellation-1956). Nine shared/Android screen probes
+  supply cancellation proof. No scenario or evidence follow-up remains; the pre-ship
+  command stays `python3 scripts/android-test-gate.py live`.
 
 - **Background Agent viewport preservation (#1955):** Retained rung-3
   `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`
