@@ -8,31 +8,49 @@ The `.orEmpty()` is a **type-system narrowing, not a defensive fallback** — Co
 
 ### `combine(observeConversations, observeMessages, pendingWorkspacePicker).stateIn(WhileSubscribed)` — three upstreams since #137
 
-Post-#137 the single `.map { … }` over `observeConversations(All)` was widened to a `combine` of three upstreams:
+The current `state` combines shared conversations, complete `threadContent`, the
+workspace picker, transient dialogs and run configuration. Confirmed read marks
+and other action/status readings join independently. The historical three-arm
+shape became this content carrier as rows, queue and history grew; it no longer
+reads `observeMessages` directly or joins received evidence separately.
 
-```kotlin
-combine(
-    repository.observeConversations(ConversationFilter.All),
-    repository.observeMessages(conversationId),
-    pendingWorkspacePicker,
-) { conversations, items, pickerVisible ->
-    val conv = conversations.firstOrNull { it.id == conversationId }
-    ThreadUiState(
-        conversationId = conversationId,
-        displayName = conv?.displayName() ?: conversationId,
-        isPromoted = conv?.isPromoted ?: false,
-        hasMessages = items.any { it is ThreadItem.MessageItem },
-        workspaceLabel = conv?.workspaceLabel() ?: "scratch",
-        workspacePickerVisible = pickerVisible,
-    )
-}.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initialValue = ThreadUiState(conversationId, displayName = conversationId))
-```
+`threadContent` carries rows, queued messages, history tail, markers and exact
+read evidence. Since #1968, both demo and relay destination factories inject
+`ThreadContentScheduling`: sequential `ThreadFold.reduce` and `render` run on
+`Dispatchers.Default`, and complete content waits for Compose's Android UI frame
+clock backed by Choreographer. At each frame with completed pending work, the
+latest complete value publishes once. Initial nonempty content and the final
+burst value need no further input. Composer, dialogs, actions and confirmed read
+marks remain outside this pacing arm. Row folds still run in composition; this
+bounds content-driven updates rather than establishing measured scrolling gains.
 
-`conv?.workspaceLabel()` in the snippet above called the **private extension function** `Conversation.workspaceLabel()`, then declared lower in this file (cwd-basename fallback: `"scratch"` for the sentinel cwd, else `cwd.substringAfterLast('/')`) — a name confusable with the domain property `Conversation.workspaceLabel: String?` added in #720 (daemon-authored opaque text, see [`data-model.md`](data-model.md#conversation)) by exactly one pair of parentheses: a `String?` property is not invokable, so the trailing `()` was what kept the call resolving to the extension rather than the property.
+Raw snapshot/live admission preserves each source's order before any conflation.
+The unbounded buffer directly after `merge` fuses with its intake channel, ahead
+of worker suspension. A bounded send can delay even bookkeeping placed before
+reduction and push pressure back into the repository's 64-slot dropping live
+source. Shallow probes with suspending sources miss that loss. Only complete
+accumulated display values may replace one another; the raw backlog can grow
+while the worker is behind and is released on collection cancellation.
+`noteNewestBoundary` stays on main at snapshot admission, and matching live deltas
+establish the nonempty baseline there. Clearing after queued reduction could
+erase a later turn outcome even when the boundary's display version is skipped.
 
-That trap is retired: [`#722`](https://github.com/pyrycode/pyrycode-mobile/issues/722) deleted the extension and replaced the call site with `workspaceLabel = workspaceDisplayName(cwd = conv?.cwd ?: "", label = conv?.workspaceLabel)`, where `workspaceDisplayName(cwd: String, label: String?): String` is a shared top-level function in `de.pyryco.mobile.ui.workspace` (`app/src/main/java/de/pyryco/mobile/ui/workspace/WorkspaceDisplayName.kt`) — no `Conversation` receiver, so it cannot be confused with the property by a missing or extra pair of parens. `conv?.workspaceLabel` (no parens, the property) is now the only workspace-labelled symbol read off `Conversation` at this call site; it flows into the second, explicitly-named `label` parameter. See [`workspace-chip.md`](workspace-chip.md#workspacelabel-derivation) for the rule itself, including the unconditional label-wins-over-scratch arm and the `MAX_WORKSPACE_LABEL_CHARS` render-path clamp.
+A single snapshot subscription supplies both rows and evidence. Each sequential
+fold carries its latest snapshot evidence through `presentedAs(rows)` into the
+complete content value; synthetic live text cannot borrow unrelated snapshot
+claims. History-gap overlays wait for `historySeed`. Pending or skipped versions
+grant no sight, and a later presented version can qualify without another
+subscription or backfill. Keep restored-row, unknown-id and gap barriers alongside
+[lifecycle, viewport and reveal qualification](thread-screen.md#what-it-does).
+See [frame/read probes](thread-screen-testing.md#frame-paced-content-1968) and the
+[#1968 plan](../../specs/architecture/1968-frame-paced-thread-content.md).
 
-`pendingWorkspacePicker = MutableStateFlow(false)` is a private hot source backing the chip-opens-picker signal. `observeMessages` re-emits on `sendMessage` (the `hasMessages` flip happens there) and on `changeWorkspace` (a new `SessionBoundary` arrives; `hasMessages` stays `false` because boundaries don't count toward the `MessageItem`-only filter). The `initialValue` block is byte-identical to its pre-#137 shape — it still constructs `ThreadUiState(conversationId, displayName = conversationId)` with the four new fields defaulting; the `state_initialValue_isConversationIdPlaceholderBeforeSubscription` test continues to pass full equality. Conversation-missing edge case: `conv` is `null` → `isPromoted = false` (treated as discussion), `workspaceLabel = "scratch"` (safe default for the chip). The `combine` over three independent signals was the right shape; collapsing the message subscription into the conversations map by calling `observeMessages(id).first()` inside the lambda would have blocked the upstream — see [`../codebase/137.md`](../codebase/137.md) lessons learned.
+Workspace labels use `workspaceDisplayName(cwd, label)`, with the daemon's domain
+property `Conversation.workspaceLabel` passed as the label. The former private
+`Conversation.workspaceLabel()` extension is retired; see
+[workspace-chip derivation](workspace-chip.md#workspacelabel-derivation).
+The picker remains a private hot signal and missing conversations retain the
+id title, discussion tier and scratch workspace fallbacks.
 
 ### `observeConversations(All).map { firstOrNull }` — option (c) for `displayName` derivation
 
@@ -48,9 +66,19 @@ The `firstOrNull { it.id == conversationId }` scan is `O(n)` per upstream emissi
 
 ### `stateIn(viewModelScope, WhileSubscribed(5_000), initialValue = ThreadUiState(id, id))`
 
-Same lifetime policy as `ChannelListViewModel` / `DiscussionListViewModel`: the upstream subscription re-uses across configuration changes (rotation) without leaking when the screen leaves the back stack for >5s. The `initialValue` falls back to `ThreadUiState(conversationId, displayName = conversationId)` — before the upstream's first emission lands, the AppBar renders the path id, matching the post-emission fallback when the id is missing. The fake's `MutableStateFlow.map` chain emits synchronously, so in practice the placeholder is invisible; it exists for type safety and process-death restoration.
+The heading preserves an older inbound anchor; since #1968 the current policy is
+`SharingStarted.WhileSubscribed()` with zero stop timeout. Last-collector exit
+immediately cancels upstream intake, worker work, pending content and the frame
+awaiter. Recollection rebuilds the fold from the repository's current snapshot;
+no prior collection's frame callback or raw backlog survives. `receivedThread`
+also expires its replay immediately. The `StateFlow` retains its last published
+value, while a new collection prepares fresh content.
 
-The pre-#139 VM was `MutableStateFlow(initial).asStateFlow()` (synchronous, hot from line 1, no `viewModelScope.launch`). The shape upgrade to `stateIn(WhileSubscribed)` is **byte-identical at the destination**: the `val state: StateFlow<ThreadUiState>` surface and the `val state by vm.state.collectAsStateWithLifecycle()` consumer pattern do not change. The interchange is deliberate — picking `MutableStateFlow` in #126 cost zero at the destination so that #139's widening to a cold-flow upstream was a drop-in replacement.
+The initial value still uses the conversation id as the display-name fallback.
+`StateFlow<ThreadUiState>` and lifecycle-bound destination collection retain their
+existing surface. Standalone ViewModels default to unpaced scheduling for semantic
+tests; factory/DI tests must inject controlled scheduling and explicitly drive
+frames rather than invoking the real Android Looper on the JVM.
 
 ### `private fun Conversation.displayName()` — re-declared, not extracted
 
@@ -81,8 +109,9 @@ When #141's rename success path eventually calls `repository.rename(conversation
 ### `items` and `queuedMessages` stay two `ThreadUiState` fields — the join with the backlog is render-time, not VM-time (#782)
 
 `threadContent: Flow<ThreadContent>` (introduced by #461, widened by #778) combines
-`threadItems`, `repository.observeQueue(conversationId)` and `historyDemand` into one
-`ThreadContent(items, queued, historyTail)` carrier — the pre-combiner that keeps the outer
+the folded row/evidence reading, `repository.observeQueue(conversationId)`,
+`historyDemand`, host availability and seeded history coverage into one
+`ThreadContent(items, queued, historyTail, historyMarkers, evidence)` carrier — the pre-combiner that keeps the outer
 five-arm `combine(...)` at its typed arity ceiling (`observeConversations`, `threadContent`,
 `pendingWorkspacePicker`, `transientDialogs`, `runConfigFlow`). `ThreadUiState` publishes `content.items`
 and `content.queued` as two **separate** fields, `items: List<ThreadItem>` and
@@ -132,7 +161,7 @@ and `state` can each read the same upstream. **`state`'s first combine arm chang
 reason — `RemoteConversationRepository.observeConversations` sends a `list_conversations` request on every
 new subscription, so a second, independent subscription for the filter would have doubled that request per
 thread opening. `shareIn` with no stop timeout is deliberate: the shared flow only needs to outlive `state`'s
-own `WhileSubscribed(5_000)` upstream, never longer, so it stops with `state`'s last subscriber rather than
+own zero-timeout `WhileSubscribed()` upstream, never longer, so it stops with `state`'s last subscriber rather than
 lingering on its own separate timeout.
 
 **Edge case flagged by review, not yet reachable.** `conversationAgent` reads `Claude` while the shared list

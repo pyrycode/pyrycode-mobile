@@ -61,7 +61,7 @@ explicit underlap at both bars, four current-Figma comparisons, viewport/inset
 sidecars and IME before/open/dismissed/reopened states at newest/history anchors.
 The [final #1646 verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1700#issuecomment-5977891679)
 records the fresh complete gates and confirms the earlier-field real-IME
-open/dismiss/reopen method passed. See [thread testing](thread-screen-testing.md#testing)
+open/dismiss/reopen method passed. See [thread testing](thread-screen-testing-coverage.md#testing)
 for executed/failed/skipped counts and named methods. Those full-suite passes
 resolve the retained focus-repair README's historical failed/busy attempts; they
 are not evidence of a separate focused device rerun.

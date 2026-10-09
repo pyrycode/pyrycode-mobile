@@ -16,7 +16,7 @@ first-arrival layout. Keep prefix, progress and incomplete-text assertions toget
 
 Standalone bubble fixtures omit `threadOpenedAt` and retain zero-start behavior.
 For first-arrival timestamp retention and realistic follow fixtures, see
-[thread testing](thread-screen-testing.md#testing). The device-only
+[thread testing](thread-screen-testing-coverage.md#testing). The device-only
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately`
 now proves immediate reopen and prefix retention through the isolated daemon/Noise/relay path.
 An eventual combined reply can hide a temporary reset through catch-up or finalization: witness

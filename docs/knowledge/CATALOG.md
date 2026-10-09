@@ -229,3 +229,5 @@ _(none yet — system overview will land when there's more than one screen to ma
 - [Conversation cache — Related](features/conversation-cache-related.md) — cache design and owning-topic references.
 
 - [Thread screen — foreground read tracking tests](features/thread-screen-testing-foreground-read-tracking.md): production list-host composition isolation, content-edge qualification and retained gate evidence; split from thread-screen-testing.md.
+
+- [Thread screen — testing coverage](features/thread-screen-testing-coverage.md): screen/ViewModel regressions, retained device evidence, session-error races and short-stream anchoring; split from the testing overview for #1968.
