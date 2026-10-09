@@ -5268,15 +5268,23 @@ class InteractiveStreamE2ETest {
             composeTestRule.onNode(closedRun).assertExists()
             composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(0)
             // ScrollTo uses the drawing viewport; reveal the actual tap center between the chrome bars.
-            composeTestRule.questionAnswerTarget(closedRun).performClick()
+            composeTestRule.questionAnswerTarget(closedRun).performTouchInput { click(center) }
             // Expansion can put this early paragraph outside composition as later tool rows arrive.
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 runCatching { list.performScrollToNode(reply) }.isSuccess &&
                     composeTestRule.onAllNodes(reply and hasAnyAncestor(child), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
-            composeTestRule.questionAnswerTarget(reply and hasAnyAncestor(child)).assertIsDisplayed()
+            composeTestRule
+                .questionAnswerTarget(
+                    reply and hasAnyAncestor(child),
+                ) { android.util.Log.i("AgentReplyReveal", it) }
+                .assertIsDisplayed()
             composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(1)
-            composeTestRule.questionAnswerTarget(openedRun).performClick()
+            composeTestRule
+                .questionAnswerTarget(
+                    openedRun,
+                ) { android.util.Log.i("AgentReplyReveal", it) }
+                .performTouchInput { click(center) }
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 runCatching { list.performScrollToNode(closedRun) }.isSuccess &&
                     composeTestRule.onAllNodes(reply, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
