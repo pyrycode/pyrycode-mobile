@@ -10,6 +10,9 @@
 - `ThreadContentScheduling.kt`: `paceThreadContent`; retain real Android frame scheduling.
 - `ThreadScreen.kt`: `ThreadMessageList`; retain layout and viewport geometry.
 - `DecodedThreadRestoreTest.kt`, `CachedThreadWorkerTest.kt`: decode freshness, metadata fallback and worker contracts.
+- `AppModule.kt`: `ThreadDestinationFactory.repository` must give cached snapshot processing the destination's configured worker.
+- `RelayConnectionFactoryTest.kt`: destination host isolation, explicit frame advancement and ViewModel teardown before resetting Main.
+- `docs/knowledge/features/development-verification-test-scheduling.md`: a cancelled worker must finish before `Dispatchers.resetMain`; asynchronous failures can attach to the next test.
 - `docs/knowledge/features/thread-screen-testing.md`: Saved-thread first draw (#1949); an isolated pass cannot erase a full-gate miss, and sparse fixtures conceal allocations.
 - `docs/knowledge/features/conversation-cache-layout.md`: exact freshly read bytes and path, independent metadata rejection and proof compatibility.
 - `docs/specs/architecture/1949-saved-thread-first-draw.md` and merged change `d7c1e20e8a43a871164f3a7c83ae430bc233fb7b`: prior allocation repairs and remaining margin.
@@ -44,6 +47,7 @@ Keep the cache's existing IO dispatcher and mutex, one immutable retained decode
 | Malformed optional metadata / invalid rows / changed proof | Decode regression tests plus existing unsigned-cache/durability tests |
 | Mutation, removal or unreadable replacement after retained decode | Existing `DecodedThreadRestoreTest` cases |
 | Injected 3000 ms cache read | Existing negative control rejects the identical 1000 ms assertion |
+| Destination snapshot processing and cancellation under an injected worker | `destinationCacheUsesConfiguredWorker`; existing host-isolation destination test awaits every ViewModel job before Main reset |
 
 ## Error handling
 
@@ -132,6 +136,12 @@ Construct each fixture immediately before its case group: the same ordinary rows
 At final merged runtime commit `b3cbeb687d812bcb81f832106252dee2c8be87a4`, exclusive isolated execution passed all eight cases (maximum 858 ms), then the full focused class plus existing fragmented-history interaction method passed 3/3, zero failures/skips. Fresh XML timestamp `2026-10-09T23:00:14` and logs are retained under `/tmp/builder-2018/final-class/`; ordinary committed draws were 154/128/116/143 ms and fragmented draws 698/338/619/267 ms. The identical-bound negative control restored at 3011 ms and drew at 3160 ms, correctly rejecting 1000 ms. The final unit selection passed 119/119. All earlier misses remain recorded above and in their fresh evidence folders; no retry discards a miss.
 
 The open diagnosis question is resolved: allocation-heavy decode/validation/proof and duplicate writer/setup work delayed restore, and eager unrelated fixture preparation leaked GC/scheduling into even the ordinary snapshot phase. The final design removes those allocations, keeps the complete cold read/render interval and exact assertion, and prepares only the active fixture outside that interval. Dispatcher UI-gate verification and the documentation handoff remain pending later stages.
+
+### 2026-10-10 — Verifier unit-gate findings: destination cache scheduling and teardown
+
+The verifier's PR XML at `8b819e571e48` records an empty host-A message list immediately after `presentFrame`, followed by an unset-Main exception from a completed `Dispatchers.Default` child at the next registry test. A fresh focused class run on that head passed 19/19, confirming the failure is scheduling-dependent. `ThreadDestinationFactory.repository` creates its cache wrapper without forwarding `contentScheduling.worker`, so draining the controlled fold/frame scheduler cannot drain cache snapshot preparation or its non-cancellable writer cleanup.
+
+Pass the existing configured worker to `CachingConversationRepository` from the destination factory. Production still uses `Dispatchers.Default`; no new dispatcher, job, signature, cache or UI contract is introduced. Add `destinationCacheUsesConfiguredWorker` before the repair: collect a real cached destination snapshot to completion and require dispatch through an instrumented configured worker, which fails deterministically with the current factory. Preserve every host-isolation/content/queue/action/reconnect assertion in the existing destination method. Its teardown cancels and joins each ViewModel job before closing the graph and resetting Main, including assertion-failure exits, so no cache finalizer can resume on Main after reset. Run the full 20-method relay factory class and affected worker/frame/cache tests with fresh XML; dispatcher full gates remain pending. Recount: fewer than 900 inserted/deleted plan, production and test lines, three production files, no exported types or migrated consumers, three criteria and unchanged reject branches. No overlapping numeric feature branch touched either rework file at the fresh fetch.
 
 ## Documentation handoff
 
