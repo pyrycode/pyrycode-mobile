@@ -1373,16 +1373,12 @@ class InteractiveStreamE2ETest {
             .assertCountEquals(0)
 
         runBlocking {
-            // Observe before tapping: session_transition clears the old reading, and only a later
-            // context_usage reply can fill it. Settings fallback cannot satisfy this wait (#1761).
+            // Subscribe before tapping and collect each clear/reply inline: a dispatched StateFlow
+            // watcher can miss the transient clear (#1869). Settings fallback cannot satisfy this wait.
             val freshReading =
                 async(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
                     withTimeout(REPLY_TIMEOUT_MS) {
-                        repository
-                            .observeContextUsage(conversationId)
-                            .dropWhile { it != null }
-                            .filterNotNull()
-                            .first()
+                        repository.observeContextUsage(conversationId).awaitResetContextUsage()
                     }
                 }
 

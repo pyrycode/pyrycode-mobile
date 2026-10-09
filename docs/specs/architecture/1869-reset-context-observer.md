@@ -34,11 +34,11 @@ The existing runBlocking parent owns the async watcher and its timeout. Only the
 
 | Event | Regression |
 | --- | --- |
-| Clear and equal-valued reply applied without yielding to the scheduled watcher | `serializedClearAndReply_areObservedEvenWhenCallerIsDelayed` |
+| Clear and reply applied without yielding to the scheduled watcher | `serializedClearAndReply_areObservedEvenWhenCallerIsDelayed` |
 | A newer reading arrives without a clear | `readingWithoutClear_cannotSatisfyFreshness` |
 | Clear arrives but no product response follows | `clearWithoutReply_staysPending` |
 | Another conversation clears and receives a reply | `anotherConversationsReset_cannotSatisfyFreshness` |
-| Repeated resets reuse the conversation id | `repeatedResets_eachRequireTheirOwnClearAndReply` |
+| Repeated resets reuse the conversation id and return equal-valued readings | `repeatedResets_eachRequireTheirOwnClearAndReply` |
 | Watcher cancellation | `cancelledWatcher_doesNotConsumeALaterReset` |
 
 ## Error handling
@@ -49,8 +49,12 @@ Missing clear or reply still fails under the existing deadline; neither old read
 
 Write the scheduling regression first against the extracted original observer and watch it fail with nonzero counts; switch the shared observer to inline collection and rerun. Drive real `RemoteConversationRepository` with a channel-backed pump, queuing transition and reply together. Run existing repository/context refresh/footer unit coverage, lint, assembleDebug, instrumentation compilation and forced Spotless checks, then the final main merge and pre-verify gate.
 
-The existing live method remains device-only because it exercises the real daemon/Claude/relay and phone UI. This ticket assigns fresh live acceptance to the dispatcher, so skip a separate focused live rerun. The PR lists the exact method and hands off the full dispatcher live gate with executed/failed/error/skipped counts and explicit method success. A focused JVM scheduling regression proves the observation race without Claude timing; no scripted reset/context twin exists because fakeclaude context replies are not established.
+The existing live method remains device-only because it exercises the real daemon/Claude/relay and phone UI. This ticket assigns fresh live acceptance to the dispatcher, so skip a separate focused live rerun. The PR requests the full curated suite with `all` in `Live tests`, names the exact method in Testing, and hands off the dispatcher live gate with executed/failed/error/skipped counts and explicit method success. A focused JVM scheduling regression proves the observation race without Claude timing; no scripted reset/context twin exists because fakeclaude context replies are not established.
 
 ## Open Questions
 
 None. If controlled scheduling does not distinguish the observer race from a missing response, reassess before changing the live test.
+
+## Revisions
+
+- 2026-10-09: the original observer ran six regressions with three failures, including the queued clear/reply schedule; the other three correctly rejected missing clear, missing reply and another conversation's reset. Inline collection passed all six, alongside 30 existing repository/ViewModel context tests. Strengthened the scheduling regression with a distinct current reading to prove the repository applied the response independently of the watcher; repeated resets retain the equal-value proof. The #1918 retained stack points to the initial ping wait, not this observer, so it remains outside the diagnosed interleaving. Final written work is approximately 300 lines, within all sizing limits.
