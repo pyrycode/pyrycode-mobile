@@ -127,6 +127,12 @@ At `b65380876`, even ordinary first open missed: restore/snapshot/content/draw 8
 
 Construct each fixture immediately before its case group: the same ordinary rows first, then the same complete fragmented fixture. Generation still finishes before `Probe.start`, with no delay, cache read, repository/ViewModel construction, warm first-open fixture, changed assertion or endpoint. The eight cases, first/open-reopen ordering, exact rows/markers, zero offline/one held-online ask and 3000 ms negative control stay unchanged. This removes unused large setup data from the ordinary cases and avoids warming their serializers through another fixture. Existing device method is the red regression; unit fixture consumers remain at 119 executed/passed, zero failures/skips.
 
+### 2026-10-10 — Resolve diagnosis and verify final merged source
+
+At final merged runtime commit `b3cbeb687d812bcb81f832106252dee2c8be87a4`, exclusive isolated execution passed all eight cases (maximum 858 ms), then the full focused class plus existing fragmented-history interaction method passed 3/3, zero failures/skips. Fresh XML timestamp `2026-10-09T23:00:14` and logs are retained under `/tmp/builder-2018/final-class/`; ordinary committed draws were 154/128/116/143 ms and fragmented draws 698/338/619/267 ms. The identical-bound negative control restored at 3011 ms and drew at 3160 ms, correctly rejecting 1000 ms. The final unit selection passed 119/119. All earlier misses remain recorded above and in their fresh evidence folders; no retry discards a miss.
+
+The open diagnosis question is resolved: allocation-heavy decode/validation/proof and duplicate writer/setup work delayed restore, and eager unrelated fixture preparation leaked GC/scheduling into even the ordinary snapshot phase. The final design removes those allocations, keeps the complete cold read/render interval and exact assertion, and prepares only the active fixture outside that interval. Dispatcher UI-gate verification and the documentation handoff remain pending later stages.
+
 ## Documentation handoff
 
 - Pending documentation stage: `docs/knowledge/features/conversation-cache-layout.md`, Thread document readers — exact byte-array retention, bounded fresh-byte comparison and direct typed decoding with independent optional-metadata fallback; unchanged format, proofs and invalidation.
