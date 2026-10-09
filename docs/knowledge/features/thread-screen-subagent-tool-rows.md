@@ -251,6 +251,16 @@ another tool call joined it. `expandedRuns` is `rememberSaveable` (tightened fro
 PR #1653's verifier review, [MUST FIX]), so an open run survives rotation and a back-stack return, the
 same guarantee the individual tool rows inside it already have via their own `rememberSaveable`.
 
+Since #1940, a closed run's displayed representative uses `msg:<runId>`, the
+first tool's key, including when that representative is a lone tool. Gap markers
+can expose tools and split/reunite runs without changing the key of the part
+containing the original first tool. On rejoin, absorbed representatives disappear
+and the combined header uses the earliest tool's key. Expanded headers instead use
+`tool-run:<runId>` so their children can retain distinct `msg:` keys. Expansion state
+still follows `runId`; Agent roots remain delivered and collapse-off rows keep their
+message keys. All four screen key consumers use the same `listKey` contract, whose
+indexed parameter is retained but unused.
+
 **Trailing status** reads the run's own tool calls, not a stored aggregate: the running spinner while
 any tool in the run is `Running`, "K failed" in the error colour with the error icon when K tools are
 `Failed` or `Denied`, otherwise the done check — reusing the tool row's `cd_tool_running`,
@@ -267,8 +277,17 @@ a flaky failure. The fold's own unit coverage lives beside, but not inside, that
 `ToolRunFoldTest` (`app/src/test/.../thread/`) covers run boundaries at assistant text, a session
 boundary and a banner, a lone tool row, a tool message with a null `toolCall` (not a tool row), nested
 sub-agent rows joining the run, expanded order, identity holding as new rows join, and `listKey`
-uniqueness across a folded list (`"tool-run:<runId>"` is a fifth distinct namespace, and `runId` being
-a message id keeps it unique the same way `withMessage`'s upsert does for `msg:` keys).
+uniqueness across a folded list. A collapsed header consumes its first tool before using
+that message key; an expanded header has a separate namespace. Two runs cannot share a
+first tool. `ThreadRowIdentityTest` adds singleton growth, marker split/rejoin at every
+position, expansion and repeated-render probes, independently checking order, content,
+marker targets and unconsumed identities.
+
+The shared `AgentRunNavigationProof` must expect the first child's message key present
+when closed: it belongs to the header. All other child keys are absent, and opening
+restores every child's individual key. Keep pointer taps, expansion semantics and owned
+prose visibility assertions alongside membership; membership alone cannot distinguish the
+closed representative from its first child.
 
 A screen-level `ToolRunCollapseTest` (`app/src/sharedTest/.../thread/`) covers the composable
 end to end: collapse/expand both directions with the flush join and sub-agent indent preserved; a run
@@ -278,6 +297,28 @@ collects `collapseToolUses` with `collectAsStateWithLifecycle`, so toggling the 
 an open thread live. No new rung-3 scenario: the technical notes' reasoning above (status-icon content
 descriptions kept, lone tool row unchanged) is why the existing live and scripted coverage stays valid
 as-is.
+
+`ThreadRowAnchorTest.loneToolGrowth_preservesBottomAnchorAndOffset` mounts the real
+`ThreadScreen` with collapse enabled and overflowing history. It observes the actual lazy
+state through `LocalThreadListCompositionObserver`, scrolls away from following, places a
+lone tool at a nonzero offset as the bottom-most visible anchor with unmatched queued rows
+below, then appends its second adjacent tool. After layout the representative key must
+hold and offset must differ by at most one physical pixel. `ThreadRowAnchorDeviceTest`
+exposes the same shared method to the routine Android UI gate.
+
+The [verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1965#issuecomment-6058799588)
+records the old-policy red control: **1 executed, 1 failed, 0 skipped**, at
+`msg:t1` becoming `tool-run:t1`. Under `/tmp/builder-1940/`, retained `anchor-red.xml`,
+`focused-green/TEST-de.pyryco.mobile.ui.conversations.thread.ThreadRowAnchorTest.xml`
+and `anchor-device-green.xml` were inspected during documentation; the latter two each
+record **1 executed/passed, 0 failed/errors/skipped**. The verifier's full JVM report
+records **4,923 executed/passed, 0 failed/errors/skipped**. Its UI gate
+`build/dispatcher-tests/ui-io1a4kx3/dispatcher.xml` records **213 executed/passed,
+0 failed, 1 skipped**, with the Android anchor method present and passed; the unrelated
+rename capture was skipped. The dispatcher-provided counted report confirms that named
+UI result. These are recorded runs, not documentation-stage test execution.
+Fresh full-live evidence for tool rendering and the changed Agent navigation proof is in
+[the ladder](../../e2e-interactive-stream.md#stable-row-identity-1940).
 
 See [`ToolCallRow`](tool-call-row.md#consecutive-tool-rows-sit-flush-1577) for the flush join the
 expanded run reuses, and the `AppPreferences.collapseToolUses` setting itself (#1634).
