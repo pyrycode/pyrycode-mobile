@@ -26,7 +26,22 @@ not a measured scrolling speedup or physical-device frame-time improvement.
 See the [verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/1962#issuecomment-6057266904)
 for acceptance evidence and its limits.
 
+## Stable row anchoring (#1940)
+
+The real-screen shared `ThreadRowAnchorTest` and Android-visible `ThreadRowAnchorDeviceTest`
+prove singleton-to-run anchoring with queued rows below. See
+[the key contract, counted red/JVM/device evidence and navigation assertion lesson](thread-screen-subagent-tool-rows.md#collapsing-runs-of-consecutive-tool-rows-1635).
+
 ## Testing
+
+`ThreadMutationArrivalTest` (#1998) mounts the production ViewModel, stable facade and screen
+with the owner absent until the composer is drawn. It attaches the owner, awaits actual title
+semantics, taps More actions once, and requires Channel info plus Edit and its event. A
+property-only readiness wait can leave Robolectric's paused main Looper undrained; observe
+rendered semantics before driving the menu. Its colliding-ID other-host control must keep the
+absent owner's Edit hidden. The unit transition test also covers disconnect/reconnect,
+non-supporting replacement and recollection. See
+[counted red/green and Android evidence](../../e2e-interactive-stream.md#verification-status).
 
 Shared geometry tests must prove device portability as well as Robolectric
 correctness. `ThreadDeleteGeometryTest` fetches its text semantics node on the

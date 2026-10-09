@@ -70,6 +70,12 @@ and at rung 4 by
 Both scenarios also prove settled scroll-only navigation followed by one owned-control tap to open
 and one to close, checking expansion semantics and child list membership (#1867).
 Controlled projection/Compose fixtures separately cover multiple agents and history permutations.
+Since #1940, the shared navigation proof treats the first child's message key as the
+collapsed representative and requires all remaining children absent until expansion.
+`InteractiveStreamE2ETest.interactiveTurn_toolPrompt_rendersToolStepInThread` remains
+the integrated tool-rendering check. Deterministic anchor preservation is proved by
+`ThreadRowAnchorTest` and its Android-visible wrapper, independently of these live
+scenarios; see [stable-row evidence](#stable-row-identity-1940).
 Attributed background-agent prose (#1827) is covered at rung 3 by
 `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_replyStaysUnderAgent`; the same rung-4
 `background-agent` scenario adds attributed and unmatched prose to its fixtures.
@@ -2181,7 +2187,7 @@ stopped; pairing material remains in its private host storage.
 `InteractiveStreamE2ETest.interactiveTurn_attentionDot_followsARealTurn` keeps its
 permission and attention-dot checks and adds the shared read mark. After the real
 reply, `SecondClientPeer` reads the daemon's facts for the conversation: the latest
-durable id must be positive and the stored mark below it, so viewing the list reads
+filtered unread id must be positive and the stored mark below it, so viewing the list reads
 nothing. The phone then opens the thread at the newest end, and the peer waits for a
 stored mark at or beyond that reply's id. The peer's latest id is only the assertion
 target; the phone's mark must come from its own foreground checkpoint.
@@ -2197,8 +2203,29 @@ deterministic viewport probes ran in that branch's UI gate:
 `InteractiveStreamE2ETest.interactiveTurn_attentionDot_followsARealTurn` preserves
 \#1912's phone-to-peer mark assertion and B's permission checks. After B becomes Unread,
 `SecondClientPeer` receives B's actual assistant reply from durable history and confirms
-a mark through that history's newest id. The phone remains on the channel list: B's
+a mark through the daemon's filtered unread watermark, backed by a received history
+entry outside `turn_state`, `stall`, `api_retry`, `compacting` and `session_transition`
+(#1948). A's phone-read assertion uses the same history-backed filtered target;
+the phone still derives its acknowledgement from its own foreground checkpoint.
+The raw history maximum can include an excluded status tail beyond the daemon's
+mark-read clamp. The phone remains on the channel list: B's
 dot becomes Idle without reopening, while A stays Idle.
+
+Dispatcher evidence, 2026-10-08: the full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` run
+(`2026-10-08T15-57-51-729Z`, JUnit XML results) tested `feature/1948` at
+`550b3e95fb`, merged with `origin/main` at `0c22abc99d`: **65 executed, 64 passed,
+1 failed, 0 skipped**.
+`InteractiveStreamE2ETest.interactiveTurn_attentionDot_followsARealTurn` executed
+and passed, proving phone-read and peer-read clearing with the permission checks
+preserved. This is a named pass in the full suite, not a separate focused run or
+an all-green suite. The unrelated
+`interactiveTurn_modelChange_roundTripsAndStaysPerConversation` failure also
+reproduced on main and is tracked by #1969. The run supplied no daemon-revision
+annotation; the prior diagnosis and focused repair evidence identify the fixed
+daemon as `55f1f1839c72ebd140679ddcb3c1db3d2d30c0d3`. The
+[operator acceptance](https://github.com/pyrycode/pyrycode-mobile/issues/1948#issuecomment-6066393092)
+accepted this named full-suite result as the ticket's live proof.
 
 The rung-4 twin is
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread`,
@@ -2461,6 +2488,24 @@ summary is in [README § Pre-ship gate](../README.md#pre-ship-gate); the README 
 restate scenario counts or turn costs — this document is the single authority for gate scope and cost.
 
 ## Live mode (rung 3, live relay)
+
+The curated collision scenario remains
+`InteractiveStreamE2ETest.interactiveTurn_twoHostsCollidingConversationId_stayPerHost` (#847, #1998):
+two real paired hosts share a conversation ID while retaining separate rows and threads; renaming A
+changes only A, including after cycling both links and rebuilding the app graph over saved state.
+B's pairing is removed in guaranteed cleanup. No rung-4 twin was added for this repair.
+
+A composer being drawn does not prove mutation-menu readiness. A thread constructed while its
+owning stable facade lacked a live delegate previously cached mutation support as false: More
+actions could open and show Channel info while Rename/Edit remained absent after connection.
+The owning-host availability projection now re-reads capability; another host with the same ID
+cannot enable it. Collision-scenario diagnostics record content-free owner capability, common menu
+rows and active Activity focus/lifecycle at rename entry/failure before cleanup. They retain the
+original exception object and attach context or collection failures as suppressed exceptions.
+The shared rename driver, assertions and deadlines are unchanged; there are no retries or longer
+waits. The historical #1989 stack establishes menu-arrival failure before editing or writing,
+but missing tap-time artifacts prevent certain attribution to this controlled defect. See
+[revision-linked counted evidence](#verification-status).
 
 The curated selector includes
 `InteractiveStreamE2ETest.interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog` (#1731).
@@ -3273,6 +3318,127 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+**Collision mutation-menu readiness (#1998, 2026-10-09).** The
+[builder cause record](https://github.com/pyrycode/pyrycode-mobile/issues/1998#issuecomment-6077997210)
+and [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2000#issuecomment-6078514440)
+distinguish a controlled local capability-latching defect from the historical occurrence.
+The historical mobile was `2d48240a001595e52aad792a9d9ed6551a2f4821`, merged main
+`ba5724b080`, daemon `a39c72739eb2e811708a67b08906614a4316b834`.
+Retained `2026-10-09T08-24-26-589Z_real-claude-gate_#1989.log` and `.stderr.log`
+establish **65 executed, 64 passed, 1 failed, 0 errors, 0 skipped**, with a 30-second
+Rename/Edit arrival timeout after More actions, before editor entry or rename submission.
+The matching `real-claude-gate-rerun_#1989` report records **1 executed/passed,
+0 failed/errors/skipped** on the same tree. Original `live-0vm8oz36` phone artifacts
+are absent; post-cleanup launcher focus does not establish focus or menu state at the tap.
+The historical source contains the repaired defect, but attribution remains an inference.
+
+The [retained regression pack](https://github.com/pyrycode/pyrycode-mobile/tree/19e0bcc2c2ed2394c243a718fd59f99487a8801e/app/src/androidTest/assets/collision-menu-1998)
+contains XML, commands, checksums and source provenance. Baseline production
+`fbad4a0cdb7025becad76a6523fd7ef83f33c552` plus new tests used the same ViewModel
+source as the historical revision. `ThreadMutationArrivalTest.owningHostArrivalEnablesEditAfterComposerWasAlreadyDrawn`
+proved Channel info visible after one menu tap, then failed on absent Edit.
+`ThreadViewModelTest.mutationCapabilityFollowsOwningRepositoryAcrossReconnect` also failed.
+Repair and strengthened tests are at `61f363e6c66f070206ab1c0d4162d7b0bb4643a7`.
+Documentation inspected the supplied reports; these are builder executions.
+
+| Regression report | Executed | Passed | Failed | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Baseline shared menu + unit capability | 3 | 1 | 2 | 0 | 0 |
+| Repaired focused set (`focused-green.xml`) | 91 | 91 | 0 | 0 | 0 |
+| Managed Android (`device-green.xml`) | 2 | 2 | 0 | 0 | 0 |
+| Scripted reconnect (`reconnect-green.xml`) | 1 | 1 | 0 | 0 | 0 |
+
+The focused set includes existing overflow, connection-gate and stable-facade coverage.
+Both shared methods, including `otherHostArrivalDoesNotEnableOwnersEdit`, passed on managed
+Android. The capability unit covers reconnect, non-supporting replacement and recollection.
+Diagnostic regressions require the same original exception even when collection fails
+(**3 executed/passed, 0 failed/errors/skipped**). Scripted reconnect used daemon
+`a39c72739eb2e811708a67b08906614a4316b834` with `vcs.modified=true`; it supplies no
+full real-Claude acceptance proof.
+
+The fresh [full dispatcher live PASS](https://github.com/pyrycode/pyrycode-mobile/issues/1998#issuecomment-6078937475)
+ran `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on
+mobile `444dd6930a729212fd5f50bac626eaff804b3b99`, merged with `origin/main`
+`31d44af7c5cc`: **65 executed, 65 passed (0 flaky), 0 failed, 0 errors, 0 skipped**,
+exit 0 in 15m 8s. Documentation inspected the retained JUnit report
+`2026-10-09T10-03-16-223Z_real-claude-gate_#1998.log`: the fully qualified collision
+method is present and passed with no failure/error/skipped child. This is full-suite
+execution, with no separate focused dispatcher run claimed.
+The XML has no daemon-revision annotation; line 96 of the matching `.stderr.log`
+identifies daemon `a536d17b1e182fb5398a5458e3afe6079b37a510` and the selected
+`build/e2e-bin/pyry` binary; line 95 identifies the mobile revision and line 97
+Claude Code **2.1.280**. Line 89 records the original artifact directory
+`/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/real-claude-gate-1998/build/dispatcher-tests/live-dghxwxtg/`.
+That directory is no longer present during documentation; the paired reports remain under
+`/Users/juhanailmoniemi/WorkSpace/Projects/pyrycode-mobile-agents/logs/` and establish
+revision and named outcome. The verifier's earlier UI gate executed/passed **212,
+0 failed/errors, 1 skipped**; scripted-all executed/passed **22, 0 failed/errors/skipped**.
+The unrelated `renameAtFigmaViewport` skip supplies no visual evidence.
+
+**Restored model-change and attention proof (#1969, 2026-10-09).** The fresh
+post-verifier full dispatcher run used
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`,
+mobile `742c465059adf89f0b58d5d42b7e1b3b728684bf` merged with `origin/main`
+`31d44af7c5cc`. Its method-level JUnit report
+`2026-10-09T09-47-46-665Z_real-claude-gate_#1969.log` records **65 executed,
+65 passed (0 flaky), 0 failed, 0 errors, 0 skipped**, exit 0 in 15m 17s. Both
+`InteractiveStreamE2ETest#interactiveTurn_modelChange_roundTripsAndStaysPerConversation`
+and `InteractiveStreamE2ETest#interactiveTurn_attentionDot_followsARealTurn`
+explicitly executed and passed. The
+[issue's gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1969#issuecomment-6078717180)
+confirms the full command, mobile revisions and counts. No separate focused run
+is claimed for this gate. The [verifier's recovered evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1999#issuecomment-6078841215)
+identifies the actual daemon as `a536d17b1e182fb5398a5458e3afe6079b37a510`,
+from line 96 of the matching `2026-10-09T09-47-46-665Z_real-claude-gate_#1969.stderr.log`.
+It records the selected `build/e2e-bin/pyry` binary; adjacent lines record the
+mobile revision, Claude Code **2.1.280** and both fixture daemon launches.
+The verifier confirmed daemon repairs #3017, #3026 and #3029 are ancestors of
+that revision. The retained JUnit report SHA-256 is
+`8d4fe382733e0ec4dd3b411d4719b841bb779d157b8f8e06042492d020cb4c12`.
+The original binary and worktree XML were removed; the matching retained stderr
+and JUnit report establish revision and method outcomes. Both acceptance criteria
+are complete without a new run.
+
+The earlier focused pair at mobile `e42c98f786c50eadaf9a864230069846326eb5ed`
+and daemon `a39c72739eb2e811708a67b08906614a4316b834` (`vcs.modified=false`,
+including daemon #3017, #3026 and #3029) executed **2, passed 2, failed 0,
+skipped 0**. The [verifier's XML review](https://github.com/pyrycode/pyrycode-mobile/pull/1999#issuecomment-6078487604)
+confirms both methods in `build/dispatcher-tests/live-659mf9c_/dispatcher.xml`
+(retained copy `/tmp/builder-1969/proof-20261009/dispatcher.xml`, SHA-256
+`b54d8a88af7ee5aa72ba4168870ca593a0aeac3fa901bc5ca265ffcf500ea773`).
+That focused daemon revision cannot establish the daemon used by the later full
+gate. Both inherited methods, helpers, assertions and deadlines stayed unchanged:
+model announcement/inheritance, exact published-value acknowledgement, reopen
+persistence and X/Y isolation; attention phone/peer read confirmation, isolation
+and permission waiting/answer checks. Historical failures remain in the
+[ticket plan](specs/architecture/1969-model-change-live-proof.md#execution-evidence-and-blocker).
+No mobile workaround, new scenario or deterministic twin was introduced.
+
+**Runtime receipt and legacy clamp compatibility (#1989, 2026-10-09).** The fresh
+full dispatcher `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`
+ran mobile `2d48240a001595e52aad792a9d9ed6551a2f4821` merged with `origin/main`
+`ba5724b08019030e677e372570e281ed3a742d84`. The retained stderr identifies daemon
+`a39c72739eb2e811708a67b08906614a4316b834` (including #3026 and #3029) and
+Claude Code **2.1.280**; the XML itself has no daemon-revision annotation.
+The fresh XML report `2026-10-09T08-24-26-589Z_real-claude-gate_#1989.log`
+records **65 executed, 64 passed, 1 failed, 0 skipped**, exit 1 in 16m 2s.
+`InteractiveStreamE2ETest#interactiveTurn_attentionDot_followsARealTurn` is present
+and passed in that full suite with unchanged phone/peer read, isolation, permission
+waiting/answer assertions and deadlines. No separate focused attention run occurred.
+The sole failure, `interactiveTurn_twoHostsCollidingConversationId_stayPerHost`,
+passed on the dispatcher's same-tree rerun: **1 executed, 1 passed, 0 failed, 0 skipped**
+(`2026-10-09T08-24-26-589Z_real-claude-gate-rerun_#1989.log`). The dispatcher
+accepted the gate after that rerun; this does not make the original full run failure-free.
+The [issue's gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1989)
+records the rerun and stale-daemon rejection: the earlier 08:01Z run used `55f1f183`,
+without either repair, and does not prove this compatibility fix. Reports and matching
+`.stderr.log` are retained under the dispatcher repository's `logs/` directory;
+full-run device artifacts were in `build/dispatcher-tests/live-0vm8oz36/`.
+\#1969's subsequent full live-proof results and missing daemon revision are recorded above.
+The permanent mobile receipt and
+confirmation regressions are described in
+[remote repository testing](knowledge/features/remote-conversation-repository.md#testing).
 
 **Shared daemon unread (#1883, 2026-10-08).** The dispatcher ran fresh full
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on
@@ -4922,6 +5088,28 @@ Earlier results and failure history:
   selective. Rung 4 needs no negative control: the scripted backend makes the positive assertion
   deterministic.
 
+### Stable row identity (#1940)
+
+The [fresh dispatcher live PASS](https://github.com/pyrycode/pyrycode-mobile/issues/1940#issuecomment-6079196923)
+ran `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on
+`feature/1940` at `7817c6b8d3b0`, merged with `origin/main` at `4f784b029747`:
+**65 executed, 65 passed, 0 failed, 0 skipped**, none flaky, exit 0 in 17m 51s.
+The dispatcher-provided fresh JUnit-XML report for `2026-10-09T10-18-35-702Z`
+contains `InteractiveStreamE2ETest.interactiveTurn_toolPrompt_rendersToolStepInThread`
+and `interactiveTurn_backgroundAgent_followsBottomUntilFinished`, each executed and
+passed. These are named results from the full suite, not separate focused runs.
+The issue names report path
+`logs/2026-10-09T10-18-35-702Z_real-claude-gate_#1940.log` and matching `.stderr.log`
+in the dispatcher repository; the supplied report has no daemon-revision annotation.
+The earlier live run's inherited failures are superseded by this fresh full pass.
+
+The verifier's scripted-all report records **22 executed/passed, 0 failed, 0 skipped**,
+including tool rendering and Agent navigation. The
+[thread topic](knowledge/features/thread-screen-subagent-tool-rows.md#collapsing-runs-of-consecutive-tool-rows-1635)
+records the deterministic real-screen anchor regression's red/JVM/Android evidence.
+Live tool rendering does not establish pixel anchoring; that shared Compose method does.
+Documentation ran only the docs guard.
+
 ## Assumptions to confirm on first live run
 
 The deterministic stream-json contract is defined by the current fakeclaude source and the raw fixtures.
@@ -4944,6 +5132,32 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Stable row identity (#1940):** Existing
+  `InteractiveStreamE2ETest.interactiveTurn_toolPrompt_rendersToolStepInThread` and
+  `interactiveTurn_backgroundAgent_followsBottomUntilFinished` passed in the fresh full
+  live suite above. The shared navigation proof's closed-header membership now matches
+  representative identity while retaining pointer and expansion checks. No new rung-3
+  scenario or `DeterministicInteractiveStreamE2ETest` twin was added, and no evidence
+  follow-up remains. The pre-ship command stays `python3 scripts/android-test-gate.py live`.
+
+- **Collision mutation-menu repair (#1998):**
+  `InteractiveStreamE2ETest.interactiveTurn_twoHostsCollidingConversationId_stayPerHost`
+  retains its two-host rename, link-cycle, saved-graph rebuild and cleanup contract.
+  The forced connection-gap condition is covered by shared `ThreadMutationArrivalTest` and a
+  capability unit transition test; no `DeterministicInteractiveStreamE2ETest` twin was added.
+  [Verification status](#verification-status) records counted red/green and fresh full-live
+  proof. Historical tap-time focus/menu evidence remains unavailable, so the controlled cause
+  must not be presented as certain attribution of the original flake.
+
+- **Restored shared proof (#1969):** Both inherited `InteractiveStreamE2ETest`
+  model-change and attention methods passed in the fresh 65-test full suite;
+  [Verification status](#verification-status) distinguishes that gate from the
+  earlier focused pair and historical failures. The verifier recovered the full
+  run's daemon revision from matching stderr and confirmed all three repairs;
+  no evidence or coverage follow-up remains. No scenario or
+  `DeterministicInteractiveStreamE2ETest` twin changed. The pre-ship command stays
+  `python3 scripts/android-test-gate.py live`.
 
 - **Archive/restore viewport discovery (#1870):** the existing rung-3
   `InteractiveStreamE2ETest#interactiveTurn_archiveRestore_roundTripsListMembership` now discovers
@@ -5210,6 +5424,17 @@ The remaining checks here are specific to a real relay or real Claude execution:
   coverage and shared Unread instead of legacy-only persisted positions.
   [Fresh full-suite evidence](#verification-status) closes the live handoff; no
   scenario follow-up remains. The pre-ship command remains
+  `python3 scripts/android-test-gate.py live`.
+
+- **Filtered unread (#1948):**
+  `InteractiveStreamE2ETest.interactiveTurn_attentionDot_followsARealTurn` uses
+  history-backed filtered daemon targets for phone and peer reads, preserving
+  permission checks. The named pass and full-run counts are recorded under
+  [Peer read clears phone attention](#peer-read-clears-phone-attention-1883);
+  no scenario follow-up remains. The existing rung-4 scripted `ping` twin in
+  `DeterministicInteractiveStreamE2ETest` keeps its target: its exact channel post
+  ends in non-excluded `assistant_delta` and `turn_end` entries. No new twin or
+  selector is added; the pre-ship command remains
   `python3 scripts/android-test-gate.py live`.
 
 - **Coverage — hardened:** [#1637](https://github.com/pyrycode/pyrycode-mobile/issues/1637)

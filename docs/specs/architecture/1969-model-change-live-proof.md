@@ -1,0 +1,84 @@
+# #1969 — Restore model-change live proof after daemon repair
+
+## Files read
+
+- `app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt`: `interactiveTurn_modelChange_roundTripsAndStaysPerConversation`, `interactiveTurn_attentionDot_followsARealTurn`, and their settings/read helpers define the inherited proof.
+- `scripts/android-test-gate.py`: focused live selection, isolated daemon build, credential ownership and counted XML evidence.
+- `scripts/e2e-emulator.sh`: daemon/mobile revision reporting and unchanged live scenario selection.
+- `docs/knowledge/features/development-verification.md` and its emulator-evidence/test-scheduling topics: focused execution cannot establish full-suite fixture isolation; zero execution is unverified.
+- `docs/knowledge/features/thread-composer-footer-testing.md`: model settings confirmation uses a fresh connection reply.
+- `docs/knowledge/features/thread-screen-testing-foreground-read-tracking.md`: retain durable read confirmation rather than inferring a read from list state.
+- Daemon `cmd/pyry/pool_adapters.go` (`settingsUpdaterAdapter.UpdateSettings`) and `cmd/pyry/session_model_selection.go` (`offeredModel`, `runSettingsFor`): merged #3017 validates offered identities and projects stored families back onto published rows.
+- Sibling daemon `docs/protocol-mobile.md`, `model_list` and `session_settings`: authoritative offered-choice/readback contract; no mobile wire change.
+
+## Change
+
+This is proof-only work. Keep both inherited methods, their helpers, assertions and deadlines unchanged. The previous unchanged-main run at mobile `07d6c93d23a53500b4de6c7cca0baba50b9ba7eb` and daemon `55f1f1839c72ebd140679ddcb3c1db3d2d30c0d3` executed two tests: attention passed, model-change failed after X's explicit Fable pick. Daemon #3017 fixes publication/validation/readback consistency; its implementation is `179b080ad74664d70cad5c1d0a7fe9c02eed173b`, merged at `b799ba5afb8d86b79f1d1eb20c737c15a632db5f`. Run the existing proof against that merged daemon in an isolated source worktree and record evidence here and in the PR. No production code, new test or UI behavior is needed.
+
+Sizing: one deliverable, two acceptance criteria, about 80 written lines including evidence/PR, zero new exported declarations, consumer updates or reject branches. No planned source edits overlap in-flight branches; other live-test branches share the inherited test file but it is preserved here.
+
+## Testing strategy
+
+Run both named inherited methods together through `scripts/android-test-gate.py live --tests` with the merged daemon source. Existing real-Claude instrumentation is necessary to prove settings acknowledgement and phone/peer durable reads. Preserve model announcement/inheritance, exact published-value acknowledgement, reopen persistence and X/Y isolation; preserve attention phone/peer confirmation, row isolation and permission waiting/answer checks. Read fresh XML and report revisions, executed/passed/failed/skipped counts and both named outcomes. Historical red evidence is linked from the issue's builder comment; do not rerun the known defective daemon or weaken its regression.
+
+Run builder lint, assembly, Android-test compilation and forced Spotless checks. After the final merge of main, push and run assembly plus `scripts/pre-verify.py --gradle` against the intended PR body. No new logic requires a new unit test.
+
+## Dispatcher live handoff
+
+The second acceptance criterion remains pending until a fresh **full** dispatcher live gate after verification. Set `## Live tests` to `all` in the PR so the gate cannot select only the focused methods. Keep `needs-real-claude` on #1969. The dispatcher must use daemon #3017's merged result and report actual daemon/mobile revisions, full executed/failed/skipped counts and explicit passes for both inherited methods. Focused success does not satisfy full-suite acceptance.
+
+## Revisions
+
+2026-10-08: The isolated daemon worktree build omitted `vcs.revision` even with `-buildvcs=true`. A separate clean clone at the same merged commit produces versioned metadata. Use its binary/source for the final focused proof and dispatcher handoff; preserve all mobile scenarios and settings contracts.
+
+2026-10-09: Blocker #1989 is closed and its regression coverage is merged through PR #1995. Diagnosis established daemon ownership: #3026 restores continuous legacy history across runtime-only receipts, and #3029 aligns legacy unread targets and read confirmation. Resume the unchanged focused pair using a clean daemon clone at `a39c72739eb2e811708a67b08906614a4316b834`, which includes all three daemon repairs. Preserve the historical failed runs below; this ticket still requires its own fresh full dispatcher live gate after verification. No implementation, scenario, helper, assertion or deadline changes are planned.
+
+## Execution evidence and blocker
+
+2026-10-08: The versioned focused run used mobile `81ad5e795114655f53f8105b4a45643a51402d2a`, daemon `b799ba5afb8d86b79f1d1eb20c737c15a632db5f` (`vcs.modified=false`) and Claude 2.1.280. It exited 1: 2 executed, 1 passed, 1 failed, 0 errors/skipped. `interactiveTurn_modelChange_roundTripsAndStaysPerConversation` passed. `interactiveTurn_attentionDot_followsARealTurn` failed at A's phone-confirmed read before B's permission/peer-read checks. Diagnostic: `rows=2 unidentified=0 malformed=0 gaps=0 versions=2 checkpoint_reaches_target=false read_reaches_target=false`.
+
+Fresh XML is retained in `build/dispatcher-tests/live-c7calbjd/dispatcher.xml` and `0-TEST-pixel2Api33Atd-_app-.xml`. The earlier `live-4errldb5` run at mobile `a1e388ce1e5060b6f8506560252ff6f90159842e` used the same daemon source without binary VCS metadata and produced the same counts/outcomes. Copies of both runs are under `/tmp/builder-1969/proof-20261008/`.
+
+Filed and linked [#1989](https://github.com/pyrycode/pyrycode-mobile/issues/1989) for diagnosis/repair of the repeated attention failure. It is an implementation dependency, not a split child. Repository ownership of the defect remains unproven; no mobile workaround, assertion change, timeout increase or ignored method was introduced. This proof-only ticket waits for that repair. The fresh full dispatcher live gate and its explicit passes remain unverified.
+
+Builder lint, debug assembly and Android-test compilation passed. Production, tests and scripts remain identical to `origin/main`.
+
+## Restored focused proof
+
+2026-10-09: The unchanged pair passed together through `scripts/android-test-gate.py live --tests` on mobile `e42c98f786c50eadaf9a864230069846326eb5ed`, daemon `a39c72739eb2e811708a67b08906614a4316b834` (`vcs.modified=false`), Claude Code 2.1.280 and managed `pixel2Api33Atd`. Exit 0: 2 executed, 2 passed, 0 failed/errors, 0 skipped. Both `interactiveTurn_modelChange_roundTripsAndStaysPerConversation` and `interactiveTurn_attentionDot_followsARealTurn` explicitly passed with their inherited assertions and timeouts unchanged.
+
+Fresh counted XML: `build/dispatcher-tests/live-659mf9c_/dispatcher.xml`, SHA-256 `b54d8a88af7ee5aa72ba4168870ca593a0aeac3fa901bc5ca265ffcf500ea773`. The same directory retains raw device XML and per-test logcat. This resolves the focused failure recorded above; #1989 is closed. Full-suite acceptance remains pending on this ticket's fresh dispatcher gate after verification, with `## Live tests` set to `all` and `needs-real-claude` retained. That gate must report actual mobile/daemon revisions, full executed/failed/skipped counts and both named passes.
+
+## Post-verifier full dispatcher evidence
+
+2026-10-09: The fresh full dispatcher gate ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on
+mobile `742c465059adf89f0b58d5d42b7e1b3b728684bf` merged with main `31d44af7c5cc`.
+The method-level JUnit gate report `2026-10-09T09-47-46-665Z` and
+[issue gate comment](https://github.com/pyrycode/pyrycode-mobile/issues/1969#issuecomment-6078717180)
+record exit 0 in 15m 17s: 65 executed, 65 passed (0 flaky), 0 failed, 0 skipped.
+Both inherited methods explicitly executed and passed with no scenario, helper,
+assertion or timeout edits. This is full-suite execution, separate from the
+focused pair above. The JUnit report omits daemon metadata; the
+[verifier recovered the full-run evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1999#issuecomment-6078841215)
+from matching retained stderr, line 96 of
+`2026-10-09T09-47-46-665Z_real-claude-gate_#1969.stderr.log`: daemon
+`a536d17b1e182fb5398a5458e3afe6079b37a510`, selected binary
+`real-claude-gate-1969/build/e2e-bin/pyry`. Adjacent lines record the mobile
+revision, Claude Code 2.1.280 and both fixture daemon launches. Full main revision:
+`31d44af7c5cc835b002707d3fd526e9d7e1cb960`.
+
+The verifier confirmed these repair merges are ancestors of the executed daemon:
+
+- #3017: `b799ba5afb8d86b79f1d1eb20c737c15a632db5f`.
+- #3026: `425d7f5e4ee02deb7bd3c7103c996c48754898e0`.
+- #3029: `a39c72739eb2e811708a67b08906614a4316b834`.
+
+The retained method-level JUnit report has 65 testcase leaves, 65 executed/passed,
+0 failed/errors/skipped; both inherited methods are present once and passed.
+SHA-256: `8d4fe382733e0ec4dd3b411d4719b841bb779d157b8f8e06042492d020cb4c12`.
+The original binary and worktree XML are no longer available; retained execution
+stderr and JUnit evidence resolve the revision handoff. Both acceptance criteria
+are complete. No new test execution occurred during this evidence return, and the
+focused daemon revision was not substituted for the full run's revision. See
+[evergreen evidence](../../e2e-interactive-stream.md#verification-status).

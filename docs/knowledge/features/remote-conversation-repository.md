@@ -277,6 +277,17 @@ Local `ReadPosition` remains the fallback. These repository facts support agreem
 between phone and desktop; viewport eligibility, attention dots and notification
 cancellation belong to the dependent UI slices.
 
+`latestEntryId` is the filtered unread watermark, not the highest received durable
+id (#1948). Live and replay receipt and fetched history exclude exactly `turn_state`,
+`stall`, `api_retry`, `compacting` and `session_transition` when raising it, matching
+the daemon's watermark and mark-read clamp. Every other durable type counts,
+including unknown types and malformed payloads with valid identities. A status-only
+page leaves latest unavailable or preserves the held value; original status entries
+and IDs still reach history, replay and read evidence. Daemon list watermarks remain
+authoritative merge inputs. Filtering before the monotonic merge matters: once a
+status tail has raised latest, a lower daemon watermark cannot undo it. Reconnecting
+and fetching history must apply the same filter or the tail returns as unread.
+
 `ConversationListProjection` keeps rows and a conversation-keyed fact ledger in one
 atomic state. List snapshots replace rows while merging each supplied fact by unsigned
 maximum. Both ordinary correlated updates and unsolicited `conversation_updated`
@@ -303,7 +314,7 @@ See [wire validation and confirmation](mobile-protocol-v2-wire-layer.md#daemon-r
 `history_entry_id` claims to the exact row version they produced, across history pages,
 direct live delivery and reconnect replay, including every delta folded into a streaming
 row. Envelope ids, replay `event_id`, a list's latest id and fetched rows never prove
-sight. A valid live id also raises the latest durable id without any viewport. Each
+sight. A valid non-excluded live id raises the unread watermark without any viewport. Each
 entry gets a fact: visible, deliberately nonvisual (state frames, info banners, menus,
 MCP and usage reports, plain background-task lifecycle) or unknown. A malformed or
 unsupported entry, a hole in received ids or a persisted gap stops the checkpoint before
@@ -312,6 +323,35 @@ nonvisual receipt. Live content without an id is held as an unidentified barrier
 by type, normalized timestamp and payload; only an ordinary matching history entry
 clears it, and no extra fetch is made to find it. Valid timestamps are canonicalized on
 both lanes, since `2026-10-07T00:00:00.1234Z` parses to `.123400Z`.
+
+Unread classification and evidence classification are independent. Excluding a
+status type from latest grants no sight and bypasses none of the unknown, malformed,
+missing-identity or receipt-gap barriers. Conversely, a strictly decoded
+`RateLimitedPayloadDto` is understood nonvisual receipt in an interactive session,
+including its benign `allowed` clearing edge and opaque future statuses. Its
+`toReading()` mapper can return null for a valid clearing edge, so mapper nullability
+cannot decide receipt validity. `rate_limited` still raises unread; it extends a
+checkpoint only after foreground presentation of a row. Malformed usage windows
+and non-interactive receipts remain barriers.
+
+Compatible runtime receipts preserve numeric continuity without creating sight (#1989).
+Daemon [#3026](https://github.com/pyrycode/pyrycode/issues/3026) repaired omitted
+`main_turn_opened` IDs by projecting known runtime facts as existing empty info-banner
+receipts with their original IDs and timestamps. Mobile decodes these as nonvisual evidence without a new runtime-type allowance. Removing receipt ID 2 from
+an otherwise valid page still blocks the checkpoint even when stored `gaps` is empty.
+Controlled reproduction established daemon ownership; historical live captures
+lacked IDs, leaving their exact sequence unproven.
+
+Receipt accounting, the exact presented version, client latest and correlated
+confirmation must agree. Daemon [#3029](https://github.com/pyrycode/pyrycode/issues/3029)
+repaired a second mismatch: stored visibility excluded successful `turn_end` from the
+clamp while its unchanged wire payload raised mobile latest. Legacy payloads carry no
+stored visibility, so mobile cannot infer it to repair that disagreement. The repaired
+legacy target uses eligible wire types and validated runtime receipts with mobile’s
+five status exclusions. Completed-reply checkpoint/latest/confirmation is 6/5/5 with runtime enabled,
+5/4/4 disabled. Fetching history or receiving only a receipt sends no read command, and
+sending the qualified request still requires correlated daemon confirmation. See the
+[full live evidence](../../e2e-interactive-stream.md#verification-status).
 
 Live evidence must describe the row the projection actually drew. Re-reducing one
 envelope in isolation is wrong when the fold depends on earlier state or on a locally
@@ -372,6 +412,30 @@ failures. Its two session-rotation regressions exercise repeated `startNewSessio
 `changeWorkspace` calls: assert retained old history ids, an unchanged latest id at
 rotation, and new entries above the checkpoint that can be marked. Clamping tests
 without a session boundary cannot catch a history reset.
+
+The watermark regressions drive both live/replay and correlated history for every
+excluded type, status-only pages, duplicates, reordered/overlapping pages and a
+history reload after reconnect, while retaining original entries and IDs. They also
+require later non-excluded content, including unknown types, to raise latest.
+`ThreadReadClaimsTest.understoodUsageWindowReceiptsExtendPresentationButMalformedWindowsRemainBarriers`
+separately guards decoded clearing edges versus malformed/non-interactive evidence;
+an unread-only assertion would miss a valid receipt that still blocks phone reads.
+
+`ThreadReadRuntimeReceiptsTest` decodes the serialized real-store examples from
+[daemon PR #3034](https://github.com/pyrycode/pyrycode/pull/3034) in
+`app/src/test/resources/daemon-contract/runtime-read-{enabled,disabled}.json` through
+the real DTO, ordered reducer and projection. Its probes are
+`runtimeReceiptRepairsTheDiagnosedHoleWithoutChangingContent`,
+`invariantOnlyUnderstoodIdentifiedReceiptsAccountForTheHole`,
+`invariantReplayAndOverlappingHistoryPreserveExactClaims` and
+`invariantMissingLiveIdentityNeedsHistoryAndFreshConnectionHasNoSight`.
+They retain omitted-ID, unknown/malformed, stored-gap, exact-version, replay,
+missing-identity and fresh-connection barriers. Reordering moves the nonvisual receipt;
+arbitrarily reversing content lifecycle entries is not an equivalent history page.
+`ConversationReadMarksTest.runtimeReceiptHistoryRequiresCorrelatedDaemonReadConfirmation`
+exercises both controls through the repository: no command before presentation, no
+confirmation from sending or unrelated replies, clamped read/latest agreement, and
+host/conversation isolation. A checkpoint-only assertion would miss the clamp defect.
 
 ## Related
 

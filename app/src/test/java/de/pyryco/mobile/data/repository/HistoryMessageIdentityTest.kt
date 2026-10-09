@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
@@ -247,7 +248,15 @@ class HistoryMessageIdentityTest {
                 val emissions = mutableListOf<List<ThreadItem>>()
                 val job =
                     backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
-                        CachingConversationRepository(delegate, cache, "host").observeMessages("c").collect { emissions += it }
+                        CachingConversationRepository(
+                            delegate,
+                            cache,
+                            "host",
+                            processingDispatcher = UnconfinedTestDispatcher(),
+                        ).observeMessages("c").collect {
+                            emissions +=
+                                it
+                        }
                     }
                 runCurrent()
                 assertRows(listOf(first), emissions.last())
@@ -258,6 +267,8 @@ class HistoryMessageIdentityTest {
                 live.value = emptyList()
                 runCurrent()
                 assertRows(expected, emissions.last())
+                advanceTimeBy(100)
+                runCurrent()
                 val restored = FileConversationCache(root, UnconfinedTestDispatcher(testScheduler)).readThread("host", "c")
                 assertRows(expected, restored)
                 val reconnected = ThreadProjection()
@@ -296,7 +307,7 @@ class HistoryMessageIdentityTest {
                     object : ConversationRepository by FakeConversationRepository(), ThreadSnapshotSource {
                         override fun observeThreadSnapshot(conversationId: String): Flow<ThreadSnapshot> = live
                     }
-                val repository = CachingConversationRepository(delegate, cache, "host")
+                val repository = CachingConversationRepository(delegate, cache, "host", processingDispatcher = UnconfinedTestDispatcher())
                 val emissions = mutableListOf<List<ThreadItem>>()
                 val job =
                     backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
@@ -350,7 +361,7 @@ class HistoryMessageIdentityTest {
                     object : ConversationRepository by FakeConversationRepository(), ThreadSnapshotSource {
                         override fun observeThreadSnapshot(conversationId: String) = projection.observeSnapshot(conversationId)
                     }
-                val repository = CachingConversationRepository(delegate, cache, "host")
+                val repository = CachingConversationRepository(delegate, cache, "host", processingDispatcher = UnconfinedTestDispatcher())
                 val expected =
                     rows(
                         if (legacyFirst) legacy else legacy.copy(id = "t#0", reconciliationId = "t"),
