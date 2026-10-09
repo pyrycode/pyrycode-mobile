@@ -9,6 +9,7 @@ import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.ui.conversations.thread.fragmentedHistoryFixture
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import org.junit.After
@@ -85,6 +86,16 @@ class HistoryHashCompatibilityTest {
         val expected = rows.mapIndexed { index, row -> row.mergeIdentity() to ULong.MAX_VALUE - index.toULong() }.toMap()
         val positions = expected.mapKeys { (identity, _) -> historyIdentity(identity) }
         assertEquals(expected, rows.receivedUnsignedHistoryOrder(positions))
+    }
+
+    @Test fun fragmentedFixtureIsCanonicalWithoutDependingOnASetupCodecEcho() {
+        val (coverage, rows) = fragmentedHistoryFixture(listOf(0, 17999))
+        assertEquals(18000, coverage.unsignedSpans.size)
+        assertEquals(36000uL, coverage.unsignedSpans.sumOf { it.last - it.first + 1u })
+        assertEquals(listOf("Row 0.", "Row 17999."), rows.map { (it as ThreadItem.MessageItem).message.content })
+        assertEquals(coverage, MobileJson.decodeFromString<HistoryCoverage>(MobileJson.encodeToString(coverage)))
+        assertEquals(historyRowProofs(rows), coverage.proofs)
+        assertEquals(listOf(1uL, 71997uL), coverage.unsignedRowOrder.values.toList())
     }
 
     private fun legacyDigest(text: String) =
