@@ -22,9 +22,12 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasScrollToIndexAction
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTouchInput
@@ -183,14 +186,10 @@ open class ThreadReaderGeometryTest {
         list().performScrollToIndex(12)
         compose.waitForIdle()
         replyCoordinates =
-            compose
-                .onAllNodesWithTag(MESSAGE_BUBBLE_TEST_TAG, useUnmergedTree = true)
-                .fetchSemanticsNodes()
-                .maxBy {
-                    it.layoutInfo.coordinates
-                        .positionInRoot()
-                        .y
-                }.layoutInfo.coordinates
+            bubble("Older row 14.")
+                .assertIsDisplayed()
+                .fetchSemanticsNode()
+                .layoutInfo.coordinates
         olderCoordinates = null
         renderedTops.clear()
         val historyTop = replyCoordinates.positionInRoot().y
@@ -260,15 +259,7 @@ open class ThreadReaderGeometryTest {
         }
         frames(3)
         val top = replyCoordinates.positionInRoot().y
-        olderCoordinates =
-            compose
-                .onAllNodesWithTag(MESSAGE_BUBBLE_TEST_TAG, useUnmergedTree = true)
-                .fetchSemanticsNodes()
-                .map { it.layoutInfo.coordinates }
-                .filter { it.positionInRoot().y < top && it.positionInRoot().y >= 0f }
-                .maxByOrNull { it.positionInRoot().y }
-        assertTrue("an older row must be visible for each gesture case", olderCoordinates != null)
-        olderTop = olderCoordinates?.positionInRoot()?.y ?: 0f
+        captureOlderRow()
         consumedMovement = 0f
         renderedTops.clear()
         renderedOlderTops.clear()
@@ -373,15 +364,7 @@ open class ThreadReaderGeometryTest {
         }
         compose.waitForIdle()
         // The newest reply is the first lazy row. Capture the actual un-clipped layout coordinates.
-        replyCoordinates =
-            compose
-                .onAllNodesWithTag(MESSAGE_BUBBLE_TEST_TAG, useUnmergedTree = true)
-                .fetchSemanticsNodes()
-                .minBy {
-                    it.layoutInfo.coordinates
-                        .positionInRoot()
-                        .y
-                }.layoutInfo.coordinates
+        replyCoordinates = bubble("Reader line 1.").fetchSemanticsNode().layoutInfo.coordinates
         compose.runOnIdle {
             assertTrue("fixture reply must overflow", replyCoordinates.size.height > listState.layoutInfo.viewportSize.height)
             listState.dispatchRawDelta(with(compose.density) { 180.dp.toPx() } - replyCoordinates.positionInRoot().y)
@@ -389,15 +372,7 @@ open class ThreadReaderGeometryTest {
         compose.waitForIdle()
         assertEquals(0, listState.firstVisibleItemIndex)
         assertTrue(listState.firstVisibleItemScrollOffset > 4)
-        olderCoordinates =
-            compose
-                .onAllNodesWithTag(MESSAGE_BUBBLE_TEST_TAG, useUnmergedTree = true)
-                .fetchSemanticsNodes()
-                .map { it.layoutInfo.coordinates }
-                .filter { it.positionInRoot().y < replyCoordinates.positionInRoot().y && it.positionInRoot().y >= 0f }
-                .maxByOrNull { it.positionInRoot().y }
-        assertTrue("an older row must be visible above the reply", olderCoordinates != null)
-        olderTop = olderCoordinates?.positionInRoot()?.y ?: 0f
+        captureOlderRow()
         compose.mainClock.autoAdvance = false
     }
 
@@ -407,10 +382,27 @@ open class ThreadReaderGeometryTest {
         frames(45)
     }
 
+    private fun captureOlderRow() {
+        // Prefetched lazy items retain coordinates; select the displayed keyed fixture row, not a y maximum.
+        olderCoordinates =
+            bubble("Older row 25.")
+                .assertIsDisplayed()
+                .fetchSemanticsNode()
+                .layoutInfo.coordinates
+        olderTop = olderCoordinates?.positionInRoot()?.y ?: 0f
+        assertTrue("an older row must be above the reply", olderTop < replyCoordinates.positionInRoot().y)
+    }
+
+    private fun bubble(text: String) =
+        compose.onNode(hasTestTag(MESSAGE_BUBBLE_TEST_TAG) and hasAnyDescendant(hasText(text)), useUnmergedTree = true)
+
     private fun assertFrames(top: Float) {
         assertTrue("must observe rendered reveal frames", renderedTops.isNotEmpty())
+        if (olderCoordinates != null) assertTrue("must observe the displayed older row", renderedOlderTops.isNotEmpty())
         renderedTops.forEachIndexed { frame, actual -> assertEquals("rendered frame $frame", top, actual, 1f) }
-        renderedOlderTops.forEachIndexed { frame, actual -> assertEquals("older row rendered frame $frame", olderTop, actual, 1f) }
+        renderedOlderTops.forEachIndexed { frame, actual ->
+            assertEquals("older row rendered frame $frame", olderTop, actual, 1f)
+        }
     }
 
     private fun list() = compose.onNode(hasScrollToIndexAction())
