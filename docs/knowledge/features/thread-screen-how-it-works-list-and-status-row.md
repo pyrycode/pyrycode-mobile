@@ -67,7 +67,7 @@ overflowing stream fills the viewport regardless of arrangement, so scrolling is
 list still reports `FollowNewestEnd`'s first-visible index and offset as 0, and the oldest row still
 sits at the viewport's far edge for `isNearOldestEnd`, so neither reader needed a change. Covered by
 `ThreadScreenShortStreamTest` (see [Thread screen — testing § Short-stream top anchoring
-(#1509)](thread-screen-testing.md#short-stream-top-anchoring-1509)).
+(#1509)](thread-screen-testing-coverage.md#short-stream-top-anchoring-1509)).
 
 **Source-list reversal is required.** `observeMessages` returns items chronologically ascending (index 0 = oldest), but `LazyColumn(reverseLayout = true)` draws the **first** item at the bottom. For "newest at the bottom" the screen reverses before passing — `rows.asReversed()` (pre-#782: `state.items.asReversed()`) is the Kotlin stdlib O(1) view (no allocation, no copy), and it's a `List<ThreadRow>` so it slots into `itemsIndexed(...)` directly. Keys are computed from the underlying rows, so the view's reversed index is irrelevant for identity.
 
@@ -400,7 +400,7 @@ When no call qualifies, it returns `null` and the existing ladder applies: think
 when the daemon reports thinking, working while busy, or the idle glyph when no other
 arm applies. Background tool rows alone do not select the running-tool arm. The screen
 also gates the selected call on `isBusy`; this display filter does not change daemon busy
-state. See [regression coverage](thread-screen-testing.md#testing).
+state. See [regression coverage](thread-screen-testing-coverage.md#testing).
 
 **Local acceptance stages (#1641).** `MainActivity` collects `ThreadViewModel.localSendStage` and passes
 it to `ThreadScreen`. Sending opens immediately before the repository send, including attachment-bearing

@@ -3254,12 +3254,18 @@ class InteractiveStreamE2ETest {
             awaitQueuedRow(queuedPrompt)
             val queued =
                 runBlocking {
-                    peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { q -> q.any { it.text == queuedPrompt } }
+                    withTimeoutDiagnostic({ "Send now: peer never observed the queued entry" }) {
+                        peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { q -> q.any { it.text == queuedPrompt } }
+                    }
                 }.single { it.text == queuedPrompt }
             val send = hasContentDescription("Send now") and hasAnyAncestor(queuedRow(queuedPrompt))
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(send).fetchSemanticsNodes().isNotEmpty() }
             composeTestRule.onNode(send).performClick()
-            runBlocking { peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { q -> q.none { it.queuedMsgId == queued.queuedMsgId } } }
+            runBlocking {
+                withTimeoutDiagnostic({ "Send now: peer never observed queue removal after the pointer tap" }) {
+                    peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { q -> q.none { it.queuedMsgId == queued.queuedMsgId } }
+                }
+            }
             val ended =
                 allowPromptsUntil(
                     peer,
