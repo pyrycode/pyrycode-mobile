@@ -40,7 +40,9 @@ All transition and geometry bookkeeping is owned by the remembered list composit
 | Multiple blocks finish, or another block stays running | `followerCompletion_withAnotherRunningBlock_keepsNewestEveryFrame`, `multipleCompletions_keepStationaryReader` |
 | Moving block is bottom-most visible with collapse enabled or disabled | `visibleCompletion_preservesStationaryRows_collapsed`, `visibleCompletion_preservesStationaryRows_uncollapsed` |
 | Moving block is offscreen | `offscreenCompletion_preservesStationaryRows` |
-| Moving block fills the viewport with no visible stationary anchor | `fullViewportCompletion_fillsVacancyAndClamps` |
+| Moving block fills the viewport with no visible stationary anchor | `fullViewportCompletion_fillsVacancyAndClamps`, `fullViewportCompletion_retainsOlderBoundaryAgainstRemainingBlock` |
+| Multiple blocks finish under a follower | `followerMultipleCompletions_keepNewestEveryFrame` |
+| Stationary anchor grows in the same publication as completion | `visibleCompletion_withStationaryGrowth_preservesTopEveryFrame` |
 | Replayed completion under the same Agent id | screen completion cases repeat terminal state; no second relocation |
 | Anchor changes due to relocation while reader is not following | focused `ThreadListFollowTest` compensation regression; subsequent growth must remain unfollowed |
 | Conversation exit/reopen, rotation and accepted sends | composition-local state resets with list; existing `ThreadScreenFollowTest` restoration/send cases remain passing |
@@ -53,8 +55,15 @@ No I/O or new UI errors. Missing stationary content falls back to the newest end
 
 Write failing real-`ThreadScreen` completion tests first. Use overflowing main history and an early terminal position followed by newer stationary messages, so completion genuinely relocates keyed rows. Capture native View draws at each explicitly advanced frame from update through settlement; assert follower index/offset and stationary pixel coordinates with a one-physical-pixel bound. Cover collapse on/off, offscreen moves, moving bottom-most anchors, full-viewport blocks and another running block. Add Android-visible overrides selecting the same shared methods into the routine UI gate, as #1942 does; platform frame proof is explicitly required by acceptance.
 
-Run focused new cases plus existing `BackgroundAgentBlocksTest`, `BackgroundAgentBlocksScreenTest`, `ThreadListFollowTest`, `ThreadScreenFollowTest` and #1942 geometry tests. Run focused Android probes, the relevant scripted `stream` scenario, lint, assembly, Android-test compilation, formatting and final pre-verify after merging main. Preserve both existing E2E methods. Dispatcher owns fresh full live/scripted gates and their named-method executed/failed/skipped evidence; list `all` under PR Live tests to require the full live acceptance gate.
+Run focused new cases plus existing `BackgroundAgentBlocksTest`, `BackgroundAgentBlocksScreenTest`, `ThreadListFollowTest`, `ThreadScreenFollowTest` and #1942 geometry tests. Run focused Android probes, the relevant scripted `background-agent` scenario, lint, assembly, Android-test compilation, formatting and final pre-verify after merging main. Preserve both existing E2E methods. Dispatcher owns fresh full live/scripted gates and their named-method executed/failed/skipped evidence; list `all` under PR Live tests to require the full live acceptance gate.
 
 ## Open Questions
 
-- Validate the anchor-transfer offset against real reversed-list layout and both platforms before handoff; record any changed design under Revisions.
+- Resolved: logical offsets transfer correctly on both platforms. Ten named viewport methods each executed once with zero failures or skips on JVM and managed Android 13, including full-viewport boundary reuse and simultaneous stationary growth. All 79 focused placement, follow and streaming-geometry methods passed.
+
+## Revisions
+
+- 2026-10-09: Capture the old lazy layout in `relocationFor` during screen composition without snapshot observation, then apply `ThreadAnchorTransfer` in the side effect before measurement. Lazy item offsets remain logical, increasing toward the older end, even under reverse layout; transfer uses their negation. Exclude wholly newest-side chrome-hidden rows from stationary anchor selection. The initial negative control executed seven cases, failing four, including loss of visible stationary membership and an unfilled full-viewport vacancy.
+- 2026-10-09: The relocation generation is snapshot-observable to the follow collector, which ignores intermediate layout bookkeeping while transfer is pending. Publish the new generation in placement so following consumes a complete corrected layout rather than treating a different key or a clamp as reader input. Capture a selected stationary row's old height in the transfer and apply its measured height delta along with padding correction: the simultaneous-growth probe failed before this integration. Completion with unchanged displayed key order needs no transfer and leaves #1942 compensation intact.
+
+- 2026-10-09: Preserve named-method platform evidence at `/tmp/builder-1955/viewport-jvm.xml` and `/tmp/builder-1955/viewport-device.xml` before the scripted scenario overwrites the device result directory. Each contains the ten viewport methods, 10 executed, 0 failed, 0 skipped. Final written work remains below 800 lines, with one new internal production type and one screen consumer.

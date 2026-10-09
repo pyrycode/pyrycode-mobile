@@ -4,7 +4,9 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.platform.LocalDensity
@@ -34,6 +36,7 @@ internal data class ListFrame(
     val scrolling: Boolean = false,
     val promptRows: Int = 0,
     val compensatedScroll: Int = 0,
+    val relocationVersion: Int = 0,
 )
 
 internal data class FollowStep(
@@ -65,6 +68,7 @@ internal fun followStep(
     val atEnd = current.anchorIndex == 0 && current.anchorOffset <= tolerancePx
     if (previous == null) return FollowStep(following = atEnd, pin = false)
     if (previous.anchorIndex < previous.promptRows && current.promptRows == 0) return FollowStep(following = true, pin = true)
+    if (previous.relocationVersion != current.relocationVersion) return FollowStep(following = following, pin = false)
     if (previous.anchorKey != current.anchorKey ||
         current.anchorOffset - previous.anchorOffset != current.compensatedScroll - previous.compensatedScroll
     ) {
@@ -114,9 +118,11 @@ internal fun FollowNewestEnd(
                 scrolling = listState.isScrollInProgress,
                 promptRows = promptRowCount,
                 compensatedScroll = viewport.compensatedScroll,
+                relocationVersion = viewport.relocationVersion,
             )
         }.distinctUntilChanged()
             .collect { frame ->
+                if (viewport.relocationPending) return@collect
                 val step = followStep(previous, frame, follow.following, tolerancePx)
                 previous = frame
                 follow.following = step.following
@@ -144,6 +150,13 @@ private suspend fun pinToNewest(listState: LazyListState) {
     }
 }
 
+internal data class ThreadAnchorTransfer(
+    val index: Int,
+    val offset: Int,
+    val key: Any? = null,
+    val height: Int = 0,
+)
+
 /**
  * Reverse layout holds an item's bottom; a history reader needs its top held instead. Capture the
  * size delta during item measurement, before a shrink can move the anchor to another item. Apply
@@ -155,15 +168,114 @@ internal class ThreadListViewport(
     var following = true
     var compensatedScroll = 0
         private set
+    var relocationVersion by mutableIntStateOf(0)
+        private set
+    private var previousRows = emptyList<ThreadRow>()
+    private var previousBlocks = emptyList<ThreadRow>()
+    var relocationPending = false
+        private set
+    private var relocationAnchor: ThreadAnchorTransfer? = null
     private var sizeDelta = 0
     private var beforePadding: Int? = null
     private var correcting = false
+
+    /** Capture old layout without observing it in composition; apply the transfer before the next measure. */
+    fun relocationFor(
+        rows: List<ThreadRow>,
+        blocks: List<ThreadRow>,
+        promptRows: Int,
+    ): ThreadAnchorTransfer? {
+        if (rows === previousRows && blocks === previousBlocks) return null
+        val oldRows = previousRows
+        val oldBlocks = previousBlocks
+        val previouslyRunning =
+            oldBlocks.filterIsInstance<ThreadRow.AgentStartMarker>().filter { !it.finished }.mapTo(
+                HashSet(),
+            ) { it.agentId }
+        val finished =
+            blocks
+                .filterIsInstance<ThreadRow.AgentStartMarker>()
+                .filter {
+                    it.finished && it.agentId in previouslyRunning
+                }.mapTo(HashSet()) { it.agentId }
+        if (finished.isEmpty() || oldRows.map { it.listKey(0) } == rows.map { it.listKey(0) }) return null
+        val movedMessages =
+            oldBlocks
+                .filterIsInstance<ThreadRow.Delivered>()
+                .filter { it.agentBlockId in finished }
+                .mapTo(HashSet()) { it.listKey(0) }
+        val movingKeys =
+            oldRows
+                .filter { row ->
+                    row.listKey(0) in movedMessages || row is ThreadRow.ToolRun && "msg:${row.runId}" in movedMessages
+                }.mapTo(HashSet()) { it.listKey(0) }
+        if (movingKeys.isEmpty()) return null
+        val info = Snapshot.withoutReadObservation { listState.layoutInfo }
+        if (info.visibleItemsInfo.isEmpty()) return null
+        val currentIndices: Map<Any, Int> = rows.asReversed().mapIndexed { index, row -> row.listKey(0) to index + promptRows }.toMap()
+        // Offsets run toward the older end even in reverse layout; rows wholly below zero are behind the composer.
+        val stationary = info.visibleItemsInfo.firstOrNull { it.offset + it.size > 0 && it.key !in movingKeys && it.key in currentIndices }
+        val index: Int
+        val offset: Int
+        if (following) {
+            index = 0
+            offset = 0
+        } else if (stationary != null) {
+            index = currentIndices.getValue(stationary.key)
+            // requestScrollToItem uses the negation of the lazy item's logical offset.
+            offset = -stationary.offset
+        } else {
+            // The viewport is inside the vacated block: its older boundary belongs to the next stationary row.
+            val oldReversed = oldRows.asReversed()
+            val oldestMoving = info.visibleItemsInfo.filter { it.key in movingKeys }.maxByOrNull { it.index }
+            val oldIndex = oldReversed.indexOfFirst { it.listKey(0) == oldestMoving?.key }
+            val olderKey =
+                oldReversed
+                    .drop(
+                        oldIndex + 1,
+                    ).firstOrNull { it.listKey(0) !in movingKeys && it.listKey(0) in currentIndices }
+                    ?.listKey(0)
+            index = olderKey?.let { currentIndices[it] } ?: 0
+            offset =
+                if (olderKey == null || oldestMoving == null) {
+                    0
+                } else {
+                    -oldestMoving.offset - oldestMoving.size
+                }
+        }
+        return if (!following &&
+            stationary != null
+        ) {
+            ThreadAnchorTransfer(index, offset, stationary.key, stationary.size)
+        } else {
+            ThreadAnchorTransfer(index, offset)
+        }
+    }
+
+    fun onRowsChanged(
+        rows: List<ThreadRow>,
+        blocks: List<ThreadRow>,
+        transfer: ThreadAnchorTransfer?,
+    ) {
+        previousRows = rows
+        previousBlocks = blocks
+        if (transfer == null) return
+        sizeDelta = 0
+        relocationPending = true
+        relocationAnchor = transfer
+        listState.requestScrollToItem(transfer.index, transfer.offset)
+        RelayLog.d { "event=thread_agent_relocation following=$following" }
+    }
 
     fun onRowMeasured(
         key: Any,
         height: Int,
     ) {
         if (following || correcting) return
+        if (relocationPending) {
+            relocationAnchor?.takeIf { it.key == key }?.let { sizeDelta = height - it.height }
+            return
+        }
         val anchor =
             Snapshot.withoutReadObservation {
                 listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == listState.firstVisibleItemIndex }
@@ -173,6 +285,11 @@ internal class ThreadListViewport(
 
     fun onPositioned() {
         if (correcting) return
+        if (relocationPending) {
+            relocationPending = false
+            relocationAnchor = null
+            relocationVersion++
+        }
         val padding = listState.layoutInfo.beforeContentPadding
         val delta = if (following) 0 else sizeDelta + padding - (beforePadding ?: padding)
         sizeDelta = 0
