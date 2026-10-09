@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.verification.FullRetentionTest
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -20,6 +21,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import org.junit.experimental.categories.Category
 import org.junit.rules.TemporaryFolder
 import kotlin.time.Duration.Companion.minutes
 
@@ -429,7 +431,9 @@ class UnsignedHistoryCacheTest {
             assertTrue(restored.unsignedUnknown)
         }
 
-    @Test fun retentionInvariant_wrapperTrimAndLaterStateCannotRestoreMaximumClaimOrWalkStop() =
+    @Category(FullRetentionTest::class)
+    @Test
+    fun retentionInvariant_wrapperTrimAndLaterStateCannotRestoreMaximumClaimOrWalkStop() =
         runTest(timeout = 3.minutes) {
             val old = page(ULong.MAX_VALUE)
             val held = rows(old)
