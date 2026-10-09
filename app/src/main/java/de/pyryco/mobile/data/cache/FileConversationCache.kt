@@ -824,7 +824,14 @@ private fun ThreadItem.toRecord(): CachedThreadRow =
     }
 
 private fun CachedThreadRow.toDomain(): ThreadItem {
-    require(listOfNotNull(message, boundary, banner, compaction, refusal, stopped).size == 1) { "thread cache row must be one kind" }
+    var kinds = 0
+    if (message != null) kinds++
+    if (boundary != null) kinds++
+    if (banner != null) kinds++
+    if (compaction != null) kinds++
+    if (refusal != null) kinds++
+    if (stopped != null) kinds++
+    require(kinds == 1) { "thread cache row must be one kind" }
     if (message != null) {
         return ThreadItem.MessageItem(
             Message(

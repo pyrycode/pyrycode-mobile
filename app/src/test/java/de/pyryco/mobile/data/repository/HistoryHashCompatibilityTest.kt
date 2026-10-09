@@ -33,7 +33,15 @@ class HistoryHashCompatibilityTest {
     }
 
     @Test fun historyIdentityPreservesTheExistingFullLowercaseSha256Encoding() {
-        for (identity in listOf("", "café 🦉", listOf("message", "fragmented-17999"), listOf("delta", "turn", ULong.MAX_VALUE))) {
+        for (identity in listOf(
+            "",
+            "café 🦉",
+            listOf("message", "fragmented-17999"),
+            listOf("delta", "turn", ULong.MAX_VALUE),
+            listOf("é", null, -1, emptyList<String>()),
+            listOf("ab", "c"),
+            listOf("a", "bc"),
+        )) {
             val text =
                 (identity as? List<*>)?.joinToString("") { it.toString().let { value -> "${value.length}:$value" } } ?: identity.toString()
             assertEquals(legacyDigest(text), historyIdentity(identity))

@@ -1,5 +1,6 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import android.os.Debug
 import android.os.SystemClock
 import android.util.Log
 import android.view.View
@@ -38,6 +39,8 @@ import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.ThreadSnapshotSource
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onEach
@@ -52,6 +55,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.coroutines.CoroutineContext
 
 /** Real disk, workers, Android frames and drawn message text; no Compose virtual-time measurement. */
 @RunWith(AndroidJUnit4::class)
@@ -151,7 +155,27 @@ class SavedThreadFirstDrawDeviceTest {
         delegate: HeldNewest,
         delayMs: Long = 0,
     ): CachingConversationRepository {
-        val disk = FileConversationCache(root)
+        val measuredIo =
+            object : CoroutineDispatcher() {
+                override fun dispatch(
+                    context: CoroutineContext,
+                    block: Runnable,
+                ) {
+                    Dispatchers.IO.dispatch(context) {
+                        val started = SystemClock.elapsedRealtimeNanos()
+                        val cpu = Debug.threadCpuTimeNanos()
+                        try {
+                            block.run()
+                        } finally {
+                            Log.i(
+                                "SavedThreadCacheWorker",
+                                "event=cache_worker_run wall_ms=${(SystemClock.elapsedRealtimeNanos() - started) / 1_000_000} cpu_ms=${(Debug.threadCpuTimeNanos() - cpu) / 1_000_000}",
+                            )
+                        }
+                    }
+                }
+            }
+        val disk = FileConversationCache(root, measuredIo)
         val measured =
             object : ConversationCache by disk {
                 override suspend fun readThread(

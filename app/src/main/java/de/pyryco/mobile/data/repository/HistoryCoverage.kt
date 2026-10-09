@@ -490,7 +490,18 @@ internal fun historyIdentity(
 ): String = historyHash(historyIdentityText(identity), digest)
 
 private fun historyIdentityText(identity: Any): String =
-    (identity as? List<*>)?.joinToString("") { value -> value.toString().let { "${it.length}:$it" } } ?: identity.toString()
+    if (identity is List<*>) {
+        buildString {
+            identity.forEach { value ->
+                val text = value.toString()
+                append(text.length)
+                append(':')
+                append(text)
+            }
+        }
+    } else {
+        identity.toString()
+    }
 
 internal fun ThreadItem.historyKeys(): List<String> {
     val segment = (this as? ThreadItem.MessageItem)?.message?.segment

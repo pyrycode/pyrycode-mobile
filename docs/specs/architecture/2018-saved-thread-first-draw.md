@@ -105,6 +105,16 @@ Exclusive focused execution at `4d1026e74` still failed held-newest fragmented f
 
 For the two thread-document writers, encode the same `CachedThread` serializer/configuration directly to a buffered UTF-8 temporary-file stream, close it, then perform the existing atomic move. The shared atomic-write helper still handles directory creation and commit; other document writers retain their existing text encoding. This eliminates whole-document string/byte buffers during large thread saves and preserves field names, schema/version, row order, proofs, retention, error classification and atomic replacement. Existing `HistoryHashCompatibilityTest` verifies canonical persisted row hashes, including multibyte text; the full cache writer/unsigned claim regression selection already passed before the change. Stream decoding remains superseded by the faster typed string parser. No new dependency, public signature or timer/fixture change.
 
+### 2026-10-10 — Remove per-row identity formatting temporaries
+
+At `53aa7eb90`, exclusive streamed-write execution still failed fragmented offline: 1052/1361/1560/1668 ms cumulative; cache 2/464/177/39/267 ms. Retain exit-1, one-executed/failed fresh XML timestamp `2026-10-09T22:44:52` under `/tmp/builder-2018/streamed-write-miss/`. Whole-document write buffers disappeared, but the remaining read/validation/proof path still allocates heavily.
+
+Build the existing length-prefixed identity text directly in one string builder rather than a formatted temporary string for each identity part; preserve UTF-16 lengths and every scalar/null/list conversion. Expanded `HistoryHashCompatibilityTest` vectors (null/nested empty list, Unicode, signed/unsigned extremes and ambiguous concatenations) passed before the change. Count nullable row kinds directly instead of allocating a six-element array and filtered list on every row. Keep the same exactly-one-kind rejection and all existing cache rejection tests. No public signature, hash encoding, kind semantics, fixture or timer changes; total forecast remains under 700 written lines.
+
+### 2026-10-10 — Distinguish worker CPU from elapsed restore time
+
+Add content-free wall/CPU diagnostics around the existing IO dispatcher's runnable in `SavedThreadFirstDrawDeviceTest.repository`, delegated to `Dispatchers.IO` with the original context and cancellation behavior. Android `Debug.threadCpuTimeNanos` measures CPU spent on the same worker; monotonic elapsed time includes allocation GC and scheduling delays. It is diagnostic evidence, never the acceptance clock: `Probe.start`, all four cumulative phase markers, exact viewport/committed-frame checks, fixtures, cold cache/repository instances, ask counts, 1000 ms assertion and 3000 ms negative control remain unchanged. No job, scope, test retry or artificial delay is added. The device-only reason remains real disk/worker/committed Android frames. Use this measurement to resolve the large variation across restore phases before further changes.
+
 ## Documentation handoff
 
 - Pending documentation stage: `docs/knowledge/features/conversation-cache-layout.md`, Thread document readers — exact byte-array retention, bounded fresh-byte comparison and direct typed decoding with independent optional-metadata fallback; unchanged format, proofs and invalidation.
