@@ -2,12 +2,16 @@ package de.pyryco.mobile.data.cache
 
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.HistoryCoverage
 import de.pyryco.mobile.data.repository.HistoryPosition
 import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotSame
@@ -96,6 +100,29 @@ class DecodedThreadRestoreTest {
             root.walkTopDown().single { it.isFile }.writeText("broken")
             assertEquals(emptyList<ThreadItem>(), cache.readThread("host", "c"))
             assertNull(cache.readHistoryPosition("host", "c"))
+        }
+
+    @Test fun metadataBeforeRowsAndUnknownFieldsKeepOptionalFailureIsolated() =
+        runTest {
+            val root = temporary.newFolder()
+            FileConversationCache(root).writeThread("host", "c", listOf(row())).getOrThrow()
+            val document = root.walkTopDown().single { it.isFile }
+            val stored = MobileJson.parseToJsonElement(document.readText()).jsonObject
+            for (history in listOf(JsonPrimitive("bad"), JsonObject(mapOf("atStart" to JsonPrimitive("bad"))))) {
+                document.writeText(
+                    JsonObject(
+                        linkedMapOf(
+                            "history" to history,
+                            "future" to JsonObject(mapOf("nested" to JsonPrimitive(true))),
+                            "rows" to stored.getValue("rows"),
+                            "version" to stored.getValue("version"),
+                        ),
+                    ).toString(),
+                )
+                val reader = FileConversationCache(root)
+                assertEquals(listOf(row()), reader.readThread("host", "c"))
+                assertNull(reader.readHistoryPosition("host", "c"))
+            }
         }
 
     @Test fun removedHostAndMissingDocumentCannotResurrectRetainedContent() =

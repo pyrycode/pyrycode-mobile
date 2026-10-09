@@ -271,9 +271,11 @@ class FileConversationCache(
         val text = document.readText()
         decodedThread?.takeIf { it.document == document && it.text == text }?.let { return it }
         decodedThread = null
-        val raw = MobileJson.parseToJsonElement(text) as? JsonObject ?: throw IllegalArgumentException("invalid thread document")
-        val rows = validatedRows(decodeStoredRows(raw))
-        val stored = decodeHistory(raw["history"], rows)
+        // Decode row records directly; only optional metadata needs an intermediate JSON tree.
+        val record = MobileJson.decodeFromString<CachedThreadRead>(text)
+        require(record.version == VERSION) { "unsupported conversation cache version" }
+        val rows = validatedRows(CachedThread(record.version, record.rows))
+        val stored = decodeHistory(record.history, rows)
         val history = stored?.copy(coverage = stored.coverage?.retainedBy(rows))?.toDomain()
         return DecodedThread(document, text, rows, history).also { decodedThread = it }
     }
@@ -561,6 +563,14 @@ private data class CachedThread(
     val version: Int,
     val rows: List<CachedThreadRow>,
     val history: CachedHistoryPosition? = null,
+)
+
+/** Read rows directly while leaving malformed optional metadata independent of row readability. */
+@Serializable
+private data class CachedThreadRead(
+    val version: Int,
+    val rows: List<CachedThreadRow>,
+    val history: JsonElement? = null,
 )
 
 /** [CachedThread] without its rows: the row writer reads only the position it keeps (#1354). */

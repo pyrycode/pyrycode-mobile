@@ -393,8 +393,12 @@ data class HistoryCoverage(
     }
 
     internal fun unsignedPositions(): Map<String, ULong> =
-        unsignedRowOrder.toMutableMap().apply {
-            legacyKeys.forEach { (key, alias) -> unsignedRowOrder[key]?.let { put(alias, maxOf(get(alias) ?: 0u, it)) } }
+        if (legacyKeys.isEmpty()) {
+            unsignedRowOrder
+        } else {
+            unsignedRowOrder.toMutableMap().apply {
+                legacyKeys.forEach { (key, alias) -> unsignedRowOrder[key]?.let { put(alias, maxOf(get(alias) ?: 0u, it)) } }
+            }
         }
 
     internal fun positions(): Map<String, Long> = unsignedPositions().mapNotNull { (key, id) -> id.signedId()?.let { key to it } }.toMap()
@@ -468,6 +472,12 @@ private fun ULong.signedId(allowZero: Boolean = false): Long? =
     takeIf { (allowZero || it > 0u) && it <= Long.MAX_VALUE.toULong() }?.toLong()
 
 internal fun historyIdentity(identity: Any): String = historyHash(historyIdentityText(identity))
+
+/** A synchronous restore batch may reuse a digest; digest resets after each independent identity. */
+internal fun historyIdentity(
+    identity: Any,
+    digest: MessageDigest,
+): String = historyHash(historyIdentityText(identity), digest)
 
 private fun historyIdentityText(identity: Any): String =
     (identity as? List<*>)?.joinToString("") { value -> value.toString().let { "${it.length}:$it" } } ?: identity.toString()

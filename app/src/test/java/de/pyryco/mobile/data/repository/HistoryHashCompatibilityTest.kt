@@ -72,6 +72,13 @@ class HistoryHashCompatibilityTest {
         assertSame(coverage, coverage.retainedBy(rows))
     }
 
+    @Test fun restoredOrderResolvesIndependentHashesWithoutLosingUnsignedPositions() {
+        val (_, rows) = fragmentedHistoryFixture((0 until 20).toList())
+        val expected = rows.mapIndexed { index, row -> row.mergeIdentity() to ULong.MAX_VALUE - index.toULong() }.toMap()
+        val positions = expected.mapKeys { (identity, _) -> historyIdentity(identity) }
+        assertEquals(expected, rows.receivedUnsignedHistoryOrder(positions))
+    }
+
     private fun legacyDigest(text: String) =
         MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8)).joinToString("") {
             "%02x".format(it)
