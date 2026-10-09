@@ -22,7 +22,7 @@ Read design context and screenshot: dark radial background, left/right message b
 
 ## Context
 
-At base `5133aa796352a5136df426979ab0634e8a554140`, the whole device class passed (2 executed, 2 passed, zero failures/skips), drawing fragmented fresh instances at 850/762 ms. The named method alone then failed (1 executed, 0 passed, 1 failed, zero skips): fragmented offline first open restored/snapshotted/completed/drew at 954/1325/1579/1722 ms. Fresh XML and logcat are retained under `/tmp/builder-2018/baseline-isolated/`. Allocation-blocking GC occurred in that interval. Negative-control-first process warming therefore hides insufficient allocation margin; the bound and probe endpoint remain valid. No decision record is required.
+At base `5133aa796352a5136df426979ab0634e8a554140`, the whole device class passed (2 executed, 2 passed, zero failures/skips), drawing fragmented fresh instances at 850/762 ms. The named method alone then failed (1 executed, 0 passed, 1 failed, zero skips): fragmented offline first open restored/snapshotted/completed/drew at 954/1325/1579/1722 ms. Fresh XML and logcat are retained under `/tmp/builder-2018/baseline-isolated/`. Allocation-blocking GC occurred in that interval. The differing outcomes expose insufficient allocation margin; the bound and probe endpoint remain valid. No decision record is required.
 
 ## Design
 
@@ -56,3 +56,44 @@ The existing isolated first-draw method is the observed red test. Add cache comp
 ## Open Questions
 
 - Which synchronous cache phase dominates the reproduced restore interval? Resolve with fresh diagnostics before the repair and record the exact replacement contract in Revisions.
+
+## Revisions
+
+### 2026-10-10 — Measured restore allocation repair
+
+The instrumented isolated run failed on fragmented held-newest first open at 1476 ms (restore/snapshot/content 758/1157/1337 ms). Cache phases measured read/decode/row-validation/metadata/proofs at 45/139/77/210/192 ms. The prior offline opening passed at 906 ms, but even its retained-decode reopen took 937 ms. The raw metadata tree followed by typed coverage consumes substantial restore time and allocations, and four full `readText` calls allocate whole-document buffers even when only comparing unchanged bytes. Fresh evidence is under `/tmp/builder-2018/diagnosis/`; exit 1, one executed/failed, zero passed/skipped.
+
+Decode the usual valid document directly as the existing `CachedThread`; on serialization failure, use the existing `CachedThreadRead`/raw-metadata fallback. Validate rows before accepting history, independently catch metadata structural failure, and retain all content proof checks. Missing legacy `spans` remains compatible through that fallback. For a retained decode at the same path, compare the entire freshly opened document text against the held text through a fixed-size character buffer; return the held value only after matching all characters and EOF. A mismatch retires it and freshly reads/decodes the current document. This preserves the existing UTF-8 `readText` interpretation and freshness contract while avoiding whole-document temporary strings on unchanged reads. No file length or timestamp participates, and no first-open fixture is warmed.
+
+Add regressions for fully typed unsigned coverage (including maximum unsigned ids), stale direct proofs, legacy omitted spans, structural metadata rejection, and a same-length replacement whose difference crosses the comparison buffer boundary. Keep the observed red device probe and all measurement/fixture assertions unchanged. One production file, no exported declarations or signature/call-site updates; forecast remains below 500 written lines.
+
+### 2026-10-10 — Remove first-decode document string
+
+The complete class still missed: fragmented offline first open drew at 2058 ms (restore/snapshot/content 1323/1727/1877 ms), despite the isolated pass. Cache read/decode/validation/metadata/proofs were 84/534/216/108/281 ms, and GC reclaimed whole-document large objects. Retain this miss under `/tmp/builder-2018/repair-class-miss/`; exit 1, two executed, one passed/one failed, zero skips. The negative control still rejected its 3640 ms draw.
+
+Keep one exact document **byte array**, decode it through the installed kotlinx-serialization JSON stream API and compare freshly opened bytes through a fixed-size byte buffer before reuse. This eliminates the additional whole-document UTF-16 string on valid first restore and its subsequent retention. Serialization failure still uses the prior UTF-8 text/raw-metadata fallback; no disk encoding or writer changes. Path plus all bytes plus EOF establish freshness. Add valid whitespace growth/truncation and trailing-second-document rejection controls, retaining the existing multibyte boundary/replacement tests. `decodeFromStream` is present in the installed 1.8.1 artifact and its existing serializers remain the authority. No new dependency or exported declaration; still one production file and under 500 written lines.
+
+### 2026-10-10 — Defer unused signed compatibility collections
+
+The streamed reader still missed on isolated fragmented offline first open: 1216/1542/1851/2103 ms cumulative restore/snapshot/content/draw, with cache phases 63/598/114/91/249 ms and repeated allocation GC. Keep the fresh exit-1 XML (one executed/failed, zero passes/skips) under `/tmp/builder-2018/stream-miss/`. The device setup first waited for another managed-device process's AVD lock; that wait is outside the measured interval.
+
+`HistoryCoverage` eagerly constructs signed span/gap/cursor/walk/order/entry collections alongside its unsigned authoritative collections, even when the restore pipeline only consumes unsigned fields. Defer these immutable compatibility views and their span-derived high-water/unknown-edge values with thread-safe `lazy`; preserve their public getter types, signed clipping/filtering, independent copies and exclusion from disk serialization. No consumers migrate and no scheduling changes. Existing signed/unsigned coverage tests plus the new `signedCompatibilityInvariant_restoredAndCopiedViewsStayIndependentAndOffDisk` cover the contract; the unchanged first-draw device probe is the red performance regression. Two production files, still below 500 written lines. Initial plan's one-file repair candidate expands to the second measured allocation source.
+
+### 2026-10-10 — Share typed decoding with metadata writes
+
+Deferring signed views reduced the isolated fragmented offline opening to 920 ms, but held-newest fresh opening still missed at 1297 ms (798/1004/1182 ms cumulative restore/snapshot/content; cache 6/379/122/47/175 ms). Fresh one-executed/failed XML and log are under `/tmp/builder-2018/lazy-miss/`. Before that restore, GC reclaimed millions of temporary objects from the repeated metadata write, and continued during restore. `readThreadRecord`, used by `writeHistoryPosition`, still builds the whole row JSON tree before typed decoding. Share the streamed typed decoder and independent metadata validation between the restore reader and this writer's reread, eliminating that allocation burst while preserving its row/version/coverage checks and exact serialized output. Remove the private single-caller `decodeStoredRows`; no public signature changes. Tests remain the existing writer/metadata compatibility suite and unchanged device probe. Delegated compatibility properties are inherently excluded by serialization; remove their redundant `@Transient` annotations, retaining annotations on stored derived fields.
+
+### 2026-10-10 — Use the faster typed string parser
+
+Sharing the writer decoder did not establish the bound: isolated fragmented offline first open measured 843/1139/1273/1369 ms; cache 3/472/105/54/177 ms. Retain this exit-1, one-executed/failed XML under `/tmp/builder-2018/writer-miss/`. The stream decoder remains the largest phase and has materially higher decode duration than the initial directly typed string decoder. Use the directly typed string parser for the shared decoder while retaining only document bytes after decode. The temporary UTF-8-decoded string is released after construction; unchanged subsequent reads still compare through the bounded buffer. This revision supersedes stream parsing, without reinstating either the metadata/row JSON tree or repeated retained-read strings. No experimental API or dependency remains.
+
+### 2026-10-10 — Validate in place
+
+The directly typed string/shared-writer run still failed: fragmented offline 940/1191/1378/1483 ms cumulative, cache 61/347/155/67/250 ms. Retain its one-executed/failed fresh XML under `/tmp/builder-2018/typed-writer-miss/`. The cache remains the dominant miss, and all its checks stay inside the measured interval. Replace `validatedRows`' filtered/distinct temporary lists with one identity-set pass over the mapped domain rows, preserving every running-tool and kind-specific duplicate rejection. Validate already-normalized unsigned spans in stored order (positive, non-reversed, sorted, disjoint and non-adjacent), and validate each gap directly against its neighbouring spans instead of sorting/merging and allocating zipped collections. The normalized-span/max-endpoint regression ran before implementation; existing cache rejection tests cover every row kind. No lifecycle state, proof policy, disk field, consumer or reject branch is added. Recount including deleted/replaced lines and the diagnostic revisions is about 550 written lines across two production and two test files plus the plan; this exceeds the initial 500-line forecast and remains below the 1600-line one-ticket ceiling.
+
+## Documentation handoff
+
+- Pending documentation stage: `docs/knowledge/features/conversation-cache-layout.md`, Thread document readers — exact byte-array retention, bounded fresh-byte comparison and direct typed decoding with independent optional-metadata fallback; unchanged format, proofs and invalidation.
+- Pending documentation stage: `docs/knowledge/features/thread-screen-testing.md`, Saved-thread first draw — retain the baseline/partial-repair misses, fresh isolated and class timings, and the dispatcher-owned UI gate result when available.
+
+- Pending documentation stage: `docs/knowledge/features/conversation-cache-layout.md`, history coverage — signed compatibility collections are computed once on demand; unsigned disk fields and validation remain authoritative.
