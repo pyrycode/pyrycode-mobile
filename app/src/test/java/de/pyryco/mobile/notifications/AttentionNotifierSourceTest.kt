@@ -26,6 +26,7 @@ import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -50,6 +51,119 @@ class AttentionNotifierSourceTest {
     private val manager get() = app.getSystemService(NotificationManager::class.java)
 
     @Test
+    fun localReplyStillRequiresRawHistoryButNeverSubscribesToBackfill() =
+        withSource { a, _, _ ->
+            a.list(0u, 2u)
+            a.pump.push("assistant_delta", """{"conversation_id":"same","turn_id":"turn","seq":0,"text":"Local reply"}""", 1u)
+            a.pump.historyPayload =
+                """
+                {"entries":[
+                  {"id":2,"type":"turn_end","ts":"$TS","payload":{"conversation_id":"same","turn_id":"turn","stop_reason":"end_turn"}},
+                  {"id":1,"type":"assistant_delta","ts":"$TS","payload":{"conversation_id":"same","turn_id":"turn","seq":0,"text":"Local reply"}}
+                ],"cursor":"older","at_start":false}
+                """.trimIndent()
+            a.end("turn", 2u)
+            runCurrent()
+            assertEquals(
+                "Local reply",
+                shadowOf(manager)
+                    .allNotifications
+                    .single()
+                    .extras
+                    .getString(Notification.EXTRA_TEXT),
+            )
+            assertEquals(
+                setOf("list_conversations", "request_history"),
+                a.pump.sent
+                    .map { it.type }
+                    .toSet(),
+            )
+        }
+
+    @Test
+    fun remoteDecodeDropCannotCertifyLocalReplyTail() = assertDroppedLiveEvidence("assistant_delta")
+
+    @Test
+    fun remoteDecodeDropCannotCertifyLocalToolSeam() = assertDroppedLiveEvidence("tool_use")
+
+    private fun assertDroppedLiveEvidence(type: String) {
+        val before = """{"conversation_id":"same","turn_id":"turn","seq":0,"text":"Before"}"""
+        val after = """{"conversation_id":"same","turn_id":"turn","seq":1,"text":"After"}"""
+        val brokenTail = """{"conversation_id":"same","turn_id":"turn","seq":1}"""
+        val brokenTool = """{"conversation_id":"same","turn_id":"turn","tool_use_id":"tool","input_summary":"target"}"""
+        val broken = if (type == "tool_use") brokenTool else brokenTail
+        withSource { a, _, _ ->
+            a.list(0u, 4u)
+            a.pump.push("assistant_delta", before, 1u)
+            a.pump.push(type, broken, 2u)
+            if (type == "tool_use") a.pump.push("assistant_delta", after, 3u)
+            // A complete history page can recover the dropped live evidence without merging it.
+            a.pump.historyPayload =
+                """
+                {"entries":[
+                  {"id":4,"type":"turn_end","ts":"$TS","payload":{"conversation_id":"same","turn_id":"turn","stop_reason":"end_turn"}},
+                  {"id":3,"type":"assistant_delta","ts":"$TS","payload":$after},
+                  {"id":2,"type":"tool_use","ts":"$TS","payload":{"conversation_id":"same","turn_id":"turn","tool_use_id":"tool","name":"Bash","input_summary":"target"}},
+                  {"id":1,"type":"assistant_delta","ts":"$TS","payload":$before}
+                ],"cursor":"older","at_start":false}
+                """.trimIndent()
+            a.end("turn", 4u)
+            runCurrent()
+            assertEquals(
+                "After",
+                shadowOf(manager)
+                    .allNotifications
+                    .single()
+                    .extras
+                    .getString(Notification.EXTRA_TEXT),
+            )
+            assertEquals(1, a.pump.sent.count { it.type == "request_history" })
+            assertTrue(a.pump.sent.none { it.type == "backfill_since" })
+            val local =
+                requireNotNull(a.repositories.value)
+                    .observeMessages("same")
+                    .first()
+                    .filterIsInstance<de.pyryco.mobile.data.repository.ThreadItem.MessageItem>()
+                    .map { it.message }
+            assertEquals(listOf(if (type == "tool_use") "BeforeAfter" else "Before"), local.map { it.content })
+            assertTrue(local.none { it.isStreaming })
+        }
+    }
+
+    @Test
+    fun historyPreviewFetchDoesNotMergeRowsAdvanceReadFactsOrRequestBackfill() =
+        withSource { a, _, source ->
+            a.list(0u, 2u)
+            a.pump.historyPayload =
+                """
+                {"entries":[
+                  {"id":3,"type":"turn_end","ts":"$TS","payload":{"conversation_id":"same","turn_id":"other","stop_reason":"end_turn"}},
+                  {"id":2,"type":"turn_end","ts":"$TS","payload":{"conversation_id":"same","turn_id":"turn","stop_reason":"end_turn"}},
+                  {"id":1,"type":"assistant_delta","ts":"$TS","payload":{"conversation_id":"same","turn_id":"turn","seq":0,"text":"Recovered reply"}}
+                ],"cursor":"older","at_start":false}
+                """.trimIndent()
+            a.end("turn", 2u)
+            runCurrent()
+            assertEquals(
+                "Recovered reply",
+                shadowOf(manager)
+                    .allNotifications
+                    .single()
+                    .extras
+                    .getString(Notification.EXTRA_TEXT),
+            )
+            assertEquals(
+                setOf("list_conversations", "request_history"),
+                a.pump.sent
+                    .map { it.type }
+                    .toSet(),
+            )
+            assertEquals(1, a.pump.sent.count { it.type == "request_history" })
+            assertEquals(0, requireNotNull(a.repositories.value).observeThreadRowCounts().first()["same"] ?: 0)
+            assertEquals(ConversationReadMarks(0u, 2u), source.currentReadMarks("a", "same"))
+        }
+
+    @Test
     fun peerPushAndListRefreshCancelOnlyTheirHostsPostedNotification() =
         withSource { a, b, source ->
             a.list(0u, 5u)
@@ -72,13 +186,13 @@ class AttentionNotifierSourceTest {
             runCurrent()
             assertTrue(postedTargets().isEmpty())
             assertEquals(
-                setOf("list_conversations"),
+                setOf("list_conversations", "request_history"),
                 a.pump.sent
                     .map { it.type }
                     .toSet(),
             )
             assertEquals(
-                setOf("list_conversations"),
+                setOf("list_conversations", "request_history"),
                 b.pump.sent
                     .map { it.type }
                     .toSet(),
@@ -187,7 +301,7 @@ class AttentionNotifierSourceTest {
             runCurrent()
             val prompt = shadowOf(manager).allNotifications.single()
             assertEquals(
-                app.getString(de.pyryco.mobile.R.string.notification_prompt),
+                "t p",
                 prompt.extras.getString(Notification.EXTRA_TEXT),
             )
             a.list(5u, 6u)
@@ -288,7 +402,7 @@ class AttentionNotifierSourceTest {
             runCurrent()
             assertEquals(setOf(target("a")), postedTargets())
             assertEquals(
-                setOf("list_conversations"),
+                setOf("list_conversations", "request_history"),
                 a.pump.sent
                     .map { it.type }
                     .toSet(),
@@ -438,9 +552,23 @@ class AttentionNotifierSourceTest {
         override val inbound = input.receiveAsFlow()
         val sent = mutableListOf<Envelope>()
         private var id = 1L
+        var historyPayload = """{"entries":[],"cursor":"","at_start":true}"""
 
         override fun send(envelope: Envelope): Boolean {
             sent += envelope
+            if (envelope.type == "request_history") {
+                input.trySend(
+                    Envelope(
+                        id++,
+                        "history_page",
+                        TS,
+                        MobileJson.parseToJsonElement(
+                            historyPayload,
+                        ),
+                        inReplyTo = envelope.id,
+                    ),
+                )
+            }
             return true
         }
 

@@ -235,7 +235,8 @@ Attributed background-agent prose (#1827) is covered at rung 3 by
    their own paragraph below, after the permission-answer / question-answer paragraph. The
    **mute-channel** scenario (#1021) is covered in its own paragraph below, after the background-task
    paragraph. The **background-push-turn-end** and **background-push-prompt** scenarios (#955) are
-   covered in their own paragraph below, after the mute-channel paragraph. The **interrupted-upload**,
+   covered in their own paragraph below, after the mute-channel paragraph; #1725 extends both
+   `InteractiveStreamE2ETest` methods with private reply/action previews and public redaction. The **interrupted-upload**,
    **interrupted-retrieval** and **cross-host-attachment-recovery** scenarios (#1017) are covered in
    their own paragraph below, after the attachments-from-phone / claude-offered-file / peer-attachment
    paragraph.
@@ -1785,7 +1786,10 @@ peer allow the command, so the turn ends while the phone is absent, the daemon's
 relay, FCM wakes the app, `onPushWake` reconnects the host, the missed `turn_end` replays, and the
 notifier posts exactly one turn-completed alert. Sending that alert's own `contentIntent` — exactly what
 the system sends on a tap — opens that conversation's thread, asserted by its run-unique name, the send
-control present and the channel-list marker absent. One real claude turn.
+control present and the channel-list marker absent. Since #1725, peer history for that completed turn
+supplies the expected last assistant segment; the built private notification must contain its cleaned
+reply preview and the public notification must contain only the sanitized title and fixed completion
+body. One real claude turn.
 
 `interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect` proves the exactly-once
 guarantee across a second reconnect inside the same wake window: with the phone already absent, the
@@ -1798,7 +1802,9 @@ There is no observable second notification to await; the scenario sleeps a bound
 reconnect, then asserts there is still
 exactly one notification and that its `postTime` is **unchanged**. A second `notify` for the same tag
 would replace the notification and change its `postTime`, which a bare count cannot see. What this proves
-is the operator-visible outcome — one notification, never re-posted.
+is the operator-visible outcome — one notification, never re-posted. Since #1725, the expected action
+preview comes from the peer's permission modal title and prompt; the private body must match it,
+while the public version retains only the sanitized title and fixed prompt body.
 One real claude turn: the peer's held command. Cleanup cancels the wake watcher, releases the held
 permission and awaits turn completion when available, closes the peer and cancels notifications.
 
@@ -1817,7 +1823,8 @@ deadlines and alert assertions remain unchanged. See
 
 No rung-4 twin: the loopback relay the scripted harness dials cannot send FCM, and
 [#685](https://github.com/pyrycode/pyrycode-mobile/issues/685) already covers synthetic delivery
-deterministically.
+deterministically. #1725's deterministic source and built-notification tests cover preview selection,
+bounded history, lifecycle, sanitization and redaction without adding a scripted FCM scenario.
 
 The **attachments-from-phone**, **claude-offered-file** and **peer-attachment** scenarios (#1016 —
 `interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes`,
@@ -5226,6 +5233,28 @@ records the deterministic real-screen anchor regression's red/JVM/Android eviden
 Live tool rendering does not establish pixel anchoring; that shared Compose method does.
 Documentation ran only the docs guard.
 
+### Private push preview proof (#1725)
+
+The two `InteractiveStreamE2ETest` push methods above retain real wake, one turn per method, thread
+tap and reconnect/unchanged-post-time checks while adding reply/action preview and public-redaction
+assertions. `assertRedactedAlert` recursively inspects public extras: every text leaf must equal the
+sanitized title or fixed body, which also catches partial preview leaks. It checks private visibility,
+private/public titles and bodies, and absence of public ticker, custom views, actions, intents or
+nested public versions. Do not marshal a posted notification to inspect it: Android's posted
+metadata contains Binder objects. Direct inspection keeps the privacy assertion usable on-device.
+
+The dispatcher's [fresh full live PASS](https://github.com/pyrycode/pyrycode-mobile/issues/1725#issuecomment-6080376024)
+on 2026-10-09 ran `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`
+against `feature/1725` at `ae0a305dded0`, merged with `origin/main` at `ce410c62f6f9` in a detached
+worktree. The fresh JUnit report `2026-10-09T11-38-38-541Z_real-claude-gate_#1725.log` records
+**65 executed, 65 passed, 0 failed, 0 skipped** (exit 0, 18m 35s). Both
+`InteractiveStreamE2ETest.interactiveTurn_backgroundTurnEnd_pushPostsOneAlertThatOpensThread` and
+`InteractiveStreamE2ETest.interactiveTurn_backgroundPrompt_pushPostsExactlyOneAlertAcrossReconnect`
+are present and passed. This evidence comes from the full suite, not a separate focused run. The
+report has no daemon-revision annotation. The final verifier's nonblocking Markdown backslash
+hard-break finding remains a [sanitizer limitation](knowledge/features/push-messaging-service.md#private-reply-and-action-previews-1725);
+this live pass does not prove that missing deterministic case.
+
 ## Assumptions to confirm on first live run
 
 The deterministic stream-json contract is defined by the current fakeclaude source and the raw fixtures.
@@ -6030,6 +6059,16 @@ The remaining checks here are specific to a real relay or real Claude execution:
   with a bounded settle instead. See the dedicated paragraph under
   [What rung 3 is made of](#what-rung-3-is-made-of) and [Verification status](#verification-status) for
   both in full.
+
+- **Coverage — extended (#1725):** the two existing `InteractiveStreamE2ETest` background-push
+  methods now assert peer-derived reply/action previews on private notifications and fixed public
+  bodies, preserving wake, tap, reconnect and unchanged-post-time checks with one real turn each.
+  The [fresh full live evidence](#private-push-preview-proof-1725) confirms both passed within
+  65 executed/passed, 0 failed, 0 skipped. The deterministic twins are source and built-notification
+  tests; no `DeterministicInteractiveStreamE2ETest` push twin exists because loopback cannot send FCM.
+  Public-redaction checks inspect fields/extras directly instead of marshalling Binder-bearing posted
+  metadata. The Markdown backslash hard-break sanitizer repair remains a code follow-up identified
+  by the final verifier, rather than evidence supplied by these live scenarios.
 
 - **Coverage — shipped:** [#1016](https://github.com/pyrycode/pyrycode-mobile/issues/1016) added
   `interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes` and
