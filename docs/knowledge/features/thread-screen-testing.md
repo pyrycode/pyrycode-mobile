@@ -26,6 +26,12 @@ not a measured scrolling speedup or physical-device frame-time improvement.
 See the [verifier review](https://github.com/pyrycode/pyrycode-mobile/pull/1962#issuecomment-6057266904)
 for acceptance evidence and its limits.
 
+## Stable row anchoring (#1940)
+
+The real-screen shared `ThreadRowAnchorTest` and Android-visible `ThreadRowAnchorDeviceTest`
+prove singleton-to-run anchoring with queued rows below. See
+[the key contract, counted red/JVM/device evidence and navigation assertion lesson](thread-screen-subagent-tool-rows.md#collapsing-runs-of-consecutive-tool-rows-1635).
+
 ## Testing
 
 `ThreadMutationArrivalTest` (#1998) mounts the production ViewModel, stable facade and screen

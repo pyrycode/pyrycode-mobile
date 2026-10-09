@@ -70,6 +70,12 @@ and at rung 4 by
 Both scenarios also prove settled scroll-only navigation followed by one owned-control tap to open
 and one to close, checking expansion semantics and child list membership (#1867).
 Controlled projection/Compose fixtures separately cover multiple agents and history permutations.
+Since #1940, the shared navigation proof treats the first child's message key as the
+collapsed representative and requires all remaining children absent until expansion.
+`InteractiveStreamE2ETest.interactiveTurn_toolPrompt_rendersToolStepInThread` remains
+the integrated tool-rendering check. Deterministic anchor preservation is proved by
+`ThreadRowAnchorTest` and its Android-visible wrapper, independently of these live
+scenarios; see [stable-row evidence](#stable-row-identity-1940).
 Attributed background-agent prose (#1827) is covered at rung 3 by
 `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_replyStaysUnderAgent`; the same rung-4
 `background-agent` scenario adds attributed and unmatched prose to its fixtures.
@@ -5082,6 +5088,28 @@ Earlier results and failure history:
   selective. Rung 4 needs no negative control: the scripted backend makes the positive assertion
   deterministic.
 
+### Stable row identity (#1940)
+
+The [fresh dispatcher live PASS](https://github.com/pyrycode/pyrycode-mobile/issues/1940#issuecomment-6079196923)
+ran `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on
+`feature/1940` at `7817c6b8d3b0`, merged with `origin/main` at `4f784b029747`:
+**65 executed, 65 passed, 0 failed, 0 skipped**, none flaky, exit 0 in 17m 51s.
+The dispatcher-provided fresh JUnit-XML report for `2026-10-09T10-18-35-702Z`
+contains `InteractiveStreamE2ETest.interactiveTurn_toolPrompt_rendersToolStepInThread`
+and `interactiveTurn_backgroundAgent_followsBottomUntilFinished`, each executed and
+passed. These are named results from the full suite, not separate focused runs.
+The issue names report path
+`logs/2026-10-09T10-18-35-702Z_real-claude-gate_#1940.log` and matching `.stderr.log`
+in the dispatcher repository; the supplied report has no daemon-revision annotation.
+The earlier live run's inherited failures are superseded by this fresh full pass.
+
+The verifier's scripted-all report records **22 executed/passed, 0 failed, 0 skipped**,
+including tool rendering and Agent navigation. The
+[thread topic](knowledge/features/thread-screen-subagent-tool-rows.md#collapsing-runs-of-consecutive-tool-rows-1635)
+records the deterministic real-screen anchor regression's red/JVM/Android evidence.
+Live tool rendering does not establish pixel anchoring; that shared Compose method does.
+Documentation ran only the docs guard.
+
 ## Assumptions to confirm on first live run
 
 The deterministic stream-json contract is defined by the current fakeclaude source and the raw fixtures.
@@ -5104,6 +5132,14 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Stable row identity (#1940):** Existing
+  `InteractiveStreamE2ETest.interactiveTurn_toolPrompt_rendersToolStepInThread` and
+  `interactiveTurn_backgroundAgent_followsBottomUntilFinished` passed in the fresh full
+  live suite above. The shared navigation proof's closed-header membership now matches
+  representative identity while retaining pointer and expansion checks. No new rung-3
+  scenario or `DeterministicInteractiveStreamE2ETest` twin was added, and no evidence
+  follow-up remains. The pre-ship command stays `python3 scripts/android-test-gate.py live`.
 
 - **Collision mutation-menu repair (#1998):**
   `InteractiveStreamE2ETest.interactiveTurn_twoHostsCollidingConversationId_stayPerHost`

@@ -50,9 +50,9 @@ Package: `de.pyryco.mobile.ui.conversations.components` (`QueuedMessageRow.kt`, 
 function — no Compose, no repository, no clock — so it is provable by a JVM unit test
 (`ThreadRowsTest.kt`) independent of the screen. `ThreadScreen` calls it once per render, cached with
 `remember(state.items, state.queuedMessages)`, and walks the result instead of `state.items` directly.
-`ThreadRow` is a sealed interface with two arms: `Delivered(item: ThreadItem)` for a row the daemon has
+The queue join emits two `ThreadRow` arms: `Delivered(item: ThreadItem)` for a row the daemon has
 run (or a non-message row — a boundary, an unrecognized frame) and `Queued(queuedMessageId, text,
-echoId)` for a message the last `queue_state` snapshot still reported waiting.
+echoId, occurrence)` for a message the last `queue_state` snapshot still reported waiting.
 
 **The join stays render-time by design, not convenience.** `queue_state` is daemon state (server SSOT
 pyrycode#720), not part of claude's turn stream, so it never folds into the thread's message reducer
@@ -86,14 +86,17 @@ so the two clients agree on one join:
 
 O(items + queued): one pass to index the echoes, one to walk the snapshot.
 
-**Recorded lesson — the crash a first draft nearly shipped.** The obvious key for an unmatched row is its
-`queued_msg_id` — it reads like an identity. It isn't one: `queued_msg_id` is daemon-supplied and nothing
-on this client checks it for uniqueness, so a snapshot repeating one value (a hostile daemon, or a
-counter bug) would mint two identical `LazyColumn` keys and Compose throws, taking the whole thread down
-for as long as that snapshot stood. The self-review security pass caught it before the plan was
-committed; see [Wiring](#wiring) for the key each arm actually takes. The general shape: a remote counter
-is not an identity until something validates it, and `QueuedMessage.messageId`'s own KDoc ("never key a
-list on it") already said as much about the sibling field.
+**Unmatched identity must tolerate repeated queued ids (#1940).** A daemon-supplied
+`queued_msg_id` alone can duplicate a `LazyColumn` key and crash the thread. The old
+whole-list position key avoided that crash but changed whenever unrelated history or
+delivered rows arrived. `foldQueuedRows` now counts each id's zero-based occurrence in
+snapshot order, including matched entries, and stores it on `Queued` (default zero).
+`queued-row:<queuedMessageId>:<occurrence>` is unique within the snapshot and independent
+of thread position. Counting only unmatched entries would renumber duplicates when an
+earlier occurrence gains an echo. Matched rows continue using the echo's message key.
+The guarantee holds while occurrence and correlation are unchanged, including repeated
+renders and reconnect with held inputs; replacing or clearing the snapshot keeps the
+existing stateless replacement semantics.
 
 ## Shape
 
@@ -182,6 +185,13 @@ before measuring wrapped text.
 
 ### Testing
 
+`ThreadRowIdentityTest.queueOccurrences_surviveRepeatedHistoryDeliveryAndFoldUpdates`
+covers duplicate queued ids, including a matched earlier occurrence, across history
+prepends, unrelated delivery, fold changes and repeated/reconnect-equivalent renders.
+`ThreadRowsTest` retains one-to-one delivery, replacement and clear coverage. The
+[real-screen anchor probe](thread-screen-subagent-tool-rows.md#collapsing-runs-of-consecutive-tool-rows-1635)
+keeps unmatched queued rows below its tool anchor.
+
 `QueuedMessageRowGeometryTest` checks exact glyph placement, shared padding, 16dp
 inter-bubble spacing and centre/edge/midpoint pointer routing at 320dp and 412dp for
 short, wrapped and long unbroken text, paired and Cancel-only, with neighbouring rows.
@@ -256,10 +266,11 @@ Why this is the right seam, and what it changes about the list the row now sits 
   rather than in the screen, so the two halves of its uniqueness argument sit next to each other. A
   matched `Queued` row takes **the same key its `Delivered` form carries** (`"msg:$echoId"`) — the
   identity that survives the queued-to-delivered treatment change; the projection owns movement. An unmatched
-  row keys on its **position** (`"queued-row:$chronologicalIndex"`), deliberately not on
-  `queued_msg_id` — see the crash this avoids in [§ The render-time join](#the-render-time-join-782)
-  above. The two arms use distinct string-literal namespaces (`"msg:"` / `"boundary:"` /
-  `"unrecognized:"` / `"queued-row:"`), so none can collide with another.
+  row uses `queued-row:<queuedMessageId>:<occurrence>`, counting matched entries too.
+  Delivered/history positions and tool-run folding do not participate. The retained
+  indexed signature ignores its index. The queue namespace stays distinct from message
+  and other row keys; repeated ids are distinguished by occurrence. See
+  [the render-time join](#the-render-time-join-782) for replacement and clear semantics.
 - **The above-delimiter cutoff (`mostRecentSessionBoundaryIndex`) still reads `state.items`, unchanged.**
   `rows` shares a prefix with `items` index-for-index and only ever appends unmatched rows after them, so
   the two index spaces agree wherever the cutoff can land; only `chronologicalIndex` is re-derived from
