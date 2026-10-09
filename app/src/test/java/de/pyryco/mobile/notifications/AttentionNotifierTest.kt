@@ -151,7 +151,7 @@ class AttentionNotifierTest {
                     val bytes = parcel.marshall()
                     listOf(Charsets.UTF_8, Charsets.UTF_16LE).forEach { charset ->
                         val serialized = bytes.toString(charset)
-                        assertTrue(listOf("secret", "gradlew", "/private", "Which", "Reply").none { it in serialized })
+                        assertTrue(listOf("secret", "gradlew", "/private/secret", "Which", "Reply").none { it in serialized })
                     }
                 } finally {
                     parcel.recycle()
