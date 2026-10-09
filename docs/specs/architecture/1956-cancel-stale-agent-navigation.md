@@ -68,3 +68,5 @@ None.
 ## Revisions
 
 2026-10-09: The production-screen interruption probe holds the real list at `UserInput` priority while the marker effect attempts its mutation. Mutator rejection cancels the inner scroll while the effect remains active; consume that request explicitly, while retaining intent when a rows-change cancels the effect itself. Observe nested input at the message-region parent so cancellation also applies if root removal leaves an empty scrollable. The focused scripted selector is `background-agent`, which directly runs the preserved rung-4 method.
+
+2026-10-09: Strengthened `remount_doesNotReviveRequest` with `StateRestorationTester` recreation after a second pending tap, alongside its ordinary departure/re-entry check. The pending request must remain absent even when saveable list and run state are restored.

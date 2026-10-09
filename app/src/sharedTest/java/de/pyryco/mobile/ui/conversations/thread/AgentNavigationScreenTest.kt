@@ -11,6 +11,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
@@ -49,6 +50,7 @@ open class AgentNavigationScreenTest {
     private var mounted by mutableStateOf(true)
     private lateinit var listState: LazyListState
     private lateinit var scope: CoroutineScope
+    private lateinit var restoration: StateRestorationTester
     private val owner = Owner()
 
     private class Owner : LifecycleOwner {
@@ -97,6 +99,9 @@ open class AgentNavigationScreenTest {
         compose.runOnIdle { mounted = false }
         compose.runOnIdle { mounted = true }
         list().performScrollToIndex(8)
+        assertArrivalKeepsReader("a")
+        tapAndRemoveRoot("a")
+        restoration.emulateSavedInstanceStateRestore()
         assertArrivalKeepsReader("a")
     }
 
@@ -166,7 +171,8 @@ open class AgentNavigationScreenTest {
                     (1..8).map { user("Older $it") } + block("a") +
                         (if (second) block("b") else emptyList()) + (1..35).map { user("Reader $it") },
             )
-        compose.setContent {
+        restoration = StateRestorationTester(compose)
+        restoration.setContent {
             scope = rememberCoroutineScope()
             CompositionLocalProvider(
                 LocalLifecycleOwner provides owner,
