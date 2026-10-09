@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
@@ -206,8 +207,11 @@ class CachedThreadWorkerTest {
             assertEquals(100_000, result.rows.size)
             assertFalse(result.rows.contains(rows.first()))
             assertEquals(live.last(), result.rows.last())
+            advanceTimeBy(100)
+            drain(worker)
             assertEquals(result.rows, cache.writes.single()) // untrimmed, including streaming input
             reader.cancel()
+            drain(worker)
         }
 
     @Test fun cachePolicyInvariant_100000LiveRowsAreFilteredOnlyAfterMainDelivery() =
@@ -246,6 +250,8 @@ class CachedThreadWorkerTest {
             assertEquals(0, reads)
             drain(worker)
             assertEquals(100_000, reads)
+            advanceTimeBy(100)
+            drain(worker)
             assertSame(guarded, cache.writes.single()) // write sees untrimmed drawn rows
             job.cancel()
         }
@@ -374,8 +380,11 @@ class CachedThreadWorkerTest {
                 assertSame(original.unsignedHistoryOrder, result.unsignedHistoryOrder)
                 assertSame(original.readEvidence, result.readEvidence)
             }
-            assertEquals(listOf(listOf(a), listOf(b)), cache.writes)
+            advanceTimeBy(100)
+            drain(worker)
+            assertEquals(listOf(listOf(b)), cache.writes)
             job.cancel()
+            drain(worker)
         }
 
     @Test fun equalityInvariant_listObserverWaitsForWorkerAndSuppressesUnchangedRows() =
@@ -399,8 +408,11 @@ class CachedThreadWorkerTest {
             source.snapshots.value = ThreadSnapshot(listOf(a), readEvidence = ThreadReadEvidence(facts = mapOf(1uL to true)))
             drain(worker)
             assertEquals(listOf(listOf(a)), readings)
+            advanceTimeBy(100)
+            drain(worker)
             assertEquals(listOf(listOf(a)), cache.writes)
             job.cancel()
+            drain(worker)
         }
 
     @Test fun cancellationInvariant_heldWorkerCannotPublishOrWriteAfterExit() =
