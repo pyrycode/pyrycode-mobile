@@ -21,3 +21,9 @@ Write tests through `notificationPreview` first and observe the hard-break asser
 ## Documentation handoff
 
 Pending for the documentation stage: update `docs/knowledge/features/push-messaging-service.md`, “Private reply and action previews (#1725)”, to replace the known hard-break limitation with the repaired behavior and preserved literal-backslash contract.
+
+Pending for the documentation stage: update the same topic's “Testing (#685) / Preview/privacy proof (#1725)” paragraph to include the deterministic hard-break and literal-backslash coverage.
+
+## Revisions
+
+- 2026-10-10: Verifier rework reproduced `SavedThreadFirstDrawDeviceTest.savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen` failing on the branch at 2,126 ms and its merge base `5133aa796` at 2,411 ms, both in fragmented offline first open. Each focused run executed one test with one failure and no skips. The unchanged 1,000 ms bound remains; inherited failure issue #2018 blocks fresh dispatcher gates. The notification design is unchanged.
