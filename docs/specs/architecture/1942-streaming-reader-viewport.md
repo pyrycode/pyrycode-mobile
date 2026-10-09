@@ -58,7 +58,7 @@ Run focused new regressions and existing follow/layout tests, lint, assembleDebu
 
 ## Open Questions
 
-- Confirm synchronous relative correction settles before drawing on JVM and Android through rendered-frame assertions. If timing requires a different layout hook, record the evidence and revised contract here before handoff.
+- Resolved: synchronous compensation completes before drawing on JVM and managed Android 13. Each platform executed all five named frame/gesture regressions with zero failures and zero skips, including actual active-fling and settled-markdown checks.
 
 ## Revisions
 
