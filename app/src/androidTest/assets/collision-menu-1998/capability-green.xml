@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-09T09:04:05.165Z" hostname="Juhanas-MacBook-Air.local" time="0.139">
+  <properties/>
+  <testcase name="mutationCapabilityFollowsOwningRepositoryAcrossReconnect" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest" time="0.115"/>
+  <testcase name="mutationsSupported_fromFakeRepository_isTrueInInitialValueAndCombine" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest" time="0.011"/>
+  <testcase name="mutationsSupported_fromNonSupportingRepository_isFalse" classname="de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest" time="0.012"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
