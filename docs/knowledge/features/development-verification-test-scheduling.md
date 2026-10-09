@@ -133,6 +133,29 @@ really advances virtual time. When adding a finite watchdog or timeout, drive on
 the intended deadline with `advanceTimeBy(...)` followed by `runCurrent()`;
 `advanceUntilIdle()` also advances newly armed watchdogs.
 
+Compose's `waitUntil` uses a wall-clock deadline while advancing the Compose clock
+one frame per poll. A fixture's virtual timer can therefore remain unfinished at
+timeout under constrained scheduling. In the delayed rename regression (#2014),
+the opening effect armed `delay(200)` at virtual time 48, but the 1,000 ms field
+wait expired at virtual time 160, before the required 248. The dialog was absent,
+the composer empty and submissions zero. Ordinary baseline runs passed; this
+fresh reproduction establishes a timer/polling mismatch, not the precise trigger
+of the earlier anonymous failures. See the [retained failure XML](../../../app/src/test/resources/e2e/discussion-rename-2014/diagnostic-background-exact.xml)
+and [commands, revisions, dirty patches and counts](../../../app/src/test/resources/e2e/discussion-rename-2014/README.md).
+
+For a controlled delayed mount, freeze `mainClock.autoAdvance` and use
+`advanceTimeUntil` to observe that the opening effect has armed its timer before
+testing the held state. One guessed frame did not start that effect in the
+[failed first repair](../../../app/src/test/resources/e2e/discussion-rename-2014/after-exact.xml).
+Keep virtual-time predicates limited to fixture state; semantics queries belong
+outside the UI-thread clock predicate. After the helper observes the missing
+labelled field, prove the held composer state and explicitly advance until the
+fixture becomes visible. Restore automatic advancement before waiting for
+dialog-window semantics and completion, and in `finally` on failure. Preserve
+the existing deadlines rather than adding retries or sleeps. See
+[rename verification](rename-dialog.md#verification) for the fixture hook and
+composer-contamination control.
+
 A fake repository seed backed by a `MutableStateFlow` — `FakeConversationRepository.setSlashCommandMenu`,
 for example — needs `advanceUntilIdle()` before a `ViewModel.state.value` assertion sees it, even with an
 `UnconfinedTestDispatcher` installed as `Main` (#884): the write still has to propagate through whatever
