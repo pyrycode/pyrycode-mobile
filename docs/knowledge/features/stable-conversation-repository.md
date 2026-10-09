@@ -280,10 +280,15 @@ reports capability off" model, but `switchToLive` is `Flow`-typed and can't be r
 the facade is a process-lifetime singleton constructed while `currentRepository.value` is `null`, so an
 `override val mutationsSupported = currentRepository.value?.mutationsSupported ?: false` initializer would
 latch `false` **forever** and never reflect a relay that connects later. The getter re-reads `.value` on
-every access — the churn-back-to-`null` test proves it re-reads rather than snapshotting. Note the sole
-consumer today, [`ThreadViewModel`](thread-screen.md), reads it **once at construction** (the mode is static
-per build config), so a connection landing after the VM is built won't flip the captured snapshot — an
-accepted, documented limitation, not this facade's concern. See [`../codebase/507.md`](../codebase/507.md).
+every access — the churn-back-to-`null` test proves it re-reads rather than snapshotting.
+Since [#1998](../../specs/architecture/1998-collision-thread-menu-capability.md),
+[`ThreadViewModel`](thread-screen-how-it-works-list-and-status-row.md) also re-reads capability
+when its owning host's availability changes. Its initial state reads the facade; the collected
+projection requires `available && repository.mutationsSupported`. An absent owner or a connected
+non-supporting delegate remains denied, and another host sharing the conversation ID cannot enable
+this destination's actions. Build-mode selection is static, but the live delegate is not: caching
+this getter at construction permanently hides Rename/Edit when the thread opens during a connection
+gap. See [controlled regression and live evidence](../../e2e-interactive-stream.md#verification-status).
 
 ### The not-connected contract
 

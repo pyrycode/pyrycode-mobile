@@ -2483,6 +2483,24 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
+The curated collision scenario remains
+`InteractiveStreamE2ETest.interactiveTurn_twoHostsCollidingConversationId_stayPerHost` (#847, #1998):
+two real paired hosts share a conversation ID while retaining separate rows and threads; renaming A
+changes only A, including after cycling both links and rebuilding the app graph over saved state.
+B's pairing is removed in guaranteed cleanup. No rung-4 twin was added for this repair.
+
+A composer being drawn does not prove mutation-menu readiness. A thread constructed while its
+owning stable facade lacked a live delegate previously cached mutation support as false: More
+actions could open and show Channel info while Rename/Edit remained absent after connection.
+The owning-host availability projection now re-reads capability; another host with the same ID
+cannot enable it. Collision-scenario diagnostics record content-free owner capability, common menu
+rows and active Activity focus/lifecycle at rename entry/failure before cleanup. They retain the
+original exception object and attach context or collection failures as suppressed exceptions.
+The shared rename driver, assertions and deadlines are unchanged; there are no retries or longer
+waits. The historical #1989 stack establishes menu-arrival failure before editing or writing,
+but missing tap-time artifacts prevent certain attribution to this controlled defect. See
+[revision-linked counted evidence](#verification-status).
+
 The curated selector includes
 `InteractiveStreamE2ETest.interactiveTurn_sessionError_recoversDroppedAndRetainedBacklog` (#1731).
 `scripts/e2e-emulator.sh` builds its separate `e2e_realclaude`-tagged daemon and starts
@@ -3294,6 +3312,63 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+**Collision mutation-menu readiness (#1998, 2026-10-09).** The
+[builder cause record](https://github.com/pyrycode/pyrycode-mobile/issues/1998#issuecomment-6077997210)
+and [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2000#issuecomment-6078514440)
+distinguish a controlled local capability-latching defect from the historical occurrence.
+The historical mobile was `2d48240a001595e52aad792a9d9ed6551a2f4821`, merged main
+`ba5724b080`, daemon `a39c72739eb2e811708a67b08906614a4316b834`.
+Retained `2026-10-09T08-24-26-589Z_real-claude-gate_#1989.log` and `.stderr.log`
+establish **65 executed, 64 passed, 1 failed, 0 errors, 0 skipped**, with a 30-second
+Rename/Edit arrival timeout after More actions, before editor entry or rename submission.
+The matching `real-claude-gate-rerun_#1989` report records **1 executed/passed,
+0 failed/errors/skipped** on the same tree. Original `live-0vm8oz36` phone artifacts
+are absent; post-cleanup launcher focus does not establish focus or menu state at the tap.
+The historical source contains the repaired defect, but attribution remains an inference.
+
+The [retained regression pack](https://github.com/pyrycode/pyrycode-mobile/tree/19e0bcc2c2ed2394c243a718fd59f99487a8801e/app/src/androidTest/assets/collision-menu-1998)
+contains XML, commands, checksums and source provenance. Baseline production
+`fbad4a0cdb7025becad76a6523fd7ef83f33c552` plus new tests used the same ViewModel
+source as the historical revision. `ThreadMutationArrivalTest.owningHostArrivalEnablesEditAfterComposerWasAlreadyDrawn`
+proved Channel info visible after one menu tap, then failed on absent Edit.
+`ThreadViewModelTest.mutationCapabilityFollowsOwningRepositoryAcrossReconnect` also failed.
+Repair and strengthened tests are at `61f363e6c66f070206ab1c0d4162d7b0bb4643a7`.
+Documentation inspected the supplied reports; these are builder executions.
+
+| Regression report | Executed | Passed | Failed | Errors | Skipped |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Baseline shared menu + unit capability | 3 | 1 | 2 | 0 | 0 |
+| Repaired focused set (`focused-green.xml`) | 91 | 91 | 0 | 0 | 0 |
+| Managed Android (`device-green.xml`) | 2 | 2 | 0 | 0 | 0 |
+| Scripted reconnect (`reconnect-green.xml`) | 1 | 1 | 0 | 0 | 0 |
+
+The focused set includes existing overflow, connection-gate and stable-facade coverage.
+Both shared methods, including `otherHostArrivalDoesNotEnableOwnersEdit`, passed on managed
+Android. The capability unit covers reconnect, non-supporting replacement and recollection.
+Diagnostic regressions require the same original exception even when collection fails
+(**3 executed/passed, 0 failed/errors/skipped**). Scripted reconnect used daemon
+`a39c72739eb2e811708a67b08906614a4316b834` with `vcs.modified=true`; it supplies no
+full real-Claude acceptance proof.
+
+The fresh [full dispatcher live PASS](https://github.com/pyrycode/pyrycode-mobile/issues/1998#issuecomment-6078937475)
+ran `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on
+mobile `444dd6930a729212fd5f50bac626eaff804b3b99`, merged with `origin/main`
+`31d44af7c5cc`: **65 executed, 65 passed (0 flaky), 0 failed, 0 errors, 0 skipped**,
+exit 0 in 15m 8s. Documentation inspected the retained JUnit report
+`2026-10-09T10-03-16-223Z_real-claude-gate_#1998.log`: the fully qualified collision
+method is present and passed with no failure/error/skipped child. This is full-suite
+execution, with no separate focused dispatcher run claimed.
+The XML has no daemon-revision annotation; line 96 of the matching `.stderr.log`
+identifies daemon `a536d17b1e182fb5398a5458e3afe6079b37a510` and the selected
+`build/e2e-bin/pyry` binary; line 95 identifies the mobile revision and line 97
+Claude Code **2.1.280**. Line 89 records the original artifact directory
+`/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/real-claude-gate-1998/build/dispatcher-tests/live-dghxwxtg/`.
+That directory is no longer present during documentation; the paired reports remain under
+`/Users/juhanailmoniemi/WorkSpace/Projects/pyrycode-mobile-agents/logs/` and establish
+revision and named outcome. The verifier's earlier UI gate executed/passed **212,
+0 failed/errors, 1 skipped**; scripted-all executed/passed **22, 0 failed/errors/skipped**.
+The unrelated `renameAtFigmaViewport` skip supplies no visual evidence.
 
 **Restored model-change and attention proof (#1969, 2026-10-09).** The fresh
 post-verifier full dispatcher run used
@@ -5029,6 +5104,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Collision mutation-menu repair (#1998):**
+  `InteractiveStreamE2ETest.interactiveTurn_twoHostsCollidingConversationId_stayPerHost`
+  retains its two-host rename, link-cycle, saved-graph rebuild and cleanup contract.
+  The forced connection-gap condition is covered by shared `ThreadMutationArrivalTest` and a
+  capability unit transition test; no `DeterministicInteractiveStreamE2ETest` twin was added.
+  [Verification status](#verification-status) records counted red/green and fresh full-live
+  proof. Historical tap-time focus/menu evidence remains unavailable, so the controlled cause
+  must not be presented as certain attribution of the original flake.
 
 - **Restored shared proof (#1969):** Both inherited `InteractiveStreamE2ETest`
   model-change and attention methods passed in the fresh 65-test full suite;
