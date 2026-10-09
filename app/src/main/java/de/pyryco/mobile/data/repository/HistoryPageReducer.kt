@@ -84,6 +84,7 @@ import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.T
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_UNRECOGNIZED_MESSAGE
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.decodeFromJsonElement
+import java.security.MessageDigest
 import java.util.TreeMap
 
 /**
@@ -897,9 +898,10 @@ private fun <T> List<ThreadItem>.resolveHistoryOrder(positions: Map<String, T>):
         emptyMap()
     } else {
         buildMap {
+            val digest = MessageDigest.getInstance("SHA-256")
             this@resolveHistoryOrder.deltaRows().forEach { row ->
                 val identity = row.mergeIdentity()
-                positions[historyIdentity(identity)]?.let { put(identity, it) }
+                positions[historyIdentity(identity, digest)]?.let { put(identity, it) }
             }
         }
     }
