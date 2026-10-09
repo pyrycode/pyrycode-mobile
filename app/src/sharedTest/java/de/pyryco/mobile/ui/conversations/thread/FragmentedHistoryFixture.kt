@@ -9,7 +9,6 @@ import de.pyryco.mobile.data.repository.UnsignedHistorySpan
 import de.pyryco.mobile.data.repository.historyKeys
 import de.pyryco.mobile.data.repository.historyRowProofs
 import kotlinx.datetime.Instant
-import kotlinx.serialization.json.Json
 
 /** 36000 received durable entries, separated into 18000 spans, restored through the disk codec. */
 internal fun fragmentedHistoryFixture(indices: List<Int>): Pair<HistoryCoverage, List<ThreadItem>> {
@@ -37,5 +36,5 @@ internal fun fragmentedHistoryFixture(indices: List<Int>): Pair<HistoryCoverage,
             unsignedRowEntries = coverage.unsignedRowOrder.mapValues { setOf(it.value) },
             proofs = historyRowProofs(rows),
         )
-    return Json.decodeFromString<HistoryCoverage>(Json.encodeToString(bound)).validated(rows) to rows
+    return bound.validated(rows) to rows
 }

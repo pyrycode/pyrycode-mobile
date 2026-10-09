@@ -204,6 +204,24 @@ test's own `finally`, and each class's `@After` calls `assertAllClosed()` before
 `Dispatchers.resetMain()` runs (#726). A `JUnit4` `TestRule` cannot enforce that ordering: a rule's
 `after`-block runs after every `@After` method, which is the wrong side of the reset.
 
+Destination frame/fold scheduling must also reach cached snapshot preparation
+(#2018). `ThreadDestinationFactory.repository` passes `contentScheduling.worker`
+to `CachingConversationRepository.processingDispatcher`; controlling only the
+ViewModel leaves cache preparation on an independent default worker, so a presented
+frame can still contain no messages. `RelayConnectionFactoryTest.destinationCacheUsesConfiguredWorker`
+collects a real cached destination snapshot to completion and requires dispatch
+through the configured worker; an inert-cache host assertion alone missed this
+wiring. Production continues to use `Dispatchers.Default`.
+
+The destination host-isolation test cancels **and joins** every ViewModel job in
+`finally`, before graph closure and Main reset, even after an assertion failure.
+Cancellation alone leaves non-cancellable cache writer cleanup able to resume on
+Main after reset, reporting `UncaughtExceptionsBeforeTest` at the next registry
+test. Keep host/content/queue/action/reconnect assertions intact while fixing
+scheduling and teardown. See the
+[review and counted regression evidence](https://github.com/pyrycode/pyrycode-mobile/pull/2024#issuecomment-6091171021)
+and [saved-thread phase evidence](thread-screen-testing.md#allocation-margin-and-retained-evidence-2018).
+
 The #726 proof holds only when it runs on the thread that later calls `resetMain()` — #892 found a
 case where it does not. With an `UnconfinedTestDispatcher` installed as `Main`, a resumption resumes
 in place on whichever thread wakes it: the `Dispatchers.Default` worker's `StateFlow` publish resumes
