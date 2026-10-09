@@ -3295,6 +3295,30 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
+**Runtime receipt and legacy clamp compatibility (#1989, 2026-10-09).** The fresh
+full dispatcher `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`
+ran mobile `2d48240a001595e52aad792a9d9ed6551a2f4821` merged with `origin/main`
+`ba5724b08019030e677e372570e281ed3a742d84`. The retained stderr identifies daemon
+`a39c72739eb2e811708a67b08906614a4316b834` (including #3026 and #3029) and
+Claude Code **2.1.280**; the XML itself has no daemon-revision annotation.
+The fresh XML report `2026-10-09T08-24-26-589Z_real-claude-gate_#1989.log`
+records **65 executed, 64 passed, 1 failed, 0 skipped**, exit 1 in 16m 2s.
+`InteractiveStreamE2ETest#interactiveTurn_attentionDot_followsARealTurn` is present
+and passed in that full suite with unchanged phone/peer read, isolation, permission
+waiting/answer assertions and deadlines. No separate focused attention run occurred.
+The sole failure, `interactiveTurn_twoHostsCollidingConversationId_stayPerHost`,
+passed on the dispatcher's same-tree rerun: **1 executed, 1 passed, 0 failed, 0 skipped**
+(`2026-10-09T08-24-26-589Z_real-claude-gate-rerun_#1989.log`). The dispatcher
+accepted the gate after that rerun; this does not make the original full run failure-free.
+The [issue's gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1989)
+records the rerun and stale-daemon rejection: the earlier 08:01Z run used `55f1f183`,
+without either repair, and does not prove this compatibility fix. Reports and matching
+`.stderr.log` are retained under the dispatcher repository's `logs/` directory;
+full-run device artifacts were in `build/dispatcher-tests/live-0vm8oz36/`.
+#1969 retains its subsequent full live-proof gate. The permanent mobile receipt and
+confirmation regressions are described in
+[remote repository testing](knowledge/features/remote-conversation-repository.md#testing).
+
 **Shared daemon unread (#1883, 2026-10-08).** The dispatcher ran fresh full
 `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on
 `feature/1883` at `eea532fcc8b004ffe3f49da63600f0716279eb30`, merged with
