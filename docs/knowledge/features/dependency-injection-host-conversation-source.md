@@ -300,8 +300,8 @@ with whichever ticket next touches `launchAttention`'s restore branch (candidate
 consumer that needs identities rather than states — a state map alone cannot tell a new turn from a
 still-running one, or a re-shown prompt from a fresh one. `AttentionAlert(serverId, conversationId, kind, key)`
 names one thing that may deserve a notification: `Kind.TurnCompleted` with `key = turnId`, or
-`Kind.Prompt` with `key = "modal:$modalId"` / `"batch:$questionBatchId"`. Every field but `serverId` is
-daemon-authored and used only as an equality key, exactly like the ids [§ Attention state](#attention-state-877)'s
+`Kind.Prompt` with `key = "modal:$modalId"` / `"batch:$questionBatchId"`. The turn and prompt identity fields are
+daemon-authored and used only as equality keys, exactly like the ids [§ Attention state](#attention-state-877)'s
 own fold treats the same way.
 
 - **Turn:** emitted inside `updateAttention`'s live-event collector, immediately after the fold's
@@ -348,6 +348,41 @@ own fold treats the same way.
   no suspension inside the fold. A late subscriber sees nothing emitted before it subscribed; the one
   production consumer, `AttentionNotifier`, is bound `createdAtStart` so it is always already subscribed
   before any host can connect.
+
+Since [#1725](../../specs/architecture/1725-private-attention-previews.md), `AttentionAlert` also
+carries a defaulted optional suspending `preview` supplier and an `isCurrent` generation guard.
+The supplier is ephemeral untrusted display content for the sole notifier consumer; it never enters
+the attention fold, cache or alert ledger. Permission suppliers capture the existing modal title
+and a prompt that cleans nonempty; question batches capture the first question in wire order.
+Other modal classes supply no preview. Final cleaning and private/public rendering belong to
+[the notifier](push-messaging-service.md#private-reply-and-action-previews-1725).
+
+A completion supplier captures the exact host generation, repository, conversation and turn (plus
+known completion checkpoint). Within a three-second total timeout it requests one newest raw
+history page and reduces it independently. Even a settled local prefix cannot authorize a preview:
+forgiving decoding may have dropped a trailing delta or segment boundary. The
+[completeness checks](remote-conversation-repository-assistant-reply-segments.md#notification-preview-evidence-1725)
+require exact attribution, consecutive durable ids, matching completion and represented row evidence
+before selecting the last nonblank settled top-level segment of that turn. No older-page walk or
+previous/child-turn substitution occurs; unavailable or incomplete evidence yields fixed copy.
+
+For `RemoteConversationRepository`, use internal `requestAttentionHistory`, not `observeMessages`
+or public `requestHistory`: ordinary observation can send `backfill_since`, while public history
+merges rows and advances latest-entry facts. The raw accessor shares the existing encrypted request
+without those side effects; notification enrichment neither merges nor persists the result.
+Non-remote test repositories use their existing `requestHistory` seam. No repository-interface or
+wire-schema expansion is needed.
+
+Lookup runs as a child of the captured host job while the notifier awaits it independently.
+Repository retirement watches the authoritative `repositories.value`, not a delayed predecessor
+emission; identity/generation guards run before and after lookup and again before posting. Removal,
+disconnect, replacement and source disposal cancel pending work; cancelling the awaiting notifier
+also cancels its lookup child. Cancellation posts nothing, rather than treating a retired lookup as
+fixed fallback. The notifier's per-host/conversation sequence prevents a slow earlier alert from
+replacing a newer eligible one, with no lookup under the shared-read post/cancel mutex. Existing
+ledger deduplication and authoritative #1884 read cancellation remain the consumer's contract.
+`AttentionPreviewSourceTest` and source/coordinator notification tests pin timeout, retirement,
+side-effect exclusion and the held-publication read race.
 
 ### Exact-host repository access
 

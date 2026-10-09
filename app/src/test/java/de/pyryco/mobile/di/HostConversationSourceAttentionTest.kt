@@ -185,7 +185,7 @@ class HostConversationSourceAttentionTest {
                     AttentionAlert("a", "chat-a", AttentionAlert.Kind.Prompt, "modal:m1"),
                     AttentionAlert("a", "chat-b", AttentionAlert.Kind.Prompt, "modal:m2"),
                 ),
-                alerts,
+                alerts.map { it.identityOnly() },
             )
 
             a.prompts("chat-b" to "m2")
@@ -239,7 +239,7 @@ class HostConversationSourceAttentionTest {
             a.events.emit(LiveSessionEvent.TurnState("c", LiveSessionEvent.TurnState.Phase.Thinking))
             runCurrent()
 
-            assertEquals(listOf(AttentionAlert("a", "c", AttentionAlert.Kind.TurnCompleted, "t1")), alerts)
+            assertEquals(listOf(AttentionAlert("a", "c", AttentionAlert.Kind.TurnCompleted, "t1")), alerts.map { it.identityOnly() })
         }
 
     @Test
@@ -275,7 +275,7 @@ class HostConversationSourceAttentionTest {
                     AttentionAlert("a", "c", AttentionAlert.Kind.Prompt, "batch:q1"),
                     AttentionAlert("a", "d", AttentionAlert.Kind.Prompt, "batch:q2"),
                 ),
-                alerts,
+                alerts.map { it.identityOnly() },
             )
         }
 
@@ -905,6 +905,8 @@ class HostConversationSourceAttentionTest {
         turnId: String,
         isError: Boolean = false,
     ) = LiveSessionEvent.TurnEnd(id, turnId, "end_turn", isError = isError)
+
+    private fun AttentionAlert.identityOnly() = AttentionAlert(serverId, conversationId, kind, key, historyEntryId)
 
     private companion object {
         val LIVE = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)

@@ -110,11 +110,13 @@ import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.DebugBundleStatus
 import de.pyryco.mobile.data.repository.EffectiveEffort
+import de.pyryco.mobile.data.repository.HistoryEntry
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.SessionPromptStatus
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.reduceHistoryPage
 import de.pyryco.mobile.di.AttentionAlert
 import de.pyryco.mobile.di.ConversationAttention
 import de.pyryco.mobile.di.HostConversationSource
@@ -126,8 +128,11 @@ import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_STATIC_PUBLI
 import de.pyryco.mobile.grantNotificationPermission
 import de.pyryco.mobile.notifications.ATTENTION_CHANNEL_ID
 import de.pyryco.mobile.notifications.NotificationTap
+import de.pyryco.mobile.notifications.completionReply
 import de.pyryco.mobile.notifications.isMuted
 import de.pyryco.mobile.notifications.nameOf
+import de.pyryco.mobile.notifications.notificationPreview
+import de.pyryco.mobile.notifications.notificationTitle
 import de.pyryco.mobile.push.PushTokenSource
 import de.pyryco.mobile.ui.components.CHANNEL_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
@@ -183,6 +188,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
@@ -2768,7 +2774,43 @@ class InteractiveStreamE2ETest {
             beforeByHost[serverIdA] = hostConversationIds(serverIdA)
             val chatA = createChatOn(serverIdA)
             createdByHost[serverIdA] = chatA
-            renameOpenThread(chatName)
+            composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(RENAME_ITEM).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNodeWithText(RENAME_ITEM).performClick()
+            composeTestRule.renameDiscussionInDialog(
+                newName = chatName,
+                fieldLabel = string(R.string.rename_dialog_field_label),
+                saveLabel = RENAME_SAVE,
+                timeoutMillis = THREAD_TIMEOUT_MS,
+                diagnostic = {
+                    val bundle = GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverIdA)
+                    val repository = bundle?.coordinator?.currentRepository?.value
+                    val renamed =
+                        repository?.let {
+                            runBlocking {
+                                withTimeoutOrNull(1_000) {
+                                    it.observeConversations(ConversationFilter.All).first().any { row ->
+                                        row.id == chatA && row.name == chatName
+                                    }
+                                }
+                            }
+                        }
+                    "owner registered=${bundle != null}, repository present=${repository != null}, confirmed rename=$renamed"
+                },
+                awaitOwningHost = {
+                    val current =
+                        checkNotNull(
+                            GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverIdA),
+                        ).coordinator.currentRepository
+                    runBlocking {
+                        withTimeout(THREAD_TIMEOUT_MS) {
+                            current.awaitDiscussionRenameOwner()
+                        }
+                    }
+                },
+            )
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
             awaitListText(chatName)
@@ -5274,15 +5316,23 @@ class InteractiveStreamE2ETest {
             composeTestRule.onNode(closedRun).assertExists()
             composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(0)
             // ScrollTo uses the drawing viewport; reveal the actual tap center between the chrome bars.
-            composeTestRule.questionAnswerTarget(closedRun).performClick()
+            composeTestRule.questionAnswerTarget(closedRun).performTouchInput { click(center) }
             // Expansion can put this early paragraph outside composition as later tool rows arrive.
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 runCatching { list.performScrollToNode(reply) }.isSuccess &&
                     composeTestRule.onAllNodes(reply and hasAnyAncestor(child), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
-            composeTestRule.questionAnswerTarget(reply and hasAnyAncestor(child)).assertIsDisplayed()
+            composeTestRule
+                .questionAnswerTarget(
+                    reply and hasAnyAncestor(child),
+                ) { android.util.Log.i("AgentReplyReveal", it) }
+                .assertIsDisplayed()
             composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(1)
-            composeTestRule.questionAnswerTarget(openedRun).performClick()
+            composeTestRule
+                .questionAnswerTarget(
+                    openedRun,
+                ) { android.util.Log.i("AgentReplyReveal", it) }
+                .performTouchInput { click(center) }
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 runCatching { list.performScrollToNode(closedRun) }.isSuccess &&
                     composeTestRule.onAllNodes(reply, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
@@ -5732,10 +5782,24 @@ class InteractiveStreamE2ETest {
             val woke = sendAppToBackground(serverId, watch)
             peerStep(peer, "allow the prompt once and await its dismissal") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
             held = null
-            peerStep(peer, "await the allowed turn's turn_end") { peer.awaitFrame(chatId, "turn_end", WAIT_TURN_TIMEOUT_MS) }
+            val completed =
+                peerStep(peer, "await the allowed turn's turn_end") { peer.awaitFrame(chatId, "turn_end", WAIT_TURN_TIMEOUT_MS) }
+            val turn = MobileJson.decodeFromJsonElement(TurnEndPayloadDto.serializer(), completed.payload)
+            val history = peerStep(peer, "read the completed reply for notification evidence") { peer.history(chatId, THREAD_TIMEOUT_MS) }
+            val rows = reduceHistoryPage(history.map { HistoryEntry(it.type, it.payload, Instant.parse(it.ts), it.id) }, interactive = true)
+            val preview =
+                requireNotNull(
+                    notificationPreview(completionReply(rows, turn.turnId)),
+                ) { "the completed real turn supplied no reply preview" }
+            assertNotEquals("completion evidence must contain a reply", string(R.string.notification_turn_completed), preview)
 
-            // 3. AC-1: the push wakes the app and exactly one turn alert shows.
-            val alert = awaitAlert(string(R.string.notification_turn_completed), woke)
+            // 3. AC-1: the push wakes the app and exactly one private reply alert shows.
+            val alert = awaitAlert(preview, woke)
+            assertRedactedAlert(
+                alert.notification,
+                string(R.string.notification_turn_completed),
+                notificationTitle(name) ?: string(R.string.app_name),
+            )
 
             // 4. AC-1: the tap, the notification's own content intent, opens that conversation's thread.
             checkNotNull(alert.notification.contentIntent) { "the alert carries no tap" }.send()
@@ -5792,7 +5856,7 @@ class InteractiveStreamE2ETest {
             awaitChannelList()
             awaitConnected()
             val connectedAt = SystemClock.elapsedRealtime()
-            val (chatId, _) = answerChat(serverId, PUSH_PROMPT_NAME_PREFIX)
+            val (chatId, name) = answerChat(serverId, PUSH_PROMPT_NAME_PREFIX)
             // Exercise the suite's shared-token binding even when this method runs alone (#1694, #1698).
             runningToolPeer().use { prior ->
                 peerStep(prior, "open prior prompt peer") { prior.open(CONNECT_TIMEOUT_MS) }
@@ -5806,8 +5870,23 @@ class InteractiveStreamE2ETest {
             val modalId = peerStep(peer, "await background permission modal") { peer.awaitPermissionModal(chatId, REPLY_TIMEOUT_MS) }
             held = chatId to modalId
 
-            // 3. AC-2: the push wakes the app and exactly one prompt alert shows.
-            val first = awaitAlert(string(R.string.notification_prompt), woke)
+            val shown =
+                peerStep(peer, "read the background permission display fields") { peer.awaitFrame(chatId, "modal_shown", REPLY_TIMEOUT_MS) }
+            val modal = MobileJson.decodeFromJsonElement(ModalShownPayloadDto.serializer(), shown.payload)
+            val preview =
+                requireNotNull(
+                    notificationPreview("${modal.title}\n\n${modal.prompt}"),
+                ) { "the real permission prompt supplied no preview" }
+            assertTrue("the real action has a prompt", modal.prompt.isNotBlank())
+            assertNotEquals("prompt evidence must show the action", string(R.string.notification_prompt), preview)
+
+            // 3. AC-2: the push wakes the app and exactly one private action alert shows.
+            val first = awaitAlert(preview, woke)
+            assertRedactedAlert(
+                first.notification,
+                string(R.string.notification_prompt),
+                notificationTitle(name) ?: string(R.string.app_name),
+            )
 
             // 4. AC-2: a second reconnect inside the wake window re-shows the prompt, and nothing is posted again.
             // The source re-emits the re-shown prompt's alert (#1337) and the notifier's ledger drops it, so nothing
@@ -5963,6 +6042,50 @@ class InteractiveStreamE2ETest {
                 ?.toString(),
         )
         return alerts.single()
+    }
+
+    /** Both push scenarios keep their private content out of the complete public notification object. */
+    private fun assertRedactedAlert(
+        notification: Notification,
+        fixed: String,
+        title: String,
+    ) {
+        assertEquals("private lock-screen visibility", Notification.VISIBILITY_PRIVATE, notification.visibility)
+        val public = requireNotNull(notification.publicVersion) { "the alert has no redacted public version" }
+        assertEquals("public conversation title", title, public.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
+        assertEquals("public fixed copy", fixed, public.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString())
+        assertEquals("private conversation title", title, notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
+        val preview = requireNotNull(notification.extras.getCharSequence(Notification.EXTRA_TEXT)).toString()
+
+        // Android attaches Binder-backed metadata after posting; Parcel.marshall cannot inspect it.
+        // Check the text-bearing object graph and exclude alternate rendering/tap surfaces instead.
+        fun assertNoPreview(value: Any?) {
+            when (value) {
+                is android.os.Bundle ->
+                    value.keySet().forEach { key ->
+                        assertFalse("public extra key carries preview content", key.contains(preview))
+                        assertNoPreview(value.get(key))
+                    }
+                is Array<*> -> value.forEach(::assertNoPreview)
+                is Iterable<*> -> value.forEach(::assertNoPreview)
+                is CharSequence ->
+                    assertTrue(
+                        "public text must be only the title or fixed copy",
+                        value.toString() == title || value.toString() == fixed,
+                    )
+                else -> assertFalse("public version carries preview content", value?.toString()?.contains(preview) == true)
+            }
+        }
+        assertNoPreview(public.extras)
+        assertEquals("public ticker", null, public.tickerText)
+        assertEquals("public custom content", null, public.contentView)
+        assertEquals("public expanded content", null, public.bigContentView)
+        assertEquals("public heads-up content", null, public.headsUpContentView)
+        assertEquals("public actions", null, public.actions)
+        assertEquals("public tap", null, public.contentIntent)
+        assertEquals("public delete intent", null, public.deleteIntent)
+        assertEquals("public full-screen intent", null, public.fullScreenIntent)
+        assertEquals("nested public version", null, public.publicVersion)
     }
 
     /** Finish the activities a tap started. The tap's `CLEAR_TASK` replaced the rule's own, so the rule cannot. */
