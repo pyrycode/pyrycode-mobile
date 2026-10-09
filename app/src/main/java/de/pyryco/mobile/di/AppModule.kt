@@ -431,7 +431,11 @@ internal class ThreadDestinationFactory(
             // (E2eTestApplication's TappingConversationRepository) observes the restored thread too. A
             // blank owner gets no cache, so no rows are ever filed under the empty id.
             decorateRepository(
-                if (cache != null && serverId.isNotEmpty()) CachingConversationRepository(stable, cache, serverId, attachments) else stable,
+                if (cache != null && serverId.isNotEmpty()) {
+                    CachingConversationRepository(stable, cache, serverId, attachments, processingDispatcher = contentScheduling.worker)
+                } else {
+                    stable
+                },
             )
         }
 
