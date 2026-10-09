@@ -79,6 +79,17 @@ class FileConversationCache(
 ) : ConversationCache {
     private val mutex = Mutex()
 
+    // One immutable decode shared by the row and coverage readers, guarded by mutex.
+    // Reads still inspect exact disk bytes, so another instance's same-size write cannot stay hidden.
+    private data class DecodedThread(
+        val document: File,
+        val text: String,
+        val rows: List<ThreadItem>,
+        val history: HistoryPosition?,
+    )
+
+    private var decodedThread: DecodedThread? = null
+
     override suspend fun readConversations(serverId: String): List<Conversation> =
         withContext(ioDispatcher) {
             mutex.withLock { readOrEmpty(serverId, "read") }
@@ -137,9 +148,7 @@ class FileConversationCache(
         withContext(ioDispatcher) {
             mutex.withLock {
                 try {
-                    decodeThreadDocument(threadDocumentFor(serverId, conversationId))?.let { stored ->
-                        stored.history?.copy(coverage = stored.history.coverage?.retainedBy(stored.rows.map { it.toDomain() }))?.toDomain()
-                    }
+                    readDecodedThread(threadDocumentFor(serverId, conversationId))?.history
                 } catch (error: Exception) {
                     val code = failureCode(error) ?: throw error
                     RelayLog.d { "conversation_cache operation=read_history status=failed code=$code" }
@@ -252,7 +261,22 @@ class FileConversationCache(
         MobileJson.encodeToString(CachedConversations(VERSION, conversations.map { it.toRecord() })),
     )
 
-    private fun decodeThread(document: File): List<ThreadItem> = readThreadRecord(document)?.let(::validatedRows).orEmpty()
+    private fun decodeThread(document: File): List<ThreadItem> = readDecodedThread(document)?.rows.orEmpty()
+
+    private fun readDecodedThread(document: File): DecodedThread? {
+        if (!document.isFile) {
+            decodedThread = null
+            return null
+        }
+        val text = document.readText()
+        decodedThread?.takeIf { it.document == document && it.text == text }?.let { return it }
+        decodedThread = null
+        val raw = MobileJson.parseToJsonElement(text) as? JsonObject ?: throw IllegalArgumentException("invalid thread document")
+        val rows = validatedRows(decodeStoredRows(raw))
+        val stored = decodeHistory(raw["history"], rows)
+        val history = stored?.copy(coverage = stored.coverage?.retainedBy(rows))?.toDomain()
+        return DecodedThread(document, text, rows, history).also { decodedThread = it }
+    }
 
     /**
      * The thread document, or `null` when none was written, rejected whole unless every row passes
@@ -264,10 +288,15 @@ class FileConversationCache(
         if (!document.isFile) return null
         val raw =
             MobileJson.parseToJsonElement(document.readText()) as? JsonObject ?: throw IllegalArgumentException("invalid thread document")
+        val stored = decodeStoredRows(raw)
+        return stored.copy(history = decodeHistory(raw["history"], stored.rows.map { it.toDomain() }))
+    }
+
+    private fun decodeStoredRows(raw: JsonObject): CachedThread {
         // Optional metadata must not participate in row decoding: malformed claims leave rows readable.
         val stored = MobileJson.decodeFromJsonElement<CachedThread>(JsonObject(raw - "history"))
         require(stored.version == VERSION) { "unsupported conversation cache version" }
-        return stored.copy(history = decodeHistory(raw["history"], stored.rows.map { it.toDomain() }))
+        return stored
     }
 
     /**
@@ -396,6 +425,7 @@ class FileConversationCache(
         withContext(ioDispatcher) {
             mutex.withLock {
                 try {
+                    decodedThread = null
                     block()
                     RelayLog.d { "conversation_cache operation=$operation status=ok" }
                     Result.success(Unit)

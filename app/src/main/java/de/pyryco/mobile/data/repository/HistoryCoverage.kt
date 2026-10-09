@@ -319,6 +319,7 @@ data class HistoryCoverage(
         rows: List<ThreadItem>,
         direct: Map<String, String>,
     ): Map<String, String> {
+        if (legacyKeys.isEmpty()) return emptyMap()
         val legacy =
             rows
                 .filterIsInstance<ThreadItem.MessageItem>()
@@ -429,7 +430,7 @@ data class HistoryCoverage(
                 deltaLengths.values.all { it >= 0 } &&
                 legacyOffsets.values.all { it >= 0 },
         ) { "invalid history anchors" }
-        if (rows != null) {
+        if (rows != null && legacyKeys.isNotEmpty()) {
             val direct = historyRowProofs(rows)
             val aliased = legacyKeys.keys - direct.keys
             require(legacyBindingProofs(rows, direct).keys == aliased) { "invalid history legacy bindings" }
