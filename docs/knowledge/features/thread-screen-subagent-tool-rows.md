@@ -166,6 +166,17 @@ collapse on and off, toggling, a prose-only block, the indent, two identically l
 block whose early paragraph is disposed at the newest end, and the history-gap cases. The live and
 scripted proofs are in [the live ladder](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
 
+The reveal proof must also survive later owned prose growing while the screen
+follows the newest end (#1973). `questionAnswerTarget` remeasures the same owned
+target and both chrome edges after each correction, with at most three attempts
+and the physical-center guard retained. The live proof opens and closes with one
+center pointer tap each. `BackgroundAgentProseScreenTest`'s
+`lateOwnedProseGrowthIsRemeasuredBeforeClosingItsRun` reproduces stale geometry;
+`expandedOwnedRunBehindHeaderIsCorrectedBeforeItsCloseTap` covers the expanded
+control under the header. Both require the collapsed prose key absent from the
+lazy-list mapping so disposal cannot impersonate a successful close. See
+[Compose evidence](development-verification-compose-evidence.md#compose-evidence).
+
 ### Consecutive tool rows sit flush (#1577)
 
 Beside `toolDepths`, the same `ThreadItem.MessageItem` dispatch arm passes `joinsNextToolRow =
