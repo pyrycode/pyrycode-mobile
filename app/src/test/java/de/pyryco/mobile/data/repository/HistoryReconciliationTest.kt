@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
@@ -208,7 +209,15 @@ class HistoryReconciliationTest {
             val emissions = mutableListOf<List<ThreadItem>>()
             val job =
                 backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
-                    CachingConversationRepository(delegate, cache, "host").observeMessages("c").collect { emissions += it }
+                    CachingConversationRepository(
+                        delegate,
+                        cache,
+                        "host",
+                        processingDispatcher = UnconfinedTestDispatcher(),
+                    ).observeMessages("c").collect {
+                        emissions +=
+                            it
+                    }
                 }
             runCurrent()
             live.value = reduced(user(1, "u", ids = "[\"$ATTACHMENT\"]"), delta(3, 1, "b"), tool(4), result(4), delta(6, 3, "d"), end(7))
@@ -229,6 +238,8 @@ class HistoryReconciliationTest {
             assertEquals(merged.ids(), emissions.last().ids())
             assertEquals(merged.messages().map { it.content }, emissions.last().messages().map { it.content })
             assertEquals(merged.seqs(), emissions.last().seqs())
+            advanceTimeBy(100)
+            runCurrent()
             val persisted = cache.readThread("host", "c")
             assertEquals(merged.ids(), persisted.ids())
             assertEquals(merged.messages().map { it.content }, persisted.messages().map { it.content })
@@ -340,7 +351,7 @@ class HistoryReconciliationTest {
                 object : ConversationRepository by FakeConversationRepository() {
                     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = live
                 }
-            val repository = CachingConversationRepository(delegate, cache, "host")
+            val repository = CachingConversationRepository(delegate, cache, "host", processingDispatcher = UnconfinedTestDispatcher())
             repeat(2) {
                 val emissions = mutableListOf<List<ThreadItem>>()
                 val reader =
@@ -407,7 +418,15 @@ class HistoryReconciliationTest {
             val emissions = mutableListOf<List<ThreadItem>>()
             val job =
                 backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
-                    CachingConversationRepository(delegate, cache, "host").observeMessages("c").collect { emissions += it }
+                    CachingConversationRepository(
+                        delegate,
+                        cache,
+                        "host",
+                        processingDispatcher = UnconfinedTestDispatcher(),
+                    ).observeMessages("c").collect {
+                        emissions +=
+                            it
+                    }
                 }
             runCurrent()
             live.value = reduced(user(1, "kept"), user(3, "newer"))

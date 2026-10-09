@@ -10,6 +10,34 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ThreadReadClaimsTest {
+    @Test fun understoodUsageWindowReceiptsExtendPresentationButMalformedWindowsRemainBarriers() {
+        val reply = entry(2u, "message", """{"conversation_id":"c","message_id":"m","role":"assistant","text":"seen"}""")
+        for (status in listOf("allowed", "allowed_warning", "future_warning")) {
+            fun window(id: ULong) =
+                entry(id, "rate_limited", """{"conversation_id":"c","status":"$status","limit_type":"five_hour","resets_at":0}""")
+            val entries = listOf(window(3u), reply, window(1u))
+            val page = reduceOrderedHistoryPage(entries, true)
+            val evidence = ThreadReadEvidence().received(entries, page, page.rows)
+            assertEquals(status, 3uL, evidence.checkpoint(page.rows.single(), 0u))
+            assertEquals(status, true, evidence.facts[1u])
+            assertEquals(status, true, evidence.facts[3u])
+            for (brokenId in listOf(1uL, 3uL)) {
+                val broken = entries.map { if (it.unsignedId == brokenId) it.copy(payload = MobileJson.parseToJsonElement("{}")) else it }
+                val bad = reduceOrderedHistoryPage(broken, true)
+                val blocked = ThreadReadEvidence().received(broken, bad, bad.rows)
+                if (brokenId ==
+                    1uL
+                ) {
+                    assertNull(blocked.checkpoint(bad.rows.single(), 0u))
+                } else {
+                    assertEquals(2uL, blocked.checkpoint(bad.rows.single(), 0u))
+                }
+            }
+            val legacy = reduceOrderedHistoryPage(entries, false)
+            assertNull(ThreadReadEvidence().received(entries, legacy, legacy.rows).checkpoint(legacy.rows.single(), 0u))
+        }
+    }
+
     @Test fun persistedReceiptGapBlocksAReconnectedNewestRowUntilTheGapIsFilled() {
         val row = entry(45u, "message", """{"conversation_id":"c","message_id":"m","role":"assistant","text":"newest"}""")
         val page = reduceOrderedHistoryPage(listOf(row), true)

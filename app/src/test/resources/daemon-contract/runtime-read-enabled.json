@@ -1,0 +1,81 @@
+{
+  "entries": [
+    {
+      "id": 6,
+      "type": "turn_state",
+      "payload": {
+        "conversation_id": "11111111-1111-4111-8111-111111111111",
+        "state": "idle"
+      },
+      "ts": "2026-10-09T06:51:56.338094976Z"
+    },
+    {
+      "id": 5,
+      "type": "turn_end",
+      "payload": {
+        "conversation_id": "11111111-1111-4111-8111-111111111111",
+        "turn_id": "74b35cd5-ff83-49b3-a9c8-d76014254353",
+        "stop_reason": "end_turn",
+        "outcome": "",
+        "is_error": false,
+        "terminal_reason": "",
+        "error_category": "",
+        "duration_ms": 0,
+        "duration_api_ms": 0,
+        "num_turns": 0,
+        "cost_usd_total": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0
+      },
+      "ts": "2026-10-09T06:51:56.337534375Z"
+    },
+    {
+      "id": 4,
+      "type": "assistant_delta",
+      "payload": {
+        "conversation_id": "11111111-1111-4111-8111-111111111111",
+        "turn_id": "74b35cd5-ff83-49b3-a9c8-d76014254353",
+        "seq": 0,
+        "parent_tool_use_id": "",
+        "text": "synthetic reply"
+      },
+      "ts": "2026-10-09T06:51:56.337024731Z"
+    },
+    {
+      "id": 3,
+      "type": "turn_state",
+      "payload": {
+        "conversation_id": "11111111-1111-4111-8111-111111111111",
+        "state": "responding"
+      },
+      "ts": "2026-10-09T06:51:56.33651131Z"
+    },
+    {
+      "id": 2,
+      "type": "banner",
+      "payload": {
+        "conversation_id": "11111111-1111-4111-8111-111111111111",
+        "level": "info",
+        "text": "",
+        "truncated": false,
+        "stops_turn": false
+      },
+      "ts": "2026-10-09T06:51:56.335946253Z"
+    },
+    {
+      "id": 1,
+      "type": "message",
+      "payload": {
+        "conversation_id": "11111111-1111-4111-8111-111111111111",
+        "message_id": "user",
+        "role": "user",
+        "text": "synthetic"
+      },
+      "ts": "2026-10-09T06:51:56.335189593Z"
+    }
+  ],
+  "cursor": "",
+  "at_start": true
+}

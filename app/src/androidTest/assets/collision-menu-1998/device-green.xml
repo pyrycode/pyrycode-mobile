@@ -1,0 +1,12 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="2" failures="0" errors="0" skipped="0" time="9.568" timestamp="2026-10-09T09:01:04" hostname="localhost">
+  <testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadMutationArrivalTest" tests="2" failures="0" errors="0" skipped="0" time="8.653" timestamp="2026-10-09T09:01:04" hostname="localhost">
+    <properties>
+      <property name="device" value="pixel2Api33Atd" />
+      <property name="flavor" value="" />
+      <property name="project" value=":app" />
+    </properties>
+    <testcase name="otherHostArrivalDoesNotEnableOwnersEdit" classname="de.pyryco.mobile.ui.conversations.thread.ThreadMutationArrivalTest" time="4.47" />
+    <testcase name="owningHostArrivalEnablesEditAfterComposerWasAlreadyDrawn" classname="de.pyryco.mobile.ui.conversations.thread.ThreadMutationArrivalTest" time="4.183" />
+  </testsuite>
+</testsuites>

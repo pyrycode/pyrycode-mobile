@@ -5,20 +5,29 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performImeAction
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -178,5 +187,51 @@ class ChannelFormFieldsTest {
         assertTrue(promptLabel.bottom < promptWell.top)
         assertTrue("name height=${nameWell.height}", nameWell.height > 52f)
         assertTrue("prompt height=${promptWell.height}", promptWell.height > 112f)
+    }
+
+    @Test fun promptWellKeepsBlankSpaceBelowWrappedAndExplicitLines() {
+        var density = 0f
+        rule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(356.dp, 600.dp))) {
+                density = LocalDensity.current.density
+                PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
+                    ChannelFormFields(
+                        name = name.value,
+                        onNameChange = { name.value = it },
+                        systemPrompt = prompt.value,
+                        onSystemPromptChange = { prompt.value = it },
+                    )
+                }
+            }
+        }
+        val field = rule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG)
+        val cases =
+            listOf(
+                "" to 1,
+                "One line" to 1,
+                "Summarise each merged pull request in one plain sentence for the release notes." to 2,
+                "First\nSecond" to 2,
+                "First\nSecond\n" to 3,
+                "One\nTwo\nThree\nFour\nFive" to 5,
+                "One line again" to 1,
+                "" to 1,
+            )
+        for ((text, lines) in cases) {
+            field.performTextReplacement(text)
+            field.assertIsFocused()
+            val layouts = mutableListOf<TextLayoutResult>()
+            field.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            val layout = layouts.single()
+            val well = field.fetchSemanticsNode().boundsInRoot
+            assertEquals(text, prompt.value)
+            assertEquals("drawn lines for '$text'", lines, layout.lineCount)
+            assertEquals("form width", 356f, well.width / density, 1.5f)
+            assertEquals("well height for $lines lines", 92f + lines * 20f, well.height / density, 1.5f)
+            assertEquals("blank space below drawn text", 76f, well.height / density - 16f - layout.size.height / density, 1.5f)
+        }
+        // The added blank surface belongs to the prompt, including its bottom edge.
+        field.performTextReplacement("First\nSecond")
+        rule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).performTouchInput { click(Offset(center.x, height - 2f)) }.assertIsFocused()
+        field.performTouchInput { click(Offset(center.x, height - 2f)) }.assertIsFocused()
     }
 }

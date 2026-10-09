@@ -1,0 +1,46 @@
+Ticket #1957 — multiline prompt well height, 2026-10-08
+
+Current Figma references fetched through get_design_context/get_screenshot:
+figma-create.png: g2HIq2UyPhslEoHRokQmHG / 784:7095
+figma-save.png: g2HIq2UyPhslEoHRokQmHG / 784:7134
+Both reference PNGs are 412x892 at native scale.
+
+Red shared regression:
+./gradlew testDebugUnitTest --tests 'de.pyryco.mobile.ui.components.ChannelFormFieldsTest.promptWellKeepsBlankSpaceBelowWrappedAndExplicitLines' --console=plain
+Exit 1; shared-red.xml records 1 executed, 1 assertion failure, 0 errors/skips.
+The four-line minimum reports only 18.68531dp below its text layout, versus 76dp.
+
+Red device regression, before production implementation:
+./gradlew :app:pixel8Api35DebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.design.ListDesignCaptureTest#promptFailedFramesAt412By892' -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e -Pandroid.testInstrumentationRunnerArguments.requireRealSystemBars=true --console=plain
+Exit 1; device-red.xml records 1 executed, 1 assertion failure, 0 errors/skips.
+The retained two-line Create prompt well measures 112dp, expected 132dp.
+
+Green focused regression and existing caller coverage:
+./gradlew testDebugUnitTest --tests 'de.pyryco.mobile.ui.components.ChannelFormFieldsTest' --tests 'de.pyryco.mobile.ui.components.CreateChannelModalTest' --tests 'de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialogTest' --tests 'de.pyryco.mobile.ui.components.ModalFieldPaletteTest' --tests 'de.pyryco.mobile.ui.conversations.list.ChannelListScreenTest' lint assembleDebug compileDebugAndroidTestKotlin --console=plain
+Exit 0; focused-green.xml records 71 executed/passed, 0 failures/errors/skips.
+Includes empty/one-line 112dp, wrapping, explicit/trailing newlines, five lines,
+shrinking, pointer focus at well edges, verbatim editing and UTF-8 validation.
+Lint, debug assembly and Android-test compilation also passed.
+
+Green full-image capture and existing Edit caller:
+./gradlew :app:pixel8Api35DebugAndroidTest --rerun '-Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.design.ListDesignCaptureTest#promptFailedFramesAt412By892,de.pyryco.mobile.ui.components.FormCallerCaptureTest#editChannel' -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e -Pandroid.testInstrumentationRunnerArguments.requireRealSystemBars=true --console=plain
+Exit 0; device-green-with-edit.xml records 2 executed/passed, 0 failures/errors/skips.
+
+Final refreshed capture: the same single-method command as the red device run.
+Exit 0; device-green.xml timestamp 2026-10-08T11:59:36 records 1 executed/passed,
+0 failures/errors/skips. That method exercises BOTH failed forms.
+The retained create-channel-prompt-failed.png and save-as-channel-prompt-failed.png
+are hardware framebuffer captures; paired .txt files record the exact viewport,
+density/font scale 1, static dark, real 24px system bars, syntheticBars=false,
+and the focused dialog's closed/zero IME at capture.
+Each retained prompt well spans y=417..549: exactly 132dp. The test independently
+checks two drawn lines and 76dp below their full line box. After capture, a real
+pointer tap at the well's bottom edge opens the IME; physical Back closes it.
+The submit action is exercised with a pointer tap at OK's top edge.
+
+Visual comparison with the retained Figma references: prompt width, two-line text,
+fill and 132dp well match. The inherited 36dp two-line error box remains 4dp short
+of the reference and shifts the centered form group; #1958 owns that correction.
+No error geometry assertion was loosened. Carets reflect retained editable focus.
+JUnit files retain suite counts/timestamps and selected cases; system logs and
+stack traces are omitted from these compact extracts.

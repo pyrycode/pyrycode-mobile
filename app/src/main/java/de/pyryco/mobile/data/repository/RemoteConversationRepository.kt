@@ -470,6 +470,7 @@ class RemoteConversationRepository(
         envelope: Envelope,
         conversation: String,
     ) {
+        if (!contributesToUnreadWatermark(envelope.type)) return
         envelope.historyEntryId
             ?.takeIf { it > 0u && conversation.isNotEmpty() }
             ?.let { conversationListProjection.recordLatestEntry(conversation, it) }
@@ -1164,7 +1165,11 @@ class RemoteConversationRepository(
         limit: Int,
     ): HistoryPage {
         val page = readHistoryPage(conversationId, cursor, limit)
-        page.entries.maxOfOrNull { it.unsignedId }?.let { conversationListProjection.recordLatestEntry(conversationId, it) }
+        page.entries
+            .asSequence()
+            .filter { contributesToUnreadWatermark(it.type) }
+            .maxOfOrNull { it.unsignedId }
+            ?.let { conversationListProjection.recordLatestEntry(conversationId, it) }
         threadProjection.mergeHistoryPage(conversationId, page, CAPABILITY_INTERACTIVE in negotiatedCapabilities())
         return page
     }

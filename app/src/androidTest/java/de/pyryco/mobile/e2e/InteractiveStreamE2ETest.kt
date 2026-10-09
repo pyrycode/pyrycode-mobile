@@ -2357,7 +2357,13 @@ class InteractiveStreamE2ETest {
             //    A's thread and A's row only; B's row and thread keep B's name.
             val renamedA = RENAMED_NAME_PREFIX + System.currentTimeMillis()
             openRow(nameA)
-            renameOpenThread(renamedA)
+            val beforeRename =
+                runCatching { collisionRenameEvidence(serverIdA) }
+                    .getOrElse { "diagnostic_error=${it.javaClass.simpleName}" }
+            Log.i("E2E", "event=collision_rename_begin $beforeRename")
+            collisionRenameStep({ "before=[$beforeRename] failure=[${collisionRenameEvidence(serverIdA)}]" }) {
+                renameOpenThread(renamedA)
+            }
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
             awaitChannelRow(renamedA)
@@ -2387,6 +2393,26 @@ class InteractiveStreamE2ETest {
             runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverIdB) }
             relaunched?.close()
         }
+    }
+
+    /** Only static flags; read inside the scenario, before its Activity and pairing cleanup. */
+    private fun collisionRenameEvidence(serverId: String): String {
+        val bundle = GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)
+        val repository = bundle?.coordinator?.currentRepository?.value
+        var focused = false
+        var resumed = false
+        composeTestRule.activityRule.scenario.onActivity { activity ->
+            focused = activity.hasWindowFocus()
+            resumed = activity.lifecycle.currentState == Lifecycle.State.RESUMED
+        }
+        val menuOpen =
+            composeTestRule.onAllNodesWithText(string(R.string.thread_overflow_channel_info)).fetchSemanticsNodes().isNotEmpty()
+        val editVisible =
+            composeTestRule.onAllNodesWithText(string(R.string.thread_overflow_edit)).fetchSemanticsNodes().isNotEmpty()
+        val renameVisible = composeTestRule.onAllNodesWithText(RENAME_ITEM).fetchSemanticsNodes().isNotEmpty()
+        return "owner_registered=${bundle != null} owner_live=${repository != null} " +
+            "owner_mutations=${repository?.mutationsSupported} menu_open=$menuOpen " +
+            "edit_visible=$editVisible rename_visible=$renameVisible focused=$focused resumed=$resumed"
     }
 
     /**
@@ -4528,13 +4554,46 @@ class InteractiveStreamE2ETest {
             val replyCheckpoint = requireNotNull(beforePhoneRead.latestEntryId) { "daemon omitted latest durable id" }
             assertTrue("real reply has durable history", replyCheckpoint > 0u)
             assertTrue("list view must leave the real reply unread", (beforePhoneRead.readUpTo ?: 0uL) < replyCheckpoint)
+            val phoneHistory = peerStep(peer, "receive A's history backing the watermark") { peer.history(chatA, THREAD_TIMEOUT_MS) }
+            assertTrue(
+                "peer received the entry backing A's filtered daemon watermark",
+                phoneHistory.any {
+                    it.id == replyCheckpoint && it.type !in setOf("turn_state", "stall", "api_retry", "compacting", "session_transition")
+                },
+            )
 
             // 3. Read the actual reply at the newest end, and observe the confirmed mark from the peer.
             openChatRow(nameA)
             peerStep(peer, "observe the phone's confirmed read of A") {
                 coroutineScope {
                     val confirmed = async(Dispatchers.Default) { peer.awaitReadMark(chatA, replyCheckpoint, THREAD_TIMEOUT_MS) }
-                    composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { confirmed.isCompleted }
+                    try {
+                        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { confirmed.isCompleted }
+                    } catch (error: ComposeTimeoutException) {
+                        val repository = checkNotNull(GlobalContext.get().get<HostConversationSource>().repositoryFor(serverId))
+                        val snapshot =
+                            (repository as de.pyryco.mobile.data.repository.ThreadSnapshotSource)
+                                .observeThreadSnapshot(
+                                    chatA,
+                                ).first()
+                        val evidence = snapshot.readEvidence
+                        val marks = repository.observeReadMarks(chatA).first()
+                        throw AssertionError(
+                            "event=phone_read_probe rows=${snapshot.rows.size} " +
+                                "unidentified=${evidence.unidentified.size} malformed=${evidence.facts.values.count { it == null }} " +
+                                "gaps=${evidence.gaps.size} versions=${evidence.versions.size} " +
+                                "checkpoint_reaches_target=${snapshot.rows.any {
+                                    (
+                                        evidence.checkpoint(
+                                            it,
+                                            marks?.readUpTo ?: 0u,
+                                        ) ?: 0u
+                                    ) >= replyCheckpoint
+                                }} " +
+                                "read_reaches_target=${(marks?.readUpTo ?: 0u) >= replyCheckpoint}",
+                            error,
+                        )
+                    }
                     confirmed.await()
                 }
             }
@@ -4560,8 +4619,14 @@ class InteractiveStreamE2ETest {
             // 6. The peer reads B's actual durable reply while the phone remains on the list.
             val history = peerStep(peer, "read B's real reply history") { peer.history(chatB, THREAD_TIMEOUT_MS) }
             assertTrue("peer received B's assistant reply", history.any { it.type == "assistant_delta" })
-            val peerCheckpoint = requireNotNull(history.maxOfOrNull { it.id }) { "peer received no durable history" }
             val beforePeerRead = peerStep(peer, "confirm B is still unread") { peer.readMarks(chatB, THREAD_TIMEOUT_MS) }
+            val peerCheckpoint = requireNotNull(beforePeerRead.latestEntryId) { "daemon omitted B's unread watermark" }
+            assertTrue(
+                "peer received the entry backing B's filtered daemon watermark",
+                history.any {
+                    it.id == peerCheckpoint && it.type !in setOf("turn_state", "stall", "api_retry", "compacting", "session_transition")
+                },
+            )
             assertTrue("the list did not acknowledge B", (beforePeerRead.readUpTo ?: 0uL) < peerCheckpoint)
             val confirmed = peerStep(peer, "acknowledge the peer's read of B") { peer.markRead(chatB, peerCheckpoint, THREAD_TIMEOUT_MS) }
             assertTrue("peer read was durably confirmed", confirmed >= peerCheckpoint)
