@@ -25,29 +25,27 @@ assistant_delta / turn_end envelopes  ──(#385 decode, capability-gated)─�
 RelayRepositoryCoordinator.liveSessionEvents : Flow<LiveSessionEvent>   ◀── #406 generic seam (reconnection-surviving)
         │  injected at the AppModule ThreadViewModel factory (already wired by #406; no new Koin binding)
         ▼
-ThreadViewModel.threadItems  ◀── #337: merge(observeMessages, liveSessionEvents) → scan(ThreadFold) → render
-        │  swapped in place for the observeMessages arm of the 5-flow `state` combine
+ThreadViewModel.threadItems  ◀── merge(threadSnapshots, liveSessionEvents) → lossless intake → worker ThreadFold.reduce/render
+        │  complete rows + exact evidence → threadContent → actual display-frame pacing (#1968)
+        │  threadContent is the content arm of the 5-flow `state` combine
         ▼
 ThreadUiState.items : List<ThreadItem>   →  ThreadScreen LazyColumn  →  MessageBubble (isStreaming ? StreamingAssistantBody : MarkdownText)
 ```
 
 Unlike `isThinking`/`isStalled` — sibling `StateFlow`s the stateless screen takes as **separate**
 params — the streaming message is a `ThreadItem` **in the thread**, so it must land in
-`ThreadUiState.items`. The seam is therefore the `items` derivation itself: the #313 finished-message
-projection from `observeMessages` and the live `liveSessionEvents` stream are folded together and the
-result replaces the `observeMessages` arm of the `state` combine (arity stays 5).
+`ThreadUiState.items`. The finished snapshot and live-event paths reduce together;
+complete rows and evidence then travel through the paced `threadContent` arm of
+`state` (typed arity stays five).
 
 ## The fold
 
-```kotlin
-private val threadItems: Flow<List<ThreadItem>> =
-    merge(
-        repository.observeMessages(conversationId).map(ThreadInput::Finished),
-        liveSessionEvents.map { ThreadInput.Live(it) },
-    ).scan(ThreadFold(emptyList(), null)) { fold, input -> fold.reduce(input, conversationId) }
-        .map { it.render() }
-        .distinctUntilChanged()
-```
+`threadItems` now produces a complete folded row/evidence reading. Main admits
+snapshots and live events through an unbounded merged intake before sequential
+worker reduction; only complete `threadContent` values are conflated for display
+frames. Boundary bookkeeping happens at admission, independent of the worker
+backlog. See [thread state ownership](thread-screen-how-it-works-state.md) for
+scheduling, exact read evidence and cancellation.
 
 The accumulator holds the latest finished projection plus the current streaming turn (`null` between
 turns):
@@ -174,14 +172,14 @@ segments existed.
 
 ## Lifecycle, errors, edge cases
 
-- **Single source of state.** `threadItems` feeds the one `state` `StateFlow`; the fold's accumulator
-  lives inside the `scan`, scoped to the combine's `stateIn(viewModelScope, WhileSubscribed(5_000))`. On
-  resubscribe after the 5 s window the scan restarts from `ThreadFold(emptyList(), null)`;
-  `observeMessages` re-emits the current finished list and any in-flight accumulated text is re-derived
-  from zero — same lifecycle as `isThinking`, acceptable because the user is off-screen during the
-  window.
+- **Single source of state.** The fold feeds `threadContent`, then the one
+  `state` `StateFlow`. Zero-timeout `WhileSubscribed()` cancels raw intake, pending
+  frame work and its accumulator when the last collector leaves. Recollection
+  rebuilds from the repository's current snapshot, without old queued inputs or
+  frame callbacks. Standalone ViewModels retain unpaced defaults; destination
+  factory tests inject controlled frames.
 - **Inert default.** The fake graph and existing tests inject `liveSessionEvents = emptyFlow()`; `merge`
-  then yields only the `observeMessages` arm, so the thread behaves exactly as #313 — no regression.
+  then yields only the snapshot arm, retaining the finished-row fold semantics.
 - **Errors — none.** The reduction is total over the sealed `LiveSessionEvent` (exhaustive `when`, no
   `else`); no exceptions thrown or caught, no result type crosses a layer. Wrong-conversation events,
   out-of-order `seq`, and unmatched `turn_end` all degrade to no-op.
@@ -268,7 +266,7 @@ Architect self-review **PASS**; code review **PASS** with zero findings.
 - [Message bubble](message-bubble.md) (#184) — the unchanged streaming render
   (`StreamingAssistantBody` typewriter while `isStreaming`, `MarkdownText` once settled).
 - [Thread screen](thread-screen.md) — the `ThreadViewModel` host; the `state` combine's second arm is
-  now `threadItems`.
+  complete, frame-paced `threadContent`.
 - [Relay repository coordinator](relay-repository-coordinator.md) ([#406](../codebase/406.md)) — owns
   the generic `liveSessionEvents` seam this consumes.
 - Render regression coverage: [#432 scripted-stream thread harness](../codebase/432.md) — the Layer-1a

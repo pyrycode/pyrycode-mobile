@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
@@ -266,6 +267,8 @@ class HistoryMessageIdentityTest {
                 live.value = emptyList()
                 runCurrent()
                 assertRows(expected, emissions.last())
+                advanceTimeBy(100)
+                runCurrent()
                 val restored = FileConversationCache(root, UnconfinedTestDispatcher(testScheduler)).readThread("host", "c")
                 assertRows(expected, restored)
                 val reconnected = ThreadProjection()

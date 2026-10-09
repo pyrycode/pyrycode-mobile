@@ -305,12 +305,15 @@ data class HistoryCoverage(
     fun retainedBy(rows: List<ThreadItem>): HistoryCoverage {
         val kept = cacheableThreadRows(rows)
         val direct = historyRowProofs(kept)
-        val available = direct + legacyBindingProofs(kept, direct)
+        val legacy = legacyBindingProofs(kept, direct)
+        val available = if (legacy.isEmpty()) direct else direct + legacy
         val missing =
             proofs
                 .filter { (key, proof) ->
                     available[key] != proof && (deltaHashes[key] == null || available[key] != deltaHashes[key])
                 }.keys
+        // Every claim was checked above; avoid rebuilding all derived maps when none changed.
+        if (missing.isEmpty() && proofs.all { (key, proof) -> available[key] == proof }) return this
         return withoutRows(missing).copy(proofs = proofs.mapValues { (key, proof) -> available[key] ?: proof } - missing)
     }
 
@@ -319,6 +322,7 @@ data class HistoryCoverage(
         rows: List<ThreadItem>,
         direct: Map<String, String>,
     ): Map<String, String> {
+        if (legacyKeys.isEmpty()) return emptyMap()
         val legacy =
             rows
                 .filterIsInstance<ThreadItem.MessageItem>()
@@ -389,8 +393,12 @@ data class HistoryCoverage(
     }
 
     internal fun unsignedPositions(): Map<String, ULong> =
-        unsignedRowOrder.toMutableMap().apply {
-            legacyKeys.forEach { (key, alias) -> unsignedRowOrder[key]?.let { put(alias, maxOf(get(alias) ?: 0u, it)) } }
+        if (legacyKeys.isEmpty()) {
+            unsignedRowOrder
+        } else {
+            unsignedRowOrder.toMutableMap().apply {
+                legacyKeys.forEach { (key, alias) -> unsignedRowOrder[key]?.let { put(alias, maxOf(get(alias) ?: 0u, it)) } }
+            }
         }
 
     internal fun positions(): Map<String, Long> = unsignedPositions().mapNotNull { (key, id) -> id.signedId()?.let { key to it } }.toMap()
@@ -429,7 +437,7 @@ data class HistoryCoverage(
                 deltaLengths.values.all { it >= 0 } &&
                 legacyOffsets.values.all { it >= 0 },
         ) { "invalid history anchors" }
-        if (rows != null) {
+        if (rows != null && legacyKeys.isNotEmpty()) {
             val direct = historyRowProofs(rows)
             val aliased = legacyKeys.keys - direct.keys
             require(legacyBindingProofs(rows, direct).keys == aliased) { "invalid history legacy bindings" }
@@ -463,10 +471,16 @@ private fun Long.positiveHistoryId(allowZero: Boolean = false): ULong {
 private fun ULong.signedId(allowZero: Boolean = false): Long? =
     takeIf { (allowZero || it > 0u) && it <= Long.MAX_VALUE.toULong() }?.toLong()
 
-internal fun historyIdentity(identity: Any): String =
-    historyHash(
-        (identity as? List<*>)?.joinToString("") { value -> value.toString().let { "${it.length}:$it" } } ?: identity.toString(),
-    )
+internal fun historyIdentity(identity: Any): String = historyHash(historyIdentityText(identity))
+
+/** A synchronous restore batch may reuse a digest; digest resets after each independent identity. */
+internal fun historyIdentity(
+    identity: Any,
+    digest: MessageDigest,
+): String = historyHash(historyIdentityText(identity), digest)
+
+private fun historyIdentityText(identity: Any): String =
+    (identity as? List<*>)?.joinToString("") { value -> value.toString().let { "${it.length}:$it" } } ?: identity.toString()
 
 internal fun ThreadItem.historyKeys(): List<String> {
     val segment = (this as? ThreadItem.MessageItem)?.message?.segment
@@ -476,6 +490,7 @@ internal fun ThreadItem.historyKeys(): List<String> {
 
 internal fun historyRowProofs(rows: List<ThreadItem>): Map<String, String> =
     buildMap {
+        val digest = MessageDigest.getInstance("SHA-256")
         rows.forEach { row ->
             val message = (row as? ThreadItem.MessageItem)?.message
             val segment = message?.segment
@@ -483,14 +498,19 @@ internal fun historyRowProofs(rows: List<ThreadItem>): Map<String, String> =
                 var offset = 0
                 segment.deltas.forEach { delta ->
                     val end = (offset + delta.length).coerceIn(offset, message.content.length)
-                    put(historyIdentity(listOf("delta", segment.turnId, delta.seq)), historyHash(message.content.substring(offset, end)))
+                    put(
+                        historyHash(historyIdentityText(listOf("delta", segment.turnId, delta.seq)), digest),
+                        historyHash(message.content.substring(offset, end), digest),
+                    )
                     offset = end
                 }
             } else {
-                put(historyIdentity(row.mergeIdentity()), cachedThreadRowProof(row))
+                put(historyHash(historyIdentityText(row.mergeIdentity()), digest), cachedThreadRowProof(row, digest))
             }
         }
     }
 
-private fun historyHash(value: String): String =
-    MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+private fun historyHash(
+    value: String,
+    digest: MessageDigest = MessageDigest.getInstance("SHA-256"),
+): String = digest.digest(value.toByteArray(Charsets.UTF_8)).toHexString()

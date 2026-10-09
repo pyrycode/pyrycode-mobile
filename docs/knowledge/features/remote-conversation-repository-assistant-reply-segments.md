@@ -186,6 +186,41 @@ parentless counterpart catches accidental changes to identity or placement. See
 [the cache thread document](conversation-cache-layout.md#layout) for disk-only unknown attribution and
 in-memory reconnect retention.
 
+### Notification preview evidence (#1725)
+
+A thread projection is deliberately forgiving, so its settled rows are not proof that a reply's
+last segment is complete. Dropped malformed deltas can leave a plausible prefix; dropped tool or
+stopped-turn boundaries can join prose that should be separate. Notification enrichment therefore
+always asks internal `RemoteConversationRepository.requestAttentionHistory(conversationId)` for
+one newest raw page (empty cursor, daemon-selected limit) within the source's three-second total
+bound. It shares `readHistoryPage`'s encrypted request, with no merge, persistence or latest-entry
+advance. Ordinary `observeMessages` can backfill and public `requestHistory` merges/advances facts;
+neither is an appropriate read-only notification seam. The ephemeral supplier and host/repository
+cancellation are owned by the
+[host source](dependency-injection-host-conversation-source.md#attention-alerts-685), with independent
+jobs and per-conversation ordering in the
+[notifier](push-messaging-service.md#private-reply-and-action-previews-1725).
+
+Before reduction can authorize content, every page entry must carry the exact string conversation
+id without filtering, durable ids must be consecutive newest-first, and a valid matching `turn_end`
+must name the target turn and its known alert checkpoint when present. Reduction then needs a
+non-null read fact for every supported row producer/update. This includes **every `turn_end`**, not
+just the matching completion: an intervening error end can append a `StoppedTurn` boundary. A
+malformed end lacking `stop_reason` can otherwise disappear silently, joining “Before” and “After”
+despite consecutive delta sequences and a valid final completion. The regression rejects that page;
+its valid-boundary control selects only “After”.
+
+Only settled assistant rows with `segment.turnId` equal to the completed turn and empty
+`parentToolUseId` qualify. Their delta sequences together must start at zero with no gap or duplicate,
+and recorded lengths must sum to each row's content length. Select the last nonblank qualifying
+segment, never a legacy row, previous turn or child reply. Missing, malformed, colliding, silently
+dropped, incomplete, failed or timed-out evidence returns no preview and leaves fixed notification
+copy; no older page or cached prefix substitutes for it. Keep the stricter certification local to
+notifications: it does not change forgiving thread/history decoding, merges or reconnect ordering.
+`AttentionPreviewSourceTest` covers malformed tool seams, attribution, trailing deltas and stopped
+boundaries; remote integration tests recover valid raw evidence while leaving the unchanged local
+truncated/joined projection alone.
+
 ### The cache's segment record
 
 `FileConversationCache`'s `CachedMessage` gains `segment: CachedSegment? = null` (`turnId`, `seqs: List<Int>`,

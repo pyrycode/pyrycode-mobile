@@ -31,11 +31,88 @@ with and without the status band's running-tasks pill. Non-rendering Info banner
 their stable rows and keys but are skipped when finding the newest rendered row;
 otherwise appending an invisible banner would change the ordinary-message resting gap.
 
-Reservations follow actual attachment and draft height changes. When a prompt or
-row-kind change changes the rest adjustment, an idle history reader's keyed anchor
-and physical offset are preserved with `requestScrollToItem`; active drags are not
-cancelled. `FollowNewestEnd` retains its existing rules. The empty state is centered
-within measured chrome reservations rather than behind the bars.
+Reservations follow actual attachment and draft height changes. Since
+[#1942](https://github.com/pyrycode/pyrycode-mobile/issues/1942), non-following readers
+retain the anchored row's top through both row-height and newest-end padding changes,
+including progressive reveal and taller or shorter settled markdown. Index zero does
+not imply following: a reply taller than the viewport can still be anchored there
+while its reader is far from the newest end. The empty state is centered within
+measured chrome reservations rather than behind the bars.
+
+`ThreadListViewport`, remembered with the list, shares geometry bookkeeping with
+`FollowNewestEnd`. Row measurement captures the current keyed anchor's height delta
+before a shrink can cause lazy measurement to publish a different anchor. It reads
+the old layout through `Snapshot.withoutReadObservation`, so row measurement does
+not observe its own measurement result. The list's placement callback combines that
+size delta with the newest-end padding delta and applies `dispatchRawDelta` before
+drawing. It corrects relative displacement without taking the scroll mutation from
+a resting finger, drag or fling. The former separate idle-only
+`requestScrollToItem` rest-adjustment effect is removed; applying both would compensate
+twice. Only the current anchor's matching displayed key contributes size compensation,
+so moving to another row does not restore a stale reading position.
+
+`ListFrame.compensatedScroll` accumulates the displacement actually consumed, including
+clamping at a list end. `followStep` excludes its change from the anchor-offset change
+when detecting reader movement. Otherwise compensation itself could change following
+state. Followers still pin growth, accepted sends resume following, prompt sizes stay
+masked from the growth signature, and a reader anchored on a departing prompt resumes
+following under #1449. Keep these rules together with geometry compensation; see
+[rendered-frame and gesture coverage](thread-screen-testing.md#reader-geometry-during-streaming-1942)
+and [the newest-end follow rule](thread-screen-subagent-tool-rows.md#the-newest-end-follow-rule-1314).
+
+**Background Agent relocation (#1955).** Stable keys alone cannot preserve the
+place a block vacates: reverse layout can follow its bottom-most visible keyed row
+into history. `ThreadListViewport.relocationFor` captures the old layout during
+composition without snapshot observation and transfers the anchor before the next
+lazy measurement, rather than waiting for a follow effect to repair a drawn jump.
+Block placement, displayed keys, internal order and run collapse retain the
+[background-agent fold contract](thread-screen-subagent-tool-rows.md#background-agent-lifecycle-placement-1783).
+
+Finished roster controls and terminal receipts can publish separately. Compare
+placement on each publication against common stationary rows **and common block
+roots**, so movement across another still-running block is visible. Classification
+also requires the block's own finished status or `finishAnchor` destination to
+change. A changed predecessor alone can mean another block inserted before an
+already-finished stationary block; excluding that stationary block would lose its
+reader's anchor. Unchanged terminal replays and ordinary inserts do not transfer.
+Moving keys come from previous block membership, including collapsed or expanded
+tool-run representatives.
+
+A follower requests index/offset zero before measurement, even when another block
+remains running. A history reader transfers to the first surviving visible
+stationary row at its old geometry and new index. Rows wholly hidden on the newest
+side behind composer chrome (`offset + size <= 0`) cannot anchor the visible reader.
+Lazy item offsets remain logical, increasing toward the older end under reverse
+layout; `requestScrollToItem` takes their **negation**.
+
+If all visible rows move, retain the vacated older boundary against the nearest
+surviving stationary row on the older side, including the heights of intervening
+old children and the root. Fill from the remaining thread; use the normal newest-end
+clamp when it cannot fill the vacancy, or index zero when no stationary content
+survives. A direct jump or restored viewport may never have measured those older
+rows. Reuse a cached height only when both the old row and its chronological
+neighbour match; otherwise `ThreadMessageList` subcomposes the old row before
+measuring the relocated list. It uses the shared renderer, identical item width
+constraints, unbounded height and the old neighbour's joined-tool spacing. These
+boundary rows are never placed, drawn, exposed to input or used to publish read or
+attachment presentation.
+
+Individual tool expansion is conversation-keyed saved screen state, shared through
+`LocalToolCallExpansion` by placed and unplaced renderers. Re-rendering identical
+content under a different saveable-state owner would collapse an expanded offscreen
+tool and undercount the boundary after neighbour invalidation or restoration.
+Standalone tool rows retain their local-state fallback.
+
+Relocation captures the selected stationary row's old height; its measured height
+delta and newest-end padding delta still use #1942's placement correction. Ordinary
+row growth and completion without changed placement keep that existing path.
+The follow collector ignores intermediate layouts while transfer is pending. A
+snapshot-observable `relocationVersion` advances in placement, allowing `followStep`
+to retain the previous following state across the completed transfer or clamp.
+Publishing it earlier would expose incomplete geometry; treating a clamp as reader
+input would wrongly enable following. Raw geometry displacement remains separately
+accounted in `compensatedScroll`. See
+[shared and Android frame coverage](thread-screen-testing.md#reader-geometry-during-background-agent-relocation-1955).
 
 The body shape since [#246](../codebase/246.md) iterated `state.items.asReversed()` with stable composite keys and dispatched at the `ThreadItem` sealed-interface level. **Since [#782](../codebase/782.md) the list walks `ThreadRow`s, not `ThreadItem`s directly:** `val rows = remember(state.items, state.queuedMessages) { foldQueuedRows(state.items, state.queuedMessages) }` joins the thread's items against the daemon's queued backlog (see
 [Queued backlog rendering § The render-time join](queued-backlog-section.md#the-render-time-join-782)),
@@ -67,33 +144,33 @@ overflowing stream fills the viewport regardless of arrangement, so scrolling is
 list still reports `FollowNewestEnd`'s first-visible index and offset as 0, and the oldest row still
 sits at the viewport's far edge for `isNearOldestEnd`, so neither reader needed a change. Covered by
 `ThreadScreenShortStreamTest` (see [Thread screen — testing § Short-stream top anchoring
-(#1509)](thread-screen-testing.md#short-stream-top-anchoring-1509)).
+(#1509)](thread-screen-testing-coverage.md#short-stream-top-anchoring-1509)).
 
 **Source-list reversal is required.** `observeMessages` returns items chronologically ascending (index 0 = oldest), but `LazyColumn(reverseLayout = true)` draws the **first** item at the bottom. For "newest at the bottom" the screen reverses before passing — `rows.asReversed()` (pre-#782: `state.items.asReversed()`) is the Kotlin stdlib O(1) view (no allocation, no copy), and it's a `List<ThreadRow>` so it slots into `itemsIndexed(...)` directly. Keys are computed from the underlying rows, so the view's reversed index is irrelevant for identity.
 
-**Stable keys are per-subtype with a string namespace prefix — four namespaces since #782.** The key
-function is `ThreadRow.listKey(chronologicalIndex)`, defined beside the fold in `ThreadRow.kt` rather
-than inline in the screen, so the fold and its key-uniqueness argument sit together. `ThreadRow.Delivered`
-re-derives the pre-#782 per-`ThreadItem` keys: `MessageItem` → `"msg:${message.id}"` (the canonical row
-identity assigned at message creation, surviving all state transitions), `SessionBoundary` →
-`"boundary:${previousSessionId.length}:$previousSessionId${newSessionId.length}:$newSessionId@$occurredAt"`
-— the boundary's full `(previousSessionId, newSessionId, occurredAt)` identity, length-prefixing the
-two daemon-supplied ids so an id containing a separator character cannot make two distinct triples
-spell the same key ([#775](../codebase/775.md); the pair alone is *not* unique — an idle-evicted
-session keeps its id, so a session evicted twice sends the same pair twice with different instants,
-and both are real rows), `UnrecognizedMessage`
-→ `"unrecognized:$id"`. `ThreadRow.Queued` adds a fourth namespace, and it is the one place the pre-#782
-one-to-one mapping between "row" and "key namespace" breaks on purpose: a **matched** `Queued` row (a
-send the daemon still reports parked) takes `echoId?.let { "msg:$it" }` — **the same key its `Delivered`
-form carries** — which is exactly what leaves the row in place, unrecreated, when the next snapshot
-delivers it (AC #2 of #782). An **unmatched** row (no echo this device minted) keys on its position,
-`"queued-row:$chronologicalIndex"`, deliberately **not** on the snapshot's `queued_msg_id`: that value is
-daemon-supplied and nothing on this client checks it for uniqueness, so a snapshot repeating one would
-mint two identical `LazyColumn` keys and crash the thread — a hazard the #782 security review caught and
-closed by keying on position instead, which is unique by construction. All four namespaces are distinct
-string literals, so no arm can collide with another. The `itemsIndexed(...)` key lambda ignores the `Int`
-first arg for the `Delivered` / matched-`Queued` arms — identity stays anchored to item fields — but the
-unmatched arm's key is deliberately position-derived, the one namespace where position *is* the identity.
+**Stable keys follow displayed identity (#1940).** `ThreadRow.listKey(chronologicalIndex)`
+lives beside the folds in `ThreadRow.kt`. The indexed signature remains for compatibility;
+its index is unused. List items, newest-row following, read qualification and end-spacing
+anchor compensation all consume this same key.
+
+Delivered messages use `msg:<message.id>`. Session boundaries use the full
+`boundary:<previousSessionId.length>:<previousSessionId><newSessionId.length>:<newSessionId>@<occurredAt>`
+identity: length prefixes avoid separator ambiguity, and the timestamp distinguishes
+repeated idle eviction with the same session pair ([#775](../codebase/775.md)). Other
+delivered kinds retain their own keys. A matched queued row uses its echo's `msg:` key;
+one-to-one correlation consumes the delivered echo, preventing a duplicate displayed key.
+An unmatched queued row uses `queued-row:<queuedMessageId>:<occurrence>`, where occurrence
+counts that id in snapshot order, including matched entries. History prepends, unrelated
+delivery and tool folds cannot shift it. Repeated queued ids remain distinct; replacement
+or clear still re-derives the projection without persistent identity state. See
+[queued identity](queued-backlog-section.md#position-in-the-list).
+
+A collapsed tool-run header uses `msg:<runId>`, representing its first tool. That key
+survives singleton-to-run growth and history-marker split/rejoin for the part containing
+that tool. Absorbed parts cease to display independently; the reunited representative
+uses the earliest tool's key. An expanded header uses `tool-run:<runId>` while every child
+regains its own message key. Giving delivered tools the header namespace would collide
+with expanded headers. See [tool-run identity and regression evidence](thread-screen-subagent-tool-rows.md#collapsing-runs-of-consecutive-tool-rows-1635).
 
 **Above-delimiter opacity (since [#136](../codebase/136.md)).** Each row is wrapped in `Box(Modifier.alpha(rowAlpha))` around the existing `when (row)` dispatch. `rowAlpha` is computed inline: a `chronologicalIndex` is reconstructed from the reversed-list index (`rows.size - 1 - reversedIndex`, since #782 — pre-#782 this read `state.items.size`), then compared strict-`<` against a `cutoffChronologicalIndex = remember(state.items) { mostRecentSessionBoundaryIndex(state.items) }` — **this cutoff itself still reads `state.items`, unchanged by #782**, because `rows` shares a prefix with `items` index-for-index and only ever appends unmatched queued rows after them, so the two index spaces agree wherever a boundary can land. Rows above the cutoff render at the file-private `ABOVE_DELIMITER_ALPHA = 0.55f` constant; rows at or after the cutoff (including the boundary itself) render at `1f`. `mostRecentSessionBoundaryIndex` is an `internal` top-level helper at the bottom of the file (`items.indexOfLast { it is ThreadItem.SessionBoundary }`); its `-1` return for the no-boundary case combines with the strict `<` to give AC3 ("zero boundaries → all rows full opacity") for free. The wrap inherits to every row variant — user/assistant `MessageBubble`, `ToolCallRow`, nested `SessionBoundaryDelimiter`, and since #782 `QueuedMessageRow` — because `Modifier.alpha(...)` is a render-only `graphicsLayer` effect and none of the row composables hold internal opacity state. **Interaction is not gated** — `ToolCallRow`'s `clickable` `Surface` stays expandable above the cutoff (alpha runs in the draw layer, after pointer input). That matches the user-story intent ("still legible, can scroll up and re-read"); if a future ticket gates above-cutoff interaction, it adds the gate at the inner `Surface`'s `enabled =` (not by stripping the alpha modifier).
 
@@ -351,7 +428,17 @@ The three new `ThreadUiState` fields shipped in #145 (`model`, `effort`, `tokenP
 
 **[#807](../codebase/807.md) retired `selectedModel: Model` / `selectedEffort: Effort` in favour of one `runConfig: ThreadRunConfig` field**, sourced from the daemon's own [`observeSessionSettings`](conversation-repository.md) + [`observeModelMenu`](conversation-repository.md) readings rather than `AppPreferences.defaultModel` / `defaultEffort` — see [thread-composer-footer.md § Sourcing](thread-composer-footer.md#sourcing) for the full sourcing story and [status-sheet.md](status-sheet.md) for the choice surface. `state.selectedModel.label()` / `state.selectedEffort.label()` are gone; the row now reads `state.runConfig.modelLabel` / `state.runConfig.effortLabel` — computed properties on `ThreadRunConfig` itself (`ThreadViewModel.kt`), not call-site `.label()` extensions, because the label a daemon-published row carries has to be resolved against the published menu, not derived from a fixed three-entry enum. `ThreadStatusRow` also gained a `pending: Boolean = false` parameter (above) that drops the row's alpha further while a run-configuration write is outstanding.
 
-[#507](../codebase/507.md) added a trailing, defaulted `mutationsSupported: Boolean = true` to `ThreadUiState`, populated differently from every field above: not from a `combine` source but from a **snapshot captured once at VM construction** (`private val mutationsSupported = repository.mutationsSupported`), then written into **both** the `combine` result and the `.stateIn` `initialValue` so the two can never disagree. The mode is static per build config (a Koin fake-vs-relay swap, never a runtime toggle), so a one-shot snapshot is sufficient; reading through the [facade](stable-conversation-repository.md) here is where its null-connection → `false` fail-safe-deny takes effect. **The field was dormant in #507 (present in state, read by nothing); [#508](../codebase/508.md) wired the two consumers** — `ThreadScreen` now passes `mutationsSupported = state.mutationsSupported` into `ThreadTopAppBar` (→ [`ThreadOverflowMenu`](thread-overflow-menu.md), gating out New session / Rename / Change workspace / Archive) and into [`ChannelInfoSheet`](channel-info-sheet.md) (gating out the whole Actions section). Both surfaces gate on this signal and nothing else — no `USE_RELAY_REPOSITORY` / instance-type / relay-vs-fake check inside the composables. In fake mode (the default) it is `true` end-to-end, so both surfaces are unchanged.
+[#507](../codebase/507.md) added the defaulted `mutationsSupported: Boolean = true`
+to `ThreadUiState`. Since [#1998](https://github.com/pyrycode/pyrycode-mobile/issues/1998),
+its initial value reads the repository and its collected state re-reads capability on owning-host
+availability changes, requiring `available && repository.mutationsSupported`. A thread opened during
+a connection gap can therefore regain Rename/Edit after that owner connects; a disconnected owner
+or non-supporting delegate stays denied. Connecting another host with the same conversation ID
+cannot enable the owner's actions. The former construction-time cache confused static build-mode
+selection with connection-scoped capability. `ThreadScreen` passes this state to
+[`ThreadOverflowMenu`](thread-overflow-menu.md) and [`ChannelInfoSheet`](channel-info-sheet.md)
+to gate their mutation actions; composables do not inspect build flags or repository types. See
+[stable facade capability reads](stable-conversation-repository.md#capability-reads--answer-false-never-throw-mutationssupported-507).
 
 Through [#807](../codebase/807.md) the row read the typed enums as `state.selectedModel.label()` / `state.selectedEffort.label()`, and `ThreadViewModel.onModelSelected(model: Model)` / `onEffortSelected(effort: Effort)` wrote a per-conversation in-memory override over `AppPreferences.defaultModel` / `defaultEffort`. **#807 replaced both sides.** The row now reads `state.runConfig.modelLabel` / `state.runConfig.effortLabel` (`ThreadRunConfig` computed properties — "unknown" with no settings reading, "default" for an inherited `""`, otherwise the daemon-published row's label made inert), and `ThreadViewModel.onModelSelected(value: String)` / `onEffortSelected(level: String)` forward a published [`ModelMenuRow.value`](conversation-repository.md) / effort-level string verbatim to `ConversationRepository.setSessionSettings`, addressed to `SessionSettings.sessionId` — never `AppPreferences`. `ThreadStatusRow`'s `model: String` / `effort: String` parameter shape is unchanged; only what feeds them moved off the device enums.
 
@@ -390,7 +477,7 @@ When no call qualifies, it returns `null` and the existing ladder applies: think
 when the daemon reports thinking, working while busy, or the idle glyph when no other
 arm applies. Background tool rows alone do not select the running-tool arm. The screen
 also gates the selected call on `isBusy`; this display filter does not change daemon busy
-state. See [regression coverage](thread-screen-testing.md#testing).
+state. See [regression coverage](thread-screen-testing-coverage.md#testing).
 
 **Local acceptance stages (#1641).** `MainActivity` collects `ThreadViewModel.localSendStage` and passes
 it to `ThreadScreen`. Sending opens immediately before the repository send, including attachment-bearing

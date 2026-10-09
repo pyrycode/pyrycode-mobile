@@ -1,5 +1,7 @@
 package de.pyryco.mobile.di
 
+import androidx.compose.runtime.BroadcastFrameClock
+import androidx.compose.runtime.withFrameNanos
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
@@ -48,6 +50,7 @@ import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
 import de.pyryco.mobile.ui.conversations.thread.AttachmentRead
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
+import de.pyryco.mobile.ui.conversations.thread.ThreadContentScheduling
 import de.pyryco.mobile.ui.conversations.thread.ThreadEvent
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import kotlinx.coroutines.CompletableDeferred
@@ -1045,6 +1048,15 @@ class RelayConnectionFactoryTest {
     fun destinationBindingsKeepCollidingIdsOnTheirHostAcrossSelectionAndReconnect() =
         runTest {
             Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            val frames = BroadcastFrameClock()
+            val scheduling = ThreadContentScheduling(StandardTestDispatcher(testScheduler)) { frames.withFrameNanos { it } }
+            var frameNanos = 0L
+
+            fun presentFrame() {
+                frameNanos += 16_666_667L
+                frames.sendFrame(frameNanos)
+                runCurrent()
+            }
             val questionScheduler = kotlinx.coroutines.test.TestCoroutineScheduler()
             val f = Fixture(this).also { it.stopTaskSupport = true }
             val registry = f.registry()
@@ -1064,6 +1076,7 @@ class RelayConnectionFactoryTest {
                         single { registry }
                         single { f.store } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
                         single { prefs }
+                        single { scheduling }
                         single {
                             de.pyryco.mobile.ui.conversations.thread
                                 .QuestionDraftStore(StandardTestDispatcher(questionScheduler))
@@ -1135,6 +1148,15 @@ class RelayConnectionFactoryTest {
                     ),
                 )
                 runCurrent()
+                assertTrue(
+                    a.state.value.queuedMessages
+                        .isEmpty(),
+                )
+                assertTrue(
+                    b.state.value.queuedMessages
+                        .isEmpty(),
+                )
+                presentFrame()
                 assertEquals(
                     "A queue",
                     a.state.value.queuedMessages
@@ -1298,6 +1320,7 @@ class RelayConnectionFactoryTest {
                 runCurrent()
                 replyRows(nextA, "A reconnected")
                 runCurrent()
+                presentFrame()
                 assertEquals("A reconnected", a.state.value.displayName)
                 assertEquals("B content", b.state.value.displayName)
                 nextA.emit(shown)
@@ -1332,6 +1355,7 @@ class RelayConnectionFactoryTest {
                             single { registry }
                             single { f.store } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
                             single { prefs }
+                            single { scheduling }
                             single<AttachmentReader> { AttachmentReader { AttachmentRead.Unreadable } }
                         },
                     )
@@ -1346,6 +1370,7 @@ class RelayConnectionFactoryTest {
                     backgroundScope.launch { demo.isThinking.collect {} }
                     backgroundScope.launch { demo.connectionState.collect {} }
                     runCurrent()
+                    presentFrame()
                     val frames = f.transports.map { it.outbound.size }
                     demo.onOverflowEvent(ThreadEvent.RenameSubmit("Demo renamed"))
                     demo.onInterrupt()

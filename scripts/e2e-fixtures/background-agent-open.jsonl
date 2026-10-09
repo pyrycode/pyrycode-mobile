@@ -5,3 +5,8 @@
 {"type":"assistant","parent_tool_use_id":"unknown1827","message":{"id":"unmatched-prose","content":[{"type":"text","text":"unmatched1827"}]}}
 {"type":"assistant","message":{"id":"main-prose","content":[{"type":"text","text":"main1827"}]}}
 {"type":"assistant","parent_tool_use_id":"agent1783","message":{"id":"child-step","content":[{"type":"tool_use","id":"child1783","name":"Read","input":{"file_path":"fixture.txt"}}]}}
+{"type":"result","subtype":"success","is_error":false,"session_id":"43143143-4314-4314-8314-431431431431"}
+{"type":"user","parent_tool_use_id":"agent1783","message":{"content":[{"type":"tool_result","tool_use_id":"child1783","content":"early child completed after main end","is_error":false}]}}
+{"type":"assistant","parent_tool_use_id":"agent1783","message":{"id":"late-child-one","content":[{"type":"tool_use","id":"late1951-one","name":"Read","input":{"file_path":"late1951-one.txt"}}]}}
+{"type":"user","parent_tool_use_id":"agent1783","message":{"content":[{"type":"tool_result","tool_use_id":"late1951-one","content":"late child one done","is_error":false}]}}
+{"type":"assistant","parent_tool_use_id":"agent1783","message":{"id":"late-child-two","content":[{"type":"tool_use","id":"late1951-two","name":"Read","input":{"file_path":"late1951-two.txt"}}]}}

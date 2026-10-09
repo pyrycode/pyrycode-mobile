@@ -52,10 +52,17 @@ import de.pyryco.mobile.grantNotificationPermission
 import de.pyryco.mobile.notifications.NotificationTap
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -1060,89 +1067,119 @@ class DeterministicInteractiveStreamE2ETest {
     @Test
     fun interactiveTurn_seededChannel_backgroundAgentMovesAndSettles() {
         arriveInSeededThread()
-        typeAndSend(SEND_PROMPT)
-        val running = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_still_working)
-        val finished = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_finished)
-        val go = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_go_to)
-        val marker = hasText(go) and hasClickAction()
-        val header = hasTestTag("background-agent:agent1783")
-        val child = hasTestTag("background-agent-child:agent1783")
-        val prose = hasText("child1827-before")
-        // The fixture's child1783 tool owns the run identity; the Agent root stays separate.
-        val run = hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:child1783"))
-        val expandLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.tool_run_expand)
-        val closedRun =
-            run and
-                SemanticsMatcher("closed owned Agent run") {
-                    it.config.getOrNull(SemanticsActions.OnClick)?.label == expandLabel
-                }
-        val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodesWithText(running).fetchSemanticsNodes().isNotEmpty() }
-        list.performScrollToNode(hasText("unmatched1827"))
-        composeTestRule.onNodeWithText("unmatched1827").assertIsDisplayed()
-        composeTestRule.onAllNodes(hasText("unmatched1827") and hasAnyAncestor(child), useUnmergedTree = true).assertCountEquals(0)
-        list.performScrollToNode(run)
-        composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(0)
-        composeTestRule.onNode(closedRun).performClick()
-        list.performScrollToNode(prose)
-        composeTestRule.onNode(prose and hasAnyAncestor(child), useUnmergedTree = true).assertIsDisplayed()
-        composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(1)
-        list.performScrollToNode(run)
-        composeTestRule.onNode(run).performClick()
-        composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(0)
-        list.performScrollToNode(marker)
-        composeTestRule.onNode(marker).performClick()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
-        composeTestRule.onNode(header).assertIsDisplayed()
-        composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(0)
-        list.performScrollToNode(run)
-        composeTestRule.onNode(closedRun).assertExists()
-        typeAndSend("release1783")
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodesWithText("after1783").fetchSemanticsNodes().isNotEmpty() }
-        composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(marker)
-        composeTestRule.onNodeWithText(finished).assertIsDisplayed()
-        composeTestRule.onNode(marker).performClick()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
-        composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasText("after1783"))
-        val agent = composeTestRule.onNode(header).fetchSemanticsNode().boundsInRoot
-        val after = composeTestRule.onNodeWithText("after1783", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-        assertTrue("terminal block must settle before the following reply", agent.bottom <= after.top)
-        // Navigation preserves collapse state; explicitly open the owned run to inspect its reply.
-        composeTestRule.onAllNodesWithText("child1827-after", useUnmergedTree = true).assertCountEquals(0)
-        val repository =
-            requireNotNull(
-                GlobalContext
-                    .get()
-                    .get<RelayRepositoryCoordinator>()
-                    .currentRepository.value,
-            )
-        val conversationId =
-            runBlocking {
-                repository
-                    .observeConversations(ConversationFilter.All)
-                    .first()
-                    .single { it.name == SEED_CHANNEL_NAME }
-                    .id
+        val coordinator = GlobalContext.get().get<RelayRepositoryCoordinator>()
+        val repository = requireNotNull(coordinator.currentRepository.value)
+        val events = MutableStateFlow<List<LiveSessionEvent>>(emptyList())
+        val eventScope = CoroutineScope(Dispatchers.IO)
+        eventScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            coordinator.liveSessionEvents.collect { event -> events.update { it + event } }
+        }
+        try {
+            typeAndSend(SEND_PROMPT)
+            val running = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_still_working)
+            val finished = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_finished)
+            val go = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.agent_go_to)
+            val marker = hasText(go) and hasClickAction()
+            val header = hasTestTag("background-agent:agent1783")
+            val child = hasTestTag("background-agent-child:agent1783")
+            val prose = hasText("child1827-before")
+            // The fixture's child1783 tool owns the run identity; the Agent root stays separate.
+            val run = hasText("Using tools:", substring = true) and hasClickAction() and hasAnyAncestor(hasTestTag("tool-run:child1783"))
+            val expandLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.tool_run_expand)
+            val closedRun =
+                run and
+                    SemanticsMatcher("closed owned Agent run") {
+                        it.config.getOrNull(SemanticsActions.OnClick)?.label == expandLabel
+                    }
+            val list = composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst()
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { composeTestRule.onAllNodesWithText(running).fetchSemanticsNodes().isNotEmpty() }
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                events.value.filterIsInstance<LiveSessionEvent.ToolUse>().count { it.parentToolUseId == "agent1783" } >= 3
             }
-        val ownedMessages =
-            runBlocking { repository.observeMessages(conversationId).first() }
-                .filterIsInstance<ThreadItem.MessageItem>()
-                .map { it.message }
-                .filter {
-                    it.role == Role.Tool &&
-                        it.toolCall?.parentToolUseId == "agent1783" ||
-                        it.role == Role.Assistant &&
-                        it.parentToolUseId == "agent1783"
+            val received = events.value
+            val origin = received.filterIsInstance<LiveSessionEvent.ToolUse>().single { it.toolUseId == "agent1783" }.turnId
+            val mainEnd = received.indexOfFirst { it is LiveSessionEvent.TurnEnd && it.turnId == origin }
+            assertTrue("launching main turn must end", mainEnd >= 0)
+            val lateTools =
+                received
+                    .drop(mainEnd + 1)
+                    .filterIsInstance<LiveSessionEvent.ToolUse>()
+                    .filter { it.parentToolUseId == "agent1783" }
+            assertEquals(listOf("late1951-one", "late1951-two"), lateTools.map { it.toolUseId })
+            assertTrue("late children retain launching attribution", lateTools.all { it.turnId == origin })
+            assertEquals("child activity must not open another main turn", 1, received.filterIsInstance<LiveSessionEvent.TurnEnd>().size)
+            list.performScrollToNode(hasText("unmatched1827"))
+            composeTestRule.onNodeWithText("unmatched1827").assertIsDisplayed()
+            composeTestRule.onAllNodes(hasText("unmatched1827") and hasAnyAncestor(child), useUnmergedTree = true).assertCountEquals(0)
+            list.performScrollToNode(run)
+            composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(0)
+            composeTestRule.onNode(closedRun).performClick()
+            list.performScrollToNode(prose)
+            composeTestRule.onNode(prose and hasAnyAncestor(child), useUnmergedTree = true).assertIsDisplayed()
+            composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(1)
+            list.performScrollToNode(run)
+            composeTestRule.onNode(run).performClick()
+            composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(0)
+            list.performScrollToNode(marker)
+            composeTestRule.onNode(marker).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
+            composeTestRule.onNode(header).assertIsDisplayed()
+            composeTestRule.onAllNodes(prose, useUnmergedTree = true).assertCountEquals(0)
+            list.performScrollToNode(run)
+            composeTestRule.onNode(closedRun).assertExists()
+            typeAndSend("release1783")
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText("after1783").fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(marker)
+            composeTestRule.onNodeWithText(finished).assertIsDisplayed()
+            composeTestRule.onNode(marker).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(header).fetchSemanticsNodes().isNotEmpty() }
+            composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasText("after1783"))
+            val agent = composeTestRule.onNode(header).fetchSemanticsNode().boundsInRoot
+            val after = composeTestRule.onNodeWithText("after1783", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            assertTrue("terminal block must settle before the following reply", agent.bottom <= after.top)
+            // Navigation preserves collapse state; explicitly open the owned run to inspect its reply.
+            composeTestRule.onAllNodesWithText("child1827-after", useUnmergedTree = true).assertCountEquals(0)
+            val conversationId =
+                runBlocking {
+                    repository
+                        .observeConversations(ConversationFilter.All)
+                        .first()
+                        .single { it.name == SEED_CHANNEL_NAME }
+                        .id
                 }
-        composeTestRule.verifyAgentRunNavigation(
-            agentId = "agent1783",
-            runId = ownedMessages.first { it.role == Role.Tool }.id,
-            childIds = ownedMessages.map { it.id },
-            ownedChild = hasText("child1827-after") and hasAnyAncestor(child),
-            goLabel = go,
-            expandLabel = expandLabel,
-            collapseLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.tool_run_collapse),
-        )
+            val ownedMessages =
+                runBlocking { repository.observeMessages(conversationId).first() }
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .map { it.message }
+                    .filter {
+                        it.role == Role.Tool &&
+                            it.toolCall?.parentToolUseId == "agent1783" ||
+                            it.role == Role.Assistant &&
+                            it.parentToolUseId == "agent1783"
+                    }
+            assertTrue(
+                "every late received tool must be retained in the owned family",
+                lateTools.all { late ->
+                    ownedMessages.any {
+                        it.id ==
+                            late.toolUseId
+                    }
+                },
+            )
+            composeTestRule.verifyAgentRunNavigation(
+                agentId = "agent1783",
+                runId = ownedMessages.first { it.role == Role.Tool }.id,
+                childIds = ownedMessages.map { it.id },
+                ownedChild = hasText("child1827-after") and hasAnyAncestor(child),
+                goLabel = go,
+                expandLabel = expandLabel,
+                collapseLabel = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.tool_run_collapse),
+            )
+        } finally {
+            eventScope.cancel()
+        }
     }
 
     /**

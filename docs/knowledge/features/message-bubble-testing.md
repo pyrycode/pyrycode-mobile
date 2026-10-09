@@ -16,7 +16,7 @@ first-arrival layout. Keep prefix, progress and incomplete-text assertions toget
 
 Standalone bubble fixtures omit `threadOpenedAt` and retain zero-start behavior.
 For first-arrival timestamp retention and realistic follow fixtures, see
-[thread testing](thread-screen-testing.md#testing). The device-only
+[thread testing](thread-screen-testing-coverage.md#testing). The device-only
 `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_reopenOngoingReplyShowsArrivedPrefixImmediately`
 now proves immediate reopen and prefix retention through the isolated daemon/Noise/relay path.
 An eventual combined reply can hide a temporary reset through catch-up or finalization: witness
@@ -144,23 +144,52 @@ and 320dp wrapping with enlarged text. A passing ATD capture and metadata sideca
 do not prove frame pixels: synthetic bars can suppress PNG output. The #1817
 verifier did not inspect fresh full-frame pixels or perform manual TalkBack traversal.
 
-Side geometry tests measure the configured viewport rather than Robolectric's
-outer window, whose density can differ. Measure the bubble, 13dp column,
-11×12dp Copy and 13×12dp Reply glyphs separately from their adjoining 48×48dp
-targets. `MessageBubbleTest` and `MessageReplyTargetsTest` require both target
-dimensions for both roles at 320dp/412dp, including short/long surfaces and
-streaming. A width-only check missed the former 36.5dp target heights. Assert the
-25dp glyph-centre gap, bubble-relative centring, containment within the visible
-surface and row, and separation from the preceding row's targets. Pointer checks
-cover both sides of the shared edge, every outer edge and overlap into the bubble;
-copy and reply must route independently with exact source and no timestamp toggle.
+Side geometry tests measure the forced viewport rather than Robolectric's outer
+window, whose density can differ. Native graphics at 320dp/412dp pins compact
+short/two-line bubbles, the exact 96dp stacked boundary, tall bubbles, streaming
+and compact rewrap without arrangement reselection. Measure the surface, action
+lane, glyphs and both dimensions of each 48×48dp target independently: a width-only
+check missed the former 36.5dp target heights. Stacked glyph centres remain 25dp
+apart; compact glyphs are centred in adjoining horizontal targets, Copy then Reply.
+Assert screen/surface containment, separation from content and other targets,
+and unchanged tall geometry.
+
+`MessageReplyTargetsTest` mounts consecutive User/User and Assistant/Assistant
+messages. Actual pointer taps near shared and outer edges must copy the exact
+owning source or reply to the exact owning identity once, without activating a
+neighbour or toggling timestamps. Preserve blank sources in fixtures: appending
+an identity creates a body line and hides the padding-only Assistant case.
+Empty/whitespace cases check absent glyphs/controls and pointer inactivity at the
+former overflowing edges. Timestamp-visible and empty-streaming cases check
+contained full-size targets and exact empty-source copy/reply routing.
 Scope source-copy selectors to the non-merging `message-row`, so another message
 or a fenced-code control cannot satisfy the assertion. Markdown and streaming
 append tests compare current source, including the 100,000-character bound.
 
-The 96dp minimum short surface retains the 12dp visible rest gap. Keep
-`BackgroundAgentRestGapTest` alongside action geometry checks: invisible trailing
-row space can satisfy containment while breaking the gap. Taller rows reduce the
+`MessageNaturalHeightTest` compares content plus existing padding, attachments
+and visible timestamps, with no action-driven floor, and checks the 16dp visible
+surface gap. Empty Text has zero-width semantic bounds but still consumes a line:
+use layout coordinates to measure that height. Empty/whitespace Assistant cases
+check padding-only surfaces and repeated timestamp-driven action removal/return
+under the same identity. Unplaced controls still retain semantics; assert their
+absence, not just their bounds. `BackgroundAgentRestGapTest` retains its **12dp**
+expectation and short user/assistant newest-message regressions. Invisible trailing
+row space can satisfy target containment while breaking that visible rest gap.
+
+Fresh #1982 rework XML from `2026-10-08T20:54Z` records **112 executed/passed,
+0 failed, 0 skipped** across eleven affected classes, including
+`MessageReplyTargetsTest` **20**, `MessageNaturalHeightTest` **12**, and
+`BackgroundAgentRestGapTest` **8**, each with zero failures/skips. The four
+empty/whitespace methods in each of the first two classes executed and passed,
+as did timestamp-visible and empty-streaming target cases at both widths.
+The subsequent verifier confirmed the same affected counts in fresh dispatcher
+`check` XML; full unit results were **5,026 executed/passed, 0 failed, 1 skipped**.
+The UI gate recorded **212 executed/passed, 0 failed, 1 skipped**, including
+`pointerReplyOpensImeAndTypingContinuesAtEndWithoutSending`; `scripted-all`
+recorded **22 executed/passed, 0 failed, 0 skipped**. No new real-Claude run was
+required or recorded for this geometry repair. See [verifier evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1990#issuecomment-6069527885).
+
+Taller rows reduce the
 lazy-list viewport; explicitly reveal the owned target and position pointer taps
 clear of the composer before retaining ownership/collapse assertions. Semantic
 visibility alone includes the area behind the composer. History fixtures must

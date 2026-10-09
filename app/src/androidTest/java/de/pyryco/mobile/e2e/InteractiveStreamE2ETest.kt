@@ -110,11 +110,13 @@ import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.DebugBundleStatus
 import de.pyryco.mobile.data.repository.EffectiveEffort
+import de.pyryco.mobile.data.repository.HistoryEntry
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.SessionPromptStatus
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.reduceHistoryPage
 import de.pyryco.mobile.di.AttentionAlert
 import de.pyryco.mobile.di.ConversationAttention
 import de.pyryco.mobile.di.HostConversationSource
@@ -126,8 +128,11 @@ import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_STATIC_PUBLI
 import de.pyryco.mobile.grantNotificationPermission
 import de.pyryco.mobile.notifications.ATTENTION_CHANNEL_ID
 import de.pyryco.mobile.notifications.NotificationTap
+import de.pyryco.mobile.notifications.completionReply
 import de.pyryco.mobile.notifications.isMuted
 import de.pyryco.mobile.notifications.nameOf
+import de.pyryco.mobile.notifications.notificationPreview
+import de.pyryco.mobile.notifications.notificationTitle
 import de.pyryco.mobile.push.PushTokenSource
 import de.pyryco.mobile.ui.components.CHANNEL_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
@@ -183,6 +188,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
@@ -2351,7 +2357,13 @@ class InteractiveStreamE2ETest {
             //    A's thread and A's row only; B's row and thread keep B's name.
             val renamedA = RENAMED_NAME_PREFIX + System.currentTimeMillis()
             openRow(nameA)
-            renameOpenThread(renamedA)
+            val beforeRename =
+                runCatching { collisionRenameEvidence(serverIdA) }
+                    .getOrElse { "diagnostic_error=${it.javaClass.simpleName}" }
+            Log.i("E2E", "event=collision_rename_begin $beforeRename")
+            collisionRenameStep({ "before=[$beforeRename] failure=[${collisionRenameEvidence(serverIdA)}]" }) {
+                renameOpenThread(renamedA)
+            }
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
             awaitChannelRow(renamedA)
@@ -2381,6 +2393,26 @@ class InteractiveStreamE2ETest {
             runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverIdB) }
             relaunched?.close()
         }
+    }
+
+    /** Only static flags; read inside the scenario, before its Activity and pairing cleanup. */
+    private fun collisionRenameEvidence(serverId: String): String {
+        val bundle = GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)
+        val repository = bundle?.coordinator?.currentRepository?.value
+        var focused = false
+        var resumed = false
+        composeTestRule.activityRule.scenario.onActivity { activity ->
+            focused = activity.hasWindowFocus()
+            resumed = activity.lifecycle.currentState == Lifecycle.State.RESUMED
+        }
+        val menuOpen =
+            composeTestRule.onAllNodesWithText(string(R.string.thread_overflow_channel_info)).fetchSemanticsNodes().isNotEmpty()
+        val editVisible =
+            composeTestRule.onAllNodesWithText(string(R.string.thread_overflow_edit)).fetchSemanticsNodes().isNotEmpty()
+        val renameVisible = composeTestRule.onAllNodesWithText(RENAME_ITEM).fetchSemanticsNodes().isNotEmpty()
+        return "owner_registered=${bundle != null} owner_live=${repository != null} " +
+            "owner_mutations=${repository?.mutationsSupported} menu_open=$menuOpen " +
+            "edit_visible=$editVisible rename_visible=$renameVisible focused=$focused resumed=$resumed"
     }
 
     /**
@@ -2742,7 +2774,43 @@ class InteractiveStreamE2ETest {
             beforeByHost[serverIdA] = hostConversationIds(serverIdA)
             val chatA = createChatOn(serverIdA)
             createdByHost[serverIdA] = chatA
-            renameOpenThread(chatName)
+            composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodesWithText(RENAME_ITEM).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNodeWithText(RENAME_ITEM).performClick()
+            composeTestRule.renameDiscussionInDialog(
+                newName = chatName,
+                fieldLabel = string(R.string.rename_dialog_field_label),
+                saveLabel = RENAME_SAVE,
+                timeoutMillis = THREAD_TIMEOUT_MS,
+                diagnostic = {
+                    val bundle = GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverIdA)
+                    val repository = bundle?.coordinator?.currentRepository?.value
+                    val renamed =
+                        repository?.let {
+                            runBlocking {
+                                withTimeoutOrNull(1_000) {
+                                    it.observeConversations(ConversationFilter.All).first().any { row ->
+                                        row.id == chatA && row.name == chatName
+                                    }
+                                }
+                            }
+                        }
+                    "owner registered=${bundle != null}, repository present=${repository != null}, confirmed rename=$renamed"
+                },
+                awaitOwningHost = {
+                    val current =
+                        checkNotNull(
+                            GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverIdA),
+                        ).coordinator.currentRepository
+                    runBlocking {
+                        withTimeout(THREAD_TIMEOUT_MS) {
+                            current.awaitDiscussionRenameOwner()
+                        }
+                    }
+                },
+            )
             composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
             awaitChannelList()
             awaitListText(chatName)
@@ -3186,12 +3254,18 @@ class InteractiveStreamE2ETest {
             awaitQueuedRow(queuedPrompt)
             val queued =
                 runBlocking {
-                    peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { q -> q.any { it.text == queuedPrompt } }
+                    withTimeoutDiagnostic({ "Send now: peer never observed the queued entry" }) {
+                        peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { q -> q.any { it.text == queuedPrompt } }
+                    }
                 }.single { it.text == queuedPrompt }
             val send = hasContentDescription("Send now") and hasAnyAncestor(queuedRow(queuedPrompt))
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { composeTestRule.onAllNodes(send).fetchSemanticsNodes().isNotEmpty() }
             composeTestRule.onNode(send).performClick()
-            runBlocking { peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { q -> q.none { it.queuedMsgId == queued.queuedMsgId } } }
+            runBlocking {
+                withTimeoutDiagnostic({ "Send now: peer never observed queue removal after the pointer tap" }) {
+                    peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { q -> q.none { it.queuedMsgId == queued.queuedMsgId } }
+                }
+            }
             val ended =
                 allowPromptsUntil(
                     peer,
@@ -4522,13 +4596,46 @@ class InteractiveStreamE2ETest {
             val replyCheckpoint = requireNotNull(beforePhoneRead.latestEntryId) { "daemon omitted latest durable id" }
             assertTrue("real reply has durable history", replyCheckpoint > 0u)
             assertTrue("list view must leave the real reply unread", (beforePhoneRead.readUpTo ?: 0uL) < replyCheckpoint)
+            val phoneHistory = peerStep(peer, "receive A's history backing the watermark") { peer.history(chatA, THREAD_TIMEOUT_MS) }
+            assertTrue(
+                "peer received the entry backing A's filtered daemon watermark",
+                phoneHistory.any {
+                    it.id == replyCheckpoint && it.type !in setOf("turn_state", "stall", "api_retry", "compacting", "session_transition")
+                },
+            )
 
             // 3. Read the actual reply at the newest end, and observe the confirmed mark from the peer.
             openChatRow(nameA)
             peerStep(peer, "observe the phone's confirmed read of A") {
                 coroutineScope {
                     val confirmed = async(Dispatchers.Default) { peer.awaitReadMark(chatA, replyCheckpoint, THREAD_TIMEOUT_MS) }
-                    composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { confirmed.isCompleted }
+                    try {
+                        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { confirmed.isCompleted }
+                    } catch (error: ComposeTimeoutException) {
+                        val repository = checkNotNull(GlobalContext.get().get<HostConversationSource>().repositoryFor(serverId))
+                        val snapshot =
+                            (repository as de.pyryco.mobile.data.repository.ThreadSnapshotSource)
+                                .observeThreadSnapshot(
+                                    chatA,
+                                ).first()
+                        val evidence = snapshot.readEvidence
+                        val marks = repository.observeReadMarks(chatA).first()
+                        throw AssertionError(
+                            "event=phone_read_probe rows=${snapshot.rows.size} " +
+                                "unidentified=${evidence.unidentified.size} malformed=${evidence.facts.values.count { it == null }} " +
+                                "gaps=${evidence.gaps.size} versions=${evidence.versions.size} " +
+                                "checkpoint_reaches_target=${snapshot.rows.any {
+                                    (
+                                        evidence.checkpoint(
+                                            it,
+                                            marks?.readUpTo ?: 0u,
+                                        ) ?: 0u
+                                    ) >= replyCheckpoint
+                                }} " +
+                                "read_reaches_target=${(marks?.readUpTo ?: 0u) >= replyCheckpoint}",
+                            error,
+                        )
+                    }
                     confirmed.await()
                 }
             }
@@ -4554,8 +4661,14 @@ class InteractiveStreamE2ETest {
             // 6. The peer reads B's actual durable reply while the phone remains on the list.
             val history = peerStep(peer, "read B's real reply history") { peer.history(chatB, THREAD_TIMEOUT_MS) }
             assertTrue("peer received B's assistant reply", history.any { it.type == "assistant_delta" })
-            val peerCheckpoint = requireNotNull(history.maxOfOrNull { it.id }) { "peer received no durable history" }
             val beforePeerRead = peerStep(peer, "confirm B is still unread") { peer.readMarks(chatB, THREAD_TIMEOUT_MS) }
+            val peerCheckpoint = requireNotNull(beforePeerRead.latestEntryId) { "daemon omitted B's unread watermark" }
+            assertTrue(
+                "peer received the entry backing B's filtered daemon watermark",
+                history.any {
+                    it.id == peerCheckpoint && it.type !in setOf("turn_state", "stall", "api_retry", "compacting", "session_transition")
+                },
+            )
             assertTrue("the list did not acknowledge B", (beforePeerRead.readUpTo ?: 0uL) < peerCheckpoint)
             val confirmed = peerStep(peer, "acknowledge the peer's read of B") { peer.markRead(chatB, peerCheckpoint, THREAD_TIMEOUT_MS) }
             assertTrue("peer read was durably confirmed", confirmed >= peerCheckpoint)
@@ -5203,15 +5316,23 @@ class InteractiveStreamE2ETest {
             composeTestRule.onNode(closedRun).assertExists()
             composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(0)
             // ScrollTo uses the drawing viewport; reveal the actual tap center between the chrome bars.
-            composeTestRule.questionAnswerTarget(closedRun).performClick()
+            composeTestRule.questionAnswerTarget(closedRun).performTouchInput { click(center) }
             // Expansion can put this early paragraph outside composition as later tool rows arrive.
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 runCatching { list.performScrollToNode(reply) }.isSuccess &&
                     composeTestRule.onAllNodes(reply and hasAnyAncestor(child), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
-            composeTestRule.questionAnswerTarget(reply and hasAnyAncestor(child)).assertIsDisplayed()
+            composeTestRule
+                .questionAnswerTarget(
+                    reply and hasAnyAncestor(child),
+                ) { android.util.Log.i("AgentReplyReveal", it) }
+                .assertIsDisplayed()
             composeTestRule.onAllNodes(reply, useUnmergedTree = true).assertCountEquals(1)
-            composeTestRule.questionAnswerTarget(openedRun).performClick()
+            composeTestRule
+                .questionAnswerTarget(
+                    openedRun,
+                ) { android.util.Log.i("AgentReplyReveal", it) }
+                .performTouchInput { click(center) }
             composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
                 runCatching { list.performScrollToNode(closedRun) }.isSuccess &&
                     composeTestRule.onAllNodes(reply, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
@@ -5378,9 +5499,11 @@ class InteractiveStreamE2ETest {
             openChatRow(name)
             val hold = "curl --max-time 180 --silent --show-error $fixture/hold"
             val childReply = "agent1783_done"
+            val holdTools = "curl --max-time 180 --silent --show-error $fixture/hold-tools"
             sendFromPhone(
                 "Use Agent once with run_in_background=true, subagent_type=general-purpose and description=Held background agent. " +
-                    "Give it exactly these instructions: first make two separate foreground Bash calls, " +
+                    "Give it exactly these instructions: first run Bash with timeout 180000 in the foreground: $holdTools . " +
+                    "After that finishes make two separate foreground Bash calls, " +
                     "each running printf agent1783_ready. Then run Bash with timeout 180000 in the foreground: $hold . " +
                     "Wait for that command to finish, then reply exactly $childReply as your own ordinary assistant paragraph. " +
                     "Do not use any other tool yourself or wait for the agent. " +
@@ -5400,7 +5523,42 @@ class InteractiveStreamE2ETest {
             val task = MobileJson.decodeFromJsonElement(BackgroundTaskStartedPayloadDto.serializer(), launched.payload)
             val agentId = task.toolCallId
             require(agentId.isNotEmpty()) { "background task omitted its Agent join" }
-            allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "launching turn did not end", allowed) { it.type == "turn_end" }
+            val origin =
+                requireNotNull(
+                    peer
+                        .recorded(chat)
+                        .single {
+                            it.type == "tool_use" && peer.field(it, "tool_use_id") == agentId
+                        }.let { peer.field(it, "turn_id") },
+                )
+            val launchingEnd =
+                allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "launching turn did not end", allowed) {
+                    it.type == "turn_end" && peer.field(it, "turn_id") == origin
+                }
+            // Causal fence: the child cannot start these tools until the main turn has ended.
+            stopTaskFixtureGet(fixture.replace("127.0.0.1", "10.0.2.2") + "/release-tools")
+            allowPromptsUntil(peer, chat, REPLY_TIMEOUT_MS, "two late child tools did not arrive", allowed, frame = "tool_use") {
+                peer.recorded(chat).dropWhile { frame -> frame != launchingEnd }.drop(1).count { frame ->
+                    frame.type == "tool_use" && peer.field(frame, "parent_tool_use_id") == agentId
+                } >= 2
+            }
+            val lateTools =
+                peer
+                    .recorded(chat)
+                    .dropWhile { it != launchingEnd }
+                    .drop(1)
+                    .filter {
+                        it.type == "tool_use" && peer.field(it, "parent_tool_use_id") == agentId
+                    }.map { requireNotNull(peer.field(it, "tool_use_id")) }
+            assertTrue("at least two distinct child tools received after main completion", lateTools.distinct().size >= 2)
+            assertTrue(
+                "late child calls retain their launching turn",
+                peer
+                    .recorded(chat)
+                    .filter {
+                        it.type == "tool_use" && peer.field(it, "tool_use_id") in lateTools
+                    }.all { peer.field(it, "turn_id") == origin },
+            )
             allowPromptsUntil(
                 peer,
                 chat,
@@ -5488,8 +5646,26 @@ class InteractiveStreamE2ETest {
                         it.role == Role.Assistant &&
                         it.parentToolUseId == agentId
                 }
+            assertTrue(
+                "every late received child belongs to the visible Agent family",
+                lateTools.all { id ->
+                    ownedMessages.any { it.id == id && it.toolCall?.parentToolUseId == agentId }
+                },
+            )
+            val lateResults = peer.recorded(chat).filter { it.type == "tool_result" && peer.field(it, "tool_use_id") in lateTools }
+            assertTrue(
+                "late children receive correctly attributed results",
+                lateTools.all { id ->
+                    lateResults.any {
+                        peer.field(it, "tool_use_id") == id &&
+                            peer.field(it, "parent_tool_use_id") == agentId &&
+                            peer.field(it, "turn_id") == origin
+                    }
+                },
+            )
             val runId = ownedMessages.first { it.role == Role.Tool }.id
             val proofRun = System.currentTimeMillis()
+            Log.i("AgentRunProof", "event=late_agent_tools after_main_end=true late_tools=${lateTools.distinct().size}")
             composeTestRule.verifyAgentRunNavigation(
                 agentId = agentId,
                 runId = runId,
@@ -5521,6 +5697,7 @@ class InteractiveStreamE2ETest {
             assertTrue("later phone message must render below the settled Agent", laterIndex < agentIndex)
         } finally {
             try {
+                stopTaskFixtureGet(fixture.replace("127.0.0.1", "10.0.2.2") + "/release-tools")
                 stopTaskFixtureGet(fixture.replace("127.0.0.1", "10.0.2.2") + "/release")
             } finally {
                 runBlocking { preferences.setCollapseToolUses(previousCollapse) }
@@ -5661,10 +5838,24 @@ class InteractiveStreamE2ETest {
             val woke = sendAppToBackground(serverId, watch)
             peerStep(peer, "allow the prompt once and await its dismissal") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
             held = null
-            peerStep(peer, "await the allowed turn's turn_end") { peer.awaitFrame(chatId, "turn_end", WAIT_TURN_TIMEOUT_MS) }
+            val completed =
+                peerStep(peer, "await the allowed turn's turn_end") { peer.awaitFrame(chatId, "turn_end", WAIT_TURN_TIMEOUT_MS) }
+            val turn = MobileJson.decodeFromJsonElement(TurnEndPayloadDto.serializer(), completed.payload)
+            val history = peerStep(peer, "read the completed reply for notification evidence") { peer.history(chatId, THREAD_TIMEOUT_MS) }
+            val rows = reduceHistoryPage(history.map { HistoryEntry(it.type, it.payload, Instant.parse(it.ts), it.id) }, interactive = true)
+            val preview =
+                requireNotNull(
+                    notificationPreview(completionReply(rows, turn.turnId)),
+                ) { "the completed real turn supplied no reply preview" }
+            assertNotEquals("completion evidence must contain a reply", string(R.string.notification_turn_completed), preview)
 
-            // 3. AC-1: the push wakes the app and exactly one turn alert shows.
-            val alert = awaitAlert(string(R.string.notification_turn_completed), woke)
+            // 3. AC-1: the push wakes the app and exactly one private reply alert shows.
+            val alert = awaitAlert(preview, woke)
+            assertRedactedAlert(
+                alert.notification,
+                string(R.string.notification_turn_completed),
+                notificationTitle(name) ?: string(R.string.app_name),
+            )
 
             // 4. AC-1: the tap, the notification's own content intent, opens that conversation's thread.
             checkNotNull(alert.notification.contentIntent) { "the alert carries no tap" }.send()
@@ -5721,7 +5912,7 @@ class InteractiveStreamE2ETest {
             awaitChannelList()
             awaitConnected()
             val connectedAt = SystemClock.elapsedRealtime()
-            val (chatId, _) = answerChat(serverId, PUSH_PROMPT_NAME_PREFIX)
+            val (chatId, name) = answerChat(serverId, PUSH_PROMPT_NAME_PREFIX)
             // Exercise the suite's shared-token binding even when this method runs alone (#1694, #1698).
             runningToolPeer().use { prior ->
                 peerStep(prior, "open prior prompt peer") { prior.open(CONNECT_TIMEOUT_MS) }
@@ -5735,8 +5926,23 @@ class InteractiveStreamE2ETest {
             val modalId = peerStep(peer, "await background permission modal") { peer.awaitPermissionModal(chatId, REPLY_TIMEOUT_MS) }
             held = chatId to modalId
 
-            // 3. AC-2: the push wakes the app and exactly one prompt alert shows.
-            val first = awaitAlert(string(R.string.notification_prompt), woke)
+            val shown =
+                peerStep(peer, "read the background permission display fields") { peer.awaitFrame(chatId, "modal_shown", REPLY_TIMEOUT_MS) }
+            val modal = MobileJson.decodeFromJsonElement(ModalShownPayloadDto.serializer(), shown.payload)
+            val preview =
+                requireNotNull(
+                    notificationPreview("${modal.title}\n\n${modal.prompt}"),
+                ) { "the real permission prompt supplied no preview" }
+            assertTrue("the real action has a prompt", modal.prompt.isNotBlank())
+            assertNotEquals("prompt evidence must show the action", string(R.string.notification_prompt), preview)
+
+            // 3. AC-2: the push wakes the app and exactly one private action alert shows.
+            val first = awaitAlert(preview, woke)
+            assertRedactedAlert(
+                first.notification,
+                string(R.string.notification_prompt),
+                notificationTitle(name) ?: string(R.string.app_name),
+            )
 
             // 4. AC-2: a second reconnect inside the wake window re-shows the prompt, and nothing is posted again.
             // The source re-emits the re-shown prompt's alert (#1337) and the notifier's ledger drops it, so nothing
@@ -5892,6 +6098,50 @@ class InteractiveStreamE2ETest {
                 ?.toString(),
         )
         return alerts.single()
+    }
+
+    /** Both push scenarios keep their private content out of the complete public notification object. */
+    private fun assertRedactedAlert(
+        notification: Notification,
+        fixed: String,
+        title: String,
+    ) {
+        assertEquals("private lock-screen visibility", Notification.VISIBILITY_PRIVATE, notification.visibility)
+        val public = requireNotNull(notification.publicVersion) { "the alert has no redacted public version" }
+        assertEquals("public conversation title", title, public.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
+        assertEquals("public fixed copy", fixed, public.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString())
+        assertEquals("private conversation title", title, notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
+        val preview = requireNotNull(notification.extras.getCharSequence(Notification.EXTRA_TEXT)).toString()
+
+        // Android attaches Binder-backed metadata after posting; Parcel.marshall cannot inspect it.
+        // Check the text-bearing object graph and exclude alternate rendering/tap surfaces instead.
+        fun assertNoPreview(value: Any?) {
+            when (value) {
+                is android.os.Bundle ->
+                    value.keySet().forEach { key ->
+                        assertFalse("public extra key carries preview content", key.contains(preview))
+                        assertNoPreview(value.get(key))
+                    }
+                is Array<*> -> value.forEach(::assertNoPreview)
+                is Iterable<*> -> value.forEach(::assertNoPreview)
+                is CharSequence ->
+                    assertTrue(
+                        "public text must be only the title or fixed copy",
+                        value.toString() == title || value.toString() == fixed,
+                    )
+                else -> assertFalse("public version carries preview content", value?.toString()?.contains(preview) == true)
+            }
+        }
+        assertNoPreview(public.extras)
+        assertEquals("public ticker", null, public.tickerText)
+        assertEquals("public custom content", null, public.contentView)
+        assertEquals("public expanded content", null, public.bigContentView)
+        assertEquals("public heads-up content", null, public.headsUpContentView)
+        assertEquals("public actions", null, public.actions)
+        assertEquals("public tap", null, public.contentIntent)
+        assertEquals("public delete intent", null, public.deleteIntent)
+        assertEquals("public full-screen intent", null, public.fullScreenIntent)
+        assertEquals("nested public version", null, public.publicVersion)
     }
 
     /** Finish the activities a tap started. The tap's `CLEAR_TASK` replaced the rule's own, so the rule cannot. */

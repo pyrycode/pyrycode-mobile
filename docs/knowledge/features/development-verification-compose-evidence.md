@@ -32,6 +32,28 @@ A chrome pointer node can exclude underlying siblings without consuming child
 movement; gradual attachment swipes and composer selection drags must cross touch
 slop successfully. A tap-only test misses cancellation of those recognizers.
 
+A valid earlier geometry sample also does not establish a completed reveal while
+content is growing. In #1973, following the newest end let later owned Agent prose
+growth move an earlier paragraph behind the header between measurement and the
+result check. An Agent progress frame does not prove that the fixture's HTTP hold
+has been reached. `questionAnswerTarget` keeps the owned matcher, takes at most
+three fresh measurements/corrections, and rechecks the target and both chrome
+edges after each displacement, including a zero displacement. It returns only
+when the physical center clears the measured header and composer; otherwise the
+chrome guard still fails. This adds no tap, sleep or timeout. Its defaulted evidence
+sink records only geometry and static stages, without content or identifiers.
+
+Use one center pointer tap per open/close transition and prove the resulting state
+independently of lazy disposal. Reveal the owned prose before checking that it
+appears exactly once, then require its lazy-list key absent through `IndexForKey`
+after closing. Semantics absence alone can mean that an open paragraph went off
+screen. `BackgroundAgentProseScreenTest.lateOwnedProseGrowthIsRemeasuredBeforeClosingItsRun`
+injects growth after the first sample on the real screen with a scoped 320×480dp
+fixture and positively asserts that growth covers the paragraph.
+`expandedOwnedRunBehindHeaderIsCorrectedBeforeItsCloseTap` separately covers the
+owned expanded control behind the header and its guarded physical close. See
+[the Agent proof and counted evidence](../../e2e-interactive-stream.md#verification-status).
+
 The [thread chrome evidence](../../../app/src/androidTest/assets/chrome-1646/README.txt)
 uses full `pixel8Api35`, real bars and hardware framebuffer captures for progressive
 backdrop blur; JVM pixels or synthetic-inset geometry cannot prove it. It retains
@@ -39,7 +61,7 @@ explicit underlap at both bars, four current-Figma comparisons, viewport/inset
 sidecars and IME before/open/dismissed/reopened states at newest/history anchors.
 The [final #1646 verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1700#issuecomment-5977891679)
 records the fresh complete gates and confirms the earlier-field real-IME
-open/dismiss/reopen method passed. See [thread testing](thread-screen-testing.md#testing)
+open/dismiss/reopen method passed. See [thread testing](thread-screen-testing-coverage.md#testing)
 for executed/failed/skipped counts and named methods. Those full-suite passes
 resolve the retained focus-repair README's historical failed/busy attempts; they
 are not evidence of a separate focused device rerun.

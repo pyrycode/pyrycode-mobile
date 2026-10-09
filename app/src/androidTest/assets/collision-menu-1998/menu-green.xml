@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.thread.ThreadMutationArrivalTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-09T09:03:52.926Z" hostname="Juhanas-MacBook-Air.local" time="10.431">
+  <properties/>
+  <testcase name="otherHostArrivalDoesNotEnableOwnersEdit" classname="de.pyryco.mobile.ui.conversations.thread.ThreadMutationArrivalTest" time="7.602"/>
+  <testcase name="owningHostArrivalEnablesEditAfterComposerWasAlreadyDrawn" classname="de.pyryco.mobile.ui.conversations.thread.ThreadMutationArrivalTest" time="2.464"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

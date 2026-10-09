@@ -1,0 +1,62 @@
+package de.pyryco.mobile.e2e
+
+import androidx.compose.ui.test.ComposeTimeoutException
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDialog
+import androidx.compose.ui.test.isEnabled
+import androidx.compose.ui.test.junit4.ComposeTestRule
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextReplacement
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
+
+/** Await the modal's own field; the thread composer can remain focused while the modal opens. */
+internal fun ComposeTestRule.renameDiscussionInDialog(
+    newName: String,
+    fieldLabel: String,
+    saveLabel: String,
+    timeoutMillis: Long,
+    diagnostic: () -> String = { "" },
+    awaitOwningHost: () -> Unit = {},
+) {
+    val inDialog = hasAnyAncestor(isDialog())
+    val field = hasSetTextAction() and hasContentDescription(fieldLabel) and inDialog
+    val save = hasText(saveLabel) and hasClickAction() and isEnabled() and inDialog
+    val title = hasText(newName) and !hasSetTextAction() and !inDialog
+    var stage = "await dialog field"
+    try {
+        waitUntil(timeoutMillis) { onAllNodes(field).fetchSemanticsNodes().size == 1 }
+        stage = "replace dialog field"
+        onNode(field).performTextReplacement(newName)
+        stage = "await enabled Save"
+        waitUntil(timeoutMillis) { onAllNodes(save).fetchSemanticsNodes().size == 1 }
+        stage = "await owning host before Save"
+        stage = "tap Save"
+        onNode(save).performClick()
+        stage = "await dialog dismissal"
+        waitUntil(timeoutMillis) { onAllNodes(isDialog()).fetchSemanticsNodes().isEmpty() }
+        stage = "await renamed title"
+        waitUntil(timeoutMillis) { onAllNodes(title).fetchSemanticsNodes().size == 1 }
+    } catch (failure: ComposeTimeoutException) {
+        throw discussionRenameFailure(stage, diagnostic, failure)
+    } catch (failure: TimeoutCancellationException) {
+        throw discussionRenameFailure(stage, diagnostic, failure)
+    } catch (failure: AssertionError) {
+        throw discussionRenameFailure(stage, diagnostic, failure)
+    }
+}
+
+/** Diagnostics are lazy and best effort; their own failure never replaces the failing UI operation. */
+internal fun discussionRenameFailure(
+    stage: String,
+    diagnostic: () -> String,
+    cause: Throwable,
+): AssertionError = AssertionError("discussion rename: $stage; ${runCatching(diagnostic).getOrDefault("diagnostic unavailable")}", cause)
+
+/** The coordinator's collected publication can lag its synchronous current authenticated owner. */
+internal suspend fun <R : Any> StateFlow<R?>.awaitDiscussionRenameOwner(): R = checkNotNull(first { it != null && it === value })

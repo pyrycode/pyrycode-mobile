@@ -440,7 +440,7 @@ the neighboring Offline Retry regression remains runnable.
 - **Session errors (#1678):** `ThreadTopOverlayTest` checks persistent-notice ordering,
   inert semantics and the reused Error colors/right-aligned bodySmall text with native graphics.
   `ScriptedSessionErrorTest` proves the real repository-to-screen graph; see
-  [thread testing](thread-screen-testing.md#session-error-graph-and-acknowledgement-races-1678).
+  [thread testing](thread-screen-testing-coverage.md#session-error-graph-and-acknowledgement-races-1678).
 - **Emulator (rung 4, #1457):** the scripted `mcp-failed` scenario
   (`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_failedMcpServerPillOpensChannelInfo`,
   [Scenarios](../../e2e-interactive-stream.md#scenarios-454)) drives the pill through the real daemon and

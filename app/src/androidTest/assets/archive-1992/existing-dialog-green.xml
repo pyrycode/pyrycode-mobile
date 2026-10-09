@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.ui.conversations.components.RenameDialogTest" tests="14" skipped="0" failures="0" errors="0" timestamp="2026-10-08T21:53:14.406Z" hostname="Juhanas-MacBook-Air.local" time="0.73">
+  <properties/>
+  <testcase name="save_enabled_when_trimmed_input_differs_from_initial_name" classname="de.pyryco.mobile.ui.conversations.components.RenameDialogTest" time="0.059"/>
+  <testcase name="save_disabled_on_whitespace_only_input" classname="de.pyryco.mobile.ui.conversations.components.RenameDialogTest" time="0.05"/>
+  <testcase name="compact_width_and_large_text_keep_field_and_actions_reachable" classname="de.pyryco.mobile.ui.conversations.components.RenameDialogTest" time="0.075"/>
+  <testcase name="tapping_cancel_invokes_onDismiss_without_invoking_onSubmit" classname="de.pyryco.mobile.ui.conversations.components.RenameDialogTest" time="0.052"/>
+  <testcase name="tapping_save_invokes_onSubmit_with_trimmed_text" classname="de.pyryco.mobile.ui.conversations.components.RenameDialogTest" time="0.048"/>
+  <testcase name="field_prefills_with_initial_name" classname="de.pyryco.mobile.ui.conversations.components.RenameDialogTest" time="0.039"/>
+  <testcase name="close_and_back_dismiss_without_submitting" classname="de.pyryco.mobile.ui.conversations.components.RenameDialogTest" time="0.091"/>
+  <testcase name="label_keeps_its_full_line_box_so_the_field_does_not_creep_closer" classname="de.pyryco.mobile.ui.conversations.components.RenameDialogTest" time="0.046"/>
+  <testcase name="field_reports_focus_once_dialog_composes" classname="de.pyryco.mobile.ui.conversations.components.RenameDialogTest" time="0.041"/>
+  <testcase name="title_and_field_label_and_buttons_render" classname="de.pyryco.mobile.ui.conversations.components.RenameDialogTest" time="0.042"/>
+  <testcase name="save_disabled_when_trimmed_input_equals_initial_name" classname="de.pyryco.mobile.ui.conversations.components.RenameDialogTest" time="0.05"/>
+  <testcase name="save_disabled_when_input_cleared" classname="de.pyryco.mobile.ui.conversations.components.RenameDialogTest" time="0.039"/>
+  <testcase name="save_disabled_on_first_composition_when_matches_initial_name" classname="de.pyryco.mobile.ui.conversations.components.RenameDialogTest" time="0.037"/>
+  <testcase name="ime_done_submits_only_a_changed_trimmed_name" classname="de.pyryco.mobile.ui.conversations.components.RenameDialogTest" time="0.058"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

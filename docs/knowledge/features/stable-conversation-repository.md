@@ -204,6 +204,15 @@ delegates; with no connection live it throws `IllegalStateException("No live rel
 Snapshotting once is correct: if the connection drops *after* the snapshot, the delegate's own method
 throws on its not-`Open` send — the facade need not re-check.
 
+A collected repository publication can lag synchronous authenticated availability (#1992).
+For a host-owned UI write, a replayed non-null repository or another host's Connected state
+cannot establish readiness. The two-host Archive test compares the owning coordinator's emitted
+repository by identity with its current `.value` immediately before its single Save. Its controlled
+regression drives this facade with A absent and another host ready: without that wait the rename
+is rejected, even though the dialog dismisses. Readiness is an observation, not a reservation;
+a later disconnect still fails through the normal one-shot contract, without retry. See
+[rename synchronization and counted evidence](../../e2e-interactive-stream.md#verification-status).
+
 **Delegation is behaviour-neutral** (AC #4): a wired mutation (`createDiscussion`/`promote`/`sendMessage`),
 a throwing stub (`archive`/`unarchive`/`rename`/`startNewSession`/`changeWorkspace` →
 `UnsupportedOperationException` on the remote repo), and a wired error (`RelayErrorException`,
@@ -280,10 +289,15 @@ reports capability off" model, but `switchToLive` is `Flow`-typed and can't be r
 the facade is a process-lifetime singleton constructed while `currentRepository.value` is `null`, so an
 `override val mutationsSupported = currentRepository.value?.mutationsSupported ?: false` initializer would
 latch `false` **forever** and never reflect a relay that connects later. The getter re-reads `.value` on
-every access — the churn-back-to-`null` test proves it re-reads rather than snapshotting. Note the sole
-consumer today, [`ThreadViewModel`](thread-screen.md), reads it **once at construction** (the mode is static
-per build config), so a connection landing after the VM is built won't flip the captured snapshot — an
-accepted, documented limitation, not this facade's concern. See [`../codebase/507.md`](../codebase/507.md).
+every access — the churn-back-to-`null` test proves it re-reads rather than snapshotting.
+Since [#1998](../../specs/architecture/1998-collision-thread-menu-capability.md),
+[`ThreadViewModel`](thread-screen-how-it-works-list-and-status-row.md) also re-reads capability
+when its owning host's availability changes. Its initial state reads the facade; the collected
+projection requires `available && repository.mutationsSupported`. An absent owner or a connected
+non-supporting delegate remains denied, and another host sharing the conversation ID cannot enable
+this destination's actions. Build-mode selection is static, but the live delegate is not: caching
+this getter at construction permanently hides Rename/Edit when the thread opens during a connection
+gap. See [controlled regression and live evidence](../../e2e-interactive-stream.md#verification-status).
 
 ### The not-connected contract
 
