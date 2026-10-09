@@ -152,6 +152,16 @@ class ThreadListFollowTest {
         assertEquals(FollowStep(following = false, pin = false), step(frame(), away, following = true))
     }
 
+    @Test
+    fun blockRelocationPreservesFollowing_evenWhenAnchorChangesOrVacancyClamps() {
+        val before = frame(key = "moving", offset = 80)
+        val relocated = frame(key = "stationary", offset = 0).copy(relocationVersion = 1)
+        assertEquals(FollowStep(following = false, pin = false), step(before, relocated, following = false))
+        assertEquals(FollowStep(following = true, pin = false), step(before, relocated, following = true))
+        assertEquals(FollowStep(following = false, pin = false), step(relocated, relocated.copy(content = "growth"), following = false))
+        assertEquals(FollowStep(following = true, pin = false), step(relocated, relocated.copy(anchorOffset = 1), following = false))
+    }
+
     private companion object {
         const val TOLERANCE = 11
     }
