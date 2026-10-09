@@ -3301,15 +3301,23 @@ post-verifier full dispatcher run used
 mobile `742c465059adf89f0b58d5d42b7e1b3b728684bf` merged with `origin/main`
 `31d44af7c5cc`. Its method-level JUnit report
 `2026-10-09T09-47-46-665Z_real-claude-gate_#1969.log` records **65 executed,
-65 passed (0 flaky), 0 failed, 0 skipped**, exit 0 in 15m 17s. Both
+65 passed (0 flaky), 0 failed, 0 errors, 0 skipped**, exit 0 in 15m 17s. Both
 `InteractiveStreamE2ETest#interactiveTurn_modelChange_roundTripsAndStaysPerConversation`
 and `InteractiveStreamE2ETest#interactiveTurn_attentionDot_followsARealTurn`
 explicitly executed and passed. The
 [issue's gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1969#issuecomment-6078717180)
 confirms the full command, mobile revisions and counts. No separate focused run
-is claimed for this gate. The full-run report supplies no daemon-revision
-annotation; its actual daemon commit remains required evidence, so #1969's
-revision handoff is unfinished despite the named full-suite passes.
+is claimed for this gate. The [verifier's recovered evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1999#issuecomment-6078841215)
+identifies the actual daemon as `a536d17b1e182fb5398a5458e3afe6079b37a510`,
+from line 96 of the matching `2026-10-09T09-47-46-665Z_real-claude-gate_#1969.stderr.log`.
+It records the selected `build/e2e-bin/pyry` binary; adjacent lines record the
+mobile revision, Claude Code **2.1.280** and both fixture daemon launches.
+The verifier confirmed daemon repairs #3017, #3026 and #3029 are ancestors of
+that revision. The retained JUnit report SHA-256 is
+`8d4fe382733e0ec4dd3b411d4719b841bb779d157b8f8e06042492d020cb4c12`.
+The original binary and worktree XML were removed; the matching retained stderr
+and JUnit report establish revision and method outcomes. Both acceptance criteria
+are complete without a new run.
 
 The earlier focused pair at mobile `e42c98f786c50eadaf9a864230069846326eb5ed`
 and daemon `a39c72739eb2e811708a67b08906614a4316b834` (`vcs.modified=false`,
@@ -5025,8 +5033,9 @@ The remaining checks here are specific to a real relay or real Claude execution:
 - **Restored shared proof (#1969):** Both inherited `InteractiveStreamE2ETest`
   model-change and attention methods passed in the fresh 65-test full suite;
   [Verification status](#verification-status) distinguishes that gate from the
-  earlier focused pair and historical failures. The remaining handoff is the
-  full run's actual daemon revision, routed to verification. No scenario or
+  earlier focused pair and historical failures. The verifier recovered the full
+  run's daemon revision from matching stderr and confirmed all three repairs;
+  no evidence or coverage follow-up remains. No scenario or
   `DeterministicInteractiveStreamE2ETest` twin changed. The pre-ship command stays
   `python3 scripts/android-test-gate.py live`.
 

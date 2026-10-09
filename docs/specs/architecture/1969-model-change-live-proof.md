@@ -59,8 +59,26 @@ The method-level JUnit gate report `2026-10-09T09-47-46-665Z` and
 record exit 0 in 15m 17s: 65 executed, 65 passed (0 flaky), 0 failed, 0 skipped.
 Both inherited methods explicitly executed and passed with no scenario, helper,
 assertion or timeout edits. This is full-suite execution, separate from the
-focused pair above. The full gate supplies no daemon-revision annotation, so its
-actual daemon commit and confirmation that it contains the repairs remain missing
-acceptance evidence, routed back to verification. The focused daemon revision
-must not be substituted for the full run's revision. See
+focused pair above. The JUnit report omits daemon metadata; the
+[verifier recovered the full-run evidence](https://github.com/pyrycode/pyrycode-mobile/pull/1999#issuecomment-6078841215)
+from matching retained stderr, line 96 of
+`2026-10-09T09-47-46-665Z_real-claude-gate_#1969.stderr.log`: daemon
+`a536d17b1e182fb5398a5458e3afe6079b37a510`, selected binary
+`real-claude-gate-1969/build/e2e-bin/pyry`. Adjacent lines record the mobile
+revision, Claude Code 2.1.280 and both fixture daemon launches. Full main revision:
+`31d44af7c5cc835b002707d3fd526e9d7e1cb960`.
+
+The verifier confirmed these repair merges are ancestors of the executed daemon:
+
+- #3017: `b799ba5afb8d86b79f1d1eb20c737c15a632db5f`.
+- #3026: `425d7f5e4ee02deb7bd3c7103c996c48754898e0`.
+- #3029: `a39c72739eb2e811708a67b08906614a4316b834`.
+
+The retained method-level JUnit report has 65 testcase leaves, 65 executed/passed,
+0 failed/errors/skipped; both inherited methods are present once and passed.
+SHA-256: `8d4fe382733e0ec4dd3b411d4719b841bb779d157b8f8e06042492d020cb4c12`.
+The original binary and worktree XML are no longer available; retained execution
+stderr and JUnit evidence resolve the revision handoff. Both acceptance criteria
+are complete. No new test execution occurred during this evidence return, and the
+focused daemon revision was not substituted for the full run's revision. See
 [evergreen evidence](../../e2e-interactive-stream.md#verification-status).
