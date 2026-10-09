@@ -3356,6 +3356,60 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
+**Frame-paced complete thread content (#1968, 2026-10-09).** The
+[verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1991#issuecomment-6080670785)
+records deterministic gates on `90d0407f06f70e325701603602d67fd2bcb96308`.
+The [dispatcher live acceptance](https://github.com/pyrycode/pyrycode-mobile/issues/1968#issuecomment-6082048895)
+used that branch merged with main `4a5e624f6f63`. Documentation consumed the
+supplied per-method gate report and issue evidence, and inspected the retained
+scripted/UI XML; it ran no acceptance tests.
+
+| Dispatcher run | Executed | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| Full `scripted-all` | 22 | 22 | 0 | 0 |
+| UI gate | 214 | 214 | 0 | 1 |
+| Full real-Claude live, initial attempt | 65 | 49 | 16 | 0 |
+| Same-tree rerun of the 16 failed live methods | 16 | 16 | 0 | 0 |
+
+Rung 4
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread`
+ran and passed in full `scripted-all`: **1 executed, 1 passed, 0 failed/skipped**.
+Reports: `build/dispatcher-tests/scripted-all-1f_plf28/dispatcher.xml` and
+`build/dispatcher-tests/scripted-all-1f_plf28/stream-0-TEST-installed.xml`, preserved
+under `/tmp/verifier-1991/current-90d0407f/scripted-all-1f_plf28/`.
+
+Rung 3 `InteractiveStreamE2ETest.interactiveTurn_pingPrompt_streamsPingReplyIntoThread`
+executed and failed once in the full live attempt (**1 executed, 0 passed, 1 failed,
+0 skipped**), then executed and passed on the dispatcher's same-tree rerun
+(**1 executed, 1 passed, 0 failed/skipped**). The dispatcher accepted the gate
+as PASS AFTER A RE-RUN and removed `needs-real-claude`. This is full-suite
+execution followed by a failed-method rerun, not a clean initial full-suite pass
+or a separate focused ping run. The supplied report has no daemon-revision
+annotation; no cause is established for the nondeterministic failures.
+Dispatcher-host reports are
+`/Users/juhanailmoniemi/WorkSpace/Projects/pyrycode-mobile-agents/logs/2026-10-09T12-15-23-378Z_real-claude-gate_#1968.log`
+and
+`/Users/juhanailmoniemi/WorkSpace/Projects/pyrycode-mobile-agents/logs/2026-10-09T12-15-23-378Z_real-claude-gate-rerun_#1968.log`;
+the initial diagnostic report uses the same prefix with `.stderr.log`.
+
+`ThreadFramePacingDeviceTest.productionDestination_burstPublishesOncePerFrame_finalDelivers_andRecollectionCleansUp`
+ran and passed in the UI gate: **1 executed, 1 passed, 0 failed/skipped**.
+Its report is `build/dispatcher-tests/ui-u8_9g1ar/dispatcher.xml`, preserved under
+`/tmp/verifier-1991/current-90d0407f/ui-u8_9g1ar/`. The UI skip was
+`RenameDialogCaptureTest.renameAtFigmaViewport`, not this probe. The verifier's
+JVM evidence records `ThreadFramePacingTest` **13 executed/passed** and
+`ThreadPacedReadViewportTest` **1 executed/passed**, each with **0 failed/skipped**.
+These controlled 60/120 Hz and production-frame probes establish the publication
+bound, final delivery, exact read versions and cleanup; streaming scenarios
+establish integration, not a measured scrolling improvement.
+
+The live `interactiveTurn_sendQueuedNow_reachesRunningTurn` also passed in the
+full attempt. Its earlier focused pass and static entry/removal timeout diagnostics
+do not identify the historical timeout's cause or establish a production repair.
+Neither preserved streaming scenario changed; no new ladder rung or pre-ship
+command is required. See [thread scheduling](knowledge/features/thread-screen-how-it-works-state.md)
+and [frame probes](knowledge/features/thread-screen-testing.md#frame-paced-content-1968).
+
 **Two-host Archive rename synchronization (#1992, 2026-10-09).** The
 [builder diagnosis](https://github.com/pyrycode/pyrycode-mobile/issues/1992#issuecomment-6069846680)
 and [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1993#issuecomment-6070146321)
