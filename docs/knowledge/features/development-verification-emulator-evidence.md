@@ -47,6 +47,18 @@ source only if its escapes are typed in upper case.
 
 ## Emulator and real evidence
 
+The [#1969 full live proof](../../e2e-interactive-stream.md#verification-status)
+records the configured command, mobile head/main revisions and method-level JUnit
+counts: **65 executed, 65 passed, 0 failed, 0 errors, 0 skipped**. Both inherited
+model-change and attention methods passed after verification. The JUnit report
+omits daemon metadata, but the [verifier recovered](https://github.com/pyrycode/pyrycode-mobile/pull/1999#issuecomment-6078841215)
+the actual daemon revision `a536d17b1e182fb5398a5458e3afe6079b37a510` and selected
+binary path from the matching `.stderr.log`, confirming repair ancestry.
+Inspect both artifacts before treating revision evidence as unavailable. A
+configured source checkout or previous focused binary revision does not establish
+which daemon a later full run used. Preserve historical reds and distinguish
+focused recovery from full-suite execution.
+
 Instrumentation retains its Application/Koin graph and saved host selection across methods.
 Stopping a private fixture daemon leaves its phone pairing saved and potentially selected,
 so a passing scenario can break the next test. Register ownership of the exact fixture server
