@@ -6,12 +6,14 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.ui.conversations.thread.fragmentedHistoryFixture
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -63,6 +65,11 @@ class HistoryHashCompatibilityTest {
             }
         val expected = rows.associate { historyIdentity(it.mergeIdentity()) to cachedThreadRowProof(it) }
         assertEquals(expected, historyRowProofs(rows))
+    }
+
+    @Test fun retainedMatchingProofsPreserveTheAlreadyValidatedCoverage() {
+        val (coverage, rows) = fragmentedHistoryFixture(listOf(0, 1, 2))
+        assertSame(coverage, coverage.retainedBy(rows))
     }
 
     private fun legacyDigest(text: String) =

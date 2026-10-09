@@ -305,12 +305,15 @@ data class HistoryCoverage(
     fun retainedBy(rows: List<ThreadItem>): HistoryCoverage {
         val kept = cacheableThreadRows(rows)
         val direct = historyRowProofs(kept)
-        val available = direct + legacyBindingProofs(kept, direct)
+        val legacy = legacyBindingProofs(kept, direct)
+        val available = if (legacy.isEmpty()) direct else direct + legacy
         val missing =
             proofs
                 .filter { (key, proof) ->
                     available[key] != proof && (deltaHashes[key] == null || available[key] != deltaHashes[key])
                 }.keys
+        // Every claim was checked above; avoid rebuilding all derived maps when none changed.
+        if (missing.isEmpty() && proofs.all { (key, proof) -> available[key] == proof }) return this
         return withoutRows(missing).copy(proofs = proofs.mapValues { (key, proof) -> available[key] ?: proof } - missing)
     }
 
