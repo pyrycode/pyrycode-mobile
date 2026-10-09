@@ -78,6 +78,10 @@ collapsed representative and requires all remaining children absent until expans
 the integrated tool-rendering check. Deterministic anchor preservation is proved by
 `ThreadRowAnchorTest` and its Android-visible wrapper, independently of these live
 scenarios; see [stable-row evidence](#stable-row-identity-1940).
+The same scenarios remain unchanged for #1955. Shared
+`BackgroundAgentViewportTest` and Android `BackgroundAgentViewportDeviceTest`
+prove each rendered frame during relocation, independently of E2E placement/navigation;
+see [counted acceptance evidence](#background-agent-viewport-preservation-1955).
 Attributed background-agent prose (#1827) is covered at rung 3 by
 `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_replyStaysUnderAgent`; the same rung-4
 `background-agent` scenario adds attributed and unmatched prose to its fixtures.
@@ -5312,6 +5316,34 @@ at `:app:compileDebugUnitTestKotlin` after 60 minutes without counted unit resul
 UI and `scripted-all` gate entries have missing logs and no per-test counts. The focused results
 above do not establish a full deterministic gate pass. Documentation ran only the docs guard.
 
+### Background-agent viewport preservation (#1955)
+
+The [final verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2016#issuecomment-6088220558)
+on `ef4b4b21657f` records the fresh full
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py scripted-all`
+gate: **22 executed, 22 passed, 0 failed, 0 skipped**. Its `dispatcher.xml` and
+`background-agent-0-TEST-installed.xml` confirm
+`DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`
+executed and passed (**1 executed, 0 failed, 0 skipped**). This is full scripted
+acceptance, distinct from the builder's focused background-agent run.
+
+The [dispatcher-owned full live PASS](https://github.com/pyrycode/pyrycode-mobile/issues/1955#issuecomment-6088454607),
+report `2026-10-09T19-56-00-743Z`, ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on
+`feature/1955` at `ef4b4b21657f`, merged with `origin/main` at `d7c1e20e8a43`:
+**65 executed, 65 passed, 0 failed, 0 skipped**, none flaky, exit 0 in 14m 46s.
+The supplied fresh per-method JUnit-XML report lists
+`InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`
+as executed and passed (**1 executed, 0 failed, 0 skipped**). No daemon-revision
+annotation was supplied, and no separate focused live run is claimed.
+
+Both existing rung-3/rung-4 methods remain unchanged. They prove integrated
+placement/navigation; the one-physical-pixel and every-rendered-frame viewport
+requirements are established by the
+[23 shared/Android frame methods](knowledge/features/thread-screen-testing.md#reader-geometry-during-background-agent-relocation-1955).
+The fresh full UI gate passed **245 executed, 245 passed, 0 failed, 1 skipped**;
+all 23 viewport methods passed with none skipped. Documentation ran only the docs guard.
+
 ### Stable row identity (#1940)
 
 The [fresh dispatcher live PASS](https://github.com/pyrycode/pyrycode-mobile/issues/1940#issuecomment-6079196923)
@@ -5378,6 +5410,15 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Background Agent viewport preservation (#1955):** Retained rung-3
+  `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished`
+  and rung-4
+  `DeterministicInteractiveStreamE2ETest.interactiveTurn_seededChannel_backgroundAgentMovesAndSettles`
+  each passed **1/0/0** (executed/failed/skipped) in the fresh full live/scripted
+  gates [above](#background-agent-viewport-preservation-1955). Shared and Android
+  frame probes supply the viewport proof. No scenario or evidence follow-up remains;
+  the pre-ship command stays `python3 scripts/android-test-gate.py live`.
 
 - **Late background Agent tools (#1951):** Strengthened existing rung-3
   `InteractiveStreamE2ETest.interactiveTurn_backgroundAgent_followsBottomUntilFinished` and rung-4
