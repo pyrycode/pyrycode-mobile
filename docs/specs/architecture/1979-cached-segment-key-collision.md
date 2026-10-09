@@ -35,6 +35,7 @@ The reducer stays pure and introduces no state, jobs, dispatchers or flows. The 
 | Same renderer key arrives as a user row or cached delta, in either direction | `identityInvariant_unsignedCacheCollisionRetainsBothArrivalDirectionsAndReplay` |
 | Same typed identity is duplicated or replayed in different input orders | `identityInvariant_unsignedCacheCollisionRetainsBothArrivalDirectionsAndReplay` |
 | Overlap at start, middle or end introduces distinct content on either side | `placementInvariant_unsignedCacheCollisionKeepsNeighboursAndDurableBounds` |
+| Lifecycle evidence arrives before or after the aliased ordinary row | `placementInvariant_unsignedCacheLifecycleAnchorsUseOrdinaryIdentityBesideSameKeySegment` |
 | Alias candidates already belong to ordinary rows | `ownershipInvariant_unsignedCacheCollisionPreservesDisplayedSegmentAndOccupiedAliases` |
 | Empty disconnect and reconnect while persistence is pending | `identityInvariant_collidingRendererKeysKeepBothIdentitiesThroughPendingReconnect` |
 | Successful write and fresh-instance file restore | `identityInvariant_collidingRendererKeysKeepBothIdentitiesThroughPendingReconnect` and `reconnectInvariant_unsignedCacheCollisionSurvivesFreshRestoreAndReplay` |
@@ -50,3 +51,9 @@ Write and run the probes red before removing production guards. Run `HistoryMess
 ## Open Questions
 
 None. Collision-discard expectations describe the obsolete guards, not genuine typed duplicates or demonstrated legacy overlap; replace them with stronger lossless assertions.
+
+## Revisions
+
+- 2026-10-10: After admission was repaired, `placementInvariant_unsignedCacheLifecycleAnchorsUseOrdinaryIdentityBesideSameKeySegment` failed because `ThreadRowAnchors` indexed a segment under the ordinary row's raw renderer key. Use `mergeIdentity` for its identity index and fallback lookup, retaining the existing sequence and legacy-whole-turn anchor paths. The probe checks markers before and after the user, history/cache lanes and replay without moving retained rows. This is part of the ticket's neighbour-placement invariant, in the same production file; no new state, exported type, signature migration or error branch is introduced.
+- 2026-10-10: The unchanged `wholeTurnArrivingOverRetainedSegments_anchorsFinishAfterWholeTurnInHistoryAndReconnect` caught a regression in that typed lookup: a fully recovered legacy whole turn no longer found its surviving segments via a raw id. Feed the already-reconciled `incomingAtoms` to lifecycle placement so exact legacy records anchor through their proven sequences. No text-based or raw-key fallback is added; the existing whole-turn assertion stays unchanged.
+- 2026-10-10: Final sizing is approximately 250 written lines across one production file, three test files and this plan, with no new exported declarations or consumer migrations. The three acceptance criteria and two removed admission branches remain within the sizing limits.

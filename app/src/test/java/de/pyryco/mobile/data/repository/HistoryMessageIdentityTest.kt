@@ -5,6 +5,7 @@ import de.pyryco.mobile.data.model.AssistantSegment
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.SegmentDelta
+import de.pyryco.mobile.data.model.ordinaryId
 import de.pyryco.mobile.data.network.HistoryPagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
@@ -395,6 +396,134 @@ class HistoryMessageIdentityTest {
             .decodeFromString<HistoryPagePayloadDto>(
                 """{"entries":[$entries],"cursor":"","at_start":true}""",
             ).toHistoryPage()
+    }
+
+    @Test
+    fun identityInvariant_unsignedCacheCollisionRetainsBothArrivalDirectionsAndReplay() {
+        val assistant = segment("shared", 0, "shared", at = 1)
+        val user = message("shared", "shared", at = 2, role = Role.User)
+        for (segmentFirst in listOf(false, true)) {
+            val first = if (segmentFirst) assistant else user
+            val second = if (segmentFirst) user else assistant
+            val expected =
+                rows(
+                    if (segmentFirst) assistant else assistant.copy(id = "shared#0"),
+                    if (segmentFirst) user.copy(id = "shared~1", reconciliationId = "shared") else user,
+                )
+            var held = rows(first).mergeUnsignedCachedRows(rows(second), emptyMap())
+            assertEquals(expected, held)
+            for (replay in listOf(
+                rows(user),
+                rows(assistant),
+                rows(user, assistant),
+                rows(assistant, user),
+                rows(user, user),
+                emptyList(),
+            )) {
+                held = held.mergeUnsignedCachedRows(replay, emptyMap())
+                assertEquals(expected, held)
+                assertEquals("shared", (held.last() as ThreadItem.MessageItem).message.ordinaryId)
+                assertEquals(expected, held.mergeUnsignedHistoryRows(replay, emptyMap()))
+            }
+            assertEquals(
+                expected,
+                emptyList<ThreadItem>().mergeUnsignedCachedRows(
+                    rows(assistant, user, assistant, user),
+                    emptyMap(),
+                    rendererOwners = rows(first),
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun placementInvariant_unsignedCacheCollisionKeepsNeighboursAndDurableBounds() {
+        val assistant = segment("shared", 0, "cached assistant", at = 3)
+        val a = message("a", "held a", at = 1, role = Role.User)
+        val z = message("z", "held z", at = 5, role = Role.User)
+        val left = message("left", "cached left", at = 0, role = Role.User)
+        val user = message("shared", "cached user", at = 2, role = Role.User)
+        val right = message("right", "cached right", at = 6, role = Role.User)
+        val base = rows(a, assistant, z)
+        val aliased = rows(left, user.copy(id = "shared~1", reconciliationId = "shared"))
+        for (index in base.indices) {
+            val incoming = rows(left, user) + base[index] + rows(right)
+            val expected = aliased + base.take(index + 1) + rows(right) + base.drop(index + 1)
+            val merged = base.mergeUnsignedCachedRows(incoming, emptyMap())
+            assertEquals(expected, merged)
+            assertEquals(expected, merged.mergeUnsignedCachedRows(incoming, emptyMap()))
+        }
+        // Durable positions overrule equal clocks and disjoint cache input.
+        val equalClocks =
+            rows(
+                a,
+                assistant,
+                z,
+            ).map { (it as ThreadItem.MessageItem).copy(message = it.message.copy(timestamp = a.timestamp)) }
+        val incoming = rows(user.copy(timestamp = a.timestamp))
+        val order =
+            (equalClocks.take(1) + incoming + equalClocks.drop(1))
+                .mapIndexed { index, row ->
+                    row.mergeIdentity() to (Long.MAX_VALUE.toULong() + index.toULong() + 1uL)
+                }.toMap()
+        val expected =
+            equalClocks.take(1) + rows(user.copy(timestamp = a.timestamp, id = "shared~1", reconciliationId = "shared")) +
+                equalClocks.drop(1)
+        val merged = equalClocks.mergeUnsignedCachedRows(incoming, order)
+        assertEquals(expected, merged)
+        assertEquals(expected, merged.mergeUnsignedCachedRows(incoming, order))
+    }
+
+    @Test
+    fun ownershipInvariant_unsignedCacheCollisionPreservesDisplayedSegmentAndOccupiedAliases() {
+        val assistant = segment("shared", 0, "cached", at = 1)
+        val user = message("shared", "live", at = 2, role = Role.User)
+        val occupied = message("shared~1", "ordinary suffix", at = 3, role = Role.User)
+        val expected = rows(assistant, user.copy(id = "shared~2", reconciliationId = "shared"), occupied)
+        var merged = rows(user, occupied).mergeUnsignedCachedRows(rows(assistant), emptyMap(), rendererOwners = rows(assistant))
+        assertEquals(expected, merged)
+        for (replay in listOf(rows(assistant), rows(user, occupied), emptyList(), rows(user, assistant))) {
+            merged = merged.mergeUnsignedCachedRows(replay, emptyMap(), rendererOwners = merged)
+            assertEquals(expected, merged)
+        }
+    }
+
+    @Test
+    fun reconnectInvariant_unsignedCacheCollisionSurvivesFreshRestoreAndReplay() =
+        runTest {
+            val dispatcher = UnconfinedTestDispatcher(testScheduler)
+            val assistant = segment("shared", 0, "shared", at = 1)
+            val user = message("shared", "shared", at = 2, role = Role.User)
+            for (segmentFirst in listOf(false, true)) {
+                val root = tmp.newFolder()
+                val first = if (segmentFirst) assistant else user
+                val second = if (segmentFirst) user else assistant
+                val expected = rows(first).mergeUnsignedCachedRows(rows(second), emptyMap())
+                assertEquals(2, expected.size)
+                FileConversationCache(root, dispatcher).writeThread("host", "c", expected).getOrThrow()
+                val restored = FileConversationCache(root, dispatcher).readThread("host", "c")
+                assertEquals(expected, restored)
+                assertEquals(expected, emptyList<ThreadItem>().mergeUnsignedCachedRows(restored, emptyMap(), rendererOwners = restored))
+                for (live in listOf(rows(user), rows(assistant), rows(assistant, user), emptyList())) {
+                    assertEquals(expected, live.mergeUnsignedCachedRows(restored, emptyMap(), rendererOwners = restored))
+                }
+            }
+        }
+
+    @Test
+    fun placementInvariant_unsignedCacheLifecycleAnchorsUseOrdinaryIdentityBesideSameKeySegment() {
+        val assistant = segment("shared", 0, "cached", at = 1)
+        val user = message("shared", "live", at = 2, role = Role.User)
+        val held = rows(assistant, user.copy(id = "shared~1", reconciliationId = "shared"))
+        val marker = ThreadItem.BackgroundTaskLifecycle("task", user.timestamp)
+        for (beforeUser in listOf(false, true)) {
+            val incoming = if (beforeUser) listOf(marker) + rows(user) else rows(user) + marker
+            val expected = if (beforeUser) held.take(1) + marker + held.drop(1) else held + marker
+            val merged = held.mergeUnsignedCachedRows(incoming, emptyMap())
+            assertEquals(expected, merged)
+            assertEquals(expected, merged.mergeUnsignedCachedRows(incoming, emptyMap()))
+            assertEquals(expected, held.mergeUnsignedHistoryRows(incoming, emptyMap()))
+        }
     }
 
     private fun merge(
