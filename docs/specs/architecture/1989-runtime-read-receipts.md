@@ -75,3 +75,21 @@ None: repository ownership was established by the preceding controlled reproduct
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-09
+
+## Revisions
+
+### 2026-10-09 — A second daemon compatibility defect blocks completion
+
+The repaired enabled receipt example passes the four new evidence/projection tests, including the original omitted-ID negative control. The pre-repair completed-reply assertion executed once and failed with expected checkpoint 6, actual null; swapping in the shipped receipt bytes fixes that hole without production changes.
+
+The repository integration then exposed a separate mismatch: `requestHistory` raises mobile latest to normal `turn_end` ID 5. Daemon #3026's real-store handoff reports watermark/clamp 4 because `historyEntryShown` now marks successful `turn_end` hidden. After actual request correlation with the documented clamp, the test fails with expected `ConversationReadMarks(readUpTo=4, latestEntryId=4)`, actual `ConversationReadMarks(readUpTo=4, latestEntryId=5)`. One test executed, one failed, zero skipped. Presentation reached checkpoint 6 and the correlated write succeeded; unread still cannot clear.
+
+Ownership remains daemon compatibility: `legacyHistoryReader.LatestDisplayableEntryID` uses explicit stored `shown`, while `newHistoryPager` does not transmit it and preserves eligible payloads unchanged. Identical legacy payloads can represent absent/false/true stored visibility and different clamps. Inferring those facts from payloads on mobile would change the existing contract and cannot distinguish those cases. Preserve raw metadata and repair legacy projection/target agreement in [daemon #3029](https://github.com/pyrycode/pyrycode/issues/3029), filed in Backlog and linked as a native blocker of this issue. The failing JVM integration is retained with `@Ignore` naming that blocker per the out-of-scope bug handoff; no live source/assertion is changed or ignored.
+
+The reordered probe moves only the nonvisual opening receipt around the content sequence: history content lifecycle order is daemon-authoritative, so arbitrary reversal of `turn_end` and deltas is not a valid equivalent page. Start/middle/end overlap, duplicate live receipt, missing identity/history resolution, fresh connection and exact-version probes all remain green.
+
+Security review of this revision: PASS. No production classifier, state, payload allowance, barrier, logging or transport changes. Four permanent evidence probes remain active; the one deferred confirmation test is explicitly linked to its daemon owner. The issue stays `needs-real-claude`; unchanged full live proof and documentation remain pending after the blocker closes. Approximately 420 written lines remain within the sizing limits; no new production declarations or migrations.
+
+This run ends waiting on #3029 with a committed/pushed recovery branch, rather than an open PR claiming a repair. Resume against refreshed daemon fixtures after that issue merges, re-enable the integration and finish the normal builder checks/PR and dispatcher live handoff.
+
+Recovery validation: focused `ThreadReadRuntimeReceiptsTest`, `ThreadReadClaimsTest`, `ConversationReadMarksTest`, `ReadCheckpointRetriesTest` and `ThreadReadSubscriptionTest` ran 49 tests: 49 passed, zero failed, one skipped (the explicitly deferred daemon regression). `assembleDebug` and forced `spotlessCheck --rerun-tasks --console=plain` passed. This is not acceptance or a live pass; lint, final pre-verification and dispatcher full live execution remain for the resumed successful handoff.

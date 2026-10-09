@@ -27,6 +27,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Ignore
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -184,6 +185,73 @@ class ConversationReadMarksTest {
             pump.push(update("a", "10", pump.mark().id))
             runCurrent()
             assertEquals(10uL, noop.await().getOrThrow())
+        }
+
+    @Ignore("blocked on pyrycode/pyrycode#3029: legacy visibility clamp leaves mobile unread above confirmed mark")
+    @Test
+    fun runtimeReceiptHistoryRequiresCorrelatedDaemonReadConfirmation() =
+        runTest {
+            val pump = Pump()
+            val repository = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val otherHost = RemoteConversationRepository(Pump(), backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            pump.push(snapshot(row("a", "0", "4"), row("b", "0", "4")))
+            runCurrent()
+            val request = backgroundScope.async { repository.requestHistory("a", "", 100) }
+            runCurrent()
+            val bytes =
+                requireNotNull(javaClass.getResource("/daemon-contract/runtime-read-enabled.json"))
+                    .readText()
+                    .replace("11111111-1111-4111-8111-111111111111", "a")
+            pump.push(
+                Envelope(
+                    99,
+                    "history_page",
+                    TS,
+                    MobileJson.parseToJsonElement(bytes),
+                    inReplyTo = pump.sent.last { it.type == "request_history" }.id,
+                ),
+            )
+            runCurrent()
+            assertEquals(6, request.await().entries.size)
+            val held = repository.observeThreadSnapshot("a").first()
+            val presented = held.rows.filterIsInstance<ThreadItem.MessageItem>().last()
+            assertEquals(2, held.rows.count { it.isReadContent() })
+            assertFalse(presented.message.isStreaming)
+            // The shipped page raises latest to its turn_end ID, unlike the daemon's clamp.
+            assertEquals(ConversationReadMarks(0u, 5u), repository.observeReadMarks("a").first())
+            assertTrue(pump.sent.none { it.type == "mark_conversation_read" })
+            val checkpoint = requireNotNull(held.readEvidence.checkpoint(presented, 0u))
+            assertEquals(6uL, checkpoint)
+            val write = backgroundScope.async { repository.markConversationRead("a", checkpoint) }
+            runCurrent()
+            assertEquals(
+                "6",
+                pump
+                    .mark()
+                    .payload.jsonObject
+                    .getValue("up_to")
+                    .jsonPrimitive.content,
+            )
+            assertFalse(write.isCompleted)
+            assertEquals(0uL, repository.observeReadMarks("a").first()?.readUpTo)
+            pump.push(update("b", "4"))
+            pump.push(update("a", "0", pump.mark().id + 1))
+            runCurrent()
+            assertFalse(write.isCompleted)
+            assertEquals(0uL, repository.observeReadMarks("a").first()?.readUpTo)
+            pump.push(update("a", "4", pump.mark().id))
+            runCurrent()
+            assertEquals(4uL, write.await().getOrThrow())
+            assertEquals(ConversationReadMarks(4u, 4u), repository.observeReadMarks("a").first())
+            assertNull(otherHost.observeReadMarks("a").first())
+            assertTrue(
+                otherHost
+                    .observeThreadSnapshot("a")
+                    .first()
+                    .readEvidence.versions
+                    .isEmpty(),
+            )
+            assertNull(held.readEvidence.checkpoint(presented.copy(message = presented.message.copy(content = "unseen")), 0u))
         }
 
     @Test fun malformedWrongTypeOrWrongTargetRepliesNeverSucceedOrMutateFacts() =
