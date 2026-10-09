@@ -1,0 +1,83 @@
+#1998: collision-thread mutation menu evidence (2026-10-09)
+
+Historical observation, not a controlled reproduction:
+mobile 2d48240a001595e52aad792a9d9ed6551a2f4821, main ba5724b080,
+daemon a39c72739eb2e811708a67b08906614a4316b834, Claude 2.1.280.
+Retained agent logs: 2026-10-09T08-24-26-589Z_real-claude-gate_#1989.log
+and .stderr.log, and matching real-claude-gate-rerun_#1989 companions,
+under /Users/juhanailmoniemi/WorkSpace/Projects/pyrycode-mobile-agents/logs/.
+Full run: 65 executed, 64 passed, 1 failed, 0 errors, 0 skipped.
+Focused same-tree rerun: 1 executed, 1 passed, 0 failed/errors/skipped.
+The stderr identifies renameOpenThread's 30000ms wait for Rename or Edit,
+before any editor entry or rename submission. Original live-0vm8oz36
+artifacts are absent. Post-cleanup DESTROYED Activity / launcher focus cannot
+establish focus or menu state at the tap.
+
+Controlled regression:
+Baseline production revision fbad4a0cdb7025becad76a6523fd7ef83f33c552 (required plan commit), with newly
+added regression tests in the working tree. The baseline ThreadViewModel
+source is identical to the historical tested mobile revision's source.
+Baseline ThreadViewModel SHA-256: ab984e90a8df01278581f5a9ada575b8616e9716d8bcb1b60ae828215325b152.
+Repaired source and final strengthened tests are committed at 61f363e6c66f070206ab1c0d4162d7b0bb4643a7.
+Repaired ThreadViewModel SHA-256: 46360705c5e78d6d52e017f8adfe9bb68c59d0fdef4971f15efefcbc8a09f160.
+These runs were made while implementing that commit; source/test changes
+are described below rather than presenting the baseline as a clean-tree run.
+
+The composer is drawn while A's stable facade has no live repository.
+Attach A, await its actual Personal title semantics, and tap More actions once.
+Channel info is displayed before Edit fails: the tap opened the menu but the
+construction-time mutation denial hid Edit after connection arrival.
+This establishes a local product defect, not historical runtime attribution.
+A separate negative control retains the disconnected owner's denial while
+host B becomes supporting under the same conversation ID.
+
+Command: ./gradlew testDebugUnitTest
+ --tests de.pyryco.mobile.ui.conversations.thread.ThreadMutationArrivalTest
+ --tests de.pyryco.mobile.ui.conversations.thread.ThreadViewModelTest.mutationCapabilityFollowsOwningRepositoryAcrossReconnect
+ --console=plain
+menu-red.xml: 2 executed, 1 passed, 1 failed, 0 errors/skipped.
+capability-red.xml: 1 executed, 0 passed, 1 failed, 0 errors/skipped.
+Combined baseline exit 1, 3 executed, 2 failed, 0 errors/skipped.
+Red positive case is unchanged in behavior; green strengthens B's control by
+constructing its real facade/ViewModel and also checks state recollection.
+menu-green.xml: 2 executed, 2 passed, 0 failed/errors/skipped.
+capability-green.xml: 3 executed, 3 passed, 0 failed/errors/skipped (includes
+both existing initial/steady supporting and non-supporting tests).
+
+Diagnostic helper command: ./gradlew testDebugUnitTest
+ --tests de.pyryco.mobile.e2e.CollisionRenameDiagnosticTest --console=plain
+Stub baseline: diagnostic-red.xml, exit 1, 3 executed, 2 failed,
+0 errors/skipped. Implemented helper: diagnostic-green.xml, exit 0,
+3 executed, 3 passed, 0 failed/errors/skipped. Tests require the same original
+exception object and suppressed static context, including a failed diagnostic.
+
+Final focused set (exit 0), focused-green.xml: 91 executed, 91 passed,
+0 failed/errors/skipped. The three sets above plus ThreadScreenOverflowTest
+(12), ThreadOverflowMenuTest (14), ThreadScreenConnectionGateTest (4), and
+StableConversationRepositoryTest (53), selected with individual --tests flags.
+focused-green.xml combines the seven fresh, otherwise unchanged Gradle suites;
+all suite stdout/stderr sections are empty.
+
+Managed-device command (exit 0):
+./gradlew :app:pixel2Api33AtdDebugAndroidTest --rerun
+ -Pandroid.testInstrumentationRunnerArguments.class=de.pyryco.mobile.ui.conversations.thread.ThreadMutationArrivalTest
+ -Pandroid.testInstrumentationRunnerArguments.notPackage=de.pyryco.mobile.e2e --console=plain
+Fresh source: app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd/TEST-pixel2Api33Atd-_app-.xml
+Copied verbatim as device-green.xml: 2 executed, 2 passed,
+0 failed/errors/skipped, including both named regression methods.
+
+Scripted command (exit 0): python3 scripts/android-test-gate.py scripted reconnect
+Source: build/dispatcher-tests/scripted-6ve3d1pq/dispatcher.xml,
+copied verbatim as reconnect-green.xml: 1 executed, 1 passed,
+0 failed/errors/skipped. Method: interactiveTurn_seededChannel_replySurvivesMidTurnReconnect.
+Mobile base was the plan commit plus the repair now in 61f363e6c66f070206ab1c0d4162d7b0bb4643a7;
+this is deterministic supporting evidence, not a real-Claude full gate.
+Test daemon binary vcs revision: a39c72739eb2e811708a67b08906614a4316b834,
+vcs.modified=true; isolated build/e2e-bin/pyry, no production-daemon changes.
+
+Pending dispatcher acceptance: fresh passing FULL live gate, explicitly naming
+interactiveTurn_twoHostsCollidingConversationId_stayPerHost, with mobile/daemon
+revisions, artifact location, executed/failed/error/skipped counts. Neither this
+regression pack nor the historical focused rerun satisfies that criterion.
+Documentation stage owns docs/e2e-interactive-stream.md, Live mode and
+Verification status, with the cause, attribution limits and counted evidence.

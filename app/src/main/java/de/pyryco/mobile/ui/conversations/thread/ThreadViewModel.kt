@@ -316,12 +316,6 @@ class ThreadViewModel(
      */
     val attachmentLoads: Flow<AttachmentLoaded> = attachmentLoadChannel.receiveAsFlow()
 
-    // #507: snapshot the repository's mutation-capability once at construction (the mode is static per
-    // build config — a Koin fake-vs-relay swap, never a runtime toggle). Reading through the facade here
-    // is where its null-connection → false fail-safe-deny takes effect. Captured once so the combine value
-    // and the initialValue can never disagree.
-    private val mutationsSupported: Boolean = repository.mutationsSupported
-
     private val pendingWorkspacePicker = MutableStateFlow(false)
 
     private val pendingRenameDialog = MutableStateFlow(false)
@@ -864,7 +858,7 @@ class ThreadViewModel(
                 lastUsedAt = conv?.lastUsedAt,
                 sessionCount = conv?.sessionHistory?.size ?: 0,
                 runConfig = runConfig.forLiveSession(lastKnownSessionId),
-                mutationsSupported = mutationsSupported,
+                mutationsSupported = repository.mutationsSupported,
                 historyTail = content.historyTail,
                 historyMarkers = content.historyMarkers,
                 readEvidence = content.evidence,
@@ -885,7 +879,13 @@ class ThreadViewModel(
         }.combine(mcpStatusReading) { uiState, mcp ->
             uiState.copy(mcpStatus = mcp)
         }.combine(combine(channelEditor.state, hostAvailable, ::Pair)) { uiState, (editor, available) ->
-            uiState.copy(channelEditor = editor, hostAvailable = available)
+            // The stable facade denies mutations between connections. Re-read on owner arrival:
+            // capturing that denial at construction would hide Rename/Edit for this destination's life.
+            uiState.copy(
+                channelEditor = editor,
+                hostAvailable = available,
+                mutationsSupported = available && repository.mutationsSupported,
+            )
         }.combine(repository.observeReadMarks(conversationId)) { uiState, marks ->
             uiState.copy(readUpTo = marks?.readUpTo)
         }.stateIn(
@@ -895,7 +895,7 @@ class ThreadViewModel(
                 ThreadUiState(
                     conversationId = conversationId,
                     displayName = conversationId,
-                    mutationsSupported = mutationsSupported,
+                    mutationsSupported = repository.mutationsSupported,
                 ),
         )
 
