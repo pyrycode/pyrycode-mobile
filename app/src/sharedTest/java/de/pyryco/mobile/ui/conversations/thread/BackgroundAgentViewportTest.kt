@@ -16,10 +16,13 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.BackgroundTask
@@ -45,6 +48,7 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 open class BackgroundAgentViewportTest {
     @get:Rule val compose = createComposeRule()
+    private lateinit var restoration: StateRestorationTester
     private val ts = Instant.parse("2026-10-09T10:00:00Z")
     private val state = mutableStateOf(ThreadUiState("viewport", "Viewport", hasMessages = true))
     private lateinit var listState: LazyListState
@@ -156,6 +160,43 @@ open class BackgroundAgentViewportTest {
             "newest clamp must not resume following",
             listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 4,
         )
+    }
+
+    @Test open fun completionAcrossFinishedBlock_preservesTallStationaryChild() = crossingFinished(false)
+
+    @Test open fun splitCompletionAcrossFinishedBlock_preservesTallStationaryChild() = crossingFinished(true)
+
+    private fun crossingFinished(split: Boolean) {
+        mount(collapsed = false, second = true, tall = true, secondTall = true)
+        compose.runOnUiThread { finish(setOf("b")) }
+        compose.waitForIdle()
+        val rows = foldBackgroundAgentBlocks(foldQueuedRows(state.value.items, emptyList()), state.value.items, null).asReversed()
+        list().performScrollToIndex(rows.indexOfFirst { it.listKey(0) == "msg:tall-b" })
+        val info = listState.layoutInfo
+        val child = info.visibleItemsInfo.first { it.key == "msg:tall-b" }
+        compose.runOnIdle { listState.dispatchRawDelta((child.size - info.viewportSize.height + info.beforeContentPadding - 20).toFloat()) }
+        compose.waitForIdle()
+        assertTrue("only stationary finished B fills the viewport", listState.layoutInfo.visibleItemsInfo.all { it.key == "msg:tall-b" })
+        val baseline =
+            listState.layoutInfo.visibleItemsInfo
+                .first()
+                .offset
+        stationaryKey = "msg:tall-b"
+        recording = true
+        compose.mainClock.autoAdvance = false
+        if (split) {
+            compose.runOnUiThread { finishRoster() }
+            frames(5)
+        }
+        compose.runOnUiThread { finish(setOf("a")) }
+        frames(8)
+        compose.runOnUiThread { finish(setOf("a")) }
+        frames(3)
+        assertTrue("sample stationary child every rendered frame", stationaryLayouts.isNotEmpty())
+        stationaryLayouts.forEach { (_, offset) ->
+            assertTrue("finished B remains visible", offset != null)
+            assertEquals(baseline.toFloat(), requireNotNull(offset).toFloat(), 1f)
+        }
     }
 
     @Test open fun delayedReceipt_followerKeepsNewestEveryFrame() = delayedFollower(newest = false)
@@ -336,11 +377,23 @@ open class BackgroundAgentViewportTest {
 
     @Test open fun fullViewportCompletion_withColdMeasurements_retainsOlderBoundary() = fullBlockBoundary(cold = true)
 
-    private fun fullBlockBoundary(cold: Boolean) {
+    @Test open fun fullViewportCompletion_withInvalidatedExpandedTool_retainsBoundary() = fullBlockBoundary(false, expanded = true)
+
+    @Test open fun fullViewportCompletion_withRestoredExpandedTool_retainsBoundary() = fullBlockBoundary(true, expanded = true)
+
+    private fun fullBlockBoundary(
+        cold: Boolean,
+        expanded: Boolean = false,
+    ) {
         mount(collapsed = false, second = true, tall = true, secondTall = true)
         val rows = foldBackgroundAgentBlocks(foldQueuedRows(state.value.items, emptyList()), state.value.items, null).asReversed()
 
         fun index(key: String) = rows.indexOfFirst { it.listKey(0) == key }
+        if (expanded) {
+            list().performScrollToIndex(index("msg:a-2"))
+            compose.onNode(hasText("Glob", substring = true) and hasClickAction()).performClick()
+            compose.waitForIdle()
+        }
         var olderBlockHeight = 0
         listOf("msg:a", "msg:a-1", "msg:a-2").forEach { key ->
             list().performScrollToIndex(index(key))
@@ -373,14 +426,34 @@ open class BackgroundAgentViewportTest {
             compose.runOnIdle {
                 measuredKeys.clear()
                 initialPosition = index("msg:tall-a") to offset
-                incarnation.intValue++
+                if (!expanded) incarnation.intValue++
             }
+            if (expanded) restoration.emulateSavedInstanceStateRestore()
             compose.waitForIdle()
             assertTrue("cold probe must own a fresh lazy list", retired !== listState)
             assertTrue(
                 "active composition must never measure older A rows before relocation",
                 listOf("msg:a", "msg:a-1", "msg:a-2").none { it in measuredKeys },
             )
+        }
+        if (expanded && !cold) {
+            // Invalidates a-2's cached neighbour without ever measuring that expanded tool again.
+            compose.runOnUiThread {
+                state.value =
+                    state.value.copy(
+                        items =
+                            state.value.items.map {
+                                if (it is ThreadItem.MessageItem &&
+                                    it.message.id == "tall-a"
+                                ) {
+                                    it.copy(message = it.message.copy(content = it.message.content + "\n\nChanged child."))
+                                } else {
+                                    it
+                                }
+                            },
+                    )
+            }
+            compose.waitForIdle()
         }
         val old = listState.layoutInfo
         assertTrue(
@@ -512,7 +585,8 @@ open class BackgroundAgentViewportTest {
                     (1..35).map { user("old-$it") } + roots + (1..35).map { user("main-$it") } +
                         children + secondChildren + remainingProse,
             )
-        compose.setContent {
+        restoration = StateRestorationTester(compose)
+        restoration.setContent {
             view = LocalView.current
             key(incarnation.intValue) {
                 CompositionLocalProvider(

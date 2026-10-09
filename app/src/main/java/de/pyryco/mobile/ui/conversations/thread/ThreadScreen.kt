@@ -108,6 +108,7 @@ import de.pyryco.mobile.ui.conversations.components.CompactingIndicator
 import de.pyryco.mobile.ui.conversations.components.CompactionBoundaryDivider
 import de.pyryco.mobile.ui.conversations.components.ConnectionStatusIndicator
 import de.pyryco.mobile.ui.conversations.components.EmptyThreadState
+import de.pyryco.mobile.ui.conversations.components.LocalToolCallExpansion
 import de.pyryco.mobile.ui.conversations.components.MEMORY_PLUGIN_DOCS_URL
 import de.pyryco.mobile.ui.conversations.components.MessageAreaRowSpacing
 import de.pyryco.mobile.ui.conversations.components.MessageBubble
@@ -126,6 +127,7 @@ import de.pyryco.mobile.ui.conversations.components.SwitchBackOffer
 import de.pyryco.mobile.ui.conversations.components.SystemPromptEditorState
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
 import de.pyryco.mobile.ui.conversations.components.ThreadStatusGlyph
+import de.pyryco.mobile.ui.conversations.components.ToolCallExpansion
 import de.pyryco.mobile.ui.conversations.components.ToolRunRow
 import de.pyryco.mobile.ui.conversations.components.TurnRecoveryNotice
 import de.pyryco.mobile.ui.conversations.components.UnrecognizedMessageRow
@@ -619,6 +621,7 @@ fun ThreadScreen(
                 // #1635: with the setting on, each run of adjacent tool rows draws as one header the reader
                 // can open. Which runs are open is UI-local, keyed by each run's first row, and saveable so a
                 // rotation or back-stack return keeps them open, as the tool rows inside keep theirs.
+                var expandedTools by rememberSaveable(state.conversationId) { mutableStateOf(emptySet<String>()) }
                 var expandedRuns by rememberSaveable(state.conversationId) { mutableStateOf(emptySet<String>()) }
                 var previousAgentRows by remember(state.conversationId) { mutableStateOf(agentRows) }
                 var pendingOpenTools by rememberSaveable(state.conversationId) { mutableStateOf(emptySet<String>()) }
@@ -829,28 +832,44 @@ fun ThreadScreen(
                         val rowMeasurementObserver = LocalThreadRowMeasurementObserver.current
                         val renderRow: @Composable (ThreadRow, ThreadRow?, Boolean) -> Unit = { row, nextRow, measuring ->
                             val candidate = readCandidate?.takeIf { !measuring && row == readRow }
+                            val toolId =
+                                ((row as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)
+                                    ?.message
+                                    ?.takeIf {
+                                        it.role ==
+                                            Role.Tool
+                                    }?.id
+                            val toolExpansion =
+                                toolId?.let { id ->
+                                    ToolCallExpansion(id in expandedTools) {
+                                        expandedTools =
+                                            if (id in expandedTools) expandedTools - id else expandedTools + id
+                                    }
+                                }
                             ThreadRowContent(
                                 rowRelocationSpec,
-                                Modifier
-                                    .layout { measurable, constraints ->
-                                        val placeable = measurable.measure(constraints)
-                                        if (!measuring) {
-                                            readerViewport.onRowMeasured(row, nextRow, placeable.height)
-                                            rowMeasurementObserver?.invoke(row.listKey(0))
-                                        }
-                                        layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
-                                    }.then(
-                                        if (candidate != null) {
-                                            Modifier.onGloballyPositioned {
-                                                candidate.laidOut = true
-                                                if (candidate.row !is ThreadItem.MessageItem) {
-                                                    candidate.trailingEdge = it.positionInWindow().y + it.size.height
-                                                }
+                                toolExpansion = toolExpansion,
+                                modifier =
+                                    Modifier
+                                        .layout { measurable, constraints ->
+                                            val placeable = measurable.measure(constraints)
+                                            if (!measuring) {
+                                                readerViewport.onRowMeasured(row, nextRow, placeable.height)
+                                                rowMeasurementObserver?.invoke(row.listKey(0))
                                             }
-                                        } else {
-                                            Modifier
-                                        },
-                                    ),
+                                            layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
+                                        }.then(
+                                            if (candidate != null) {
+                                                Modifier.onGloballyPositioned {
+                                                    candidate.laidOut = true
+                                                    if (candidate.row !is ThreadItem.MessageItem) {
+                                                        candidate.trailingEdge = it.positionInWindow().y + it.size.height
+                                                    }
+                                                }
+                                            } else {
+                                                Modifier
+                                            },
+                                        ),
                             ) {
                                 historyMarkersFor(row, gapMarkers).forEach { marker ->
                                     HistoryGapRow(
@@ -1326,9 +1345,12 @@ fun ThreadScreen(
 private fun ThreadRowContent(
     relocationSpec: BringIntoViewSpec,
     modifier: Modifier = Modifier,
+    toolExpansion: ToolCallExpansion? = null,
     content: @Composable () -> Unit,
 ) {
-    CompositionLocalProvider(LocalBringIntoViewSpec provides relocationSpec) { Column(modifier) { content() } }
+    CompositionLocalProvider(LocalBringIntoViewSpec provides relocationSpec, LocalToolCallExpansion provides toolExpansion) {
+        Column(modifier) { content() }
+    }
 }
 
 /** Keep the drawing viewport full size while relocating focus between the measured chrome surfaces. */

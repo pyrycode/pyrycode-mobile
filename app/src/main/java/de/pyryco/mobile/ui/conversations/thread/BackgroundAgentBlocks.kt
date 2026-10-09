@@ -114,7 +114,10 @@ internal fun foldBackgroundAgentBlocks(
         when {
             id in roots -> {
                 val task = roots.getValue(checkNotNull(id))
-                result += ThreadRow.AgentStartMarker(checkNotNull(message).id, task.description.orEmpty().take(4096), task.finished)
+                // Own destination distinguishes relocation from a neighbour inserting before this block.
+                val finishAnchor = task.finishPosition?.let { rows.getOrNull(it - 1)?.listKey(0) ?: "thread-start" }
+                result +=
+                    ThreadRow.AgentStartMarker(checkNotNull(message).id, task.description.orEmpty().take(4096), task.finished, finishAnchor)
             }
             message?.id in claimed -> Unit
             else -> result += row

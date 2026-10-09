@@ -217,11 +217,18 @@ internal class ThreadListViewport(
         }
         val oldPlacements = placements(oldBlocks)
         val newPlacements = placements(blocks)
+        val oldMarkers = oldBlocks.filterIsInstance<ThreadRow.AgentStartMarker>().associateBy { it.agentId }
         val finished =
             blocks
                 .filterIsInstance<ThreadRow.AgentStartMarker>()
-                .filter { it.finished && it.agentId in oldPlacements && oldPlacements[it.agentId] != newPlacements[it.agentId] }
-                .mapTo(HashSet()) { it.agentId }
+                .filter { marker ->
+                    val old = oldMarkers[marker.agentId]
+                    marker.finished &&
+                        old != null &&
+                        (!old.finished || old.finishAnchor != marker.finishAnchor) &&
+                        marker.agentId in oldPlacements &&
+                        oldPlacements[marker.agentId] != newPlacements[marker.agentId]
+                }.mapTo(HashSet()) { it.agentId }
         if (finished.isEmpty()) return null
         val movedMessages =
             oldBlocks

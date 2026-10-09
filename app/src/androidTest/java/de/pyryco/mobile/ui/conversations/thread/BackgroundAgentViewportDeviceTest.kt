@@ -7,6 +7,18 @@ import org.junit.runner.RunWith
 /** Required Android-visible rendered-frame probes; the shared class also runs on JVM. */
 @RunWith(AndroidJUnit4::class)
 class BackgroundAgentViewportDeviceTest : BackgroundAgentViewportTest() {
+    @Test override fun completionAcrossFinishedBlock_preservesTallStationaryChild() =
+        super.completionAcrossFinishedBlock_preservesTallStationaryChild()
+
+    @Test override fun splitCompletionAcrossFinishedBlock_preservesTallStationaryChild() =
+        super.splitCompletionAcrossFinishedBlock_preservesTallStationaryChild()
+
+    @Test override fun fullViewportCompletion_withInvalidatedExpandedTool_retainsBoundary() =
+        super.fullViewportCompletion_withInvalidatedExpandedTool_retainsBoundary()
+
+    @Test override fun fullViewportCompletion_withRestoredExpandedTool_retainsBoundary() =
+        super.fullViewportCompletion_withRestoredExpandedTool_retainsBoundary()
+
     @Test override fun newestReceiptAcrossRunningBlock_followerKeepsNewestEveryFrame() =
         super.newestReceiptAcrossRunningBlock_followerKeepsNewestEveryFrame()
 
