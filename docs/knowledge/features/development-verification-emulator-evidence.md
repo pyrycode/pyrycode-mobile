@@ -47,6 +47,17 @@ source only if its escapes are typed in upper case.
 
 ## Emulator and real evidence
 
+The [#1969 full live proof](../../e2e-interactive-stream.md#verification-status)
+records the configured command, mobile head/main revisions and method-level JUnit
+counts: **65 executed, 65 passed, 0 failed, 0 skipped**. Both inherited model-change
+and attention methods passed after verification. Its daemon revision is missing
+from the gate report; the known repaired daemon used for the earlier two-test
+focused pair is evidence for that pair alone. A configured source checkout or
+previous binary revision does not establish which daemon a later full run used.
+The actual full-run daemon commit remains a verification evidence handoff;
+preserve the historical reds and distinguish focused recovery from full-suite
+execution when completing it.
+
 Instrumentation retains its Application/Koin graph and saved host selection across methods.
 Stopping a private fixture daemon leaves its phone pairing saved and potentially selected,
 so a passing scenario can break the next test. Register ownership of the exact fixture server

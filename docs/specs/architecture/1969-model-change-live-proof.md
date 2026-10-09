@@ -48,3 +48,19 @@ Builder lint, debug assembly and Android-test compilation passed. Production, te
 2026-10-09: The unchanged pair passed together through `scripts/android-test-gate.py live --tests` on mobile `e42c98f786c50eadaf9a864230069846326eb5ed`, daemon `a39c72739eb2e811708a67b08906614a4316b834` (`vcs.modified=false`), Claude Code 2.1.280 and managed `pixel2Api33Atd`. Exit 0: 2 executed, 2 passed, 0 failed/errors, 0 skipped. Both `interactiveTurn_modelChange_roundTripsAndStaysPerConversation` and `interactiveTurn_attentionDot_followsARealTurn` explicitly passed with their inherited assertions and timeouts unchanged.
 
 Fresh counted XML: `build/dispatcher-tests/live-659mf9c_/dispatcher.xml`, SHA-256 `b54d8a88af7ee5aa72ba4168870ca593a0aeac3fa901bc5ca265ffcf500ea773`. The same directory retains raw device XML and per-test logcat. This resolves the focused failure recorded above; #1989 is closed. Full-suite acceptance remains pending on this ticket's fresh dispatcher gate after verification, with `## Live tests` set to `all` and `needs-real-claude` retained. That gate must report actual mobile/daemon revisions, full executed/failed/skipped counts and both named passes.
+
+## Post-verifier full dispatcher evidence
+
+2026-10-09: The fresh full dispatcher gate ran
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on
+mobile `742c465059adf89f0b58d5d42b7e1b3b728684bf` merged with main `31d44af7c5cc`.
+The method-level JUnit gate report `2026-10-09T09-47-46-665Z` and
+[issue gate comment](https://github.com/pyrycode/pyrycode-mobile/issues/1969#issuecomment-6078717180)
+record exit 0 in 15m 17s: 65 executed, 65 passed (0 flaky), 0 failed, 0 skipped.
+Both inherited methods explicitly executed and passed with no scenario, helper,
+assertion or timeout edits. This is full-suite execution, separate from the
+focused pair above. The full gate supplies no daemon-revision annotation, so its
+actual daemon commit and confirmation that it contains the repairs remain missing
+acceptance evidence, routed back to verification. The focused daemon revision
+must not be substituted for the full run's revision. See
+[evergreen evidence](../../e2e-interactive-stream.md#verification-status).

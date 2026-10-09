@@ -3295,6 +3295,37 @@ only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
 
+**Restored model-change and attention proof (#1969, 2026-10-09).** The fresh
+post-verifier full dispatcher run used
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`,
+mobile `742c465059adf89f0b58d5d42b7e1b3b728684bf` merged with `origin/main`
+`31d44af7c5cc`. Its method-level JUnit report
+`2026-10-09T09-47-46-665Z_real-claude-gate_#1969.log` records **65 executed,
+65 passed (0 flaky), 0 failed, 0 skipped**, exit 0 in 15m 17s. Both
+`InteractiveStreamE2ETest#interactiveTurn_modelChange_roundTripsAndStaysPerConversation`
+and `InteractiveStreamE2ETest#interactiveTurn_attentionDot_followsARealTurn`
+explicitly executed and passed. The
+[issue's gate evidence](https://github.com/pyrycode/pyrycode-mobile/issues/1969#issuecomment-6078717180)
+confirms the full command, mobile revisions and counts. No separate focused run
+is claimed for this gate. The full-run report supplies no daemon-revision
+annotation; its actual daemon commit remains required evidence, so #1969's
+revision handoff is unfinished despite the named full-suite passes.
+
+The earlier focused pair at mobile `e42c98f786c50eadaf9a864230069846326eb5ed`
+and daemon `a39c72739eb2e811708a67b08906614a4316b834` (`vcs.modified=false`,
+including daemon #3017, #3026 and #3029) executed **2, passed 2, failed 0,
+skipped 0**. The [verifier's XML review](https://github.com/pyrycode/pyrycode-mobile/pull/1999#issuecomment-6078487604)
+confirms both methods in `build/dispatcher-tests/live-659mf9c_/dispatcher.xml`
+(retained copy `/tmp/builder-1969/proof-20261009/dispatcher.xml`, SHA-256
+`b54d8a88af7ee5aa72ba4168870ca593a0aeac3fa901bc5ca265ffcf500ea773`).
+That focused daemon revision cannot establish the daemon used by the later full
+gate. Both inherited methods, helpers, assertions and deadlines stayed unchanged:
+model announcement/inheritance, exact published-value acknowledgement, reopen
+persistence and X/Y isolation; attention phone/peer read confirmation, isolation
+and permission waiting/answer checks. Historical failures remain in the
+[ticket plan](specs/architecture/1969-model-change-live-proof.md#execution-evidence-and-blocker).
+No mobile workaround, new scenario or deterministic twin was introduced.
+
 **Runtime receipt and legacy clamp compatibility (#1989, 2026-10-09).** The fresh
 full dispatcher `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live`
 ran mobile `2d48240a001595e52aad792a9d9ed6551a2f4821` merged with `origin/main`
@@ -3315,7 +3346,8 @@ records the rerun and stale-daemon rejection: the earlier 08:01Z run used `55f1f
 without either repair, and does not prove this compatibility fix. Reports and matching
 `.stderr.log` are retained under the dispatcher repository's `logs/` directory;
 full-run device artifacts were in `build/dispatcher-tests/live-0vm8oz36/`.
-#1969 retains its subsequent full live-proof gate. The permanent mobile receipt and
+\#1969's subsequent full live-proof results and missing daemon revision are recorded above.
+The permanent mobile receipt and
 confirmation regressions are described in
 [remote repository testing](knowledge/features/remote-conversation-repository.md#testing).
 
@@ -4989,6 +5021,14 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Restored shared proof (#1969):** Both inherited `InteractiveStreamE2ETest`
+  model-change and attention methods passed in the fresh 65-test full suite;
+  [Verification status](#verification-status) distinguishes that gate from the
+  earlier focused pair and historical failures. The remaining handoff is the
+  full run's actual daemon revision, routed to verification. No scenario or
+  `DeterministicInteractiveStreamE2ETest` twin changed. The pre-ship command stays
+  `python3 scripts/android-test-gate.py live`.
 
 - **Archive/restore viewport discovery (#1870):** the existing rung-3
   `InteractiveStreamE2ETest#interactiveTurn_archiveRestore_roundTripsListMembership` now discovers
