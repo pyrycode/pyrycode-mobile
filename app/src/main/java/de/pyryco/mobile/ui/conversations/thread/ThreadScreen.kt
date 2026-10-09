@@ -39,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -60,6 +61,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -79,6 +81,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.offset
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ConversationAgent
@@ -614,7 +619,19 @@ fun ThreadScreen(
                     remember(queuedRows, state.items, state.backgroundTasks) {
                         foldBackgroundAgentBlocks(queuedRows, state.items, state.backgroundTasks)
                     }
-                var goToAgent by remember(state.conversationId) { mutableStateOf<String?>(null) }
+                val agentNavigation = remember(state.conversationId) { ThreadAgentNavigation() }
+                val destinationLifecycle = LocalLifecycleOwner.current.lifecycle
+                DisposableEffect(agentNavigation, destinationLifecycle) {
+                    val observer =
+                        LifecycleEventObserver { _, event ->
+                            if (event == Lifecycle.Event.ON_PAUSE) agentNavigation.cancel("departure")
+                        }
+                    destinationLifecycle.addObserver(observer)
+                    onDispose {
+                        destinationLifecycle.removeObserver(observer)
+                        agentNavigation.cancel("departure")
+                    }
+                }
                 // #1621: the one message whose meta row (timestamp + copy) shows; every other bubble hides it
                 // until tapped. UI-local, keyed by message id so it follows the message as rows arrive.
                 var metaRowMessageId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -649,7 +666,14 @@ fun ThreadScreen(
                 // hasMessages already covers that case.
                 // #1002: the message area, with the Top overlay pinned over its top edge while the messages
                 // scroll beneath it.
-                Box(modifier = Modifier.fillMaxWidth().weight(1f).testTag("thread-message-region")) {
+                Box(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .nestedScroll(agentNavigation)
+                            .testTag("thread-message-region"),
+                ) {
                     // Movement can prefetch after a page settles; arrival alone never asks.
                     // The ViewModel remains the authoritative single-flight and termination gate.
                     val demandOlderHistory by rememberUpdatedState(onDemandOlderHistory)
@@ -696,15 +720,14 @@ fun ThreadScreen(
                         // "Go to agent" only scrolls the block's own root row into view; it never expands
                         // the block's collapsed run (that root draws as itself regardless, #1827
                         // follow-up — only its own tap, via ToolRunRow's onToggle, opens or closes a run).
-                        LaunchedEffect(goToAgent, rows, promptRowCount) {
-                            val agentId = goToAgent ?: return@LaunchedEffect
+                        LaunchedEffect(agentNavigation, agentNavigation.pending, rows, promptRowCount) {
+                            val request = agentNavigation.pending ?: return@LaunchedEffect
                             val index =
                                 reversedRows.indexOfFirst { row ->
-                                    ((row as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)?.message?.id == agentId
+                                    ((row as? ThreadRow.Delivered)?.item as? ThreadItem.MessageItem)?.message?.id == request.agentId
                                 }
                             if (index >= 0) {
-                                listState.scrollToItem(index + promptRowCount)
-                                goToAgent = null
+                                agentNavigation.scrollToRoot(listState, index + promptRowCount, request)
                             }
                         }
                         // Info banners retain their keys but render nothing; spacing follows the visible row.
@@ -970,7 +993,11 @@ fun ThreadScreen(
                                                 },
                                         )
                                     is ThreadRow.AgentStartMarker ->
-                                        AgentStartMarker(row.description, row.finished, onGoToAgent = { goToAgent = row.agentId })
+                                        AgentStartMarker(
+                                            row.description,
+                                            row.finished,
+                                            onGoToAgent = { agentNavigation.request(row.agentId) },
+                                        )
                                     is ThreadRow.ToolRun ->
                                         Box(Modifier.testTag("tool-run:${row.runId}")) {
                                             ToolRunRow(

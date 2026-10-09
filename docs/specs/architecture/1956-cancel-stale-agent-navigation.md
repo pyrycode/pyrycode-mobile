@@ -25,7 +25,7 @@ A tap can outlive its root disappearing from loaded rows. A later root arrival m
 
 Add a small UI-local `ThreadAgentNavigation` owner with an identity-bearing request and the currently executing navigation job. A fresh marker tap replaces the request even for the same agent. `ThreadScreen` remembers the owner per conversation and keeps its existing row lookup effect, delegating the actual scroll to that owner. A successful scroll consumes only the request it executed.
 
-Attach a non-consuming nested-scroll observer to the list. Nonzero vertical `UserInput` cancels the request and its active job synchronously; this includes accessibility scrolling. Programmatic `scrollToItem`, layout changes and viewport compensation do not emit reader input. Keep the history-demand gesture unchanged.
+Attach a non-consuming nested-scroll observer to the message region, enclosing both list and empty-thread scrollables. Nonzero vertical `UserInput` cancels the request and its active job synchronously; this includes accessibility scrolling. Programmatic `scrollToItem`, layout changes and viewport compensation do not emit reader input. Keep the history-demand gesture unchanged.
 
 Observe the destination lifecycle with `DisposableEffect`: loss of resumed ownership cancels navigation, and disposal cancels it too. The request is never saveable. Conversation changes create a fresh owner and retire the old one. Run expansion remains independently owned by existing saveable state.
 
@@ -47,6 +47,7 @@ Shared production-screen probes in `AgentNavigationScreenTest`, also explicitly 
 | Unmount/remount or saved-state recreation | `remount_doesNotReviveRequest` |
 | Conversation switches away and back, reusing root id | `conversationSwitch_doesNotReviveRequest` |
 | Another marker tap replaces an unresolved request | `freshTap_replacesUnresolvedRequest` |
+| A new tap after cancellation | `freshTapAfterReaderCancellation_navigates` |
 
 Existing `BackgroundAgentBlocksScreenTest` covers navigation before/after task completion and collapsed/expanded owned runs.
 
@@ -58,8 +59,12 @@ Cancellation is expected control flow. Static structured event codes report requ
 
 Write shared screen regressions first and observe their cancellation failure on current production behavior. They invoke the rendered marker's actual click action and then remove its loaded root in the same UI turn, before the navigation effect can settle. Capture the real `LazyListState` through the existing composition observer. Assert waiting arrival reaches the root, cancelled arrival retains stationary reader position, and a successful request cannot replay. Exercise actual pointer and semantics scrolling, lifecycle departure, remount and conversation replacement.
 
-The device file only wraps shared probes so the routine UI gate selects them, as required by the ticket; it contains no separate device-only implementation. Run the shared class and existing marker/expansion tests on JVM, the wrapper class on Android with named-method XML counts, and the relevant `stream` scripted scenario. Preserve the rung-3 `InteractiveStreamE2ETest#interactiveTurn_backgroundAgent_followsBottomUntilFinished` and rung-4 `DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_backgroundAgentMovesAndSettles` unchanged. Fresh full live and scripted results, including these methods' counts, are pending dispatcher-owned gates.
+The device file only wraps shared probes so the routine UI gate selects them, as required by the ticket; it contains no separate device-only implementation. Run the shared class and existing marker/expansion tests on JVM, the wrapper class on Android with named-method XML counts, and the relevant `background-agent` scripted scenario. Preserve the rung-3 `InteractiveStreamE2ETest#interactiveTurn_backgroundAgent_followsBottomUntilFinished` and rung-4 `DeterministicInteractiveStreamE2ETest#interactiveTurn_seededChannel_backgroundAgentMovesAndSettles` unchanged. Fresh full live and scripted results, including these methods' counts, are pending dispatcher-owned gates.
 
 ## Open Questions
 
 None.
+
+## Revisions
+
+2026-10-09: The production-screen interruption probe holds the real list at `UserInput` priority while the marker effect attempts its mutation. Mutator rejection cancels the inner scroll while the effect remains active; consume that request explicitly, while retaining intent when a rows-change cancels the effect itself. Observe nested input at the message-region parent so cancellation also applies if root removal leaves an empty scrollable. The focused scripted selector is `background-agent`, which directly runs the preserved rung-4 method.
