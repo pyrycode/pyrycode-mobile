@@ -4,9 +4,9 @@
 
 - `app/src/sharedTest/java/de/pyryco/mobile/e2e/QuestionAnswerPhone.kt`: `questionAnswerTarget` relocates in the drawing viewport, applies one ScrollBy correction and guards the tap center.
 - `app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/BackgroundAgentProseScreenTest.kt`: owned-run and long-prose fixtures preserve attribution and collapse proof.
-- `app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt`: `interactiveTurn_backgroundAgent_replyStaysUnderAgent` fails while revealing the opened run, before its close tap; fixture/preference cleanup must remain.
+- `app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt`: `interactiveTurn_backgroundAgent_replyStaysUnderAgent` historically failed while revealing the attributed paragraph, before preparing its close tap; fixture/preference cleanup must remain.
 - `app/src/sharedTest/java/de/pyryco/mobile/e2e/AgentRunNavigationProof.kt`: other consumers retain the existing helper contract.
-- `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt`: `ChromeAwareThreadList` uses reverse layout and a chrome-aware relocation spec.
+- `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt`: `ThreadMessageList` uses reverse layout and a chrome-aware relocation spec.
 - `docs/knowledge/features/thread-screen-subagent-tool-rows.md` and `development-verification-compose-evidence.md`: ownership differs from run identity; drawing-viewport display does not prove a chrome-clear physical target.
 - `docs/e2e-interactive-stream.md`: existing rung-3 prose proof and rung-4 background-agent twin.
 - `docs/specs/architecture/1904-background-agent-run-selector.md` and `1867-agent-navigation-run-toggle.md`: preserve child ownership and explicit closed/open/closed transitions.
