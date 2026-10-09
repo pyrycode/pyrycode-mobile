@@ -93,15 +93,18 @@ class SavedThreadFirstDrawDeviceTest {
 
     @Test fun savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen() {
         installHost()
-        val ordinary =
-            (0 until 20).map {
-                ThreadItem.MessageItem(Message("ordinary-$it", "s", Role.User, "Saved $it.", Instant.fromEpochSeconds(it.toLong()), false))
-            }
-        val fragmented = fragmentedHistoryFixture((0 until 18000).toList())
-        for ((name, coverage, rows) in listOf(
-            Triple("ordinary", null, ordinary),
-            Triple("fragmented", fragmented.first, fragmented.second),
-        )) {
+        for (name in listOf("ordinary", "fragmented")) {
+            val (coverage, rows) =
+                if (name == "ordinary") {
+                    null to
+                        (0 until 20).map {
+                            ThreadItem.MessageItem(
+                                Message("ordinary-$it", "s", Role.User, "Saved $it.", Instant.fromEpochSeconds(it.toLong()), false),
+                            )
+                        }
+                } else {
+                    fragmentedHistoryFixture((0 until 18000).toList())
+                }
             for (online in listOf(false, true)) {
                 withFixture(name, rows, coverage) { root ->
                     val delegate = HeldNewest()
