@@ -4,7 +4,12 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.view.View
 import androidx.compose.foundation.LocalOverscrollFactory
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
@@ -16,9 +21,11 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
@@ -29,6 +36,8 @@ import de.pyryco.mobile.data.model.MessageAttachment
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
+import de.pyryco.mobile.ui.conversations.components.MarkdownText
+import de.pyryco.mobile.ui.conversations.components.StreamingMarkdownText
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -64,6 +73,8 @@ open class ThreadReaderGeometryTest {
             }
         }
     private val body = (1..95).joinToString("\n\n") { "Reader line $it." }
+    private val growthTail = "[Settlement growth](https://example.invalid/" + "segment/".repeat(40)
+    private val shrinkTail = "```text\nSettlement shrink\n```"
     private val state =
         mutableStateOf(
             ThreadUiState(
@@ -91,8 +102,11 @@ open class ThreadReaderGeometryTest {
         list().performTouchInput { down(Offset(centerX, height / 2f)) }
         recording = true
         appendAndReveal()
-        finishReply()
-        frames(5)
+        settlementCases().forEach { (tail, grows) ->
+            updateReply(body + "\n\n" + tail, true)
+            fullyReveal()
+            settleAndAssertHeight(grows)
+        }
         assertFrames(top)
         list().performTouchInput { up() }
     }
@@ -101,24 +115,56 @@ open class ThreadReaderGeometryTest {
         openReader()
         val top = replyCoordinates.positionInRoot().y
         recording = true
-        val headings = body.replace("Reader line", "# Reader line")
-        updateReply(headings, true)
-        frames(5)
-        val headingPlainHeight = replyCoordinates.size.height
-        updateReply(headings, false)
-        frames(5)
-        assertTrue("heading markdown grows", replyCoordinates.size.height > headingPlainHeight)
-        assertFrames(top)
-        renderedTops.clear()
-        updateReply(body, true)
-        frames(5)
-        assertFrames(top)
-        val plainHeight = replyCoordinates.size.height
-        renderedTops.clear()
-        updateReply(body, false)
-        frames(5)
-        assertTrue("soft-line markdown shrinks", replyCoordinates.size.height < plainHeight)
-        assertFrames(top)
+        settlementCases().forEach { (tail, grows) ->
+            updateReply(body + "\n\n" + tail, true)
+            fullyReveal()
+            settleAndAssertHeight(grows)
+            assertFrames(top)
+        }
+    }
+
+    @Test open fun settlementFixtures_changeHeightWithoutProgressiveReveal() {
+        val caret = mutableStateOf(true)
+        compose.setContent {
+            PyrycodeMobileTheme {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    listOf("growth" to growthTail, "shrink" to shrinkTail).forEach { (name, text) ->
+                        Box(Modifier.width(180.dp).testTag("$name-streaming")) {
+                            // Direct renderer input is already complete: no reveal producer or text update.
+                            StreamingMarkdownText(text, caretVisible = caret.value)
+                        }
+                        Box(Modifier.width(180.dp).testTag("$name-settled")) {
+                            MarkdownText(text)
+                        }
+                    }
+                }
+            }
+        }
+        listOf(true, false).forEach { visible ->
+            compose.runOnIdle { caret.value = visible }
+            val growthStreaming =
+                compose
+                    .onNodeWithTag("growth-streaming")
+                    .fetchSemanticsNode()
+                    .size.height
+            val growthSettled =
+                compose
+                    .onNodeWithTag("growth-settled")
+                    .fetchSemanticsNode()
+                    .size.height
+            val shrinkStreaming =
+                compose
+                    .onNodeWithTag("shrink-streaming")
+                    .fetchSemanticsNode()
+                    .size.height
+            val shrinkSettled =
+                compose
+                    .onNodeWithTag("shrink-settled")
+                    .fetchSemanticsNode()
+                    .size.height
+            assertTrue("unfinished link grows with caret=$visible", growthSettled > growthStreaming + 1)
+            assertTrue("fence caret line shrinks with caret=$visible", shrinkSettled < shrinkStreaming - 1)
+        }
     }
 
     @Test open fun endSpacing_preservesReaderInBothDirections() {
@@ -159,42 +205,99 @@ open class ThreadReaderGeometryTest {
 
     @Test open fun movingReader_preservesConsumedMovement() {
         openReader()
-        val top = replyCoordinates.positionInRoot().y
-        recording = true
-        list().performTouchInput { down(Offset(centerX, height / 2f)) }
-        repeat(6) { step ->
-            list().performTouchInput { moveBy(Offset(0f, -15f), delayMillis = 32) }
-            if (step == 2) updateReply(body + "\n" + (1..15).joinToString("\n") { "Delta $it." }, true)
-            if (step == 3) {
-                assertTrue("spacing changes during the active drag", listState.isScrollInProgress)
-                attachments(true)
+        settlementCases().forEach { (tail, grows) ->
+            updateReply(body, true)
+            fullyReveal()
+            val top = resetMotionBaseline()
+            val beforeDrag = consumedMovement
+            list().performTouchInput { down(Offset(centerX, height / 2f)) }
+            repeat(6) { step ->
+                list().performTouchInput { moveBy(Offset(0f, -15f), delayMillis = 32) }
+                if (step == 2) updateReply(body + "\n\n" + tail, true)
+                if (step == 3) {
+                    assertTrue("spacing changes during the active drag", listState.isScrollInProgress)
+                    attachments(true)
+                }
+                if (step == 4) attachments(false)
+                frames(3)
             }
-            if (step == 4) attachments(false)
-            frames(3)
+            assertTrue("the drag consumed real movement", consumedMovement < beforeDrag - 10f)
+            fullyReveal()
+            assertTrue("settlement arrives during an active drag", listState.isScrollInProgress)
+            settleAndAssertHeight(grows)
+            assertTrue("settlement preserves the active drag", listState.isScrollInProgress)
+
+            // Re-enter streaming with the same complete source before starting the fling.
+            val text = replyText()
+            updateReply(text, true)
+            fullyReveal()
+            list().performTouchInput {
+                // Frame sampling leaves preceding velocity samples far apart. Finish with a real burst.
+                repeat(4) { moveBy(Offset(0f, -30f), delayMillis = 10) }
+                up()
+            }
+            val beforeFling = consumedMovement
+            attachments(true)
+            frames(2)
+            assertTrue("the fling remains active after spacing growth", listState.isScrollInProgress)
+            attachments(false)
+            frames(2)
+            assertTrue("settlement arrives during the fling", listState.isScrollInProgress)
+            settleAndAssertHeight(grows)
+            assertTrue("settlement preserves the active fling", listState.isScrollInProgress)
+            frames(120)
+            assertTrue("the fling consumes movement after the update", consumedMovement < beforeFling - 1f)
+            assertTrue("the fling finishes naturally", !listState.isScrollInProgress)
+            assertFrames(top)
         }
-        val dragMovement = consumedMovement
-        assertTrue("the drag consumed real movement", dragMovement < -10f)
-        list().performTouchInput {
-            // Frame sampling leaves the preceding velocity samples far apart. Finish with a real burst.
-            repeat(4) { moveBy(Offset(0f, -30f), delayMillis = 10) }
-            up()
-        }
-        val beforeFling = consumedMovement
-        val tail = (1..20).joinToString("\n") { "Appended line $it." }
-        updateReply(body + "\n" + tail, true)
-        frames(4)
-        assertTrue("the fling remains active after reveal", listState.isScrollInProgress)
-        attachments(true)
-        frames(2)
-        assertTrue("the fling remains active after spacing growth", listState.isScrollInProgress)
-        attachments(false)
-        frames(2)
-        assertTrue("settlement arrives during the fling", listState.isScrollInProgress)
-        finishReply()
-        frames(30)
-        assertTrue("the fling consumes movement after the update", consumedMovement < beforeFling - 1f)
-        assertFrames(top)
     }
+
+    private fun resetMotionBaseline(): Float {
+        // Each independent gesture case starts near the reply's top, with room for an unclamped fling.
+        recording = false
+        compose.runOnUiThread {
+            listState.dispatchRawDelta(with(compose.density) { 180.dp.toPx() } - replyCoordinates.positionInRoot().y)
+        }
+        frames(3)
+        val top = replyCoordinates.positionInRoot().y
+        olderCoordinates =
+            compose
+                .onAllNodesWithTag(MESSAGE_BUBBLE_TEST_TAG, useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .map { it.layoutInfo.coordinates }
+                .filter { it.positionInRoot().y < top && it.positionInRoot().y >= 0f }
+                .maxByOrNull { it.positionInRoot().y }
+        assertTrue("an older row must be visible for each gesture case", olderCoordinates != null)
+        olderTop = olderCoordinates?.positionInRoot()?.y ?: 0f
+        consumedMovement = 0f
+        renderedTops.clear()
+        renderedOlderTops.clear()
+        recording = true
+        return top
+    }
+
+    private fun settlementCases() = listOf(growthTail to true, shrinkTail to false)
+
+    private fun fullyReveal() {
+        // 720ms exceeds the 495ms catch-up budget plus presentation. Sample every frame, including catch-up.
+        frames(45)
+    }
+
+    private fun settleAndAssertHeight(grows: Boolean) {
+        val text = replyText()
+        val streamingHeight = replyCoordinates.size.height
+        finishReply()
+        frames(5)
+        assertEquals("settlement must hold the complete source constant", text, replyText())
+        val settledHeight = replyCoordinates.size.height
+        if (grows) {
+            assertTrue("fully revealed unfinished link must grow on settlement", settledHeight > streamingHeight + 1)
+        } else {
+            assertTrue("fully revealed fence must shrink on settlement", settledHeight < streamingHeight - 1)
+        }
+    }
+
+    private fun replyText() = (state.value.items.last() as ThreadItem.MessageItem).message.content
 
     private fun finishReply() {
         val text = (state.value.items.last() as ThreadItem.MessageItem).message.content

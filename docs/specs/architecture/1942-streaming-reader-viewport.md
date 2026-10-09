@@ -38,9 +38,10 @@ Bookkeeping belongs to the remembered list composition; no ViewModel or reposito
 | Event | Required regression |
 | --- | --- |
 | Appended delta and every progressive reveal frame, tall reply at index zero | `streamingReader_holdsTopAndOlderRowsEveryFrame` |
-| Streaming switches to taller or shorter settled markdown | `settledMarkdown_holdsTopForGrowthAndShrink` |
-| Finger held without movement during growth | `restingTouch_holdsReaderEveryFrame` |
-| Drag or fling while geometry changes | `movingReader_preservesConsumedMovement` |
+| Identical complete source changes height between renderers, independently of progressive reveal | `settlementFixtures_changeHeightWithoutProgressiveReveal` verifies unfinished-link growth and fenced-block shrink with the caret on and off |
+| Streaming switches to taller or shorter settled markdown after complete reveal | `settledMarkdown_holdsTopForGrowthAndShrink` |
+| Finger held without movement during reveal and verified settlement growth/shrink | `restingTouch_holdsReaderEveryFrame` |
+| Drag or fling while geometry changes, including verified settlement growth/shrink | `movingReader_preservesConsumedMovement` |
 | Ordinary spacing changes 4dp → 16dp → 4dp at index zero or in history | `endSpacing_preservesReaderInBothDirections` |
 | Reader moves to another keyed anchor | `endSpacing_preservesReaderInBothDirections` moves from the reply to a history key; refresh rather than restore a stale position |
 | Following growth, accepted send, prompt departure, save/restore | existing `ThreadListFollowTest` and `ThreadScreenFollowTest` |
@@ -58,10 +59,17 @@ Run focused new regressions and existing follow/layout tests, lint, assembleDebu
 
 ## Open Questions
 
-- Resolved: synchronous compensation completes before drawing on JVM and managed Android 13. Each platform executed all five named frame/gesture regressions with zero failures and zero skips, including actual active-fling and settled-markdown checks.
+- Rework validation pending: confirm both renderer-height directions with complete identical source, then rerun the real-screen frame/gesture methods on JVM and managed Android 13. The verifier invalidated the original heading-growth fixture and found that the claimed Android archive held a scripted scenario instead of the geometry probes.
+
+## Documentation handoff
+
+- Pending for the documentation stage: `docs/knowledge/features/thread-screen-how-it-works-list-and-status-row.md`, list reservations and following: keyed row-size and newest-end padding compensation, consumed compensation excluded from reader movement, and preservation of active scroll mutation.
+- Pending for the documentation stage: `docs/knowledge/features/thread-screen-testing.md`, viewport regression coverage: rendered-frame shared cases and Android-visible probe selection, including independently verified settlement fixtures and fresh counted geometry evidence.
+- Pending for the documentation stage: record actual fresh full UI/live results in the thread testing overview, including `InteractiveStreamE2ETest.interactiveTurn_pingPrompt_streamsPingReplyIntoThread`; these dispatcher-owned checks remain pending at builder handoff.
 
 ## Revisions
 
 - 2026-10-09: Capture the anchor's row-height delta in `ThreadRowContent` measurement before the lazy measure publishes a possibly different anchor after a shrink; apply size and reservation deltas in `ThreadMessageList`'s placement callback. Read the old lazy geometry without snapshot observation to avoid making item measurement depend on its own measure result. `dispatchRawDelta` preserves the active scroll mutation; `ListFrame.compensatedScroll` distinguishes that displacement from reader input. The five initial real-screen negative controls executed and failed with zero skips (40px reveal drift, 60px attachment drift and 3032px markdown drift).
 - 2026-10-09: Native JVM drawing follows `ComposerFileTileTintTest`'s explicit `View.draw(Canvas)` pattern. A root draw modifier alone records no JVM frames, and `captureToImage` times out; explicit draws observe the real composed bubble coordinates at each advanced frame. Paragraph breaks provide a genuine settled-markdown shrink; heading syntax provides growth of the same text at settlement. Progressive reveal also ends into settled markdown while the reader's finger remains down.
 - 2026-10-09: Motion assertions now take the fling baseline after finger release, require a live fling at each geometry update, and finish into settled markdown during that fling. A final burst supplies fresh velocity samples after the frame-by-frame drag; without it the gesture can produce no fling. A resting finger does not set `isScrollInProgress`, so its guarantee is the recorded geometry while the injected pointer remains down, rather than that flag.
+- 2026-10-09, verifier finding 1: Withdraw the earlier heading-growth and paragraph-shrink fixture claims. Both heading renderers share styles, and a five-frame baseline can still hold unrevealed text. Independently measure direct streaming/settled renderers with identical complete input and both caret states: an unfinished link hides its target while streaming and grows when settled literally; a fenced block reserves a caret line that disappears on settlement. Before each real-screen settlement baseline, advance every rendered frame beyond the 495ms catch-up budget and keep the source unchanged at completion. Assert actual height growth/shrink as well as top/older-row stability, including resting touch and active drag/fling.

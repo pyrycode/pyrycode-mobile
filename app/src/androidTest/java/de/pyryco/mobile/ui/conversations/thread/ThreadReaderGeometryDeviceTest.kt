@@ -11,6 +11,10 @@ class ThreadReaderGeometryDeviceTest : ThreadReaderGeometryTest() {
 
     @Test override fun settledMarkdown_holdsTopForGrowthAndShrink() = super.settledMarkdown_holdsTopForGrowthAndShrink()
 
+    @Test override fun settlementFixtures_changeHeightWithoutProgressiveReveal() =
+        super
+            .settlementFixtures_changeHeightWithoutProgressiveReveal()
+
     @Test override fun restingTouch_holdsReaderEveryFrame() = super.restingTouch_holdsReaderEveryFrame()
 
     @Test override fun movingReader_preservesConsumedMovement() = super.movingReader_preservesConsumedMovement()
