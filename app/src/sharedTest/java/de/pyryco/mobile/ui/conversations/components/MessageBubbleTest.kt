@@ -441,7 +441,7 @@ class MessageBubbleTest {
                 assertEquals(12f, (bubble.left - column.right).value, 1f)
             }
             assertTrue(target.left >= root.left && target.right <= root.right)
-            // Real pointer taps cover every side, including the strip overlapping the bubble.
+            // Real pointer taps cover every side of the target, which now clears the bubble.
             controls[index].performTouchInput {
                 click(Offset(1f, center.y))
                 click(Offset(right - 1f, center.y))
@@ -450,7 +450,7 @@ class MessageBubbleTest {
             }
         }
         assertEquals(List(8) { LONG_BODY }, clipboard.writes)
-        assertEquals("copy target must win over the bubble timestamp detector", 0, toggles)
+        assertEquals("copy target must not toggle the bubble timestamp", 0, toggles)
     }
 
     @Test
