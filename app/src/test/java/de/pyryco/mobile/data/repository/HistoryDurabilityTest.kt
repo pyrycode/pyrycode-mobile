@@ -273,11 +273,11 @@ class HistoryDurabilityTest {
             val newest = held.last() as ThreadItem.MessageItem
             val many = List(MAX_CACHED_THREAD_ROWS) { index -> newest.copy(message = newest.message.copy(id = "new-$index")) }
             cache().writeThread("h", "c", held + many)
-            val restored = cache().readHistoryPosition("h", "c")?.coverage
-            assertTrue(restored?.spans?.isEmpty() == true)
-            assertTrue(restored?.unknown == true)
-            assertEquals("", cache().readHistoryPosition("h", "c")?.cursor)
-            assertEquals(false, cache().readHistoryPosition("h", "c")?.atStart)
+            val restored = cache().readHistoryPosition("h", "c")
+            assertTrue(restored?.coverage?.spans?.isEmpty() == true)
+            assertTrue(restored?.coverage?.unknown == true)
+            assertEquals("", restored?.cursor)
+            assertEquals(false, restored?.atStart)
             assertEquals(MAX_CACHED_THREAD_ROWS, cache().readThread("h", "c").size)
         }
 }
