@@ -29,6 +29,7 @@ internal fun ComposeTestRule.verifyAgentRunNavigation(
     goLabel: String,
     expandLabel: String,
     collapseLabel: String,
+    markerMatcher: SemanticsMatcher = hasText(goLabel) and hasClickAction(),
     evidence: (String) -> Unit = {},
 ) {
     require(childIds.isNotEmpty()) { "Agent proof needs loaded owned children" }
@@ -110,7 +111,7 @@ internal fun ComposeTestRule.verifyAgentRunNavigation(
     }
 
     assertClosed("before-navigation")
-    val marker = questionAnswerTarget(hasText(goLabel) and hasClickAction())
+    val marker = questionAnswerTarget(markerMatcher, lazyKey = "agent-start:$agentId", evidence = evidence)
     marker.performTouchInput { click(center) }
     waitUntil(10_000) { onAllNodes(root).fetchSemanticsNodes().size == 1 }
     onNode(root).assertIsDisplayed()
