@@ -44,7 +44,7 @@ Production state/scopes remain unchanged. Harness closes its repository/ViewMode
 | Two child calls arrive while idle or during a later main turn | same received-frame regression and both named e2e methods |
 | Collapse off → closed → expanded → closed; task finishes | same regression and existing `verifyAgentRunNavigation` |
 | Duplicate/replayed tools, another Agent and foreground tools | `ScriptedBackgroundAgentToolsTest.invariantReplayAndInterleavingPreserveExclusiveOwnership` |
-| Parent backfill, reversed sibling arrivals and overlapping history | existing `BackgroundAgentBlocksTest`/`BackgroundAgentProseTest` plus small ownership permutation probes |
+| Parent backfill, reversed sibling arrivals and overlapping history | `BackgroundAgentBlocksTest.invariantLoadedParentChainsOwnEverySiblingPermutationOnce` and `BackgroundAgentProseTest.historyOverlapReplayAndReconnectKeepEachSegmentOnceAtTheFinishAnchor` |
 
 ## Error handling
 
@@ -57,3 +57,7 @@ Run the new received-frame shared screen regression and existing `ToolRunCollaps
 ## Open Questions
 
 Does correctly attributed post-turn activity expose a Mobile defect? Resolve from the received-frame and scripted proofs before handoff.
+
+## Revisions
+
+2026-10-09: Correctly attributed received frames pass against unchanged Mobile production code. Removing `late-two`'s received parent makes the new ownership assertion fail (1 executed, 1 failed, 0 skipped); restoring it passes. Daemon #2960 supplies the missing attribution, so this ticket lands regression coverage and strengthened existing e2e proofs only. The loopback fixture adds an independent `/hold-tools`/`/release-tools` fence, released after the observed main end, to guarantee two late tool starts rather than relying on scheduling. A repository-visible replay barrier ensures replay assertions run after all duplicate frames were reduced. Actual written work remains below 1,600 lines with zero exported production API changes.

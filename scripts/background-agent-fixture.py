@@ -9,19 +9,20 @@ import threading
 def serve(port_file):
     released = threading.Event()
     reply_released = threading.Event()
+    tools_released = threading.Event()
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self, *_args):
             pass
 
         def do_GET(self):
-            if self.path in ("/hold", "/hold-reply"):
-                release = reply_released if self.path == "/hold-reply" else released
+            if self.path in ("/hold", "/hold-reply", "/hold-tools"):
+                release = {"/hold": released, "/hold-reply": reply_released, "/hold-tools": tools_released}[self.path]
                 if not release.wait(180):
                     self.send_error(408)
                     return
-            elif self.path in ("/release", "/release-reply"):
-                release = reply_released if self.path == "/release-reply" else released
+            elif self.path in ("/release", "/release-reply", "/release-tools"):
+                release = {"/release": released, "/release-reply": reply_released, "/release-tools": tools_released}[self.path]
                 release.set()
             else:
                 self.send_error(404)
