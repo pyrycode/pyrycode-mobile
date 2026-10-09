@@ -6,6 +6,8 @@ import android.view.View
 import androidx.compose.foundation.LocalOverscrollFactory
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
@@ -47,6 +49,9 @@ open class BackgroundAgentViewportTest {
     private val state = mutableStateOf(ThreadUiState("viewport", "Viewport", hasMessages = true))
     private lateinit var listState: LazyListState
     private lateinit var view: View
+    private val incarnation = mutableIntStateOf(0)
+    private var initialPosition: Pair<Int, Int>? = null
+    private val measuredKeys = mutableSetOf<Any>()
     private var recording = false
     private var anchor: LayoutCoordinates? = null
     private val positions = mutableListOf<Float>()
@@ -89,6 +94,68 @@ open class BackgroundAgentViewportTest {
         compose.runOnUiThread { finish(setOf("a", "b")) }
         frames(8)
         assertNewestFrames()
+    }
+
+    @Test open fun newestReceiptAcrossRunningBlock_followerKeepsNewestEveryFrame() {
+        mount(collapsed = false, second = true)
+        recording = true
+        compose.mainClock.autoAdvance = false
+        compose.runOnUiThread { finish(setOf("b"), newest = true) }
+        frames(8)
+        assertNewestFrames()
+        compose.runOnUiThread { finish(setOf("b"), newest = true) }
+        frames(3)
+        assertNewestFrames()
+    }
+
+    @Test open fun newestReceiptAcrossRunningBlock_readerKeepsStationaryRows_collapsed() = newestReceiptReader(true)
+
+    @Test open fun newestReceiptAcrossRunningBlock_readerKeepsStationaryRows_uncollapsed() = newestReceiptReader(false)
+
+    private fun newestReceiptReader(collapsed: Boolean) {
+        mount(collapsed, second = true)
+        compose.runOnIdle { listState.dispatchRawDelta(12f) }
+        compose.waitForIdle()
+        assertEquals(
+            "moving B child is the bottom-most anchor",
+            if (collapsed) "msg:b-1" else "msg:b-2",
+            listState.layoutInfo.visibleItemsInfo
+                .first { it.index == listState.firstVisibleItemIndex }
+                .key,
+        )
+        anchor =
+            bubble("main-35")
+                .assertIsDisplayed()
+                .fetchSemanticsNode()
+                .layoutInfo.coordinates
+        stationaryKey = "msg:main-35"
+        val top = requireNotNull(anchor).positionInRoot().y
+        val readerOffset = listState.firstVisibleItemScrollOffset
+        recording = true
+        compose.mainClock.autoAdvance = false
+        compose.runOnUiThread { finish(setOf("b"), newest = true) }
+        frames(8)
+        compose.runOnUiThread { finish(setOf("b"), newest = true) }
+        frames(3)
+        // B settles behind A. A's old position cannot be filled on its newer side, so the
+        // permitted newest-end clamp removes exactly the reader's original scroll offset.
+        assertTrue("must draw the clamped vacancy", ends.any { it == 0 to 0 })
+        assertEquals("one stationary sample per rendered frame", ends.size, positions.size)
+        ends.zip(positions).forEach { (end, position) ->
+            assertEquals("relocation must never follow B into history", 0, end.first)
+            assertTrue("only the old position or normal newest clamp is allowed", end.second == readerOffset || end.second == 0)
+            assertEquals(top - (readerOffset - end.second), position, 1f)
+        }
+        stationaryLayouts.forEach { assertTrue("stationary main row remains visible", it.second != null) }
+        compose.runOnUiThread {
+            state.value =
+                state.value.copy(items = state.value.items + listOf(tool("c", "Agent"), launch("c"), tool("c-1", "Read", "c")))
+        }
+        frames(5)
+        assertTrue(
+            "newest clamp must not resume following",
+            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 4,
+        )
     }
 
     @Test open fun delayedReceipt_followerKeepsNewestEveryFrame() = delayedFollower(newest = false)
@@ -265,7 +332,11 @@ open class BackgroundAgentViewportTest {
         positions.forEach { assertEquals(top, it, 1f) }
     }
 
-    @Test open fun fullViewportCompletion_retainsOlderBoundaryAgainstRemainingBlock() {
+    @Test open fun fullViewportCompletion_retainsOlderBoundaryAgainstRemainingBlock() = fullBlockBoundary(cold = false)
+
+    @Test open fun fullViewportCompletion_withColdMeasurements_retainsOlderBoundary() = fullBlockBoundary(cold = true)
+
+    private fun fullBlockBoundary(cold: Boolean) {
         mount(collapsed = false, second = true, tall = true, secondTall = true)
         val rows = foldBackgroundAgentBlocks(foldQueuedRows(state.value.items, emptyList()), state.value.items, null).asReversed()
 
@@ -295,6 +366,22 @@ open class BackgroundAgentViewportTest {
         val offset = height - info.viewportSize.height + info.beforeContentPadding - 20
         compose.runOnIdle { listState.dispatchRawDelta(offset.toFloat()) }
         compose.waitForIdle()
+        if (cold) {
+            // Calibration belongs to a retired composition. The active list starts directly inside
+            // tall-a, so neither its older children nor its root can warm the production height cache.
+            val retired = listState
+            compose.runOnIdle {
+                measuredKeys.clear()
+                initialPosition = index("msg:tall-a") to offset
+                incarnation.intValue++
+            }
+            compose.waitForIdle()
+            assertTrue("cold probe must own a fresh lazy list", retired !== listState)
+            assertTrue(
+                "active composition must never measure older A rows before relocation",
+                listOf("msg:a", "msg:a-1", "msg:a-2").none { it in measuredKeys },
+            )
+        }
         val old = listState.layoutInfo
         assertTrue(
             "viewport must contain only the completing block",
@@ -427,50 +514,62 @@ open class BackgroundAgentViewportTest {
             )
         compose.setContent {
             view = LocalView.current
-            CompositionLocalProvider(LocalOverscrollFactory provides null, LocalThreadListCompositionObserver provides { listState = it }) {
-                PyrycodeMobileTheme {
-                    ThreadScreen(
-                        state.value,
-                        {},
-                        {},
-                        ConnectionState.Connected,
-                        {},
-                        collapseToolUses = collapsed,
-                        modifier =
-                            Modifier.drawWithContent {
-                                drawContent()
-                                if (recording) {
-                                    ends += listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
-                                    val info = listState.layoutInfo
-                                    tallVisibleFrames += info.visibleItemsInfo.any { it.key == "msg:tall-a" }
-                                    if (watchVacatedBoundary && info.visibleItemsInfo.none { it.key == "msg:tall-a" }) {
-                                        info.visibleItemsInfo.firstOrNull { it.key == "msg:tall-b" }?.let {
-                                            vacatedBoundaryFrames +=
-                                                (
-                                                    info.viewportSize.height - info.beforeContentPadding - it.offset - it.size -
-                                                        remainingOlderBlockHeight
-                                                ).toFloat()
+            key(incarnation.intValue) {
+                CompositionLocalProvider(
+                    LocalOverscrollFactory provides null,
+                    LocalThreadRowMeasurementObserver provides { measuredKeys += it },
+                    LocalThreadListCompositionObserver provides {
+                        listState = it
+                        initialPosition?.let { (index, offset) ->
+                            it.requestScrollToItem(index, offset)
+                            initialPosition = null
+                        }
+                    },
+                ) {
+                    PyrycodeMobileTheme {
+                        ThreadScreen(
+                            state.value,
+                            {},
+                            {},
+                            ConnectionState.Connected,
+                            {},
+                            collapseToolUses = collapsed,
+                            modifier =
+                                Modifier.drawWithContent {
+                                    drawContent()
+                                    if (recording) {
+                                        ends += listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+                                        val info = listState.layoutInfo
+                                        tallVisibleFrames += info.visibleItemsInfo.any { it.key == "msg:tall-a" }
+                                        if (watchVacatedBoundary && info.visibleItemsInfo.none { it.key == "msg:tall-a" }) {
+                                            info.visibleItemsInfo.firstOrNull { it.key == "msg:tall-b" }?.let {
+                                                vacatedBoundaryFrames +=
+                                                    (
+                                                        info.viewportSize.height - info.beforeContentPadding - it.offset - it.size -
+                                                            remainingOlderBlockHeight
+                                                    ).toFloat()
+                                            }
+                                        }
+                                        if (mainRowBaselines.isNotEmpty()) {
+                                            mainRowFrames +=
+                                                mainRowBaselines.keys.associateWith { key ->
+                                                    info.visibleItemsInfo.firstOrNull { it.key == key }?.let { item ->
+                                                        info.viewportSize.height - info.beforeContentPadding - item.offset - item.size
+                                                    }
+                                                }
+                                        }
+                                        anchor?.takeIf { it.isAttached }?.let { positions += it.positionInRoot().y }
+                                        stationaryKey?.let { key ->
+                                            stationaryLayouts +=
+                                                key to
+                                                listState.layoutInfo.visibleItemsInfo
+                                                    .firstOrNull { it.key == key }
+                                                    ?.offset
                                         }
                                     }
-                                    if (mainRowBaselines.isNotEmpty()) {
-                                        mainRowFrames +=
-                                            mainRowBaselines.keys.associateWith { key ->
-                                                info.visibleItemsInfo.firstOrNull { it.key == key }?.let { item ->
-                                                    info.viewportSize.height - info.beforeContentPadding - item.offset - item.size
-                                                }
-                                            }
-                                    }
-                                    anchor?.takeIf { it.isAttached }?.let { positions += it.positionInRoot().y }
-                                    stationaryKey?.let { key ->
-                                        stationaryLayouts +=
-                                            key to
-                                            listState.layoutInfo.visibleItemsInfo
-                                                .firstOrNull { it.key == key }
-                                                ?.offset
-                                    }
-                                }
-                            },
-                    )
+                                },
+                        )
+                    }
                 }
             }
         }

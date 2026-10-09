@@ -155,6 +155,7 @@ internal data class ThreadAnchorTransfer(
     val offset: Int,
     val key: Any? = null,
     val height: Int = 0,
+    val boundaryRows: List<Pair<ThreadRow, ThreadRow?>> = emptyList(),
 )
 
 /**
@@ -172,10 +173,15 @@ internal class ThreadListViewport(
         private set
     private var previousRows = emptyList<ThreadRow>()
     private var previousBlocks = emptyList<ThreadRow>()
-    private val rowHeights = mutableMapOf<Any, Int>()
+
+    // Reuse actual geometry, including a tool's local expansion, only for unchanged old rows.
+    private val rowMeasurements = mutableMapOf<Any, Triple<ThreadRow, ThreadRow?, Int>>()
     var relocationPending = false
         private set
     private var relocationAnchor: ThreadAnchorTransfer? = null
+    private var boundaryMeasured = false
+    val boundaryRows: List<Pair<ThreadRow, ThreadRow?>>
+        get() = if (boundaryMeasured) emptyList() else relocationAnchor?.boundaryRows.orEmpty()
     private var sizeDelta = 0
     private var beforePadding: Int? = null
     private var correcting = false
@@ -190,10 +196,11 @@ internal class ThreadListViewport(
         val oldRows = previousRows
         val oldBlocks = previousBlocks
         // Controls can finish a roster before the terminal receipt supplies the final position.
-        // Compare placement against common stationary rows, rather than the marker's status edge.
-        val stationaryKeys =
+        // Common roots also encode movement across an adjacent still-running block. New rows and
+        // children are excluded, so inserts and unchanged terminal replays cannot transfer an anchor.
+        val placementKeys =
             oldBlocks
-                .filter { it !is ThreadRow.Delivered || it.agentBlockId == null }
+                .filter { it !is ThreadRow.Delivered || it.agentBlockId == null || it.listKey(0) == "msg:${it.agentBlockId}" }
                 .mapTo(HashSet()) { it.listKey(0) }
                 .intersect(blocks.mapTo(HashSet()) { it.listKey(0) })
 
@@ -202,9 +209,9 @@ internal class ThreadListViewport(
             val positions = mutableMapOf<String, Any?>()
             source.forEach { row ->
                 val key = row.listKey(0)
-                if (key in stationaryKeys) olderKey = key
                 val agent = (row as? ThreadRow.Delivered)?.agentBlockId
                 if (agent != null && key == "msg:$agent") positions[agent] = olderKey
+                if (key in placementKeys) olderKey = key
             }
             return positions
         }
@@ -234,6 +241,7 @@ internal class ThreadListViewport(
         val stationary = info.visibleItemsInfo.firstOrNull { it.offset + it.size > 0 && it.key !in movingKeys && it.key in currentIndices }
         val index: Int
         val offset: Int
+        var boundaryRows = emptyList<Pair<ThreadRow, ThreadRow?>>()
         if (following) {
             index = 0
             offset = 0
@@ -256,8 +264,16 @@ internal class ThreadListViewport(
                 if (olderKey == null || oldestMoving == null) {
                     0
                 } else {
-                    // Older block rows can be outside the measured viewport while a tall child fills it.
-                    -oldestMoving.offset - oldestMoving.size - intervening.sumOf { rowHeights[it.listKey(0)] ?: 0 }
+                    // Measure old offscreen rows before the new list, even after a direct jump or restore.
+                    // Their old neighbour controls joined-tool spacing; a cached height is insufficient.
+                    val olderRows = intervening.mapIndexed { i, row -> row to oldReversed.getOrNull(oldIndex + i) }
+                    val cached =
+                        olderRows.mapNotNull { (row, next) ->
+                            rowMeasurements[row.listKey(0)]?.takeIf { it.first == row && it.second == next }
+                        }
+                    val cachedKeys = cached.mapTo(HashSet()) { it.first.listKey(0) }
+                    boundaryRows = olderRows.filter { it.first.listKey(0) !in cachedKeys }
+                    -oldestMoving.offset - oldestMoving.size - cached.sumOf { it.third }
                 }
         }
         return if (!following &&
@@ -265,7 +281,7 @@ internal class ThreadListViewport(
         ) {
             ThreadAnchorTransfer(index, offset, stationary.key, stationary.size)
         } else {
-            ThreadAnchorTransfer(index, offset)
+            ThreadAnchorTransfer(index, offset, boundaryRows = boundaryRows)
         }
     }
 
@@ -276,20 +292,30 @@ internal class ThreadListViewport(
     ) {
         previousRows = rows
         previousBlocks = blocks
-        rowHeights.keys.retainAll(rows.mapTo(HashSet()) { it.listKey(0) })
+        rowMeasurements.keys.retainAll(rows.mapTo(HashSet()) { it.listKey(0) })
         if (transfer == null) return
         sizeDelta = 0
         relocationPending = true
         relocationAnchor = transfer
-        listState.requestScrollToItem(transfer.index, transfer.offset)
+        boundaryMeasured = false
+        if (transfer.boundaryRows.isEmpty()) listState.requestScrollToItem(transfer.index, transfer.offset)
         RelayLog.d { "event=thread_agent_relocation following=$following" }
     }
 
+    fun onBoundaryMeasured(height: Int) {
+        val transfer = relocationAnchor ?: return
+        if (boundaryMeasured || transfer.boundaryRows.isEmpty()) return
+        boundaryMeasured = true
+        listState.requestScrollToItem(transfer.index, transfer.offset - height)
+    }
+
     fun onRowMeasured(
-        key: Any,
+        row: ThreadRow,
+        nextRow: ThreadRow?,
         height: Int,
     ) {
-        rowHeights[key] = height
+        val key = row.listKey(0)
+        rowMeasurements[key] = Triple(row, nextRow, height)
         if (following || correcting) return
         if (relocationPending) {
             relocationAnchor?.takeIf { it.key == key }?.let { sizeDelta = height - it.height }

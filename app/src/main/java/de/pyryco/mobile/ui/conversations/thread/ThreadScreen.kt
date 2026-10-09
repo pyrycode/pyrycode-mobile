@@ -60,6 +60,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
@@ -72,6 +73,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.offset
@@ -147,6 +149,9 @@ internal val LocalThreadListCompositionObserver =
             ) -> Unit
         )?,
     > { null }
+
+/** Lets the cold-boundary regression distinguish unmeasured rows from merely offscreen rows. */
+internal val LocalThreadRowMeasurementObserver = staticCompositionLocalOf<((Any) -> Unit)?> { null }
 
 /** The status band's reading box (#1312), so a test can tell a band reading from the same words in a message. */
 internal const val STATUS_READING_TEST_TAG = "thread-status-reading"
@@ -821,9 +826,151 @@ fun ThreadScreen(
                                 }
                             }
                         val rowRelocationSpec = LocalBringIntoViewSpec.current
+                        val rowMeasurementObserver = LocalThreadRowMeasurementObserver.current
+                        val renderRow: @Composable (ThreadRow, ThreadRow?, Boolean) -> Unit = { row, nextRow, measuring ->
+                            val candidate = readCandidate?.takeIf { !measuring && row == readRow }
+                            ThreadRowContent(
+                                rowRelocationSpec,
+                                Modifier
+                                    .layout { measurable, constraints ->
+                                        val placeable = measurable.measure(constraints)
+                                        if (!measuring) {
+                                            readerViewport.onRowMeasured(row, nextRow, placeable.height)
+                                            rowMeasurementObserver?.invoke(row.listKey(0))
+                                        }
+                                        layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
+                                    }.then(
+                                        if (candidate != null) {
+                                            Modifier.onGloballyPositioned {
+                                                candidate.laidOut = true
+                                                if (candidate.row !is ThreadItem.MessageItem) {
+                                                    candidate.trailingEdge = it.positionInWindow().y + it.size.height
+                                                }
+                                            }
+                                        } else {
+                                            Modifier
+                                        },
+                                    ),
+                            ) {
+                                historyMarkersFor(row, gapMarkers).forEach { marker ->
+                                    HistoryGapRow(
+                                        marker.unsignedAnchor,
+                                        Modifier.onSizeChanged {
+                                            gapHeights[marker.unsignedAnchor] =
+                                                it.height
+                                        },
+                                    )
+                                }
+                                when (row) {
+                                    is ThreadRow.Delivered ->
+                                        when (val item = row.item) {
+                                            is ThreadItem.MessageItem ->
+                                                MessageBubble(
+                                                    message = item.message,
+                                                    onContentPresented = { candidate?.revealed = true },
+                                                    onContentTrailingEdge =
+                                                        candidate?.let { tracked ->
+                                                            { _, bottom -> tracked.trailingEdge = bottom }
+                                                        },
+                                                    onReply = { pendingReplyDraft = onReplyToMessage(it) },
+                                                    modifier =
+                                                        if (row.agentBlockId ==
+                                                            item.message.id
+                                                        ) {
+                                                            Modifier.testTag("background-agent:${item.message.id}")
+                                                        } else if (row.agentBlockId != null && item.message.role == Role.Assistant) {
+                                                            Modifier
+                                                                .padding(
+                                                                    start =
+                                                                        MessageAreaRowSpacing *
+                                                                            ((toolDepths[item.message.parentToolUseId] ?: 0) + 1),
+                                                                ).testTag("background-agent-child:${row.agentBlockId}")
+                                                        } else {
+                                                            Modifier
+                                                        },
+                                                    threadOpenedAt = threadOpenedAt,
+                                                    toolNestingDepth = toolDepths[item.message.id] ?: 0,
+                                                    joinsNextToolRow = row.joinsToolRow(nextRow),
+                                                    attachmentStates = attachmentStates,
+                                                    onAttachmentShown = if (measuring) ({ _ -> }) else onAttachmentShown,
+                                                    onRetryAttachment = onRetryAttachment,
+                                                    onOpenAttachment = attachmentActions.open,
+                                                    onSaveAttachment = attachmentActions.save,
+                                                    onRequestAttachment = onRequestAttachment,
+                                                    onOpenMarkdownLink = onOpenMarkdownLink,
+                                                    // A streaming reply keeps its row hidden and takes no tap, so
+                                                    // the first tap after it finishes is the one that shows it.
+                                                    metaRowVisible =
+                                                        !item.message.isStreaming && metaRowMessageId == item.message.id,
+                                                    onToggleMetaRow =
+                                                        if (item.message.isStreaming) {
+                                                            null
+                                                        } else {
+                                                            {
+                                                                val id = item.message.id
+                                                                metaRowMessageId = if (metaRowMessageId == id) null else id
+                                                            }
+                                                        },
+                                                )
+                                            is ThreadItem.SessionBoundary ->
+                                                SessionBoundaryDelimiter(boundary = item)
+                                            is ThreadItem.UnrecognizedMessage ->
+                                                UnrecognizedMessageRow(item = item)
+                                            // #1359: an info banner keeps its row and key but draws
+                                            // nothing, as desktop's TimelineRow does.
+                                            is ThreadItem.Banner ->
+                                                if (item.level != BannerLevel.Info) {
+                                                    BannerNoticeRow(item = item, agent = state.agent)
+                                                }
+                                            is ThreadItem.CompactionBoundary -> CompactionBoundaryDivider(item = item)
+                                            is ThreadItem.ModelRefusal ->
+                                                ModelRefusalRow(
+                                                    item = item,
+                                                    agent = state.agent,
+                                                    switchBack = switchBackOffer?.takeIf { it.armedBy(item) },
+                                                    onSwitchBack = onSwitchBack,
+                                                    // #1494: a model the menu knows reads as its menu label.
+                                                    knownModelLabel = state.runConfig::knownModelLabel,
+                                                )
+                                            is ThreadItem.BackgroundTaskLifecycle -> Unit
+                                            is ThreadItem.StoppedTurn -> StoppedTurnRow(item = item, agent = state.agent)
+                                        }
+                                    // One render path for both kinds of queued row — the one the echo
+                                    // correlated to and the one this device minted no echo for — so the
+                                    // two cannot drift apart. The id is bound here, so the row never
+                                    // holds one.
+                                    is ThreadRow.Queued ->
+                                        QueuedMessageRow(
+                                            text = row.text,
+                                            onDrop = { onDropQueued(row.queuedMessageId) },
+                                            onSendNow =
+                                                if (state.runConfig.midTurnInputSupported) {
+                                                    { onSendQueuedNow(row.queuedMessageId) }
+                                                } else {
+                                                    null
+                                                },
+                                        )
+                                    is ThreadRow.AgentStartMarker ->
+                                        AgentStartMarker(row.description, row.finished, onGoToAgent = { goToAgent = row.agentId })
+                                    is ThreadRow.ToolRun ->
+                                        Box(Modifier.testTag("tool-run:${row.runId}")) {
+                                            ToolRunRow(
+                                                toolCalls = remember(row.tools) { row.tools.mapNotNull { it.toolCall } },
+                                                expanded = row.expanded,
+                                                onToggle = {
+                                                    expandedRuns =
+                                                        if (row.expanded) expandedRuns - row.runId else expandedRuns + row.runId
+                                                },
+                                                modifier = Modifier.padding(horizontal = MessageContentGutter),
+                                            )
+                                        }
+                                }
+                            }
+                        }
                         ThreadMessageList(
                             state = listState,
                             viewport = readerViewport,
+                            measureBoundaryRow = { row, next -> renderRow(row, next, true) },
                             modifier =
                                 Modifier.fillMaxSize().olderHistoryPull(listPull).onGloballyPositioned {
                                     val origin = it.positionInWindow()
@@ -923,141 +1070,7 @@ fun ThreadScreen(
                                 contentType = { _, row -> row.contentType() },
                             ) { reversedIndex, row ->
                                 val chronologicalIndex = rows.size - 1 - reversedIndex
-                                val candidate = readCandidate?.takeIf { row == readRow }
-                                ThreadRowContent(
-                                    rowRelocationSpec,
-                                    Modifier
-                                        .layout { measurable, constraints ->
-                                            val placeable = measurable.measure(constraints)
-                                            readerViewport.onRowMeasured(row.listKey(chronologicalIndex), placeable.height)
-                                            layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
-                                        }.then(
-                                            if (candidate != null) {
-                                                Modifier.onGloballyPositioned {
-                                                    candidate.laidOut = true
-                                                    if (candidate.row !is ThreadItem.MessageItem) {
-                                                        candidate.trailingEdge = it.positionInWindow().y + it.size.height
-                                                    }
-                                                }
-                                            } else {
-                                                Modifier
-                                            },
-                                        ),
-                                ) {
-                                    historyMarkersFor(row, gapMarkers).forEach { marker ->
-                                        HistoryGapRow(
-                                            marker.unsignedAnchor,
-                                            Modifier.onSizeChanged {
-                                                gapHeights[marker.unsignedAnchor] =
-                                                    it.height
-                                            },
-                                        )
-                                    }
-                                    when (row) {
-                                        is ThreadRow.Delivered ->
-                                            when (val item = row.item) {
-                                                is ThreadItem.MessageItem ->
-                                                    MessageBubble(
-                                                        message = item.message,
-                                                        onContentPresented = { candidate?.revealed = true },
-                                                        onContentTrailingEdge =
-                                                            candidate?.let { tracked ->
-                                                                { _, bottom -> tracked.trailingEdge = bottom }
-                                                            },
-                                                        onReply = { pendingReplyDraft = onReplyToMessage(it) },
-                                                        modifier =
-                                                            if (row.agentBlockId ==
-                                                                item.message.id
-                                                            ) {
-                                                                Modifier.testTag("background-agent:${item.message.id}")
-                                                            } else if (row.agentBlockId != null && item.message.role == Role.Assistant) {
-                                                                Modifier
-                                                                    .padding(
-                                                                        start =
-                                                                            MessageAreaRowSpacing *
-                                                                                ((toolDepths[item.message.parentToolUseId] ?: 0) + 1),
-                                                                    ).testTag("background-agent-child:${row.agentBlockId}")
-                                                            } else {
-                                                                Modifier
-                                                            },
-                                                        threadOpenedAt = threadOpenedAt,
-                                                        toolNestingDepth = toolDepths[item.message.id] ?: 0,
-                                                        joinsNextToolRow = row.joinsToolRow(rows.getOrNull(chronologicalIndex + 1)),
-                                                        attachmentStates = attachmentStates,
-                                                        onAttachmentShown = onAttachmentShown,
-                                                        onRetryAttachment = onRetryAttachment,
-                                                        onOpenAttachment = attachmentActions.open,
-                                                        onSaveAttachment = attachmentActions.save,
-                                                        onRequestAttachment = onRequestAttachment,
-                                                        onOpenMarkdownLink = onOpenMarkdownLink,
-                                                        // A streaming reply keeps its row hidden and takes no tap, so
-                                                        // the first tap after it finishes is the one that shows it.
-                                                        metaRowVisible =
-                                                            !item.message.isStreaming && metaRowMessageId == item.message.id,
-                                                        onToggleMetaRow =
-                                                            if (item.message.isStreaming) {
-                                                                null
-                                                            } else {
-                                                                {
-                                                                    val id = item.message.id
-                                                                    metaRowMessageId = if (metaRowMessageId == id) null else id
-                                                                }
-                                                            },
-                                                    )
-                                                is ThreadItem.SessionBoundary ->
-                                                    SessionBoundaryDelimiter(boundary = item)
-                                                is ThreadItem.UnrecognizedMessage ->
-                                                    UnrecognizedMessageRow(item = item)
-                                                // #1359: an info banner keeps its row and key but draws
-                                                // nothing, as desktop's TimelineRow does.
-                                                is ThreadItem.Banner ->
-                                                    if (item.level != BannerLevel.Info) {
-                                                        BannerNoticeRow(item = item, agent = state.agent)
-                                                    }
-                                                is ThreadItem.CompactionBoundary -> CompactionBoundaryDivider(item = item)
-                                                is ThreadItem.ModelRefusal ->
-                                                    ModelRefusalRow(
-                                                        item = item,
-                                                        agent = state.agent,
-                                                        switchBack = switchBackOffer?.takeIf { it.armedBy(item) },
-                                                        onSwitchBack = onSwitchBack,
-                                                        // #1494: a model the menu knows reads as its menu label.
-                                                        knownModelLabel = state.runConfig::knownModelLabel,
-                                                    )
-                                                is ThreadItem.BackgroundTaskLifecycle -> Unit
-                                                is ThreadItem.StoppedTurn -> StoppedTurnRow(item = item, agent = state.agent)
-                                            }
-                                        // One render path for both kinds of queued row — the one the echo
-                                        // correlated to and the one this device minted no echo for — so the
-                                        // two cannot drift apart. The id is bound here, so the row never
-                                        // holds one.
-                                        is ThreadRow.Queued ->
-                                            QueuedMessageRow(
-                                                text = row.text,
-                                                onDrop = { onDropQueued(row.queuedMessageId) },
-                                                onSendNow =
-                                                    if (state.runConfig.midTurnInputSupported) {
-                                                        { onSendQueuedNow(row.queuedMessageId) }
-                                                    } else {
-                                                        null
-                                                    },
-                                            )
-                                        is ThreadRow.AgentStartMarker ->
-                                            AgentStartMarker(row.description, row.finished, onGoToAgent = { goToAgent = row.agentId })
-                                        is ThreadRow.ToolRun ->
-                                            Box(Modifier.testTag("tool-run:${row.runId}")) {
-                                                ToolRunRow(
-                                                    toolCalls = remember(row.tools) { row.tools.mapNotNull { it.toolCall } },
-                                                    expanded = row.expanded,
-                                                    onToggle = {
-                                                        expandedRuns =
-                                                            if (row.expanded) expandedRuns - row.runId else expandedRuns + row.runId
-                                                    },
-                                                    modifier = Modifier.padding(horizontal = MessageContentGutter),
-                                                )
-                                            }
-                                    }
-                                }
+                                renderRow(row, rows.getOrNull(chronologicalIndex + 1), false)
                             }
                             // #777: under reverseLayout a later item takes a higher index and draws further up,
                             // so appending here puts the affordance at the oldest end for free. #778 widened it
@@ -1324,6 +1337,7 @@ private fun ThreadRowContent(
 private fun ThreadMessageList(
     state: LazyListState,
     viewport: ThreadListViewport,
+    measureBoundaryRow: @Composable (ThreadRow, ThreadRow?) -> Unit,
     headerHeight: Dp,
     composerHeight: Dp,
     contentPadding: PaddingValues,
@@ -1350,14 +1364,29 @@ private fun ThreadMessageList(
             }
         }
     CompositionLocalProvider(LocalBringIntoViewSpec provides relocationSpec) {
-        LazyColumn(
-            state = state,
-            modifier = modifier.onGloballyPositioned { viewport.onPositioned() },
-            reverseLayout = true,
-            contentPadding = contentPadding,
-            verticalArrangement = verticalArrangement,
-            content = content,
-        )
+        SubcomposeLayout(modifier) { constraints ->
+            // Old boundary rows are measured but never placed, drawn, or exposed as input targets.
+            // Use the same renderer and width as LazyColumn, with its unbounded item height.
+            val itemConstraints = constraints.copy(minWidth = 0, minHeight = 0, maxHeight = Constraints.Infinity)
+            val boundaryHeight =
+                viewport.boundaryRows.sumOf { (row, next) ->
+                    subcompose(row.listKey(0)) { measureBoundaryRow(row, next) }
+                        .sumOf { it.measure(itemConstraints).height }
+                }
+            viewport.onBoundaryMeasured(boundaryHeight)
+            val list =
+                subcompose(Unit) {
+                    LazyColumn(
+                        state = state,
+                        modifier = Modifier.onGloballyPositioned { viewport.onPositioned() },
+                        reverseLayout = true,
+                        contentPadding = contentPadding,
+                        verticalArrangement = verticalArrangement,
+                        content = content,
+                    )
+                }.single().measure(constraints)
+            layout(list.width, list.height) { list.placeRelative(0, 0) }
+        }
     }
 }
 

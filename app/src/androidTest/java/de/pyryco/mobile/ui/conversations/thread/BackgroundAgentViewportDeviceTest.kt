@@ -7,6 +7,18 @@ import org.junit.runner.RunWith
 /** Required Android-visible rendered-frame probes; the shared class also runs on JVM. */
 @RunWith(AndroidJUnit4::class)
 class BackgroundAgentViewportDeviceTest : BackgroundAgentViewportTest() {
+    @Test override fun newestReceiptAcrossRunningBlock_followerKeepsNewestEveryFrame() =
+        super.newestReceiptAcrossRunningBlock_followerKeepsNewestEveryFrame()
+
+    @Test override fun newestReceiptAcrossRunningBlock_readerKeepsStationaryRows_collapsed() =
+        super.newestReceiptAcrossRunningBlock_readerKeepsStationaryRows_collapsed()
+
+    @Test override fun newestReceiptAcrossRunningBlock_readerKeepsStationaryRows_uncollapsed() =
+        super.newestReceiptAcrossRunningBlock_readerKeepsStationaryRows_uncollapsed()
+
+    @Test override fun fullViewportCompletion_withColdMeasurements_retainsOlderBoundary() =
+        super.fullViewportCompletion_withColdMeasurements_retainsOlderBoundary()
+
     @Test override fun followerCompletion_keepsNewestEveryRenderedFrame() = super.followerCompletion_keepsNewestEveryRenderedFrame()
 
     @Test override fun followerCompletion_withAnotherRunningBlock_keepsNewestEveryFrame() =
