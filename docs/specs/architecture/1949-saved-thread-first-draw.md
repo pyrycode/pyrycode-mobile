@@ -72,3 +72,11 @@ Write and run the timing/held-response tests before any production repair. Devic
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-09
+
+## Revisions
+
+### 2026-10-09 — Baseline latency and draw evidence
+
+Ordinary first/reopens measured 132–190 ms. The full fragmented fixture failed to draw within 15 seconds: restoration/coverage work had not delivered a snapshot, while the device logged allocation-blocking GC. `historyIdentity` and `cachedThreadRowProof` format each SHA-256 digest byte through `String.format`, multiplying allocations over repeated coverage validation and restore reads. Replace only these digest-to-hex encodings with Kotlin's existing `ByteArray.toHexString` pattern, preserving every input byte, full SHA-256 digest and lowercase encoding. Add compatibility assertions against the previous formatter and persisted row representation. Re-measure before deciding whether any further repair is needed. This is two production files, no new exported declaration and no consumer update.
+
+The test-owned parent draw modifier did not observe updates in child render layers. Replace it with a root `OnDrawListener` that checks exact newest text, placement and viewport bounds and registers an Android frame-commit callback for that draw. Only the committed frame records the timestamp; test idleness and StateFlow emission never establish draw evidence. The 3-second negative control measured 3,395 ms and the identical bound assertion rejected it.

@@ -673,7 +673,7 @@ internal fun cachedThreadRowProof(row: ThreadItem): String =
     MessageDigest
         .getInstance("SHA-256")
         .digest(MobileJson.encodeToString(row.toRecord()).toByteArray(Charsets.UTF_8))
-        .joinToString("") { "%02x".format(it) }
+        .toHexString()
 
 private fun ThreadItem.toRecord(): CachedThreadRow =
     when (this) {

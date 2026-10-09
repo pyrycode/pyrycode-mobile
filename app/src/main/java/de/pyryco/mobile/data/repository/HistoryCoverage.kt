@@ -493,4 +493,4 @@ internal fun historyRowProofs(rows: List<ThreadItem>): Map<String, String> =
     }
 
 private fun historyHash(value: String): String =
-    MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+    MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8)).toHexString()
