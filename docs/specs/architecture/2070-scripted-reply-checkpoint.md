@@ -81,3 +81,23 @@ Run focused tests, lint, debug assembly, Android test compilation if its source 
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-10-11
+
+## Revisions
+
+### 2026-10-11 — Exact original daemon proves external ownership
+
+The configured sibling daemon is `a536d17b1e18`, older than the supplied failing `b75aea7948b3`. The original ordered pair against the configured checkout passed both methods (2 executed/passed, zero failed/errors/skips). That is a control, not repaired acceptance: it lacks the queued-send facts introduced later by daemon #2972.
+
+Fetch and archive the exact original daemon revision into an isolated `/tmp/builder-2070/daemon-original` source snapshot, without changing the live sibling checkout. Run the same ordered pair against it, with only content-free checkpoint observation added to the test. Both methods fail (2 executed, 0 passed, 2 failed, zero errors/skips). The reply is settled with one delta, bound to claims 9 and 10. Two observations ten seconds apart show received IDs 2,3,4,5,6,7,9,10,11,12, the hole (7,9), zero unknowns, unidentified entries and stored gaps. It is not a lost version or a transient collector emission.
+
+Sanitized raw history establishes ID 8 as `send_delivered`, inserted between the user message at 7 and assistant delta at 9. `queuedSendHistory.delivered` appends it; `legacyHistoryType` and `legacyRuntimeFact` exclude it, so neither live publication nor `newHistoryPager` accounts for its identity. `send_accepted` at ID 1 is also excluded, but the internal ID 8 hole alone explains this checkpoint rejection. Existing open [daemon #3167](https://github.com/pyrycode/pyrycode/issues/3167) owns this precise defect; reuse it and link it natively as this issue's blocker. No Mobile workaround or circular #2069 dependency is appropriate.
+
+Retain `ScriptedPingReadEvidenceTest` as two active controlled probes: repeated projection observation cannot repair the hole despite an exact settled binding; only an understood synthetic receipt can close it, while unknown/malformed entries and an unseen content version remain blocked across duplicate/overlapping receipt. These certify the required Mobile barrier, not a shipped daemon repair. The pre-repair red proof is the exact original device pair. On resume, add the repaired daemon's real receipt fixture and perform the controlled repair comparison and original ordered pair before opening a PR.
+
+Evidence lives under `app/src/androidTest/assets/read-2070/`: counted XML for both method names and both daemon controls, sanitized reply evidence, raw ID/type/length metadata and `invocations.json` containing commands, counts, commits, hashes and original artifact paths. The original archive has no Git metadata, so its gate revision prints unavailable; the manifest records the verified archive source revision and binary hash explicitly. #2069 still owns the final durable-gap acceptance. Its original failure is reported independently; the older-daemon passing pair does not resolve it.
+
+Security re-review: PASS. No production change, new receipt classifier or allowance, wire shape, new sight, persistence, transport, credential or lifecycle change. Diagnostics contain only static categories, booleans, counts and durable numbers. Synthetic positive receipt accounting cannot bind an unseen version. All real assertions, deadlines and ordered selection stay intact. Forecast now below 450 written lines including probes and retained evidence; zero new exported production declarations or migrations.
+
+This is a recovery branch pending daemon #3167, not a completed repair. Normal builder completion checks, repaired original pair, dispatcher scripted-all and documentation remain pending after the blocker closes.
+
+Recovery validation: the two new probes and existing read-claims, runtime-receipt, marks, retries and subscription classes executed 52 tests, all passed with zero failures/errors/skips. `assembleDebug`, `compileDebugAndroidTestKotlin` and forced `spotlessCheck` passed. Retain the focused unit command and counted XML with the paired evidence. Lint and final post-merge pre-verification remain for the successful resumed handoff.

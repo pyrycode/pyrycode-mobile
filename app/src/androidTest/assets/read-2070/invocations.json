@@ -1,0 +1,56 @@
+{
+  "app_commit": "f079a459524019f4273879d64f5833ed2688e802",
+  "production_base": "427d0594e1ca374007b038f18cd5f8764e274d17",
+  "production_changed": false,
+  "relay_revision": "a7a05d1f123d42fa17ac23b5e4d10a8f741a4911",
+  "original_daemon_revision": "b75aea7948b3c1b0c70983b11ea4047b09862099",
+  "original_daemon_source": "git archive b75aea7948b3c1b0c70983b11ea4047b09862099 extracted to /tmp/builder-2070/daemon-original; no source modifications",
+  "original_daemon_sha256": "c5839af5756f56a1da9c7835a76b8bc3c7a518d5a59d7f537de5a03bd2a275ed",
+  "original_command": "ANDROID_GATE_WAIT_SECONDS=2700 ANDROID_HOME=/Users/juhanailmoniemi/Library/Android/sdk PYRYCODE_SRC=/tmp/builder-2070/daemon-original python3 scripts/android-test-gate.py scripted ping",
+  "original_exit": 1,
+  "original_counts": {
+    "executed": 2,
+    "passed": 0,
+    "failed": 2,
+    "errors": 0,
+    "skipped": 0
+  },
+  "original_artifacts": "/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2070/build/dispatcher-tests/scripted-478bmqjm",
+  "original_managed_xml": "/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2070/app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd/TEST-pixel2Api33Atd-_app-.xml",
+  "configured_daemon_revision": "a536d17b1e182fb5398a5458e3afe6079b37a510",
+  "configured_command": "ANDROID_GATE_WAIT_SECONDS=2700 ANDROID_HOME=/Users/juhanailmoniemi/Library/Android/sdk python3 scripts/android-test-gate.py scripted ping",
+  "configured_exit": 0,
+  "configured_counts": {
+    "executed": 2,
+    "passed": 2,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "configured_artifacts": "/Users/juhanailmoniemi/Workspace/Projects/.pyrycode-worktrees/pyrycode-mobile/builder-2070/build/dispatcher-tests/scripted-6ffcc0lu",
+  "configured_result_scope": "Older daemon without queued-send facts; control only, not acceptance against the original failing revision",
+  "original_test_source_sha256": "390494869f81d8bcd5d2b0b90ec1b1249f954fae649b72bb5bed77455c6f42de",
+  "diagnostic_change": "Content-free reply checkpoint observation only; selection, assertions, deadlines and coverage checks unchanged",
+  "app_apk_sha256": "a61b2802a199fb4aeb3c591d51c0467f812d2e8c24ce24700792d0c151e19e71",
+  "original_test_apk_sha256": "0bdabbca36b2a5e24c76b57fe485827b69df620eadfa6266041cfb3be8f35d95",
+  "blocker": "https://github.com/pyrycode/pyrycode/issues/3167",
+  "durable_gap_owner": "https://github.com/pyrycode/pyrycode-mobile/issues/2069",
+  "pending": "Paired rerun against fixed daemon and dispatcher scripted-all; no passing suite claimed",
+  "focused_unit_classes": [
+    "de.pyryco.mobile.data.repository.ScriptedPingReadEvidenceTest",
+    "de.pyryco.mobile.data.repository.ThreadReadClaimsTest",
+    "de.pyryco.mobile.data.repository.ThreadReadRuntimeReceiptsTest",
+    "de.pyryco.mobile.data.repository.ConversationReadMarksTest",
+    "de.pyryco.mobile.data.repository.ReadCheckpointRetriesTest",
+    "de.pyryco.mobile.ui.conversations.thread.ThreadReadSubscriptionTest"
+  ],
+  "focused_unit_command": "ANDROID_HOME=/Users/juhanailmoniemi/Library/Android/sdk ./gradlew testDebugUnitTest --tests de.pyryco.mobile.data.repository.ScriptedPingReadEvidenceTest --tests de.pyryco.mobile.data.repository.ThreadReadClaimsTest --tests de.pyryco.mobile.data.repository.ThreadReadRuntimeReceiptsTest --tests de.pyryco.mobile.data.repository.ConversationReadMarksTest --tests de.pyryco.mobile.data.repository.ReadCheckpointRetriesTest --tests de.pyryco.mobile.ui.conversations.thread.ThreadReadSubscriptionTest --console=plain",
+  "focused_unit_counts": {
+    "executed": 52,
+    "passed": 52,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "recovery_checks": "assembleDebug, compileDebugAndroidTestKotlin, forced spotlessCheck all passed; completion checks remain pending after daemon repair"
+}

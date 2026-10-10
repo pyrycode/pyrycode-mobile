@@ -465,7 +465,21 @@ class DeterministicInteractiveStreamE2ETest {
                                     snapshot.rows
                                         .filterIsInstance<ThreadItem.MessageItem>()
                                         .lastOrNull { it.message.role == Role.Assistant && it.message.content == PING }
-                                reply?.let { snapshot.readEvidence.checkpoint(it, 0uL) }
+                                reply?.let {
+                                    val evidence = snapshot.readEvidence
+                                    val checkpoint = evidence.checkpoint(it, 0uL)
+                                    val receipts = evidence.facts.keys.sorted()
+                                    android.util.Log.i(
+                                        "ScriptedReadProof",
+                                        "event=reply_checkpoint checkpoint=$checkpoint streaming=${it.message.isStreaming} " +
+                                            "deltas=${it.message.segment?.deltas?.size} claims=${evidence.versions[it]?.sorted()} " +
+                                            "receipts=$receipts holes=${receipts.zipWithNext().filter { (a, b) -> b - a > 1u }} " +
+                                            "unknown=${evidence.facts.filterValues { fact -> fact == null }.keys.sorted()} " +
+                                            "gaps=${evidence.gaps.map { gap -> gap.anchor to gap.edge }} " +
+                                            "unidentified=${evidence.unidentified.size}",
+                                    )
+                                    checkpoint
+                                }
                             }.first()
                     }
                 if (checkpoint == null) {
