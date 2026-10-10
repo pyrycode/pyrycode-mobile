@@ -84,6 +84,13 @@ def parse_action(path):
     return parts[1], parts[2]
 
 
+def observe(arm, action, phase, fixture_ready):
+    try:
+        print(f"session_error arm={arm} action={action} phase={phase} fixture_ready={fixture_ready}", flush=True)
+    except OSError:
+        pass  # An unavailable host log must not fail an action or owned-daemon teardown.
+
+
 class Case:
     def __init__(self, args, arm):
         if not args.scripted and not (os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY")):
@@ -157,6 +164,7 @@ class Case:
     def record(self, event, status):
         with (self.evidence / "control.jsonl").open("a") as writer:
             writer.write(json.dumps({"event": event, **status}) + "\n")
+        observe(self.arm, event, "observed", self.before is not None)
 
     def pairing(self, label):
         result = subprocess.run([self.args.daemon, "pair", "-pyry-name=" + self.name, "--name=" + label],
@@ -309,7 +317,13 @@ def main():
             except ValueError:
                 self.send_error(404)
                 return
+            def observe_phase(phase):
+                case = cases.get(arm)
+                ready = case is not None and case.before is not None
+                observe(arm, action, phase, ready)
+
             try:
+                observe_phase("started")
                 if action == "start":
                     if arm in cases:
                         raise RuntimeError("case_already_started")
@@ -327,12 +341,14 @@ def main():
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)
+                observe_phase("finished")
             except (OSError, RuntimeError, KeyError, ValueError, subprocess.SubprocessError) as error:
                 evidence = Path(args.evidence) / arm
                 evidence.mkdir(parents=True, exist_ok=True, mode=0o700)
                 # RuntimeErrors in this module contain static codes only.
                 code = str(error) if type(error) is RuntimeError else type(error).__name__
                 (evidence / "failure-code.txt").write_text(code + "\n")
+                observe_phase("failed")
                 # No exception details: pairing and process errors can contain credentials.
                 self.send_error(503, "session_error_fixture_failed; inspect private evidence")
 
