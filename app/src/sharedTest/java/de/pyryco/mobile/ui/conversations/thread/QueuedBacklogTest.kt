@@ -94,7 +94,7 @@ class QueuedBacklogTest {
         onDropQueued: (Long) -> Unit = {},
     ) {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = state,
                     onBack = {},
@@ -120,7 +120,7 @@ class QueuedBacklogTest {
         val sends = mutableListOf<Long>()
         val drops = mutableListOf<Long>()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state =
                         stateWith(listOf(queued(42, "queued"))).copy(
@@ -155,7 +155,7 @@ class QueuedBacklogTest {
     fun sendNow_visibilityFollowsOnlyFreshExplicitSupport() {
         var config by mutableStateOf(ThreadRunConfig())
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = stateWith(listOf(queued(42, "queued"))).copy(runConfig = config),
                     onBack = {},
@@ -196,7 +196,7 @@ class QueuedBacklogTest {
         var sends = 0
         var drops = 0
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 de.pyryco.mobile.ui.conversations.components.QueuedMessageRow(
                     text = "A long queued message that wraps over multiple lines while both controls remain reachable.",
                     onDrop = { drops++ },
@@ -266,7 +266,7 @@ class QueuedBacklogTest {
         val items = listOf(sentUserMessage("m-0", "an already sent message"), sentUserMessage("m-1", "wait for me"))
         var queue by mutableStateOf(listOf(queued(7L, "wait for me", messageId = "m-1")))
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = stateWith(queue = queue, items = items),
                     onBack = {},
@@ -327,7 +327,7 @@ class QueuedBacklogTest {
     fun queued_rows_render_in_wire_order_and_clear_when_the_backlog_empties() {
         var queue by mutableStateOf(emptyList<QueuedMessage>())
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = stateWith(queue = queue),
                     onBack = {},

@@ -628,6 +628,96 @@ class CoalescedThreadWritesTest {
             }
         }
 
+    @Test fun coverageInvariant_firstOrderingReadCannotOverwriteNewerSaveAfterQuietPeriod() =
+        firstOrderingOverlapsCoverage(holdRead = true, flush = false)
+
+    @Test fun coverageInvariant_firstOrderingReadCannotOverwriteNewerSaveOnCancellation() =
+        firstOrderingOverlapsCoverage(holdRead = true, flush = true)
+
+    @Test fun coverageInvariant_firstOrderingDispatchCannotOverwriteNewerSaveAfterQuietPeriod() =
+        firstOrderingOverlapsCoverage(holdRead = false, flush = false)
+
+    @Test fun coverageInvariant_firstOrderingDispatchCannotOverwriteNewerSaveOnCancellation() =
+        firstOrderingOverlapsCoverage(holdRead = false, flush = true)
+
+    private fun firstOrderingOverlapsCoverage(
+        holdRead: Boolean,
+        flush: Boolean,
+    ) = runTest {
+        val dispatcher = UnconfinedTestDispatcher(testScheduler)
+        val worker = HeldWorker()
+        val a = reduceHistoryPage(page(1).entries, true)
+        val ab = reduceHistoryPage(page(1, 2).entries, true)
+        val older = a + row("stale")
+        val disk = FileConversationCache(tmp.root, dispatcher)
+        disk.writeThread("host", "c", a).getOrThrow()
+        disk.writeHistoryPosition("host", "c", HistoryPosition("older", false, HistoryCoverage().received(page(1)))).getOrThrow()
+        val cache = Cache(disk)
+        val orderEntered = CompletableDeferred<Unit>()
+        val orderRelease = CompletableDeferred<Unit>()
+        val heldCache =
+            object : ConversationCache by cache {
+                override suspend fun readHistoryPosition(
+                    serverId: String,
+                    conversationId: String,
+                ): HistoryPosition? {
+                    val saved = cache.readHistoryPosition(serverId, conversationId)
+                    if (holdRead && !orderEntered.isCompleted) {
+                        orderEntered.complete(Unit)
+                        orderRelease.await()
+                    }
+                    return saved
+                }
+            }
+        val source = Source().apply { snapshots.value = ThreadSnapshot(older) }
+        val repository = CachingConversationRepository(source, heldCache, "host", processingDispatcher = worker)
+        val delivered = mutableListOf<ThreadSnapshot>()
+        val reader = backgroundScope.launch(dispatcher) { repository.observeThreadSnapshot("c").collect { delivered += it } }
+        assertEquals(holdRead, orderEntered.isCompleted)
+        assertEquals(if (holdRead) 0 else 1, worker.pending.size)
+        assertTrue(delivered.isEmpty())
+        source.snapshots.value = ThreadSnapshot(ab)
+        val save =
+            launch(dispatcher) {
+                repository.writeHistoryPosition("c", HistoryPosition("older", false, HistoryCoverage().received(page(1, 2))))
+            }
+        worker.next(last = true) // finish the newer save while the first captured snapshot's order is held
+        runCurrent()
+        save.join()
+        val saved = FileConversationCache(tmp.root, dispatcher).readHistoryPosition("host", "c")
+        assertEquals(listOf(HistorySpan(1, 2)), saved?.coverage?.spans)
+        assertEquals(ab, FileConversationCache(tmp.root, dispatcher).readThread("host", "c"))
+        if (holdRead) orderRelease.complete(Unit)
+        worker.next() // saved ordering
+        runCurrent()
+        worker.next() // older merge
+        runCurrent()
+        worker.next() // older candidate acceptance; leave the next live merge held
+        runCurrent()
+        assertEquals(listOf(older), delivered.map { it.rows })
+        assertEquals(1, worker.pending.size)
+        try {
+            if (!flush) {
+                quiet()
+                assertEquals(2, worker.pending.size)
+                worker.next(last = true) // run only the quiet-period writer, never the newer merge
+                runCurrent()
+                assertEquals(listOf(older), delivered.map { it.rows })
+                assertEquals(ab, FileConversationCache(tmp.root, dispatcher).readThread("host", "c"))
+                assertEquals(saved, FileConversationCache(tmp.root, dispatcher).readHistoryPosition("host", "c"))
+                assertEquals(listOf(ab), cache.writes)
+            }
+        } finally {
+            reader.cancel()
+            drain(worker)
+            reader.join()
+        }
+        assertEquals(listOf(older), delivered.map { it.rows })
+        assertEquals(ab, FileConversationCache(tmp.root, dispatcher).readThread("host", "c"))
+        assertEquals(saved, FileConversationCache(tmp.root, dispatcher).readHistoryPosition("host", "c"))
+        assertEquals(listOf(ab), cache.writes)
+    }
+
     @Test fun coverageInvariant_newerRemovalComparedWithActualPersistedHistoryRows() =
         runTest {
             val f = Fixture(this)
@@ -824,7 +914,7 @@ class CoalescedThreadWritesTest {
             assertTrue(cache.writes.isEmpty())
             val delivered = mutableListOf<ThreadSnapshot>()
             val reader = backgroundScope.launch(dispatcher) { repository.observeThreadSnapshot("c").collect { delivered += it } }
-            assertEquals(2, worker.pending.size) // restoration has read [a] and is held on the worker
+            assertEquals(2, worker.pending.size) // [ab] is already captured; its first ordering dispatch is held
             source.snapshots.value = ThreadSnapshot(a)
             worker.next() // finish the already-captured save while restoration remains held
             runCurrent()
@@ -832,7 +922,7 @@ class CoalescedThreadWritesTest {
             assertEquals(ab, FileConversationCache(tmp.root, dispatcher).readThread("host", "c"))
             assertEquals(listOf(HistorySpan(1, 2)), disk.readHistoryPosition("host", "c")?.coverage?.spans)
             drain(worker)
-            assertEquals(a, delivered.single().rows)
+            assertEquals(listOf(ab, a), delivered.map { it.rows })
             assertEquals(listOf(ab), cache.writes)
             try {
                 if (!flush) {

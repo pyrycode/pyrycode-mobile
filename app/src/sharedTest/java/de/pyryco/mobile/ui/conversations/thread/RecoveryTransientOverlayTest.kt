@@ -54,7 +54,7 @@ class RecoveryTransientOverlayTest {
         notice: TurnRecoveryNotice = TurnRecoveryNotice.ContextTooLong,
     ) {
         composeRule.setContent {
-            PyrycodeMobileTheme(dynamicColor = false) {
+            PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
                 ThreadTopOverlay(
                     usageLimit = null,
                     usageLimitDismissed = false,

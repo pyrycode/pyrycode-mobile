@@ -600,7 +600,7 @@ open class BackgroundAgentViewportTest {
                         }
                     },
                 ) {
-                    PyrycodeMobileTheme {
+                    PyrycodeMobileTheme(darkTheme = true) {
                         ThreadScreen(
                             state.value,
                             {},

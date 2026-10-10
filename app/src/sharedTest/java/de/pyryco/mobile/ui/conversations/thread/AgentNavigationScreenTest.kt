@@ -178,7 +178,7 @@ open class AgentNavigationScreenTest {
                 LocalLifecycleOwner provides owner,
                 LocalThreadListCompositionObserver provides { listState = it },
             ) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     if (mounted) ThreadScreen(state, {}, {}, ConnectionState.Connected, {})
                 }
             }

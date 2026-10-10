@@ -42,7 +42,7 @@ class ThreadBannerLevelTest {
                     ),
             )
         composeRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = state,
                     onBack = {},

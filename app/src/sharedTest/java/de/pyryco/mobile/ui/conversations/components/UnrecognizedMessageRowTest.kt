@@ -66,7 +66,7 @@ class UnrecognizedMessageRowTest {
 
     private fun setContent(item: ThreadItem.UnrecognizedMessage) {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 UnrecognizedMessageRow(item = item)
             }
         }
@@ -165,7 +165,7 @@ class UnrecognizedMessageRowTest {
     fun expanded_state_survives_configuration_change() {
         val restorationTester = StateRestorationTester(composeTestRule)
         restorationTester.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 UnrecognizedMessageRow(item = unrecognized())
             }
         }
@@ -185,7 +185,7 @@ class UnrecognizedMessageRowTest {
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
     fun collapsed_row_height_includes_the_standard_16dp_trailing_gutter() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 Column { UnrecognizedMessageRow(item = unrecognized(), modifier = Modifier.testTag("row-1")) }
             }
         }

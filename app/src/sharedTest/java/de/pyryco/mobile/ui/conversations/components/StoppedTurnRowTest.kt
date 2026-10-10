@@ -42,7 +42,7 @@ class StoppedTurnRowTest {
     private fun labels(cases: List<Pair<ThreadItem.StoppedTurn, ConversationAgent>>): List<String> {
         val labels = mutableListOf<String>()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 cases.forEach { (item, agent) -> labels += stoppedTurnLabel(item, agent) }
             }
         }
@@ -101,7 +101,7 @@ class StoppedTurnRowTest {
     @Test
     fun the_row_draws_its_label_as_inert_text() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 StoppedTurnRow(item = stopped("prompt_too_long", category = "invalid_request"), agent = ConversationAgent.Codex)
             }
         }
@@ -120,7 +120,7 @@ class StoppedTurnRowTest {
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
     fun leaves_its_own_8dp_top_pad_above_the_text() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 Column {
                     androidx.compose.foundation.layout
                         .Box(Modifier.testTag("bubble-above").height(10.dp))

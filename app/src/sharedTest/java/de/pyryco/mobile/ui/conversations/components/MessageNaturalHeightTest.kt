@@ -50,7 +50,7 @@ class MessageNaturalHeightTest {
         var visible by mutableStateOf(false)
         rule.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(width.dp, 892.dp))) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     Surface {
                         Column {
                             listOf(Role.User, Role.Assistant).forEach { role ->

@@ -44,7 +44,7 @@ class BannerNoticeRowTest {
 
     private fun setContent(item: ThreadItem.Banner) {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 BannerNoticeRow(item = item, agent = ConversationAgent.Claude)
             }
         }

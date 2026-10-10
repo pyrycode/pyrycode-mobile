@@ -51,7 +51,7 @@ class ThreadRecoveryNoticeTest {
         showRePair: Boolean = false,
     ) {
         composeRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state =
                         ThreadUiState(

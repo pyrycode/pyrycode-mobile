@@ -72,7 +72,7 @@ class SideMessageCopyTest {
                         ?.let { AnnotatedString(it.toString()) }
             }
         composeRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 CompositionLocalProvider(LocalClipboardManager provides platformCopy) {
                     LazyColumn {
                         if (banner) {
@@ -123,7 +123,7 @@ class SideMessageCopyTest {
         var dismissed by mutableStateOf(emptySet<UsageLimitDismissals.Key>())
         composeRule.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, 732.dp))) {
-                PyrycodeMobileTheme {
+                PyrycodeMobileTheme(darkTheme = true) {
                     ThreadScreen(
                         state =
                             ThreadUiState(

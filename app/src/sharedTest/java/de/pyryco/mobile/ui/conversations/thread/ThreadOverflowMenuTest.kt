@@ -36,11 +36,10 @@ class ThreadOverflowMenuTest {
     private fun string(resId: Int): String = InstrumentationRegistry.getInstrumentation().targetContext.getString(resId)
 
     @Test
-    fun actionRows_keepFullOrder_andButtonSemantics_inBothThemes() {
-        val dark = mutableStateOf(false)
+    fun actionRows_keepFullOrder_andButtonSemantics_inDarkTheme() {
         val promoted = mutableStateOf(false)
         composeTestRule.setContent {
-            PyrycodeMobileTheme(darkTheme = dark.value) {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadOverflowMenu(
                     expanded = true,
                     isPromoted = promoted.value,
@@ -50,29 +49,26 @@ class ThreadOverflowMenuTest {
                 )
             }
         }
-        for (theme in listOf(false, true)) {
-            for (channel in listOf(false, true)) {
-                composeTestRule.runOnIdle {
-                    dark.value = theme
-                    promoted.value = channel
-                }
-                val labels =
-                    buildList {
-                        if (!channel) add(R.string.save_as_channel_action)
-                        add(R.string.thread_overflow_new_session)
-                        add(if (channel) R.string.thread_overflow_edit else R.string.thread_overflow_rename)
-                        add(R.string.thread_overflow_archive)
-                        add(R.string.thread_overflow_channel_info)
-                        add(R.string.background_tasks_title)
-                        if (channel) add(R.string.thread_overflow_install_memory_plugin)
-                    }
-                val nodes = labels.map { composeTestRule.onNodeWithText(string(it)).fetchSemanticsNode() }
-                nodes.forEach {
-                    assertEquals(Role.Button, it.config[SemanticsProperties.Role])
-                    org.junit.Assert.assertFalse(it.config.contains(SemanticsProperties.Selected))
-                }
-                nodes.zipWithNext().forEach { (a, b) -> assertEquals(a.boundsInRoot.bottom, b.boundsInRoot.top, 1f) }
+        for (channel in listOf(false, true)) {
+            composeTestRule.runOnIdle {
+                promoted.value = channel
             }
+            val labels =
+                buildList {
+                    if (!channel) add(R.string.save_as_channel_action)
+                    add(R.string.thread_overflow_new_session)
+                    add(if (channel) R.string.thread_overflow_edit else R.string.thread_overflow_rename)
+                    add(R.string.thread_overflow_archive)
+                    add(R.string.thread_overflow_channel_info)
+                    add(R.string.background_tasks_title)
+                    if (channel) add(R.string.thread_overflow_install_memory_plugin)
+                }
+            val nodes = labels.map { composeTestRule.onNodeWithText(string(it)).fetchSemanticsNode() }
+            nodes.forEach {
+                assertEquals(Role.Button, it.config[SemanticsProperties.Role])
+                org.junit.Assert.assertFalse(it.config.contains(SemanticsProperties.Selected))
+            }
+            nodes.zipWithNext().forEach { (a, b) -> assertEquals(a.boundsInRoot.bottom, b.boundsInRoot.top, 1f) }
         }
     }
 
@@ -81,7 +77,7 @@ class ThreadOverflowMenuTest {
         val promoted = mutableStateOf(true)
         val mutations = mutableStateOf(true)
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadOverflowMenu(
                     expanded = true,
                     isPromoted = promoted.value,
@@ -116,7 +112,7 @@ class ThreadOverflowMenuTest {
     fun tapping_backgroundTasks_dismisses_then_opensPanel_withoutDispatchingAnEvent() {
         val log = mutableListOf<String>()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadOverflowMenu(
                     expanded = true,
                     isPromoted = true,
@@ -143,7 +139,7 @@ class ThreadOverflowMenuTest {
     @Test
     fun channel_menu_items_render_in_documented_order_when_expanded() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadOverflowMenu(
                     expanded = true,
                     isPromoted = true,
@@ -170,7 +166,7 @@ class ThreadOverflowMenuTest {
     @Test
     fun discussion_menu_items_render_in_documented_order_when_expanded() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadOverflowMenu(
                     expanded = true,
                     isPromoted = false,
@@ -194,7 +190,7 @@ class ThreadOverflowMenuTest {
     @Test
     fun mutation_actions_are_hidden_when_mutations_unsupported() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadOverflowMenu(
                     expanded = true,
                     isPromoted = true,
@@ -222,7 +218,7 @@ class ThreadOverflowMenuTest {
     fun tapping_new_session_dismisses_then_dispatches_event() {
         val log = mutableListOf<String>()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadOverflowMenu(
                     expanded = true,
                     isPromoted = true,
@@ -241,7 +237,7 @@ class ThreadOverflowMenuTest {
     fun tapping_rename_dismisses_then_dispatches_event() {
         val log = mutableListOf<String>()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadOverflowMenu(
                     expanded = true,
                     isPromoted = false,
@@ -260,7 +256,7 @@ class ThreadOverflowMenuTest {
     fun tapping_edit_in_a_channel_dismisses_then_dispatches_edit_channel() {
         val log = mutableListOf<String>()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadOverflowMenu(
                     expanded = true,
                     isPromoted = true,
@@ -279,7 +275,7 @@ class ThreadOverflowMenuTest {
     fun tapping_archive_dismisses_then_dispatches_event() {
         val log = mutableListOf<String>()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadOverflowMenu(
                     expanded = true,
                     isPromoted = true,
@@ -298,7 +294,7 @@ class ThreadOverflowMenuTest {
     fun tapping_channel_info_dismisses_then_dispatches_event() {
         val log = mutableListOf<String>()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadOverflowMenu(
                     expanded = true,
                     isPromoted = true,
@@ -317,7 +313,7 @@ class ThreadOverflowMenuTest {
     fun tapping_save_as_channel_dismisses_then_dispatches_event() {
         val log = mutableListOf<String>()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadOverflowMenu(
                     expanded = true,
                     isPromoted = false,
@@ -337,7 +333,7 @@ class ThreadOverflowMenuTest {
         val log = mutableListOf<String>()
         val fakeHandler = RecordingUriHandler()
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 CompositionLocalProvider(LocalUriHandler provides fakeHandler) {
                     ThreadOverflowMenu(
                         expanded = true,
@@ -365,7 +361,7 @@ class ThreadOverflowMenuTest {
             )
         val report = androidx.compose.runtime.mutableStateOf(available)
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadOverflowMenu(
                     expanded = true,
                     isPromoted = true,

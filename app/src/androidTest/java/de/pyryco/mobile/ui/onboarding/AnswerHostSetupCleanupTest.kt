@@ -148,7 +148,7 @@ class AnswerHostSetupCleanupTest {
                     override fun evaluate() {
                         lateinit var nav: NavHostController
                         compose.setContent {
-                            PyrycodeMobileTheme {
+                            PyrycodeMobileTheme(darkTheme = true) {
                                 nav = rememberNavController()
                                 PyryNavHost(Routes.WELCOME, navController = nav)
                             }

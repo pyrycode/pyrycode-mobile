@@ -244,7 +244,7 @@ class ThreadComposerFooterWidthTest {
         var attaches = 0
         var statusClicks = 0
         composeTestRule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(pixel8)) {
                     CompositionLocalProvider(LocalDensity provides Density(1f)) {
                         ThreadComposerFooter(

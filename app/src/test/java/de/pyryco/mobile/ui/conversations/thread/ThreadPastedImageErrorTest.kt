@@ -55,7 +55,7 @@ class ThreadPastedImageErrorTest {
     @Test
     fun unreadableAndOversizedPastes_queueInertTopPills_inArrivalOrder() {
         rule.setContent {
-            PyrycodeMobileTheme {
+            PyrycodeMobileTheme(darkTheme = true) {
                 ThreadScreen(
                     state = ThreadUiState("c1", "Thread"),
                     onBack = {},

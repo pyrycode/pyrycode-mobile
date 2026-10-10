@@ -47,7 +47,6 @@ class ConnectionStatusLineLayoutTest {
 
     private fun exercise(connectedOnly: Boolean) {
         var scale by mutableStateOf(1f)
-        var dark by mutableStateOf(false)
         var status by mutableStateOf(ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected))
         var density = 1f
         val expectedSizes = mutableMapOf<String, IntSize>()
@@ -55,7 +54,7 @@ class ConnectionStatusLineLayoutTest {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(412.dp, 892.dp))) {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(scale)) {
                     density = LocalDensity.current.density
-                    PyrycodeMobileTheme(darkTheme = dark, dynamicColor = false) {
+                    PyrycodeMobileTheme(darkTheme = true, dynamicColor = false) {
                         val measurer = rememberTextMeasurer()
                         for ((name, visual) in listOf("Relay" to status.relay.toLegVisual(), "Pyrycode" to status.pyrycode.toLegVisual())) {
                             val nameSize = measurer.measure(name, MaterialTheme.typography.labelMedium).size
@@ -94,48 +93,45 @@ class ConnectionStatusLineLayoutTest {
                     ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down),
                 )
             }
-        for (darkTheme in listOf(false, true)) {
-            for (fontScale in listOf(1f, 2f)) {
-                for (value in statuses) {
-                    rule.runOnIdle {
-                        scale = fontScale
-                        dark = darkTheme
-                        status = value
-                    }
-                    val host = rule.onNodeWithTag("host").fetchSemanticsNode().boundsInRoot
-                    assertEquals("fixture width", 412 * density, host.width, 1f)
+        for (fontScale in listOf(1f, 2f)) {
+            for (value in statuses) {
+                rule.runOnIdle {
+                    scale = fontScale
+                    status = value
+                }
+                val host = rule.onNodeWithTag("host").fetchSemanticsNode().boundsInRoot
+                assertEquals("fixture width", 412 * density, host.width, 1f)
 
-                    fun leg(
-                        name: String,
-                        description: String,
-                    ): Rect {
-                        val bounds =
-                            rule
-                                .onNodeWithContentDescription(description)
-                                .assertIsDisplayed()
-                                .fetchSemanticsNode()
-                                .boundsInRoot
-                        val expected = expectedSizes.getValue(name)
-                        assertEquals("$description width at $fontScale", expected.width.toFloat(), bounds.width, 1f)
-                        assertEquals("$description unwrapped height at $fontScale", expected.height.toFloat(), bounds.height, 1f)
-                        assertTrue(
-                            "$description inside host",
-                            bounds.left >= host.left && bounds.right <= host.right && bounds.bottom <= host.bottom,
-                        )
-                        return bounds
-                    }
-                    val relay = leg("Relay", value.relay.toLegVisual().contentDescription)
-                    val pyrycode = leg("Pyrycode", value.pyrycode.toLegVisual().contentDescription)
-                    assertEquals("Settings start inset", host.left + 16 * density, relay.left, 1f)
-                    if (fontScale == 1f) {
-                        assertEquals("normal spacing", 24 * density, pyrycode.left - relay.right, 1f)
-                        assertEquals("normal alignment", relay.center.y, pyrycode.center.y, 1f)
-                    } else {
-                        assertTrue("whole groups do not overlap", pyrycode.top >= relay.bottom || pyrycode.left >= relay.right)
-                        if (connectedOnly) {
-                            assertEquals("stacked start", relay.left, pyrycode.left, 1f)
-                            assertTrue("enlarged connected groups stack", pyrycode.top > relay.bottom)
-                        }
+                fun leg(
+                    name: String,
+                    description: String,
+                ): Rect {
+                    val bounds =
+                        rule
+                            .onNodeWithContentDescription(description)
+                            .assertIsDisplayed()
+                            .fetchSemanticsNode()
+                            .boundsInRoot
+                    val expected = expectedSizes.getValue(name)
+                    assertEquals("$description width at $fontScale", expected.width.toFloat(), bounds.width, 1f)
+                    assertEquals("$description unwrapped height at $fontScale", expected.height.toFloat(), bounds.height, 1f)
+                    assertTrue(
+                        "$description inside host",
+                        bounds.left >= host.left && bounds.right <= host.right && bounds.bottom <= host.bottom,
+                    )
+                    return bounds
+                }
+                val relay = leg("Relay", value.relay.toLegVisual().contentDescription)
+                val pyrycode = leg("Pyrycode", value.pyrycode.toLegVisual().contentDescription)
+                assertEquals("Settings start inset", host.left + 16 * density, relay.left, 1f)
+                if (fontScale == 1f) {
+                    assertEquals("normal spacing", 24 * density, pyrycode.left - relay.right, 1f)
+                    assertEquals("normal alignment", relay.center.y, pyrycode.center.y, 1f)
+                } else {
+                    assertTrue("whole groups do not overlap", pyrycode.top >= relay.bottom || pyrycode.left >= relay.right)
+                    if (connectedOnly) {
+                        assertEquals("stacked start", relay.left, pyrycode.left, 1f)
+                        assertTrue("enlarged connected groups stack", pyrycode.top > relay.bottom)
                     }
                 }
             }

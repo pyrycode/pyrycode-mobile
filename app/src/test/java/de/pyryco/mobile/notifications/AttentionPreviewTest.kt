@@ -6,6 +6,27 @@ import org.junit.Test
 
 class AttentionPreviewTest {
     @Test
+    fun markdownHardBreaksBecomeOneSpaceWithoutABackslash() {
+        assertEquals("first second", notificationPreview("first\\\nsecond"))
+        assertEquals("first second", notificationPreview("first\\\r\nsecond"))
+        assertEquals("first second", notificationPreview("first  \nsecond"))
+    }
+
+    @Test
+    fun literalBackslashesInProseRemainUnchanged() {
+        assertEquals("path C:\\work\\file", notificationPreview("path C:\\work\\file"))
+        assertEquals("escaped \\\\ slash", notificationPreview("escaped \\\\ slash"))
+        assertEquals("first\\\\ second", notificationPreview("first\\\\\nsecond"))
+    }
+
+    @Test
+    fun literalBackslashesInCodeRemainUnchangedEvenBeforeANewline() {
+        assertEquals("first\\ second", notificationPreview("`first\\\nsecond`"))
+        assertEquals("first\\ second", notificationPreview("```text\nfirst\\\nsecond\n```"))
+        assertEquals("first\\ second", notificationPreview("    first\\\n    second"))
+    }
+
+    @Test
     fun linkLabelsKeepLiteralBlockMarkersInTheirOriginalInlineContext() {
         listOf("1. Restart", "> Continue", "# Section", "- Option", "**bold** `# code`").forEach { label ->
             val expected = if (label.startsWith("**")) "bold # code" else label

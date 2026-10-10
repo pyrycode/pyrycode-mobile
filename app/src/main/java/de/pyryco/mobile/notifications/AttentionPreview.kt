@@ -68,7 +68,7 @@ private fun previewPlainText(source: String): String {
             MarkdownTokenTypes.ATX_HEADER, MarkdownTokenTypes.LIST_BULLET, MarkdownTokenTypes.LIST_NUMBER,
             MarkdownTokenTypes.BLOCK_QUOTE, GFMTokenTypes.CHECK_BOX,
             -> ""
-            GFMTokenTypes.TABLE_SEPARATOR -> " "
+            MarkdownTokenTypes.HARD_LINE_BREAK, GFMTokenTypes.TABLE_SEPARATOR -> " "
             MarkdownElementTypes.LINK_DEFINITION, MarkdownElementTypes.AUTOLINK, MarkdownTokenTypes.HORIZONTAL_RULE -> ""
             MarkdownTokenTypes.HTML_TAG -> ""
             MarkdownTokenTypes.HTML_BLOCK_CONTENT -> node.getTextInNode(source).toString().replace(Regex("<[^>]*>"), " ")

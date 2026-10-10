@@ -317,10 +317,10 @@ mistake its literal numbered-list, quote or heading characters for formatting. W
 including tabs, line breaks and U+0085 NEXT LINE inside code, become one space before remaining
 control and Unicode format characters are dropped. Trimmed-empty output uses fixed copy. The final
 preview contains at most 200 Unicode code points; truncation keeps 199 plus one trailing “…” without
-splitting a surrogate pair. **Known limitation from PR #1946's final verifier review:** a Markdown
-backslash hard break still produces a literal backslash before the normalized space. The sanitizer
-therefore does not yet remove every markup delimiter; literal backslashes inside code must survive
-any repair.
+splitting a surrogate pair. Markdown hard breaks, including a trailing backslash before LF or
+CRLF and the two-space form, become one space (#2006). Normalize the parser's `HARD_LINE_BREAK`
+token rather than removing backslashes from the source: literal prose backslashes, including escaped
+pairs before a newline, and backslashes in inline, fenced and indented code remain unchanged.
 
 The original notification has `VISIBILITY_PRIVATE`. Its separately built public version contains
 only the same sanitized conversation title (or app-name fallback), small icon and fixed body above.
@@ -465,7 +465,11 @@ in any of these lines.
 ### Testing (#685)
 
 **Preview/privacy proof (#1725).** `AttentionPreviewTest` covers Markdown, label context, literal
-code, Unicode whitespace/control removal and code-point truncation. `AttentionPreviewSourceTest`
+code, Unicode whitespace/control removal and code-point truncation. Through `notificationPreview`,
+`markdownHardBreaksBecomeOneSpaceWithoutABackslash` covers LF/CRLF and two-space hard breaks;
+`literalBackslashesInProseRemainUnchanged` protects paths and escaped pairs, including before a
+newline; `literalBackslashesInCodeRemainUnchangedEvenBeforeANewline` protects inline, fenced and
+indented code (#2006). `AttentionPreviewSourceTest`
 covers exact-turn/host attribution, top-level selection, incomplete evidence, one-page recovery,
 three-second timeout and host/repository retirement. `AttentionNotifierTest` inspects the built
 private/public notifications, recursively checks public extras for content leakage, and covers
@@ -473,8 +477,7 @@ ordering, concurrent delivery, gate rechecks and content-free logs/ledger. Remot
 regressions prove enrichment does not backfill, merge, persist or advance read facts. The existing
 rung-3 push methods now assert reply/action previews and public redaction alongside wake, tap and
 unchanged-post-time checks; the [ladder](../../e2e-interactive-stream.md#private-push-preview-proof-1725)
-records the fresh counted full live result. The hard-break limitation above remains outside the
-passing sanitizer suite's coverage.
+records the fresh counted full live result.
 
 `AttentionNotifierTest.previewsArePrivateAndPublicVersionsContainOnlyFixedCopy` also checks the
 serialized public parcel in UTF-8 and UTF-16LE. Match the exact synthetic fixture path
