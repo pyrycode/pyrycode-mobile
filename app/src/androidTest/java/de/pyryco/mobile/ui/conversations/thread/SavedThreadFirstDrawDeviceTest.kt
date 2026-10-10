@@ -97,29 +97,18 @@ class SavedThreadFirstDrawDeviceTest {
         installHost()
         val probes = mutableListOf<Probe>()
         for (name in listOf("ordinary", "fragmented")) {
-            val (coverage, rows) =
-                if (name == "ordinary") {
-                    null to
-                        (0 until 20).map {
-                            ThreadItem.MessageItem(
-                                Message("ordinary-$it", "s", Role.User, "Saved $it.", Instant.fromEpochSeconds(it.toLong()), false),
-                            )
-                        }
-                } else {
-                    fragmentedHistoryFixture((0 until 18000).toList())
-                }
-            withFixture(name, rows, coverage) { source ->
+            withSavedFixture(name) { source, expected ->
                 for (online in listOf(false, true)) {
                     withFixtureCopy(source) { root ->
                         val delegate = HeldNewest()
                         var repo: CachingConversationRepository? = null
                         repeat(2) { opening ->
                             val probe =
-                                Probe("$name online=$online opening=$opening", (rows.last() as ThreadItem.MessageItem).message.content)
+                                Probe("$name online=$online opening=$opening", expected.newestText)
                             activeProbe = probe
                             probes += probe
                             if (repo == null) repo = repository(root, delegate)
-                            openAndMeasure(requireNotNull(repo), delegate, online, probe, rows, coverage)
+                            openAndMeasure(requireNotNull(repo), delegate, online, probe, expected)
                         }
                     }
                 }
@@ -138,7 +127,7 @@ class SavedThreadFirstDrawDeviceTest {
             val delegate = HeldNewest()
             val probe = Probe("negative-control", (rows.last() as ThreadItem.MessageItem).message.content)
             activeProbe = probe
-            openAndMeasure(repository(root, delegate, 3000), delegate, false, probe, rows, null)
+            openAndMeasure(repository(root, delegate, 3000), delegate, false, probe, expectation(rows, null))
             assertTrue(probe.elapsed(probe.drawn.get()) >= 3000)
             assertThrows(AssertionError::class.java) { probe.assertBound() }
         }
@@ -287,9 +276,9 @@ class SavedThreadFirstDrawDeviceTest {
         delegate: HeldNewest,
         online: Boolean,
         probe: Probe,
-        rows: List<ThreadItem>,
-        coverage: HistoryCoverage?,
+        expected: FixtureExpectation,
     ) {
+        val rows = expected.rows
         val store = ViewModelStore()
         val beforeAsks = delegate.asks.size
         val measuredRepo =
@@ -324,24 +313,16 @@ class SavedThreadFirstDrawDeviceTest {
                 assertEquals(if (online) beforeAsks + 1 else beforeAsks, delegate.asks.size)
                 assertTrue(delegate.asks.all { it == "" to 200 })
                 assertFalse(delegate.response.isCompleted)
-                assertEquals(
-                    coverage
-                        ?.unsignedGaps
-                        ?.map { it.anchor }
-                        ?.let { listOf(0uL) + it }
-                        .orEmpty(),
-                    state.historyMarkers.map { it.unsignedAnchor },
-                )
+                assertEquals(expected.anchors, state.historyMarkers.map { it.unsignedAnchor })
             }
             Log.i(
                 "SavedThreadFirstDraw",
-                "case=${probe.name} rows=${rows.size} durable=${coverage?.unsignedSpans?.sumOf {
-                    (it.last - it.first + 1u).toLong()
-                } ?: rows.size.toLong()} spans=${coverage?.unsignedSpans?.size ?: 0} restored_ms=${probe.elapsed(
-                    probe.restored.get(),
-                )} snapshot_ms=${probe.elapsed(
-                    probe.snapshot.get(),
-                )} complete_ms=${probe.elapsed(probe.complete.get())} drawn_ms=${probe.elapsed(probe.drawn.get())}",
+                "case=${probe.name} rows=${rows.size} durable=${expected.durableEntries} spans=${expected.spans} " +
+                    "restored_ms=${probe.elapsed(
+                        probe.restored.get(),
+                    )} snapshot_ms=${probe.elapsed(
+                        probe.snapshot.get(),
+                    )} complete_ms=${probe.elapsed(probe.complete.get())} drawn_ms=${probe.elapsed(probe.drawn.get())}",
             )
         } finally {
             composeRule.runOnUiThread {
@@ -370,6 +351,61 @@ class SavedThreadFirstDrawDeviceTest {
         try {
             check(source.copyRecursively(root))
             block(root)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    private data class FixtureExpectation(
+        val rows: List<ThreadItem>,
+        val anchors: List<ULong>,
+        val durableEntries: Long,
+        val spans: Int,
+    ) {
+        val newestText = (rows.last() as ThreadItem.MessageItem).message.content
+    }
+
+    private fun expectation(
+        rows: List<ThreadItem>,
+        coverage: HistoryCoverage?,
+    ) = FixtureExpectation(
+        rows = rows,
+        anchors =
+            coverage
+                ?.unsignedGaps
+                ?.map { it.anchor }
+                ?.let { listOf(0uL) + it }
+                .orEmpty(),
+        durableEntries = coverage?.unsignedSpans?.sumOf { (it.last - it.first + 1u).toLong() } ?: rows.size.toLong(),
+        spans = coverage?.unsignedSpans?.size ?: 0,
+    )
+
+    private fun withSavedFixture(
+        name: String,
+        block: (File, FixtureExpectation) -> Unit,
+    ) {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val root = File(context.noBackupFilesDir, "first-draw-$name-${SystemClock.elapsedRealtimeNanos()}")
+        try {
+            val expected =
+                runBlocking {
+                    val (coverage, rows) =
+                        if (name == "ordinary") {
+                            null to
+                                (0 until 20).map {
+                                    ThreadItem.MessageItem(
+                                        Message("ordinary-$it", "s", Role.User, "Saved $it.", Instant.fromEpochSeconds(it.toLong()), false),
+                                    )
+                                }
+                        } else {
+                            fragmentedHistoryFixture((0 until 18000).toList())
+                        }
+                    val cache = FileConversationCache(root)
+                    cache.writeThread("host", "c", rows).getOrThrow()
+                    if (coverage != null) cache.writeHistoryPosition("host", "c", HistoryPosition("saved", false, coverage)).getOrThrow()
+                    expectation(rows, coverage)
+                }
+            block(root, expected)
         } finally {
             root.deleteRecursively()
         }
