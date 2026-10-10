@@ -520,7 +520,14 @@ class ThreadViewModel(
             .observeConversations(ConversationFilter.All)
             .onEach { list ->
                 list.firstOrNull { it.id == conversationId }?.let { conversation ->
-                    if (previousConversationAgent?.let { it != conversation.agent } == true) agentChanged = true
+                    // A local switch's target can be conflated with a switch-back. Its replacement
+                    // session still invalidates old-agent readings even if the observed agent is unchanged.
+                    if (previousConversationAgent?.let { it != conversation.agent } == true ||
+                        agentSwitchUi.value.request?.sending == true &&
+                        conversation.currentSessionId.isNotEmpty() && conversation.currentSessionId != lastKnownSessionId
+                    ) {
+                        agentChanged = true
+                    }
                     previousConversationAgent = conversation.agent
                     pendingModel.value?.let { pending ->
                         if (pending.agent != conversation.agent ||
@@ -3031,24 +3038,29 @@ class ThreadViewModel(
                     Result.failure(SwitchAgentFailure(SwitchAgentFailure.Category.Failed))
                 }
             if (result.isSuccess) {
-                // The repository folded the confirmed successor before returning. Its shared observer
-                // can still be queued behind this coroutine; bind to that input rather than the old UI.
+                // Repository success is authoritative. The shared observer can lag or conflate the
+                // target with a newer switch-back; either replacement settles this phone's operation.
                 val successor =
                     conversationReadings.first { reading ->
-                        reading.list.any { it.id == conversationId && it.agent == request.choice.agent }
+                        val current = reading.list.firstOrNull { it.id == conversationId }
+                        current == null ||
+                            current.agent == request.choice.agent ||
+                            current.currentSessionId.isNotEmpty() && current.currentSessionId != config.sessionId
                     }
-                val sessionId = successor.list.first { it.id == conversationId }.currentSessionId
+                val current = successor.list.firstOrNull { it.id == conversationId }
                 agentSwitchUi.value =
                     AgentSwitchUi(
                         confirmed =
-                            ConfirmedModelDisplay(
-                                request.choice.agent,
-                                sessionId,
-                                request.choice.label.inert(),
-                                request.choice.value,
-                                originSettingsSeq,
-                                successor.seq,
-                            ),
+                            current?.takeIf { it.agent == request.choice.agent }?.let {
+                                ConfirmedModelDisplay(
+                                    request.choice.agent,
+                                    it.currentSessionId,
+                                    request.choice.label.inert(),
+                                    request.choice.value,
+                                    originSettingsSeq,
+                                    successor.seq,
+                                )
+                            },
                     )
                 repository.refreshSessionSettings(conversationId)
                 RelayLog.d { "event=agent_switch_ui outcome=confirmed" }
