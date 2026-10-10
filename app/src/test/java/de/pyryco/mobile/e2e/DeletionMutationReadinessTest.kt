@@ -5,9 +5,11 @@ import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
@@ -15,11 +17,85 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-@OptIn(ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class, ExperimentalForInheritanceCoroutinesApi::class)
 class DeletionMutationReadinessTest {
+    @Test
+    fun renameWithRetiredPublication_waitsForTheOwningReplacementAndSubmitsOnce() =
+        runTest {
+            val old = RecordingRepository()
+            val owner = LaggingRepositoryPublication(old)
+            val stable = StableConversationRepository(owner.current)
+            owner.available = null
+            assertSame(old, owner.published.value)
+            assertNull(owner.current.value)
+            var submissions = 0
+            val rename =
+                async {
+                    runCatching {
+                        awaitDeletionMutationReady(owner.current)
+                        submissions++
+                        stable.rename(CHAT, "unique discussion")
+                    }
+                }
+            runCurrent()
+            assertFalse("A retired publication must not release Save", rename.isCompleted)
+            assertEquals(0, submissions)
+            val fresh = RecordingRepository()
+            owner.available = fresh
+            owner.published.value = null
+            runCurrent()
+            owner.published.value = old
+            runCurrent()
+            assertFalse("Save must await publication of its current owner", rename.isCompleted)
+            owner.published.value = fresh
+            rename.await().getOrThrow()
+            assertEquals(1, submissions)
+            assertTrue(old.calls.isEmpty())
+            assertEquals(listOf("rename"), fresh.calls)
+            assertTrue(fresh.observeConversations(ConversationFilter.All).first().any { it.id == CHAT && it.name == "unique discussion" })
+        }
+
+    @Test
+    fun deleteWithRetiredPublication_waitsForTheOwningReplacementAndSubmitsOnce() =
+        runTest {
+            val old = RecordingRepository()
+            val owner = LaggingRepositoryPublication(old)
+            val stable = StableConversationRepository(owner.current)
+            owner.available = null
+            assertSame(old, owner.published.value)
+            assertNull(owner.current.value)
+            var submissions = 0
+            val delete =
+                async {
+                    runCatching {
+                        awaitDeletionMutationReady(owner.current)
+                        submissions++
+                        stable.delete(CHAT)
+                    }
+                }
+            runCurrent()
+            assertFalse("A retired publication must not release confirmation", delete.isCompleted)
+            assertEquals(0, submissions)
+            val fresh = RecordingRepository()
+            owner.available = fresh
+            owner.published.value = null
+            runCurrent()
+            owner.published.value = old
+            runCurrent()
+            assertFalse("Confirmation must await publication of its current owner", delete.isCompleted)
+            owner.published.value = fresh
+            delete.await().getOrThrow()
+            assertEquals(1, submissions)
+            assertTrue(old.calls.isEmpty())
+            assertEquals(listOf("delete"), fresh.calls)
+            assertFalse(fresh.observeConversations(ConversationFilter.All).first().any { it.id == CHAT })
+        }
+
     @Test
     fun renameDuringGap_waitsAndReachesTheNewDelegateExactlyOnce() =
         runTest {
@@ -155,6 +231,18 @@ class DeletionMutationReadinessTest {
             StableConversationRepository(current).delete(CHAT)
             assertEquals(listOf("delete"), repository.calls)
         }
+
+    /** Mirrors the coordinator: collection can retain a repository rejected by synchronous value. */
+    private class LaggingRepositoryPublication(
+        initial: ConversationRepository,
+    ) {
+        val published = MutableStateFlow<ConversationRepository?>(initial)
+        var available: ConversationRepository? = initial
+        val current =
+            object : StateFlow<ConversationRepository?> by published {
+                override val value: ConversationRepository? get() = available
+            }
+    }
 
     private class RecordingRepository(
         private val delegate: FakeConversationRepository = FakeConversationRepository(),

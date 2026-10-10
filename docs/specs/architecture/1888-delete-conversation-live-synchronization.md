@@ -10,6 +10,10 @@
 - `docs/knowledge/features/thread-screen.md`, `thread-screen-how-it-works-sheets.md`, `channel-info-sheet.md`, `thread-overflow-menu-wiring-tests-and-edge-cases.md`: current sheet/dialog lifecycle and scrolling requirements; historical sheet-behind-dialog commentary is stale against production.
 - `docs/knowledge/features/channel-list-screen.md`: the list marker indicates composition, whereas rows are lazy and arrival is weaker than readiness.
 - `docs/knowledge/features/development-verification.md`, `development-verification-gates.md`, `docs/e2e-interactive-stream.md`: shared regression placement and real-daemon harness.
+- `app/src/main/java/de/pyryco/mobile/data/repository/RelayRepositoryCoordinator.kt`: `currentRepository`, `liveRepository`; collection can lag synchronous transport/pump availability.
+- `app/src/sharedTest/java/de/pyryco/mobile/e2e/DeletionMutationReadiness.kt`, `DiscussionRename.kt`: `awaitDeletionMutationReady`, `awaitDiscussionRenameOwner`; the latter already qualifies publication against current availability.
+- `app/src/test/java/de/pyryco/mobile/e2e/DeletionMutationReadinessTest.kt`: existing reconnect, timeout, cancellation and host-isolation coverage; add publication/value divergence regressions.
+- `docs/knowledge/features/stable-conversation-repository.md`: readiness is an observation, not a reservation; later disconnects retain the one-shot failure contract.
 
 ## Context
 
@@ -41,6 +45,7 @@ Every scenario exception remains a failing test. Diagnostics use static stage co
 | --- | --- |
 | Owning host disconnects before Save, then reconnects with a replacement delegate | One rename on the replacement only: `renameDuringGap_waitsAndReachesTheNewDelegateExactlyOnce`. |
 | Owning host disconnects before confirmation, then reconnects | One delete on the replacement only: `deleteDuringGap_waitsAndReachesTheNewDelegateExactlyOnce`. |
+| Publication retains a retired delegate while synchronous availability is null, then the owning replacement becomes ready | No early Save or confirmation; each submits once to the replacement: `renameWithRetiredPublication_waitsForTheOwningReplacementAndSubmitsOnce`, `deleteWithRetiredPublication_waitsForTheOwningReplacementAndSubmitsOnce`. |
 | Another host is ready or reconnects while the owner is unavailable | Neither mutation is released; each submits once when its owner returns: `anotherReadyHost_doesNotReleaseTheOwningHostWait`. |
 | Wait times out, then the same host reconnects | Timeout remains a failure and no mutation submits later: `missingHost_preservesTheCallersTimeout`. |
 | Wait is cancelled, then the same host reconnects | Cancellation remains cancellation and no mutation submits later: `cancelledWait_doesNotSubmitAfterReconnect`. |
@@ -91,3 +96,16 @@ Revision `e2525a93376c34ab69afce0395057dfd30b856ae` forced both connection gaps 
 The renewed ticket preserves the existing repair and evidence. Strengthen the timeout regression to attempt both guarded mutations and reconnect after the timeout, asserting no late submission; explicitly assert cancellation and exercise both mutations in the host-isolation regression. This clarifies the existing contract without changing the readiness helper or live drive. Neither helper nor regression overlaps another remote numeric feature branch. Forecast remains below 550 written lines, with no production edits, signature migration or additional deliverable.
 
 The current builder checks are focused readiness, Channel info and overflow tests, lint, APK assembly, androidTest compilation and forced Spotless, followed by `scripts/pre-verify.py --gradle` after the final main merge. The earlier whole-unit-suite requirement is superseded by the current builder role; the dispatcher owns full deterministic suites and the fresh passing full live gate. No separate focused live run is required by the refined ticket.
+
+### 2026-10-10 — verifier finding 1: reject retired publications
+
+`currentRepository.collect` uses the asynchronous `publishedRepository`, while its synchronous `value` calls `liveRepository()` and rejects a retired transport or non-open pump. A non-null publication alone can therefore release Save or Delete during the diagnosed gap. Require the collected delegate to be non-null and identical to the owning flow's synchronous value, matching the existing `awaitDiscussionRenameOwner` contract without changing either helper's callers.
+
+Add separate rename/delete regressions over the real `StableConversationRepository` with a test flow that delegates collection to a retained publication and exposes availability independently. Both must hold submission while A remains published but synchronous availability is null, reject stale A when replacement B is current, and submit once after B is published. Existing timeout, cancellation and host-isolation tests stay intact. Before the repair, both new regressions executed and failed at the no-early-submission assertion (2 executed, 2 failed, 0 skipped); negative XML is retained at `/tmp/builder-1888/rework-negative/` during this run.
+
+Readiness remains an observation immediately before the single UI action, with the existing caller's timeout and cancellation. A disconnect after that observation still fails through the existing mutation/postcondition contract; no reservation, retry or production change is added. No numeric remote feature branch overlaps the helper or regression. Forecast is approximately 600 total written lines including the additional rework evidence and plan, below every sizing boundary.
+
+## Documentation handoff
+
+- Pending documentation stage: update `docs/e2e-interactive-stream.md`, “Live mode (rung 3, live relay)” and “Verification status”, with owning-host readiness, synchronous delegate identity qualification and rename completion before Back. Preserve the corrected tested-merge attribution for #1854, both historical failure stages and retained negative/positive controls.
+- Pending documentation stage: update `docs/knowledge/features/development-verification-emulator-evidence.md`, “Emulator and real evidence”, with the publication/value divergence and counted regression evidence. Add the dispatcher's eventual fresh full-live revision, artifact location, executed/failed/skipped counts and explicit deletion-method pass; acceptance stays pending until that evidence exists.
