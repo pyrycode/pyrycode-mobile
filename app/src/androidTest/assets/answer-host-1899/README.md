@@ -36,6 +36,17 @@ JUnit SHA-256 is `8ad6f8f7d2fa6f1a48b0c110fbeea60bc36ceffce6bc2ba6e1f3666896ee25
 `red.xml` is a sanitized one-case summary; the original is retained at
 `/tmp/builder-1899/red-device.xml`. The device was managed `pixel2Api33Atd`, API 33 / AOSP ATD.
 
+## Controlled green
+
+After removing only the compatibility wait, the identical focused command exited 0 with
+**1 executed, 1 passed, 0 failed, 0 errors, 0 skipped** at `2026-10-10T01:07:23`. The named regression
+passed in 3.32 seconds with the preceding host still Offline. It required one connect,
+one exact-target verification, successful saved name/record and list navigation; original entries
+and Koin definitions were restored. Source JUnit SHA-256:
+`d2a0ba7cb085e8b64fe60f3fd1537053ba144c25e5d86912029a3fac2d306005`. `green.xml` retains the counted case; the original is at
+`/tmp/builder-1899/green-device.xml`. Red helper revision: `54fd1bd52`; green changes only the
+unrelated readiness wait plus its explanatory comment. No deadline/assertion/retry changed.
+
 ## Live acceptance
 
 Builder controlled evidence is separate from live acceptance. The dispatcher must separately run

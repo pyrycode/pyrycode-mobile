@@ -75,3 +75,7 @@ Pending documentation stage: `docs/e2e-interactive-stream.md`, “What rung 3 is
 
 **Reviewer:** builder (self-review per builder/security-review.md)
 **Date:** 2026-10-10
+
+## Revisions
+
+- 2026-10-10: controlled device regression at the pre-repair helper (`54fd1bd52`) executed once and failed with the historical 30000 ms coroutine timeout, before target verification. Remove only the compatibility wait. The native fixture controls compatibility state and the PairCodeViewModel network-controller/readiness seams; it keeps the actual parser, fingerprint confirm, encrypted save, display-name write and exact-target verification path. Cleanup and unchanged answer assertions remain mandatory.
