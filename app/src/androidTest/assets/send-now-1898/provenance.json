@@ -38,5 +38,20 @@
       "sha256": "848f413129df9fdb427535f8890a415b0f836d1d6428c0ee5a5740753ce410f5"
     }
   ],
-  "historical_daemon_contains_ordering_repair_7a52b70a": true
+  "historical_daemon_contains_ordering_repair_7a52b70a": true,
+  "scripted_send_now": {
+    "command": "ANDROID_GATE_WAIT_SECONDS=1200 python3 scripts/android-test-gate.py scripted send-now",
+    "mobile": "0d8e807a84ec66ae493117a59c0eaa3eecb45af1",
+    "daemon": "a536d17b1e182fb5398a5458e3afe6079b37a510",
+    "daemon_vcs_modified": true,
+    "daemon_sha256": "ba71f83dd6121cbec245bbcd93bbcbf8f9daf94b8b75bc4689321c4ea64a251b",
+    "backend": "scripted fakeclaude; no real Claude turns",
+    "artifact": "scripted.xml",
+    "executed": 1,
+    "passed": 1,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "exit": 0
+  }
 }

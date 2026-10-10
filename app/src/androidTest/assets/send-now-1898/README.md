@@ -32,3 +32,8 @@ phone/peer link state. Diagnostic passes do not establish historical causation.
 The fresh full dispatcher live gate after verification is still required.
 On return, retain its complete counted XML, method-level result and mobile/daemon
 revision metadata beside these assets; record errors and skips as well as failures.
+
+scripted.xml retains the fresh deterministic send-now twin: 1 executed/passed,
+0 failures/errors/skips, process exit 0. Its tested mobile commit and daemon
+binary revision, dirty-build flag and hash are in provenance.json. This
+scripted fakeclaude result does not replace the pending full live gate.
