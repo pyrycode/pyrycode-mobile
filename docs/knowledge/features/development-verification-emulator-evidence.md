@@ -47,6 +47,54 @@ source only if its escapes are typed in upper case.
 
 ## Emulator and real evidence
 
+A collected repository publication can lag synchronous authenticated availability (#1888).
+`RelayRepositoryCoordinator.currentRepository` can still emit retired A while `.value` is null
+or replacement B. An ordinary `MutableStateFlow` cannot model that divergence; the first
+readiness regressions therefore passed despite the stale-delegate race. `awaitDeletionMutationReady` now
+requires `it != null && it === current.value` on the owning host immediately before Save or
+Delete confirmation. Readiness reserves nothing: a later disconnect retains the one-shot failure
+contract. Observe the authoritative renamed header before Back destroys the thread's mutation
+scope; a list arrival marker alone proves neither rename completion nor unique-row presence.
+
+`DeletionMutationReadinessTest` uses the real stable facade with independent publication/value
+control. `renameWithRetiredPublication_waitsForTheOwningReplacementAndSubmitsOnce` and
+`deleteWithRetiredPublication_waitsForTheOwningReplacementAndSubmitsOnce` hold while A is
+published but unavailable, reject A while B is current, then each submit once after B is published.
+The [final verifier](https://github.com/pyrycode/pyrycode-mobile/pull/1926#issuecomment-6093256477)
+confirmed all eight methods passed at `9e05f7352a3115a98ff5b9c69185f3bcc65fd2c9`, including
+reconnect, wrong-host isolation for both actions, caller timeout with no late submission,
+cancellation after reconnect and immediate readiness. The retained negative XML at
+`/tmp/builder-1888/rework-negative/TEST-de.pyryco.mobile.e2e.DeletionMutationReadinessTest.xml`
+contains both divergence failures at the no-early-submission assertion.
+
+| Focused evidence | Executed | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| Original immediate-availability control | 5 | 1 | 4 | 0 |
+| First repaired readiness class, before divergence coverage | 6 | 6 | 0 | 0 |
+| Pre-identity-qualification divergence regressions | 2 | 0 | 2 | 0 |
+| Final readiness class | 8 | 8 | 0 | 0 |
+| Final focused readiness/coordinator/Channel info/overflow selection | 36 | 36 | 0 | 0 |
+
+The [PR testing record](https://github.com/pyrycode/pyrycode-mobile/pull/1926) identifies the
+final selection's 8 readiness, 1 coordinator divergence, 15 Channel info and 12 overflow methods
+and fresh `app/build/test-results/testDebugUnitTest/TEST-*.xml`. The verifier counted final
+whole JVM **5172 executed, 0 failed/skipped**, UI **254 executed/passed, 0 failed, 1 skipped**,
+and scripted-all **22 executed/passed, 0 failed/skipped**. These do not substitute for live proof.
+
+The subsequent [full dispatcher live gate](https://github.com/pyrycode/pyrycode-mobile/issues/1888#issuecomment-6093482889)
+ran `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on
+`9e05f7352a3115a98ff5b9c69185f3bcc65fd2c9` merged with main
+`4d34974952d874a39295447fa677cb1c6dd207a9`: **65 executed/passed, 0 failed, 0 skipped**.
+Fresh retained XML explicitly confirms
+`InteractiveStreamE2ETest.interactiveTurn_deleteConversation_removesFromListAndClosesThread`
+ran and passed. Report: dispatcher
+`logs/2026-10-10T03-36-21-148Z_real-claude-gate_#1888.log`; matching stderr records
+`real-claude-gate-1888/build/dispatcher-tests/live-6dwhqb25` and daemon
+`a536d17b1e182fb5398a5458e3afe6079b37a510` (XML omits daemon metadata).
+This is full-suite acceptance, with no separate focused run required. See
+[historical stages and retained device controls](../../e2e-interactive-stream.md#delete-conversation-readiness-1888)
+for the corrected #1854 tested-merge attribution and earlier negative/positive gap evidence.
+
 The [#1969 full live proof](../../e2e-interactive-stream.md#verification-status)
 records the configured command, mobile head/main revisions and method-level JUnit
 counts: **65 executed, 65 passed, 0 failed, 0 errors, 0 skipped**. Both inherited
