@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.network
 
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -89,6 +90,7 @@ internal class ThreadUpdateDto private constructor(
             try {
                 require(type in setOf(TYPE_THREAD_ITEM_ADDED, TYPE_THREAD_ITEM_CHANGED, TYPE_THREAD_TEXT_APPEND))
                 require("continuation" !in raw)
+                require(validThreadJson(raw))
                 ThreadUpdateDto(type, raw)
             } catch (_: IllegalArgumentException) {
                 null
@@ -133,3 +135,25 @@ private fun JsonObject.optionalInteger(key: String): Long? = if (key in this) th
 private fun JsonObject.optionalBoolean(key: String): Boolean? = if (key in this) threadBoolean(key) else null
 
 private fun invalidThreadField(): Nothing = throw IllegalArgumentException("invalid thread field")
+
+// Tree parsing admits some non-JSON numeric tokens. Preserve valid unknown numbers without coercion.
+private val threadJsonNumber = Regex("-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-]?[0-9]+)?")
+
+private fun validThreadJson(root: JsonElement): Boolean {
+    val remaining = ArrayDeque<JsonElement>()
+    remaining.add(root)
+    while (remaining.isNotEmpty()) {
+        when (val value = remaining.removeLast()) {
+            is JsonObject -> remaining.addAll(value.values)
+            is JsonArray -> remaining.addAll(value)
+            is JsonPrimitive ->
+                if (!value.isString &&
+                    value.content !in setOf("null", "true", "false") &&
+                    !threadJsonNumber.matches(value.content)
+                ) {
+                    return false
+                }
+        }
+    }
+    return true
+}

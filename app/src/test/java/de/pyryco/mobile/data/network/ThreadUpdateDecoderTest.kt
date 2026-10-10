@@ -169,6 +169,30 @@ class ThreadUpdateDecoderTest {
     }
 
     @Test
+    fun invalidJsonNumbersInsideUnknownContentAreRejected() {
+        val raw = obj(addition().toString().replace("\"count\":9007199254740991", "\"count\":00"))
+        repair(decoder.decode(envelope(added, raw)))
+    }
+
+    @Test
+    fun validDigestCannotAdmitInvalidOriginalJsonNumbers() {
+        val raw = obj(addition().toString().replace("\"count\":9007199254740991", "\"count\":00"))
+        val p = parts(added, raw, 31)
+        p.dropLast(1).forEach { pending(decoder.decode(it)) }
+        repair(decoder.decode(p.last()))
+        assertTrue(decoder.abandon().isEmpty())
+    }
+
+    @Test
+    fun validUnknownJsonNumbersRetainTheirOriginalTokens() {
+        val raw = obj(addition().toString().replace("\"count\":9007199254740991", "\"count\":-1.2300E+1000"))
+        assertEquals(raw, complete(decoder.decode(envelope(added, raw))).raw)
+        val p = parts(added, raw, 31)
+        p.dropLast(1).forEach { pending(decoder.decode(it)) }
+        assertEquals(raw, complete(decoder.decode(p.last())).raw)
+    }
+
+    @Test
     fun multipartRecoversOriginalPayload() {
         val large = "🌲\u0000\\\"\u2028".repeat(15000)
         val rawAddition = replace(addition(), "item", replace(addition().getValue("item").jsonObject, "summary", JsonPrimitive(large)))
