@@ -3473,12 +3473,32 @@ class InteractiveStreamE2ETest {
                     peerStep(prior, "open prior peer") { prior.open(CONNECT_TIMEOUT_MS) }
                 }
                 peerStep(peer, "open") { peer.open(CONNECT_TIMEOUT_MS) }
-                sendFromPhone(STOP_HOLD_PROMPT)
+                // #1925: correlate this send with bounded observations before failure cleanup; cause remains unproven.
                 val modalId =
-                    peerStep(
-                        peer,
-                        "await the held command's permission prompt",
-                    ) { peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS) }
+                    withStopHoldDiagnostics(
+                        conversationId = conversationId,
+                        nowMs = System::currentTimeMillis,
+                        snapshot = {
+                            val coordinator =
+                                GlobalContext
+                                    .get()
+                                    .get<RelayConnectionRegistry>()
+                                    .connectionFor(serverId)
+                                    ?.coordinator
+                            val phonePermission =
+                                coordinator?.hostModals?.value?.outstanding?.any {
+                                    it.conversationId == conversationId && it.modalClass == "permission"
+                                }
+                            stopHoldEvidence(conversationId, peer.recorded(conversationId), phonePermission)
+                        },
+                        emit = { Log.i("StopHoldProbe", it) },
+                    ) {
+                        sendFromPhone(STOP_HOLD_PROMPT)
+                        peerStep(
+                            peer,
+                            "await the held command's permission prompt",
+                        ) { peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS) }
+                    }
                 peerStep(peer, "allow the prompt once and await its dismissal") { peer.allowOnce(modalId, THREAD_TIMEOUT_MS) }
 
                 // 3. Tap the composer's Stop control once no dialog covers it.
