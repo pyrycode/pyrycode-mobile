@@ -47,6 +47,69 @@ source only if its escapes are typed in upper case.
 
 ## Emulator and real evidence
 
+Tier-tag counts in the shared lazy channel list span every host and only composed rows. After
+archiving one host's fixtures, requiring global `TREE_CHANNEL_ROW_TEST_TAG` absence can time out
+on another host's valid channel; zero composed rows can also hide offscreen membership. Establish
+emptiness from the exact host's collected `HostConversationSnapshot`: it must exist, have
+`rowsLoaded` and contain no channels. Then scroll to and tap that host's qualified plus. Repository
+emptiness alone does not establish that the list's collected snapshot has caught up.
+
+`EmptyHostChannelSetupTest` (#1897) keeps selected B's channel visible while target A is loaded
+and empty, and requires exactly A's creation event. The old drive failed (**1 executed/failed,
+0 skipped**); repaired JVM and Android 13 runs each passed **4 executed, 0 failed/errors/skipped**,
+including absent, unloaded and stale-nonempty target guards. Preserve fixture restoration/deletion
+on failure. The historical timeout identifies the faulty wait but does not identify the remaining
+row's host. See [retained controlled evidence and fresh full-live named pass](../../e2e-interactive-stream.md#empty-host-channel-setup-1897)
+for the source mapping, counts, mobile/daemon revisions and artifact locations.
+
+A collected repository publication can lag synchronous authenticated availability (#1888).
+`RelayRepositoryCoordinator.currentRepository` can still emit retired A while `.value` is null
+or replacement B. An ordinary `MutableStateFlow` cannot model that divergence; the first
+readiness regressions therefore passed despite the stale-delegate race. `awaitDeletionMutationReady` now
+requires `it != null && it === current.value` on the owning host immediately before Save or
+Delete confirmation. Readiness reserves nothing: a later disconnect retains the one-shot failure
+contract. Observe the authoritative renamed header before Back destroys the thread's mutation
+scope; a list arrival marker alone proves neither rename completion nor unique-row presence.
+
+`DeletionMutationReadinessTest` uses the real stable facade with independent publication/value
+control. `renameWithRetiredPublication_waitsForTheOwningReplacementAndSubmitsOnce` and
+`deleteWithRetiredPublication_waitsForTheOwningReplacementAndSubmitsOnce` hold while A is
+published but unavailable, reject A while B is current, then each submit once after B is published.
+The [final verifier](https://github.com/pyrycode/pyrycode-mobile/pull/1926#issuecomment-6093256477)
+confirmed all eight methods passed at `9e05f7352a3115a98ff5b9c69185f3bcc65fd2c9`, including
+reconnect, wrong-host isolation for both actions, caller timeout with no late submission,
+cancellation after reconnect and immediate readiness. The retained negative XML at
+`/tmp/builder-1888/rework-negative/TEST-de.pyryco.mobile.e2e.DeletionMutationReadinessTest.xml`
+contains both divergence failures at the no-early-submission assertion.
+
+| Focused evidence | Executed | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: | ---: |
+| Original immediate-availability control | 5 | 1 | 4 | 0 |
+| First repaired readiness class, before divergence coverage | 6 | 6 | 0 | 0 |
+| Pre-identity-qualification divergence regressions | 2 | 0 | 2 | 0 |
+| Final readiness class | 8 | 8 | 0 | 0 |
+| Final focused readiness/coordinator/Channel info/overflow selection | 36 | 36 | 0 | 0 |
+
+The [PR testing record](https://github.com/pyrycode/pyrycode-mobile/pull/1926) identifies the
+final selection's 8 readiness, 1 coordinator divergence, 15 Channel info and 12 overflow methods
+and fresh `app/build/test-results/testDebugUnitTest/TEST-*.xml`. The verifier counted final
+whole JVM **5172 executed, 0 failed/skipped**, UI **254 executed/passed, 0 failed, 1 skipped**,
+and scripted-all **22 executed/passed, 0 failed/skipped**. These do not substitute for live proof.
+
+The subsequent [full dispatcher live gate](https://github.com/pyrycode/pyrycode-mobile/issues/1888#issuecomment-6093482889)
+ran `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on
+`9e05f7352a3115a98ff5b9c69185f3bcc65fd2c9` merged with main
+`4d34974952d874a39295447fa677cb1c6dd207a9`: **65 executed/passed, 0 failed, 0 skipped**.
+Fresh retained XML explicitly confirms
+`InteractiveStreamE2ETest.interactiveTurn_deleteConversation_removesFromListAndClosesThread`
+ran and passed. Report: dispatcher
+`logs/2026-10-10T03-36-21-148Z_real-claude-gate_#1888.log`; matching stderr records
+`real-claude-gate-1888/build/dispatcher-tests/live-6dwhqb25` and daemon
+`a536d17b1e182fb5398a5458e3afe6079b37a510` (XML omits daemon metadata).
+This is full-suite acceptance, with no separate focused run required. See
+[historical stages and retained device controls](../../e2e-interactive-stream.md#delete-conversation-readiness-1888)
+for the corrected #1854 tested-merge attribution and earlier negative/positive gap evidence.
+
 The [#1969 full live proof](../../e2e-interactive-stream.md#verification-status)
 records the configured command, mobile head/main revisions and method-level JUnit
 counts: **65 executed, 65 passed, 0 failed, 0 errors, 0 skipped**. Both inherited
@@ -68,6 +131,18 @@ including assertion and partial-pairing failures. Remove each arm before beginni
 connection, then requires unchanged entries, the same connection bundle and Connected state
 in that same process. A fresh process or successful recovery reply alone cannot prove cleanup.
 See [recovery evidence](../../e2e-interactive-stream.md#session-error-recovery-1731).
+
+An explicitly addressed scenario must await readiness for the same host, even after fixture
+cleanup is correct. Compatibility selection can block on a stopped unrelated host or falsely
+report readiness from a different connected host. Send now's `awaitSendNowConnection` (#1898)
+reads its named bundle's combined relay/daemon status and requires both legs Connected at the
+original deadline, without changing selection or retrying. Real-registry regression checks
+exercise both wrong-host cases; a single happy-path connection check would miss them.
+[Send now coverage](../../e2e-interactive-stream.md#live-mode-rung-3-live-relay) records the
+controlled failures/passes and the separate historical and full-live evidence. A bare timeout
+without retained stage/phone evidence cannot establish which operation failed. Fixed operation
+labels and lazy content-free link snapshots preserve the original timeout cause rather than
+turning a passing diagnostic run into proof of historical causation.
 
 An instrumented test proves behavior in its fixture. It does not prove camera
 binding, lifecycle timing, relay compatibility or a real daemon round trip. The
@@ -132,6 +207,85 @@ timeouts, retaining the original cause and deadline (#1703). Its captured `Await
 peer admission/key-binding repair. Accepted daemon handshakes do not prove that a phone answer
 was sent. Preserve sanitized stderr, counted XML and copied per-test logcat together; removed
 gate worktrees can erase the phone evidence needed to correlate them.
+
+A setup-stage label still needs a sub-operation and the historical tested source. In #1899,
+`PairPhone`'s 30000 ms coroutine timeout identifies the compatibility `awaitConnected` before
+code pairing: the other UI waits throw Compose timeouts and target verification handles its
+deadline as ViewModel state. Compatibility selection follows the latest surviving saved host,
+not the host about to be paired. The controlled Offline regression fails at that wait before
+repair and passes after its removal, while real parsing, fingerprint confirmation, encrypted
+save/name and exact-new-record verification remain. This establishes an unrelated setup
+prerequisite, not why the preceding host was unavailable. The unopened `peer::linkState` is
+not phone evidence; a post-test DESTROYED/focus snapshot describes teardown. Historical phone
+logcat and timed device XML were lost with the gate worktree, and retained daemon handshakes
+lack a method interval for attribution. Preserve that uncertainty rather than assigning
+selection, transport or lifecycle failure from another surface. See the
+[historical, controlled and fresh live evidence](../../e2e-interactive-stream.md#answer-host-setup-independence-1899).
+
+A passing fixture method does not prove that its process-global DI restoration is correct.
+The #1899 answer-host fixture initially restored `PairCodeViewModel` from explicit Koin
+parameters, while production navigation supplies `SavedStateHandle["serverId"]`. After
+teardown, later targeted pairing consequently lost its read-only host name and wrong-host
+guard. Restore the production lookup, including empty-target normalization, only after the
+fixture activity closes. `AnswerHostSetupCleanupTest.targetedPairingAfterFixtureTeardownKeepsItsHostGuard`
+finishes the actual fixture and activity, then launches production navigation in a second
+activity in the same instrumentation process without replacing Koin. Its red/green checks
+cover target naming/read-only behavior, wrong-host rejection before fingerprint confirmation,
+editable empty-target pairing and unchanged saved entries. A fresh process or separately
+passing pairing unit class cannot expose this contamination. The
+[retained device evidence](../../../app/src/androidTest/assets/answer-host-1899/README.md)
+records **1 executed/failed, 0 skipped** before binding repair and **2 executed/passed,
+0 failed/errors/skipped** afterward across cleanup and setup independence.
+
+Private DataStore files alone do not isolate UID-wide Keystore custody (#2036).
+`KeystorePairedServerStoreTest` deleted the production pairing wrap alias during
+lost-key tests and teardown while the app retained encrypted blobs, including
+empty collections. Fresh sweep logcat orders failed read, failed seed save and
+then failed removal; the teardown error masked the original save failure.
+`storageTestKeyLossAndTeardownPreserveAppPairings` establishes the cause by driving
+the actual lost-key method and teardown, then requiring a successful app snapshot
+of named, ordered records. Each storage test now owns a private DataStore and
+alias through the [internal constructor](paired-server-store.md#how-custody-works-mechanism-a-wrap-at-rest);
+production keeps its fixed alias and real encryption.
+
+The answer-host fixture requires `readSnapshot().getOrThrow()`: fallback-empty
+`list()` cannot prove readability or restoration. After activity closure it
+restores the original connection source and production `SavedStateHandle` target
+binding, removes only persisted fixture IDs, and compares preceding records,
+names and order. Failed initial reads change nothing; failed saves remove no
+unowned IDs. Failed setup/body keeps its primary exception, with any cleanup
+failure suppressed on it. This storage boundary complements the two-activity DI
+regression above; passing either in isolation cannot establish sweep isolation.
+
+[Retained #2036 evidence](../../../app/src/androidTest/assets/answer-host-2036/README.md)
+contains commands, revisions/patch identities, exit statuses, sanitized XML and
+selected content-free logcat. All builder runs used managed `pixel2Api33Atd`,
+Android 13/API 33 AOSP ATD, under the host-wide hold. Before isolated cleanup at
+`292c52bca` and before classes/sweep at `75a10c4a4` precede repair; final after runs
+use `c69770073`. Executed excludes skips; all rows have zero errors.
+
+| Selection | Before executed / passed / failed / skipped; exit | After executed / passed / failed / skipped; exit |
+| --- | --- | --- |
+| Isolated cleanup | 1 / 1 / 0 / 0; 0 | 1 / 1 / 0 / 0; 0 |
+| Complete answer-host classes | 2 / 2 / 0 / 0; 0 | 5 / 5 / 0 / 0; 0 |
+| Key-custody probe | 1 / 0 / 1 / 0; 1 | 1 / 1 / 0 / 0; 0 |
+| Failed-save primary-error probe | 1 / 0 / 1 / 0; 1 | 1 / 1 / 0 / 0; 0 |
+| Same two-shard non-e2e sweep | 1573 / 1572 / 1 / 2; 1 | 1576 / 1576 / 0 / 2; 0 |
+
+The isolated/class baselines passed while the sweep failed only cleanup; the
+fresh sweep reproduced the retained #2027 baseline. Both named acceptance methods
+above passed in the repaired classes and sweep; storage coverage passed **17/17**.
+Identity comparison found no misses, three new regressions and no unrelated
+failures. Unchanged skips were `RenameDialogCaptureTest.renameAtFigmaViewport` and
+`ComposerPasteTest.pastingAnImageUri_reachesTheAttachmentPath_andLeavesTheDraftEmpty`.
+
+The [#2036 verifier](https://github.com/pyrycode/pyrycode-mobile/pull/2046#issuecomment-6097849302)
+and dispatcher gate report confirm configured UI execution at `70e785332`:
+**259 executed/passed, 0 failed/errors, 1 skipped**, exit 0, with both named methods
+passed. Scripted-all: **22 executed/passed, 0 failed/errors/skipped**, exit 0.
+These are configured gates, distinct from the builder diagnostic sweep; this
+repair required no new real-Claude run. See the
+[answer-host evidence history](../../e2e-interactive-stream.md#answer-host-setup-independence-1899).
 
 An enabled semantic node and successful `performScrollToNode` do not establish a usable physical
 tap target. The thread draws beneath header/composer chrome. In #1703's short-thread reproduction,

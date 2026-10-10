@@ -1,0 +1,5 @@
+<testsuite name="AnswerHostSetupCleanupTest pre-fix control" tests="1" failures="1" errors="0" skipped="0" timestamp="2026-10-10T01:57:39">
+  <testcase name="targetedPairingAfterFixtureTeardownKeepsItsHostGuard" classname="de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest" time="4.264">
+    <failure type="java.lang.AssertionError" message="Targeted pairing lost its host label after fixture teardown">The requested host id was absent from Host name; the field was empty and editable after the actual setup fixture and first activity had finished.</failure>
+  </testcase>
+</testsuite>

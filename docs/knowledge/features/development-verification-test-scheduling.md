@@ -49,6 +49,19 @@ events before attributing the failure to conversation routing or increasing a ti
 [permission-answer coverage](../../e2e-interactive-stream.md#what-rung-3-is-made-of) and its
 [53-test full-suite proof](../../e2e-interactive-stream.md#verification-status).
 
+An open peer session proves neither turn delivery nor permission emission. For the Stop permission
+wait (#1925), an exact test-authored held-prompt match correlated #1870's conversation to daemon
+submission and durable thinking activity; absent modal history still could not distinguish a prompt
+never emitted from one lost before observation. Aggregate delivery refusals in #1968's daemon log
+could not be attributed without a scenario/conversation marker. Retain a bounded submission timestamp
+and validated conversation UUID before send, then summarize conversation-owned events and current
+phone permission before failure cleanup. Use capped counters and fixed allowlists, without payload
+text, tool names, raw errors, instructions or pairing material. Non-atomic phone/peer snapshots and
+missing transient phone state remain observation limits; no activity observed is not proof that a
+turn never started. The Stop wrapper currently retains failure snapshots only for assertions;
+non-assertion send/wait failures remain a diagnostic gap. See
+[Stop coverage and the open behavioural investigation](../../e2e-interactive-stream.md#what-rung-3-is-made-of).
+
 A standalone peer scenario can pass while later full-suite scenarios fail because an earlier peer
 bound their shared token. Open and close a prior peer with the same pairing before the observing peer
 when testing this lifecycle, as the [Stop scenario](../../e2e-interactive-stream.md#what-rung-3-is-made-of)
@@ -133,6 +146,29 @@ really advances virtual time. When adding a finite watchdog or timeout, drive on
 the intended deadline with `advanceTimeBy(...)` followed by `runCurrent()`;
 `advanceUntilIdle()` also advances newly armed watchdogs.
 
+Compose's `waitUntil` uses a wall-clock deadline while advancing the Compose clock
+one frame per poll. A fixture's virtual timer can therefore remain unfinished at
+timeout under constrained scheduling. In the delayed rename regression (#2014),
+the opening effect armed `delay(200)` at virtual time 48, but the 1,000 ms field
+wait expired at virtual time 160, before the required 248. The dialog was absent,
+the composer empty and submissions zero. Ordinary baseline runs passed; this
+fresh reproduction establishes a timer/polling mismatch, not the precise trigger
+of the earlier anonymous failures. See the [retained failure XML](../../../app/src/test/resources/e2e/discussion-rename-2014/diagnostic-background-exact.xml)
+and [commands, revisions, dirty patches and counts](../../../app/src/test/resources/e2e/discussion-rename-2014/README.md).
+
+For a controlled delayed mount, freeze `mainClock.autoAdvance` and use
+`advanceTimeUntil` to observe that the opening effect has armed its timer before
+testing the held state. One guessed frame did not start that effect in the
+[failed first repair](../../../app/src/test/resources/e2e/discussion-rename-2014/after-exact.xml).
+Keep virtual-time predicates limited to fixture state; semantics queries belong
+outside the UI-thread clock predicate. After the helper observes the missing
+labelled field, prove the held composer state and explicitly advance until the
+fixture becomes visible. Restore automatic advancement before waiting for
+dialog-window semantics and completion, and in `finally` on failure. Preserve
+the existing deadlines rather than adding retries or sleeps. See
+[rename verification](rename-dialog.md#verification) for the fixture hook and
+composer-contamination control.
+
 A fake repository seed backed by a `MutableStateFlow` — `FakeConversationRepository.setSlashCommandMenu`,
 for example — needs `advanceUntilIdle()` before a `ViewModel.state.value` assertion sees it, even with an
 `UnconfinedTestDispatcher` installed as `Main` (#884): the write still has to propagate through whatever
@@ -203,6 +239,24 @@ happens-before edge and can pass vacuously. `HostChannelListViewModelTest`,
 test's own `finally`, and each class's `@After` calls `assertAllClosed()` before
 `Dispatchers.resetMain()` runs (#726). A `JUnit4` `TestRule` cannot enforce that ordering: a rule's
 `after`-block runs after every `@After` method, which is the wrong side of the reset.
+
+Destination frame/fold scheduling must also reach cached snapshot preparation
+(#2018). `ThreadDestinationFactory.repository` passes `contentScheduling.worker`
+to `CachingConversationRepository.processingDispatcher`; controlling only the
+ViewModel leaves cache preparation on an independent default worker, so a presented
+frame can still contain no messages. `RelayConnectionFactoryTest.destinationCacheUsesConfiguredWorker`
+collects a real cached destination snapshot to completion and requires dispatch
+through the configured worker; an inert-cache host assertion alone missed this
+wiring. Production continues to use `Dispatchers.Default`.
+
+The destination host-isolation test cancels **and joins** every ViewModel job in
+`finally`, before graph closure and Main reset, even after an assertion failure.
+Cancellation alone leaves non-cancellable cache writer cleanup able to resume on
+Main after reset, reporting `UncaughtExceptionsBeforeTest` at the next registry
+test. Keep host/content/queue/action/reconnect assertions intact while fixing
+scheduling and teardown. See the
+[review and counted regression evidence](https://github.com/pyrycode/pyrycode-mobile/pull/2024#issuecomment-6091171021)
+and [saved-thread phase evidence](thread-screen-testing.md#allocation-margin-and-retained-evidence-2018).
 
 The #726 proof holds only when it runs on the thread that later calls `resetMain()` — #892 found a
 case where it does not. With an `UnconfinedTestDispatcher` installed as `Main`, a resumption resumes

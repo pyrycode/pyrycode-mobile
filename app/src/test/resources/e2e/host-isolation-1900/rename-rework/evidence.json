@@ -1,0 +1,58 @@
+{
+  "method": "de.pyryco.mobile.e2e.DiscussionRenameTest.delayedDialogDoesNotReplaceComposer",
+  "finding": "inherited dialog-field timeout; cause unestablished",
+  "blocker_issue": 2014,
+  "runs": [
+    {
+      "phase": "pr",
+      "mobile": "d854b9d7e3de60f8ce7c025eb196da7378ba19d4",
+      "command": [
+        "./gradlew",
+        "testDebugUnitTest",
+        "--tests",
+        "de.pyryco.mobile.e2e.DiscussionRenameTest.delayedDialogDoesNotReplaceComposer",
+        "--console=plain"
+      ],
+      "exit_code": 1,
+      "gradle_duration_seconds": 54,
+      "listed": 1,
+      "executed": 1,
+      "passed": 0,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0,
+      "timestamp_utc": "2026-10-09T16:17:28.766Z",
+      "raw_xml": "pr-failure.xml",
+      "raw_xml_sha256": "6eaa8b369f8c6ad380a694f588a26875c4e3617c7c9c6dc445fd5d5010b71d2e"
+    },
+    {
+      "phase": "main",
+      "mobile": "1fabcb89c91dff0d0f1488f6098bb6b508bcbd21",
+      "command": [
+        "./gradlew",
+        "testDebugUnitTest",
+        "--tests",
+        "de.pyryco.mobile.e2e.DiscussionRenameTest.delayedDialogDoesNotReplaceComposer",
+        "--console=plain"
+      ],
+      "exit_code": 1,
+      "gradle_duration_seconds": 14,
+      "listed": 1,
+      "executed": 1,
+      "passed": 0,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0,
+      "timestamp_utc": "2026-10-09T16:18:45.650Z",
+      "raw_xml": "main-failure.xml",
+      "raw_xml_sha256": "74197dafb7e54049ce5c534c7ad970296ccf0b465396b15e1ee540498d06ba99"
+    }
+  ],
+  "identical_pr_and_main_source_blobs": {
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/DiscussionRenameTest.kt": "2402553e2505088a1bf1423af7cb51c848050853",
+    "app/src/sharedTest/java/de/pyryco/mobile/e2e/DiscussionRename.kt": "e138bcccb561827f317121eb888fa8adbd204e58",
+    "app/src/main/java/de/pyryco/mobile/ui/conversations/components/RenameDialog.kt": "38595b9580614f15aa0d63dd5f0c0b7ba59ad6ea",
+    "app/build.gradle.kts": "2da0f779ddfa9ec9ed214bb0a495ac5a7432d9c4",
+    "gradle.properties": "75cbd2f81cd67732ac192b640a7379f8f653e28f"
+  }
+}

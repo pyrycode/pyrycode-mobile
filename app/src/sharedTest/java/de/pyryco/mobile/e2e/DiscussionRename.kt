@@ -15,7 +15,11 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 
-/** Await the modal's own field; the thread composer can remain focused while the modal opens. */
+/**
+ * Await the modal's own field; the thread composer can remain focused while the modal opens.
+ * [onDialogFieldAbsent] lets a fixture release its controlled mount after observing the missing field,
+ * before the wall-clock wait for the dialog window. Live callers leave this scheduler hook unset.
+ */
 internal fun ComposeTestRule.renameDiscussionInDialog(
     newName: String,
     fieldLabel: String,
@@ -23,6 +27,7 @@ internal fun ComposeTestRule.renameDiscussionInDialog(
     timeoutMillis: Long,
     diagnostic: () -> String = { "" },
     awaitOwningHost: () -> Unit = {},
+    onDialogFieldAbsent: (() -> Unit)? = null,
 ) {
     val inDialog = hasAnyAncestor(isDialog())
     val field = hasSetTextAction() and hasContentDescription(fieldLabel) and inDialog
@@ -30,6 +35,9 @@ internal fun ComposeTestRule.renameDiscussionInDialog(
     val title = hasText(newName) and !hasSetTextAction() and !inDialog
     var stage = "await dialog field"
     try {
+        if (onDialogFieldAbsent != null && onAllNodes(field).fetchSemanticsNodes().isEmpty()) {
+            onDialogFieldAbsent()
+        }
         waitUntil(timeoutMillis) { onAllNodes(field).fetchSemanticsNodes().size == 1 }
         stage = "replace dialog field"
         onNode(field).performTextReplacement(newName)

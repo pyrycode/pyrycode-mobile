@@ -2,6 +2,45 @@
 
 Split out of [Remote conversation repository — the Phase 4 `ConversationRepository`](remote-conversation-repository.md) on 2026-09-05 to keep that document under the 50000-byte size cap the docs guard enforces. Every section below moved here verbatim and kept its heading, so its anchors are unchanged. Part of [Remote conversation repository — the Phase 4 `ConversationRepository`](remote-conversation-repository.md); see that document for what it does, its edge cases and its links.
 
+## Agent switching (#1117)
+
+`switchAgent` delegates through `ConversationCommands` to the connection-owned
+`SwitchAgentCommands`. Both negotiated `interactive` and `multi_agent` are
+required before sending; missing either returns typed `Unsupported` without a
+send. Required strings preserve empty model, and `MobileJson` omits only null
+effort. Keep field validation and refusal semantics linked to the
+[daemon's `switch_agent` contract](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md#switch_agent).
+
+Success is uncorrelated, so `RelayRequests.sendAndAwaitReply` cannot implement
+this command. The helper shares `RelayRequests.nextRequestId` but registers its
+own pending target before sending. The ordinary `conversation_updated` arm fully
+decodes and folds the row before offering it for confirmation. Only explicit
+original wire strings for `id` and the requested `agent` confirm that target.
+A cached Claude value cannot prove a switch back to Claude: omitted agents are
+preserved by ordinary updates, and unknown agents map to Claude for display.
+Other conversations, omitted/null/unknown/different agents and malformed rows
+cannot confirm; neither reset progress, session transitions nor plain acks settle
+the call. No optimistic fold is added. A confirmed commitment stays successful
+when a late cleanup error arrives.
+
+Only a matching `error.in_reply_to` settles a refusal. Switches bypass generic
+`RelayRequests.mapError`, which can expose daemon message text, and classify by
+code into [typed failures](conversation-repository-shape.md#shape), preserving
+valid decoded retryability. Unknown codes and malformed errors yield sanitized
+fallbacks; unrelated errors cannot settle a switch. Failures retain no daemon
+message, request values, payload or caught cause. Switch logs contain only
+`event=switch_agent` and static outcome names. An offline operational failure
+retains the old binding but may follow stored handover or dropped backlog; it
+must not be described as a rollback.
+
+[Connection cleanup](remote-conversation-repository-state-errors-and-handoff.md#state--concurrency-model)
+settles pending work without a deadline or retry: outgoing wrap-up can take about
+90 seconds. `RemoteConversationRepositorySwitchAgentTest` covers both directions,
+explicit wire identity, row visibility before completion, refusal sanitization
+and pending-call lifecycle. `SwitchAgentDelegationTest` covers the stable and fake
+seams. [#1118](https://github.com/pyrycode/pyrycode-mobile/issues/1118) owns the
+picker caller, operator confirmation and live-flow proof.
+
 ## `setSessionSettings(sessionId, model, effort, yolo)` — the fifth mutation, first session-scoped ([#543](../codebase/543.md))
 
 Applies the operator's model / effort / YOLO change to a **running session** over v2

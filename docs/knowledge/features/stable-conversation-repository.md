@@ -219,6 +219,17 @@ a throwing stub (`archive`/`unarchive`/`rename`/`startNewSession`/`changeWorkspa
 `IllegalArgumentException`) all propagate **verbatim** — the facade adds, suppresses, and translates
 nothing.
 
+### Agent switching — snapshot-or-result (#1117)
+
+`switchAgent` reads `currentRepository.value` once and forwards conversation id,
+target agent, model and optional effort unchanged to that delegate. No live
+connection returns `Result.failure(SwitchAgentFailure(Category.Unavailable))`.
+An in-flight switch stays with the captured connection when the facade changes
+hosts or reconnects; it is never replayed on the replacement. The delegate owns
+confirmation, sanitized failures and cancellation. `SwitchAgentDelegationTest`
+checks replacement delegates and verbatim arguments. See the
+[repository contract](conversation-repository-shape.md#shape).
+
 ### Host system prompts — snapshot-or-result (#1774)
 
 `requestHostSystemPrompt` and `setHostSystemPrompt` read `currentRepository.value`

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="de.pyryco.mobile.e2e.EmptyHostChannelSetupTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-10T03:33:24.528Z" hostname="Juhanas-MacBook-Air.local" time="5.02">
+  <properties/>
+  <testcase name="emptyTargetCreatesWhileAnotherSelectedHostKeepsItsChannel" classname="de.pyryco.mobile.e2e.EmptyHostChannelSetupTest" time="4.051"/>
+  <testcase name="unloadedEmptyTargetDoesNotEstablishChannelAbsence" classname="de.pyryco.mobile.e2e.EmptyHostChannelSetupTest" time="0.232"/>
+  <testcase name="staleTargetChannelsMustLeaveTheListSnapshotBeforeCreation" classname="de.pyryco.mobile.e2e.EmptyHostChannelSetupTest" time="0.227"/>
+  <testcase name="missingTargetDoesNotBorrowAnotherHostsEmptyList" classname="de.pyryco.mobile.e2e.EmptyHostChannelSetupTest" time="0.231"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

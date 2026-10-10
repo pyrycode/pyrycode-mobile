@@ -47,6 +47,7 @@ import de.pyryco.mobile.data.repository.HostReadingFrames
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.e2e.awaitSendNowConnection
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
 import de.pyryco.mobile.ui.conversations.thread.AttachmentRead
 import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
@@ -54,10 +55,12 @@ import de.pyryco.mobile.ui.conversations.thread.ThreadContentScheduling
 import de.pyryco.mobile.ui.conversations.thread.ThreadEvent
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.drop
@@ -68,6 +71,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -97,6 +101,8 @@ import org.koin.core.parameter.parametersOf
 import org.koin.dsl.binds
 import org.koin.dsl.module
 import java.io.ByteArrayOutputStream
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.coroutines.CoroutineContext
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RelayConnectionFactoryTest {
@@ -119,6 +125,61 @@ class RelayConnectionFactoryTest {
         RelayLog.sink = previousSink
         RelayLog.enabled = previousEnabled
     }
+
+    @Test
+    fun sendNowReadinessIgnoresStoppedSelectedHost() =
+        runTest {
+            val f = Fixture(this)
+            f.unavailable = "B"
+            f.store.save(f.a.record)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                f.transports.last().reportAbsent()
+                runCurrent()
+                val selected = registry.selected.value
+                assertSame(registry.connectionFor("B"), selected)
+                assertEquals(RelayLinkStatus.DaemonAbsent, registry.connectionStatus.value.relay)
+
+                awaitSendNowConnection(registry, "A", 30_000)
+
+                assertSame("readiness must not mutate selection", selected, registry.selected.value)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun sendNowReadinessWaitsForItsOwnHostEvenWhenSelectedPeerIsConnected() =
+        runTest {
+            val f = Fixture(this)
+            f.unavailable = "A"
+            f.store.save(f.a.record)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                f.transports.first().reportAbsent()
+                runCurrent()
+                assertEquals(RelayLinkStatus.Connected, registry.connectionStatus.value.relay)
+                val readiness = async { awaitSendNowConnection(registry, "A", 30_000) }
+                runCurrent()
+                assertFalse("another host cannot satisfy Send now readiness", readiness.isCompleted)
+
+                f.unavailable = null
+                registry.connectionFor("A")?.supervisor?.retry()
+                runCurrent()
+                readiness.await()
+                assertSame(registry.connectionFor("B"), registry.selected.value)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
 
     @Test
     fun pairingStatusWaitsForExactCredentialsAndKeepsConnectedPeer() =
@@ -1045,6 +1106,44 @@ class RelayConnectionFactoryTest {
         }
 
     @Test
+    fun destinationCacheUsesConfiguredWorker() =
+        runTest {
+            val f = Fixture(this)
+            val registry = f.registry()
+            val dispatches = AtomicInteger()
+            val dispatcher = StandardTestDispatcher(testScheduler)
+            val worker =
+                object : CoroutineDispatcher() {
+                    override fun dispatch(
+                        context: CoroutineContext,
+                        block: Runnable,
+                    ) {
+                        dispatches.incrementAndGet()
+                        dispatcher.dispatch(context, block)
+                    }
+                }
+            val destinations =
+                ThreadDestinationFactory(
+                    useRelay = true,
+                    registry = registry,
+                    fake = FakeConversationRepository(),
+                    store = f.store,
+                    decorateRepository = { it },
+                    cache = InertConversationCache,
+                    attachmentReader = lazy { AttachmentReader { AttachmentRead.Unreadable } },
+                    contentScheduling = ThreadContentScheduling(worker),
+                )
+            try {
+                val rows = destinations.repository("A").observeMessages("c").first()
+                assertTrue(rows.isEmpty())
+                assertTrue("The destination cache must dispatch to its configured worker", dispatches.get() > 0)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
     fun destinationBindingsKeepCollidingIdsOnTheirHostAcrossSelectionAndReconnect() =
         runTest {
             Dispatchers.setMain(StandardTestDispatcher(testScheduler))
@@ -1394,7 +1493,11 @@ class RelayConnectionFactoryTest {
                     demoApp.close()
                 }
             } finally {
-                vms.forEach { it.viewModelScope.cancel() }
+                // Cache writer finalization can resume on Main after cancellation; finish it before reset.
+                vms.forEach {
+                    it.viewModelScope.coroutineContext.job
+                        .cancelAndJoin()
+                }
                 app.close()
                 registry.dispose()
                 runCurrent()

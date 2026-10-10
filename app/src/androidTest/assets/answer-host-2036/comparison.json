@@ -1,0 +1,46 @@
+{
+  "retained_vs_fresh_before_added": [],
+  "retained_vs_fresh_before_missing": [],
+  "after_added": [
+    [
+      "de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest",
+      "storageTestKeyLossAndTeardownPreserveAppPairings"
+    ],
+    [
+      "de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest",
+      "failedFixtureSavePreservesOriginalErrorAndDoesNotRemoveUnownedPairings"
+    ],
+    [
+      "de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest",
+      "failedFixtureRestoresBindingsAndPreservesAppPairings"
+    ]
+  ],
+  "after_missing": [],
+  "before_skipped": [
+    [
+      "de.pyryco.mobile.ui.conversations.components.RenameDialogCaptureTest",
+      "renameAtFigmaViewport"
+    ],
+    [
+      "de.pyryco.mobile.ui.conversations.thread.ComposerPasteTest",
+      "pastingAnImageUri_reachesTheAttachmentPath_andLeavesTheDraftEmpty"
+    ]
+  ],
+  "after_skipped": [
+    [
+      "de.pyryco.mobile.ui.conversations.components.RenameDialogCaptureTest",
+      "renameAtFigmaViewport"
+    ],
+    [
+      "de.pyryco.mobile.ui.conversations.thread.ComposerPasteTest",
+      "pastingAnImageUri_reachesTheAttachmentPath_andLeavesTheDraftEmpty"
+    ]
+  ],
+  "after_unrelated_failures": [],
+  "cleared_failure": [
+    [
+      "de.pyryco.mobile.ui.onboarding.AnswerHostSetupCleanupTest",
+      "targetedPairingAfterFixtureTeardownKeepsItsHostGuard"
+    ]
+  ]
+}

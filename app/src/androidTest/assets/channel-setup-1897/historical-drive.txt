@@ -1,0 +1,35 @@
+    fun interactiveTurn_createEditArchiveChannel_readsPromptBack() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val stamp = System.currentTimeMillis()
+        val firstName = "${CHANNEL_E2E_PREFIX}$stamp-a"
+        val newName = "${CHANNEL_E2E_PREFIX}$stamp-b"
+        val nextSessionLine = string(R.string.edit_channel_prompt_next_session)
+        var channelId: String? = null
+        var defaultProbeId: String? = null
+        val archivedFixtureIds = mutableListOf<String>()
+        try {
+            awaitChannelList()
+            awaitConnected()
+            val originalChannelIds =
+                hostConversationIds(serverId, "the harness's seeded channel", ConversationFilter.Channels) {
+                    twoHostArg(ARG_COLLISION_CONVERSATION_ID) in it
+                }
+            originalChannelIds.forEach { id ->
+                runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).archive(id) } }
+                archivedFixtureIds.add(id)
+            }
+            hostConversationIds(serverId, "an empty Channels section", ConversationFilter.Channels) { it.isEmpty() }
+            val daemonDefault = runBlocking { withTimeout(THREAD_TIMEOUT_MS) { hostRepository(serverId).createDiscussion(null) } }
+            defaultProbeId = daemonDefault.id
+            val before = hostConversationIds(serverId, "the default-folder probe") { daemonDefault.id in it }
+
+            // 1. The empty Channels section creates in the host's default working folder.
+            val plus = hasTestTag(treeHostChannelAddTestTag(serverId))
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                runCatching { scrollListTo(plus) }.isSuccess
+            }
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasTestTag(TREE_CHANNEL_ROW_TEST_TAG)).fetchSemanticsNodes().isEmpty()
+            }
+            composeTestRule.onAllNodes(hasTestTag(TREE_CHANNEL_ROW_TEST_TAG)).assertCountEquals(0)
+            composeTestRule.onNode(plus).performClick()

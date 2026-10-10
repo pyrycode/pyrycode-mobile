@@ -84,6 +84,13 @@ under the dedicated, non-exportable, uid-scoped Android Keystore key
 Keystore, with no user-auth requirement or forced StrongBox requirement; see
 [ADR 0006](../decisions/0006-keystore-wrap-at-rest-device-static-key.md).
 
+The public `KeystorePairedServerStore(dataStore, ioDispatcher = Dispatchers.IO)`
+constructor always uses that fixed production alias. The internal three-argument
+constructor accepts a fixture-owned `wrapKeyAlias` for destructive real-Keystore
+tests (#2036). It changes key ownership only: AES parameters, atomic mutations,
+strict decoding and credential redaction remain the same. Host ids, names and
+pairing payloads never choose aliases.
+
 | Preference in `app_prefs` | Value |
 | --- | --- |
 | `pyrycode.paired_server` | `base64(iv ‖ ciphertext)`, with the 12-byte IV prepended |
@@ -112,6 +119,15 @@ migrate. Removing the final entry persists an **encrypted empty collection**, so
 reopening cannot resurrect a removed legacy pairing. If the first migration write
 fails, the original legacy blob and compatibility choice remain unchanged.
 
+An encrypted empty collection still depends on its original wrap key. Deleting
+the alias leaves the blob unreadable and blocks strict mutations, even when no
+hosts remain. A private DataStore does not isolate a shared UID-wide alias:
+storage tests must own both the file and key, cancel/join the DataStore scope
+before deletion, and delete only their private alias. The #2036 sweep exposed
+production-key deletion by tests; the
+[causal regression and counted evidence](development-verification-emulator-evidence.md#emulator-and-real-evidence)
+retain that failure and the repair.
+
 ## Data flow
 
 ```text
@@ -136,6 +152,12 @@ Missing storage produces an empty list or `null`. Expected IO, Keystore and deco
 failures do the same for reads, including a lost key, invalid base64, a truncated
 or authentication-failing blob, malformed JSON, an unsupported version or duplicate
 ids. The key lookup is non-creating, and reads never erase or repair stored data.
+
+`readSnapshot()` distinguishes a successful empty collection from a failed read
+as `Result<List<PairedServerEntry>>`; expected failures carry a redacted
+`PairedServerStoreException`. `list()` uses the empty fallback. Fixture preservation
+and cleanup assertions must require `readSnapshot().getOrThrow()` rather than
+accepting fallback emptiness as proof of restored storage.
 
 Mutations strictly decode existing storage before changing it. They throw
 `PairedServerStoreException` on expected storage, Keystore or malformed-data
