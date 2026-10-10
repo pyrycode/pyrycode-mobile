@@ -929,10 +929,45 @@ pairing, then opens its observing peer. Both must settle through the handshake a
 `list_conversations` probe. This catches per-instance identity rotation even when the method runs
 alone, without spending another Claude turn. See [the handshake regression](knowledge/features/development-verification-test-scheduling.md#test-scheduling-and-harnesses).
 
-The fresh dispatcher full suite on 2026-10-06 after #1721 explicitly passed
-`InteractiveStreamE2ETest#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`:
-**62 executed, 62 passed, 0 failed, 0 skipped**. See
-[Verification status](#verification-status) for the revisions and retained reports.
+The later pre-Stop failures investigated in [#1925](https://github.com/pyrycode/pyrycode-mobile/issues/1925)
+are distinct from #1456's post-interrupt ping loss. Both original #1870/#1968 stderr reports timed out
+at the 90-second permission wait with peer link 1 open and zero replacements. For #1870, an exact
+held-prompt match identifies the conversation in retained durable history; the correlated daemon log
+records enqueue at 2026-10-07T17:32:10.327Z. Durable history records user echo at
+17:32:38.892336Z, thinking at
+17:32:44.190248Z and thinking progress through 17:33:54.038381Z. No tool use/result or turn end was
+recorded. This establishes turn activity, but neither command execution nor a terminal refusal;
+absence of a durable modal frame does not establish whether a permission prompt was emitted.
+For #1968, no durable held-command marker connects the scenario to the daemon's aggregate
+permission-posture delivery refusals. Its delivery remains unproven. See the
+[correlated investigation](https://github.com/pyrycode/pyrycode-mobile/issues/1925#issuecomment-6093379621).
+
+`withStopHoldDiagnostics` now surrounds only this method's existing phone send and first permission
+wait. `StopHoldProbe` emits `stop_hold_submit` before send and `stop_hold_permission_ready` on success;
+an assertion failure emits `stop_hold_permission_failed` before cleanup and retains the original
+failure as cause with the bounded evidence in the assertion message. Numeric wall-clock milliseconds
+and a validated canonical conversation UUID permit run correlation. Snapshots summarize only this
+conversation's retained peer frames: counts capped at 999 for user echo, turn state, thinking,
+assistant events, tool events, modal/permission, refusal, session error and turn end; state/stop labels
+are allowlisted. A single phone `hostModals.value` read reports permission presence as true, false or
+unknown. No pairing material, instructions, prompt/command, tool names, raw errors or Claude-authored
+text enters this probe.
+
+The classifications distinguish permission observed at peer, at phone only, a terminal turn, tool
+activity, other turn activity, user echo only and no observed activity. They describe observations:
+no observed activity does not prove a turn never started, and tool activity does not prove successful
+execution. Peer and phone snapshots are not atomic; absent current phone permission cannot rule out
+a transient prompt. Cancellation passes through, and snapshot failure uses a static unavailable
+marker. The wrapper currently catches only assertion failures from the send/wait body; Send readiness
+or modal-decoding exceptions can leave only the submission marker, as the
+[verifier noted](https://github.com/pyrycode/pyrycode-mobile/pull/2034#issuecomment-6093664478).
+
+This is an evidence repair, not elimination of the flake. Behavioural investigation remains open in
+[#2032](https://github.com/pyrycode/pyrycode-mobile/issues/2032). The real held command, once-only
+approval, phone Stop, cancelled end, Stop disappearance, same-conversation ping and second end,
+and absent held reply token remain required, with unchanged deadlines and no retry. The fresh
+2026-10-10 dispatcher full live suite explicitly passed the named Stop method with **65 executed,
+65 passed, 0 failed, 0 skipped**; see [Verification status](#stop-permission-stage-evidence-1925).
 
 The **delete-conversation** scenario (#554) is likewise **always-on** (not `@Ignore`d): both post-conditions
 are **durable** structural facts — a conversation is in the channel list or not, and the thread has popped
@@ -2556,6 +2591,23 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
+The existing deletion scenario
+`InteractiveStreamE2ETest.interactiveTurn_deleteConversation_removesFromListAndClosesThread`
+(#1888) waits for its discussion's owning host immediately before Save and Delete confirmation.
+`awaitDeletionMutationReady` accepts a non-null `currentRepository` emission only when it is
+identical to that flow's synchronous `.value`: collection may still publish a retired delegate
+while the authenticated transport/pump is unavailable or a replacement is current. Entry-only
+Connected state can represent intentional idle, and another ready host cannot release this wait.
+Each wait retains `THREAD_TIMEOUT_MS` and cancellation; readiness is an observation, so a later
+disconnect still fails through the mutation/postcondition contract rather than retrying.
+
+After Save, the drive observes the confirmed unique name in the thread header before Back can
+destroy the ViewModel's mutation scope. It then proves displayed list presence, reopens that
+thread, deletes through Channel info and the confirmation dialog, and independently checks list
+return and unique-name absence. This remains an always-on rung-3 real relay/daemon scenario with
+zero Claude turns. No rung-4 twin, production behavior, selectors or scenario sleeps changed.
+See [deletion evidence](#delete-conversation-readiness-1888).
+
 The curated collision scenario remains
 `InteractiveStreamE2ETest.interactiveTurn_twoHostsCollidingConversationId_stayPerHost` (#847, #1998):
 two real paired hosts share a conversation ID while retaining separate rows and threads; renaming A
@@ -3471,6 +3523,92 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+### Stop permission stage evidence (#1925)
+
+The change repairs the missing diagnostic evidence around the pre-Stop permission wait; the
+behavioural cause remains unproven in [#2032](https://github.com/pyrycode/pyrycode-mobile/issues/2032).
+The [verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2034#issuecomment-6093664478)
+confirmed fresh JVM XML: **51 executed/passed, 0 failed/errors, 0 skipped**, including 13
+`StopHoldEvidenceTest` regressions, 15 peer-wait, 14 ping-diagnosis and 9 instruction-restoration tests.
+The PR records contract-stub red runs (10 executed/8 failed, then 12 executed/2 failed); these prove
+the evidence gap regression, not reproduction or repair of the live behavioural cause.
+Dispatcher deterministic gates passed: UI **256 executed/passed, 0 failed, 1 skipped**;
+scripted-all **22 executed/passed, 0 failed, 0 skipped**. Neither executed the live Stop method.
+
+The fresh [dispatcher full-live PASS](https://github.com/pyrycode/pyrycode-mobile/issues/1925#issuecomment-6093784908)
+on 2026-10-10 ran `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` against
+`feature/1925` at **`8f4780675fdd1e0451606c488cc0c23594144123`**, merged with `origin/main` at
+**`e593583305a6`** in a detached worktree. Exit 0, wall clock 897.4 seconds; **65 executed, 65 passed
+(0 flaky), 0 failed, 0 skipped**. The fresh JUnit XML explicitly contains the passing testcase
+`de.pyryco.mobile.e2e.InteractiveStreamE2ETest#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`.
+This was a fresh full suite, not a same-tree focused rerun. No daemon-revision annotation was retained.
+
+Retained reports on the dispatcher host:
+
+- Test report: `/Users/juhanailmoniemi/WorkSpace/Projects/pyrycode-mobile-agents/logs/2026-10-10T04-15-49-647Z_real-claude-gate_#1925.log`.
+- Diagnostic report: `/Users/juhanailmoniemi/WorkSpace/Projects/pyrycode-mobile-agents/logs/2026-10-10T04-15-49-647Z_real-claude-gate_#1925.stderr.log`.
+
+The named pass satisfies the fresh-live evidence requirement; it does not establish why the earlier
+permission prompts were absent or that diagnostics eliminate the flake. See
+[Stop coverage](#what-rung-3-is-made-of) for the proven historical stage and remaining observer limits.
+
+### Delete-conversation readiness (#1888)
+
+The [tested-source diagnosis](https://github.com/pyrycode/pyrycode-mobile/issues/1888#issuecomment-6043311668)
+accounts for two historical stages. #1854 tested merge
+`f77f772c8d56251c3e5da12c1c125d887d2ed872` (parents `3e059504f9` and `970d7c422f`):
+the timeout was the first uniquely renamed list-presence wait, correcting the old branch-head
+Channel info attribution. #1878 tested `9b55c94b107cc263443126396f842a9e72da5b1f`:
+the timeout was post-confirmation `awaitChannelList`. The verifier independently mapped both
+retained stderr stacks against those tested revisions.
+
+Retained daemon logs connect each target to teardown before its missing mutation: #1854's
+`pyry-e2e.NTBfoP/daemon.log` records create/history at 11:36:20.412/.502 +03:00,
+peer-close at .515 and a new handshake at 11:36:21.553, with no target rename;
+#1878's `pyry-e2e.6WLkmJ/daemon.log` records rename/history at 09:13:55.514/.798,
+peer-close at .960, a new handshake at 09:13:57.048 and history at .093, with no target delete.
+Historical phone XML was removed with the gate worktrees; daemon logs alone do not prove UI
+action delivery. The fresh gap controls supplied that missing connection: each submitted once
+with `repository=false legacy_connected=true`, reproducing the respective missing mutation.
+The stable facade rejects unavailable one-shot calls and the guarded ViewModel call catches
+that rejection. No measured window/input defect was established.
+
+The [retained content-free evidence pack](../app/src/androidTest/assets/deletion-1888/README.md)
+preserves source/log provenance, hashed historical identities and XML/logcat excerpts:
+
+| Control | Revision | Artifact directory | Executed | Passed | Failed | Skipped |
+| --- | --- | --- | ---: | ---: | ---: | ---: |
+| Original Save gap; first list-presence timeout | `f4ff81a73` | `build/dispatcher-tests/live-qnfag9ra` | 1 | 0 | 1 | 0 |
+| Original confirmation gap; dialog closes, thread/discussion remain | `80d5e1b5a` | `build/dispatcher-tests/live-9b_iwrpu` | 1 | 0 | 1 | 0 |
+| Repaired drive with both forced gaps | `e2525a93376c34ab69afce0395057dfd30b856ae` | `build/dispatcher-tests/live-yln6f7vx` | 1 | 1 | 0 | 0 |
+| Earlier clean focused deletion | `425ace87ce391706e3ef1153d2cb7e775f2618fc` | `build/dispatcher-tests/live-iggnztkt` | 1 | 1 | 0 | 0 |
+
+These focused proofs predate the synchronous-identity rework; temporary gap injection and
+window diagnostics are absent from the final drive. The earlier diagnostic full run at
+`5de4f4459` executed 64, passed 62, failed 2, skipped 0: deletion passed, but unrelated
+\#1870 archive presence and daemon `pyrycode#2939` parser-gap failures prevented full acceptance.
+[Counted JVM regression evidence](knowledge/features/development-verification-emulator-evidence.md#emulator-and-real-evidence)
+includes both stale-publication negative controls and all eight final readiness passes.
+
+The [final verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/1926#issuecomment-6093256477)
+reviewed `9e05f7352a3115a98ff5b9c69185f3bcc65fd2c9`. The subsequent
+[dispatcher full live PASS](https://github.com/pyrycode/pyrycode-mobile/issues/1888#issuecomment-6093482889)
+ran `ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py live` on that
+`feature/1888` head merged with `origin/main` at `4d34974952d874a39295447fa677cb1c6dd207a9`:
+**65 executed, 65 passed, 0 failed, 0 errors, 0 skipped**, exit 0 in 15m 39s.
+Fresh JUnit XML explicitly contains
+`InteractiveStreamE2ETest.interactiveTurn_deleteConversation_removesFromListAndClosesThread`
+with no failure/error/skipped child: **ran and passed**. This satisfies full-live acceptance;
+no separate focused dispatcher run is claimed or required.
+
+The retained report is dispatcher
+`logs/2026-10-10T03-36-21-148Z_real-claude-gate_#1888.log`; matching `.stderr.log` and
+`.meta.log` record the artifact directory `build/dispatcher-tests/live-6dwhqb25` in
+`real-claude-gate-1888` and tested head/main/command. XML has no daemon-revision annotation;
+stderr identifies daemon `a536d17b1e182fb5398a5458e3afe6079b37a510` and that worktree's
+`build/e2e-bin/pyry`. The worktree is gone; documentation inspected retained XML, metadata,
+diagnostic records and committed controls, without running acceptance tests.
 
 ### Answer-host setup independence (#1899)
 
@@ -5737,6 +5875,23 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Stop permission evidence (#1925):** The existing rung-3
+  `InteractiveStreamE2ETest#interactiveTurn_stopRunningTurn_showsInterruptedThenRepliesAgain`
+  now retains bounded submission/permission stage evidence, with unchanged behaviour and deadlines.
+  No `DeterministicInteractiveStreamE2ETest` twin was added; JVM regressions cover the probe contract.
+  [#2032](https://github.com/pyrycode/pyrycode-mobile/issues/2032) owns the unproven behavioural cause
+  using fresh correlated evidence. The verifier also identified non-assertion send/wait failures that
+  can retain only the submission marker. The fresh full live named pass and **65 executed/passed,
+  0 failed/skipped** are [recorded above](#stop-permission-stage-evidence-1925). The pre-ship command
+  remains `python3 scripts/android-test-gate.py live`.
+
+- Deletion readiness (#1888) retains the existing
+  `InteractiveStreamE2ETest.interactiveTurn_deleteConversation_removesFromListAndClosesThread`.
+  Its owning-host and stale-publication guards have JVM regression proof and a fresh passing full
+  live gate; no `DeterministicInteractiveStreamE2ETest` twin was added. Preserve the unique-name
+  presence and both deletion postconditions when changing synchronization; see
+  [counted evidence](#delete-conversation-readiness-1888).
 
 - **Coverage — hardened:** [#1899](https://github.com/pyrycode/pyrycode-mobile/issues/1899)
   removes the preceding-host readiness prerequisite from answer-host setup for
