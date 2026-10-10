@@ -2,6 +2,7 @@ package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.ConversationAgent
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
+import de.pyryco.mobile.data.network.CAPABILITY_MULTI_AGENT
 import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.ErrorPayload
@@ -85,7 +86,7 @@ internal class SwitchAgentCommands(
             synchronized(this) {
                 if (ended) return failure(SwitchAgentFailure.Category.Unavailable)
                 val capabilities = negotiatedCapabilities()
-                if (CAPABILITY_INTERACTIVE !in capabilities || "multi_agent" !in capabilities) {
+                if (CAPABILITY_INTERACTIVE !in capabilities || CAPABILITY_MULTI_AGENT !in capabilities) {
                     return failure(SwitchAgentFailure.Category.Unsupported)
                 }
                 // Sending is non-suspending; end cannot sweep before this registration is visible.
