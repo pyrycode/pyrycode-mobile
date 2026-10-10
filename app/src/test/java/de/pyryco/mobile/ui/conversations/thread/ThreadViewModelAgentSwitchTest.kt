@@ -54,13 +54,16 @@ class ThreadViewModelAgentSwitchTest {
 
     @Test fun ownAgentPickUsesSettings() =
         runTest {
-            val repo = Repo()
-            val (vm, _) = collect(repo)
-            vm.onModelSelected("haiku")
-            runCurrent()
-            assertEquals(listOf(Triple("s1", "haiku", null)), repo.settingsWrites)
-            assertTrue(repo.switches.isEmpty())
-            assertNull(vm.state.value.runConfig.agentSwitch)
+            for (agent in ConversationAgent.entries) {
+                val repo = Repo(agent)
+                val (vm, _) = collect(repo)
+                val model = if (agent == ConversationAgent.Claude) "haiku" else "gpt-6-sol"
+                vm.onModelSelected(model)
+                runCurrent()
+                assertEquals(listOf(Triple("s1", model, null)), repo.settingsWrites)
+                assertTrue(repo.switches.isEmpty())
+                assertNull(vm.state.value.runConfig.agentSwitch)
+            }
         }
 
     @Test fun confirmationDismissSendsNothing() =
@@ -93,6 +96,7 @@ class ThreadViewModelAgentSwitchTest {
                 vm.onOverflowEvent(ThreadEvent.AgentSwitchConfirm)
                 vm.onModelSelected("haiku")
                 vm.onEffortSelected("low")
+                vm.onPermissionModeSelected("plan")
                 vm.onOverflowEvent(ThreadEvent.AgentSwitchDismiss)
                 runCurrent()
                 assertEquals(listOf(SwitchAgentCall(CONV, repo.other, repo.target, "high")), repo.switches)
@@ -108,8 +112,8 @@ class ThreadViewModelAgentSwitchTest {
 
     @Test fun unsupportedAndEmptyEffortAreOmitted() =
         runTest {
-            for (effort in listOf("ultra", "")) {
-                val repo = Repo(effort = effort)
+            for ((agent, effort) in ConversationAgent.entries.flatMap { agent -> listOf("ultra", "").map { agent to it } }) {
+                val repo = Repo(agent, effort = effort)
                 val (vm, _) = collect(repo)
                 vm.onModelSelected(repo.target)
                 vm.onOverflowEvent(ThreadEvent.AgentSwitchConfirm)
@@ -160,6 +164,29 @@ class ThreadViewModelAgentSwitchTest {
                 assertTrue(config.agentSwitchFailed)
                 assertEquals(1, repo.switches.size)
             }
+        }
+
+    @Test fun failureAfterLostSettingsRestoresConfirmedLabel() =
+        runTest {
+            val repo = Repo()
+            val (vm, _) = collect(repo)
+            vm.onModelSelected(repo.target)
+            vm.onOverflowEvent(ThreadEvent.AgentSwitchConfirm)
+            repo.settings.value = null
+            runCurrent()
+            repo.result.complete(Result.failure(SwitchAgentFailure(SwitchAgentFailure.Category.Failed)))
+            runCurrent()
+            assertEquals("Claude Opus", vm.state.value.runConfig.modelLabel)
+            assertEquals(
+                "opus",
+                vm.state.value.runConfig.confirmedSwitchChoice
+                    ?.value,
+            )
+            assertTrue(
+                vm.state.value.runConfig.effortChoices
+                    .isEmpty(),
+            )
+            assertTrue(vm.state.value.runConfig.agentSwitchFailed)
         }
 
     @Test fun localExceptionIsSanitizedAndNeverRetried() =
@@ -317,6 +344,7 @@ class ThreadViewModelAgentSwitchTest {
                         row("opus", "Claude Opus", ConversationAgent.Claude),
                         row("gpt-6-luna", "GPT-6 Luna", ConversationAgent.Codex),
                         row("haiku", "Claude Haiku", ConversationAgent.Claude),
+                        row("gpt-6-sol", "GPT-6 Sol", ConversationAgent.Codex),
                     ),
                     0,
                 ),

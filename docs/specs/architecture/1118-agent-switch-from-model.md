@@ -5,6 +5,7 @@
 - `ThreadViewModel.kt`: `runConfigFlow`, `runConfig`, `onModelSelected`, `sessionSettings` and `conversations` own settings projection and writes.
 - `ThreadUiState.kt`: `ThreadModelChoice`, `ThreadRunConfig.selectedChoice`, `selectedMetadata` and `modelLabel` currently assume an own-agent menu.
 - `ThreadScreen.kt`: `ThreadStatusArea`, the footer overlay and `StatusSheet` share model selection.
+- `StatusSheet.kt`: `ModelSection` uses optional selected-agent metadata to keep identical wire values from marking another agent’s row; existing callers remain source-compatible.
 - `MobileModal.kt`: `MobileModal` provides client-controlled confirmation and dismissal callbacks.
 - `EffortRecall.kt`: `offer` consumes selected metadata; widening visible rows must not widen recall's vocabulary.
 - `SwitchAgentCommands.kt`: `switchAgent` settles only after a matching conversation update; sanitized typed failures do not promise rollback.
@@ -22,7 +23,7 @@ The confirmation uses the shared mobile modal: target-agent title and close glyp
 
 ## Context
 
-The daemon publishes both agents' models. An own-agent pick remains a settings write; an other-agent pick needs explicit confirmation and the already merged repository operation. One UI deliverable; no protocol, history or message-fold changes. No decision record required. Remote feature-branch inspection found no overlaps in the four production files.
+The daemon publishes both agents' models. An own-agent pick remains a settings write; an other-agent pick needs explicit confirmation and the already merged repository operation. One UI deliverable; no protocol, history or message-fold changes. No decision record required. Remote feature-branch inspection found no overlaps in the planned production files.
 
 ## Design
 
@@ -86,3 +87,14 @@ None.
 Preservation checks: focused `ThreadViewModelAgentModelMenuTest` and `ThreadViewModelAgentSwitchTest` executed 24 tests, all passed with zero skips. `spotlessApply` passed. These establish partial ViewModel behavior only; no shared UI proof or final builder gate has run.
 
 2026-10-10 (refined re-entry): The updated issue limits all model selection and live proof to Run configuration, resolving the former footer-affordance contradiction. Continue the preserved implementation and add `ThreadAgentSwitchUiTest` for both directions, dismissal routes, pending status/control labeling, failure and successor readings. The existing shared full-height modal is the required styling source; the compact confirmation frame supplies content, typography and actions. No in-flight file overlaps found on re-entry. Total forecast remains about 1200 written lines, one exported carrier plus two event objects, no consumer migration and eight outcome branches.
+
+2026-10-10 (UI proof): Red tests exposed the old radio mark during a pending switch and loss of the confirmed label when settings disappear before a refusal. Run configuration now marks the captured target under its applying header and disables every settings control during the send. The private switch carrier retains the previous inert selected row as a display-only fallback on failure; missing successor settings never borrow its effort/permission metadata. The shared screen test exercises these edges; the unit probe is `failureAfterLostSettingsRestoresConfirmedLabel`. Security review remains PASS: the fallback is inert, agent-scoped, never written or persisted.
+
+2026-10-10 (selection identity): `confirmedRadioMarkIsScopedToAgentEvenWhenValuesCoincide` failed because the radio projection compared value alone. Add optional selected-agent metadata to `StatusSheet`/`StatusSheetContent` and forward it only from `ThreadScreen`. Two production call sites change; all existing constructors and other calls keep their defaults. No new exported type and no simultaneous fixture migration. The raw row-agent pair owns the radio mark as well as the command routing.
+
+2026-10-10 (existing routing contract): Focused effort-recall and held-permission tests require the existing `onModelSelected` write path while no menu is available. Preserve that own-agent settings write; a published menu still requires exactly one known row, and only a captured other-agent row can switch. Unknown/ambiguous published rows remain inert. The Codex model-selection fixture now explicitly tags its row Codex, rather than relying on the source-compatible Claude default. No broad fixture migration.
+
+
+## Documentation handoff
+
+Pending for the documentation stage: update `docs/knowledge/features/thread-screen-how-it-works-state.md`, “The model-menu agent filter”, for the merged menu and retained own-agent selection/effort scope; `docs/knowledge/features/thread-composer-footer-effort-recall.md` for the unchanged own-agent recall contract. Live scenario and counted live evidence belong to follow-up #2052, not this deterministic implementation.

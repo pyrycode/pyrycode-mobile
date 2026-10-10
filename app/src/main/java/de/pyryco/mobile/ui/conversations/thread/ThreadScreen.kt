@@ -1291,6 +1291,7 @@ fun ThreadScreen(
                 },
         )
     }
+    // Reuse the ticket-required shared full-height shell; the Figma confirmation supplies its copy and actions.
     state.runConfig.agentSwitch?.takeUnless { it.sending }?.let { confirmation ->
         MobileModal(
             title = stringResource(R.string.thread_agent_switch_title, agentName(confirmation.choice.agent)),
@@ -1319,7 +1320,20 @@ fun ThreadScreen(
             // The producer's own cut plus this client's render cap, summed for display only — each keeps
             // its own field on the state so neither is ever recomputed from the other.
             notListedModels = state.runConfig.droppedModels + state.runConfig.hiddenChoices,
-            selectedModel = state.runConfig.selectedChoice?.value,
+            selectedModel =
+                state.runConfig.agentSwitch
+                    ?.takeIf { it.sending }
+                    ?.choice
+                    ?.value
+                    ?: state.runConfig.selectedChoice?.value
+                    ?: state.runConfig.confirmedSwitchChoice
+                        ?.takeIf { it.agent == state.runConfig.agent }
+                        ?.value,
+            selectedAgent =
+                state.runConfig.agentSwitch
+                    ?.takeIf { it.sending }
+                    ?.choice
+                    ?.agent ?: state.runConfig.agent,
             modelSelectionNote = state.runConfig.modelSelectionNote,
             onModelSelected = { value ->
                 onModelSelected(value)
@@ -1334,7 +1348,7 @@ fun ThreadScreen(
             pending = state.runConfig.pending,
             // An empty session id means the daemon has no session to address, so the controls read only.
             // So does a host that is not connected (#1319).
-            enabled = state.runConfig.writable && connected,
+            enabled = state.runConfig.writable && connected && state.runConfig.agentSwitch?.sending != true,
             onDismiss = { sheetVisible = false },
             effortNote = state.runConfig.effortNote?.text(state.agent),
             running = state.runConfig.running,

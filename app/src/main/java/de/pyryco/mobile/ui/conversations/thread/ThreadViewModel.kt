@@ -370,14 +370,11 @@ class ThreadViewModel(
     /** The [pendingModel] twin for effort (#807). */
     private val pendingEffort = MutableStateFlow<String?>(null)
 
-    /**
-     * This thread's switch-back offer (#1360), or `null`: at most one, armed only by a live session-scoped
-     * fallback refusal ([onLiveRefusalEvent]), never by a row, so a restored refusal cannot arm it. Written on
-     * Main only.
-     */
+    /** Phone-local confirmation, send and display-only settlement; never a persisted command. */
     private data class AgentSwitchUi(
         val request: ThreadAgentSwitch? = null,
         val confirmed: ThreadModelChoice? = null,
+        val previous: ThreadModelChoice? = null,
         val failed: Boolean = false,
     )
 
@@ -385,6 +382,11 @@ class ThreadViewModel(
     private var previousConversationAgent: ConversationAgent? = null
     private var agentChanged = false
 
+    /**
+     * This thread's switch-back offer (#1360), or `null`: at most one, armed only by a live session-scoped
+     * fallback refusal ([onLiveRefusalEvent]), never by a row, so a restored refusal cannot arm it. Written on
+     * Main only.
+     */
     private val refusalOffer = MutableStateFlow<RefusalOffer?>(null)
 
     /** This opening's recall of the remembered effort (#686); its write is [startEffortRecall]. */
@@ -2874,11 +2876,14 @@ class ThreadViewModel(
         if (!connectedFor("model")) return
         val config = state.value.runConfig
         if (agentSwitchUi.value.request != null || config.pending) return
-        val choice = config.choices.singleOrNull { it.value == value } ?: return
-        if (choice.agent != config.agent) {
+        val choice = config.choices.singleOrNull { it.value == value }
+        // Preserve an own-agent write already requested when no menu is available. A published menu,
+        // however, must resolve one known row before a pick can write or ask for confirmation.
+        if (config.menuAvailable && choice == null) return
+        if (choice != null && choice.agent != config.agent) {
             if (!config.writable || config.settingsHeld) return
             effortRecall.cancel()
-            agentSwitchUi.value = AgentSwitchUi(request = ThreadAgentSwitch(config.agent, choice))
+            agentSwitchUi.value = AgentSwitchUi(request = ThreadAgentSwitch(config.agent, choice), previous = config.selectedChoice)
             RelayLog.d { "event=agent_switch_confirmation outcome=opened" }
             return
         }
@@ -2898,11 +2903,12 @@ class ThreadViewModel(
     }
 
     private fun confirmAgentSwitch() {
-        val request = agentSwitchUi.value.request ?: return
+        val switching = agentSwitchUi.value
+        val request = switching.request ?: return
         if (request.sending) return
         val config = state.value.runConfig
         if (!connectedFor("agent_switch") || config.agent != request.source || config.settingsHeld) {
-            agentSwitchUi.value = AgentSwitchUi(failed = true)
+            agentSwitchUi.value = AgentSwitchUi(failed = true, confirmed = switching.previous)
             RelayLog.w { "event=agent_switch_ui outcome=unavailable" }
             return
         }
@@ -2911,7 +2917,7 @@ class ThreadViewModel(
                 level.isNotEmpty() && request.choice.effortChoices.any { it.value == level }
             }
         // Claim on Main before launch: even two taps before StateFlow publishes send only once.
-        agentSwitchUi.value = AgentSwitchUi(request = request.copy(sending = true))
+        agentSwitchUi.value = switching.copy(request = request.copy(sending = true))
         clearRefusalOffer("agent_switch")
         RelayLog.d { "event=agent_switch_ui outcome=started" }
         viewModelScope.launch {
@@ -2928,7 +2934,7 @@ class ThreadViewModel(
                 repository.refreshSessionSettings(conversationId)
                 RelayLog.d { "event=agent_switch_ui outcome=confirmed" }
             } else {
-                agentSwitchUi.value = AgentSwitchUi(failed = true)
+                agentSwitchUi.value = AgentSwitchUi(failed = true, confirmed = switching.previous)
                 val category = (result.exceptionOrNull() as? SwitchAgentFailure)?.category ?: SwitchAgentFailure.Category.Failed
                 RelayLog.w { "event=agent_switch_ui outcome=failed category=$category" }
             }

@@ -114,11 +114,12 @@ sealed interface ThreadEvent {
         override fun toString(): String = "McpToggle(serverName=<redacted>, enabled=$enabled)"
     }
 
-    /** The Run configuration sheet opened (#1309); the thread re-reads its settings. */
+    /** Explicitly send the captured other-agent pick. */
     data object AgentSwitchConfirm : ThreadEvent
 
     data object AgentSwitchDismiss : ThreadEvent
 
+    /** The Run configuration sheet opened (#1309); the thread re-reads its settings. */
     data object RunConfigOpen : ThreadEvent
 
     data object SaveAsChannel : ThreadEvent
