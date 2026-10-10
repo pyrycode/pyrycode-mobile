@@ -4411,58 +4411,73 @@ class InteractiveStreamE2ETest {
     @Test
     fun interactiveTurn_permissionPrompts_heldPerConversation() {
         val (serverId, peer) = answerHostPeer()
+
+        fun <T> step(
+            stage: PermissionIsolationStage,
+            block: () -> T,
+        ): T {
+            android.util.Log.i("PermissionIsolation", "event=step_start stage=${stage.name}")
+            return permissionIsolationStep(stage, peer::linkState, block).also {
+                android.util.Log.i("PermissionIsolation", "event=step_complete stage=${stage.name}")
+            }
+        }
         try {
-            pairAnswerHost()
-            val (chatA, nameA) = answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "pa-")
-            val (chatB, nameB) = answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "pb-")
-            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            step(PermissionIsolationStage.PairPhone) { pairAnswerHost() }
+            val (chatA, nameA) = step(PermissionIsolationStage.CreateA) { answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "pa-") }
+            val (chatB, nameB) = step(PermissionIsolationStage.CreateB) { answerChat(serverId, ANSWER_CHAT_NAME_PREFIX + "pb-") }
+            step(PermissionIsolationStage.OpenPeer) { runBlocking { peer.open(CONNECT_TIMEOUT_MS) } }
 
             // 1. A raises a prompt in A.
-            openChatRow(nameA)
-            sendFromPhone(ANSWER_PERMISSION_PROMPT)
+            step(PermissionIsolationStage.OpenA) { openChatRow(nameA) }
+            step(PermissionIsolationStage.SendA) { sendFromPhone(ANSWER_PERMISSION_PROMPT) }
             val shownA =
-                runBlocking {
-                    MobileJson.decodeFromJsonElement(
-                        ModalShownPayloadDto.serializer(),
-                        peer.awaitFrame(chatA, "modal_shown", REPLY_TIMEOUT_MS).payload,
-                    )
+                step(PermissionIsolationStage.AwaitA) {
+                    runBlocking {
+                        MobileJson.decodeFromJsonElement(
+                            ModalShownPayloadDto.serializer(),
+                            peer.awaitFrame(chatA, "modal_shown", REPLY_TIMEOUT_MS).payload,
+                        )
+                    }
                 }
             val promptA = shownA.modalId
-            awaitPromptDialog()
+            step(PermissionIsolationStage.DrawA) { awaitPromptDialog() }
 
             // 2. B raises its own prompt while A's is outstanding, and B shows it.
-            leaveThread()
-            openChatRow(nameB)
-            sendFromPhone(ANSWER_PERMISSION_PROMPT)
-            val promptB = runBlocking { peer.awaitPermissionModal(chatB, REPLY_TIMEOUT_MS) }
+            step(PermissionIsolationStage.LeaveA) { leaveThread() }
+            step(PermissionIsolationStage.OpenB) { openChatRow(nameB) }
+            step(PermissionIsolationStage.SendB) { sendFromPhone(ANSWER_PERMISSION_PROMPT) }
+            val promptB = step(PermissionIsolationStage.AwaitB) { runBlocking { peer.awaitPermissionModal(chatB, REPLY_TIMEOUT_MS) } }
             assertNotEquals("the two chats' prompts", promptA, promptB)
-            awaitPromptDialog()
+            step(PermissionIsolationStage.DrawB) { awaitPromptDialog() }
 
             // 3. Back in A, A's prompt is still shown: B's did not replace it.
-            leaveThread()
-            openChatRow(nameA)
-            awaitPromptDialog()
+            step(PermissionIsolationStage.LeaveB) { leaveThread() }
+            step(PermissionIsolationStage.ReopenA) { openChatRow(nameA) }
+            step(PermissionIsolationStage.RedrawA) { awaitPromptDialog() }
 
             // 4. Allowing in A (a non-default option arms first) resolves A's prompt from the phone, not B's.
             val allow = hasText(shownA.options.first { it.id == ALLOW_ONCE }.label) and hasClickAction() and inPromptDialog()
             val armed = SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, string(R.string.modal_armed_option_desc))
-            tapInPrompt(allow)
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(allow and armed).fetchSemanticsNodes().isNotEmpty()
+            step(PermissionIsolationStage.ArmA) {
+                tapInPrompt(allow)
+                composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                    composeTestRule.onAllNodes(allow and armed).fetchSemanticsNodes().isNotEmpty()
+                }
             }
-            tapInPrompt(allow)
-            val dismissedA = runBlocking { peer.awaitModalDismissed(promptA, THREAD_TIMEOUT_MS) }
+            step(PermissionIsolationStage.ConfirmA) { tapInPrompt(allow) }
+            val dismissedA =
+                step(PermissionIsolationStage.DismissA) { runBlocking { peer.awaitModalDismissed(promptA, THREAD_TIMEOUT_MS) } }
             assertEquals("who resolved A's prompt", REMOTE_SOURCE, peer.field(dismissedA, "source"))
             assertEquals("A's prompt outcome", ALLOW_ONCE, peer.field(dismissedA, "outcome"))
-            awaitNoPromptDialog("A's dialog stayed after the phone allowed it")
+            step(PermissionIsolationStage.RemoveA) { awaitNoPromptDialog("A's dialog stayed after the phone allowed it") }
 
             // 5. B's prompt is still shown in B, so A's answer left it; the peer allows it and B's dialog closes untouched.
-            leaveThread()
-            openChatRow(nameB)
-            awaitPromptDialog()
-            runBlocking { peer.allowOnce(promptB, THREAD_TIMEOUT_MS) }
-            awaitNoPromptDialog("B's dialog stayed after the peer allowed it")
-            awaitTurnEnd(peer, chatB, 1, "B's peer-allowed turn")
+            step(PermissionIsolationStage.LeaveAnsweredA) { leaveThread() }
+            step(PermissionIsolationStage.ReopenB) { openChatRow(nameB) }
+            step(PermissionIsolationStage.RedrawB) { awaitPromptDialog() }
+            step(PermissionIsolationStage.AllowB) { runBlocking { peer.allowOnce(promptB, THREAD_TIMEOUT_MS) } }
+            step(PermissionIsolationStage.RemoveB) { awaitNoPromptDialog("B's dialog stayed after the peer allowed it") }
+            step(PermissionIsolationStage.EndB) { awaitTurnEnd(peer, chatB, 1, "B's peer-allowed turn") }
         } finally {
             peer.close()
             runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverId) }

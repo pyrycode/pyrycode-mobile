@@ -1,0 +1,19 @@
+Source: 2026-10-07T06-50-40-098Z_real-claude-gate_#1731.stderr.log
+Original gate worktree and per-test artifacts no longer survive.
+
+Execute de.pyryco.mobile.e2e.InteractiveStreamE2ETest.interactiveTurn_permissionPrompts_heldPerConversation: FAILED
+kotlinx.coroutines.TimeoutCancellationException: kotlinx.coroutines.TimeoutCancellationException: Timed out waiting for 30000 ms
+at kotlinx.coroutines.TimeoutKt.TimeoutCancellationException(Timeout.kt:189)
+at kotlinx.coroutines.TimeoutCoroutine.run(Timeout.kt:157)
+at kotlinx.coroutines.EventLoopImplBase$DelayedRunnableTask.run(EventLoop.common.kt:505)
+at kotlinx.coroutines.EventLoopImplBase.processNextEvent(EventLoop.common.kt:263)
+at kotlinx.coroutines.DefaultExecutor.run(DefaultExecutor.kt:105)
+at java.lang.Thread.run(Thread.java:1012)
+
+kotlinx.coroutines.TimeoutCancellationException: Timed out waiting for 30000 ms
+at kotlinx.coroutines.TimeoutKt.TimeoutCancellationException(Timeout.kt:189)
+at kotlinx.coroutines.TimeoutCoroutine.run(Timeout.kt:157)
+at kotlinx.coroutines.EventLoopImplBase$DelayedRunnableTask.run(EventLoop.common.kt:505)
+at kotlinx.coroutines.EventLoopImplBase.processNextEvent(EventLoop.common.kt:263)
+at kotlinx.coroutines.DefaultExecutor.run(DefaultExecutor.kt:105)
+at java.lang.Thread.run(Thread.java:1012)
