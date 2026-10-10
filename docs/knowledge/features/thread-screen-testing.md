@@ -35,7 +35,8 @@ scenarios establish streaming integration. See
 `SavedThreadFirstDrawDeviceTest.savedThreads_firstNewestDrawWithinOneSecond_offlineAndHeldNewest_firstOpenAndReopen`
 uses real `FileConversationCache`, `CachingConversationRepository`, `ThreadViewModel`,
 production `ThreadContentScheduling` and `ThreadScreen` on the configured Android 13
-managed device. It prepares and persists each active fixture before its case group: **20 ordinary
+managed device. It prepares and persists each active source fixture once before its case group,
+then copies its complete persisted bytes to independent offline/held-newest roots: **20 ordinary
 saved messages**, then **18,000 displayed message rows / 36,000 durable entries /
 18,000 spans**. Each
 fixture runs offline and with a connected delegate whose newest response stays held.
@@ -137,8 +138,10 @@ the IO-worker diagnostic measured **1293 ms elapsed / 577 ms CPU**. CPU time
 explains elapsed variation but never replaces the wall-clock acceptance interval.
 Duplicate metadata-write mapping and setup serialization also generated garbage
 that survived into restore. Preparing the entire fragmented fixture before the
-ordinary group delayed even a 20-row snapshot/draw. Prepare only the active fixture
-and return its already-bound canonical coverage instead of a setup codec echo.
+ordinary group delayed even a 20-row snapshot/draw. Prepare only the active source
+fixture once, copy its persisted bytes for each mode
+(as refined in #2027 below), and return its already-bound canonical coverage instead
+of a setup codec echo.
 Generation remains outside the timer; real writes/reads and cold construction remain
 intact. `fragmentedFixtureIsCanonicalWithoutDependingOnASetupCodecEcho` pins canonical
 codec equality, counts, sampled rows, endpoint ids and proofs. Neither serializer
@@ -296,6 +299,134 @@ expanded timestamp compatibility separately passed **1/1/0/0/0**. The dispatcher
 scripted-all gate exited 0, **22/22/0/0/0** (retained
 `/tmp/verifier-2035/evidence/dispatcher-scripted.xml`). This repair adds no
 real-Claude flow or ladder scenario.
+
+**Residual in-depth failure (#2027), 2026-10-10.** The original
+[main-sweep evidence](https://github.com/pyrycode/pyrycode-mobile/issues/2027#issuecomment-6093748684)
+on `f3186e5a5ed013540cf74ff410e9e36dcd75b775` exited 1 after 744 seconds:
+**1571/1570/1/2/0** executed/passed/failed/skipped/errors. Fragmented offline
+first open drew at **1577 ms**; the negative control passed. The interval from
+last passing sweep `60ba3f24fed1e82630d03761ee7eef585bff19f4` establishes no
+causal commit. Launcher focus followed activity `DESTROYED`, so it does not
+establish focus loss. Originals are retained in the issue's refinement comment
+and copied under `/tmp/builder-2027/prior/`.
+
+The landed #2026 repair at `79b212e949b840b3aad5f96137bd6ad4377a35b9`
+reduced production restore allocations, but did not eliminate residual isolated
+misses. The [post-#2026 evidence](https://github.com/pyrycode/pyrycode-mobile/issues/2027#issuecomment-6094369932)
+retains fragmented offline first-open tuples **737/1032/1277/1402 ms** on
+`f0b4b2c1b00dc12e7f27b641be59ef69c0ffa8ad` and **1225/1491/1765/2054 ms**
+on the landed merge base. Each exited 1, **1/0/1/0/0**. Originals remain under
+`/tmp/builder-2006/rework-evidence/post-2026-{branch,merge-base}/`.
+
+The [residual diagnosis and verifier PASS](https://github.com/pyrycode/pyrycode-mobile/pull/2037#issuecomment-6095042198)
+retain these additional isolated first-open misses under `/tmp/builder-2027/`;
+each exited 1 with **1/0/1/0/0**:
+
+| Directory | Fixture / mode | Cumulative phases (ms) |
+| --- | --- | --- |
+| `baseline-isolated` | fragmented / offline | 711/997/1135/1264 |
+| `bluetooth-isolated-1` | fragmented / offline | 656/917/1139/1315 |
+| `state-isolated-2` | fragmented / held newest | 593/829/1011/1157 |
+
+The baseline isolated worker used **631 wall / 328 CPU ms**, versus
+**382/334 ms** in the unchanged in-depth pass: comparable CPU work did not
+explain time off CPU. The held-newest miss persisted without Bluetooth native
+aborts/restarts and logged app GC reclaiming **58 MB** during restoration and
+continuing through projection/draw; its worker used **578/364 ms**. Repeating
+complete synthetic serialization, mapping and proofs between modes recreated
+\#2018's setup-allocation hazard. Persist each source fixture once and copy its
+complete app-private directory to independent mode roots. Copying invokes no
+reader, decoder, repository, ViewModel or composition. Each first-open timer
+still starts before fresh cache/repository construction; each reopen keeps only
+its own repository and creates a fresh ViewModel/composition. Source and copies
+are cleaned in `finally`. Production code and persistence validation are unchanged.
+
+After copying, isolated held-newest workers measured **253/239** and **265/244 ms**,
+with no app GC overlapping those held-newest timed intervals. Repeated isolated,
+class, in-depth and regular UI passes support this allocation repair without
+attributing every historical miss to one cause. All eight probes are retained
+and their unchanged **1000 ms** bounds asserted after cleanup; a timing miss
+fails the method without retrying or hiding later cases. Worker queue/wall/CPU
+and ViewModel installation/teardown events are diagnostic only. CPU time never
+replaces monotonic wall time through the exact newest-text committed frame.
+
+Bluetooth setup now requests emulator shutdown regardless of the persisted off
+preference, observes exact OFF with no pending enable, requests shutdown again
+and rechecks within a ten-second responsive-polling deadline. API 33 does not
+support the attempted platform wait command; those `ready-*` attempts executed
+zero tests and are not passes. OFF can precede queued recovery: restart/native
+activity remains in some passing logs, so readiness observations prove neither
+permanent quiescence nor the sole cause of latency. The verifier also retained
+nonblocking findings about dialog restoration on setup failure and synchronous
+shell calls exceeding the coroutine deadline; fake responsive-shell timeout
+coverage does not prove stalled shell cancellation.
+
+**Counted final builder comparison.** Runtime revision
+`d08cb44916994cc9f7785d7684c97838746cd302` contains #2026. Later source changes
+only clarify comments and rename a unit method. The isolated commands are the
+same managed Pixel 2 API 33 ATD commands recorded for #2026 above, selecting each
+named method separately, with FIFO coordination and animations disabled. The
+whole-class run omits `#METHOD`. In-depth omits the class argument entirely and
+adds `-Pandroid.experimental.androidTest.numManagedDeviceShards=2`, selecting
+all non-e2e device tests. These selections differ from the configured regular UI
+gate. Counts are **executed/passed/failed/skipped/errors**.
+
+| Directory under `/tmp/builder-2027/` | Selection | Exit | Counts | XML timestamp (UTC, 2026-10-10) |
+| --- | --- | ---: | --- | --- |
+| `copy-isolated-1` | named first draw | 0 | 1/1/0/0/0 | 06:36:32 |
+| `copy-isolated-2` | named first draw | 0 | 1/1/0/0/0 | 06:37:23 |
+| `copy-control-1` | named negative control | 0 | 1/1/0/0/0 | 06:36:57 |
+| `copy-control-2` | named negative control | 0 | 1/1/0/0/0 | 06:37:43 |
+| `copy-class` | affected class | 0 | 2/2/0/0/0 | 06:38:12 |
+| `copy-in-depth` | all non-e2e, two shards | 1 | 1573/1572/1/2/0 | 06:49:43; 06:49:23 |
+
+Each directory retains fresh `TEST-pixel2Api33Atd*.xml`, selected-method
+`logcat-…SavedThreadFirstDrawDeviceTest-<method>.txt` and `run.json` with revision,
+command and exit; in-depth logcats are in `shard_0/`. Both named methods executed
+and passed individually in the final in-depth XML, each **1/1/0/0/0**. The class
+maximum draw/control was **773/3299 ms**. The unchanged baseline and intermediate
+in-depth runs also exited 1, **1573/1572/1/2/0**, with both saved-thread methods
+passing. The sole failure was the unrelated Keystore cleanup method
+`AnswerHostSetupCleanupTest.targetedPairingAfterFixtureTeardownKeepsItsHostGuard`,
+tracked as [#2036](https://github.com/pyrycode/pyrycode-mobile/issues/2036).
+`focused-evidence.json` and the [plan revisions](../../specs/architecture/2027-in-depth-saved-thread-first-draw.md#revisions)
+retain all attempts, including partial passes and misses.
+
+**Dispatcher regular UI acceptance.** On reviewed head
+`41aa0657a3e48c6d67a650fa5dd855036e6b6b41`, the configured command
+`ANDROID_GATE_WAIT_SECONDS=2700 python3 scripts/android-test-gate.py ui`
+exited 0, **256/256/0/1/0**. Inspected XML
+`/tmp/verifier-2037/evidence/dispatcher-ui.xml` has timestamp
+**2026-10-10T07:11:03**; both named saved-thread methods executed once and
+passed, each **1/1/0/0/0**. Both selected logcats are beside it. The sole skip
+remains `RenameDialogCaptureTest.renameAtFigmaViewport`; the #2036 method passed
+in this regular selection. This gate pass does not convert the builder's
+in-depth selection into a zero-failure run.
+
+Selected logs retain all eight cumulative
+**restore/snapshot/complete-content/committed-draw** tuples, monotonic ms:
+
+| Case | Builder isolated 1 | Builder isolated 2 | Builder in-depth | Dispatcher regular UI |
+| --- | --- | --- | --- | --- |
+| Ordinary offline first | 20/334/345/613 | 215/238/255/349 | 3/17/50/84 | 7/9/24/146 |
+| Ordinary offline reopen | 81/118/157/293 | 146/167/170/290 | 1/9/49/137 | 14/19/100/150 |
+| Ordinary held newest first | 26/57/93/183 | 21/28/109/169 | 7/8/84/143 | 10/13/21/66 |
+| Ordinary held newest reopen | 39/71/96/200 | 7/30/38/101 | 6/8/52/84 | 13/14/39/86 |
+| Fragmented offline first | 312/450/593/682 | 331/437/579/715 | 334/436/588/647 | 332/431/560/624 |
+| Fragmented offline reopen | 45/166/294/371 | 36/114/217/318 | 25/121/245/305 | 18/91/243/300 |
+| Fragmented held newest first | 262/359/470/546 | 268/344/453/513 | 278/357/462/522 | 286/352/461/550 |
+| Fragmented held newest reopen | 45/132/256/319 | 24/94/203/275 | 28/97/267/342 | 16/89/205/251 |
+| Delayed negative control | 3017/3140/3154/3231 | 3035/3142/3164/3228 | 3045/3051/3115/3150 | 3017/3026/3038/3092 |
+
+Both separate isolated controls and the full-selection controls passed by
+rejecting the identical bound after the injected **3000 ms** restore delay.
+The ordinary **20 messages** and fragmented **18000 displayed rows / 36000
+durable entries / 18000 spans**, exact saved rows, every marker anchor and
+zero offline / one held connected newest-page request per opening remain asserted.
+The dispatcher scripted-all gate also exited 0, **22/22/0/0**, per its counted
+gate report; it does not run these two methods. No live daemon/Claude scenario
+was added or required. The automatic post-merge main sweep remains dispatcher-owned
+and pending; it is not a branch acceptance gate. Documentation obtained no device runs.
 
 ## Folded-row composition reuse (#1954)
 
